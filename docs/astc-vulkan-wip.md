@@ -161,6 +161,13 @@ PoC and carries only logical dimensions plus an affine scale/offset; no GGUF or
 ggml public type changed. This makes the future packer/shader boundary explicit
 without pretending that an encoder already exists.
 
+The eighth sweep added optional Vulkan timestamp queries around the compute
+dispatch in the shader-device smoke. When the selected queue reports
+`timestampValidBits`, the executable prints elapsed nanoseconds using the
+physical device's `timestampPeriod`; otherwise correctness still runs without a
+timing claim. This is instrumentation only: sequential/non-local access
+patterns and a bandwidth comparison are intentionally not inferred yet.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -177,7 +184,8 @@ After each implementation sweep:
 
 1. Run the new shader-device smoke on the Intel/target GPU and capture decoded
    values for both block sizes.
-2. Add timestamp-query measurements for sequential versus non-local fetches.
+2. Add sequential versus non-local fetch patterns and compare their timestamp
+   distributions on the target GPU.
 3. Record device name, driver version, shader workgroup shape, elapsed GPU time,
    and represented bytes.
 4. Revisit the plan after numerical and bandwidth evidence, before designing a

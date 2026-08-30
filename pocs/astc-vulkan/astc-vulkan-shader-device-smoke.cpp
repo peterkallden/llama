@@ -164,6 +164,7 @@ int main(int argc, char ** argv) {
         ? VK_FORMAT_ASTC_4x4_UNORM_BLOCK : VK_FORMAT_ASTC_6x6_UNORM_BLOCK;
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
     uint32_t queue_family = UINT32_MAX;
+    uint32_t timestamp_valid_bits = 0;
     for (VkPhysicalDevice device : devices) {
         if (!supports_format(device, format)) {
             continue;
@@ -176,6 +177,7 @@ int main(int argc, char ** argv) {
             if ((queues[i].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0) {
                 physical_device = device;
                 queue_family = i;
+                timestamp_valid_bits = queues[i].timestampValidBits;
                 break;
             }
         }
@@ -220,6 +222,7 @@ int main(int argc, char ** argv) {
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkShaderModule shader_module = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkQueryPool query_pool = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
     do {
         if (!success) break;
@@ -318,6 +321,13 @@ int main(int argc, char ** argv) {
         if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipeline_info,
                                      nullptr, &pipeline) != VK_SUCCESS) break;
 
+        const VkQueryPoolCreateInfo query_info{
+            VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, nullptr, 0,
+            VK_QUERY_TYPE_TIMESTAMP, 2, 0,
+        };
+        if (timestamp_valid_bits != 0 &&
+            vkCreateQueryPool(device, &query_info, nullptr, &query_pool) != VK_SUCCESS) break;
+
         const VkCommandPoolCreateInfo command_pool_info{
             VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr,
             VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queue_family,
@@ -334,6 +344,11 @@ int main(int argc, char ** argv) {
             VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr,
         };
         if (vkBeginCommandBuffer(command_buffer, &begin_info) != VK_SUCCESS) break;
+        if (query_pool != VK_NULL_HANDLE) {
+            vkCmdResetQueryPool(command_buffer, query_pool, 0, 2);
+            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                query_pool, 0);
+        }
         const VkImageMemoryBarrier to_transfer{
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, 0,
             VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
@@ -363,6 +378,10 @@ int main(int argc, char ** argv) {
         vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, sizeof(dimensions), dimensions);
         vkCmdDispatch(command_buffer, 1, 1, 1);
+        if (query_pool != VK_NULL_HANDLE) {
+            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                query_pool, 1);
+        }
         const VkBufferMemoryBarrier output_barrier{
             VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr,
             VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT,
@@ -393,10 +412,24 @@ int main(int argc, char ** argv) {
                 break;
             }
         }
+        if (success && query_pool != VK_NULL_HANDLE) {
+            uint64_t timestamps[2] = {};
+            const VkResult query_result = vkGetQueryPoolResults(
+                device, query_pool, 0, 2, sizeof(timestamps), timestamps,
+                sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+            if (query_result == VK_SUCCESS) {
+                VkPhysicalDeviceProperties properties{};
+                vkGetPhysicalDeviceProperties(physical_device, &properties);
+                const double elapsed_ns = static_cast<double>(timestamps[1] - timestamps[0]) *
+                                           properties.limits.timestampPeriod;
+                std::printf("ASTC %s shader timestamp %.3f ns\n", argv[2], elapsed_ns);
+            }
+        }
     } while (false);
 
     if (device != VK_NULL_HANDLE) vkDeviceWaitIdle(device);
     if (fence != VK_NULL_HANDLE) vkDestroyFence(device, fence, nullptr);
+    if (query_pool != VK_NULL_HANDLE) vkDestroyQueryPool(device, query_pool, nullptr);
     if (command_pool != VK_NULL_HANDLE) vkDestroyCommandPool(device, command_pool, nullptr);
     if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, pipeline, nullptr);
     if (pipeline_layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
