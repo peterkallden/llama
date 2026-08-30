@@ -8,13 +8,18 @@
 
 #include <fstream>
 #include <filesystem>
+#include <chrono>
 #include <iostream>
 #include <thread>
 
 class http_server_guard final {
 public:
     explicit http_server_guard(httplib::Server & server)
-        : server_(server), thread_([this] { server_.listen_after_bind(); }) {}
+        : server_(server), thread_([&server] { server.listen_after_bind(); }) {
+        // The client can otherwise win the race with the listener startup on
+        // Windows, turning a connection failure into an unrelated teardown.
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
 
     ~http_server_guard() {
         server_.stop();

@@ -128,13 +128,13 @@ bool test_profile_router() {
     common_agent_model_router router(catalog);
     common_agent_model_route baseline;
     if (!router.begin_turn({}, baseline, error) || baseline.cache_reused ||
-            baseline.selection.path != "/models/qwen.gguf") return false;
+            baseline.selection.path != (std::filesystem::path("/models") / "qwen.gguf").lexically_normal().string()) return false;
     common_agent_model_route same;
     if (!router.begin_turn("agent-default", same, error) || !same.cache_reused ||
             same.cache_key != baseline.cache_key) return false;
     common_agent_model_route research;
     if (!router.begin_turn("research", research, error) || research.cache_reused ||
-            research.selection.path != "/models/research.gguf" ||
+            research.selection.path != (std::filesystem::path("/models") / "research.gguf").lexically_normal().string() ||
             router.cache().size() != 2) return false;
     if (!router.end_turn(same, error) || !router.end_turn(baseline, error) ||
             !router.end_turn(research, error)) return false;
