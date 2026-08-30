@@ -23,7 +23,6 @@
 
 struct common_agent_cli_tool_selection {
     common_agent_runtime_tooling tooling;
-    std::unique_ptr<agent_tool_view> tool_view;
     std::vector<std::unique_ptr<agent_mcp_tool_client>> mcp_clients;
     std::vector<std::unique_ptr<agent_tool_provider>> openapi_providers;
     std::unique_ptr<agent_embedding_provider> embedding_provider;
@@ -34,6 +33,10 @@ struct common_agent_cli_tool_selection {
     std::unique_ptr<common_agent_data_store> owned_data_store;
     std::shared_ptr<common_agent_sandbox_runtime> sandbox_runtime;
     std::shared_ptr<common_agent_workspace_manager> workspace_manager;
+    // The composite view owns sub-views that retain references to the
+    // providers and clients above. Declare it last so its destructor runs
+    // first and never observes an already-destroyed provider.
+    std::unique_ptr<agent_tool_view> tool_view;
 };
 
 struct agent_host_stdio_mcp_provider_request {
