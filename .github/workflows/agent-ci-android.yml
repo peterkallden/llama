@@ -183,7 +183,9 @@ jobs:
       - name: Install Vulkan host headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
 
-      - name: Run Android SQLite instrumentation smoke
+      - name: Run Android SQLite instrumentation smoke (primary emulator)
+        id: android_sqlite_smoke_primary
+        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -201,6 +203,9 @@ jobs:
           disable-animations: false
           working-directory: examples/llama.android
           script: |
+            set -euo pipefail
+            retry_marker="$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy"
+            rm -f "$retry_marker"
             adb wait-for-device
             test "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
             echo "Emulator ABI:"
@@ -209,5 +214,56 @@ jobs:
             adb shell df -h /data /data/local/tmp
             adb shell pm uninstall com.arm.aichat.test || true
             adb shell pm uninstall com.example.llama.aichat || true
-            adb shell cmd package list packages >/dev/null
+            if ! bash "$GITHUB_WORKSPACE/scripts/agent-android-package-manager-ready.sh"; then
+              touch "$retry_marker"
+              exit 75
+            fi
             ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=3
+
+      - name: Detect unhealthy primary emulator
+        id: android_sqlite_retry
+        if: always()
+        run: |
+          if [[ -f "$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy" ]]; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Retry Android SQLite instrumentation smoke (fresh emulator)
+        id: android_sqlite_smoke_retry
+        if: steps.android_sqlite_retry.outputs.required == 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          heap-size: 512M
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -wipe-data -no-metrics -gpu swiftshader_indirect
+          force-avd-creation: true
+          disable-spellchecker: true
+          disable-animations: false
+          working-directory: examples/llama.android
+          script: |
+            set -euo pipefail
+            adb wait-for-device
+            test "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
+            echo "Emulator ABI:"
+            adb shell getprop ro.product.cpu.abilist
+            echo "Emulator storage:"
+            adb shell df -h /data /data/local/tmp
+            adb shell pm uninstall com.arm.aichat.test || true
+            adb shell pm uninstall com.example.llama.aichat || true
+            bash "$GITHUB_WORKSPACE/scripts/agent-android-package-manager-ready.sh"
+            ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=3
+
+      - name: Fail a non-retryable Android smoke failure
+        if: always() && steps.android_sqlite_smoke_primary.outcome == 'failure' && steps.android_sqlite_retry.outputs.required != 'true'
+        run: exit 1
+
+      - name: Require successful fresh-emulator retry
+        if: always() && steps.android_sqlite_retry.outputs.required == 'true' && steps.android_sqlite_smoke_retry.outcome != 'success'
+        run: exit 1
