@@ -210,7 +210,7 @@ jobs:
           disable-animations: false
           working-directory: examples/llama.android
           script: |
-            set -euo pipefail
+            set -eu
             rm -f "$GITHUB_WORKSPACE/.agent-android-primary-script-not-started"
             retry_marker="$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy"
             rm -f "$retry_marker"
@@ -257,7 +257,7 @@ jobs:
           disable-animations: false
           working-directory: examples/llama.android
           script: |
-            set -euo pipefail
+            set -eu
             adb wait-for-device
             test "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
             echo "Emulator ABI:"
