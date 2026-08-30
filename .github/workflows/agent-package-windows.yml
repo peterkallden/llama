@@ -47,6 +47,8 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || inputs.source_ref || 'feature/llama-agent' }}
 
       - name: Provision Cozo C API
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $cozoRoot = Join-Path $env:RUNNER_TEMP "cozo-$env:COZO_VERSION"
