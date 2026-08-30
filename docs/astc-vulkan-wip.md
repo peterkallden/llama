@@ -153,6 +153,14 @@ and 7,463,824 bytes (about 7.12 MiB) for 6x6. These figures describe the
 compressed image allocation, including edge-block padding; they are not a claim
 about effective model weight bits after metadata or alignment.
 
+The seventh sweep added `astc-vulkan-tensor-contract.h` and a focused CTest for
+the first tensor mapping proposal. A logical row-major matrix packs four scalar
+columns into each RGBA texel, rounds the final texel channels, and then applies
+ASTC block rounding to the texel image. The metadata record is private to the
+PoC and carries only logical dimensions plus an affine scale/offset; no GGUF or
+ggml public type changed. This makes the future packer/shader boundary explicit
+without pretending that an encoder already exists.
+
 ## Test sweep policy
 
 After each implementation sweep:

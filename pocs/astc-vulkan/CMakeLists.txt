@@ -16,6 +16,12 @@ target_include_directories(test-astc-vulkan-smoke PRIVATE
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(test-astc-vulkan-smoke PRIVATE cxx_std_17)
 
+add_executable(test-astc-vulkan-tensor-contract
+    tests/test-astc-vulkan-tensor-contract.cpp)
+target_include_directories(test-astc-vulkan-tensor-contract PRIVATE
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_compile_features(test-astc-vulkan-tensor-contract PRIVATE cxx_std_17)
+
 find_package(Vulkan QUIET)
 if (Vulkan_FOUND)
     add_executable(astc-vulkan-capability-probe
@@ -63,6 +69,10 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-smoke
         COMMAND test-astc-vulkan-smoke)
     set_property(TEST test-astc-vulkan-smoke PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-tensor-contract
+        COMMAND test-astc-vulkan-tensor-contract)
+    set_property(TEST test-astc-vulkan-tensor-contract PROPERTY LABELS astc)
 
     if (TARGET astc-vulkan-capability-probe)
         add_test(NAME astc-vulkan-capability-probe

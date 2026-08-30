@@ -49,8 +49,8 @@ and the benchmark produces deterministic, validated values.
 
 ## Phase 2: offline ASTC-aware weight packer
 
-1. Define an experimental input tensor format and metadata record; do not add
-   it to the public GGUF specification.
+1. [x] Define an experimental input tensor layout and metadata record; do not
+   add it to the public GGUF specification.
 2. Implement 4x4 and 6x6 packing paths.
 3. Encode static weight blocks offline and preserve any scale, offset, outlier,
    or layout metadata needed by the shader in a companion buffer.
