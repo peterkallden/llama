@@ -18,7 +18,13 @@ $cmakeCandidates = @(
 $cmakeBin = $cmakeCandidates | Where-Object {
     Test-Path -LiteralPath (Join-Path $_ 'cmake.exe')
 } | Select-Object -First 1
-$llvmBin = 'E:\progs\bin'
+$llvmCandidates = @(
+    'C:\tools\LLVM\bin',
+    'E:\progs\bin'
+)
+$llvmBin = $llvmCandidates | Where-Object {
+    Test-Path -LiteralPath (Join-Path $_ 'clang.exe')
+} | Select-Object -First 1
 
 foreach ($requiredPath in @($cmakeBin, $llvmBin)) {
     if (-not (Test-Path -LiteralPath $requiredPath -PathType Container)) {

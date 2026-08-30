@@ -118,6 +118,7 @@ int main() {
     nlohmann::json spec_check;
     std::ifstream spec_check_file(spec_path);
     spec_check_file >> spec_check;
+    spec_check_file.close();
     if (!build_agent_openapi_catalog(spec_check, request.openapi_providers.front(), catalog_check, error)) {
         std::cerr << "catalog build failed: " << error << "\n";
         return 1;
