@@ -1,0 +1,28 @@
+#version 450
+
+// Minimal sampled-image contract shader. It deliberately performs no model
+// operation yet; it validates that an ASTC image can feed a compute shader.
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 0) uniform sampler2D astc_weights;
+
+layout(std430, set = 0, binding = 1) buffer ValidationOutput {
+    vec4 values[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint width;
+    uint height;
+} params;
+
+void main() {
+    const uint index = gl_GlobalInvocationID.x;
+    const uint texel_count = params.width * params.height;
+    if (index >= texel_count) {
+        return;
+    }
+
+    const uint x = index % params.width;
+    const uint y = index / params.width;
+    values[index] = texelFetch(astc_weights, ivec2(x, y), 0);
+}

@@ -90,10 +90,12 @@ the eventual packer must optimize neural-weight and dot-product objectives.
 
 ## Implemented in the current sweep
 
-- Added `ggml/src/ggml-vulkan/astc-vulkan-contract.h` with host-neutral format
-  constants and block-count helpers.
-- Added `pocs/astc-vulkan/` with an opt-in CMake target, contract test, and
-  no-GPU host smoke.
+- Added `pocs/astc-vulkan/` with an opt-in CMake target, host-neutral format
+  constants, contract test, and no-GPU host smoke.
+- Added an optional standard-Vulkan capability probe for sampled ASTC 4x4 and
+  6x6 formats.
+- Added a minimal `texelFetch` compute shader source; compilation is conditional
+  on `glslc` availability.
 - Kept production `ggml-vulkan` sources and shaders untouched.
 - Deferred device smoke until sampled-image allocation and shader execution
   exist.
@@ -102,6 +104,18 @@ The first focused build was configured with `LLAMA_BUILD_TESTS=ON`,
 `LLAMA_BUILD_EXAMPLES=ON`, `LLAMA_ASTC_VULKAN_POC=ON`, and `GGML_VULKAN=OFF`.
 Both ASTC tests passed under CTest (`2/2`). This confirms the contract and
 host-smoke layer without making unsupported claims about a GPU.
+
+The next sweep adds an optional Vulkan capability probe and a minimal
+`texelFetch` compute shader. The probe returns CTest skip code 77 when no Vulkan
+device supports both sampled ASTC formats. The shader compile smoke is only
+registered when `glslc` is available.
+
+In the second focused run, the probe built and CTest passed (`3/3`). The local
+Vulkan installation enumerated an Intel UHD Graphics 620 device with both
+formats sampleable; the NVIDIA GeForce 920MX and llvmpipe devices reported no
+sampled ASTC support. `glslc` was not installed, so the shader compile smoke was
+not registered. This confirms that capability must be selected per device and
+not inferred from the presence of a Vulkan loader alone.
 
 ## Test sweep policy
 
@@ -117,13 +131,14 @@ After each implementation sweep:
 
 ## Next sweep
 
-1. Verify the host contract and smoke targets in a normal test build.
-2. Add a standalone Vulkan capability probe for sampled ASTC 4x4 and 6x6.
-3. Add a minimal GLSL compute shader that reads a pre-encoded ASTC image and
-   writes a validation buffer.
-4. Add a device smoke with explicit skip behavior when no suitable Vulkan device
+1. Add a GLSL compiler to the build environment and compile the validation
+   shader through the same test path used by the existing Vulkan backend.
+2. Add a small Vulkan image/upload/readback harness around the validation shader.
+3. Add a device smoke with explicit skip behavior when no suitable Vulkan device
    or format feature is available.
-5. Compare the shader result with a CPU reference before adding any matvec path.
+4. Compare the shader result with a CPU reference before adding any matvec path.
+5. Revisit the plan and record whether image allocation, layout transitions, and
+   sampled-image descriptors introduce constraints not visible in the probe.
 
 ## Open questions
 
