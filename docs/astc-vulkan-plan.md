@@ -95,12 +95,19 @@ dispatches; its timing data is still exploratory and not a performance claim.
 21. [x] Define a versioned offline pack artifact and companion metadata
     contract containing format, layout/permutation, mapping mode, encoder
     quality, and block calibration fields.
-22. Add an input path for real GGUF weight slices and representative activation
-    traces; keep the fixture path for deterministic regression tests.
-23. Compare ASTC candidates against FP16 and the closest existing low-bit
+22. [x] Add an input path for real GGUF weight slices and representative
+    activation traces; keep the fixture path for deterministic regression
+    tests. The trace reader is versioned and the real-model path is exercised
+    with SmolLM2 F16 tensors; a captured model activation trace is still
+    required before making a quality claim.
+23. [x] Compare ASTC candidates against FP16 and the closest existing low-bit
     reference with explicit acceptance thresholds for relative matvec error.
-24. Evaluate a sparse residual/outlier sidecar and include its bytes in the
-    pressure-aware storage decision.
+    The first real-layer probe compares both ASTC block sizes and Q4_0; the
+    threshold is intentionally a provisional Phase-2 gate until layer-wide
+    traces are available.
+24. [x] Evaluate a sparse residual/outlier sidecar and include its bytes in the
+    pressure-aware storage decision. The first probe uses a fixed 1% top-error
+    budget and reports index/value overhead explicitly.
 25. Implement the first reproducible offline packer artifact only after the
     preceding quality and storage gates pass.
 26. [x] Validate packed channel-order metadata as an actual four-channel

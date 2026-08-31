@@ -445,7 +445,7 @@ After each implementation sweep:
    failed hypotheses, and new constraints;
 6. do not claim GPU support or speedup until a real device benchmark exists.
 
-## Next sweep
+## Next sweep (superseded by real-model input sweep)
 
 1. Add a reader for real GGUF weight slices and representative activation
    traces, with explicit support limited to documented source tensor types.
@@ -459,6 +459,62 @@ After each implementation sweep:
    measured storage tradeoff justify their offline search cost.
 6. Keep encoder availability separate from Vulkan runtime tests and do not alter
    any ggml tensor path until weight errors are materially reduced.
+
+## Thirty-first sweep: real GGUF input and quality comparison
+
+The input path now reads rank-2 F16/F32 tensor slices directly from a GGUF file
+using ggml's public gguf reader APIs. It validates tensor byte sizes and
+dimensions, converts F16 to F32 for the existing host-side matrix contract, and
+keeps the deterministic generated fixture as a CTest. A small listing mode was
+added so a real model can be inspected without changing the runtime path.
+
+The first real input is `SmolLM2-135M-Instruct-F16.gguf` (135M parameters,
+F16, 271 MB as published) and `blk.0.attn_q.weight` is a 576x576 matrix. The
+download was verified against the published SHA-256 before use. No model file
+is checked into the repository.
+
+## Thirty-second sweep: ASTC/Q4 reference and residual budget
+
+`astc-vulkan-quality-smoke` now compares the loaded F16 matrix with a Q4_0
+reference and standard ASTC 4x4/6x6 roundtrips. It reports compressed bytes,
+global versus shared block-affine metadata, elementwise MSE, activation-weighted
+relative matvec MSE, and total bytes after a 1% sparse residual sidecar. The
+probe uses deterministic activation vectors when no trace is supplied and can
+consume the versioned binary activation-trace format from the input reader.
+
+On `blk.0.attn_q.weight`, Q4_0 measured 0.00990 relative activation MSE. ASTC
+4x4 measured 0.23267 (global) and 0.18155 (block-affine), while ASTC 6x6
+measured 0.51503 and 0.46071 respectively. Correcting the largest 1% errors
+reduced these values only to 0.20513/0.15572 and 0.42483/0.38467. The
+provisional quality gate of 0.10 therefore fails for all ASTC variants. This is
+useful evidence against entering Phase 3 with the generic baseline; it does
+not yet rule out a neural-weight-aware encoder or a larger residual budget.
+
+The complete ASTC CTest label was rebuilt and passed 14/14 tests, including the
+new GGUF/input contract, host encoder/weight fixtures, Vulkan capability and
+device checks, and 4x4/6x6 shader fetch variants. The large host fixture remains
+deliberately slow (about 105 seconds) because it exhaustively searches the
+current candidate set.
+
+The storage comparison is equally important: the 576x576 F16 matrix is
+663,552 bytes and Q4_0 is 186,624 bytes. ASTC 4x4 uses 82,944 compressed bytes
+before calibration metadata, while 6x6 uses 36,864. Shared block-affine
+metadata raises totals to 124,416 and 55,296 bytes respectively, before the
+26,544-byte 1% residual sidecar. Metadata and residuals must therefore be
+counted as resident bandwidth, not treated as free compression overhead.
+
+## Updated next sweep
+
+1. Capture representative activation traces from the llama evaluation path and
+   feed them to the quality probe for several layers, not only synthetic input.
+2. Add a direct dequantized Q4_0 matvec comparison and report per-layer gate
+   results rather than one aggregate tensor.
+3. Sweep residual budgets (0.25%, 1%, 2%, 5%) and make the quality/storage
+   frontier explicit for 4x4 and 6x6.
+4. Investigate whether endpoint/partition search or a neural-aware ASTC input
+   transform can close the measured gap before any shader integration.
+5. Keep Phase 3 Vulkan matvec work limited to a correctness scaffold until a
+   candidate passes the real-layer quality gate.
 
 ## Open questions
 

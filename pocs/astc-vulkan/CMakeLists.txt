@@ -50,6 +50,31 @@ if (TARGET astcenc::astcenc-static)
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_link_libraries(astc-vulkan-weight-smoke PRIVATE astcenc::astcenc-static)
     target_compile_features(astc-vulkan-weight-smoke PRIVATE cxx_std_17)
+    if (TARGET ggml-base)
+        add_executable(astc-vulkan-quality-smoke
+            astc-vulkan-quality-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-quality-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-quality-smoke PRIVATE
+            astcenc::astcenc-static ggml-base)
+        target_compile_features(astc-vulkan-quality-smoke PRIVATE cxx_std_17)
+    endif()
+endif()
+
+# The input reader is deliberately independent from Vulkan and astcenc.  It
+# uses the same ggml/gguf code as llama.cpp to turn real F16 tensors and
+# captured activation traces into the float matrix contract used by the PoC.
+if (TARGET ggml-base)
+    add_executable(astc-vulkan-input-smoke
+        astc-vulkan-input-smoke.cpp
+        astc-vulkan-input.cpp)
+    target_include_directories(astc-vulkan-input-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/ggml/include)
+    target_link_libraries(astc-vulkan-input-smoke PRIVATE ggml-base)
+    target_compile_features(astc-vulkan-input-smoke PRIVATE cxx_std_17)
 endif()
 
 find_program(ASTC_VULKAN_GLSLC glslc)
@@ -101,6 +126,12 @@ if (BUILD_TESTING)
         add_test(NAME astc-vulkan-weight-smoke-large
             COMMAND astc-vulkan-weight-smoke --large)
         set_property(TEST astc-vulkan-weight-smoke-large PROPERTY LABELS astc)
+    endif()
+
+    if (TARGET astc-vulkan-input-smoke)
+        add_test(NAME astc-vulkan-input-smoke
+            COMMAND astc-vulkan-input-smoke)
+        set_property(TEST astc-vulkan-input-smoke PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-capability-probe)
