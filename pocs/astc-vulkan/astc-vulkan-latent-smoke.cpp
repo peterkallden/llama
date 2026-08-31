@@ -1622,6 +1622,7 @@ int main(int argc, char ** argv) {
     std::string footprint;
     std::string preset = "thorough";
     uint32_t maximum_samples = 0;
+    uint32_t maximum_calibration_samples = 0;
     uint32_t maximum_rows = 0;
     uint32_t maximum_columns = 0;
     std::string export_astc_path;
@@ -1654,6 +1655,8 @@ int main(int argc, char ** argv) {
             preset = argv[++index];
         } else if (option == "--max-samples" && index + 1 < argc) {
             maximum_samples = static_cast<uint32_t>(std::stoul(argv[++index]));
+        } else if (option == "--max-calibration-samples" && index + 1 < argc) {
+            maximum_calibration_samples = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if (option == "--max-rows" && index + 1 < argc) {
             maximum_rows = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if (option == "--max-columns" && index + 1 < argc) {
@@ -1678,7 +1681,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-mode scalar|additive]\n",
                          argv[0]);
             return 2;
@@ -1824,7 +1827,9 @@ int main(int argc, char ** argv) {
         calibration_inputs.values = std::move(loaded.values);
     }
     limit_activation_samples(inputs, maximum_samples);
-    limit_activation_samples(calibration_inputs, maximum_samples);
+    limit_activation_samples(calibration_inputs,
+                             maximum_calibration_samples == 0 ? maximum_samples :
+                                                                  maximum_calibration_samples);
     crop_activation_columns(inputs, columns);
     crop_activation_columns(calibration_inputs, columns);
     for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,

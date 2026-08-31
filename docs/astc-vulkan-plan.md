@@ -629,3 +629,9 @@ Per-block candidate ownership and coverage diagnostics are now enforced. The
 next selector experiments can therefore be interpreted as genuine block-local
 comparisons. Keep the baseline streams available as escape candidates and
 reject any block with insufficient legal coverage from quality claims.
+
+Calibration-size ablation is now a required reporting dimension. Use
+`--max-calibration-samples` while keeping the holdout trace fixed, and report
+both sample count and shard composition. Do not tune damping, block order, or
+format choice against a reduced holdout; reduced traces are mechanism probes
+only.

@@ -2290,3 +2290,22 @@ and average candidate coverage. On the synthetic 6x6 fixture coverage was
 6--8 candidates per block (7.5 average), with no change to the previously
 observed selector ordering. This removes a misleading global-pool degree of
 freedom and makes subsequent Block-LDLQ/stability results easier to interpret.
+
+## Ninety-third sweep: calibration-size ablation with fixed holdout
+
+The harness now accepts `--max-calibration-samples` separately from
+`--max-samples`, preventing calibration-size experiments from silently
+changing the holdout set. On `attn_q` with 6x6 and the per-block pool, the
+Block-LDLQ/local holdout pairs were:
+
+| Calibration samples | Local | Block-LDLQ |
+| ---: | ---: | ---: |
+| 4 | 0.35908 | 0.39023 |
+| 8 | 0.35378 | 0.35297 |
+| 10 | 0.36614 | 0.34428 |
+
+The result supports the larger-trace requirement but is not monotonic: a
+four-sample Hessian overfits badly, eight samples are near parity, and the
+full ten-sample trace gives the clearest Block-LDLQ gain. Calibration diversity
+therefore matters in addition to sample count; future runs must report both
+trace size and shard composition.
