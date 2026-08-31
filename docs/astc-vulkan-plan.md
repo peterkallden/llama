@@ -278,6 +278,9 @@ dispatches; its timing data is still exploratory and not a performance claim.
      and damping reference) to the selector harness. Do not interpret
      Block-LDLQ target regeneration until the trace rank and conditioning are
      adequate for the selected column panel size.
+59i. Add a standalone Block-LDLQ conditional-target contract with a known
+     correlated Hessian. Require the regenerated legal candidate to reduce the
+     quadratic objective before wiring target updates into ASTC encoding.
 59g. Add a stability-gated fixed-pool selector using two equal calibration
      shards. Normalize each shard gain by its residual energy and accept a
      proposal only when the lower shard gain remains positive. Compare it with

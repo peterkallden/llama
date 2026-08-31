@@ -286,6 +286,13 @@ if (BUILD_TESTING)
         COMMAND test-astc-vulkan-error-shaping)
     set_property(TEST test-astc-vulkan-error-shaping PROPERTY LABELS astc)
 
+    add_executable(test-astc-vulkan-block-ldlq
+        tests/test-astc-vulkan-block-ldlq.cpp)
+    target_compile_features(test-astc-vulkan-block-ldlq PRIVATE cxx_std_17)
+    add_test(NAME test-astc-vulkan-block-ldlq
+        COMMAND test-astc-vulkan-block-ldlq)
+    set_property(TEST test-astc-vulkan-block-ldlq PROPERTY LABELS astc)
+
     add_test(NAME test-astc-vulkan-contract
         COMMAND test-astc-vulkan-contract)
     set_property(TEST test-astc-vulkan-contract PROPERTY LABELS astc)

@@ -2079,6 +2079,20 @@ Block-LDLQ claim. Larger traces must precede interpretation of target
 regeneration, and the factorization contract will explicitly cover damping and
 rank-deficient inputs.
 
+## Eighty-sixth sweep: Block-LDLQ contract
+
+The first Block-LDLQ contract is now checked independently of ASTC encoding.
+For a committed block error `e_C = q_C - W_C`, the continuous conditional
+target for a future block is shifted by
+`W_F - H_FF^-1 H_FC e_C`. The contract uses a two-block correlated Hessian
+where independent local rounding chooses `{0, 0}`, while the regenerated target
+chooses `{0, 1}` and reduces quadratic error from `0.8395` to `0.0575`.
+
+This is the target-update mechanism we will insert into ASTC block selection.
+The test is built CPU-only in an isolated directory because the existing
+Vulkan build directory lacks the optional SPIRV-Headers package; no production
+Vulkan target is changed.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact
