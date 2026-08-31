@@ -76,6 +76,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
 12. Evaluate deeper endpoint, partition, and rate-distortion candidates from
     Basis Universal as a research reference; do not add cross-block state to
     the GPU-resident representation.
+13. [x] Report per-block reconstruction error so outlier blocks are visible
+    independently of the global objective.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

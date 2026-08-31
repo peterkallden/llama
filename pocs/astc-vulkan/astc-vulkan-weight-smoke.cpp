@@ -33,6 +33,8 @@ struct roundtrip_result {
     double mse = 0.0;
     double activation_mse = 0.0;
     double objective = 0.0;
+    double max_block_mse = 0.0;
+    double p95_block_mse = 0.0;
     float max_error = 0.0f;
     double dot_error = 0.0;
     std::array<uint32_t, 4> channel_order{ 0, 1, 2, 3 };
@@ -146,6 +148,10 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
         inverse_texel_order[texel_order[encoded_index]] = static_cast<uint32_t>(encoded_index);
     }
     std::vector<float> reconstructed_weights(weights.size());
+    const uint32_t blocks_x = ggml_vk_astc_block_count(width, format.block_width);
+    const uint32_t blocks_y = ggml_vk_astc_block_count(height, format.block_height);
+    std::vector<double> block_squared_error(static_cast<size_t>(blocks_x) * blocks_y, 0.0);
+    std::vector<uint32_t> block_value_count(block_squared_error.size(), 0);
     double squared_error = 0.0;
     for (uint32_t row = 0; row < layout.rows; ++row) {
         for (uint32_t column = 0; column < layout.columns; ++column) {
@@ -162,9 +168,23 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
             const float error = std::fabs(weights[weight_index] - reconstructed);
             squared_error += static_cast<double>(error) * error;
             result.max_error = std::max(result.max_error, error);
+            const uint32_t encoded_x = encoded_texel % width;
+            const uint32_t encoded_y = encoded_texel / width;
+            const size_t block_index = static_cast<size_t>(encoded_y / format.block_height) * blocks_x +
+                encoded_x / format.block_width;
+            block_squared_error[block_index] += static_cast<double>(error) * error;
+            ++block_value_count[block_index];
         }
     }
     result.mse = squared_error / weights.size();
+    std::vector<double> block_mse(block_squared_error.size());
+    for (size_t i = 0; i < block_mse.size(); ++i) {
+        block_mse[i] = block_squared_error[i] / block_value_count[i];
+    }
+    result.max_block_mse = *std::max_element(block_mse.begin(), block_mse.end());
+    std::sort(block_mse.begin(), block_mse.end());
+    const size_t p95_index = std::min(block_mse.size() - 1, (block_mse.size() * 95) / 100);
+    result.p95_block_mse = block_mse[p95_index];
 
     double activation_squared_error = 0.0;
     for (const std::vector<float> & activations : activation_samples) {
@@ -193,7 +213,8 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
         reconstructed_dot += reconstructed_weights[i] * first_activations[i % layout.columns];
     }
     result.dot_error = std::fabs(reference_dot - reconstructed_dot);
-    return std::isfinite(result.mse) && std::isfinite(result.activation_mse) &&
+    return std::isfinite(result.mse) && std::isfinite(result.max_block_mse) &&
+        std::isfinite(result.p95_block_mse) && std::isfinite(result.activation_mse) &&
         std::isfinite(result.objective) && std::isfinite(result.dot_error);
 }
 
@@ -224,13 +245,14 @@ bool search_channel_orders(const ggml_vk_astc_format_contract & format,
     } while (std::next_permutation(channel_order.begin(), channel_order.end()));
 
     std::printf(
-        "ASTC weight %s %s/%s order %u%u%u%u: %zu bytes, MSE %.8f, activation MSE %.8f, objective %.8f, max error %.6f, dot error %.6f\n",
+        "ASTC weight %s %s/%s order %u%u%u%u: %zu bytes, MSE %.8f, block P95/max %.8f/%.8f, activation MSE %.8f, objective %.8f, max error %.6f, dot error %.6f\n",
         format.name, best_result.layout_name, best_result.quality_name,
         best_result.channel_order[0],
         best_result.channel_order[1],
         best_result.channel_order[2], best_result.channel_order[3],
-        layout.storage_bytes(format), best_result.mse, best_result.activation_mse,
-        best_result.objective, best_result.max_error, best_result.dot_error);
+        layout.storage_bytes(format), best_result.mse, best_result.p95_block_mse,
+        best_result.max_block_mse, best_result.activation_mse, best_result.objective,
+        best_result.max_error, best_result.dot_error);
     return true;
 }
 

@@ -333,6 +333,14 @@ promising evidence that encoder search can improve quality without changing
 the runtime representation, but it is not yet a model-quality result and may
 cost substantially more offline packing time.
 
+The twentieth sweep added per-block error accounting to the weight smoke. Each
+reconstructed scalar is attributed to the encoded ASTC block (after any texel
+permutation), and the result reports P95 and maximum block MSE alongside the
+global metrics. The selected candidates measured block P95/max of 0.06200861
+for 4x4 medium and 0.09616162 for 6x6 thorough. Because this fixture contains
+only 9 and 4 blocks respectively, P95 equals the worst block; larger real
+layers are required before interpreting the percentile statistically.
+
 ## Test sweep policy
 
 After each implementation sweep:
