@@ -1699,7 +1699,7 @@ region of `blk.0.attn_q.weight` was exported in all four forms:
 | FP32 buffer source | 1,179,648 bytes | 32.00 bpw |
 | Q4_0 | 165,888 bytes | 4.50 bpw (including 16-bit scale/block) |
 | TQ2_0 | 76,032 bytes | 2.0625 bpw |
-| ASTC 4x4 / 5x5 / 6x6 | 294,912 / 191,488 / 132,096 bytes | 8.00 / 5.6875 / 4.03125 bpw |
+| ASTC 4x4 / 5x5 / 6x6 | 294,912 / 191,168 / 132,096 bytes | 8.00 / 5.18576 / 3.58333 bpw (edge-padded) |
 
 All five shaders passed the Vulkan/CPU correctness gate. With 1,000
 dispatches in one command buffer on the Intel UHD Graphics 620, the first
@@ -1725,6 +1725,61 @@ these exact 576x512 artifacts, using the captured layer trace, then repeat the
 timing with a batched/multi-row workload. TQ1 remains a separate follow-up:
 its base-3 unpacking and 1.6875 bpw layout should not be conflated with TQ2's
 two-bit shader.
+
+## Seventy-third sweep: common-shape quality gate
+
+The exact 576x512 F16-derived source was evaluated with the 25-sample layer-0
+holdout trace. The current L+A ASTC payloads, Q4_0, and TQ2_0 were decoded and
+scored with the same activation-relative objective:
+
+| Representation | Nominal/effective rate | Element MSE | Activation-relative MSE |
+|---|---:|---:|---:|
+| Q4_0 | 4.50 bpw | 0.00081560 | 0.0076115 |
+| ASTC L+A 4x4 | 8.00 bpw | 0.010458 | 0.13270 |
+| ASTC L+A 5x5 | 5.18576 bpw | 0.053897 | 0.68481 |
+| TQ2_0 | 2.0625 bpw | 0.053860 | 0.53004 |
+| ASTC L+A 6x6 | 3.58333 bpw | 0.078718 | 0.99737 |
+
+This changes the immediate interpretation of the GPU timings. ASTC 4x4 was
+faster than the standalone Q4 shader, but its present L+A representation is
+far less faithful on real activation traces. The result is not an ASTC-format
+failure: earlier scalar-RGBA ASTC runs on the same family of weights had much
+lower error, especially at 4x4 and 5x5. It does show that the L+A additive
+mapping needs activation-aware candidate ranking or training before it can be
+compared as a serious Q4 replacement.
+
+The next experiment therefore has two coupled parts: export and time the
+scalar-RGBA ASTC payload with the same Vulkan shader, then compare scalar and
+L+A at equal footprint. Only after that should we spend effort on a richer
+latent representation. The Q4/TQ2 controls remain useful because they expose
+the quality/latency frontier that ASTC must approach.
+
+## Seventy-fourth sweep: scalar ASTC versus L+A
+
+The scalar-RGBA exporter path now emits the same common 576x512 F16-derived
+matrix with `R=G=B` and no residual alpha stream. The existing ASTC matvec
+shader can consume it by using the scalar affine constants
+`scale_l=10.03125`, `scale_a=0`, and `offset=-4.78125`.
+
+On the 25-sample holdout trace, scalar ASTC activation-relative MSE was
+approximately 0.00194 (4x4), 0.01799 (5x5), and 0.07693 (6x6). For reference,
+the current L+A payloads measured 0.13270, 0.68481, and 0.99737 respectively;
+Q4_0 was 0.00761 and TQ2_0 was 0.53004. The scalar mapping is therefore much
+more faithful than L+A on this layer, especially at 4x4 and 5x5, although Q4
+still has the best error in this particular comparison.
+
+The corresponding 1,000-dispatch scalar-ASTC timestamps were ~162.5 us,
+~148.8 us, and ~166.7 us for 4x4, 5x5, and 6x6. They differ materially from
+the L+A timings (~158.1 us, ~172.3 us, and ~196.5 us), showing that the latent
+mapping changes both shader arithmetic and the encoder's block statistics. This
+is a useful result: ASTC footprint alone does not determine runtime, and the
+representation layout is now an explicit performance variable.
+
+The scalar and L+A figures come from separate process runs and remain
+directional until a single harness controls warm-up and ordering. The next
+quality/runtime comparison should use scalar ASTC, L+A ASTC, Q4, and TQ2 in
+one run, then move to a streaming working set. L+A-specific training should be
+deprioritized until it can close this scalar quality gap.
 
 ## Seventy-first sweep: common-shape FP32 baseline
 

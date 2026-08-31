@@ -365,10 +365,11 @@ bandwidth/capacity hypothesis but does not establish an end-to-end speedup.
 
 The next required gates are:
 
-1. Measure FP32, Q4, TQ2, and ASTC on exactly the same shape and report
+1. [~] Measure FP32, Q4, TQ2, and ASTC on exactly the same shape and report
    elementwise plus activation-relative error from one calibration/holdout
-   trace.
-2. Separate raw buffer loads, sampled FP32 loads, ASTC decode, and packed
+   trace. The L+A ASTC, scalar ASTC, Q4, and TQ2 values are now available; a
+   single combined timing harness remains.
+2. [~] Separate raw buffer loads, sampled FP32 loads, ASTC decode, and packed
    dequantization with minimal microbench shaders. The first sampled-FP32
    control is now present; its scalar result is provisional until the common
    warm-up harness is added.

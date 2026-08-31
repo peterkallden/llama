@@ -538,6 +538,7 @@ int main(int argc, char ** argv) {
     std::string export_astc_path;
     std::string export_reference_path;
     std::string export_weights_path;
+    std::string export_mode = "additive";
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
@@ -566,6 +567,8 @@ int main(int argc, char ** argv) {
             if (option == "--export-astc") export_astc_path = value;
             else if (option == "--export-reference") export_reference_path = value;
             else export_weights_path = value;
+        } else if (option == "--export-mode" && index + 1 < argc) {
+            export_mode = argv[++index];
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace") &&
                    index + 1 < argc) {
@@ -579,7 +582,7 @@ int main(int argc, char ** argv) {
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--max-samples N] [--max-rows N] [--max-columns N] "
-                         "[--export-astc path --export-reference path --export-weights path]\n",
+                         "[--export-astc path --export-reference path --export-weights path --export-mode scalar|additive]\n",
                          argv[0]);
             return 2;
         }
@@ -611,6 +614,10 @@ int main(int argc, char ** argv) {
         g_astc_preset = ASTCENC_PRE_FAST;
     } else if (preset != "thorough") {
         std::fprintf(stderr, "unsupported --preset value: %s\n", preset.c_str());
+        return 2;
+    }
+    if (export_mode != "scalar" && export_mode != "additive") {
+        std::fprintf(stderr, "unsupported --export-mode value: %s\n", export_mode.c_str());
         return 2;
     }
 #if !defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
@@ -716,7 +723,8 @@ int main(int argc, char ** argv) {
             kDefaultCoarseLevels);
         if (!export_astc_path.empty()) {
             astc_roundtrip_result exported;
-            if (!astc_roundtrip(additive_latents.texels, rows, columns, format, nullptr, exported) ||
+            const latent_representation & export_latents = export_mode == "scalar" ? scalar_latents : additive_latents;
+            if (!astc_roundtrip(export_latents.texels, rows, columns, format, nullptr, exported) ||
                 !write_binary(export_astc_path, exported.compressed) ||
                 !write_binary(export_reference_path, exported.texels)) {
                 std::fprintf(stderr, "ASTC latent export failed\n");
