@@ -2243,3 +2243,19 @@ although it does not yet beat the earlier whole-image conflict-aware proxy.
 The 4x4 and 5x5 results are negative, so no general quality claim is allowed.
 The next refinement is a true block-LDL update (not diagonal damping), with
 explicit candidate validity/coverage checks and larger calibration traces.
+
+## Ninetieth sweep: compact block-LDL update
+
+The target-regeneration prototype now solves a damped `H_FF` system for each
+future ASTC-width column block and applies `H_FF^-1 H_FC` to the target. This
+replaces the earlier scalar/diagonal update while retaining the same legal
+candidate pool and scan-order control. It is still a bounded research
+implementation, not a production quantizer or a full sparse factorization.
+
+On the bounded SmolLM2 6x6 probe, the block solve reduced calibration
+activation-relative MSE to `0.29496` and holdout to `0.34428`, compared with
+`0.32886`/`0.41279` for coordinate selection and `0.36614` for local holdout.
+The previous diagonal Block-LDLQ prototype measured `0.35580` holdout, so the
+compact future-block solve recovers additional quality. The result is a
+promising 6x6 signal, not yet a cross-footprint claim; 4x4 and 5x5 remain
+required regression points in the next full sweep.

@@ -606,6 +606,13 @@ three-way comparison on larger calibration traces and at least one additional
 real tensor. The current CTest smoke is a contract/regression gate, not a
 quality threshold.
 
+The compact block-LDL update is now the preferred 6x6 research path. Before
+GPU work, run the full 4x4/5x5/6x6 matrix on the same larger traces, expose
+the damping and block-order parameters for ablation, and add a coverage
+report showing how many retained candidates are actually reachable per ASTC
+block. Any mixed-format decision must wait for those regressions and for a
+second real tensor.
+
 The bounded proxy has now been run. It is retained as a regression/evaluation
 gate, while the next implementation target is a side-fork-only per-block
 top-K snapshot. That snapshot must be opt-in, thread-safe or explicitly

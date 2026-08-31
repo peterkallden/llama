@@ -952,6 +952,52 @@ bool block_ldlq_select_astc_blocks(const std::vector<float> & reference,
     result.forward_changes = 0;
     result.reverse_changes = 0;
 
+    auto solve_damped_block = [&](uint32_t first_column, uint32_t count,
+                                  const std::vector<double> & input,
+                                  std::vector<double> & output) {
+        std::vector<double> matrix(static_cast<size_t>(count) * count, 0.0);
+        for (uint32_t row = 0; row < count; ++row) {
+            for (uint32_t column = 0; column < count; ++column) {
+                matrix[static_cast<size_t>(row) * count + column] =
+                    gram[static_cast<size_t>(first_column + row) * columns + first_column + column];
+            }
+            matrix[static_cast<size_t>(row) * count + row] += damping;
+        }
+        output = input;
+        for (uint32_t pivot = 0; pivot < count; ++pivot) {
+            uint32_t best_row = pivot;
+            for (uint32_t row = pivot + 1; row < count; ++row) {
+                if (std::abs(matrix[static_cast<size_t>(row) * count + pivot]) >
+                    std::abs(matrix[static_cast<size_t>(best_row) * count + pivot])) {
+                    best_row = row;
+                }
+            }
+            if (std::abs(matrix[static_cast<size_t>(best_row) * count + pivot]) < 1e-12) return false;
+            if (best_row != pivot) {
+                for (uint32_t column = pivot; column < count; ++column) {
+                    std::swap(matrix[static_cast<size_t>(pivot) * count + column],
+                              matrix[static_cast<size_t>(best_row) * count + column]);
+                }
+                std::swap(output[pivot], output[best_row]);
+            }
+            const double pivot_value = matrix[static_cast<size_t>(pivot) * count + pivot];
+            for (uint32_t column = pivot; column < count; ++column) {
+                matrix[static_cast<size_t>(pivot) * count + column] /= pivot_value;
+            }
+            output[pivot] /= pivot_value;
+            for (uint32_t row = 0; row < count; ++row) {
+                if (row == pivot) continue;
+                const double factor = matrix[static_cast<size_t>(row) * count + pivot];
+                for (uint32_t column = pivot; column < count; ++column) {
+                    matrix[static_cast<size_t>(row) * count + column] -=
+                        factor * matrix[static_cast<size_t>(pivot) * count + column];
+                }
+                output[row] -= factor * output[pivot];
+            }
+        }
+        return true;
+    };
+
     for (uint32_t block = 0; block < block_count; ++block) {
         const uint32_t row0 = (block / blocks_x) * format.block_height;
         const uint32_t column0 = (block % blocks_x) * format.block_width;
@@ -989,13 +1035,26 @@ bool block_ldlq_select_astc_blocks(const std::vector<float> & reference,
         if (best_candidate == candidates.size()) return false;
         const auto & chosen = candidates[best_candidate];
         for (uint32_t row = row0; row < row_end; ++row) {
-            for (uint32_t left = column0; left < column_end; ++left) {
-                const size_t index = static_cast<size_t>(row) * columns + left;
-                const double error = chosen.reconstructed[index] - reference[index];
-                for (uint32_t future = column_end; future < columns; ++future) {
-                    target[static_cast<size_t>(row) * columns + future] -=
-                        gram[static_cast<size_t>(future) * columns + left] * error /
-                        (gram[static_cast<size_t>(future) * columns + future] + damping);
+            std::vector<double> committed_error(column_end - column0, 0.0);
+            for (uint32_t column = column0; column < column_end; ++column) {
+                committed_error[column - column0] =
+                    chosen.reconstructed[static_cast<size_t>(row) * columns + column] -
+                    reference[static_cast<size_t>(row) * columns + column];
+            }
+            for (uint32_t future_column0 = column_end; future_column0 < columns;
+                 future_column0 += format.block_width) {
+                const uint32_t future_count = std::min(format.block_width, columns - future_column0);
+                std::vector<double> rhs(future_count, 0.0);
+                for (uint32_t future = 0; future < future_count; ++future) {
+                    for (uint32_t current = 0; current < committed_error.size(); ++current) {
+                        rhs[future] += gram[static_cast<size_t>(future_column0 + future) * columns +
+                                           column0 + current] * committed_error[current];
+                    }
+                }
+                std::vector<double> update;
+                if (!solve_damped_block(future_column0, future_count, rhs, update)) return false;
+                for (uint32_t future = 0; future < future_count; ++future) {
+                    target[static_cast<size_t>(row) * columns + future_column0 + future] -= update[future];
                 }
             }
         }
