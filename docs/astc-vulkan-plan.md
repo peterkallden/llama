@@ -157,10 +157,13 @@ dispatches; its timing data is still exploratory and not a performance claim.
     an ASTC texture automatically implements AQLM's vector codebooks.
 37. [x] Add a structured block-residual control to test whether a low-frequency
     second latent is more ASTC-compatible than an independent per-value tail.
-38. Implement a small codec-aware optimizer/projection loop. Keep the exact
+38. [x] Add a small codec-aware projection-level sweep. Keep the exact
+    `astcenc` roundtrip as the acceptance oracle and report the result for each
+    coarse alphabet.
+39. Implement a small codec-aware optimizer/projection loop. Keep the exact
     `astcenc` roundtrip as the acceptance oracle and report held-out activation
     error after every projection step.
-39. Add a model-loss or calibration-data entry point only after the optimizer
+40. Add a model-loss or calibration-data entry point only after the optimizer
     reproduces the scalar and structured controls. Do not introduce a training
     dependency into the normal llama.cpp build for this research stage.
 

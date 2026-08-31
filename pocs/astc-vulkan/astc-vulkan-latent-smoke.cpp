@@ -15,7 +15,7 @@ namespace {
 
 constexpr uint32_t kRows = 32;
 constexpr uint32_t kColumns = 256;
-constexpr uint32_t kCoarseLevels = 16;
+constexpr uint32_t kDefaultCoarseLevels = 16;
 
 struct affine_decoder {
     double scale_l = 0.0;
@@ -208,15 +208,16 @@ std::vector<float> make_scalar_latents(const std::vector<float> & weights,
 std::vector<float> make_additive_latents(const std::vector<float> & weights,
                                          float minimum, float range,
                                          uint32_t rows, uint32_t columns,
-                                         uint32_t block, bool block_residual) {
+                                         uint32_t block, bool block_residual,
+                                         uint32_t coarse_levels) {
     std::vector<float> result(weights.size() * 4);
-    const float step = range / (kCoarseLevels - 1);
+    const float step = range / (coarse_levels - 1);
     const float residual_radius = std::max(step * 0.5f, 1e-6f);
     std::vector<float> residuals(weights.size());
     for (size_t index = 0; index < weights.size(); ++index) {
         const float level = std::round((weights[index] - minimum) / step);
         const float coarse = minimum +
-            std::clamp(level, 0.0f, static_cast<float>(kCoarseLevels - 1)) * step;
+            std::clamp(level, 0.0f, static_cast<float>(coarse_levels - 1)) * step;
         residuals[index] = weights[index] - coarse;
     }
     if (block_residual) {
@@ -247,7 +248,7 @@ std::vector<float> make_additive_latents(const std::vector<float> & weights,
     for (size_t index = 0; index < weights.size(); ++index) {
         const float level = std::round((weights[index] - minimum) / step);
         const float coarse = minimum +
-            std::clamp(level, 0.0f, static_cast<float>(kCoarseLevels - 1)) * step;
+            std::clamp(level, 0.0f, static_cast<float>(coarse_levels - 1)) * step;
         const float l = (coarse - minimum) / range;
         const float a = std::clamp(0.5f + residuals[index] / (2.0f * residual_radius),
                                    0.0f, 1.0f);
@@ -286,14 +287,17 @@ bool run_case(const char * name, const std::vector<float> & weights,
 int main(int argc, char ** argv) {
     std::string model_path;
     std::string tensor_name;
+    bool search_levels = false;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
-        if ((option == "--model" || option == "--tensor") && index + 1 < argc) {
+        if (option == "--search-levels") {
+            search_levels = true;
+        } else if ((option == "--model" || option == "--tensor") && index + 1 < argc) {
             const std::string value = argv[++index];
             if (option == "--model") model_path = value;
             else tensor_name = value;
         } else {
-            std::fprintf(stderr, "usage: %s [--model path --tensor name]\n", argv[0]);
+            std::fprintf(stderr, "usage: %s [--search-levels] [--model path --tensor name]\n", argv[0]);
             return 2;
         }
     }
@@ -334,9 +338,11 @@ int main(int argc, char ** argv) {
                                  ggml_vk_astc_5x5_unorm_rgba,
                                  ggml_vk_astc_6x6_unorm_rgba }) {
         const std::vector<float> additive_latents = make_additive_latents(
-            weights, minimum, range, rows, columns, format.block_width, false);
+            weights, minimum, range, rows, columns, format.block_width, false,
+            kDefaultCoarseLevels);
         const std::vector<float> block_latents = make_additive_latents(
-            weights, minimum, range, rows, columns, format.block_width, true);
+            weights, minimum, range, rows, columns, format.block_width, true,
+            kDefaultCoarseLevels);
         if (!run_case("scalar-rgba", weights, scalar_latents, rows, columns, format) ||
             !run_case("luminance-alpha-additive", weights, additive_latents,
                       rows, columns, format) ||
@@ -344,6 +350,19 @@ int main(int argc, char ** argv) {
                       rows, columns, format)) {
             std::fprintf(stderr, "ASTC latent smoke failed\n");
             return 1;
+        }
+        if (search_levels) {
+            for (const uint32_t coarse_levels : { 3u, 5u, 8u, 16u, 32u }) {
+                const std::vector<float> candidate = make_additive_latents(
+                    weights, minimum, range, rows, columns, format.block_width, false,
+                    coarse_levels);
+                char name[64];
+                std::snprintf(name, sizeof(name), "projection-levels-%u", coarse_levels);
+                if (!run_case(name, weights, candidate, rows, columns, format)) {
+                    std::fprintf(stderr, "ASTC latent projection search failed\n");
+                    return 1;
+                }
+            }
         }
     }
     return 0;

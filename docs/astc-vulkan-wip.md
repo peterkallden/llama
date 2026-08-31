@@ -1071,3 +1071,27 @@ therefore prototype an outer codec-aware projection loop, with exact ASTC
 roundtrip and held-out activation loss as the oracle. A differentiable
 surrogate or PV-Tuning-style update belongs around that loop, not inside the
 Vulkan runtime.
+
+## Forty-ninth sweep: coarse-alphabet projection search
+
+The latent smoke now accepts `--search-levels` and evaluates 3, 5, 8, 16, and
+32 coarse levels. Each candidate is projected through the real `astcenc`
+roundtrip and calibrated with the affine `s_L L' + s_A A' + b` decoder. This is
+the first small codec-aware search; it is deliberately not called training,
+because it searches one hand-designed latent family and uses the deterministic
+activation suite.
+
+On the deterministic fixture, the best projection level varied by footprint:
+
+| Format | Best searched levels | Activation-relative MSE |
+|---|---:|---:|
+| 4x4 | 5 | 0.0005892 |
+| 5x5 | 5 | 0.0050519 |
+| 6x6 | 16 | 0.0097293 |
+
+The search changes the residual trade-off but does not beat the scalar control
+at the same footprint. This is still useful: it proves that the offline
+projection layer can expose real ASTC mode/quality feedback, and it gives the
+future optimizer a concrete oracle. The next step is to replace the fixed
+coarse-plus-residual construction with learned or calibration-optimized latent
+fields, evaluated on held-out activation vectors after every exact projection.
