@@ -13,6 +13,7 @@ layout(std430, set = 0, binding = 1) buffer ValidationOutput {
 layout(push_constant) uniform PushConstants {
     uint width;
     uint height;
+    uint access_pattern;
 } params;
 
 void main() {
@@ -22,7 +23,14 @@ void main() {
         return;
     }
 
-    const uint x = index % params.width;
-    const uint y = index / params.width;
+    uint sample_index = index;
+    if (params.access_pattern != 0) {
+        // A bijective permutation for the current 4x4 and 6x6 smoke images.
+        // This intentionally defeats simple adjacent-texel locality without
+        // changing the set of values that must be decoded.
+        sample_index = (index * 7u + 3u) % texel_count;
+    }
+    const uint x = sample_index % params.width;
+    const uint y = sample_index / params.width;
     values[index] = texelFetch(astc_weights, ivec2(x, y), 0);
 }

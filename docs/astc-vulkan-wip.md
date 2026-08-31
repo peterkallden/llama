@@ -175,6 +175,29 @@ both ASTC formats; image-resource smoke and shader readback passed for 4x4 and
 20.17 microseconds for 6x6 with the current 64-invocation workgroup. These are
 smoke-test timestamps, not a bandwidth benchmark or a decoder-throughput claim.
 
+The tenth sweep added an explicit access-pattern push constant to the validation
+shader. The default path maps adjacent invocations to adjacent texels; the
+`nonlocal` path applies a bijective `(index * 7 + 3) mod texel_count` permutation
+for both smoke image sizes. CTest now runs both patterns for 4x4 and 6x6, so
+future timing data will compare identical decoded values under different
+locality assumptions.
+
+The eleventh sweep collected ten timestamp samples for each pattern on Intel
+UHD Graphics 620 using Mesa 26.0.8-1ubuntu0.3. The current shader uses a
+64-invocation workgroup and each smoke image occupies one 128-bit ASTC block.
+
+| Format | Pattern | Min (ns) | Median (ns) | Mean (ns) | Max (ns) |
+|---|---|---:|---:|---:|---:|
+| 4x4 | sequential | 17,333 | 22,917 | 23,133 | 36,417 |
+| 4x4 | nonlocal | 17,167 | 22,333 | 22,917 | 36,917 |
+| 6x6 | sequential | 18,250 | 20,583 | 22,083 | 31,167 |
+| 6x6 | nonlocal | 18,500 | 25,167 | 25,242 | 37,250 |
+
+The samples are intentionally treated as a harness check, not a performance
+claim. The images are too small and the variance too large to establish a
+locality effect. The next benchmark must use larger ASTC images and repeated
+dispatches while keeping upload and pipeline setup outside the timed region.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -189,10 +212,10 @@ After each implementation sweep:
 
 ## Next sweep
 
-1. Add sequential versus non-local fetch patterns and compare their timestamp
-   distributions on the target GPU.
+1. Scale the test image and repeat dispatches so texture-cache behavior is
+   measurable independently of setup overhead.
 2. Record driver version, shader workgroup shape, repeated-run variance, and
-   represented bytes.
+   represented bytes for each benchmark configuration.
 3. Revisit the plan after numerical and bandwidth evidence, before designing a
    weight packer or changing any ggml tensor path.
 3. Revisit the plan after numerical and bandwidth evidence, before designing a

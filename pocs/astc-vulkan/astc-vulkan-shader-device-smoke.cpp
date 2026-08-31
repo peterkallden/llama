@@ -131,10 +131,15 @@ void destroy_image(VkDevice device, image_resources & resources) {
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc != 3 || (std::string(argv[2]) != "4x4" && std::string(argv[2]) != "6x6")) {
-        std::fprintf(stderr, "usage: %s <validation.spv> <4x4|6x6>\n", argv[0]);
+    const std::string format_name = argc >= 3 ? argv[2] : "";
+    const std::string pattern_name = argc == 4 ? argv[3] : "sequential";
+    if ((argc != 3 && argc != 4) || (format_name != "4x4" && format_name != "6x6") ||
+        (pattern_name != "sequential" && pattern_name != "nonlocal")) {
+        std::fprintf(stderr, "usage: %s <validation.spv> <4x4|6x6> [sequential|nonlocal]\n",
+                     argv[0]);
         return 2;
     }
+    const uint32_t access_pattern = pattern_name == "nonlocal" ? 1u : 0u;
     const std::vector<uint32_t> spirv = read_spirv(argv[1]);
     if (spirv.empty()) {
         std::fprintf(stderr, "ASTC shader smoke skipped: SPIR-V file unavailable\n");
@@ -160,7 +165,7 @@ int main(int argc, char ** argv) {
     }
     std::vector<VkPhysicalDevice> devices(device_count);
     vkEnumeratePhysicalDevices(instance, &device_count, devices.data());
-    const VkFormat format = std::string(argv[2]) == "4x4"
+    const VkFormat format = format_name == "4x4"
         ? VK_FORMAT_ASTC_4x4_UNORM_BLOCK : VK_FORMAT_ASTC_6x6_UNORM_BLOCK;
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
     uint32_t queue_family = UINT32_MAX;
@@ -207,7 +212,7 @@ int main(int argc, char ** argv) {
     VkQueue queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, queue_family, 0, &queue);
 
-    const uint32_t width = std::string(argv[2]) == "4x4" ? 4 : 6;
+    const uint32_t width = format_name == "4x4" ? 4 : 6;
     const uint32_t height = width;
     image_resources image;
     bool success = create_image(physical_device, device, format, width, height, image);
@@ -303,7 +308,7 @@ int main(int argc, char ** argv) {
         };
         if (vkCreateShaderModule(device, &shader_info, nullptr, &shader_module) != VK_SUCCESS) break;
         const VkPushConstantRange push_constants{
-            VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t) * 2,
+            VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t) * 3,
         };
         const VkPipelineLayoutCreateInfo layout_info{
             VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1,
@@ -374,7 +379,7 @@ int main(int argc, char ** argv) {
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
             pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
-        const uint32_t dimensions[2] = { width, height };
+        const uint32_t dimensions[3] = { width, height, access_pattern };
         vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, sizeof(dimensions), dimensions);
         vkCmdDispatch(command_buffer, 1, 1, 1);
@@ -406,8 +411,9 @@ int main(int argc, char ** argv) {
         vkUnmapMemory(device, output_memory);
         for (float value : values) {
             if (!std::isfinite(value) || std::fabs(value - kExpectedChannel) > 1e-3f) {
-                std::fprintf(stderr, "ASTC %s shader smoke failed: decoded value %.7f\n",
-                             argv[2], value);
+                std::fprintf(stderr,
+                             "ASTC %s %s shader smoke failed: decoded value %.7f\n",
+                             format_name.c_str(), pattern_name.c_str(), value);
                 success = false;
                 break;
             }
@@ -422,7 +428,8 @@ int main(int argc, char ** argv) {
                 vkGetPhysicalDeviceProperties(physical_device, &properties);
                 const double elapsed_ns = static_cast<double>(timestamps[1] - timestamps[0]) *
                                            properties.limits.timestampPeriod;
-                std::printf("ASTC %s shader timestamp %.3f ns\n", argv[2], elapsed_ns);
+                std::printf("ASTC %s %s shader timestamp %.3f ns\n",
+                            format_name.c_str(), pattern_name.c_str(), elapsed_ns);
             }
         }
     } while (false);
@@ -444,9 +451,11 @@ int main(int argc, char ** argv) {
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
     if (!success) {
-        std::fprintf(stderr, "ASTC %s shader smoke failed\n", argv[2]);
+        std::fprintf(stderr, "ASTC %s %s shader smoke failed\n",
+                     format_name.c_str(), pattern_name.c_str());
         return 1;
     }
-    std::printf("ASTC %s shader fetch smoke passed\n", argv[2]);
+    std::printf("ASTC %s %s shader fetch smoke passed\n",
+                format_name.c_str(), pattern_name.c_str());
     return 0;
 }

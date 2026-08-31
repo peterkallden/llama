@@ -33,16 +33,15 @@ into `ggml-vulkan` is a later decision gate after device-backed evidence.
    available.
 6. [x] Upload a known-valid ASTC block and verify `texelFetch` results in a
    compute shader against a CPU reference when a compatible device is present.
-7. [ ] Measure sequential and deliberately non-local fetch patterns with Vulkan
-   timestamp queries.
-8. [x] Record the host-side represented-byte calculation, including block
-   rounding and edge padding; device name, driver version, and elapsed GPU time
-   remain pending timestamp measurements.
+7. [x] Implement sequential and deliberately non-local fetch patterns with
+   Vulkan timestamp queries and collect an initial repeated sample.
+8. [x] Record device name, driver version, supported formats, shader workgroup
+   shape, elapsed GPU time, and represented bytes for the first host run.
 
-Current status: capability, resource allocation/upload, shader compilation, and
-the device-execution/readback path are implemented and validated on the Intel
-UHD Graphics 620. CTest still skips these tests on hosts that expose no
-physical ASTC-capable device.
+Current status: capability, resource allocation/upload, shader compilation,
+device execution/readback, and initial access-pattern instrumentation are
+implemented and validated on the Intel UHD Graphics 620. CTest still skips
+these tests on hosts that expose no physical ASTC-capable device.
 
 Exit criterion: the selected target GPU accepts both formats as sampled images
 and the benchmark produces deterministic, validated values.
