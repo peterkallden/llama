@@ -150,6 +150,7 @@ std::vector<double> matvec_outputs(const std::vector<float> & weights, uint32_t 
 struct coordinate_result {
     std::vector<float> reconstructed;
     std::vector<uint8_t> compressed;
+    std::vector<uint32_t> selected_indices;
     uint32_t forward_changes = 0;
     uint32_t reverse_changes = 0;
 };
@@ -159,6 +160,174 @@ struct astc_candidate {
     std::vector<float> reconstructed;
     std::vector<uint8_t> compressed;
 };
+
+void apply_block_candidate(const astc_candidate & candidate, uint32_t block,
+                           uint32_t blocks_x, uint32_t rows, uint32_t columns,
+                           const ggml_vk_astc_format_contract & format,
+                           std::vector<float> & reconstructed,
+                           std::vector<uint8_t> & compressed) {
+    const uint32_t row0 = (block / blocks_x) * format.block_height;
+    const uint32_t column0 = (block % blocks_x) * format.block_width;
+    const uint32_t row_end = std::min(row0 + format.block_height, rows);
+    const uint32_t column_end = std::min(column0 + format.block_width, columns);
+    for (uint32_t row = row0; row < row_end; ++row) {
+        for (uint32_t column = column0; column < column_end; ++column) {
+            const size_t index = static_cast<size_t>(row) * columns + column;
+            reconstructed[index] = candidate.reconstructed[index];
+        }
+    }
+    std::copy_n(candidate.compressed.data() + static_cast<size_t>(block) * 16, 16,
+                compressed.data() + static_cast<size_t>(block) * 16);
+}
+
+double block_activation_error(const std::vector<float> & reference,
+                              const astc_candidate & candidate,
+                              uint32_t block, uint32_t blocks_x,
+                              uint32_t rows, uint32_t columns,
+                              const ggml_vk_astc_format_contract & format,
+                              const activations & inputs) {
+    const uint32_t row0 = (block / blocks_x) * format.block_height;
+    const uint32_t column0 = (block % blocks_x) * format.block_width;
+    const uint32_t row_end = std::min(row0 + format.block_height, rows);
+    const uint32_t column_end = std::min(column0 + format.block_width, columns);
+    double error = 0.0;
+    for (uint32_t sample = 0; sample < inputs.samples; ++sample) {
+        const float * input = inputs.values.data() + static_cast<size_t>(sample) * columns;
+        for (uint32_t row = row0; row < row_end; ++row) {
+            double delta = 0.0;
+            for (uint32_t column = column0; column < column_end; ++column) {
+                const size_t index = static_cast<size_t>(row) * columns + column;
+                delta += (candidate.reconstructed[index] - reference[index]) * input[column];
+            }
+            error += delta * delta;
+        }
+    }
+    return error;
+}
+
+bool local_select_astc_blocks(const std::vector<float> & reference,
+                              const std::vector<astc_candidate> & candidates,
+                              uint32_t rows, uint32_t columns,
+                              const ggml_vk_astc_format_contract & format,
+                              const activations & calibration,
+                              coordinate_result & result,
+                              const std::vector<std::vector<uint32_t>> * shortlists) {
+    if (candidates.empty()) return false;
+    const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
+    const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
+    const uint32_t block_count = blocks_x * blocks_y;
+    if (shortlists != nullptr && shortlists->size() != block_count) return false;
+    result.reconstructed = candidates.front().reconstructed;
+    result.compressed = candidates.front().compressed;
+    result.selected_indices.assign(block_count, 0);
+    for (uint32_t block = 0; block < block_count; ++block) {
+        const std::vector<uint32_t> fallback = [&]() {
+            std::vector<uint32_t> all(candidates.size());
+            for (uint32_t index = 0; index < candidates.size(); ++index) all[index] = index;
+            return all;
+        }();
+        const std::vector<uint32_t> & candidate_indices = shortlists == nullptr ?
+            fallback : (*shortlists)[block];
+        double best_error = INFINITY;
+        uint32_t best_index = 0;
+        for (uint32_t candidate_index : candidate_indices) {
+            if (candidate_index >= candidates.size()) return false;
+            const double error = block_activation_error(reference, candidates[candidate_index],
+                                                        block, blocks_x, rows, columns,
+                                                        format, calibration);
+            if (error < best_error) {
+                best_error = error;
+                best_index = candidate_index;
+            }
+        }
+        result.selected_indices[block] = best_index;
+        apply_block_candidate(candidates[best_index], block, blocks_x, rows, columns,
+                              format, result.reconstructed, result.compressed);
+    }
+    return true;
+}
+
+// Select from one fixed legal pool using simultaneous residual-feedback rounds.
+// Each round reads the same residual for every block, so the decisions are
+// independent and can be dispatched in parallel. Cross-block interactions are
+// intentionally omitted within a round; this is the fixed-pool Hessian/Jacobi
+// approximation that will be compared against sequential coordinate descent.
+bool hessian_feedback_select_astc_blocks(
+        const std::vector<float> & reference,
+        const std::vector<astc_candidate> & candidates,
+        uint32_t rows, uint32_t columns,
+        const ggml_vk_astc_format_contract & format,
+        const activations & calibration,
+        coordinate_result & result,
+        const std::vector<std::vector<uint32_t>> * shortlists,
+        uint32_t rounds = 3) {
+    if (!local_select_astc_blocks(reference, candidates, rows, columns, format,
+                                  calibration, result, shortlists)) return false;
+    const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
+    const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
+    const uint32_t block_count = blocks_x * blocks_y;
+    const std::vector<double> expected = matvec_outputs(reference, rows, columns, calibration);
+    for (uint32_t round = 0; round < rounds; ++round) {
+        const std::vector<double> actual = matvec_outputs(result.reconstructed, rows, columns, calibration);
+        std::vector<double> residual(expected.size());
+        for (size_t index = 0; index < residual.size(); ++index) residual[index] = expected[index] - actual[index];
+        std::vector<uint32_t> next_indices = result.selected_indices;
+        for (uint32_t block = 0; block < block_count; ++block) {
+            const uint32_t row0 = (block / blocks_x) * format.block_height;
+            const uint32_t row_end = std::min(row0 + format.block_height, rows);
+            const uint32_t row_count = row_end - row0;
+            const std::vector<uint32_t> fallback = [&]() {
+                std::vector<uint32_t> all(candidates.size());
+                for (uint32_t index = 0; index < candidates.size(); ++index) all[index] = index;
+                return all;
+            }();
+            const std::vector<uint32_t> & candidate_indices = shortlists == nullptr ?
+                fallback : (*shortlists)[block];
+            double best_error = INFINITY;
+            uint32_t best_index = result.selected_indices[block];
+            for (uint32_t candidate_index : candidate_indices) {
+                if (candidate_index >= candidates.size()) return false;
+                const astc_candidate & candidate = candidates[candidate_index];
+                const uint32_t column0 = (block % blocks_x) * format.block_width;
+                const uint32_t column_end = std::min(column0 + format.block_width, columns);
+                double residual_dot_delta = 0.0;
+                double delta_norm = 0.0;
+                for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                    const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
+                    for (uint32_t row = row0; row < row_end; ++row) {
+                        double delta = 0.0;
+                        for (uint32_t column = column0; column < column_end; ++column) {
+                            const size_t index = static_cast<size_t>(row) * columns + column;
+                            delta += (candidate.reconstructed[index] -
+                                      candidates[result.selected_indices[block]].reconstructed[index]) * input[column];
+                        }
+                        const size_t output_index = static_cast<size_t>(sample) * rows + row;
+                        residual_dot_delta += residual[output_index] * delta;
+                        delta_norm += delta * delta;
+                    }
+                }
+                const double error = -2.0 * residual_dot_delta + delta_norm;
+                if (error < best_error) {
+                    best_error = error;
+                    best_index = candidate_index;
+                }
+            }
+            next_indices[block] = best_index;
+        }
+        uint32_t changes = 0;
+        result.reconstructed = candidates.front().reconstructed;
+        result.compressed = candidates.front().compressed;
+        for (uint32_t block = 0; block < block_count; ++block) {
+            changes += next_indices[block] != result.selected_indices[block] ? 1u : 0u;
+            result.selected_indices[block] = next_indices[block];
+            apply_block_candidate(candidates[next_indices[block]], block, blocks_x, rows, columns,
+                                  format, result.reconstructed, result.compressed);
+        }
+        result.forward_changes += changes;
+        if (changes == 0) break;
+    }
+    return true;
+}
 
 // Build a bounded per-block pool that preserves both the local optimum and
 // candidates with different activation-space error directions. This is an
@@ -280,6 +449,7 @@ bool coordinate_select_astc_blocks(const std::vector<float> & reference,
     result.reconstructed = candidates.front().reconstructed;
     result.compressed = candidates.front().compressed;
     std::vector<uint32_t> selected_indices(block_count, 0);
+    result.selected_indices = selected_indices;
     const uint32_t regularization_baseline = candidates.size() > 1 ? 1 : 0;
     const double penalty_unit = replacement_penalty * initial_residual_error /
                                 std::max<uint32_t>(block_count, 1);
@@ -326,14 +496,9 @@ bool coordinate_select_astc_blocks(const std::vector<float> & reference,
                 }
                 residual_error = candidate_error;
                 selected_indices[block] = candidate_index;
-                for (uint32_t row = row0; row < std::min(row0 + format.block_height, rows); ++row) {
-                    for (uint32_t column = column0; column < std::min(column0 + format.block_width, columns); ++column) {
-                        const size_t index = static_cast<size_t>(row) * columns + column;
-                        result.reconstructed[index] = candidate.reconstructed[index];
-                    }
-                }
-                std::copy_n(candidate.compressed.data() + static_cast<size_t>(block) * 16, 16,
-                            result.compressed.data() + static_cast<size_t>(block) * 16);
+                apply_block_candidate(candidate, block, blocks_x, rows, columns, format,
+                                      result.reconstructed, result.compressed);
+                result.selected_indices[block] = candidate_index;
                 ++changes;
             }
         }
@@ -349,6 +514,7 @@ bool coordinate_select_astc_blocks(const std::vector<float> & reference,
         maximum_error = std::max(maximum_error,
                                  std::abs(static_cast<double>(verified[index] - result.reconstructed[index])));
     }
+    result.selected_indices = std::move(selected_indices);
     return maximum_error <= 1e-6;
 }
 
@@ -593,7 +759,7 @@ bool run_coordinate_case(const std::vector<float> & weights,
                          const ggml_vk_astc_format_contract & format,
                          const activations & calibration, const activations & holdout,
                          bool include_fast_candidate, bool include_diverse_candidates,
-                         bool regularized_selection) {
+                         bool regularized_selection, bool selector_compare = false) {
     astc_roundtrip_result standard;
     astc_roundtrip_result neural;
     if (!astc_roundtrip(latents.texels, rows, columns, format, nullptr, standard) ||
@@ -643,6 +809,35 @@ bool run_coordinate_case(const std::vector<float> & weights,
     if (include_diverse_candidates) {
         shortlists = make_diverse_block_shortlists(weights, candidates, rows, columns,
                                                     format, selection_inputs, 4);
+    }
+    if (selector_compare) {
+        coordinate_result local;
+        coordinate_result feedback;
+        coordinate_result coordinate;
+        if (!local_select_astc_blocks(weights, candidates, rows, columns, format,
+                                      calibration, local, &shortlists) ||
+            !hessian_feedback_select_astc_blocks(weights, candidates, rows, columns, format,
+                                                 calibration, feedback, &shortlists) ||
+            !coordinate_select_astc_blocks(weights, candidates, rows, columns, format,
+                                           calibration, latents.decoder, coordinate, &shortlists)) {
+            return false;
+        }
+        const double local_loss = activation_relative_mse(weights, local.reconstructed,
+                                                           rows, columns, holdout);
+        const double feedback_loss = activation_relative_mse(weights, feedback.reconstructed,
+                                                              rows, columns, holdout);
+        const double coordinate_loss = activation_relative_mse(weights, coordinate.reconstructed,
+                                                               rows, columns, holdout);
+        const double denominator = local_loss - coordinate_loss;
+        const double recovered_gain = denominator > 0.0 ?
+            (local_loss - feedback_loss) / denominator : NAN;
+        std::printf("latent-selector-compare format=%s pool=%zu local-holdout=%.8g "
+                    "coordinate-holdout=%.8g hessian-feedback-holdout=%.8g "
+                    "hessian-recovered-coordinate-gain=%.8g feedback-round-changes=%u\n",
+                    format.name, candidates.size(), local_loss, coordinate_loss, feedback_loss,
+                    recovered_gain, feedback.forward_changes);
+        return std::isfinite(local_loss) && std::isfinite(feedback_loss) &&
+               std::isfinite(coordinate_loss);
     }
     auto select = [&](const activations & inputs, double penalty, coordinate_result & result) {
         return coordinate_select_astc_blocks(weights, candidates, rows, columns, format, inputs,
@@ -721,6 +916,7 @@ int main(int argc, char ** argv) {
     bool coordinate_fast_candidate = false;
     bool coordinate_diverse = false;
     bool coordinate_regularized = false;
+    bool selector_compare = false;
     std::string footprint;
     std::string preset = "thorough";
     uint32_t maximum_samples = 0;
@@ -746,6 +942,8 @@ int main(int argc, char ** argv) {
             coordinate_diverse = true;
         } else if (option == "--coordinate-regularized") {
             coordinate_regularized = true;
+        } else if (option == "--selector-compare") {
+            selector_compare = true;
         } else if (option == "--footprint" && index + 1 < argc) {
             footprint = argv[++index];
         } else if (option == "--preset" && index + 1 < argc) {
@@ -774,7 +972,7 @@ int main(int argc, char ** argv) {
             else calibration_trace_path = value;
         } else {
             std::fprintf(stderr,
-                         "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] "
+                         "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--max-samples N] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-mode scalar|additive]\n",
@@ -805,6 +1003,12 @@ int main(int argc, char ** argv) {
     if (coordinate_regularized && !coordinate_select) {
         std::fprintf(stderr, "--coordinate-regularized requires --coordinate-select\n");
         return 2;
+    }
+    if (selector_compare) {
+        neural_rank = true;
+        coordinate_select = true;
+        coordinate_only = true;
+        coordinate_diverse = true;
     }
     if (export_astc_path.empty() != export_reference_path.empty() ||
         (!export_astc_path.empty() && footprint.empty())) {
@@ -961,7 +1165,7 @@ int main(int argc, char ** argv) {
         if (coordinate_select &&
             !run_coordinate_case(weights, additive_latents, rows, columns, format,
                                  calibration_inputs, inputs, coordinate_fast_candidate, coordinate_diverse,
-                                 coordinate_regularized)) {
+                                 coordinate_regularized, selector_compare)) {
             std::fprintf(stderr, "ASTC coordinate selection smoke failed\n");
             return 1;
         }

@@ -281,6 +281,17 @@ needed, use a thin QR or SVD of `X`, because typical trace counts make
 low-correlation and negative-correlation alternatives, and candidates covering
 the next principal error direction, each subject to an activation-loss bound.
 
+The first implementation uses simultaneous residual feedback (a block-Jacobi
+approximation) to make the decisions parallel. Initial smoke measurements are
+deliberately treated as a negative-control baseline: on the small synthetic
+fixture, local neural ranking reached `7.02e-5`, coordinate descent `4.56e-5`,
+and feedback `1.17e-4` on holdout. On the bounded SmolLM2 layer probe, feedback
+also trailed local/coordinate selection for 4x4, 5x5, and 6x6. This is useful
+evidence that reading a shared residual is not by itself a sufficient Hessian
+approximation; later work needs damping, a compact curvature model, or a
+conflict-aware schedule. The comparison harness remains valuable because all
+three selectors use the same legal candidate pool.
+
 ### Two-sided sensitivity is a later, stronger objective
 
 ASTC blocks span both output and input dimensions. If a defensible

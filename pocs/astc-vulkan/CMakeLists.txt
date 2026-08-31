@@ -332,6 +332,10 @@ if (BUILD_TESTING)
                 COMMAND astc-vulkan-latent-smoke --neural-rank --coordinate-select
                     --coordinate-diverse --coordinate-regularized)
             set_property(TEST astc-vulkan-latent-regularized-coordinate-smoke PROPERTY LABELS astc)
+            add_test(NAME astc-vulkan-latent-selector-compare-smoke
+                COMMAND astc-vulkan-latent-smoke --selector-compare --footprint 4x4
+                    --max-rows 8 --max-columns 32)
+            set_property(TEST astc-vulkan-latent-selector-compare-smoke PROPERTY LABELS astc)
         endif()
     endif()
 

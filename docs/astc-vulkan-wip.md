@@ -1993,6 +1993,33 @@ weight columns. A feedback method that later regenerates ASTC blocks from
 modified targets is a separate, stronger encoder experiment and must not be
 presented as the same fixed-pool comparison.
 
+## Eighty-second sweep: first three-way selector comparison
+
+The PoC now exposes `--selector-compare`. It constructs one fixed pool of four
+legal ASTC streams (standard, neural-rank, fast, and medium), derives the same
+bounded activation-space shortlist for every block, and evaluates:
+
+1. local neural ranking, independently per block;
+2. cached-residual coordinate descent with forward and reverse sweeps; and
+3. simultaneous residual-feedback rounds, a parallel Jacobi approximation to
+   the Hessian-guided selector.
+
+The initial results are a useful negative control. On the 8x32 synthetic 4x4
+fixture, holdout relative MSE was `7.0236e-5` local, `4.5552e-5` coordinate,
+and `1.1711e-4` feedback (`G_HF=-1.899`). On the 32x64 SmolLM2
+`blk.0.attn_q.weight` probe, results were:
+
+| Footprint | Local | Coordinate | Feedback |
+| --- | ---: | ---: | ---: |
+| 4x4 | 0.03032 | 0.03062 | 0.03239 |
+| 5x5 | 0.14044 | 0.16937 | 0.16929 |
+| 6x6 | 0.35711 | 0.39286 | 0.35967 |
+
+These numbers do not establish a quality win. They do establish a reproducible
+three-way harness and show that a shared residual with simultaneous updates is
+not yet a reliable curvature model. The next implementation should add
+damping or conflict-aware acceptance and retain this negative-control result.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact

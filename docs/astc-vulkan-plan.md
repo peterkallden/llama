@@ -264,6 +264,11 @@ dispatches; its timing data is still exploratory and not a performance claim.
      feedback to alter the source target for later ASTC blocks and regenerate
      their legal candidates. Report this stronger encoder jointly with the
      fixed-pool result; it is not a like-for-like selector comparison.
+59f. Add a reproducible `--selector-compare` smoke that runs all three fixed-pool
+     selectors on the same small fixture. Treat the first parallel Jacobi
+     feedback implementation as a diagnostic baseline: it must not be called a
+     Hessian win unless it improves holdout loss and reports positive recovered
+     coordinate-descent gain.
 60. Add a two-sided objective only after input-only shaping is stable. Capture
     output sensitivity separately and evaluate `tr(H_O E H_I E^T)` first with
     a diagonal `H_O`, then a bounded Kronecker-factored approximation. A plain
