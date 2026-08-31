@@ -2186,3 +2186,35 @@ The immediate next quality gate remains unchanged: evaluate FP32, Q4_0, TQ2_0,
 and ASTC 4x4/5x5/6x6 on the same source and activation trace. Only after that
 should a streaming working-set test decide whether ASTC's resident-size saving
 can compensate for its sampler/decode latency.
+
+## Eighty-eighth sweep: side-fork per-block top-K callback
+
+The isolated `astc-encoder-neural-rank` fork now exposes an opt-in
+`astcenc_candidate_callback`. It receives the physical 16-byte block, source
+block position, local post-realignment ASTC error, partition count, and plane
+metadata. The callback is disabled by default and is not part of the llama
+Vulkan runtime. The PoC invokes it with a single compressor thread, making the
+collector deterministic and avoiding an implicit thread-safety promise.
+
+The latent harness uses this callback to retain up to four unique candidates
+per block, splice each candidate into the neural baseline stream, decode it
+through astcenc, and feed the resulting per-block alternatives to the existing
+selectors. This is the first real per-block candidate pool rather than a
+whole-image capacity proxy.
+
+On the bounded SmolLM2 layer (32x64, ten calibration samples), the collector
+observed 1386/1013/1005 callbacks and retained 512/364/264 block candidates
+for 4x4/5x5/6x6 respectively. Holdout activation-relative MSE was:
+
+| Footprint | Local | Coordinate | Conflict-aware | Stability |
+| --- | ---: | ---: | ---: | ---: |
+| 4x4 | 0.03034 | 0.03127 | 0.03184 | 0.03030 |
+| 5x5 | 0.14707 | 0.19443 | 0.16330 | 0.15644 |
+| 6x6 | 0.36614 | 0.41279 | 0.37485 | 0.37095 |
+
+The richer per-block pool is not a quality win by itself. It can lower
+calibration loss while worsening holdout, especially for 5x5. This confirms
+that candidate generation and candidate selection must be separated: the
+callback proves that legal alternatives are available, while the next engine
+must regenerate future targets using Block-LDLQ/GPTVQ-style Hessian feedback
+and evaluate candidates in a block-local, calibration-stable way.

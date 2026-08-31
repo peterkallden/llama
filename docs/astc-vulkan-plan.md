@@ -590,6 +590,14 @@ and feed those legal blocks into Block-LDLQ/GPTVQ target regeneration. If it
 does not, keep the existing search and move effort to richer calibration
 traces and the target-regeneration engine.
 
+The side fork now provides the opt-in per-block callback and the PoC has
+validated a bounded top-K collector. The next algorithmic gate is therefore
+not a larger pool: implement target regeneration over these legal block
+alternatives. Start with the two-block Block-LDLQ contract, extend it to a
+small row/column block, and compare local, coordinate, conflict-aware, and
+regenerated-target selectors on identical candidate snapshots. Keep the
+callback and collector out of normal Vulkan execution.
+
 The bounded proxy has now been run. It is retained as a regression/evaluation
 gate, while the next implementation target is a side-fork-only per-block
 top-K snapshot. That snapshot must be opt-in, thread-safe or explicitly

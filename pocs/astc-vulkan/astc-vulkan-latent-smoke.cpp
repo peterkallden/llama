@@ -46,6 +46,54 @@ struct astc_roundtrip_result {
     uint32_t alpha_dual_plane_blocks = 0;
 };
 
+struct captured_astc_candidate {
+    std::array<uint8_t, 16> block{};
+    float error = 0.0f;
+};
+
+struct astc_candidate_capture {
+    uint32_t blocks_x = 0;
+    uint32_t blocks_y = 0;
+    uint32_t blocks_z = 1;
+    uint32_t block_width = 1;
+    uint32_t block_height = 1;
+    uint32_t block_depth = 1;
+    uint32_t max_per_block = 4;
+    uint32_t callback_count = 0;
+    std::vector<std::vector<captured_astc_candidate>> blocks;
+};
+
+#if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+void capture_astc_candidate(void * user_data, unsigned int pos_x, unsigned int pos_y,
+                            unsigned int pos_z, const uint8_t block_data[16], float errorval,
+                            unsigned int, int) {
+    auto * capture = static_cast<astc_candidate_capture *>(user_data);
+    if (capture == nullptr || capture->blocks_x == 0 || capture->blocks_y == 0) return;
+    const uint32_t block_x = pos_x / capture->block_width;
+    const uint32_t block_y = pos_y / capture->block_height;
+    const uint32_t block_z = pos_z / capture->block_depth;
+    const size_t block_index = (static_cast<size_t>(block_z) * capture->blocks_y + block_y) *
+                               capture->blocks_x + block_x;
+    if (block_index >= capture->blocks.size()) return;
+    ++capture->callback_count;
+    auto & candidates = capture->blocks[block_index];
+    const auto duplicate = std::find_if(candidates.begin(), candidates.end(),
+        [&](const captured_astc_candidate & candidate) {
+            return std::equal(candidate.block.begin(), candidate.block.end(), block_data);
+        });
+    if (duplicate != candidates.end()) return;
+    captured_astc_candidate candidate;
+    std::copy_n(block_data, 16, candidate.block.begin());
+    candidate.error = errorval;
+    candidates.push_back(candidate);
+    std::sort(candidates.begin(), candidates.end(),
+              [](const captured_astc_candidate & left, const captured_astc_candidate & right) {
+                  return left.error < right.error;
+              });
+    if (candidates.size() > capture->max_per_block) candidates.pop_back();
+}
+#endif
+
 double elementwise_mse(const std::vector<float> & reference,
                        const std::vector<float> & candidate) {
     double sum = 0.0;
@@ -869,7 +917,8 @@ bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t c
                     const ggml_vk_astc_format_contract & format,
                     const affine_decoder * ranking_decoder,
                     astc_roundtrip_result & result,
-                    unsigned int candidate_limit = 0) {
+                    unsigned int candidate_limit = 0,
+                    astc_candidate_capture * candidate_capture = nullptr) {
     result.compressed_bytes = ggml_vk_astc_image_storage_bytes(format, columns, rows);
     astcenc_config config{};
 #if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
@@ -883,6 +932,23 @@ bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t c
     if (candidate_limit != 0) {
         config.tune_candidate_limit = candidate_limit;
     }
+#if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+    if (candidate_capture != nullptr) {
+        candidate_capture->blocks_x = (columns + format.block_width - 1) / format.block_width;
+        candidate_capture->blocks_y = (rows + format.block_height - 1) / format.block_height;
+        candidate_capture->blocks_z = 1;
+        candidate_capture->block_width = format.block_width;
+        candidate_capture->block_height = format.block_height;
+        candidate_capture->block_depth = 1;
+        candidate_capture->blocks.assign(
+            static_cast<size_t>(candidate_capture->blocks_x) * candidate_capture->blocks_y,
+            {});
+        config.candidate_callback = capture_astc_candidate;
+        config.candidate_callback_user_data = candidate_capture;
+    }
+#else
+    (void) candidate_capture;
+#endif
 #if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
     if (ranking_decoder != nullptr) {
         config.neural_l_scale = static_cast<float>(ranking_decoder->scale_l);
@@ -1114,8 +1180,10 @@ bool run_coordinate_case(const std::vector<float> & weights,
                          bool include_candidate_capacity = false) {
     astc_roundtrip_result standard;
     astc_roundtrip_result neural;
+    astc_candidate_capture captured_candidates;
     if (!astc_roundtrip(latents.texels, rows, columns, format, nullptr, standard) ||
-        !astc_roundtrip(latents.texels, rows, columns, format, &latents.decoder, neural)) return false;
+        !astc_roundtrip(latents.texels, rows, columns, format, &latents.decoder, neural, 0,
+                        include_candidate_capacity ? &captured_candidates : nullptr)) return false;
     const std::vector<float> standard_weights = reconstruct(standard.texels, latents.decoder);
     const std::vector<float> neural_weights = reconstruct(neural.texels, latents.decoder);
     const double standard_calibration = activation_relative_mse(
@@ -1152,17 +1220,33 @@ bool run_coordinate_case(const std::vector<float> & weights,
                                std::move(medium.compressed) });
     }
     if (include_candidate_capacity) {
-        for (const unsigned int candidate_limit : { 1u, 2u, 4u, 8u }) {
-            astc_roundtrip_result capacity;
-            if (!astc_roundtrip(latents.texels, rows, columns, format, &latents.decoder,
-                                capacity, candidate_limit)) return false;
-            char name[64];
-            std::snprintf(name, sizeof(name), "neural-rank-candidates-%u", candidate_limit);
-            candidates.push_back({ name, reconstruct(capacity.texels, latents.decoder),
-                                   std::move(capacity.compressed) });
+        size_t captured_block_count = 0;
+        size_t captured_candidate_count = 0;
+        for (const auto & block_candidates : captured_candidates.blocks) {
+            if (!block_candidates.empty()) ++captured_block_count;
+            captured_candidate_count += block_candidates.size();
         }
-        std::printf("latent-candidate-capacity format=%s limits=1,2,4,8 pool=%zu\n",
-                    format.name, candidates.size());
+        for (size_t block = 0; block < captured_candidates.blocks.size(); ++block) {
+            for (size_t candidate_index = 0;
+                 candidate_index < captured_candidates.blocks[block].size(); ++candidate_index) {
+                std::vector<uint8_t> compressed = neural.compressed;
+                std::copy(captured_candidates.blocks[block][candidate_index].block.begin(),
+                          captured_candidates.blocks[block][candidate_index].block.end(),
+                          compressed.data() + block * 16);
+                std::vector<float> texels;
+                if (!astc_decode(compressed, rows, columns, format, texels)) return false;
+                char name[64];
+                std::snprintf(name, sizeof(name), "astc-topk-block-%zu-candidate-%zu",
+                              block, candidate_index);
+                candidates.push_back({ name, reconstruct(texels, latents.decoder),
+                                       std::move(compressed) });
+            }
+        }
+        std::printf("latent-candidate-pool format=%s callbacks=%u blocks=%zu candidates=%zu "
+                    "per-block-cap=%u pool=%zu\n", format.name,
+                    captured_candidates.callback_count, captured_block_count,
+                    captured_candidate_count, captured_candidates.max_per_block,
+                    candidates.size());
     }
     const uint32_t selection_samples = regularized_selection ? calibration.samples / 2 : calibration.samples;
     if (regularized_selection && calibration.samples < 4) return false;
