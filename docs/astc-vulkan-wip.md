@@ -1040,3 +1040,34 @@ dual-plane blocks and loses almost all useful activation fidelity. This is
 evidence for the proposed next stage — jointly structured/codec-aware latents
 and model-aware loss — rather than support for adding a residual to an
 unmodified model.
+
+## Forty-eighth sweep: structured second latent
+
+The latent smoke now includes a third control: `luminance-alpha-block-residual`.
+It quantizes a weight to 16 coarse levels, replaces the residual inside each
+ASTC footprint with that footprint's mean residual, and stores the result as
+`RGB=L, A=A`. This intentionally discards high-frequency residual information
+to test whether a spatially smooth second latent is easier for ASTC to retain.
+
+On the deterministic 32 x 256 fixture the activation-relative errors were:
+
+| Format | Scalar RGBA | Free residual L+A | Block-mean residual L+A |
+|---|---:|---:|---:|
+| 4x4 | 0.0000615 | 0.0015541 | 0.0006792 |
+| 5x5 | 0.0003547 | 0.0076515 | 0.0009650 |
+| 6x6 | 0.0012688 | 0.0097293 | 0.0014733 |
+
+The block residual is a meaningful improvement over the free residual, and it
+also causes the encoder to avoid dual-plane on this smooth signal. It is still
+not competitive with the scalar control. On the real SmolLM2
+`blk.0.attn_q.weight` layer the corresponding errors were `0.23891`, `0.25656`,
+and `0.26793` for 4x4, 5x5, and 6x6. Thus a hand-constructed smooth residual is
+not a candidate representation either.
+
+This narrows the next experiment rather than ending the latent track. The
+second field must be learned or jointly optimized so that it is both useful to
+the model and spatially compatible with ASTC. The next implementation will
+therefore prototype an outer codec-aware projection loop, with exact ASTC
+roundtrip and held-out activation loss as the oracle. A differentiable
+surrogate or PV-Tuning-style update belongs around that loop, not inside the
+Vulkan runtime.

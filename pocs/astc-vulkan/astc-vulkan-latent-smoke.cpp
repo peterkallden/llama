@@ -206,16 +206,50 @@ std::vector<float> make_scalar_latents(const std::vector<float> & weights,
 }
 
 std::vector<float> make_additive_latents(const std::vector<float> & weights,
-                                         float minimum, float range) {
+                                         float minimum, float range,
+                                         uint32_t rows, uint32_t columns,
+                                         uint32_t block, bool block_residual) {
     std::vector<float> result(weights.size() * 4);
     const float step = range / (kCoarseLevels - 1);
     const float residual_radius = std::max(step * 0.5f, 1e-6f);
+    std::vector<float> residuals(weights.size());
+    for (size_t index = 0; index < weights.size(); ++index) {
+        const float level = std::round((weights[index] - minimum) / step);
+        const float coarse = minimum +
+            std::clamp(level, 0.0f, static_cast<float>(kCoarseLevels - 1)) * step;
+        residuals[index] = weights[index] - coarse;
+    }
+    if (block_residual) {
+        // A block-constant residual is deliberately low frequency. This is a
+        // cheap control for the hypothesis that ASTC can preserve a structured
+        // second latent even when it destroys an independent per-value tail.
+        for (uint32_t row0 = 0; row0 < rows; row0 += block) {
+            for (uint32_t column0 = 0; column0 < columns; column0 += block) {
+                double sum = 0.0;
+                uint32_t count = 0;
+                for (uint32_t row = row0; row < std::min(row0 + block, rows); ++row) {
+                    for (uint32_t column = column0;
+                         column < std::min(column0 + block, columns); ++column) {
+                        sum += residuals[static_cast<size_t>(row) * columns + column];
+                        ++count;
+                    }
+                }
+                const float mean = static_cast<float>(sum / std::max(count, 1u));
+                for (uint32_t row = row0; row < std::min(row0 + block, rows); ++row) {
+                    for (uint32_t column = column0;
+                         column < std::min(column0 + block, columns); ++column) {
+                        residuals[static_cast<size_t>(row) * columns + column] = mean;
+                    }
+                }
+            }
+        }
+    }
     for (size_t index = 0; index < weights.size(); ++index) {
         const float level = std::round((weights[index] - minimum) / step);
         const float coarse = minimum +
             std::clamp(level, 0.0f, static_cast<float>(kCoarseLevels - 1)) * step;
         const float l = (coarse - minimum) / range;
-        const float a = std::clamp(0.5f + (weights[index] - coarse) / (2.0f * residual_radius),
+        const float a = std::clamp(0.5f + residuals[index] / (2.0f * residual_radius),
                                    0.0f, 1.0f);
         float * texel = result.data() + index * 4;
         texel[0] = l;
@@ -296,12 +330,17 @@ int main(int argc, char ** argv) {
     const float minimum = *minimum_it;
     const float range = std::max(*maximum_it - minimum, 1e-6f);
     const std::vector<float> scalar_latents = make_scalar_latents(weights, minimum, range);
-    const std::vector<float> additive_latents = make_additive_latents(weights, minimum, range);
     for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,
                                  ggml_vk_astc_5x5_unorm_rgba,
                                  ggml_vk_astc_6x6_unorm_rgba }) {
+        const std::vector<float> additive_latents = make_additive_latents(
+            weights, minimum, range, rows, columns, format.block_width, false);
+        const std::vector<float> block_latents = make_additive_latents(
+            weights, minimum, range, rows, columns, format.block_width, true);
         if (!run_case("scalar-rgba", weights, scalar_latents, rows, columns, format) ||
             !run_case("luminance-alpha-additive", weights, additive_latents,
+                      rows, columns, format) ||
+            !run_case("luminance-alpha-block-residual", weights, block_latents,
                       rows, columns, format)) {
             std::fprintf(stderr, "ASTC latent smoke failed\n");
             return 1;
