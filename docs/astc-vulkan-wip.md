@@ -603,6 +603,27 @@ References:
 - Liu et al., [EoRA](https://arxiv.org/abs/2410.21271); Cho et al.,
   [Preserve-Then-Quantize / SRR](https://arxiv.org/abs/2602.02001).
 
+## Thirty-seventh sweep: WHT64 signed rotation
+
+The quality probe now includes a deterministic signed WHT64 basis. It applies a
+64-wide orthogonal transform to each hidden-dimension group, with the inverse
+transform used for reconstruction; the 576-wide SmolLM2 matrices divide into
+nine complete groups. This is closer to the larger randomized rotations used by
+QuaRot and QuIP# than the earlier four-value H4 test.
+
+The first fixed sign mask did not improve ASTC. On `blk.0.attn_q.weight`,
+4x4 shared block-affine corrected activation-relative MSE was 0.22080 for
+WHT64 versus 0.15572 for the unrotated baseline; 6x6 was 0.45355 versus
+0.38467. This is a preliminary mask result, not a theorem about all rotations.
+The likely explanation is architectural: WHT64 decorrelates hidden channels,
+while ASTC's generic image encoder benefits from local spatial/channel
+correlation. QuIP# gains from a rotation because it follows with a dedicated
+vector/lattice quantizer, which ASTC does not provide.
+
+The next rotation test, if retained, must search several signed masks and score
+them with the same activation-aware objective. It should not be promoted based
+on a single fixed mask.
+
 ## Updated next sweep
 
 1. Capture representative activation traces from the llama evaluation path and

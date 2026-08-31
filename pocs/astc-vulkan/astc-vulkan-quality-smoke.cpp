@@ -56,24 +56,58 @@ enum class transform_mode {
 enum class basis_mode {
     identity,
     hadamard4,
+    wht64,
 };
 
-std::vector<float> apply_basis(const std::vector<float> & weights,
-                               uint32_t rows, uint32_t columns,
-                               basis_mode basis) {
+void hadamard_transform(float * values, uint32_t count) {
+    for (uint32_t step = 1; step < count; step *= 2) {
+        for (uint32_t offset = 0; offset < count; offset += 2 * step) {
+            for (uint32_t index = 0; index < step; ++index) {
+                const float lhs = values[offset + index];
+                const float rhs = values[offset + step + index];
+                values[offset + index] = lhs + rhs;
+                values[offset + step + index] = lhs - rhs;
+            }
+        }
+    }
+    const float scale = 1.0f / std::sqrt(static_cast<float>(count));
+    for (uint32_t index = 0; index < count; ++index) values[index] *= scale;
+}
+
+void transform_group(float * values, uint32_t count, basis_mode basis, bool inverse) {
+    if (basis == basis_mode::hadamard4) {
+        hadamard_transform(values, count);
+        return;
+    }
+    if (basis != basis_mode::wht64) return;
+    static const std::array<int8_t, 64> signs = [] {
+        std::array<int8_t, 64> result{};
+        uint32_t state = 0x243f6a88u;
+        for (uint32_t index = 0; index < result.size(); ++index) {
+            state = state * 1664525u + 1013904223u;
+            result[index] = (state & 1) == 0 ? 1 : -1;
+        }
+        return result;
+    }();
+    if (!inverse) {
+        for (uint32_t index = 0; index < count; ++index) values[index] *= signs[index];
+        hadamard_transform(values, count);
+    } else {
+        hadamard_transform(values, count);
+        for (uint32_t index = 0; index < count; ++index) values[index] *= signs[index];
+    }
+}
+
+std::vector<float> transform_basis(const std::vector<float> & weights,
+                                   uint32_t rows, uint32_t columns,
+                                   basis_mode basis, bool inverse) {
     std::vector<float> transformed = weights;
     if (basis == basis_mode::identity) return transformed;
+    const uint32_t group_size = basis == basis_mode::hadamard4 ? 4 : 64;
     for (uint32_t row = 0; row < rows; ++row) {
-        for (uint32_t column = 0; column < columns; column += 4) {
-            const size_t index = static_cast<size_t>(row) * columns + column;
-            const float a = weights[index + 0];
-            const float b = weights[index + 1];
-            const float c = weights[index + 2];
-            const float d = weights[index + 3];
-            transformed[index + 0] = 0.5f * (a + b + c + d);
-            transformed[index + 1] = 0.5f * (a - b + c - d);
-            transformed[index + 2] = 0.5f * (a + b - c - d);
-            transformed[index + 3] = 0.5f * (a - b - c + d);
+        for (uint32_t column = 0; column < columns; column += group_size) {
+            transform_group(transformed.data() + static_cast<size_t>(row) * columns + column,
+                            group_size, basis, inverse);
         }
     }
     return transformed;
@@ -82,7 +116,7 @@ std::vector<float> apply_basis(const std::vector<float> & weights,
 std::vector<float> undo_basis(const std::vector<float> & weights,
                               uint32_t rows, uint32_t columns,
                               basis_mode basis) {
-    return apply_basis(weights, rows, columns, basis);
+    return transform_basis(weights, rows, columns, basis, true);
 }
 
 float encode_value(float value, float offset, float scale, transform_mode mode) {
@@ -232,8 +266,9 @@ bool encode_format(const std::vector<float> & weights,
                    basis_mode basis,
                    result & output,
                    std::vector<float> * reconstructed_out = nullptr) {
-    if (basis == basis_mode::hadamard4 && columns % 4 != 0) return false;
-    const std::vector<float> encoded_weights = apply_basis(weights, rows, columns, basis);
+    const uint32_t basis_group_size = basis == basis_mode::wht64 ? 64 : 4;
+    if (basis != basis_mode::identity && columns % basis_group_size != 0) return false;
+    const std::vector<float> encoded_weights = transform_basis(weights, rows, columns, basis, false);
     const uint32_t texel_columns = (columns + 3) / 4;
     const uint32_t padded_columns = texel_columns * 4;
     const uint32_t blocks_x = (texel_columns + block_width - 1) / block_width;
@@ -346,7 +381,8 @@ bool encode_format(const std::vector<float> & weights,
     output.block_height = block_height;
     output.block_affine = block_affine;
     output.transform_name = transform == transform_mode::linear ? "linear" : "signed-sqrt";
-    output.basis_name = basis == basis_mode::identity ? "identity" : "hadamard4";
+    output.basis_name = basis == basis_mode::identity ? "identity" :
+        (basis == basis_mode::hadamard4 ? "hadamard4" : "wht64");
     if (reconstructed_out != nullptr) *reconstructed_out = reconstructed;
     return std::isfinite(output.mse) && std::isfinite(output.activation_relative_mse);
 }
@@ -436,7 +472,8 @@ int main(int argc, char ** argv) {
     bool gate_passed = true;
     for (const uint32_t block : { 4u, 6u }) {
         for (const bool block_affine : { false, true }) {
-            for (const basis_mode basis : { basis_mode::identity, basis_mode::hadamard4 }) {
+            for (const basis_mode basis : { basis_mode::identity, basis_mode::hadamard4,
+                                            basis_mode::wht64 }) {
                 for (const transform_mode transform : { transform_mode::linear,
                                                          transform_mode::signed_sqrt }) {
             result output;
