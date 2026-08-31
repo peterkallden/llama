@@ -2513,3 +2513,16 @@ for larger models without revalidation.
 The next gate remains a genuinely larger calibration trace. Until one is
 available, keep strict shard counts as diagnostics and do not add a separate
 worst-shard penalty that would duplicate this conservative behavior.
+
+## One-hundred-third sweep: regression coverage for opt-in gates
+
+The CMake test matrix now includes `astc-vulkan-latent-angular-stability-smoke`.
+It exercises candidate-direction shortlists and four-shard stability on the
+bounded synthetic fixture, while the original candidate-capacity smoke remains
+unchanged. The expanded focused suite passes 4/4 (two standalone contracts and
+two latent selector smokes).
+
+The local real-model calibration trace is only ten samples, so the planned
+larger-trace experiment cannot be inferred from this fixture. We must obtain a
+separate calibration capture with a fixed, disjoint holdout before treating
+four-shard stability or Block-LDLQ as model-level evidence.

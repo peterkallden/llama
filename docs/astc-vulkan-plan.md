@@ -705,3 +705,9 @@ The damping ablation did not change the current 6x6 decisions across
 `1e-5`--`1e-3`. Keep the parameter exposed for future ill-conditioned traces,
 but prioritize calibration diversity, block ordering, and candidate direction
 retention over further damping tuning.
+
+Regression coverage now includes a dedicated angular-shortlist/four-shard
+stability smoke; the focused ASTC suite is 4/4 green. The current real-model
+calibration capture has only ten samples, which is insufficient for a genuine
+larger-trace claim. Acquire or generate a disjoint, larger calibration trace
+before changing selector defaults or starting GPU performance interpretation.
