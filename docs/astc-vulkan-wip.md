@@ -2665,3 +2665,19 @@ This confirms that bandwidth comparisons must use sufficiently tall tiles or
 full tensors; a short diagnostic crop overstates ASTC's rate. The large-tile
 candidate search is intentionally kept as an offline CPU reference and is not
 being interpreted as runtime latency.
+
+## One-hundred-eleventh sweep: Vulkan target inventory
+
+The host exposes Vulkan 1.4 with an Intel UHD Graphics 620, an NVIDIA GeForce
+920MX, and llvmpipe. `vulkaninfo` reports `textureCompressionASTC_LDR = true`
+for the Intel device and false for the other two enumerated devices. This is
+useful as a concrete sampler target, but it is not an ARM/Mali proxy: format
+support, cache behavior, and texture-unit throughput remain implementation
+specific.
+
+The Vulkan build is currently blocked by the missing `SPIRV-Headers` CMake
+package. A non-interactive system install is not possible in this session
+because sudo requires the user's password. The CPU reference and all eight
+focused ASTC tests remain unaffected; once the package is installed, the next
+step is to build the existing device/shader smokes and validate sampled ASTC
+decode on the Intel target.

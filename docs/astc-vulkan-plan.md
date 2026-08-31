@@ -755,3 +755,11 @@ columns, a 32-row 6x6 crop measured 4.000 b/w because of edge blocks, while a
 128-row crop measured 3.6667 b/w and approached the 3.5556 b/w asymptote. Use
 tall/full-height tiles for rate studies and keep short crops only for functional
 contracts.
+tall/full-height tiles for rate studies and keep short crops only for functional
+contracts.
+
+The local Vulkan inventory now identifies Intel UHD 620 as the only enumerated
+device advertising ASTC LDR. This can serve as a first device-backed sampler
+check, but it must be reported separately from the intended ARM/Mali target.
+The remaining build dependency is the Ubuntu `spirv-headers` development
+package; install it before enabling the Vulkan shader/device test gate.
