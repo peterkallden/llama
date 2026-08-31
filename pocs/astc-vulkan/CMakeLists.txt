@@ -57,6 +57,13 @@ if (TARGET astcenc::astcenc-static)
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_link_libraries(astc-vulkan-level-smoke PRIVATE astcenc::astcenc-static)
     target_compile_features(astc-vulkan-level-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-channel-semantic-smoke
+        astc-vulkan-channel-semantic-smoke.cpp)
+    target_include_directories(astc-vulkan-channel-semantic-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-channel-semantic-smoke PRIVATE astcenc::astcenc-static)
+    target_compile_features(astc-vulkan-channel-semantic-smoke PRIVATE cxx_std_17)
     if (TARGET ggml-base)
         add_executable(astc-vulkan-quality-smoke
             astc-vulkan-quality-smoke.cpp
@@ -173,6 +180,9 @@ if (BUILD_TESTING)
         add_test(NAME astc-vulkan-level-smoke
             COMMAND astc-vulkan-level-smoke)
         set_property(TEST astc-vulkan-level-smoke PROPERTY LABELS astc)
+        add_test(NAME astc-vulkan-channel-semantic-smoke
+            COMMAND astc-vulkan-channel-semantic-smoke)
+        set_property(TEST astc-vulkan-channel-semantic-smoke PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-input-smoke)

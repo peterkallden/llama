@@ -917,3 +917,34 @@ quality or GPU throughput. The important result is nevertheless clear: 6x6
 has a real capacity/bandwidth experiment at Q3-adjacent density but needs a
 better ASTC-aware representation; 5x5 is the intermediate research point;
 and 4x4 is a deliberately less dense, high-fidelity texture-resident control.
+
+## Forty-sixth sweep: channel semantics, RG16, and residual pairs
+
+`astc-vulkan-channel-semantic-smoke` retains four explicitly named channel
+meanings on a deterministic 32x256 weight matrix: four independent weights per
+RGBA texel, two coarse-only weights per texel, two coarse-plus-residual weights
+per texel, and a two-value RG16 high/low-byte control. It runs every semantic
+against 4x4, 5x5, and 6x6 and reports physical bytes, effective bits per
+logical weight, element MSE, and activation-relative matvec MSE.
+
+The first result rejects an attractive but unsafe interpretation of the
+channels. ASTC does not preserve the high and low byte of a synthetic 16-bit
+word reliably enough for the bytes to be recombined after decode. At 4x4,
+RG16 pairs measured `0.04217` element MSE and `0.02921` relative activation
+MSE. This is much worse than using the channels as approximate numerical
+values, so RG16 remains a negative control rather than a candidate format.
+
+The naive residual construction also lost to coarse-only storage:
+
+| Format | Pair rate (bpw) | Coarse-only relative MSE | Coarse + residual relative MSE |
+|---|---:|---:|---:|
+| 4x4 | 4.0000 | 0.00379 | 0.01908 |
+| 5x5 | 2.8438 | 0.00834 | 0.03350 |
+| 6x6 | 2.0625 | 0.00688 | 0.03207 |
+
+The coarse quantization is spatially structured enough for ASTC to approximate
+it, while its ordinary per-value residual is high-frequency and ASTC destroys
+it. This does not invalidate a two-component representation; it narrows the
+next hypothesis. A residual must be structured before it enters ASTC (for
+example block-local, low-rank, sparse sidecar, or ASTC-aware-trained), rather
+than treating decoded RG bytes as a lossless 16-bit container.

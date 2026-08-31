@@ -123,6 +123,11 @@ dispatches; its timing data is still exploratory and not a performance claim.
     tensor artifacts, so actual TQ tests use locally quantized 256-aligned
     SmolLM2 FFn-down matrices. Keep model binaries out of git; record their
     source and checksums in the WIP log.
+29. [x] Evaluate channel semantics independently of block footprint: four
+    independent scalar channels, two coarse-only pairs, two coarse-plus-
+    residual pairs, and an RG16 high/low-byte control. Treat high/low bytes as
+    a robustness control rather than a storage proposal; retain a residual
+    only if its post-ASTC error improves the measured activation objective.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
