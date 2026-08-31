@@ -660,6 +660,14 @@ comparison on identical candidate snapshots (local ranking, forward
 Block-LDLQ, and improved Hessian feedback/target regeneration) across 4x4,
 5x5, and 6x6, with fixed holdout traces and at least two real tensors.
 
+The complete bounded matrix is now available. Forward Block-LDLQ wins only
+for `attn_q` at 6x6; local ranking wins the other five tensor/footprint cases,
+while coordinate descent loses to local in all six. Treat the 6x6 `attn_q`
+result as a promising but tensor-sensitive research signal. Before expanding
+the search or integrating GPU execution, improve candidate-direction
+coverage and test activation-weighted/Hessian-whitened scoring with local as
+the mandatory fallback.
+
 The damping ablation did not change the current 6x6 decisions across
 `1e-5`--`1e-3`. Keep the parameter exposed for future ill-conditioned traces,
 but prioritize calibration diversity, block ordering, and candidate direction

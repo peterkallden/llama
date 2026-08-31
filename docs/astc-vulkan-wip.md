@@ -2371,3 +2371,33 @@ an improved Hessian-feedback/target-regeneration variant. It must be run over
 the 4x4, 5x5, and 6x6 footprints, both calibration and fixed holdout traces,
 and at least the `attn_q`/`attn_k` tensor pair before any GPU performance
 interpretation.
+
+## Ninety-seventh sweep: three-way footprint and tensor matrix
+
+The planned comparison was run with identical per-block candidate snapshots,
+the same 32x64 crops, ten calibration samples, and a fixed holdout trace. The
+table reports holdout activation-relative MSE for local ranking and forward
+Block-LDLQ; coordinate descent is included as the offline sequential control.
+
+| Tensor | Footprint | Local | Coordinate | Block-LDLQ |
+| --- | --- | ---: | ---: | ---: |
+| `attn_q` | 4x4 | **0.03034** | 0.03127 | 0.03347 |
+| `attn_q` | 5x5 | **0.14707** | 0.19114 | 0.17326 |
+| `attn_q` | 6x6 | 0.36614 | 0.41279 | **0.34428** |
+| `attn_k` | 4x4 | **0.01624** | 0.01850 | 0.01720 |
+| `attn_k` | 5x5 | **0.12632** | 0.14842 | 0.13145 |
+| `attn_k` | 6x6 | **0.24283** | 0.29983 | 0.25469 |
+
+Only the `attn_q` 6x6 case beats local ranking (approximately 6% relative
+holdout improvement). Coordinate descent is worse than local in every case,
+and Block-LDLQ is worse than local in five of six cases. The result confirms
+that target regeneration is a useful mechanism probe but is not yet a
+general-purpose ASTC quantizer. It also reinforces the variable-coding policy:
+selector and footprint decisions may eventually be tensor-specific, but no
+automatic runtime policy is justified by this bounded matrix.
+
+The immediate next gate is to improve the candidate error directions and the
+calibration objective before adding more search complexity. In particular,
+retain local as the fallback, compare activation-weighted/Hessian-whitened
+candidate ranking on the same snapshots, and repeat only the promising 6x6
+case before any GPU timing claim.
