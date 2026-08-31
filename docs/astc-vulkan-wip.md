@@ -2631,3 +2631,23 @@ asymptotic 6x6 rate; full-height tiles are needed for bandwidth measurements.
 The focused regression suite remains green (8/8 tests). The next gate is to
 capture a disjoint FFN holdout, exercise larger row tiles, and compare selectors
 on the same 1,536-column candidate pool before making any runtime-layout claim.
+
+## One-hundred-ninth sweep: disjoint wide-trace selector control
+
+A second prompt produced a disjoint 17-sample holdout, also with 1,536
+columns. Using the same 32-row crop and four-candidate legal ASTC pool, the
+selector comparison was:
+
+| Footprint | Local holdout | Coordinate | Block-LDLQ | Conflict-aware | Stability (2 shards) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 4x4 | **0.00401355** | 0.00769581 | 0.00567515 | 0.00489500 | 0.00432600 |
+| 5x5 | **0.0833805** | 0.144511 | 0.116832 | 0.101622 | 0.0900087 |
+| 6x6 | 0.288087 | 0.367801 | 0.304118 | 0.306418 | **0.288002** |
+
+On this very small FFN control, local ranking is the safest selector for 4x4
+and 5x5, while two-shard stability is effectively tied with local for 6x6.
+Coordinate descent and Block-LDLQ improve the calibration objective but do not
+generalize to this holdout. This reinforces the existing policy: selector
+choice is an offline, holdout-gated decision and local is always a valid
+fallback. The run is a wide-dimension plumbing/control result, not evidence
+that 6x6 is universally best.

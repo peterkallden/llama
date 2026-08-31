@@ -744,3 +744,8 @@ Required follow-up before GPU/runtime work:
    edge-padding separately from asymptotic block bandwidth.
 4. Keep the capture API opt-in and staging-only until end-to-end quality and
    device-backed Vulkan sampling have been measured.
+
+The first disjoint FFN control (32 rows, all 1,536 columns) is complete. Local
+ranking remained best on 4x4 and 5x5 holdout error; two-shard stability tied
+local on 6x6. This is consistent with the conservative fallback policy and
+does not justify a global selector or footprint default.
