@@ -2455,3 +2455,21 @@ full-model quality.
 The next implementation gate is to add explicit calibration-shard reporting
 and a conservative cross-shard acceptance score, then rerun the 6x6 probe. The
 runtime fallback remains local ranking; no GPU integration is justified yet.
+
+## One-hundredth sweep: calibration-shard diagnostics
+
+The harness now reports four contiguous calibration-shard losses for local and
+Block-LDLQ selectors whenever at least four calibration samples are available.
+On the angular `attn_q` 6x6 probe, local had mean `0.38880`, standard deviation
+`0.05445`, and worst shard `0.46787`; Block-LDLQ had lower mean `0.33446` but
+standard deviation `0.09326` and worst shard `0.49541`.
+
+This is the clearest evidence so far that a calibration-only gain can be
+unstable. The selector should therefore not accept a lower mean blindly: a
+future shard-aware gate must constrain dispersion or worst-shard regression,
+while preserving local ranking as a safe fallback. The diagnostic is read-only
+and does not alter selector decisions yet.
+
+Next implement the conservative gate as an offline ablation (mean gain minus
+dispersion penalty and a worst-shard guard), then compare it with the existing
+two-shard stability selector on the same candidate snapshots.

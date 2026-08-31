@@ -174,6 +174,32 @@ activations slice_activation_samples(const activations & inputs,
     return result;
 }
 
+void print_calibration_shard_summary(const char * selector,
+                                     const std::vector<float> & reference,
+                                     const std::vector<float> & candidate,
+                                     uint32_t rows, uint32_t columns,
+                                     const activations & calibration,
+                                     uint32_t shard_count = 4) {
+    if (calibration.samples < shard_count || shard_count == 0) return;
+    const uint32_t shard_size = (calibration.samples + shard_count - 1) / shard_count;
+    std::vector<double> losses;
+    for (uint32_t first = 0; first < calibration.samples; first += shard_size) {
+        const uint32_t count = std::min(shard_size, calibration.samples - first);
+        losses.push_back(activation_relative_mse(reference, candidate, rows, columns,
+                                                  slice_activation_samples(calibration, first, count)));
+    }
+    double mean = 0.0;
+    for (double loss : losses) mean += loss;
+    mean /= std::max<size_t>(losses.size(), 1);
+    double variance = 0.0;
+    for (double loss : losses) variance += (loss - mean) * (loss - mean);
+    variance /= std::max<size_t>(losses.size(), 1);
+    std::printf("latent-calibration-shards selector=%s count=%zu mean=%.8g std=%.8g min=%.8g max=%.8g\n",
+                selector, losses.size(), mean, std::sqrt(variance),
+                *std::min_element(losses.begin(), losses.end()),
+                *std::max_element(losses.begin(), losses.end()));
+}
+
 struct hessian_stats {
     uint32_t rank = 0;
     double maximum_eigenvalue = 0.0;
@@ -1546,6 +1572,10 @@ bool run_coordinate_case(const std::vector<float> & weights,
                                                                        rows, columns, calibration);
         const double ldlq_calibration = activation_relative_mse(weights, ldlq.reconstructed,
                                                                  rows, columns, calibration);
+        print_calibration_shard_summary("local", weights, local.reconstructed,
+                                        rows, columns, calibration);
+        print_calibration_shard_summary("block-ldlq", weights, ldlq.reconstructed,
+                                        rows, columns, calibration);
         const double denominator = local_loss - coordinate_loss;
         const double recovered_gain = denominator > 0.0 ?
             (local_loss - feedback_loss) / denominator : NAN;

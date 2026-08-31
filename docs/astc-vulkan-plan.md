@@ -683,6 +683,13 @@ minimum-trace/data-diversity gate, not as a quality threshold. Add explicit
 shard-stability reporting and conservative cross-shard acceptance before
 testing larger traces or GPU performance.
 
+Four-shard diagnostics are now emitted for selector comparisons. The current
+6x6 `attn_q` Block-LDLQ result has lower mean calibration error but higher
+dispersion and a worse worst shard than local, so the next implementation is
+an offline conservative gate: penalize shard variance and reject any candidate
+that regresses the worst shard. Compare it directly with the existing
+stability selector before making further quality or GPU claims.
+
 The damping ablation did not change the current 6x6 decisions across
 `1e-5`--`1e-3`. Keep the parameter exposed for future ill-conditioned traces,
 but prioritize calibration diversity, block ordering, and candidate direction
