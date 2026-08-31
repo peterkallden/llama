@@ -161,6 +161,12 @@ struct astc_candidate {
     std::vector<uint8_t> compressed;
 };
 
+struct feedback_proposal {
+    uint32_t block = 0;
+    uint32_t candidate = 0;
+    double predicted_gain = 0.0;
+};
+
 void apply_block_candidate(const astc_candidate & candidate, uint32_t block,
                            uint32_t blocks_x, uint32_t rows, uint32_t columns,
                            const ggml_vk_astc_format_contract & format,
@@ -325,6 +331,120 @@ bool hessian_feedback_select_astc_blocks(
         }
         result.forward_changes += changes;
         if (changes == 0) break;
+    }
+    return true;
+}
+
+// Keep proposal generation parallel-friendly, but serialize only the cheap
+// acceptance pass. Candidates are never regenerated and every accepted choice
+// is checked against the current residual, preventing simultaneous overshoot.
+bool conflict_aware_select_astc_blocks(
+        const std::vector<float> & reference,
+        const std::vector<astc_candidate> & candidates,
+        uint32_t rows, uint32_t columns,
+        const ggml_vk_astc_format_contract & format,
+        const activations & calibration,
+        coordinate_result & result,
+        const std::vector<std::vector<uint32_t>> * shortlists) {
+    if (!local_select_astc_blocks(reference, candidates, rows, columns, format,
+                                  calibration, result, shortlists)) return false;
+    const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
+    const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
+    const uint32_t block_count = blocks_x * blocks_y;
+    const std::vector<double> expected = matvec_outputs(reference, rows, columns, calibration);
+    std::vector<double> actual = matvec_outputs(result.reconstructed, rows, columns, calibration);
+    std::vector<double> residual(expected.size());
+    for (size_t index = 0; index < residual.size(); ++index) {
+        residual[index] = expected[index] - actual[index];
+    }
+    std::vector<feedback_proposal> proposals;
+    proposals.reserve(block_count);
+    for (uint32_t block = 0; block < block_count; ++block) {
+        const uint32_t row0 = (block / blocks_x) * format.block_height;
+        const uint32_t row_end = std::min(row0 + format.block_height, rows);
+        const uint32_t column0 = (block % blocks_x) * format.block_width;
+        const uint32_t column_end = std::min(column0 + format.block_width, columns);
+        const std::vector<uint32_t> fallback = [&]() {
+            std::vector<uint32_t> all(candidates.size());
+            for (uint32_t index = 0; index < candidates.size(); ++index) all[index] = index;
+            return all;
+        }();
+        const std::vector<uint32_t> & candidate_indices = shortlists == nullptr ?
+            fallback : (*shortlists)[block];
+        feedback_proposal best;
+        best.block = block;
+        best.candidate = result.selected_indices[block];
+        best.predicted_gain = 0.0;
+        for (uint32_t candidate_index : candidate_indices) {
+            if (candidate_index >= candidates.size()) return false;
+            double residual_dot_delta = 0.0;
+            double delta_norm = 0.0;
+            for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
+                for (uint32_t row = row0; row < row_end; ++row) {
+                    double delta = 0.0;
+                    for (uint32_t column = column0; column < column_end; ++column) {
+                        const size_t index = static_cast<size_t>(row) * columns + column;
+                        delta += (candidates[candidate_index].reconstructed[index] -
+                                  candidates[result.selected_indices[block]].reconstructed[index]) * input[column];
+                    }
+                    const size_t output_index = static_cast<size_t>(sample) * rows + row;
+                    residual_dot_delta += residual[output_index] * delta;
+                    delta_norm += delta * delta;
+                }
+            }
+            const double gain = 2.0 * residual_dot_delta - delta_norm;
+            if (gain > best.predicted_gain) {
+                best.candidate = candidate_index;
+                best.predicted_gain = gain;
+            }
+        }
+        if (best.predicted_gain > 0.0) proposals.push_back(best);
+    }
+    std::sort(proposals.begin(), proposals.end(), [](const feedback_proposal & left,
+                                                     const feedback_proposal & right) {
+        return left.predicted_gain > right.predicted_gain;
+    });
+    for (const feedback_proposal & proposal : proposals) {
+        const uint32_t block = proposal.block;
+        const uint32_t row0 = (block / blocks_x) * format.block_height;
+        const uint32_t row_end = std::min(row0 + format.block_height, rows);
+        const uint32_t column0 = (block % blocks_x) * format.block_width;
+        const uint32_t column_end = std::min(column0 + format.block_width, columns);
+        double residual_dot_delta = 0.0;
+        double delta_norm = 0.0;
+        for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+            const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
+            for (uint32_t row = row0; row < row_end; ++row) {
+                double delta = 0.0;
+                for (uint32_t column = column0; column < column_end; ++column) {
+                    const size_t index = static_cast<size_t>(row) * columns + column;
+                    delta += (candidates[proposal.candidate].reconstructed[index] -
+                              result.reconstructed[index]) * input[column];
+                }
+                const size_t output_index = static_cast<size_t>(sample) * rows + row;
+                residual_dot_delta += residual[output_index] * delta;
+                delta_norm += delta * delta;
+            }
+        }
+        const double gain = 2.0 * residual_dot_delta - delta_norm;
+        if (gain <= 1e-18) continue;
+        for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+            const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
+            for (uint32_t row = row0; row < row_end; ++row) {
+                double delta = 0.0;
+                for (uint32_t column = column0; column < column_end; ++column) {
+                    const size_t index = static_cast<size_t>(row) * columns + column;
+                    delta += (candidates[proposal.candidate].reconstructed[index] -
+                              result.reconstructed[index]) * input[column];
+                }
+                residual[static_cast<size_t>(sample) * rows + row] -= delta;
+            }
+        }
+        result.selected_indices[block] = proposal.candidate;
+        apply_block_candidate(candidates[proposal.candidate], block, blocks_x, rows, columns,
+                              format, result.reconstructed, result.compressed);
+        ++result.forward_changes;
     }
     return true;
 }
@@ -813,11 +933,14 @@ bool run_coordinate_case(const std::vector<float> & weights,
     if (selector_compare) {
         coordinate_result local;
         coordinate_result feedback;
+        coordinate_result conflict_aware;
         coordinate_result coordinate;
         if (!local_select_astc_blocks(weights, candidates, rows, columns, format,
                                       calibration, local, &shortlists) ||
             !hessian_feedback_select_astc_blocks(weights, candidates, rows, columns, format,
                                                  calibration, feedback, &shortlists) ||
+            !conflict_aware_select_astc_blocks(weights, candidates, rows, columns, format,
+                                                calibration, conflict_aware, &shortlists) ||
             !coordinate_select_astc_blocks(weights, candidates, rows, columns, format,
                                            calibration, latents.decoder, coordinate, &shortlists)) {
             return false;
@@ -826,18 +949,37 @@ bool run_coordinate_case(const std::vector<float> & weights,
                                                            rows, columns, holdout);
         const double feedback_loss = activation_relative_mse(weights, feedback.reconstructed,
                                                               rows, columns, holdout);
+        const double conflict_loss = activation_relative_mse(weights, conflict_aware.reconstructed,
+                                                              rows, columns, holdout);
         const double coordinate_loss = activation_relative_mse(weights, coordinate.reconstructed,
                                                                rows, columns, holdout);
+        const double local_calibration = activation_relative_mse(weights, local.reconstructed,
+                                                                  rows, columns, calibration);
+        const double feedback_calibration = activation_relative_mse(weights, feedback.reconstructed,
+                                                                     rows, columns, calibration);
+        const double conflict_calibration = activation_relative_mse(weights, conflict_aware.reconstructed,
+                                                                      rows, columns, calibration);
+        const double coordinate_calibration = activation_relative_mse(weights, coordinate.reconstructed,
+                                                                       rows, columns, calibration);
         const double denominator = local_loss - coordinate_loss;
         const double recovered_gain = denominator > 0.0 ?
             (local_loss - feedback_loss) / denominator : NAN;
-        std::printf("latent-selector-compare format=%s pool=%zu local-holdout=%.8g "
-                    "coordinate-holdout=%.8g hessian-feedback-holdout=%.8g "
-                    "hessian-recovered-coordinate-gain=%.8g feedback-round-changes=%u\n",
-                    format.name, candidates.size(), local_loss, coordinate_loss, feedback_loss,
-                    recovered_gain, feedback.forward_changes);
+        const double conflict_denominator = local_loss - coordinate_loss;
+        const double conflict_gain = conflict_denominator > 0.0 ?
+            (local_loss - conflict_loss) / conflict_denominator : NAN;
+        std::printf("latent-selector-compare format=%s pool=%zu "
+                    "local-calibration=%.8g coordinate-calibration=%.8g "
+                    "hessian-feedback-calibration=%.8g conflict-aware-calibration=%.8g "
+                    "local-holdout=%.8g coordinate-holdout=%.8g "
+                    "hessian-feedback-holdout=%.8g conflict-aware-holdout=%.8g "
+                    "hessian-recovered-coordinate-gain=%.8g conflict-aware-recovered-coordinate-gain=%.8g "
+                    "feedback-round-changes=%u conflict-aware-accepted=%u\n",
+                    format.name, candidates.size(), local_calibration, coordinate_calibration,
+                    feedback_calibration, conflict_calibration, local_loss, coordinate_loss,
+                    feedback_loss, conflict_loss, recovered_gain, conflict_gain,
+                    feedback.forward_changes, conflict_aware.forward_changes);
         return std::isfinite(local_loss) && std::isfinite(feedback_loss) &&
-               std::isfinite(coordinate_loss);
+               std::isfinite(conflict_loss) && std::isfinite(coordinate_loss);
     }
     auto select = [&](const activations & inputs, double penalty, coordinate_result & result) {
         return coordinate_select_astc_blocks(weights, candidates, rows, columns, format, inputs,

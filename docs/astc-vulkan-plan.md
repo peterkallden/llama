@@ -269,6 +269,11 @@ dispatches; its timing data is still exploratory and not a performance claim.
      feedback implementation as a diagnostic baseline: it must not be called a
      Hessian win unless it improves holdout loss and reports positive recovered
      coordinate-descent gain.
+59g. Add a stability-gated fixed-pool selector using two equal calibration
+     shards. Normalize each shard gain by its residual energy and accept a
+     proposal only when the lower shard gain remains positive. Compare it with
+     local, coordinate, feedback, and conflict-aware results before collecting
+     larger traces.
 60. Add a two-sided objective only after input-only shaping is stable. Capture
     output sensitivity separately and evaluate `tr(H_O E H_I E^T)` first with
     a diagonal `H_O`, then a bounded Kronecker-factored approximation. A plain

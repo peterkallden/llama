@@ -2020,6 +2020,31 @@ three-way harness and show that a shared residual with simultaneous updates is
 not yet a reliable curvature model. The next implementation should add
 damping or conflict-aware acceptance and retain this negative-control result.
 
+## Eighty-third sweep: conflict-aware acceptance
+
+The PoC now also performs a parallel-proposal/sequential-accept pass. Each
+block proposes its best candidate from the frozen residual, proposals are
+ordered by predicted gain, and each proposal is re-evaluated against the
+residual after earlier commits. This preserves parallel candidate scoring while
+rejecting simultaneous overshoot.
+
+On the synthetic 8x32 4x4 fixture, conflict-aware selection reached
+`4.3416e-5` holdout relative MSE versus `7.0236e-5` local and `4.5552e-5`
+coordinate descent, recovering `1.087` of the coordinate gain. On the bounded
+SmolLM2 probe it improved calibration consistently, but did not beat local on
+holdout:
+
+| Footprint | Local calibration | Conflict calibration | Local holdout | Conflict holdout |
+| --- | ---: | ---: | ---: | ---: |
+| 4x4 | 0.03015 | 0.02470 | 0.03032 | 0.03100 |
+| 5x5 | 0.15952 | 0.11950 | 0.14044 | 0.16254 |
+| 6x6 | 0.38280 | 0.30295 | 0.35711 | 0.35839 |
+
+The result isolates the remaining issue: conflict handling fixes calibration
+overshoot, but the selected directions can still be calibration-specific. The
+next sweep therefore adds two-shard stability gating with no new candidate
+pool.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact
