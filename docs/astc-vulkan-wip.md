@@ -391,6 +391,15 @@ bytes; 4x4 global mapping remained best at 0.23307591 versus 0.23746265 for
 block-affine. This makes affine calibration a plausible 6x6 option, but its
 metadata must be included in any bandwidth or capacity comparison.
 
+The twenty-seventh sweep tested separate affine `scale/offset` pairs for each
+of the four logical channels inside a block. It did not win the neural
+objective on either fixture. The small fixture's best per-channel candidate
+reached 0.11736877 (4x4) and 0.24216012 (6x6), versus 0.09723277 and 0.23868437
+for the best global/shared-affine candidates, while adding 32 bytes per block
+instead of 8. The large fixture likewise selected shared/global mappings. The
+per-channel mode remains useful as a documented negative control, but is not a
+recommended representation.
+
 The twenty-first sweep added a conservative block-tail term to the candidate
 objective:
 `MSE + activation_MSE + 0.25 * max_block_MSE`. The coefficient is intentionally

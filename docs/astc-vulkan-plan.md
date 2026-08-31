@@ -90,6 +90,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
     samples with different norms are comparable during candidate search.
 19. [x] Evaluate per-block affine scale/offset reconstruction and report its
     metadata overhead separately from compressed ASTC bytes.
+20. [x] Evaluate per-channel block affine calibration; retain it only as a
+    measured negative candidate because of its quality/metadata tradeoff.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

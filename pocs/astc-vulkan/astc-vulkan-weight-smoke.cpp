@@ -30,11 +30,13 @@ struct encoder_quality {
 struct mapping_mode {
     const char * name;
     bool block_affine;
+    bool per_channel;
 };
 
-const std::array<mapping_mode, 2> kMappingModes{{
-    { "global", false },
-    { "block-affine", true },
+const std::array<mapping_mode, 3> kMappingModes{{
+    { "global", false, false },
+    { "block-affine", true, false },
+    { "block-affine-channel", true, true },
 }};
 
 const std::array<encoder_quality, 3> kEncoderQualities{{
@@ -142,8 +144,9 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
     for (size_t encoded_index = 0; encoded_index < texel_order.size(); ++encoded_index) {
         inverse_texel_order[texel_order[encoded_index]] = static_cast<uint32_t>(encoded_index);
     }
-    std::vector<float> block_scale(static_cast<size_t>(blocks_x) * blocks_y, kWeightScale);
-    std::vector<float> block_offset(block_scale.size(), kWeightMin);
+    const size_t block_count = static_cast<size_t>(blocks_x) * blocks_y;
+    std::vector<float> block_scale(block_count * 4, kWeightScale);
+    std::vector<float> block_offset(block_count * 4, kWeightMin);
     if (mapping.block_affine) {
         std::vector<float> block_min(block_scale.size(), kWeightScale);
         std::vector<float> block_max(block_scale.size(), kWeightMin);
@@ -155,16 +158,28 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
                 const uint32_t encoded_y = encoded_texel / width;
                 const size_t block_index = static_cast<size_t>(encoded_y / format.block_height) * blocks_x +
                     encoded_x / format.block_width;
+                const size_t channel_index = mapping.per_channel ? column % 4 : 0;
+                const size_t map_index = block_index * 4 + channel_index;
                 const float weight = weights[static_cast<size_t>(row) * layout.columns + column];
-                block_min[block_index] = std::min(block_min[block_index], weight);
-                block_max[block_index] = std::max(block_max[block_index], weight);
+                block_min[map_index] = std::min(block_min[map_index], weight);
+                block_max[map_index] = std::max(block_max[map_index], weight);
             }
         }
-        for (size_t i = 0; i < block_scale.size(); ++i) {
-            block_offset[i] = block_min[i];
-            block_scale[i] = std::max(block_max[i] - block_min[i], 1e-6f);
+        for (size_t block_index = 0; block_index < block_count; ++block_index) {
+            const float shared_offset = block_min[block_index * 4];
+            const float shared_scale = block_max[block_index * 4] - shared_offset;
+            for (size_t channel = 0; channel < 4; ++channel) {
+                const size_t map_index = block_index * 4 + channel;
+                if (mapping.per_channel) {
+                    block_offset[map_index] = block_min[map_index];
+                    block_scale[map_index] = std::max(block_max[map_index] - block_min[map_index], 1e-6f);
+                } else {
+                    block_offset[map_index] = shared_offset;
+                    block_scale[map_index] = std::max(shared_scale, 1e-6f);
+                }
+            }
         }
-        result.metadata_bytes = block_scale.size() * sizeof(float) * 2;
+        result.metadata_bytes = block_count * (mapping.per_channel ? 4 : 1) * sizeof(float) * 2;
     }
     std::vector<float> texels(texel_components);
     for (uint32_t encoded_row = 0; encoded_row < layout.rows; ++encoded_row) {
@@ -180,8 +195,10 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
                 encoded_texel / format.block_width;
             for (uint32_t channel = 0; channel < 4; ++channel) {
                 const float weight = weights[weight_offset + channel_order[channel]];
+                const size_t channel_index = mapping.per_channel ? channel_order[channel] : 0;
+                const size_t map_index = block_index * 4 + channel_index;
                 texels[texel_offset + channel] = mapping.block_affine ?
-                    (weight - block_offset[block_index]) / block_scale[block_index] :
+                    (weight - block_offset[map_index]) / block_scale[map_index] :
                     (weight - kWeightMin) / kWeightScale;
             }
         }
@@ -236,8 +253,10 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
             const uint32_t encoded_y = encoded_texel / width;
             const size_t block_index = static_cast<size_t>(encoded_y / format.block_height) * blocks_x +
                 encoded_x / format.block_width;
+            const size_t channel_index = mapping.per_channel ? logical_channel : 0;
+            const size_t map_index = block_index * 4 + channel_index;
             const float reconstructed = mapping.block_affine ?
-                decoded[texel_index] * block_scale[block_index] + block_offset[block_index] :
+                decoded[texel_index] * block_scale[map_index] + block_offset[map_index] :
                 decoded[texel_index] * kWeightScale + kWeightMin;
             reconstructed_weights[weight_index] = reconstructed;
             const float error = std::fabs(weights[weight_index] - reconstructed);
