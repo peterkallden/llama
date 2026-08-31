@@ -2711,3 +2711,12 @@ All three passed. The workload is deliberately small and correctness-first;
 the timestamps include neither realistic batching nor comparison with ggml's
 FP16/Q4 kernels. The next performance gate is a larger row count with repeated
 dispatches and an explicitly matched buffer-backed control.
+
+## One-hundred-fourteenth sweep: complete Vulkan CTest pass
+
+After building the previously missing CPU/PoC targets in the Vulkan build tree,
+the complete ASTC test selection passed 28/28. This includes the contract,
+encoder, TQ/weight, latent-selector, input-trace, ASTC capability, image
+resource, shader compilation, and six device shader-access tests. The suite
+does not change the production Vulkan backend; it exercises the isolated PoC
+targets and the existing generic Vulkan test infrastructure.

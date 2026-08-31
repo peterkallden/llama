@@ -755,16 +755,12 @@ columns, a 32-row 6x6 crop measured 4.000 b/w because of edge blocks, while a
 128-row crop measured 3.6667 b/w and approached the 3.5556 b/w asymptote. Use
 tall/full-height tiles for rate studies and keep short crops only for functional
 contracts.
-tall/full-height tiles for rate studies and keep short crops only for functional
-contracts.
 
 The local Vulkan inventory now identifies Intel UHD 620 as the only enumerated
 device advertising ASTC LDR. This can serve as a first device-backed sampler
 check, but it must be reported separately from the intended ARM/Mali target.
-The remaining build dependency is the Ubuntu `spirv-headers` development
-package; install it before enabling the Vulkan shader/device test gate.
 
-That dependency is now installed and the isolated Vulkan build is green. Intel
+The isolated Vulkan build is green. Intel
 UHD 620 passes ASTC 4x4/5x5/6x6 capability, image, and shader-device tests;
 NVIDIA 920MX and llvmpipe are recorded as unsupported for sampled ASTC. A
 32x1,536 scalar ASTC payload also passes the GPU matvec contract on Intel. The
