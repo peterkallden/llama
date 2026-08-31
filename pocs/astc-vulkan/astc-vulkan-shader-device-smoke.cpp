@@ -158,8 +158,10 @@ int main(int argc, char ** argv) {
     std::string pattern_name = "sequential";
     bool benchmark = false;
     bool matvec = false;
+    bool buffer_matvec = false;
     std::string payload_path;
     std::string reference_path;
+    std::string weights_path;
     uint32_t supplied_width = 0;
     uint32_t supplied_height = 0;
     float scale_l = 1.0f;
@@ -171,12 +173,14 @@ int main(int argc, char ** argv) {
         const std::string option = argv[index++];
         if (option == "--benchmark") benchmark = true;
         else if (option == "--matvec") matvec = true;
-        else if ((option == "--payload" || option == "--reference" ||
+        else if (option == "--buffer-matvec") { matvec = true; buffer_matvec = true; }
+        else if ((option == "--payload" || option == "--reference" || option == "--weights" ||
                   option == "--width" || option == "--height" || option == "--scale-l" ||
                   option == "--scale-a" || option == "--offset") && index < argc) {
             const std::string value = argv[index++];
             if (option == "--payload") payload_path = value;
             else if (option == "--reference") reference_path = value;
+            else if (option == "--weights") weights_path = value;
             else if (option == "--width") supplied_width = static_cast<uint32_t>(std::stoul(value));
             else if (option == "--height") supplied_height = static_cast<uint32_t>(std::stoul(value));
             else if (option == "--scale-l") scale_l = std::stof(value);
@@ -189,14 +193,17 @@ int main(int argc, char ** argv) {
     }
     if (argc < 3 || (format_name != "4x4" && format_name != "5x5" && format_name != "6x6") ||
         (pattern_name != "sequential" && pattern_name != "nonlocal") ||
-        (payload_path.empty() != reference_path.empty()) ||
-        (!payload_path.empty() && (supplied_width == 0 || supplied_height == 0)) ||
-        (matvec && (payload_path.empty() || benchmark || pattern_name != "sequential"))) {
+        ((!buffer_matvec && (payload_path.empty() != reference_path.empty())) ||
+         (buffer_matvec && reference_path.empty())) ||
+        (!buffer_matvec && !weights_path.empty()) ||
+        ((!payload_path.empty() || buffer_matvec) && (supplied_width == 0 || supplied_height == 0)) ||
+        (matvec && ((!buffer_matvec && payload_path.empty()) || pattern_name != "sequential"))) {
         std::fprintf(stderr,
                      "usage: %s <validation.spv> <4x4|5x5|6x6> "
                      "[sequential|nonlocal] [--benchmark] "
                      "[--payload astc.bin --reference decoded-rgba-f32.bin --width N --height N] "
-                     "[--matvec --scale-l S --scale-a S --offset B]\n",
+                     "[--matvec|--buffer-matvec --weights weights-f32.bin "
+                     "--scale-l S --scale-a S --offset B]\n",
                      argv[0]);
         return 2;
     }
@@ -282,12 +289,14 @@ int main(int argc, char ** argv) {
         format_name == "4x4" ? ggml_vk_astc_4x4_unorm_rgba :
         format_name == "5x5" ? ggml_vk_astc_5x5_unorm_rgba : ggml_vk_astc_6x6_unorm_rgba,
         width, height);
-    const VkDeviceSize staging_bytes = block_count * kAstcBlockBytes;
+    VkDeviceSize staging_bytes = block_count * kAstcBlockBytes;
     const uint32_t dispatch_repeats = benchmark ? kBenchmarkDispatchRepeats : 1;
     const std::vector<uint8_t> payload = payload_path.empty() ? std::vector<uint8_t>() :
                                          read_binary<uint8_t>(payload_path);
     const std::vector<float> expected_values = reference_path.empty() ? std::vector<float>() :
                                                read_binary<float>(reference_path);
+    const std::vector<float> source_weights = weights_path.empty() ? std::vector<float>() :
+                                              read_binary<float>(weights_path);
     if ((!payload_path.empty() && payload.size() != staging_bytes) ||
         (!reference_path.empty() && expected_values.size() != static_cast<size_t>(width) * height * 4)) {
         std::fprintf(stderr, "ASTC shader smoke payload/reference dimensions do not match image extent\n");
@@ -295,8 +304,15 @@ int main(int argc, char ** argv) {
         vkDestroyInstance(instance, nullptr);
         return 2;
     }
+    if (!source_weights.empty() && source_weights.size() != static_cast<size_t>(width) * height) {
+        std::fprintf(stderr, "ASTC shader smoke source weight dimensions do not match image extent\n");
+        vkDestroyDevice(device, nullptr);
+        vkDestroyInstance(instance, nullptr);
+        return 2;
+    }
     image_resources image;
-    bool success = create_image(physical_device, device, format, width, height, image);
+    bool success = buffer_matvec || create_image(physical_device, device, format, width, height, image);
+    if (buffer_matvec) staging_bytes = static_cast<VkDeviceSize>(width) * height * sizeof(float);
     VkBuffer staging_buffer = VK_NULL_HANDLE;
     VkDeviceMemory staging_memory = VK_NULL_HANDLE;
     VkBuffer output_buffer = VK_NULL_HANDLE;
@@ -314,7 +330,8 @@ int main(int argc, char ** argv) {
         if (!success) break;
         const VkBufferCreateInfo staging_info{
             VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, staging_bytes,
-            VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_SHARING_MODE_EXCLUSIVE, 0, nullptr,
+            (buffer_matvec ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
+            VK_SHARING_MODE_EXCLUSIVE, 0, nullptr,
         };
         if (vkCreateBuffer(device, &staging_info, nullptr, &staging_buffer) != VK_SUCCESS) break;
         VkMemoryRequirements staging_requirements{};
@@ -330,7 +347,22 @@ int main(int argc, char ** argv) {
             vkBindBufferMemory(device, staging_buffer, staging_memory, 0) != VK_SUCCESS) break;
         void * mapped = nullptr;
         if (vkMapMemory(device, staging_memory, 0, staging_bytes, 0, &mapped) != VK_SUCCESS) break;
-        if (payload.empty()) {
+        if (buffer_matvec) {
+            float * weights = static_cast<float *>(mapped);
+            if (!source_weights.empty()) {
+                std::memcpy(weights, source_weights.data(), source_weights.size() * sizeof(float));
+            } else {
+                for (uint32_t row = 0; row < height; ++row) {
+                    for (uint32_t column = 0; column < width; ++column) {
+                        const size_t texel = (static_cast<size_t>(row) * width + column) * 4;
+                        const float l = (expected_values[texel] + expected_values[texel + 1] +
+                                         expected_values[texel + 2]) / 3.0f;
+                        weights[static_cast<size_t>(row) * width + column] =
+                            scale_l * l + scale_a * expected_values[texel + 3] + offset;
+                    }
+                }
+            }
+        } else if (payload.empty()) {
             for (uint64_t block = 0; block < block_count; ++block) {
                 std::memcpy(static_cast<unsigned char *>(mapped) + block * kAstcBlockBytes,
                             kConstantHalfBlock, kAstcBlockBytes);
@@ -359,19 +391,23 @@ int main(int argc, char ** argv) {
             vkBindBufferMemory(device, output_buffer, output_memory, 0) != VK_SUCCESS) break;
 
         const VkDescriptorSetLayoutBinding bindings[2] = {
-            { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr },
+            { 0, buffer_matvec ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr },
             { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr },
         };
         const VkDescriptorSetLayoutCreateInfo descriptor_info{
             VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 2, bindings,
         };
         if (vkCreateDescriptorSetLayout(device, &descriptor_info, nullptr, &descriptor_layout) != VK_SUCCESS) break;
-        const VkDescriptorPoolSize pool_sizes[2] = {
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 },
-        };
+        VkDescriptorPoolSize pool_sizes[2]{};
+        uint32_t pool_size_count = 0;
+        if (buffer_matvec) {
+            pool_sizes[pool_size_count++] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 };
+        } else {
+            pool_sizes[pool_size_count++] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+            pool_sizes[pool_size_count++] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 };
+        }
         const VkDescriptorPoolCreateInfo pool_info{
-            VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 2, pool_sizes,
+            VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, pool_size_count, pool_sizes,
         };
         if (vkCreateDescriptorPool(device, &pool_info, nullptr, &descriptor_pool) != VK_SUCCESS) break;
         const VkDescriptorSetAllocateInfo set_info{
@@ -381,10 +417,12 @@ int main(int argc, char ** argv) {
         if (vkAllocateDescriptorSets(device, &set_info, &descriptor_set) != VK_SUCCESS) break;
         const VkDescriptorImageInfo image_descriptor{ image.sampler, image.view,
                                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        const VkDescriptorBufferInfo weight_descriptor{ staging_buffer, 0, staging_bytes };
         const VkDescriptorBufferInfo buffer_descriptor{ output_buffer, 0, output_bytes };
         const VkWriteDescriptorSet writes[2] = {
             { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set, 0, 0, 1,
-              VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &image_descriptor, nullptr, nullptr },
+              buffer_matvec ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+              buffer_matvec ? nullptr : &image_descriptor, buffer_matvec ? &weight_descriptor : nullptr, nullptr },
             { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set, 1, 0, 1,
               VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buffer_descriptor, nullptr },
         };
@@ -444,12 +482,12 @@ int main(int argc, char ** argv) {
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_QUEUE_FAMILY_IGNORED,
             VK_QUEUE_FAMILY_IGNORED, image.image, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
         };
-        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        if (!buffer_matvec) vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_transfer);
         const VkBufferImageCopy copy_region{
             0, 0, 0, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, { 0, 0, 0 }, { width, height, 1 },
         };
-        vkCmdCopyBufferToImage(command_buffer, staging_buffer, image.image,
+        if (!buffer_matvec) vkCmdCopyBufferToImage(command_buffer, staging_buffer, image.image,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
         const VkImageMemoryBarrier to_shader{
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr,
@@ -458,7 +496,7 @@ int main(int argc, char ** argv) {
             VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, image.image,
             { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
         };
-        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        if (!buffer_matvec) vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_shader);
         if (query_pool != VK_NULL_HANDLE) {
             vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -538,8 +576,10 @@ int main(int argc, char ** argv) {
                 vkGetPhysicalDeviceProperties(physical_device, &properties);
                 const double elapsed_ns = static_cast<double>(timestamps[1] - timestamps[0]) *
                                            properties.limits.timestampPeriod;
-                std::printf("ASTC %s %s shader timestamp %.3f ns\n",
-                            format_name.c_str(), pattern_name.c_str(), elapsed_ns);
+                const double per_dispatch_ns = elapsed_ns / dispatch_repeats;
+                std::printf("%s %s %s shader timestamp %.3f ns (%u dispatches)\n",
+                            buffer_matvec ? "buffer" : "ASTC", format_name.c_str(),
+                            pattern_name.c_str(), per_dispatch_ns, dispatch_repeats);
             }
         }
     } while (false);
@@ -561,11 +601,11 @@ int main(int argc, char ** argv) {
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
     if (!success) {
-        std::fprintf(stderr, "ASTC %s %s shader smoke failed\n",
-                     format_name.c_str(), pattern_name.c_str());
+        std::fprintf(stderr, "%s %s %s shader smoke failed\n",
+                     buffer_matvec ? "buffer" : "ASTC", format_name.c_str(), pattern_name.c_str());
         return 1;
     }
-    std::printf("ASTC %s %s shader fetch smoke passed\n",
-                format_name.c_str(), pattern_name.c_str());
+    std::printf("%s %s %s shader fetch smoke passed\n",
+                buffer_matvec ? "buffer" : "ASTC", format_name.c_str(), pattern_name.c_str());
     return 0;
 }

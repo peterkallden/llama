@@ -1582,3 +1582,60 @@ implement ASTC emulation on hardware that lacks it, and a future benchmark must
 record adapter PCI ID, driver, environment, and format features. The generic
 runtime contract remains: unsupported or emulated configurations may validate
 correctness but cannot substantiate the compressed-bandwidth hypothesis.
+
+## Sixty-eighth sweep: FP32 buffer control and first apples-to-apples timing
+
+The host-side shader smoke now has an explicitly isolated `--buffer-matvec`
+control. It binds the same output SSBO, uses the same 64-invocation workgroup,
+activation function, shared-memory reduction, push constants, and dispatch
+geometry as `astc-matvec.comp`. The only intentional difference is the weight
+source: the control reads one FP32 value per matrix element from a storage
+buffer, while the ASTC path performs `texelFetch` followed by the fixed L+A
+reconstruction in the shader. No `ggml-vulkan` source or production Vulkan
+pipeline is changed.
+
+The control accepts an optional `--weights weights-f32.bin` file, so a future
+run can use the exact FP16-derived source matrix. Until that artifact is
+available, the smoke can derive FP32 control weights from the same decoded RGBA
+reference and affine constants used by the ASTC run. That current mode is a
+transport/decode control, not an original-FP16 quality comparison; the source
+matrix provenance is therefore recorded explicitly rather than inferred.
+
+On the Intel UHD Graphics 620 (Kaby Lake, ANV/Mesa 26.0.8), the bounded
+SmolLM2 F16-derived 32x64 probe was run with 20 in-command-buffer dispatches
+and the reported timestamp divided by 20:
+
+| Path | Footprint argument | Per-dispatch GPU timestamp |
+|---|---:|---:|
+| FP32 storage-buffer control | 4x4 | ~2.88 us |
+| ASTC sampled image | 4x4 | ~2.36 us |
+| ASTC sampled image | 5x5 | ~2.46 us |
+| ASTC sampled image | 6x6 | ~2.40 us |
+
+The small workload and shared shader reduction make these numbers sensitive to
+driver scheduling and timestamp granularity. They are a mechanism signal only:
+ASTC was not slower than the buffer control in this run, but this is not yet a
+bandwidth claim, a model-quality result, or an end-to-end inference speedup.
+The next measurement must use a larger representative matrix (or a tiled test
+fixture), preserve the exact FP16 source for both paths, include upload/cache
+effects separately from steady-state sampling, and repeat across adapters with
+native versus emulated ASTC identified.
+
+The existing 4x4/5x5/6x6 ASTC validation CTests remain unchanged and pass. The
+buffer path is deliberately a manual/experimental control at this stage because
+its model-derived binary fixtures are not checked into the repository.
+
+## Current execution plan after the buffer control
+
+1. [x] Keep ASTC matvec and FP32 buffer control in separate experimental
+   shaders and verify both with the same CPU reconstruction oracle.
+2. [x] Add repeated GPU timestamping and report per-dispatch values for 4x4,
+   5x5, and 6x6.
+3. [ ] Export one exact FP32/F16-derived source matrix and matching ASTC
+   payload/reference fixtures from the same tensor; run both paths over a
+   larger matrix and a larger batch of rows.
+4. [ ] Add an explicit Q4/TQ2 buffer control with named shaders and preserved
+   CTests, then compare quality, bytes/weight, and GPU time against ASTC.
+5. [ ] Only after the controls are stable, prototype activation-aware
+   candidate ranking and re-run the earlier 4x4/5x5/6x6, TQ1/TQ2, scalar,
+   and ASTC-Q evaluations from the same source artifacts.
