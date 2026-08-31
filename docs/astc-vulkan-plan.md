@@ -56,12 +56,16 @@ dispatches; its timing data is still exploratory and not a performance claim.
    add it to the public GGUF specification.
 2. [x] Add a host-only baseline encoder adapter that exercises 4x4 and 6x6
    through the external astcenc library.
-3. Implement 4x4 and 6x6 tensor packing paths.
-4. Encode static weight blocks offline and preserve any scale, offset, outlier,
+3. [x] Add a host-only tensor-to-RGBA staging and roundtrip smoke for 4x4 and
+   6x6 using the same external encoder boundary.
+4. Implement 4x4 and 6x6 tensor packing paths.
+5. Encode static weight blocks offline and preserve any scale, offset, outlier,
    or layout metadata needed by the shader in a companion buffer.
-5. Evaluate elementwise error, dot-product error, and error distribution per
-   block versus FP16/FP32 and an existing low-bit reference.
-6. Iterate on channel assignment and tensor permutation only when it improves
+6. [x] Collect an initial elementwise and dot-product error measurement against
+   the uncompressed host tensor.
+7. Evaluate error distribution per block versus FP16/FP32 and an existing
+   low-bit reference.
+8. Iterate on channel assignment and tensor permutation only when it improves
    the measured objective.
 
 The packer must optimize a numerical objective. A generic image compressor is

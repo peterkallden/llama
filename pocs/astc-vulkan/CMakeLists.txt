@@ -43,6 +43,13 @@ if (TARGET astcenc::astcenc-static)
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_link_libraries(astc-vulkan-astcenc-smoke PRIVATE astcenc::astcenc-static)
     target_compile_features(astc-vulkan-astcenc-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-weight-smoke
+        astc-vulkan-weight-smoke.cpp)
+    target_include_directories(astc-vulkan-weight-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-weight-smoke PRIVATE astcenc::astcenc-static)
+    target_compile_features(astc-vulkan-weight-smoke PRIVATE cxx_std_17)
 endif()
 
 find_program(ASTC_VULKAN_GLSLC glslc)
@@ -88,6 +95,9 @@ if (BUILD_TESTING)
         add_test(NAME astc-vulkan-astcenc-smoke
             COMMAND astc-vulkan-astcenc-smoke)
         set_property(TEST astc-vulkan-astcenc-smoke PROPERTY LABELS astc)
+        add_test(NAME astc-vulkan-weight-smoke
+            COMMAND astc-vulkan-weight-smoke)
+        set_property(TEST astc-vulkan-weight-smoke PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-capability-probe)

@@ -232,6 +232,30 @@ these values are not acceptable neural-weight quality limits yet. The Vulkan
 path remains independent: this is an offline baseline adapter, not yet a
 neural-weight-aware packer or a GGUF format change.
 
+The fourteenth sweep added a tensor roundtrip smoke. A deterministic 12x48
+weight matrix is packed as four normalized scalar channels per texel, encoded
+with ASTC 4x4 and 6x6, decoded on the CPU, mapped back through the affine
+weight scale, and evaluated with a fixed activation vector. The test reports
+element MSE/max error and dot-product error for both formats. This is the first
+weight-oriented numerical contract; it still uses a generic image encoder and
+does not claim production quantization quality.
+
+The first weight-oriented run is intentionally a negative result. The generic
+image encoder produced the following metrics after mapping the decoded UNORM
+values back to the original [-1, 1] weight range:
+
+| Format | Compressed bytes | MSE | Max error | Dot-product error |
+|---|---:|---:|---:|---:|
+| 4x4 | 144 | 0.03747012 | 0.696776 | 0.133961 |
+| 6x6 | 64 | 0.09105601 | 0.970683 | 0.377323 |
+
+The roundtrip is technically valid, but these errors are far beyond an
+inference-quality target. The likely cause is that image-oriented ASTC shares
+endpoints and interpolation weights across spatial neighborhoods, while the
+current row-major matrix mapping has no corresponding spatial correlation. This
+rules out treating a generic image encode as a usable weight packer. The
+adapter is retained as a baseline and regression fixture only.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -246,12 +270,12 @@ After each implementation sweep:
 
 ## Next sweep
 
-1. Expand the benchmark matrix and repeat count enough to report stable
+1. Test block-local tensor permutations and channel assignments against the
+   elementwise and dot-product objective.
+2. Expand the benchmark matrix and repeat count enough to report stable
    distributions across image sizes and workgroup shapes.
-2. Start the offline packer prototype using an external ASTC encoder boundary;
-   keep encoder availability separate from Vulkan runtime tests.
-3. Revisit the plan after numerical and bandwidth evidence, before changing any
-   ggml tensor path.
+3. Keep encoder availability separate from Vulkan runtime tests and do not alter
+   any ggml tensor path until weight errors are materially reduced.
 
 ## Open questions
 
