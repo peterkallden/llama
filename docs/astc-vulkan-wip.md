@@ -2291,6 +2291,15 @@ and average candidate coverage. On the synthetic 6x6 fixture coverage was
 observed selector ordering. This removes a misleading global-pool degree of
 freedom and makes subsequent Block-LDLQ/stability results easier to interpret.
 
+### Design decision: variable block coding remains allowed
+
+The experiment does not assume one identical coding decision for every block
+or even every tensor. ASTC already permits per-block modes, partitions,
+quantization levels, and dual-plane choices, and the offline selector may
+choose among them. We will initially keep one footprint per tensor to retain a
+simple runtime layout; mixed 4x4/5x5/6x6 footprints inside one tensor remain a
+later optimization requiring explicit metadata and address handling.
+
 ## Ninety-third sweep: calibration-size ablation with fixed holdout
 
 The harness now accepts `--max-calibration-samples` separately from
@@ -2320,3 +2329,13 @@ dominant variables remain calibration geometry, block order, and which legal
 candidate directions are retained. Damping stays configurable for future
 larger-trace and ill-conditioned cases, but is not the next optimization
 target.
+
+## Ninety-fifth sweep: Block-LDLQ order ablation
+
+Block-LDLQ now exposes `--ldlq-order forward|reverse`. On the SmolLM2
+`attn_q` 6x6 pool, forward order retained the earlier `0.34428` holdout
+result, while reverse order produced `0.36614`, equal to local ranking. This
+confirms that target regeneration is directional: it shifts information to
+future blocks and cannot be treated as an order-independent score. A future
+Hessian-pivoted or head-aware order is therefore more promising than further
+damping tuning.

@@ -630,11 +630,27 @@ next selector experiments can therefore be interpreted as genuine block-local
 comparisons. Keep the baseline streams available as escape candidates and
 reject any block with insufficient legal coverage from quality claims.
 
+### Variable coding policy
+
+The design remains open to variable coding. We are not required to encode an
+entire layer with one identical representation: each ASTC block may choose a
+different legal mode, partition, dual-plane state, candidate, or selector
+result. The initial runtime contract stays simpler by using one footprint per
+tensor and a uniform sampled-image layout. Mixed footprints within one tensor
+are deferred because they require additional metadata and address/decode
+handling. This is a deferred optimization, not an architectural restriction.
+
 Calibration-size ablation is now a required reporting dimension. Use
 `--max-calibration-samples` while keeping the holdout trace fixed, and report
 both sample count and shard composition. Do not tune damping, block order, or
 format choice against a reduced holdout; reduced traces are mechanism probes
 only.
+
+Block order is now a measured algorithmic parameter. Forward order is the
+reference because target regeneration is directional; reverse order is kept
+as a negative control. The next implementation should derive a bounded
+Hessian-pivoted order offline and compare it against forward order without
+changing the runtime texture layout.
 
 The damping ablation did not change the current 6x6 decisions across
 `1e-5`--`1e-3`. Keep the parameter exposed for future ill-conditioned traces,

@@ -20,6 +20,7 @@ constexpr uint32_t kColumns = 256;
 constexpr uint32_t kDefaultCoarseLevels = 16;
 float g_astc_preset = ASTCENC_PRE_THOROUGH;
 double g_block_ldlq_damping = 1e-4;
+bool g_block_ldlq_reverse_order = false;
 
 struct affine_decoder {
     double scale_l = 0.0;
@@ -416,7 +417,8 @@ bool local_select_astc_blocks(const std::vector<float> & reference,
     result.reconstructed = candidates.front().reconstructed;
     result.compressed = candidates.front().compressed;
     result.selected_indices.assign(block_count, 0);
-    for (uint32_t block = 0; block < block_count; ++block) {
+    for (uint32_t ordinal = 0; ordinal < block_count; ++ordinal) {
+        const uint32_t block = g_block_ldlq_reverse_order ? block_count - ordinal - 1 : ordinal;
         const std::vector<uint32_t> fallback = [&]() {
             std::vector<uint32_t> all(candidates.size());
             for (uint32_t index = 0; index < candidates.size(); ++index) all[index] = index;
@@ -1053,8 +1055,7 @@ bool block_ldlq_select_astc_blocks(const std::vector<float> & reference,
                     chosen.reconstructed[static_cast<size_t>(row) * columns + column] -
                     reference[static_cast<size_t>(row) * columns + column];
             }
-            for (uint32_t future_column0 = column_end; future_column0 < columns;
-                 future_column0 += format.block_width) {
+            const auto update_future_block = [&](uint32_t future_column0) {
                 const uint32_t future_count = std::min(format.block_width, columns - future_column0);
                 std::vector<double> rhs(future_count, 0.0);
                 for (uint32_t future = 0; future < future_count; ++future) {
@@ -1067,6 +1068,20 @@ bool block_ldlq_select_astc_blocks(const std::vector<float> & reference,
                 if (!solve_damped_block(future_column0, future_count, rhs, update)) return false;
                 for (uint32_t future = 0; future < future_count; ++future) {
                     target[static_cast<size_t>(row) * columns + future_column0 + future] -= update[future];
+                }
+                return true;
+            };
+            if (!g_block_ldlq_reverse_order) {
+                for (uint32_t future_column0 = column_end; future_column0 < columns;
+                     future_column0 += format.block_width) {
+                    if (!update_future_block(future_column0)) return false;
+                }
+            } else if (column0 != 0) {
+                uint32_t future_column0 = ((column0 - 1) / format.block_width) * format.block_width;
+                while (true) {
+                    if (!update_future_block(future_column0)) return false;
+                    if (future_column0 == 0) break;
+                    future_column0 -= format.block_width;
                 }
             }
         }
@@ -1522,7 +1537,7 @@ bool run_coordinate_case(const std::vector<float> & weights,
                     "hessian-feedback-calibration=%.8g conflict-aware-calibration=%.8g "
                     "stability-calibration=%.8g "
                     "local-holdout=%.8g coordinate-holdout=%.8g block-ldlq-holdout=%.8g "
-                    "block-ldlq-changes=%u "
+                    "block-ldlq-changes=%u block-ldlq-order=%s "
                     "hessian-feedback-holdout=%.8g conflict-aware-holdout=%.8g stability-holdout=%.8g "
                     "hessian-recovered-coordinate-gain=%.8g conflict-aware-recovered-coordinate-gain=%.8g "
                     "stability-recovered-coordinate-gain=%.8g feedback-round-changes=%u "
@@ -1531,7 +1546,9 @@ bool run_coordinate_case(const std::vector<float> & weights,
                     "local-unique-choices=%zu conflict-unique-choices=%zu stability-unique-choices=%zu\n",
                     format.name, candidates.size(), local_calibration, coordinate_calibration,
                     ldlq_calibration, feedback_calibration, conflict_calibration, stability_calibration, local_loss,
-                    coordinate_loss, ldlq_loss, ldlq.forward_changes, feedback_loss, conflict_loss, stability_loss, recovered_gain,
+                    coordinate_loss, ldlq_loss, ldlq.forward_changes,
+                    g_block_ldlq_reverse_order ? "reverse" : "forward",
+                    feedback_loss, conflict_loss, stability_loss, recovered_gain,
                     conflict_gain, stability_gain, feedback.forward_changes,
                     conflict_aware.forward_changes, stability.forward_changes,
                     minimum_coverage == std::numeric_limits<size_t>::max() ? 0 : minimum_coverage,
@@ -1660,6 +1677,14 @@ int main(int argc, char ** argv) {
             maximum_calibration_samples = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if (option == "--ldlq-damping" && index + 1 < argc) {
             g_block_ldlq_damping = std::stod(argv[++index]);
+        } else if (option == "--ldlq-order" && index + 1 < argc) {
+            const std::string order = argv[++index];
+            if (order == "forward") g_block_ldlq_reverse_order = false;
+            else if (order == "reverse") g_block_ldlq_reverse_order = true;
+            else {
+                std::fprintf(stderr, "unsupported --ldlq-order value: %s\n", order.c_str());
+                return 2;
+            }
         } else if (option == "--max-rows" && index + 1 < argc) {
             maximum_rows = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if (option == "--max-columns" && index + 1 < argc) {
@@ -1684,7 +1709,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-mode scalar|additive]\n",
                          argv[0]);
             return 2;
