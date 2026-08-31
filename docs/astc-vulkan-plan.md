@@ -108,9 +108,12 @@ dispatches; its timing data is still exploratory and not a performance claim.
 24. [x] Evaluate a sparse residual/outlier sidecar and include its bytes in the
     pressure-aware storage decision. The first probe uses a fixed 1% top-error
     budget and reports index/value overhead explicitly.
-25. Implement the first reproducible offline packer artifact only after the
+25. [x] Evaluate a structured low-rank residual sidecar against sparse outliers,
+    including its F16 storage cost and activation-weighted error at several
+    ranks. Keep it as a research candidate until the multi-layer gate passes.
+26. Implement the first reproducible offline packer artifact only after the
     preceding quality and storage gates pass.
-26. [x] Validate packed channel-order metadata as an actual four-channel
+27. [x] Validate packed channel-order metadata as an actual four-channel
     permutation before any artifact can be consumed.
 
 The packer must optimize a numerical objective. A generic image compressor is
