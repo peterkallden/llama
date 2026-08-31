@@ -1895,6 +1895,36 @@ selection plus a replacement penalty, followed by an untouched holdout. The
 Hessian-feedback and two-sided objectives remain deferred until that gate is
 passed.
 
+## Seventy-eighth sweep: regularized calibration/validation selection
+
+The selector now supports `--coordinate-regularized`. It splits the supplied
+calibration trace into equal selection and validation halves, chooses a
+replacement penalty from a fixed offline grid, then reruns the selected
+penalty on all calibration samples before measuring the untouched holdout.
+The penalty is normalized to the initial output-error energy and is charged
+when a block departs from the uniform neural-ranked candidate. This is a
+selection guard only; it adds no runtime metadata or shader work.
+
+The new contract passed. On the same bounded SmolLM2 32x64 probe, the
+validation-selected penalty was zero for all three footprints. The
+regularized selector nevertheless changed the holdout relative to the prior
+diverse run:
+
+| Footprint | Uniform neural holdout | Prior diverse holdout | Regularized holdout | Validation relative MSE | Selected penalty |
+|---|---:|---:|---:|---:|---:|
+| 4x4 | 0.02782733 | 0.03129320 | 0.03045620 | 0.03188133 | 0 |
+| 5x5 | 0.15407998 | 0.16197053 | 0.16128243 | 0.17747256 | 0 |
+| 6x6 | 0.33293869 | 0.38492473 | 0.38919650 | 0.47478864 | 0 |
+
+This is a modest improvement for 4x4 and 5x5 over the unregularized
+diverse-pool selector, but it still does not beat the uniform neural stream;
+6x6 worsens. The zero penalty is itself informative: on this small split,
+the validation data did not justify preferring the uniform stream strongly
+enough to pay for the added restriction. The method is now structurally ready,
+but it needs a larger calibration corpus and more layers before any penalty
+or selector policy can be considered reliable. Hessian-guided feedback remains
+the next algorithmic sweep, beginning with a synthetic matched baseline.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact
