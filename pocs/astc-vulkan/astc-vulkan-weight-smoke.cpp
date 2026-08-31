@@ -17,6 +17,7 @@ constexpr uint32_t kRows = 12;
 constexpr uint32_t kColumns = 48;
 constexpr double kElementwiseLossWeight = 1.0;
 constexpr double kActivationLossWeight = 1.0;
+constexpr double kBlockTailLossWeight = 0.25;
 
 struct encoder_quality {
     const char * name;
@@ -203,7 +204,8 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
     result.activation_mse = activation_squared_error /
         static_cast<double>(activation_samples.size() * layout.rows);
     result.objective = kElementwiseLossWeight * result.mse +
-        kActivationLossWeight * result.activation_mse;
+        kActivationLossWeight * result.activation_mse +
+        kBlockTailLossWeight * result.max_block_mse;
 
     double reference_dot = 0.0;
     double reconstructed_dot = 0.0;

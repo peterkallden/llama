@@ -341,6 +341,16 @@ for 4x4 medium and 0.09616162 for 6x6 thorough. Because this fixture contains
 only 9 and 4 blocks respectively, P95 equals the worst block; larger real
 layers are required before interpreting the percentile statistically.
 
+The twenty-first sweep added a conservative block-tail term to the candidate
+objective:
+`MSE + activation_MSE + 0.25 * max_block_MSE`. The coefficient is intentionally
+explicit and small; it prevents a single poor block from being hidden by the
+global average without allowing the tiny fixture to dominate selection. The
+selected candidates were unchanged (4x4 identity/medium and 6x6
+identity/thorough), while their reported objectives became 0.10849460 and
+0.30935956 respectively. This is a ranking guardrail, not a calibrated model
+quality threshold.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -363,7 +373,9 @@ After each implementation sweep:
    encoder candidates with the neural objective.
 4. Evaluate deeper endpoint/partition candidates only if the objective justifies
    the added offline search cost.
-5. Keep encoder availability separate from Vulkan runtime tests and do not alter
+5. Calibrate the objective weights using representative activations and larger
+   layer fixtures.
+6. Keep encoder availability separate from Vulkan runtime tests and do not alter
    any ggml tensor path until weight errors are materially reduced.
 
 ## Open questions
