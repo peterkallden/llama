@@ -279,6 +279,13 @@ if (ASTC_VULKAN_GLSLC)
 endif()
 
 if (BUILD_TESTING)
+    add_executable(test-astc-vulkan-error-shaping
+        tests/test-astc-vulkan-error-shaping.cpp)
+    target_compile_features(test-astc-vulkan-error-shaping PRIVATE cxx_std_17)
+    add_test(NAME test-astc-vulkan-error-shaping
+        COMMAND test-astc-vulkan-error-shaping)
+    set_property(TEST test-astc-vulkan-error-shaping PROPERTY LABELS astc)
+
     add_test(NAME test-astc-vulkan-contract
         COMMAND test-astc-vulkan-contract)
     set_property(TEST test-astc-vulkan-contract PROPERTY LABELS astc)

@@ -237,7 +237,7 @@ dispatches; its timing data is still exploratory and not a performance claim.
     cached-residual coordinate selection, nested calibration/validation splits,
     and an untouched holdout. Add an explicit penalty for replacing the
     uniform baseline so a larger pool cannot silently overfit calibration.
-59. Prototype Hessian-guided **block error feedback** as an offline encoder
+59. [~] Prototype Hessian-guided **block error feedback** as an offline encoder
     alternative. After locking a legal ASTC block, project its error into a
     low-rank input-sensitivity basis and modify only targets of later blocks.
     First compare it with exact coordinate descent on small fixtures; it must

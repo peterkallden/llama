@@ -1925,6 +1925,38 @@ but it needs a larger calibration corpus and more layers before any penalty
 or selector policy can be considered reliable. Hessian-guided feedback remains
 the next algorithmic sweep, beginning with a synthetic matched baseline.
 
+## Seventy-ninth sweep: Hessian-guided feedback mathematical contract
+
+The first error-feedback contract is now isolated in
+`test-astc-vulkan-error-shaping`. It uses two scalar block decisions with
+identical `{0, 1}` candidate alphabets and a positive correlated input Hessian
+
+```
+H = [[1.0, 0.9],
+     [0.9, 1.0]]
+```
+
+For the reference `(0.49, 0.45)`, independent local rounding selects `(0, 0)`
+and has quadratic error `0.8395`. After committing the first block, the
+conditional target for the second is shifted to
+
+```
+target_2 = w_2 + H_21 / H_22 * (w_1 - q_1) = 0.891
+```
+
+so feedback selects `(0, 1)` and reduces the same quadratic error to `0.0575`.
+This is a deliberately minimal proof that a locally worse second choice can be
+globally better under correlated sensitivity. It is not an ASTC quality result:
+the fixture has no ASTC candidates, endpoint decisions, or bitstream. It is a
+guard against implementing the feedback sign or Hessian indexing incorrectly
+before adding the real legal-block adapter.
+
+The contract passes alongside the existing ASTC tests. The next implementation
+must replace the scalar choices with a bounded ASTC block shortlist, use a
+low-rank calibration-sensitivity basis for larger matrices, and compare against
+the exact cached-residual coordinate selector on matched synthetic ASTC
+fixtures. Only then is a real-layer feedback run justified.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact
