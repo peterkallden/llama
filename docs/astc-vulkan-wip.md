@@ -1435,3 +1435,32 @@ run in a batch environment without encoding unrelated controls. `thorough`
 remains the default; lower presets are only adapter/debug probes and must be
 reported separately. The next run must use a batchable runner, report both
 trace sample counts, and repeat 4x4, 5x5, and 6x6 before interpreting quality.
+
+## Sixty-first sweep: bounded real-layer selection result
+
+To exercise the full adapter within the available execution window, the first
+real run used the leading 32x64 submatrix of SmolLM2 F16
+`blk.0.attn_q.weight`. This is a **bounded adapter probe**, not a layer result:
+it preserves actual model weights and matching trace columns, but must not be
+compared directly with full 576x576 measurements. Both traces were loaded
+before cropping, then cropped identically to the first 64 input columns.
+
+The supplied files contain 10 calibration and 25 independent holdout samples.
+All encodes used the default `thorough` preset and the fixed L+A decoder.
+
+| Footprint | Standard L+A holdout | Uniform neural-rank holdout | Coordinate-selected holdout |
+|---|---:|---:|---:|
+| 4x4 | 0.03396980 | 0.02782733 | 0.02974956 |
+| 5x5 | 0.20582444 | 0.15407998 | 0.16202227 |
+| 6x6 | 0.52479088 | 0.33293869 | 0.34494348 |
+
+Coordinate selection improves every footprint over ordinary image-ranked L+A:
+approximately 12%, 21%, and 34% for 4x4, 5x5, and 6x6. It does **not** beat
+the uniform neural-ranked stream on this independent holdout. That is a useful
+negative result: with a two-stream pool, block-level cancellation can improve
+the calibration objective but can still overfit the limited calibration trace.
+The required next experiment is therefore a broader legal candidate pool
+(different quality presets and/or fixed latent mappings), selected solely on a
+larger calibration set and evaluated on an untouched holdout. It is not yet
+justified to change ASTCENC's internal candidate generation or claim a model
+quality win over uniform neural ranking.

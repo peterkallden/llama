@@ -98,6 +98,17 @@ void limit_activation_samples(activations & inputs, uint32_t maximum_samples) {
     inputs.values.resize(static_cast<size_t>(inputs.samples) * inputs.columns);
 }
 
+void crop_activation_columns(activations & inputs, uint32_t columns) {
+    if (columns >= inputs.columns) return;
+    std::vector<float> cropped(static_cast<size_t>(inputs.samples) * columns);
+    for (uint32_t sample = 0; sample < inputs.samples; ++sample) {
+        std::copy_n(inputs.values.data() + static_cast<size_t>(sample) * inputs.columns,
+                    columns, cropped.data() + static_cast<size_t>(sample) * columns);
+    }
+    inputs.columns = columns;
+    inputs.values = std::move(cropped);
+}
+
 std::vector<float> reconstruct(const std::vector<float> & texels,
                                const affine_decoder & decoder) {
     std::vector<float> result(texels.size() / 4);
@@ -457,6 +468,14 @@ bool run_coordinate_case(const std::vector<float> & weights,
         !astc_roundtrip(latents.texels, rows, columns, format, &latents.decoder, neural)) return false;
     const std::vector<float> standard_weights = reconstruct(standard.texels, latents.decoder);
     const std::vector<float> neural_weights = reconstruct(neural.texels, latents.decoder);
+    const double standard_calibration = activation_relative_mse(
+        weights, standard_weights, rows, columns, calibration);
+    const double standard_holdout = activation_relative_mse(
+        weights, standard_weights, rows, columns, holdout);
+    const double neural_calibration = activation_relative_mse(
+        weights, neural_weights, rows, columns, calibration);
+    const double neural_holdout = activation_relative_mse(
+        weights, neural_weights, rows, columns, holdout);
     coordinate_result selected;
     if (!coordinate_select_astc_blocks(weights, standard_weights, neural_weights,
                                        standard.compressed, neural.compressed,
@@ -466,9 +485,12 @@ bool run_coordinate_case(const std::vector<float> & weights,
     const double holdout_mse = activation_relative_mse(
         weights, selected.reconstructed, rows, columns, holdout);
     std::printf("latent-coordinate format=%s mode=luminance-alpha-additive "
+                "standard-calibration=%.8g standard-holdout=%.8g "
+                "neural-calibration=%.8g neural-holdout=%.8g "
                 "calibration-relative-MSE=%.8g holdout-relative-MSE=%.8g "
                 "forward-changes=%u reverse-changes=%u candidates=2 calibration-samples=%u holdout-samples=%u\n",
-                format.name, calibration_mse, holdout_mse,
+                format.name, standard_calibration, standard_holdout, neural_calibration, neural_holdout,
+                calibration_mse, holdout_mse,
                 selected.forward_changes, selected.reverse_changes, calibration.samples, holdout.samples);
     return std::isfinite(calibration_mse) && std::isfinite(holdout_mse);
 }
@@ -487,6 +509,8 @@ int main(int argc, char ** argv) {
     std::string footprint;
     std::string preset = "thorough";
     uint32_t maximum_samples = 0;
+    uint32_t maximum_rows = 0;
+    uint32_t maximum_columns = 0;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
@@ -503,6 +527,10 @@ int main(int argc, char ** argv) {
             preset = argv[++index];
         } else if (option == "--max-samples" && index + 1 < argc) {
             maximum_samples = static_cast<uint32_t>(std::stoul(argv[++index]));
+        } else if (option == "--max-rows" && index + 1 < argc) {
+            maximum_rows = static_cast<uint32_t>(std::stoul(argv[++index]));
+        } else if (option == "--max-columns" && index + 1 < argc) {
+            maximum_columns = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace") &&
                    index + 1 < argc) {
@@ -515,7 +543,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--max-samples N]\n",
+                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-rows N] [--max-columns N]\n",
                          argv[0]);
             return 2;
         }
@@ -571,6 +599,23 @@ int main(int argc, char ** argv) {
         weights = std::move(matrix.values);
     }
 
+    const uint32_t source_rows = rows;
+    const uint32_t trace_columns = columns;
+    const uint32_t selected_rows = maximum_rows == 0 ? rows : std::min(rows, maximum_rows);
+    const uint32_t selected_columns = maximum_columns == 0 ? columns : std::min(columns, maximum_columns);
+    if (selected_rows != rows || selected_columns != columns) {
+        std::vector<float> cropped(static_cast<size_t>(selected_rows) * selected_columns);
+        for (uint32_t row = 0; row < selected_rows; ++row) {
+            std::copy_n(weights.data() + static_cast<size_t>(row) * columns, selected_columns,
+                        cropped.data() + static_cast<size_t>(row) * selected_columns);
+        }
+        rows = selected_rows;
+        columns = selected_columns;
+        weights = std::move(cropped);
+        std::printf("latent-submatrix rows=%u columns=%u source-rows=%u source-columns=%u\n",
+                    rows, columns, source_rows, trace_columns);
+    }
+
     const auto [minimum_it, maximum_it] = std::minmax_element(weights.begin(), weights.end());
     const float minimum = *minimum_it;
     const float range = std::max(*maximum_it - minimum, 1e-6f);
@@ -581,7 +626,7 @@ int main(int argc, char ** argv) {
     if (!trace_path.empty()) {
         ggml_vk_astc_activation_trace loaded;
         if (!ggml_vk_astc_load_activation_trace(trace_path, loaded, error) ||
-            loaded.columns != columns) {
+            loaded.columns != trace_columns) {
             std::fprintf(stderr, "invalid activation trace: %s\n", error.c_str());
             return 1;
         }
@@ -592,7 +637,7 @@ int main(int argc, char ** argv) {
     if (!calibration_trace_path.empty()) {
         ggml_vk_astc_activation_trace loaded;
         if (!ggml_vk_astc_load_activation_trace(calibration_trace_path, loaded, error) ||
-            loaded.columns != columns) {
+            loaded.columns != trace_columns) {
             std::fprintf(stderr, "invalid calibration activation trace: %s\n", error.c_str());
             return 1;
         }
@@ -601,6 +646,8 @@ int main(int argc, char ** argv) {
     }
     limit_activation_samples(inputs, maximum_samples);
     limit_activation_samples(calibration_inputs, maximum_samples);
+    crop_activation_columns(inputs, columns);
+    crop_activation_columns(calibration_inputs, columns);
     for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,
                                  ggml_vk_astc_5x5_unorm_rgba,
                                  ggml_vk_astc_6x6_unorm_rgba }) {
