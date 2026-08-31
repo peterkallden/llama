@@ -98,6 +98,9 @@ if (BUILD_TESTING)
         add_test(NAME astc-vulkan-weight-smoke
             COMMAND astc-vulkan-weight-smoke)
         set_property(TEST astc-vulkan-weight-smoke PROPERTY LABELS astc)
+        add_test(NAME astc-vulkan-weight-smoke-large
+            COMMAND astc-vulkan-weight-smoke --large)
+        set_property(TEST astc-vulkan-weight-smoke-large PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-capability-probe)

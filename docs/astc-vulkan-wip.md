@@ -341,6 +341,18 @@ for 4x4 medium and 0.09616162 for 6x6 thorough. Because this fixture contains
 only 9 and 4 blocks respectively, P95 equals the worst block; larger real
 layers are required before interpreting the percentile statistically.
 
+The twenty-second sweep added an optional 64x256 host fixture (`--large`) and
+registered it as a separate CTest. The larger image represents 16x16 ASTC 4x4
+blocks or 11x11 ASTC 6x6 blocks, making the block percentile meaningful while
+keeping the original small fixture as a fast contract test.
+
+The larger fixture selected 4x4 identity/thorough with objective 0.36033993
+and 6x6 identity/medium with objective 0.84021780. The ordering differs from
+the small fixture, which confirms that encoder quality and channel choices must
+be evaluated per tensor shape and activation distribution rather than frozen
+from one toy matrix. The absolute errors remain far too high for inference;
+this is a search-harness result only.
+
 The twenty-first sweep added a conservative block-tail term to the candidate
 objective:
 `MSE + activation_MSE + 0.25 * max_block_MSE`. The coefficient is intentionally

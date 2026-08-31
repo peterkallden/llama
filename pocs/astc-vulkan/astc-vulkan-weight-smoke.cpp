@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <numeric>
 #include <vector>
 
@@ -15,6 +16,8 @@ constexpr float kWeightMin = -1.0f;
 constexpr float kWeightScale = 2.0f;
 constexpr uint32_t kRows = 12;
 constexpr uint32_t kColumns = 48;
+constexpr uint32_t kLargeRows = 64;
+constexpr uint32_t kLargeColumns = 256;
 constexpr double kElementwiseLossWeight = 1.0;
 constexpr double kActivationLossWeight = 1.0;
 constexpr double kBlockTailLossWeight = 0.25;
@@ -283,18 +286,30 @@ bool search_layout_qualities(const ggml_vk_astc_format_contract & format,
 
 } // namespace
 
-int main() {
-    constexpr ggml_vk_astc_weight_layout layout{ kRows, kColumns, 4 };
-    static_assert(layout.is_valid(), "weight layout must be valid");
-    std::vector<float> weights(static_cast<size_t>(kRows) * kColumns);
-    std::vector<std::vector<float>> activation_samples(4, std::vector<float>(kColumns));
-    for (uint32_t row = 0; row < kRows; ++row) {
-        for (uint32_t column = 0; column < kColumns; ++column) {
-            weights[static_cast<size_t>(row) * kColumns + column] =
+int main(int argc, char ** argv) {
+    bool large_fixture = false;
+    if (argc == 2 && std::strcmp(argv[1], "--large") == 0) {
+        large_fixture = true;
+    } else if (argc != 1) {
+        std::fprintf(stderr, "usage: %s [--large]\n", argv[0]);
+        return 2;
+    }
+    const uint32_t rows = large_fixture ? kLargeRows : kRows;
+    const uint32_t columns = large_fixture ? kLargeColumns : kColumns;
+    const ggml_vk_astc_weight_layout layout{ rows, columns, 4 };
+    if (!layout.is_valid()) {
+        std::fprintf(stderr, "invalid weight layout\n");
+        return 1;
+    }
+    std::vector<float> weights(static_cast<size_t>(rows) * columns);
+    std::vector<std::vector<float>> activation_samples(4, std::vector<float>(columns));
+    for (uint32_t row = 0; row < rows; ++row) {
+        for (uint32_t column = 0; column < columns; ++column) {
+            weights[static_cast<size_t>(row) * columns + column] =
                 0.75f * std::sin(0.17f * (row + 1) * (column + 1));
         }
     }
-    for (uint32_t column = 0; column < kColumns; ++column) {
+    for (uint32_t column = 0; column < columns; ++column) {
         activation_samples[0][column] = 0.5f * std::cos(0.11f * (column + 1));
         activation_samples[1][column] = 0.5f * std::sin(0.07f * (column + 3));
         activation_samples[2][column] = 0.25f * std::cos(0.19f * (column + 5));

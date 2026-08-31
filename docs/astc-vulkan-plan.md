@@ -80,6 +80,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
     independently of the global objective.
 14. [x] Include a conservative block-tail penalty in candidate ranking while
     keeping its weight explicit for later calibration.
+15. [x] Add a larger host fixture and CTest target so block-error percentiles
+    are exercised beyond the tiny smoke matrix.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
