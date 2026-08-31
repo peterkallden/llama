@@ -2045,6 +2045,28 @@ overshoot, but the selected directions can still be calibration-specific. The
 next sweep therefore adds two-shard stability gating with no new candidate
 pool.
 
+## Eighty-fourth sweep: two-shard stability gating
+
+The fixed-pool harness now computes two equal calibration shards and accepts a
+proposal only when its normalized residual-energy gain is positive in both
+shards. This is deliberately conservative with the current ten-sample trace;
+larger traces are still needed before using more shards.
+
+On the synthetic 8x32 4x4 fixture, stability gating matched the conflict-aware
+result at `4.3416e-5` holdout. On the bounded SmolLM2 probe:
+
+| Footprint | Local calibration | Stability calibration | Local holdout | Stability holdout |
+| --- | ---: | ---: | ---: | ---: |
+| 4x4 | 0.03015 | 0.02710 | 0.03032 | 0.03029 |
+| 5x5 | 0.15952 | 0.13413 | 0.14044 | 0.14322 |
+| 6x6 | 0.38280 | 0.33915 | 0.35711 | 0.35840 |
+
+Stability gating removes much of the calibration-only gain from
+conflict-aware selection and restores holdout behavior close to local ranking.
+It has not yet produced a robust quality win, but it supports calibration
+stability as the correct regularization axis and should remain in the comparison
+matrix while larger activation traces are collected.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact

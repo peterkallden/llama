@@ -292,6 +292,15 @@ approximation; later work needs damping, a compact curvature model, or a
 conflict-aware schedule. The comparison harness remains valuable because all
 three selectors use the same legal candidate pool.
 
+The follow-up acceptance pass keeps proposal generation parallel but rechecks
+each proposal against the updated residual. It improved the synthetic 4x4
+holdout beyond coordinate descent, while on the SmolLM2 probe it reduced
+calibration error without beating local holdout error. A two-shard gate that
+requires positive normalized gain in both calibration halves restored holdout
+behavior close to local ranking. This separates conflict overshoot from
+calibration-specific directions and motivates collecting larger traces before
+using more shards.
+
 ### Two-sided sensitivity is a later, stronger objective
 
 ASTC blocks span both output and input dimensions. If a defensible
