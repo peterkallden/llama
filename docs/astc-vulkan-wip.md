@@ -319,6 +319,20 @@ This is still a host-side search fixture, not a claim about model quality. The
 next improvement is to feed representative activation samples from a real
 llama layer and then search ASTC encoder candidates under this objective.
 
+The nineteenth sweep added an encoder-quality search over `astcenc`'s fast,
+medium, and thorough presets. Each preset is evaluated across the existing
+channel and spatial candidates, and the best result is selected by the neural
+objective. This is the first concrete candidate-search method inspired by the
+Basis Universal approach; the output remains ordinary ASTC blocks and no
+runtime Vulkan code changes.
+
+On the deterministic fixture, `medium` remained best for 4x4 with objective
+0.09299244. For 6x6, `thorough` reduced the objective to 0.28531916 compared
+with 0.42610726 for medium, despite the same 64-byte image footprint. This is
+promising evidence that encoder search can improve quality without changing
+the runtime representation, but it is not yet a model-quality result and may
+cost substantially more offline packing time.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -339,7 +353,9 @@ After each implementation sweep:
    distributions across image sizes and workgroup shapes.
 3. Use representative activation samples from a real llama layer and rank
    encoder candidates with the neural objective.
-4. Keep encoder availability separate from Vulkan runtime tests and do not alter
+4. Evaluate deeper endpoint/partition candidates only if the objective justifies
+   the added offline search cost.
+5. Keep encoder availability separate from Vulkan runtime tests and do not alter
    any ggml tensor path until weight errors are materially reduced.
 
 ## Open questions

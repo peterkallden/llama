@@ -18,6 +18,17 @@ constexpr uint32_t kColumns = 48;
 constexpr double kElementwiseLossWeight = 1.0;
 constexpr double kActivationLossWeight = 1.0;
 
+struct encoder_quality {
+    const char * name;
+    float value;
+};
+
+const std::array<encoder_quality, 3> kEncoderQualities{{
+    { "fast", ASTCENC_PRE_FAST },
+    { "medium", ASTCENC_PRE_MEDIUM },
+    { "thorough", ASTCENC_PRE_THOROUGH },
+}};
+
 struct roundtrip_result {
     double mse = 0.0;
     double activation_mse = 0.0;
@@ -26,6 +37,7 @@ struct roundtrip_result {
     double dot_error = 0.0;
     std::array<uint32_t, 4> channel_order{ 0, 1, 2, 3 };
     const char * layout_name = "identity";
+    const char * quality_name = "medium";
 };
 
 std::vector<uint32_t> identity_texel_order(const ggml_vk_astc_weight_layout & layout) {
@@ -75,6 +87,7 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
                       const std::vector<std::vector<float>> & activation_samples,
                       const std::array<uint32_t, 4> & channel_order,
                       const std::vector<uint32_t> & texel_order,
+                      const encoder_quality & quality,
                       roundtrip_result & result) {
     const unsigned int width = layout.texel_columns();
     const unsigned int height = layout.rows;
@@ -100,7 +113,7 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
     astcenc_config config{};
     astcenc_error status = astcenc_config_init(
         ASTCENC_PRF_LDR, format.block_width, format.block_height, 1,
-        ASTCENC_PRE_MEDIUM, 0, &config);
+        quality.value, 0, &config);
     if (status != ASTCENC_SUCCESS) return false;
     astcenc_context * context = nullptr;
     status = astcenc_context_alloc(&config, 1, &context);
@@ -190,13 +203,14 @@ bool search_channel_orders(const ggml_vk_astc_format_contract & format,
                            const std::vector<std::vector<float>> & activation_samples,
                            const char * layout_name,
                            const std::vector<uint32_t> & texel_order,
+                           const encoder_quality & quality,
                            roundtrip_result & best_result) {
     std::array<uint32_t, 4> channel_order{ 0, 1, 2, 3 };
     bool found_result = false;
     do {
         roundtrip_result candidate;
         if (!encode_roundtrip(format, layout, weights, activation_samples,
-                              channel_order, texel_order, candidate)) {
+                              channel_order, texel_order, quality, candidate)) {
             return false;
         }
         if (!found_result || candidate.objective < best_result.objective ||
@@ -204,18 +218,43 @@ bool search_channel_orders(const ggml_vk_astc_format_contract & format,
             best_result = candidate;
             best_result.channel_order = channel_order;
             best_result.layout_name = layout_name;
+            best_result.quality_name = quality.name;
             found_result = true;
         }
     } while (std::next_permutation(channel_order.begin(), channel_order.end()));
 
     std::printf(
-        "ASTC weight %s %s order %u%u%u%u: %zu bytes, MSE %.8f, activation MSE %.8f, objective %.8f, max error %.6f, dot error %.6f\n",
-        format.name, best_result.layout_name, best_result.channel_order[0],
+        "ASTC weight %s %s/%s order %u%u%u%u: %zu bytes, MSE %.8f, activation MSE %.8f, objective %.8f, max error %.6f, dot error %.6f\n",
+        format.name, best_result.layout_name, best_result.quality_name,
+        best_result.channel_order[0],
         best_result.channel_order[1],
         best_result.channel_order[2], best_result.channel_order[3],
         layout.storage_bytes(format), best_result.mse, best_result.activation_mse,
         best_result.objective, best_result.max_error, best_result.dot_error);
     return true;
+}
+
+bool search_layout_qualities(const ggml_vk_astc_format_contract & format,
+                             const ggml_vk_astc_weight_layout & layout,
+                             const std::vector<float> & weights,
+                             const std::vector<std::vector<float>> & activation_samples,
+                             const char * layout_name,
+                             const std::vector<uint32_t> & texel_order,
+                             roundtrip_result & best_result) {
+    bool found_result = false;
+    for (const encoder_quality & quality : kEncoderQualities) {
+        roundtrip_result candidate;
+        if (!search_channel_orders(format, layout, weights, activation_samples,
+                                   layout_name, texel_order, quality, candidate)) {
+            return false;
+        }
+        if (!found_result || candidate.objective < best_result.objective ||
+            (candidate.objective == best_result.objective && candidate.mse < best_result.mse)) {
+            best_result = candidate;
+            found_result = true;
+        }
+    }
+    return found_result;
 }
 
 } // namespace
@@ -244,17 +283,17 @@ int main() {
     roundtrip_result format_4x4_grouped;
     roundtrip_result format_6x6_identity;
     roundtrip_result format_6x6_grouped;
-    if (!search_channel_orders(ggml_vk_astc_4x4_unorm_rgba, layout,
-                               weights, activation_samples, "identity", identity_order,
+    if (!search_layout_qualities(ggml_vk_astc_4x4_unorm_rgba, layout,
+                                 weights, activation_samples, "identity", identity_order,
                                format_4x4_identity) ||
-        !search_channel_orders(ggml_vk_astc_4x4_unorm_rgba, layout,
-                               weights, activation_samples, "grouped", grouped_order,
+        !search_layout_qualities(ggml_vk_astc_4x4_unorm_rgba, layout,
+                                 weights, activation_samples, "grouped", grouped_order,
                                format_4x4_grouped) ||
-        !search_channel_orders(ggml_vk_astc_6x6_unorm_rgba, layout,
-                               weights, activation_samples, "identity", identity_order,
+        !search_layout_qualities(ggml_vk_astc_6x6_unorm_rgba, layout,
+                                 weights, activation_samples, "identity", identity_order,
                                format_6x6_identity) ||
-        !search_channel_orders(ggml_vk_astc_6x6_unorm_rgba, layout,
-                               weights, activation_samples, "grouped", grouped_order,
+        !search_layout_qualities(ggml_vk_astc_6x6_unorm_rgba, layout,
+                                 weights, activation_samples, "grouped", grouped_order,
                                format_6x6_grouped)) {
         std::fprintf(stderr, "ASTC weight smoke failed\n");
         return 1;
@@ -263,8 +302,9 @@ int main() {
         format_4x4_grouped.objective < format_4x4_identity.objective ? format_4x4_grouped : format_4x4_identity;
     const roundtrip_result & best_6x6 =
         format_6x6_grouped.objective < format_6x6_identity.objective ? format_6x6_grouped : format_6x6_identity;
-    std::printf("ASTC weight selected 4x4 %s, 6x6 %s\n",
-                best_4x4.layout_name, best_6x6.layout_name);
+    std::printf("ASTC weight selected 4x4 %s/%s, 6x6 %s/%s\n",
+                best_4x4.layout_name, best_4x4.quality_name,
+                best_6x6.layout_name, best_6x6.quality_name);
     std::printf("ASTC weight smoke passed\n");
     return 0;
 }

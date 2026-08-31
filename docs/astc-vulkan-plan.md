@@ -70,9 +70,12 @@ dispatches; its timing data is still exploratory and not a performance claim.
    the measured objective.
 10. [x] Add an activation-weighted neural objective so candidate layouts and
     channel assignments are scored on matrix-vector error as well as MSE.
-11. Evaluate encoder search and rate-distortion methods from Basis Universal as
-    a research reference, while keeping the final representation standard ASTC
-    blocks and scoring candidates with neural objectives.
+11. [x] Evaluate `astcenc` quality presets as a first encoder-candidate search,
+    using Basis Universal's search methodology while keeping the final
+    representation standard ASTC blocks.
+12. Evaluate deeper endpoint, partition, and rate-distortion candidates from
+    Basis Universal as a research reference; do not add cross-block state to
+    the GPU-resident representation.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
