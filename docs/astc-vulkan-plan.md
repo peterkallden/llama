@@ -175,14 +175,19 @@ dispatches; its timing data is still exploratory and not a performance claim.
 44. [x] Decide the encoder boundary: retain standard `astcenc` for baselines,
     and treat a constrained `astcenc` fork as an offline research component,
     never as a Vulkan runtime decoder.
-45. Define a constrained encoder experiment that can prefer or restrict legal
+45. [x] Define a constrained encoder experiment that can prefer or restrict legal
     ASTC block modes (L+A endpoint modes, dual-plane alpha, weight grids, and
     BISE alphabets), while reusing the standard bit packing and reference
-    decoder. Validate every emitted block with `astcenc_get_block_info`, CPU
-    decode, and the existing Vulkan sampled-image smoke.
+    decoder. The first implementation probes the public astcenc search knobs;
+    a source fork is still required for exact mode restrictions. Validate every
+    emitted block with `astcenc_get_block_info` and CPU decode.
 46. Add a fallback-preserving encoder adapter so a missing or experimental
     encoder cannot affect normal llama.cpp builds or silently emit a
     non-standard block stream.
+47. [x] Add a minimal block-policy prepacker as a deliberately bounded Track-3
+    control. It reduces each ASTC footprint to a constant signal but delegates
+    final legal bit packing to standard `astcenc`; do not present it as a custom
+    ASTC bitstream implementation.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

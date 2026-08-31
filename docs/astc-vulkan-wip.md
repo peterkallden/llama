@@ -1144,30 +1144,6 @@ and `0.065283`). The selected alphabet therefore generalizes, but the current
 hand-designed L+A family still does not win. The calibration/holdout split is
 now the acceptance oracle for the next learned-latent projection loop.
 
-## Fifty-second sweep: encoder boundary decision
-
-The experiments now make the encoder requirement clearer. Standard `astcenc`
-is sufficient to prove the Vulkan resource, shader, bitrate, and scalar
-quality baselines, but its public API does not provide a stable way to request
-the exact endpoint mode, weight grid, dual-plane component, partition, or BISE
-alphabet that an ASTC-Latent representation may need.
-
-The selected architecture is therefore an **offline constrained astcenc
-fork/extension**, not a new runtime decoder:
-
-- keep standard `astcenc` as the baseline and fallback;
-- reuse its legal ASTC bit packing, endpoint quantization, BISE handling, and
-  reference decode;
-- add neural-objective candidate restrictions/preferences in the offline
-  search; and
-- validate emitted blocks with block-info inspection, CPU roundtrip, and the
-  Vulkan sampled-image smoke.
-
-If this cannot express the required latent forms, a small constrained packer
-may be written from the ASTC specification, but it must still emit standard
-128-bit blocks. A non-standard format would require a shader decoder and would
-no longer test the fixed-function texture-bandwidth hypothesis. No vendor
-assembler is needed for either path.
 
 ## Fifty-second sweep: encoder boundary decision
 
@@ -1193,3 +1169,31 @@ may be written from the ASTC specification, but it must still emit standard
 128-bit blocks. A non-standard format would require a shader decoder and would
 no longer test the fixed-function texture-bandwidth hypothesis. No vendor
 assembler is needed for either path.
+
+## Fifty-third sweep: three encoder-track controls
+
+`astc-vulkan-encoder-track-smoke` now makes the three encoder tracks
+executable on the same L+A signal:
+
+1. **Standard** uses the unmodified `astcenc` search.
+2. **Constrained-search** uses only public `astcenc_config` knobs: independent
+   channel error weights, a one-partition limit, and a relaxed dual-plane
+   early-out threshold.
+3. **Minimal-block-policy** replaces each source footprint by its per-block
+   mean before invoking standard `astcenc`. This is a bounded prepacker control,
+   not a custom ASTC bitstream.
+
+All three produce ordinary 128-bit ASTC blocks. On a two-by-two-block fixture:
+
+| Format | Standard MSE | Constrained MSE | Minimal policy MSE | Standard dual-plane | Constrained dual-plane |
+|---|---:|---:|---:|---:|---:|
+| 4x4 | 0.00000976 | 0.00001077 | 0.003403 | 4/4 | 4/4 |
+| 5x5 | 0.00001791 | 0.00002268 | 0.004821 | 4/4 | 4/4 |
+| 6x6 | 0.00002871 | 0.00004484 | 0.005861 | 4/4 | 3/4 |
+
+The public search knobs therefore do not yet justify a source fork: they
+slightly worsen the generic signal while leaving dual-plane selection mostly
+unchanged. Track 3 also confirms that a simple block-constant policy discards
+too much latent information. The next fork experiment must operate at the
+candidate search/objective layer — preserving ASTC endpoint and weight detail —
+not by collapsing the input before encoding.

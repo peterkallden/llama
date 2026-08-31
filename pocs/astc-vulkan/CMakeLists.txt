@@ -44,6 +44,14 @@ if (TARGET astcenc::astcenc-static)
     target_link_libraries(astc-vulkan-astcenc-smoke PRIVATE astcenc::astcenc-static)
     target_compile_features(astc-vulkan-astcenc-smoke PRIVATE cxx_std_17)
 
+    add_executable(astc-vulkan-encoder-track-smoke
+        astc-vulkan-encoder-track-smoke.cpp)
+    target_include_directories(astc-vulkan-encoder-track-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-encoder-track-smoke PRIVATE
+        astcenc::astcenc-static)
+    target_compile_features(astc-vulkan-encoder-track-smoke PRIVATE cxx_std_17)
+
     add_executable(astc-vulkan-weight-smoke
         astc-vulkan-weight-smoke.cpp)
     target_include_directories(astc-vulkan-weight-smoke PRIVATE
@@ -187,6 +195,9 @@ if (BUILD_TESTING)
         add_test(NAME astc-vulkan-astcenc-smoke
             COMMAND astc-vulkan-astcenc-smoke)
         set_property(TEST astc-vulkan-astcenc-smoke PROPERTY LABELS astc)
+        add_test(NAME astc-vulkan-encoder-track-smoke
+            COMMAND astc-vulkan-encoder-track-smoke)
+        set_property(TEST astc-vulkan-encoder-track-smoke PROPERTY LABELS astc)
         add_test(NAME astc-vulkan-weight-smoke
             COMMAND astc-vulkan-weight-smoke)
         set_property(TEST astc-vulkan-weight-smoke PROPERTY LABELS astc)
