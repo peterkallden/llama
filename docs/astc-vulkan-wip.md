@@ -844,3 +844,28 @@ for a fair ASTC comparison, while TQ/Q4 are useful controls. A complete
 model-level ASTC result still requires a loader/runtime path that can fetch
 ASTC-resident weights during inference; the current measurements are the
 weight and matvec gates that must pass before changing the GGUF format.
+
+## Forty-fourth sweep: TQ1 versus TQ2 behavior
+
+The TQ controls were run with four additional fixed prompts, temperature 0,
+seed 42, and 12 generated tokens. TQ1_0 and TQ2_0 produced the same
+continuation for every prompt in this smoke set, and both produced PPL
+`52.1643` on the one-chunk corpus. This is expected behavior rather than
+evidence that the formats are interchangeable in general: both formats encode
+the same ternary alphabet and can differ only when quantization or conversion
+pipelines choose different values.
+
+The storage and implementation tradeoff is:
+
+| Format | Representation | Nominal rate | Current Vulkan source status |
+|---|---|---:|---|
+| TQ1_0 | base-3 packed trits (five trits/byte plus a small high part) | 1.6875 bpw | no TQ1 shader/pipeline in this checkout |
+| TQ2_0 | two bits/weight, ternary codes | 2.0625 bpw | dedicated Vulkan dequant/matvec shaders present |
+
+TQ1 therefore remains the density leader, but its base-3 unpacking is a poor
+first target for a texture experiment and would require a new Vulkan shader
+path. TQ2 is the more practical GPU control because the backend already knows
+how to execute it and its two-bit code layout is closer to a shader-friendly
+ASTC comparison. Neither result changes the ASTC quality gate: ASTC must still
+beat or approach the TQ/Q4 matvec frontier on the same F16 source before it is
+considered a runtime replacement.
