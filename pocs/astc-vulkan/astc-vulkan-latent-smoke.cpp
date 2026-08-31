@@ -19,6 +19,7 @@ constexpr uint32_t kRows = 32;
 constexpr uint32_t kColumns = 256;
 constexpr uint32_t kDefaultCoarseLevels = 16;
 float g_astc_preset = ASTCENC_PRE_THOROUGH;
+double g_block_ldlq_damping = 1e-4;
 
 struct affine_decoder {
     double scale_l = 0.0;
@@ -954,7 +955,7 @@ bool block_ldlq_select_astc_blocks(const std::vector<float> & reference,
         maximum_diagonal = std::max(maximum_diagonal,
                                     gram[static_cast<size_t>(column) * columns + column]);
     }
-    const double damping = std::max(maximum_diagonal * 1e-4, 1e-12);
+    const double damping = std::max(maximum_diagonal * g_block_ldlq_damping, 1e-12);
     std::vector<float> target = reference;
     result.reconstructed = candidates.front().reconstructed;
     result.compressed = candidates.front().compressed;
@@ -1657,6 +1658,8 @@ int main(int argc, char ** argv) {
             maximum_samples = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if (option == "--max-calibration-samples" && index + 1 < argc) {
             maximum_calibration_samples = static_cast<uint32_t>(std::stoul(argv[++index]));
+        } else if (option == "--ldlq-damping" && index + 1 < argc) {
+            g_block_ldlq_damping = std::stod(argv[++index]);
         } else if (option == "--max-rows" && index + 1 < argc) {
             maximum_rows = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if (option == "--max-columns" && index + 1 < argc) {
@@ -1681,7 +1684,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-mode scalar|additive]\n",
                          argv[0]);
             return 2;
@@ -1739,6 +1742,10 @@ int main(int argc, char ** argv) {
     }
     if (export_mode != "scalar" && export_mode != "additive") {
         std::fprintf(stderr, "unsupported --export-mode value: %s\n", export_mode.c_str());
+        return 2;
+    }
+    if (!std::isfinite(g_block_ldlq_damping) || g_block_ldlq_damping < 0.0) {
+        std::fprintf(stderr, "--ldlq-damping must be a finite non-negative value\n");
         return 2;
     }
 #if !defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)

@@ -2309,3 +2309,14 @@ four-sample Hessian overfits badly, eight samples are near parity, and the
 full ten-sample trace gives the clearest Block-LDLQ gain. Calibration diversity
 therefore matters in addition to sample count; future runs must report both
 trace size and shard composition.
+
+## Ninety-fourth sweep: Block-LDLQ damping ablation
+
+The Block-LDLQ damping factor is now exposed as `--ldlq-damping`. On the
+SmolLM2 `attn_q` 6x6 per-block pool, factors `1e-5`, `1e-4`, and `1e-3`
+produced identical selector results (`0.34428` holdout for Block-LDLQ). The
+current candidate set is therefore not sensitive to this damping range; the
+dominant variables remain calibration geometry, block order, and which legal
+candidate directions are retained. Damping stays configurable for future
+larger-trace and ill-conditioned cases, but is not the next optimization
+target.

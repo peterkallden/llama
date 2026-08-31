@@ -635,3 +635,8 @@ Calibration-size ablation is now a required reporting dimension. Use
 both sample count and shard composition. Do not tune damping, block order, or
 format choice against a reduced holdout; reduced traces are mechanism probes
 only.
+
+The damping ablation did not change the current 6x6 decisions across
+`1e-5`--`1e-3`. Keep the parameter exposed for future ill-conditioned traces,
+but prioritize calibration diversity, block ordering, and candidate direction
+retention over further damping tuning.
