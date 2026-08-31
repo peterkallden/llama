@@ -68,7 +68,9 @@ dispatches; its timing data is still exploratory and not a performance claim.
 8. [x] Evaluate all 24 RGBA channel assignments against the initial objective.
 9. Iterate on spatial block layout and tensor permutation only when it improves
    the measured objective.
-10. Evaluate encoder search and rate-distortion methods from Basis Universal as
+10. [x] Add an activation-weighted neural objective so candidate layouts and
+    channel assignments are scored on matrix-vector error as well as MSE.
+11. Evaluate encoder search and rate-distortion methods from Basis Universal as
     a research reference, while keeping the final representation standard ASTC
     blocks and scoring candidates with neural objectives.
 

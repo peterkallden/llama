@@ -15,9 +15,13 @@ constexpr float kWeightMin = -1.0f;
 constexpr float kWeightScale = 2.0f;
 constexpr uint32_t kRows = 12;
 constexpr uint32_t kColumns = 48;
+constexpr double kElementwiseLossWeight = 1.0;
+constexpr double kActivationLossWeight = 1.0;
 
 struct roundtrip_result {
     double mse = 0.0;
+    double activation_mse = 0.0;
+    double objective = 0.0;
     float max_error = 0.0f;
     double dot_error = 0.0;
     std::array<uint32_t, 4> channel_order{ 0, 1, 2, 3 };
@@ -68,7 +72,7 @@ std::vector<uint32_t> grouped_texel_order(const ggml_vk_astc_weight_layout & lay
 bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
                       const ggml_vk_astc_weight_layout & layout,
                       const std::vector<float> & weights,
-                      const std::vector<float> & activations,
+                      const std::vector<std::vector<float>> & activation_samples,
                       const std::array<uint32_t, 4> & channel_order,
                       const std::vector<uint32_t> & texel_order,
                       roundtrip_result & result) {
@@ -128,6 +132,7 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
     for (size_t encoded_index = 0; encoded_index < texel_order.size(); ++encoded_index) {
         inverse_texel_order[texel_order[encoded_index]] = static_cast<uint32_t>(encoded_index);
     }
+    std::vector<float> reconstructed_weights(weights.size());
     double squared_error = 0.0;
     for (uint32_t row = 0; row < layout.rows; ++row) {
         for (uint32_t column = 0; column < layout.columns; ++column) {
@@ -140,6 +145,7 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
             const size_t texel_index = static_cast<size_t>(encoded_texel) * 4 +
                 static_cast<size_t>(decoded_channel - channel_order.begin());
             const float reconstructed = decoded[texel_index] * kWeightScale + kWeightMin;
+            reconstructed_weights[weight_index] = reconstructed;
             const float error = std::fabs(weights[weight_index] - reconstructed);
             squared_error += static_cast<double>(error) * error;
             result.max_error = std::max(result.max_error, error);
@@ -147,30 +153,41 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
     }
     result.mse = squared_error / weights.size();
 
+    double activation_squared_error = 0.0;
+    for (const std::vector<float> & activations : activation_samples) {
+        for (uint32_t row = 0; row < layout.rows; ++row) {
+            double reference_dot = 0.0;
+            double reconstructed_dot = 0.0;
+            for (uint32_t column = 0; column < layout.columns; ++column) {
+                const size_t index = static_cast<size_t>(row) * layout.columns + column;
+                reference_dot += weights[index] * activations[column];
+                reconstructed_dot += reconstructed_weights[index] * activations[column];
+            }
+            const double error = reference_dot - reconstructed_dot;
+            activation_squared_error += error * error;
+        }
+    }
+    result.activation_mse = activation_squared_error /
+        static_cast<double>(activation_samples.size() * layout.rows);
+    result.objective = kElementwiseLossWeight * result.mse +
+        kActivationLossWeight * result.activation_mse;
+
     double reference_dot = 0.0;
     double reconstructed_dot = 0.0;
+    const std::vector<float> & first_activations = activation_samples.front();
     for (size_t i = 0; i < weights.size(); ++i) {
-        const uint32_t column = static_cast<uint32_t>(i % layout.columns);
-        const uint32_t row = static_cast<uint32_t>(i / layout.columns);
-        const uint32_t logical_channel = column % 4;
-        const auto decoded_channel = std::find(
-            channel_order.begin(), channel_order.end(), logical_channel);
-        const uint32_t logical_texel = row * width + column / 4;
-        const uint32_t encoded_texel = inverse_texel_order[logical_texel];
-        const size_t texel_index = static_cast<size_t>(encoded_texel) * 4 +
-            static_cast<size_t>(decoded_channel - channel_order.begin());
-        const float reconstructed = decoded[texel_index] * kWeightScale + kWeightMin;
-        reference_dot += weights[i] * activations[column];
-        reconstructed_dot += reconstructed * activations[column];
+        reference_dot += weights[i] * first_activations[i % layout.columns];
+        reconstructed_dot += reconstructed_weights[i] * first_activations[i % layout.columns];
     }
     result.dot_error = std::fabs(reference_dot - reconstructed_dot);
-    return std::isfinite(result.mse) && std::isfinite(result.dot_error);
+    return std::isfinite(result.mse) && std::isfinite(result.activation_mse) &&
+        std::isfinite(result.objective) && std::isfinite(result.dot_error);
 }
 
 bool search_channel_orders(const ggml_vk_astc_format_contract & format,
                            const ggml_vk_astc_weight_layout & layout,
                            const std::vector<float> & weights,
-                           const std::vector<float> & activations,
+                           const std::vector<std::vector<float>> & activation_samples,
                            const char * layout_name,
                            const std::vector<uint32_t> & texel_order,
                            roundtrip_result & best_result) {
@@ -178,12 +195,12 @@ bool search_channel_orders(const ggml_vk_astc_format_contract & format,
     bool found_result = false;
     do {
         roundtrip_result candidate;
-        if (!encode_roundtrip(format, layout, weights, activations,
+        if (!encode_roundtrip(format, layout, weights, activation_samples,
                               channel_order, texel_order, candidate)) {
             return false;
         }
-        if (!found_result || candidate.mse < best_result.mse ||
-            (candidate.mse == best_result.mse && candidate.dot_error < best_result.dot_error)) {
+        if (!found_result || candidate.objective < best_result.objective ||
+            (candidate.objective == best_result.objective && candidate.mse < best_result.mse)) {
             best_result = candidate;
             best_result.channel_order = channel_order;
             best_result.layout_name = layout_name;
@@ -192,12 +209,12 @@ bool search_channel_orders(const ggml_vk_astc_format_contract & format,
     } while (std::next_permutation(channel_order.begin(), channel_order.end()));
 
     std::printf(
-        "ASTC weight %s %s order %u%u%u%u: %zu bytes, MSE %.8f, max error %.6f, dot error %.6f\n",
+        "ASTC weight %s %s order %u%u%u%u: %zu bytes, MSE %.8f, activation MSE %.8f, objective %.8f, max error %.6f, dot error %.6f\n",
         format.name, best_result.layout_name, best_result.channel_order[0],
         best_result.channel_order[1],
         best_result.channel_order[2], best_result.channel_order[3],
-        layout.storage_bytes(format), best_result.mse, best_result.max_error,
-        best_result.dot_error);
+        layout.storage_bytes(format), best_result.mse, best_result.activation_mse,
+        best_result.objective, best_result.max_error, best_result.dot_error);
     return true;
 }
 
@@ -207,7 +224,7 @@ int main() {
     constexpr ggml_vk_astc_weight_layout layout{ kRows, kColumns, 4 };
     static_assert(layout.is_valid(), "weight layout must be valid");
     std::vector<float> weights(static_cast<size_t>(kRows) * kColumns);
-    std::vector<float> activations(kColumns);
+    std::vector<std::vector<float>> activation_samples(4, std::vector<float>(kColumns));
     for (uint32_t row = 0; row < kRows; ++row) {
         for (uint32_t column = 0; column < kColumns; ++column) {
             weights[static_cast<size_t>(row) * kColumns + column] =
@@ -215,7 +232,10 @@ int main() {
         }
     }
     for (uint32_t column = 0; column < kColumns; ++column) {
-        activations[column] = 0.5f * std::cos(0.11f * (column + 1));
+        activation_samples[0][column] = 0.5f * std::cos(0.11f * (column + 1));
+        activation_samples[1][column] = 0.5f * std::sin(0.07f * (column + 3));
+        activation_samples[2][column] = 0.25f * std::cos(0.19f * (column + 5));
+        activation_samples[3][column] = (static_cast<int>(column % 7) - 3) * 0.1f;
     }
 
     const auto identity_order = identity_texel_order(layout);
@@ -225,24 +245,24 @@ int main() {
     roundtrip_result format_6x6_identity;
     roundtrip_result format_6x6_grouped;
     if (!search_channel_orders(ggml_vk_astc_4x4_unorm_rgba, layout,
-                               weights, activations, "identity", identity_order,
+                               weights, activation_samples, "identity", identity_order,
                                format_4x4_identity) ||
         !search_channel_orders(ggml_vk_astc_4x4_unorm_rgba, layout,
-                               weights, activations, "grouped", grouped_order,
+                               weights, activation_samples, "grouped", grouped_order,
                                format_4x4_grouped) ||
         !search_channel_orders(ggml_vk_astc_6x6_unorm_rgba, layout,
-                               weights, activations, "identity", identity_order,
+                               weights, activation_samples, "identity", identity_order,
                                format_6x6_identity) ||
         !search_channel_orders(ggml_vk_astc_6x6_unorm_rgba, layout,
-                               weights, activations, "grouped", grouped_order,
+                               weights, activation_samples, "grouped", grouped_order,
                                format_6x6_grouped)) {
         std::fprintf(stderr, "ASTC weight smoke failed\n");
         return 1;
     }
     const roundtrip_result & best_4x4 =
-        format_4x4_grouped.mse < format_4x4_identity.mse ? format_4x4_grouped : format_4x4_identity;
+        format_4x4_grouped.objective < format_4x4_identity.objective ? format_4x4_grouped : format_4x4_identity;
     const roundtrip_result & best_6x6 =
-        format_6x6_grouped.mse < format_6x6_identity.mse ? format_6x6_grouped : format_6x6_identity;
+        format_6x6_grouped.objective < format_6x6_identity.objective ? format_6x6_grouped : format_6x6_identity;
     std::printf("ASTC weight selected 4x4 %s, 6x6 %s\n",
                 best_4x4.layout_name, best_6x6.layout_name);
     std::printf("ASTC weight smoke passed\n");

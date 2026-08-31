@@ -297,6 +297,28 @@ weighted matrix-vector error (and later logit error), for example
 Basis-style encoder search a llama-relevant score instead of relying on image
 PSNR. No change is made to the Vulkan runtime or ggml tensor path yet.
 
+The eighteenth sweep implemented that first neural objective in the host
+weight smoke. Four deterministic activation vectors are evaluated across all
+rows, and each candidate reports activation MSE in addition to element MSE and
+the legacy first-vector dot error. Candidate ranking now minimizes
+`elementwise_MSE + activation_MSE`; this is deliberately simple and keeps the
+weights between the two terms explicit for later calibration.
+
+With the updated objective, the identity layout remained selected for both
+formats. The best channel orders changed because the objective now sees four
+activation patterns:
+
+| Format | Layout | Best order | MSE | Activation MSE | Objective |
+|---|---|---|---:|---:|---:|
+| 4x4 | identity | `2301` | 0.03734940 | 0.05564304 | 0.09299244 |
+| 4x4 | grouped | `0132` | 0.07066771 | 0.19674188 | 0.26740959 |
+| 6x6 | identity | `0312` | 0.09106646 | 0.33504080 | 0.42610726 |
+| 6x6 | grouped | `1230` | 0.13563544 | 0.37468951 | 0.51032495 |
+
+This is still a host-side search fixture, not a claim about model quality. The
+next improvement is to feed representative activation samples from a real
+llama layer and then search ASTC encoder candidates under this objective.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -315,8 +337,8 @@ After each implementation sweep:
    objective; channel search alone is insufficient.
 2. Expand the benchmark matrix and repeat count enough to report stable
    distributions across image sizes and workgroup shapes.
-3. Add an activation-weighted neural objective and use it to rank encoder
-   candidates, taking Basis Universal's search strategy as a reference.
+3. Use representative activation samples from a real llama layer and rank
+   encoder candidates with the neural objective.
 4. Keep encoder availability separate from Vulkan runtime tests and do not alter
    any ggml tensor path until weight errors are materially reduced.
 
