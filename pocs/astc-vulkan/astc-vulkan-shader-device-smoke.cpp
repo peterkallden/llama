@@ -67,6 +67,18 @@ std::vector<uint32_t> read_spirv(const char * path) {
     return input ? code : std::vector<uint32_t>();
 }
 
+template<typename T>
+std::vector<T> read_binary(const std::string & path) {
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input) return {};
+    const std::streamsize size = input.tellg();
+    if (size <= 0 || size % static_cast<std::streamsize>(sizeof(T)) != 0) return {};
+    std::vector<T> values(static_cast<size_t>(size) / sizeof(T));
+    input.seekg(0);
+    input.read(reinterpret_cast<char *>(values.data()), size);
+    return input ? values : std::vector<T>();
+}
+
 bool create_image(VkPhysicalDevice physical_device, VkDevice device, VkFormat format,
                   uint32_t width, uint32_t height, image_resources & resources) {
     const VkImageCreateInfo image_info{
@@ -134,19 +146,38 @@ void destroy_image(VkDevice device, image_resources & resources) {
 
 int main(int argc, char ** argv) {
     const std::string format_name = argc >= 3 ? argv[2] : "";
-    const std::string pattern_name = argc == 4 ? argv[3] : "sequential";
-    const bool benchmark = argc == 5 && std::string(argv[4]) == "--benchmark";
-    if ((argc < 3 || argc > 5) ||
-        (format_name != "4x4" && format_name != "5x5" && format_name != "6x6") ||
-        (pattern_name != "sequential" && pattern_name != "nonlocal")) {
+    std::string pattern_name = "sequential";
+    bool benchmark = false;
+    std::string payload_path;
+    std::string reference_path;
+    uint32_t supplied_width = 0;
+    uint32_t supplied_height = 0;
+    int index = 3;
+    if (index < argc && argv[index][0] != '-') pattern_name = argv[index++];
+    while (index < argc) {
+        const std::string option = argv[index++];
+        if (option == "--benchmark") benchmark = true;
+        else if ((option == "--payload" || option == "--reference" ||
+                  option == "--width" || option == "--height") && index < argc) {
+            const std::string value = argv[index++];
+            if (option == "--payload") payload_path = value;
+            else if (option == "--reference") reference_path = value;
+            else if (option == "--width") supplied_width = static_cast<uint32_t>(std::stoul(value));
+            else supplied_height = static_cast<uint32_t>(std::stoul(value));
+        } else {
+            std::fprintf(stderr, "unknown or incomplete option: %s\n", option.c_str());
+            return 2;
+        }
+    }
+    if (argc < 3 || (format_name != "4x4" && format_name != "5x5" && format_name != "6x6") ||
+        (pattern_name != "sequential" && pattern_name != "nonlocal") ||
+        (payload_path.empty() != reference_path.empty()) ||
+        (!payload_path.empty() && (supplied_width == 0 || supplied_height == 0))) {
         std::fprintf(stderr,
                      "usage: %s <validation.spv> <4x4|5x5|6x6> "
-                     "[sequential|nonlocal] [--benchmark]\n",
+                     "[sequential|nonlocal] [--benchmark] "
+                     "[--payload astc.bin --reference decoded-rgba-f32.bin --width N --height N]\n",
                      argv[0]);
-        return 2;
-    }
-    if (argc == 5 && !benchmark) {
-        std::fprintf(stderr, "unknown option: %s\n", argv[4]);
         return 2;
     }
     const uint32_t access_pattern = pattern_name == "nonlocal" ? 1u : 0u;
@@ -224,14 +255,26 @@ int main(int argc, char ** argv) {
     vkGetDeviceQueue(device, queue_family, 0, &queue);
 
     const uint32_t block_extent = format_name == "4x4" ? 4 : format_name == "5x5" ? 5 : 6;
-    const uint32_t width = benchmark ? kBenchmarkTexelExtent : block_extent;
-    const uint32_t height = width;
+    const uint32_t width = supplied_width != 0 ? supplied_width :
+                           benchmark ? kBenchmarkTexelExtent : block_extent;
+    const uint32_t height = supplied_height != 0 ? supplied_height : width;
     const uint64_t block_count = ggml_vk_astc_image_block_count(
         format_name == "4x4" ? ggml_vk_astc_4x4_unorm_rgba :
         format_name == "5x5" ? ggml_vk_astc_5x5_unorm_rgba : ggml_vk_astc_6x6_unorm_rgba,
         width, height);
     const VkDeviceSize staging_bytes = block_count * kAstcBlockBytes;
     const uint32_t dispatch_repeats = benchmark ? kBenchmarkDispatchRepeats : 1;
+    const std::vector<uint8_t> payload = payload_path.empty() ? std::vector<uint8_t>() :
+                                         read_binary<uint8_t>(payload_path);
+    const std::vector<float> expected_values = reference_path.empty() ? std::vector<float>() :
+                                               read_binary<float>(reference_path);
+    if ((!payload_path.empty() && payload.size() != staging_bytes) ||
+        (!reference_path.empty() && expected_values.size() != static_cast<size_t>(width) * height * 4)) {
+        std::fprintf(stderr, "ASTC shader smoke payload/reference dimensions do not match image extent\n");
+        vkDestroyDevice(device, nullptr);
+        vkDestroyInstance(instance, nullptr);
+        return 2;
+    }
     image_resources image;
     bool success = create_image(physical_device, device, format, width, height, image);
     VkBuffer staging_buffer = VK_NULL_HANDLE;
@@ -267,9 +310,13 @@ int main(int argc, char ** argv) {
             vkBindBufferMemory(device, staging_buffer, staging_memory, 0) != VK_SUCCESS) break;
         void * mapped = nullptr;
         if (vkMapMemory(device, staging_memory, 0, staging_bytes, 0, &mapped) != VK_SUCCESS) break;
-        for (uint64_t block = 0; block < block_count; ++block) {
-            std::memcpy(static_cast<unsigned char *>(mapped) + block * kAstcBlockBytes,
-                        kConstantHalfBlock, kAstcBlockBytes);
+        if (payload.empty()) {
+            for (uint64_t block = 0; block < block_count; ++block) {
+                std::memcpy(static_cast<unsigned char *>(mapped) + block * kAstcBlockBytes,
+                            kConstantHalfBlock, kAstcBlockBytes);
+            }
+        } else {
+            std::memcpy(mapped, payload.data(), payload.size());
         }
         vkUnmapMemory(device, staging_memory);
 
@@ -433,11 +480,12 @@ int main(int argc, char ** argv) {
         if (vkMapMemory(device, output_memory, 0, output_bytes, 0, &output_mapped) != VK_SUCCESS) break;
         std::memcpy(values.data(), output_mapped, static_cast<size_t>(output_bytes));
         vkUnmapMemory(device, output_memory);
-        for (float value : values) {
-            if (!std::isfinite(value) || std::fabs(value - kExpectedChannel) > 1e-3f) {
+        for (size_t value_index = 0; value_index < values.size(); ++value_index) {
+            const float expected = expected_values.empty() ? kExpectedChannel : expected_values[value_index];
+            if (!std::isfinite(values[value_index]) || std::fabs(values[value_index] - expected) > 1e-3f) {
                 std::fprintf(stderr,
                              "ASTC %s %s shader smoke failed: decoded value %.7f\n",
-                             format_name.c_str(), pattern_name.c_str(), value);
+                             format_name.c_str(), pattern_name.c_str(), values[value_index]);
                 success = false;
                 break;
             }

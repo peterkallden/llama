@@ -1490,3 +1490,26 @@ representative calibration corpus plus a regularized selection objective
 (for example, a penalty for departing from the uniform neural stream). Only
 after that should we revisit richer ASTC latent layouts or internal encoder
 shortlists.
+
+## Sixty-third sweep: FP16-derived ASTC payload through Vulkan
+
+The GPU path is now validated as a separate mechanism contract. The shader
+device smoke accepts an externally packed standard ASTC payload and a CPU
+decoded RGBA reference. `astc-vulkan-latent-smoke` can export these two files
+from an F16 GGUF matrix without changing the production backend.
+
+Using the leading 32x64 region of SmolLM2 F16 `blk.0.attn_q.weight`, a standard
+ASTC 4x4 L+A payload (2,048 bytes) was encoded offline, uploaded to the exposed
+Intel UHD Graphics 620 Vulkan device, fetched with `texelFetch` in a compute
+shader, and compared against the CPU ASTC decoder. The dispatch passed; the
+reported shader timestamp was 4,333 ns for this one 2,048-texel validation
+dispatch.
+
+This establishes byte-for-byte portable resource use and CPU/GPU decode
+agreement for real model-derived data on this driver. It does **not** establish
+cross-vendor numerical behavior, end-to-end LLM quality, or a performance win:
+the dispatch is deliberately a decode/readback validation and includes neither
+the affine reconstruction nor a matrix-vector kernel. Those remain separate
+gates. The F16 GGUF is the correct source-of-truth for future GPU experiments;
+all ASTC, metadata, and reference artifacts must be derived from the same
+tensor and recorded footprint.

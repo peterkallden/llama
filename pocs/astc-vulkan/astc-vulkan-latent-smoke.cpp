@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -107,6 +108,14 @@ void crop_activation_columns(activations & inputs, uint32_t columns) {
     }
     inputs.columns = columns;
     inputs.values = std::move(cropped);
+}
+
+template<typename T>
+bool write_binary(const std::string & path, const std::vector<T> & values) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char *>(values.data()),
+                 static_cast<std::streamsize>(values.size() * sizeof(T)));
+    return static_cast<bool>(output);
 }
 
 std::vector<float> reconstruct(const std::vector<float> & texels,
@@ -526,6 +535,8 @@ int main(int argc, char ** argv) {
     uint32_t maximum_samples = 0;
     uint32_t maximum_rows = 0;
     uint32_t maximum_columns = 0;
+    std::string export_astc_path;
+    std::string export_reference_path;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
@@ -548,6 +559,10 @@ int main(int argc, char ** argv) {
             maximum_rows = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if (option == "--max-columns" && index + 1 < argc) {
             maximum_columns = static_cast<uint32_t>(std::stoul(argv[++index]));
+        } else if ((option == "--export-astc" || option == "--export-reference") && index + 1 < argc) {
+            const std::string value = argv[++index];
+            if (option == "--export-astc") export_astc_path = value;
+            else export_reference_path = value;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace") &&
                    index + 1 < argc) {
@@ -579,6 +594,11 @@ int main(int argc, char ** argv) {
     }
     if (coordinate_fast_candidate && !coordinate_select) {
         std::fprintf(stderr, "--coordinate-fast-candidate requires --coordinate-select\n");
+        return 2;
+    }
+    if (export_astc_path.empty() != export_reference_path.empty() ||
+        (!export_astc_path.empty() && footprint.empty())) {
+        std::fprintf(stderr, "exports require --export-astc, --export-reference, and --footprint\n");
         return 2;
     }
     if (preset == "medium") {
@@ -681,6 +701,18 @@ int main(int argc, char ** argv) {
         const latent_representation block_latents = make_additive_latents(
             weights, minimum, range, rows, columns, format.block_width, true,
             kDefaultCoarseLevels);
+        if (!export_astc_path.empty()) {
+            astc_roundtrip_result exported;
+            if (!astc_roundtrip(additive_latents.texels, rows, columns, format, nullptr, exported) ||
+                !write_binary(export_astc_path, exported.compressed) ||
+                !write_binary(export_reference_path, exported.texels)) {
+                std::fprintf(stderr, "ASTC latent export failed\n");
+                return 1;
+            }
+            std::printf("latent-export format=%s bytes=%zu texels=%zu astc=%s reference=%s\n",
+                        format.name, exported.compressed.size(), exported.texels.size(),
+                        export_astc_path.c_str(), export_reference_path.c_str());
+        }
         if (!coordinate_only &&
             (!std::isfinite(run_case("scalar-rgba", weights, scalar_latents,
                                     rows, columns, format, inputs)) ||
