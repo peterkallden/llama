@@ -14,7 +14,7 @@ now has a device-backed validation executable that can upload a known-valid
 constant ASTC block, execute the compiled shader, and read the reconstructed
 texels when a compatible physical device is available.
 
-Current phase: **Phase 1, contract and host-smoke foundation**.
+Current phase: **Phase 2, sidecar resource/session foundation**.
 
 ## Decisions made
 

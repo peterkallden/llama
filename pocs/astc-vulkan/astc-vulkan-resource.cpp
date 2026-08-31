@@ -142,6 +142,7 @@ bool astc_vulkan_texture::upload(VkPhysicalDevice physical_device, VkDevice devi
     VkDeviceMemory staging_memory = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
+    bool submitted = false;
     bool success = false;
     do {
         const VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0,
@@ -193,11 +194,13 @@ bool astc_vulkan_texture::upload(VkPhysicalDevice physical_device, VkDevice devi
         const VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr,
             1, &command_buffer, 0, nullptr};
         const VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, 0};
-        if (vkCreateFence(device, &fence_info, nullptr, &fence) != VK_SUCCESS ||
-            vkQueueSubmit(queue, 1, &submit, fence) != VK_SUCCESS ||
-            vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) break;
+        if (vkCreateFence(device, &fence_info, nullptr, &fence) != VK_SUCCESS) break;
+        if (vkQueueSubmit(queue, 1, &submit, fence) != VK_SUCCESS) break;
+        submitted = true;
+        if (vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) break;
         success = true;
     } while (false);
+    if (submitted && !success) vkDeviceWaitIdle(device);
     if (fence != VK_NULL_HANDLE) vkDestroyFence(device, fence, nullptr);
     if (command_pool != VK_NULL_HANDLE) vkDestroyCommandPool(device, command_pool, nullptr);
     if (staging_memory != VK_NULL_HANDLE) vkFreeMemory(device, staging_memory, nullptr);
