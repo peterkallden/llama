@@ -23,6 +23,12 @@ struct affine_decoder {
     double offset = 0.0;
 };
 
+struct activations {
+    uint32_t samples = 8;
+    uint32_t columns = 0;
+    std::vector<float> values;
+};
+
 struct astc_roundtrip_result {
     std::vector<float> texels;
     size_t compressed_bytes = 0;
@@ -43,19 +49,19 @@ double elementwise_mse(const std::vector<float> & reference,
 
 double activation_relative_mse(const std::vector<float> & reference,
                                const std::vector<float> & candidate,
-                               uint32_t rows, uint32_t columns) {
+                               uint32_t rows, uint32_t columns,
+                               const activations & inputs) {
     double error_sum = 0.0;
     double reference_sum = 0.0;
-    for (uint32_t sample = 1; sample <= 4; ++sample) {
+    for (uint32_t sample = 0; sample < inputs.samples; ++sample) {
+        const float * input = inputs.values.data() + static_cast<size_t>(sample) * columns;
         for (uint32_t row = 0; row < rows; ++row) {
             double expected = 0.0;
             double actual = 0.0;
             for (uint32_t column = 0; column < columns; ++column) {
-                const float activation = 0.5f * std::sin(0.017f * sample * (column + 1)) +
-                    0.2f * std::cos(0.031f * (sample + 1) * (column + 3));
                 const size_t index = static_cast<size_t>(row) * columns + column;
-                expected += reference[index] * activation;
-                actual += candidate[index] * activation;
+                expected += reference[index] * input[column];
+                actual += candidate[index] * input[column];
             }
             const double error = expected - actual;
             error_sum += error * error;
@@ -63,6 +69,20 @@ double activation_relative_mse(const std::vector<float> & reference,
         }
     }
     return error_sum / std::max(reference_sum, 1e-12);
+}
+
+activations make_default_activations(uint32_t columns) {
+    activations result;
+    result.columns = columns;
+    result.values.resize(static_cast<size_t>(result.samples) * columns);
+    for (uint32_t sample = 0; sample < result.samples; ++sample) {
+        for (uint32_t column = 0; column < columns; ++column) {
+            result.values[static_cast<size_t>(sample) * columns + column] =
+                0.5f * std::sin(0.017f * (sample + 1) * (column + 1)) +
+                0.2f * std::cos(0.031f * (sample + 2) * (column + 3));
+        }
+    }
+    return result;
 }
 
 bool solve_3x3(double matrix[3][3], double rhs[3], affine_decoder & result) {
@@ -263,7 +283,8 @@ std::vector<float> make_additive_latents(const std::vector<float> & weights,
 
 bool run_case(const char * name, const std::vector<float> & weights,
               const std::vector<float> & latents, uint32_t rows, uint32_t columns,
-              const ggml_vk_astc_format_contract & format) {
+              const ggml_vk_astc_format_contract & format,
+              const activations & inputs) {
     astc_roundtrip_result roundtrip;
     if (!astc_roundtrip(latents, rows, columns, format, roundtrip)) return false;
     const affine_decoder decoder = std::string(name) == "scalar-rgba"
@@ -271,7 +292,8 @@ bool run_case(const char * name, const std::vector<float> & weights,
         : fit_affine_decoder(weights, roundtrip.texels);
     const std::vector<float> reconstructed = reconstruct(roundtrip.texels, decoder);
     const double mse = elementwise_mse(weights, reconstructed);
-    const double activation_mse = activation_relative_mse(weights, reconstructed, rows, columns);
+    const double activation_mse = activation_relative_mse(
+        weights, reconstructed, rows, columns, inputs);
     std::printf("latent format=%s mode=%s bytes=%zu bpw=%.5f dual-plane=%u/%u alpha-plane=%u "
                 "sL=%.8g sA=%.8g b=%.8g MSE=%.8g activation-relative-MSE=%.8g\n",
                 format.name, name, roundtrip.compressed_bytes,
@@ -287,17 +309,22 @@ bool run_case(const char * name, const std::vector<float> & weights,
 int main(int argc, char ** argv) {
     std::string model_path;
     std::string tensor_name;
+    std::string trace_path;
     bool search_levels = false;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
             search_levels = true;
-        } else if ((option == "--model" || option == "--tensor") && index + 1 < argc) {
+        } else if ((option == "--model" || option == "--tensor" || option == "--trace") &&
+                   index + 1 < argc) {
             const std::string value = argv[++index];
             if (option == "--model") model_path = value;
-            else tensor_name = value;
+            else if (option == "--tensor") tensor_name = value;
+            else trace_path = value;
         } else {
-            std::fprintf(stderr, "usage: %s [--search-levels] [--model path --tensor name]\n", argv[0]);
+            std::fprintf(stderr,
+                         "usage: %s [--search-levels] [--model path --tensor name] [--trace path]\n",
+                         argv[0]);
             return 2;
         }
     }
@@ -309,6 +336,7 @@ int main(int argc, char ** argv) {
     uint32_t rows = kRows;
     uint32_t columns = kColumns;
     std::vector<float> weights;
+    std::string error;
     if (model_path.empty()) {
         weights.resize(static_cast<size_t>(rows) * columns);
         for (uint32_t row = 0; row < rows; ++row) {
@@ -320,7 +348,6 @@ int main(int argc, char ** argv) {
         }
     } else {
         ggml_vk_astc_loaded_matrix matrix;
-        std::string error;
         if (!ggml_vk_astc_load_gguf_matrix(model_path, tensor_name, matrix, error)) {
             std::fprintf(stderr, "%s\n", error.c_str());
             return 1;
@@ -334,6 +361,17 @@ int main(int argc, char ** argv) {
     const float minimum = *minimum_it;
     const float range = std::max(*maximum_it - minimum, 1e-6f);
     const std::vector<float> scalar_latents = make_scalar_latents(weights, minimum, range);
+    activations inputs = make_default_activations(columns);
+    if (!trace_path.empty()) {
+        ggml_vk_astc_activation_trace loaded;
+        if (!ggml_vk_astc_load_activation_trace(trace_path, loaded, error) ||
+            loaded.columns != columns) {
+            std::fprintf(stderr, "invalid activation trace: %s\n", error.c_str());
+            return 1;
+        }
+        inputs.samples = loaded.samples;
+        inputs.values = std::move(loaded.values);
+    }
     for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,
                                  ggml_vk_astc_5x5_unorm_rgba,
                                  ggml_vk_astc_6x6_unorm_rgba }) {
@@ -343,11 +381,11 @@ int main(int argc, char ** argv) {
         const std::vector<float> block_latents = make_additive_latents(
             weights, minimum, range, rows, columns, format.block_width, true,
             kDefaultCoarseLevels);
-        if (!run_case("scalar-rgba", weights, scalar_latents, rows, columns, format) ||
+        if (!run_case("scalar-rgba", weights, scalar_latents, rows, columns, format, inputs) ||
             !run_case("luminance-alpha-additive", weights, additive_latents,
-                      rows, columns, format) ||
+                      rows, columns, format, inputs) ||
             !run_case("luminance-alpha-block-residual", weights, block_latents,
-                      rows, columns, format)) {
+                      rows, columns, format, inputs)) {
             std::fprintf(stderr, "ASTC latent smoke failed\n");
             return 1;
         }
@@ -358,7 +396,7 @@ int main(int argc, char ** argv) {
                     coarse_levels);
                 char name[64];
                 std::snprintf(name, sizeof(name), "projection-levels-%u", coarse_levels);
-                if (!run_case(name, weights, candidate, rows, columns, format)) {
+                if (!run_case(name, weights, candidate, rows, columns, format, inputs)) {
                     std::fprintf(stderr, "ASTC latent projection search failed\n");
                     return 1;
                 }

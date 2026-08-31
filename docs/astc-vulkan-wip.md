@@ -1095,3 +1095,13 @@ projection layer can expose real ASTC mode/quality feedback, and it gives the
 future optimizer a concrete oracle. The next step is to replace the fixed
 coarse-plus-residual construction with learned or calibration-optimized latent
 fields, evaluated on held-out activation vectors after every exact projection.
+
+The latent smoke now accepts `--trace path`, using the same versioned trace
+reader as the other PoC quality tools. On the captured SmolLM2 layer-0 holdout
+trace, the scalar control measured relative matvec errors of `0.0014712`,
+`0.0143491`, and `0.0652828` for 4x4, 5x5, and 6x6. The free L+A residual was
+`0.113342`, `0.629460`, and `0.914666`; the block residual was `0.218061`,
+`0.222477`, and `0.229024`. The ordering is consistent with the synthetic
+calibration suite, so the negative result is not caused by evaluating only the
+vectors used to construct the candidates. The trace path is now the required
+oracle for future projection/latent optimization.

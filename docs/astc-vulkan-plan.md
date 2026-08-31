@@ -166,6 +166,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
 40. Add a model-loss or calibration-data entry point only after the optimizer
     reproduces the scalar and structured controls. Do not introduce a training
     dependency into the normal llama.cpp build for this research stage.
+41. [x] Add optional activation-trace input to the latent smoke so projection
+    candidates can be scored on held-out layer inputs.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
