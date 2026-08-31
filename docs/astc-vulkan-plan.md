@@ -188,6 +188,15 @@ dispatches; its timing data is still exploratory and not a performance claim.
     control. It reduces each ASTC footprint to a constant signal but delegates
     final legal bit packing to standard `astcenc`; do not present it as a custom
     ASTC bitstream implementation.
+48. [x] Add Track 4, an opt-in late candidate-ranking metric in a side
+    `astcenc` fork. Preserve the encoder's normal candidate generation, legal
+    ASTC packing, and standard decoder; re-rank final L+A candidates by
+    reconstructed weight MSE rather than RGBA MSE.
+49. Add activation-aware Track-4 scoring using captured calibration traces.
+    Start with a diagonal activation-energy approximation, then validate exact
+    incremental `||X(W - W_hat)^T||_F^2` scoring, including cross terms, on a
+    held-out trace. Do not move the metric into a Vulkan shader or normal
+    llama.cpp build.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

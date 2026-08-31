@@ -1197,3 +1197,46 @@ unchanged. Track 3 also confirms that a simple block-constant policy discards
 too much latent information. The next fork experiment must operate at the
 candidate search/objective layer — preserving ASTC endpoint and weight detail —
 not by collapsing the input before encoding.
+
+## Fifty-fourth sweep: neural-aware late candidate ranking (Track 4)
+
+Track 4 is now implemented and tested in the adjacent, isolated
+`astc-encoder-neural-rank` fork at commit `c4b0acf`. It changes neither Vulkan
+nor llama.cpp production code. The fork preserves `astcenc` candidate
+generation, endpoint/weight search, BISE packing, and emitted 128-bit ASTC
+blocks. It only changes the final symbolic candidate error calculation when
+the opt-in `ASTCENC_FLG_MAP_NEURAL_LA` flag is selected.
+
+For this experimental mapping, replicated RGB represents latent `L` and alpha
+represents latent `A`. With explicit scales, the final ranking error is:
+
+```
+W       = s_L * mean(R, G, B) + s_A * A
+error   = (W_source - W_decoded)^2
+```
+
+The flag is mutually exclusive with ASTC normal-map and RGBM metrics. It is
+off by default and is built only with an opt-in research CMake target. The
+fast one-plane path falls back to the generic one-plane scorer under this
+metric, so the result remains correct while preserving the ordinary optimized
+path for all non-experimental encodes.
+
+The CTest `neural-rank-smoke` evaluates eight deterministic 6x6 L+A fixtures.
+Each fixture contains a varying neural signal plus an anti-correlated latent
+carrier; therefore channel error and reconstructed-weight error need not agree.
+All eight fixtures chose different legal ASTC block streams under the neural
+metric. Weight MSE fell by 48--66% (about 56% on average), while RGBA MSE rose,
+as expected, because the new metric permits L/A errors to cancel after the
+cheap `L+A` reconstruction. The neural selection used dual-plane blocks for
+7/9, 7/9, 6/9, 5/9, 5/9, 7/9, 7/9, and 7/9 blocks across the fixtures, versus
+7/9, 6/9, 5/9, 4/9, 4/9, 3/9, 2/9, and 4/9 for standard RGBA ranking.
+
+This is the intended proof of mechanism: standard-compatible ASTC candidate
+blocks can be worse under image reconstruction yet materially better after a
+neural latent decoder. It is not an LLM-quality or throughput result. This
+first stage only replaces the *late* score after astcenc's ordinary shortlist
+has been formed; its earlier pruning remains image-oriented. The next stage is
+therefore to widen or preserve that shortlist and score candidates against
+captured activations. A diagonal activation-energy score is a useful first
+approximation, but final selection must use exact incremental activation loss
+because activation columns can be correlated.
