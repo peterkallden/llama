@@ -447,16 +447,16 @@ After each implementation sweep:
 
 ## Next sweep
 
-1. Test block-local tensor permutations against the elementwise and dot-product
-   objective; channel search alone is insufficient.
-2. Expand the benchmark matrix and repeat count enough to report stable
-   distributions across image sizes and workgroup shapes.
-3. Use representative activation samples from a real llama layer and rank
-   encoder candidates with the neural objective.
-4. Evaluate deeper endpoint/partition candidates only if the objective justifies
-   the added offline search cost.
-5. Calibrate the objective weights using representative activations and larger
-   layer fixtures.
+1. Add a reader for real GGUF weight slices and representative activation
+   traces, with explicit support limited to documented source tensor types.
+2. Add FP16 and the closest existing low-bit reference to the same objective and
+   report total resident bytes, including ASTC metadata.
+3. Evaluate sparse residual/outlier sidecars at fixed budgets and include their
+   index/value overhead in pressure-aware selection.
+4. Calibrate objective weights on real layer distributions and define a
+   reproducible quality gate for entering Phase 3.
+5. Evaluate deeper endpoint/partition candidates only if the quality gate and
+   measured storage tradeoff justify their offline search cost.
 6. Keep encoder availability separate from Vulkan runtime tests and do not alter
    any ggml tensor path until weight errors are materially reduced.
 
