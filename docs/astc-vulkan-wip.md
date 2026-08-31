@@ -265,6 +265,38 @@ as a packer degree of freedom, but it cannot compensate for the larger spatial
 correlation mismatch. Spatial block layout and objective-driven packing remain
 the next research target.
 
+The sixteenth sweep compared the identity texel order with a deterministic
+magnitude-grouped order that sorted rows and four-column groups by aggregate
+absolute weight. The grouped order was a deliberately simple locality and
+correlation hypothesis, not a final packer. It was worse on this fixture:
+
+| Format | Layout | Best order | MSE | Max error | Dot-product error |
+|---|---|---|---:|---:|---:|
+| 4x4 | identity | `0231` | 0.03734365 | 0.696776 | 0.041689 |
+| 4x4 | grouped | `0123` | 0.06857636 | 0.908702 | 2.727908 |
+| 6x6 | identity | `0231` | 0.09071333 | 0.842460 | 0.513958 |
+| 6x6 | grouped | `1203` | 0.13164938 | 1.004278 | 3.026635 |
+
+The result is useful because it rejects a plausible but unsupported spatial
+heuristic. ASTC block locality must be designed around a neural objective and
+validated on more than one fixture; it should not be inferred from magnitude
+sorting alone.
+
+The seventeenth sweep reviewed the supplied Basis Universal implementation and
+documentation. The useful transfer is methodological: candidate search over
+endpoint modes, partitions, weight grids, dual-plane/component choices, and
+permutations, followed by scoring after exact ASTC quantization and decode.
+UASTC itself is not the runtime format for this experiment; it is a distinct
+ASTC-like intermediate/supercompressed representation. Cross-block predictors,
+DPCM, and rate-distortion choices may improve file size, but the GPU-resident
+path must retain independently addressable standard ASTC 4x4/6x6 blocks.
+
+The next quality objective will combine elementwise error with activation-
+weighted matrix-vector error (and later logit error), for example
+`alpha * MSE + beta * E[(W*a - W_hat*a)^2] + gamma * tail_error`. This gives
+Basis-style encoder search a llama-relevant score instead of relying on image
+PSNR. No change is made to the Vulkan runtime or ggml tensor path yet.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -283,7 +315,9 @@ After each implementation sweep:
    objective; channel search alone is insufficient.
 2. Expand the benchmark matrix and repeat count enough to report stable
    distributions across image sizes and workgroup shapes.
-3. Keep encoder availability separate from Vulkan runtime tests and do not alter
+3. Add an activation-weighted neural objective and use it to rank encoder
+   candidates, taking Basis Universal's search strategy as a reference.
+4. Keep encoder availability separate from Vulkan runtime tests and do not alter
    any ggml tensor path until weight errors are materially reduced.
 
 ## Open questions

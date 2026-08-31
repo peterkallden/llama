@@ -118,6 +118,48 @@ KV cache is a possible later experiment. Unlike static weights, it is updated
 for every token and therefore needs an efficient, valid compressed-block write
 path before it can be considered.
 
+## Basis Universal as an encoder-method reference
+
+The supplied Basis Universal material is useful for improving the *offline
+encoder methodology*, but it is not a drop-in replacement for the Vulkan
+runtime path. Its UASTC representation uses ASTC-like endpoints, weights,
+partitions, quantization tables, and 128-bit blocks, yet UASTC is a distinct
+bitstream and must not be uploaded as a standard Vulkan ASTC image. The
+repository also describes a canonical compact intermediate representation that
+can be transcoded to a device format at load time. These ideas support a
+two-stage design: keep a canonical tensor/latent representation, then produce
+ordinary ASTC 4x4 or 6x6 blocks for the selected GPU.
+
+The encoder techniques worth borrowing are candidate search and objective
+design: search endpoint modes, partitions, weight grids, dual-plane choices,
+component assignments, and tensor permutations; then score each candidate
+after ASTC quantization and decode. Endpoint prediction, DPCM, supercompression,
+and cross-block rate-distortion coding are useful for disk or network size, but
+must not be copied into the GPU-resident format when they compromise independent
+random access to a block.
+
+For neural weights, image PSNR or generic MSE is not sufficient. The packer
+should rank candidates with a weighted objective such as:
+
+\[
+L = \alpha\,\mathrm{MSE}(W,\hat W)
+  + \beta\,\mathbb{E}_a\left[(Wa-\hat W a)^2\right]
+  + \gamma\,L_{\mathrm{outlier/tail}},
+\]
+
+where `a` is drawn from representative or held-out activation vectors. A
+later model-level pass can add logit or perplexity loss. This directly tests
+whether a candidate's endpoint/weight decisions preserve the computation that
+llama actually performs. The current smoke only has one fixed activation
+vector, so it is a baseline rather than a production-quality criterion.
+
+The current evidence reinforces this separation. Generic `astcenc` row-major
+packing produced poor weight reconstruction; a 24-way channel search improved
+one 4x4 dot-product sample but did not make the representation acceptable, and
+a naive magnitude-grouped spatial order was worse than identity. Basis-style
+candidate search is therefore a promising next step, while blindly adopting
+UASTC or image-oriented heuristics is not.
+
 ## References
 
 - [Khronos Vulkan format definitions](https://docs.vulkan.org/spec/latest/chapters/formats.html)
@@ -127,3 +169,6 @@ path before it can be considered.
 - [Real-Time Neural Materials using Block-Compressed Features](https://arxiv.org/abs/2311.16121)
 - [Hardware Accelerated Neural Block Texture Compression with Cooperative Vectors](https://arxiv.org/abs/2506.06040)
 - [Khronos Vulkan ML tutorial: sampler-assisted resizing](https://github.khronos.org/Vulkan-Site/tutorial/latest/ML_Inference/Desktop_Applications/05_real_time_camera.html)
+- [Basis Universal: UASTC texture specification](https://github.com/BinomialLLC/basis_universal/wiki/UASTC-Texture-Specification)
+- [Basis Universal: Textures as Universal Latents](https://github.com/BinomialLLC/basis_universal/wiki/Basis-Universal%3A-Textures-as-Universal-Latents)
+- [Basis Universal repository](https://github.com/BinomialLLC/basis_universal)
