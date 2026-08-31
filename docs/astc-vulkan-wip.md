@@ -2093,6 +2093,47 @@ The test is built CPU-only in an isolated directory because the existing
 Vulkan build directory lacks the optional SPIRV-Headers package; no production
 Vulkan target is changed.
 
+## Eighty-seventh sweep: bounded candidate-capacity pool
+
+The latent harness now exposes an opt-in `--candidate-sweep` mode. It encodes
+the same L+A source with ASTC's existing per-mode candidate limits `1, 2, 4,
+8`, then adds those standard-compatible streams to the fixed-pool selector
+comparison. This is intentionally not a new ASTC bitstream and does not alter
+the normal Vulkan path. It measures whether additional candidates already
+available inside `astcenc` provide useful alternative block choices before we
+add a true per-block callback or a custom neural-aware encoder.
+
+The pool is still a whole-image bounded proxy: each stream is independently
+encoded and the selector chooses blocks across streams. It therefore tests
+candidate diversity and selection behavior, but it is not yet an internal
+ASTC candidate pool. The next gate is to compare pool size, unique block
+choices, calibration/holdout loss, and encoding cost on the synthetic fixture
+and the SmolLM2 layer trace. A real internal top-K API remains opt-in and
+isolated to the side fork if this proxy shows a measurable benefit.
+
+On the synthetic 8x32 6x6 fixture, the eight-stream pool produced five unique
+candidate choices in the local, conflict-aware, and stability selections. The
+conflict-aware and stability selectors reached `1.2993e-4` activation MSE,
+slightly better than the coordinate result `1.3453e-4`; simple feedback was
+worse at `4.4502e-4`.
+
+On the bounded SmolLM2 `blk.0.attn_q.weight` probe (32x64, ten calibration
+samples), the richer pool changed the holdout picture as follows:
+
+| Footprint | Local | Conflict-aware | Stability |
+| --- | ---: | ---: | ---: |
+| 4x4 | 0.02875 | 0.03114 | 0.02990 |
+| 5x5 | 0.14465 | 0.16566 | 0.14348 |
+| 6x6 | 0.34705 | 0.34072 | 0.35044 |
+
+These values are activation-relative holdout MSE. The pool is promising for
+6x6 conflict-aware selection and keeps stability close to local ranking, but
+it is not a universal win: 5x5 still overfits and 4x4 remains mixed. This is
+exactly the intended gate. We should not claim that a larger candidate pool
+solves the problem; the next implementation should expose true per-block
+top-K candidates so Block-LDLQ/GPTVQ target regeneration can rank alternatives
+against a common, not whole-image, candidate set.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact

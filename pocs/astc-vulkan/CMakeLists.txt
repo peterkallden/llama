@@ -343,6 +343,10 @@ if (BUILD_TESTING)
                 COMMAND astc-vulkan-latent-smoke --selector-compare --footprint 4x4
                     --max-rows 8 --max-columns 32)
             set_property(TEST astc-vulkan-latent-selector-compare-smoke PROPERTY LABELS astc)
+            add_test(NAME astc-vulkan-latent-candidate-capacity-smoke
+                COMMAND astc-vulkan-latent-smoke --candidate-sweep --footprint 6x6
+                    --max-rows 8 --max-columns 32)
+            set_property(TEST astc-vulkan-latent-candidate-capacity-smoke PROPERTY LABELS astc)
         endif()
     endif()
 

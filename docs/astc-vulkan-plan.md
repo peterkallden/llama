@@ -569,3 +569,29 @@ The first potentially upstreamable contribution is likely capability plumbing
 or a general sampled-image helper only if it benefits more than this
 experiment. The ASTC weight format itself should remain experimental until it
 has model-level evidence across devices.
+
+### Current execution gate: candidate capacity before an internal pool
+
+The next implementation step is an opt-in bounded candidate-capacity sweep.
+Use the existing `astcenc` search with limits 1, 2, 4, and 8, preserve legal
+standard ASTC output, and compare those streams in the existing selector
+matrix. Record:
+
+- candidate pool size and unique per-block choices;
+- calibration and holdout activation-relative error;
+- recovered coordinate-descent gain;
+- encode time and compressed bytes (the latter must remain unchanged);
+- whether extra candidates improve holdout rather than only calibration.
+
+Interpretation rule: this whole-image pool is a proxy for candidate diversity,
+not evidence that an internal neural-aware ASTC encoder exists. If it shows a
+stable benefit, expose a side-fork-only per-block top-K diagnostic interface
+and feed those legal blocks into Block-LDLQ/GPTVQ target regeneration. If it
+does not, keep the existing search and move effort to richer calibration
+traces and the target-regeneration engine.
+
+The bounded proxy has now been run. It is retained as a regression/evaluation
+gate, while the next implementation target is a side-fork-only per-block
+top-K snapshot. That snapshot must be opt-in, thread-safe or explicitly
+single-threaded for diagnostics, and must return only legal 16-byte ASTC
+blocks. No Vulkan runtime or standard llama backend path may depend on it.

@@ -868,7 +868,8 @@ bool coordinate_select_astc_blocks(const std::vector<float> & reference,
 bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t columns,
                     const ggml_vk_astc_format_contract & format,
                     const affine_decoder * ranking_decoder,
-                    astc_roundtrip_result & result) {
+                    astc_roundtrip_result & result,
+                    unsigned int candidate_limit = 0) {
     result.compressed_bytes = ggml_vk_astc_image_storage_bytes(format, columns, rows);
     astcenc_config config{};
 #if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
@@ -879,6 +880,9 @@ bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t c
 #endif
     if (astcenc_config_init(ASTCENC_PRF_LDR, format.block_width, format.block_height, 1,
                             g_astc_preset, flags, &config) != ASTCENC_SUCCESS) return false;
+    if (candidate_limit != 0) {
+        config.tune_candidate_limit = candidate_limit;
+    }
 #if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
     if (ranking_decoder != nullptr) {
         config.neural_l_scale = static_cast<float>(ranking_decoder->scale_l);
@@ -1106,7 +1110,8 @@ bool run_coordinate_case(const std::vector<float> & weights,
                          const ggml_vk_astc_format_contract & format,
                          const activations & calibration, const activations & holdout,
                          bool include_fast_candidate, bool include_diverse_candidates,
-                         bool regularized_selection, bool selector_compare = false) {
+                         bool regularized_selection, bool selector_compare = false,
+                         bool include_candidate_capacity = false) {
     astc_roundtrip_result standard;
     astc_roundtrip_result neural;
     if (!astc_roundtrip(latents.texels, rows, columns, format, nullptr, standard) ||
@@ -1145,6 +1150,19 @@ bool run_coordinate_case(const std::vector<float> & weights,
         if (!encoded) return false;
         candidates.push_back({ "neural-rank-medium", reconstruct(medium.texels, latents.decoder),
                                std::move(medium.compressed) });
+    }
+    if (include_candidate_capacity) {
+        for (const unsigned int candidate_limit : { 1u, 2u, 4u, 8u }) {
+            astc_roundtrip_result capacity;
+            if (!astc_roundtrip(latents.texels, rows, columns, format, &latents.decoder,
+                                capacity, candidate_limit)) return false;
+            char name[64];
+            std::snprintf(name, sizeof(name), "neural-rank-candidates-%u", candidate_limit);
+            candidates.push_back({ name, reconstruct(capacity.texels, latents.decoder),
+                                   std::move(capacity.compressed) });
+        }
+        std::printf("latent-candidate-capacity format=%s limits=1,2,4,8 pool=%zu\n",
+                    format.name, candidates.size());
     }
     const uint32_t selection_samples = regularized_selection ? calibration.samples / 2 : calibration.samples;
     if (regularized_selection && calibration.samples < 4) return false;
@@ -1209,6 +1227,12 @@ bool run_coordinate_case(const std::vector<float> & weights,
             (local_loss - conflict_loss) / conflict_denominator : NAN;
         const double stability_gain = conflict_denominator > 0.0 ?
             (local_loss - stability_loss) / conflict_denominator : NAN;
+        const auto unique_choices = [](const coordinate_result & result) {
+            std::vector<uint32_t> choices = result.selected_indices;
+            std::sort(choices.begin(), choices.end());
+            choices.erase(std::unique(choices.begin(), choices.end()), choices.end());
+            return choices.size();
+        };
         std::printf("latent-selector-compare format=%s pool=%zu "
                     "local-calibration=%.8g coordinate-calibration=%.8g "
                     "hessian-feedback-calibration=%.8g conflict-aware-calibration=%.8g "
@@ -1217,12 +1241,14 @@ bool run_coordinate_case(const std::vector<float> & weights,
                     "hessian-feedback-holdout=%.8g conflict-aware-holdout=%.8g stability-holdout=%.8g "
                     "hessian-recovered-coordinate-gain=%.8g conflict-aware-recovered-coordinate-gain=%.8g "
                     "stability-recovered-coordinate-gain=%.8g feedback-round-changes=%u "
-                    "conflict-aware-accepted=%u stability-accepted=%u\n",
+                    "conflict-aware-accepted=%u stability-accepted=%u "
+                    "local-unique-choices=%zu conflict-unique-choices=%zu stability-unique-choices=%zu\n",
                     format.name, candidates.size(), local_calibration, coordinate_calibration,
                     feedback_calibration, conflict_calibration, stability_calibration, local_loss,
                     coordinate_loss, feedback_loss, conflict_loss, stability_loss, recovered_gain,
                     conflict_gain, stability_gain, feedback.forward_changes,
-                    conflict_aware.forward_changes, stability.forward_changes);
+                    conflict_aware.forward_changes, stability.forward_changes,
+                    unique_choices(local), unique_choices(conflict_aware), unique_choices(stability));
         return std::isfinite(local_loss) && std::isfinite(feedback_loss) &&
                std::isfinite(conflict_loss) && std::isfinite(stability_loss) &&
                std::isfinite(coordinate_loss);
@@ -1305,6 +1331,7 @@ int main(int argc, char ** argv) {
     bool coordinate_diverse = false;
     bool coordinate_regularized = false;
     bool selector_compare = false;
+    bool candidate_sweep = false;
     std::string footprint;
     std::string preset = "thorough";
     uint32_t maximum_samples = 0;
@@ -1332,6 +1359,8 @@ int main(int argc, char ** argv) {
             coordinate_regularized = true;
         } else if (option == "--selector-compare") {
             selector_compare = true;
+        } else if (option == "--candidate-sweep") {
+            candidate_sweep = true;
         } else if (option == "--footprint" && index + 1 < argc) {
             footprint = argv[++index];
         } else if (option == "--preset" && index + 1 < argc) {
@@ -1360,7 +1389,7 @@ int main(int argc, char ** argv) {
             else calibration_trace_path = value;
         } else {
             std::fprintf(stderr,
-                         "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] "
+                         "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--max-samples N] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-mode scalar|additive]\n",
@@ -1396,6 +1425,13 @@ int main(int argc, char ** argv) {
         neural_rank = true;
         coordinate_select = true;
         coordinate_only = true;
+        coordinate_diverse = true;
+    }
+    if (candidate_sweep) {
+        neural_rank = true;
+        coordinate_select = true;
+        coordinate_only = true;
+        selector_compare = true;
         coordinate_diverse = true;
     }
     if (export_astc_path.empty() != export_reference_path.empty() ||
@@ -1553,7 +1589,7 @@ int main(int argc, char ** argv) {
         if (coordinate_select &&
             !run_coordinate_case(weights, additive_latents, rows, columns, format,
                                  calibration_inputs, inputs, coordinate_fast_candidate, coordinate_diverse,
-                                 coordinate_regularized, selector_compare)) {
+                                 coordinate_regularized, selector_compare, candidate_sweep)) {
             std::fprintf(stderr, "ASTC coordinate selection smoke failed\n");
             return 1;
         }
