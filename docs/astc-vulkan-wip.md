@@ -2776,3 +2776,17 @@ This is an intentional boundary: the resource module is reusable by the
 future manifest-backed session, while `ggml-vulkan` remains untouched. Error
 cleanup and ownership still belong to the caller for now; a later RAII wrapper
 can be introduced once the upload/session API is fixed rather than guessed.
+
+## One-hundred-eighteenth sweep: manifest-bound sampled texture session
+
+`astc_vulkan_texture` now owns one sampled ASTC image and its upload lifetime.
+It validates the footprint and exact block payload size, creates the image via
+the shared resource helper, stages the blocks through a host-visible buffer,
+records the two image-layout transitions, waits for the transfer fence, and
+releases temporary upload resources while retaining the sampled image/view/
+sampler. Destruction is explicit and idempotent through `reset()`.
+
+The existing device smoke now exercises this session for 4x4, 5x5, and 6x6;
+all three uploads pass on Intel UHD 620. The API intentionally handles one
+tensor per image first. Atlas/page placement remains a metadata concern until
+descriptor indexing and lifetime requirements are measured.

@@ -1,9 +1,12 @@
 #include "astc-vulkan-contract.h"
+#include "astc-vulkan-driver.h"
+#include "astc-vulkan-resource.h"
 
 #include <vulkan/vulkan.h>
 
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace {
@@ -38,7 +41,7 @@ bool format_supports(VkPhysicalDevice physical_device, VkFormat format,
     return (properties.optimalTilingFeatures & required) == required;
 }
 
-bool create_and_upload_image(VkPhysicalDevice physical_device, VkDevice device,
+bool create_and_upload_image_legacy(VkPhysicalDevice physical_device, VkDevice device,
                              VkQueue queue, uint32_t queue_family,
                              VkFormat format, VkExtent3D extent) {
     const VkImageCreateInfo image_info{
@@ -228,6 +231,21 @@ bool create_and_upload_image(VkPhysicalDevice physical_device, VkDevice device,
     vkFreeMemory(device, resources.memory, nullptr);
     vkDestroyImage(device, resources.image, nullptr);
     return success;
+}
+
+bool create_and_upload_image(VkPhysicalDevice physical_device, VkDevice device,
+                             VkQueue queue, uint32_t queue_family,
+                             VkFormat format, VkExtent3D extent) {
+    const uint8_t footprint = format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK ? 0 :
+                              format == VK_FORMAT_ASTC_5x5_UNORM_BLOCK ? 1 : 2;
+    const auto fp = static_cast<astc_vulkan_footprint>(footprint);
+    const size_t bytes = static_cast<size_t>(astc_vulkan_image_bytes(
+        fp, extent.width, extent.height));
+    std::vector<uint8_t> payload(bytes, 0);
+    astc_vulkan_texture texture;
+    std::string error;
+    return texture.upload(physical_device, device, queue, queue_family, footprint,
+                          extent.width, extent.height, payload, error);
 }
 
 } // namespace

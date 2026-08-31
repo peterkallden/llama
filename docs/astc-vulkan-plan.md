@@ -798,3 +798,8 @@ The repeated GPU controls and sidecar resource refactor are now complete. The
 next implementation gate is a manifest-backed upload/session object with
 explicit ownership and fallback behavior; only after that should a narrow
 llama-facing FFN-down adapter be attempted.
+
+The manifest, atlas placement, and sampled-texture upload/session boundaries
+are now implemented and device-smoke validated. Remaining driver work is the
+descriptor/dispatch session for a manifest record, a narrow FFN-down adapter,
+and end-to-end fallback tests; these still stay under `pocs/astc-vulkan`.

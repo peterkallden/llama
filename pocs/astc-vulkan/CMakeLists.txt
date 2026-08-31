@@ -41,7 +41,7 @@ if (Vulkan_FOUND)
         astc-vulkan-resource.cpp)
     target_include_directories(astc-vulkan-resource PUBLIC
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
-    target_link_libraries(astc-vulkan-resource PUBLIC Vulkan::Vulkan)
+    target_link_libraries(astc-vulkan-resource PUBLIC Vulkan::Vulkan astc-vulkan-driver)
     target_compile_features(astc-vulkan-resource PUBLIC cxx_std_17)
 
     add_executable(astc-vulkan-capability-probe
@@ -51,7 +51,7 @@ if (Vulkan_FOUND)
 
     add_executable(astc-vulkan-device-smoke
         astc-vulkan-device-smoke.cpp)
-    target_link_libraries(astc-vulkan-device-smoke PRIVATE Vulkan::Vulkan)
+    target_link_libraries(astc-vulkan-device-smoke PRIVATE Vulkan::Vulkan astc-vulkan-resource)
     target_compile_features(astc-vulkan-device-smoke PRIVATE cxx_std_17)
 endif()
 
