@@ -1105,3 +1105,18 @@ trace, the scalar control measured relative matvec errors of `0.0014712`,
 calibration suite, so the negative result is not caused by evaluating only the
 vectors used to construct the candidates. The trace path is now the required
 oracle for future projection/latent optimization.
+
+## Fiftieth sweep: row/column additive control
+
+To test the spatial-structure side of the AQLM analogy, the smoke now includes
+`row-column-additive`. It stores a normalized row mean in RGB and a normalized
+column mean in alpha, then fits the same affine decoder after ASTC sampling.
+This is a deliberately simple additive factorization, not a learned codebook.
+
+On the deterministic fixture its activation-relative errors were `0.90524`,
+`0.90932`, and `0.90084` for 4x4, 5x5, and 6x6. The real SmolLM2 attention
+layer was similarly poor (about `0.90` on all three footprints). ASTC selects
+alpha dual-plane frequently for this layout, but the factorization has thrown
+away too much weight information. It is retained as a negative control: an
+AQLM-like additive representation must learn vector/group codebooks jointly
+with model loss; simple row/column statistics are not sufficient.

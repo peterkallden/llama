@@ -168,6 +168,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
     dependency into the normal llama.cpp build for this research stage.
 41. [x] Add optional activation-trace input to the latent smoke so projection
     candidates can be scored on held-out layer inputs.
+42. [x] Add an AQLM-inspired row/column additive control, `W ~= row + column`,
+    to separate spatially structured additive semantics from a residual tail.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

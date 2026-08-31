@@ -24,7 +24,7 @@ struct affine_decoder {
 };
 
 struct activations {
-    uint32_t samples = 8;
+    uint32_t samples = 4;
     uint32_t columns = 0;
     std::vector<float> values;
 };
@@ -225,6 +225,37 @@ std::vector<float> make_scalar_latents(const std::vector<float> & weights,
     return result;
 }
 
+std::vector<float> make_row_column_latents(const std::vector<float> & weights,
+                                           uint32_t rows, uint32_t columns) {
+    std::vector<float> row_means(rows, 0.0f);
+    std::vector<float> column_means(columns, 0.0f);
+    for (uint32_t row = 0; row < rows; ++row) {
+        for (uint32_t column = 0; column < columns; ++column) {
+            const float value = weights[static_cast<size_t>(row) * columns + column];
+            row_means[row] += value;
+            column_means[column] += value;
+        }
+    }
+    for (float & value : row_means) value /= columns;
+    for (float & value : column_means) value /= rows;
+    const auto [row_min_it, row_max_it] = std::minmax_element(row_means.begin(), row_means.end());
+    const auto [column_min_it, column_max_it] =
+        std::minmax_element(column_means.begin(), column_means.end());
+    const float row_range = std::max(*row_max_it - *row_min_it, 1e-6f);
+    const float column_range = std::max(*column_max_it - *column_min_it, 1e-6f);
+    std::vector<float> result(weights.size() * 4);
+    for (uint32_t row = 0; row < rows; ++row) {
+        for (uint32_t column = 0; column < columns; ++column) {
+            float * texel = result.data() +
+                (static_cast<size_t>(row) * columns + column) * 4;
+            texel[0] = texel[1] = texel[2] =
+                (row_means[row] - *row_min_it) / row_range;
+            texel[3] = (column_means[column] - *column_min_it) / column_range;
+        }
+    }
+    return result;
+}
+
 std::vector<float> make_additive_latents(const std::vector<float> & weights,
                                          float minimum, float range,
                                          uint32_t rows, uint32_t columns,
@@ -361,6 +392,7 @@ int main(int argc, char ** argv) {
     const float minimum = *minimum_it;
     const float range = std::max(*maximum_it - minimum, 1e-6f);
     const std::vector<float> scalar_latents = make_scalar_latents(weights, minimum, range);
+    const std::vector<float> row_column_latents = make_row_column_latents(weights, rows, columns);
     activations inputs = make_default_activations(columns);
     if (!trace_path.empty()) {
         ggml_vk_astc_activation_trace loaded;
@@ -382,6 +414,8 @@ int main(int argc, char ** argv) {
             weights, minimum, range, rows, columns, format.block_width, true,
             kDefaultCoarseLevels);
         if (!run_case("scalar-rgba", weights, scalar_latents, rows, columns, format, inputs) ||
+            !run_case("row-column-additive", weights, row_column_latents,
+                      rows, columns, format, inputs) ||
             !run_case("luminance-alpha-additive", weights, additive_latents,
                       rows, columns, format, inputs) ||
             !run_case("luminance-alpha-block-residual", weights, block_latents,
