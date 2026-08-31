@@ -539,6 +539,23 @@ and 6x6 rose from 0.38467 to 0.53908. The global mappings showed the same
 direction. The transform is therefore retained only as a reproducible negative
 control and is not part of the proposed representation.
 
+## Thirty-fifth sweep: low-rank residual candidate
+
+The probe now estimates a low-rank correction to the shared block-affine ASTC
+matrix using deterministic power iterations. It reports F16-sized `U` and `V`
+sidecar bytes for ranks 4, 8, 16, and 32, together with corrected elementwise
+and activation-weighted errors. On `blk.0.attn_q.weight`, rank 32 improved
+4x4 corrected activation-relative MSE from 0.15572 to 0.12836, but increased
+the total representation to 198,144 bytes versus 186,624 bytes for Q4_0. The
+6x6 rank-32 point remained at 0.25487 and was not competitive.
+
+On the larger `blk.0.ffn_down.weight`, rank 32 4x4 reached 0.20821 at 466,944
+bytes, while Q4_0 was 0.00844 at 497,664 bytes. This shows that low-rank
+residuals can improve the ASTC frontier, especially when the base format has a
+larger storage budget, but the current generic ASTC base still misses the
+quality gate by a wide margin. The algorithm is therefore evidence for a
+possible hybrid design, not a runtime format decision yet.
+
 ## Updated next sweep
 
 1. Capture representative activation traces from the llama evaluation path and

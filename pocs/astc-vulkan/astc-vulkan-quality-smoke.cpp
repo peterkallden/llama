@@ -5,6 +5,7 @@
 #include "ggml.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -33,16 +34,56 @@ struct result {
     size_t residual_bytes = 0;
     bool block_affine = false;
     const char * transform_name = "linear";
+    const char * basis_name = "identity";
     double mse = 0.0;
     double activation_relative_mse = 0.0;
     double corrected_mse = 0.0;
     double corrected_activation_relative_mse = 0.0;
 };
 
+struct low_rank_point {
+    uint32_t rank = 0;
+    size_t bytes = 0;
+    double mse = 0.0;
+    double activation_relative_mse = 0.0;
+};
+
 enum class transform_mode {
     linear,
     signed_sqrt,
 };
+
+enum class basis_mode {
+    identity,
+    hadamard4,
+};
+
+std::vector<float> apply_basis(const std::vector<float> & weights,
+                               uint32_t rows, uint32_t columns,
+                               basis_mode basis) {
+    std::vector<float> transformed = weights;
+    if (basis == basis_mode::identity) return transformed;
+    for (uint32_t row = 0; row < rows; ++row) {
+        for (uint32_t column = 0; column < columns; column += 4) {
+            const size_t index = static_cast<size_t>(row) * columns + column;
+            const float a = weights[index + 0];
+            const float b = weights[index + 1];
+            const float c = weights[index + 2];
+            const float d = weights[index + 3];
+            transformed[index + 0] = 0.5f * (a + b + c + d);
+            transformed[index + 1] = 0.5f * (a - b + c - d);
+            transformed[index + 2] = 0.5f * (a + b - c - d);
+            transformed[index + 3] = 0.5f * (a - b - c + d);
+        }
+    }
+    return transformed;
+}
+
+std::vector<float> undo_basis(const std::vector<float> & weights,
+                              uint32_t rows, uint32_t columns,
+                              basis_mode basis) {
+    return apply_basis(weights, rows, columns, basis);
+}
 
 float encode_value(float value, float offset, float scale, transform_mode mode) {
     const float normalized = std::clamp((value - offset) / scale, 0.0f, 1.0f);
@@ -108,6 +149,79 @@ double elementwise_mse(const std::vector<float> & reference,
     return error / std::max<size_t>(reference.size(), 1);
 }
 
+std::vector<low_rank_point> evaluate_low_rank_residual(
+        const std::vector<float> & reference,
+        const std::vector<float> & candidate,
+        uint32_t rows, uint32_t columns,
+        const activation_set & activations) {
+    const std::array<uint32_t, 4> ranks{ 4, 8, 16, 32 };
+    std::vector<float> residual(reference.size());
+    for (size_t i = 0; i < residual.size(); ++i) residual[i] = reference[i] - candidate[i];
+    std::vector<float> corrected = candidate;
+    std::vector<low_rank_point> points;
+    for (uint32_t component = 1; component <= ranks.back(); ++component) {
+        std::vector<float> right(columns);
+        for (uint32_t column = 0; column < columns; ++column) {
+            right[column] = std::sin(0.17f * (component + 1) * (column + 1));
+        }
+        for (int iteration = 0; iteration < 6; ++iteration) {
+            std::vector<float> left(rows, 0.0f);
+            for (uint32_t row = 0; row < rows; ++row) {
+                for (uint32_t column = 0; column < columns; ++column) {
+                    left[row] += residual[static_cast<size_t>(row) * columns + column] * right[column];
+                }
+            }
+            double left_norm = 0.0;
+            for (float value : left) left_norm += static_cast<double>(value) * value;
+            left_norm = std::sqrt(std::max(left_norm, 1e-20));
+            for (float & value : left) value = static_cast<float>(value / left_norm);
+            std::fill(right.begin(), right.end(), 0.0f);
+            for (uint32_t column = 0; column < columns; ++column) {
+                for (uint32_t row = 0; row < rows; ++row) {
+                    right[column] += residual[static_cast<size_t>(row) * columns + column] * left[row];
+                }
+            }
+            double right_norm = 0.0;
+            for (float value : right) right_norm += static_cast<double>(value) * value;
+            right_norm = std::sqrt(std::max(right_norm, 1e-20));
+            for (float & value : right) value = static_cast<float>(value / right_norm);
+        }
+        std::vector<float> left(rows, 0.0f);
+        for (uint32_t row = 0; row < rows; ++row) {
+            for (uint32_t column = 0; column < columns; ++column) {
+                left[row] += residual[static_cast<size_t>(row) * columns + column] * right[column];
+            }
+        }
+        double left_norm = 0.0;
+        for (float value : left) left_norm += static_cast<double>(value) * value;
+        left_norm = std::sqrt(std::max(left_norm, 1e-20));
+        for (float & value : left) value = static_cast<float>(value / left_norm);
+        double singular_value = 0.0;
+        for (uint32_t row = 0; row < rows; ++row) {
+            for (uint32_t column = 0; column < columns; ++column) {
+                singular_value += static_cast<double>(left[row]) *
+                    residual[static_cast<size_t>(row) * columns + column] * right[column];
+            }
+        }
+        for (uint32_t row = 0; row < rows; ++row) {
+            for (uint32_t column = 0; column < columns; ++column) {
+                const size_t index = static_cast<size_t>(row) * columns + column;
+                const float component_value = static_cast<float>(singular_value) * left[row] * right[column];
+                corrected[index] += component_value;
+                residual[index] -= component_value;
+            }
+        }
+        if (component == ranks[0] || component == ranks[1] ||
+            component == ranks[2] || component == ranks[3]) {
+            points.push_back({ component,
+                static_cast<size_t>(component) * (rows + columns) * sizeof(ggml_fp16_t),
+                elementwise_mse(reference, corrected),
+                activation_relative_mse(reference, corrected, rows, columns, activations) });
+        }
+    }
+    return points;
+}
+
 bool encode_format(const std::vector<float> & weights,
                    uint32_t rows, uint32_t columns,
                    const activation_set & activations,
@@ -115,7 +229,11 @@ bool encode_format(const std::vector<float> & weights,
                    bool block_affine,
                    float residual_fraction,
                    transform_mode transform,
-                   result & output) {
+                   basis_mode basis,
+                   result & output,
+                   std::vector<float> * reconstructed_out = nullptr) {
+    if (basis == basis_mode::hadamard4 && columns % 4 != 0) return false;
+    const std::vector<float> encoded_weights = apply_basis(weights, rows, columns, basis);
     const uint32_t texel_columns = (columns + 3) / 4;
     const uint32_t padded_columns = texel_columns * 4;
     const uint32_t blocks_x = (texel_columns + block_width - 1) / block_width;
@@ -123,7 +241,7 @@ bool encode_format(const std::vector<float> & weights,
     const size_t block_count = static_cast<size_t>(blocks_x) * blocks_y;
     float minimum = std::numeric_limits<float>::infinity();
     float maximum = -std::numeric_limits<float>::infinity();
-    for (float value : weights) {
+    for (float value : encoded_weights) {
         minimum = std::min(minimum, value);
         maximum = std::max(maximum, value);
     }
@@ -138,7 +256,7 @@ bool encode_format(const std::vector<float> & weights,
             for (uint32_t column = 0; column < columns; ++column) {
                 const uint32_t block_x = (column / 4) / block_width;
                 const size_t block = static_cast<size_t>(block_y) * blocks_x + block_x;
-                const float value = weights[static_cast<size_t>(row) * columns + column];
+                const float value = encoded_weights[static_cast<size_t>(row) * columns + column];
                 block_offsets[block] = std::min(block_offsets[block], value);
                 block_maximum[block] = std::max(block_maximum[block], value);
             }
@@ -154,7 +272,7 @@ bool encode_format(const std::vector<float> & weights,
             const size_t destination = static_cast<size_t>(row) * padded_columns + column;
             const size_t block = static_cast<size_t>(row / block_height) * blocks_x +
                                  (column / 4) / block_width;
-            texels[destination] = encode_value(weights[source], block_offsets[block],
+            texels[destination] = encode_value(encoded_weights[source], block_offsets[block],
                                                 block_scales[block], transform);
         }
     }
@@ -189,16 +307,17 @@ bool encode_format(const std::vector<float> & weights,
     astcenc_context_free(context);
     if (!decoded_ok) return false;
 
-    std::vector<float> reconstructed(weights.size());
+    std::vector<float> reconstructed_encoded(weights.size());
     for (uint32_t row = 0; row < rows; ++row) {
         for (uint32_t column = 0; column < columns; ++column) {
             const size_t block = static_cast<size_t>(row / block_height) * blocks_x +
                                  (column / 4) / block_width;
-            reconstructed[static_cast<size_t>(row) * columns + column] = decode_value(
+            reconstructed_encoded[static_cast<size_t>(row) * columns + column] = decode_value(
                 decoded[static_cast<size_t>(row) * padded_columns + column],
                 block_offsets[block], block_scales[block], transform);
         }
     }
+    std::vector<float> reconstructed = undo_basis(reconstructed_encoded, rows, columns, basis);
     output.mse = elementwise_mse(weights, reconstructed);
     output.activation_relative_mse = activation_relative_mse(
         weights, reconstructed, rows, columns, activations);
@@ -227,6 +346,8 @@ bool encode_format(const std::vector<float> & weights,
     output.block_height = block_height;
     output.block_affine = block_affine;
     output.transform_name = transform == transform_mode::linear ? "linear" : "signed-sqrt";
+    output.basis_name = basis == basis_mode::identity ? "identity" : "hadamard4";
+    if (reconstructed_out != nullptr) *reconstructed_out = reconstructed;
     return std::isfinite(output.mse) && std::isfinite(output.activation_relative_mse);
 }
 
@@ -315,28 +436,47 @@ int main(int argc, char ** argv) {
     bool gate_passed = true;
     for (const uint32_t block : { 4u, 6u }) {
         for (const bool block_affine : { false, true }) {
-            for (const transform_mode transform : { transform_mode::linear,
-                                                     transform_mode::signed_sqrt }) {
+            for (const basis_mode basis : { basis_mode::identity, basis_mode::hadamard4 }) {
+                for (const transform_mode transform : { transform_mode::linear,
+                                                         transform_mode::signed_sqrt }) {
             result output;
             if (!encode_format(matrix.values, matrix.rows, matrix.columns, activations,
-                               block, block, block_affine, residual_fraction, transform, output)) {
+                               block, block, block_affine, residual_fraction, transform, basis, output)) {
                 std::fprintf(stderr, "ASTC %ux%u encode/decode failed\n", block, block);
                 return 1;
             }
             const size_t total_bytes = output.astc_bytes + output.metadata_bytes;
             const size_t corrected_total = total_bytes + output.residual_bytes;
-            std::printf("ASTC %ux%u mode=%s transform=%s residual=%.3g%% bytes=%zu (+%zu residual=%zu) MSE %.8g activation-relative-MSE %.8g corrected-MSE %.8g corrected-activation-relative-MSE %.8g\n",
-                        block, block, block_affine ? "block-affine" : "global", output.transform_name,
+            std::printf("ASTC %ux%u mode=%s basis=%s transform=%s residual=%.3g%% bytes=%zu (+%zu residual=%zu) MSE %.8g activation-relative-MSE %.8g corrected-MSE %.8g corrected-activation-relative-MSE %.8g\n",
+                        block, block, block_affine ? "block-affine" : "global", output.basis_name, output.transform_name,
                         residual_fraction * 100.0f,
                         total_bytes, output.astc_bytes, output.residual_bytes,
                         output.mse, output.activation_relative_mse, output.corrected_mse,
                         output.corrected_activation_relative_mse);
-            std::printf("ASTC %ux%u mode=%s transform=%s total-with-residual-bytes=%zu\n",
+            std::printf("ASTC %ux%u mode=%s basis=%s transform=%s total-with-residual-bytes=%zu\n",
                         block, block, block_affine ? "block-affine" : "global",
-                        output.transform_name, corrected_total);
+                        output.basis_name, output.transform_name, corrected_total);
             gate_passed = gate_passed &&
                 output.corrected_activation_relative_mse <= kQualityGateRelativeActivationMse;
+                }
             }
+        }
+    }
+    for (const uint32_t block : { 4u, 6u }) {
+        result base_result;
+        std::vector<float> base_reconstructed;
+        if (!encode_format(matrix.values, matrix.rows, matrix.columns, activations,
+                           block, block, true, residual_fraction, transform_mode::linear,
+                           basis_mode::identity, base_result, &base_reconstructed)) {
+            std::fprintf(stderr, "ASTC %ux%u low-rank baseline failed\n", block, block);
+            return 1;
+        }
+        for (const low_rank_point & point : evaluate_low_rank_residual(
+                matrix.values, base_reconstructed, matrix.rows, matrix.columns, activations)) {
+            std::printf("ASTC %ux%u mode=block-affine basis=identity transform=linear low-rank=%u residual-bytes=%zu MSE %.8g activation-relative-MSE %.8g total-with-residual-bytes=%zu\n",
+                        block, block, point.rank, point.bytes, point.mse,
+                        point.activation_relative_mse,
+                        base_result.astc_bytes + base_result.metadata_bytes + point.bytes);
         }
     }
     std::printf("quality-gate corrected activation-relative-MSE <= %.3f: %s\n",
