@@ -2777,14 +2777,6 @@ future manifest-backed session, while `ggml-vulkan` remains untouched. Error
 cleanup and ownership still belong to the caller for now; a later RAII wrapper
 can be introduced once the upload/session API is fixed rather than guessed.
 
-## One-hundred-nineteenth sweep: atlas alignment hardening
-
-The atlas packer now checks ASTC block-aligned extents before placement and
-uses widened arithmetic for edge comparisons. A regression fixture covering a
-tensor that fits in texels but not in its aligned block extent now rejects the
-layout deterministically. This keeps 4K-page planning safe for arbitrary
-tensor widths, including the 1,536-column FFN path.
-
 ## One-hundred-eighteenth sweep: manifest-bound sampled texture session
 
 `astc_vulkan_texture` now owns one sampled ASTC image and its upload lifetime.
@@ -2798,3 +2790,11 @@ The existing device smoke now exercises this session for 4x4, 5x5, and 6x6;
 all three uploads pass on Intel UHD 620. The API intentionally handles one
 tensor per image first. Atlas/page placement remains a metadata concern until
 descriptor indexing and lifetime requirements are measured.
+
+## One-hundred-nineteenth sweep: atlas alignment hardening
+
+The atlas packer now checks ASTC block-aligned extents before placement and
+uses widened arithmetic for edge comparisons. A regression fixture covering a
+tensor that fits in texels but not in its aligned block extent now rejects the
+layout deterministically. This keeps 4K-page planning safe for arbitrary
+tensor widths, including the 1,536-column FFN path.
