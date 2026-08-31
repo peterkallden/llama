@@ -1301,3 +1301,49 @@ the final objective. The CTest requires a majority activation-loss improvement,
 not universal improvement. The next integration must select candidate blocks
 against calibration-trace output error and confirm the selected result on a
 holdout trace.
+
+## Fifty-seventh sweep: fixed decoder and real Track-4 holdout result
+
+The latent PoC previously fit `s_L`, `s_A`, and `b` after ASTC decode. That is
+an acceptable optimistic analysis baseline, but it is invalid for encoder
+ranking: the encoder cannot score against a decoder whose coefficients are
+learned only after its candidate has been chosen. Each latent constructor now
+provides a fixed affine decoder before encoding. For the additive construction:
+
+```
+L = (coarse - minimum) / range
+A = 0.5 + residual / (2 * residual_radius)
+W = range * L + 2 * residual_radius * A + minimum - residual_radius
+```
+
+The same `range` and `2 * residual_radius` coefficients are passed to the
+Track-4 astcenc metric. The side fork is linked only by an explicit, separate
+CMake build with its static archive and include path; the ordinary llama build
+continues to link the packaged astcenc and cannot enable `--neural-rank`.
+`astc-vulkan-latent-smoke` remains the standard CTest, while the isolated build
+adds opt-in `astc-vulkan-latent-neural-rank-smoke`; both passed. The latter is
+kept separate because it deliberately exercises an external research fork and
+takes about 24 seconds even on the small synthetic fixture.
+
+On SmolLM2 F16 `blk.0.attn_q.weight` (576x576), the isolated build encoded
+both ordinary and neural-ranked L+A latents and evaluated the existing holdout
+trace. This run did **not** select on the supplied calibration trace yet; it
+is a real-weight/holdout measurement of the fixed weight-aware candidate score.
+
+| Footprint | Standard L+A holdout relative MSE | Track-4 L+A holdout relative MSE | Scalar ASTC holdout relative MSE |
+|---|---:|---:|---:|
+| 4x4 | 0.11310736 | 0.00877819 | 0.00149140 |
+| 5x5 | 0.62712064 | 0.08579853 | 0.01438145 |
+| 6x6 | 0.94989797 | 0.35078510 | 0.06550879 |
+
+Track 4 lowers L+A holdout error by approximately 92%, 86%, and 63% for 4x4,
+5x5, and 6x6 respectively. It also changes dual-plane selection substantially:
+4x4 rises from 3,250 to 12,206 blocks, 5x5 from 103 to 10,457, and 6x6 from
+zero to 8,040. This is strong evidence that ordinary image ranking was choosing
+the wrong ASTC block family for this latent decoder.
+
+However, scalar ASTC remains better at every footprint. The result proves the
+candidate-ranking mechanism on real weights, not that L+A is ready to replace
+the scalar baseline. The next required step is exact calibration-trace ranking
+with cached output-error cross terms and an untouched holdout. Only then should
+we revisit neural texture layouts, permutations, or TQ controls.

@@ -208,6 +208,11 @@ dispatches; its timing data is still exploratory and not a performance claim.
     metric is opt-in. Re-evaluate true TQ1_0 and TQ2_0 separately on the same
     256-aligned real layers and traces, across more than one projection, before
     using either as an ASTC-Q quality or throughput control.
+52. [x] Make every encoder-ranked latent representation specify its runtime
+    affine decoder before encoding. Do not fit `s_L`, `s_A`, or `b` after
+    decode when using those parameters in an ASTC candidate score. Add an
+    isolated llama PoC build that can link the side-fork encoder only when
+    explicitly supplied with its static library and headers.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

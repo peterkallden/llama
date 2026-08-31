@@ -23,6 +23,11 @@ struct affine_decoder {
     double offset = 0.0;
 };
 
+struct latent_representation {
+    std::vector<float> texels;
+    affine_decoder decoder;
+};
+
 struct activations {
     uint32_t samples = 4;
     uint32_t columns = 0;
@@ -85,86 +90,6 @@ activations make_default_activations(uint32_t columns) {
     return result;
 }
 
-bool solve_3x3(double matrix[3][3], double rhs[3], affine_decoder & result) {
-    for (uint32_t column = 0; column < 3; ++column) {
-        uint32_t pivot = column;
-        for (uint32_t row = column + 1; row < 3; ++row) {
-            if (std::fabs(matrix[row][column]) > std::fabs(matrix[pivot][column])) {
-                pivot = row;
-            }
-        }
-        if (std::fabs(matrix[pivot][column]) < 1e-12) return false;
-        for (uint32_t entry = column; entry < 3; ++entry) {
-            std::swap(matrix[column][entry], matrix[pivot][entry]);
-        }
-        std::swap(rhs[column], rhs[pivot]);
-        const double inverse = 1.0 / matrix[column][column];
-        for (uint32_t entry = column; entry < 3; ++entry) matrix[column][entry] *= inverse;
-        rhs[column] *= inverse;
-        for (uint32_t row = 0; row < 3; ++row) {
-            if (row == column) continue;
-            const double factor = matrix[row][column];
-            for (uint32_t entry = column; entry < 3; ++entry) {
-                matrix[row][entry] -= factor * matrix[column][entry];
-            }
-            rhs[row] -= factor * rhs[column];
-        }
-    }
-    result.scale_l = rhs[0];
-    result.scale_a = rhs[1];
-    result.offset = rhs[2];
-    return true;
-}
-
-affine_decoder fit_affine_decoder(const std::vector<float> & weights,
-                                  const std::vector<float> & texels) {
-    double normal[3][3]{};
-    double rhs[3]{};
-    for (size_t index = 0; index < weights.size(); ++index) {
-        const float * texel = texels.data() + index * 4;
-        // RGB stores the first (luminance-like) latent. Alpha stores the
-        // second latent. Averaging RGB makes the contract robust to minor
-        // encoder channel asymmetry while preserving the intended semantics.
-        const double features[3] = {
-            (texel[0] + texel[1] + texel[2]) / 3.0,
-            texel[3],
-            1.0,
-        };
-        for (uint32_t row = 0; row < 3; ++row) {
-            rhs[row] += features[row] * weights[index];
-            for (uint32_t column = 0; column < 3; ++column) {
-                normal[row][column] += features[row] * features[column];
-            }
-        }
-    }
-    affine_decoder result;
-    return solve_3x3(normal, rhs, result) ? result : affine_decoder{};
-}
-
-affine_decoder fit_scalar_decoder(const std::vector<float> & weights,
-                                  const std::vector<float> & texels) {
-    double sum_l = 0.0;
-    double sum_ll = 0.0;
-    double sum_w = 0.0;
-    double sum_lw = 0.0;
-    for (size_t index = 0; index < weights.size(); ++index) {
-        const float * texel = texels.data() + index * 4;
-        const double luminance = (texel[0] + texel[1] + texel[2]) / 3.0;
-        sum_l += luminance;
-        sum_ll += luminance * luminance;
-        sum_w += weights[index];
-        sum_lw += luminance * weights[index];
-    }
-    const double count = weights.size();
-    const double determinant = sum_ll * count - sum_l * sum_l;
-    if (std::fabs(determinant) < 1e-12) return {};
-    return {
-        (sum_lw * count - sum_l * sum_w) / determinant,
-        0.0,
-        (sum_ll * sum_w - sum_l * sum_lw) / determinant,
-    };
-}
-
 std::vector<float> reconstruct(const std::vector<float> & texels,
                                const affine_decoder & decoder) {
     std::vector<float> result(texels.size() / 4);
@@ -179,13 +104,30 @@ std::vector<float> reconstruct(const std::vector<float> & texels,
 
 bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t columns,
                     const ggml_vk_astc_format_contract & format,
+                    const affine_decoder * ranking_decoder,
                     astc_roundtrip_result & result) {
     result.compressed_bytes = ggml_vk_astc_image_storage_bytes(format, columns, rows);
     astcenc_config config{};
+#if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+    const unsigned int flags = ranking_decoder == nullptr ? 0 : ASTCENC_FLG_MAP_NEURAL_LA;
+#else
+    if (ranking_decoder != nullptr) return false;
+    const unsigned int flags = 0;
+#endif
     if (astcenc_config_init(ASTCENC_PRF_LDR, format.block_width, format.block_height, 1,
-                            ASTCENC_PRE_THOROUGH, 0, &config) != ASTCENC_SUCCESS) return false;
+                            ASTCENC_PRE_THOROUGH, flags, &config) != ASTCENC_SUCCESS) return false;
+#if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+    if (ranking_decoder != nullptr) {
+        config.neural_l_scale = static_cast<float>(ranking_decoder->scale_l);
+        config.neural_a_scale = static_cast<float>(ranking_decoder->scale_a);
+    }
+#endif
     astcenc_context * context = nullptr;
+#if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+    if (astcenc_context_alloc(&config, 1, &context, nullptr) != ASTCENC_SUCCESS) return false;
+#else
     if (astcenc_context_alloc(&config, 1, &context) != ASTCENC_SUCCESS) return false;
+#endif
     void * source_slice = const_cast<float *>(source.data());
     astcenc_image source_image{ columns, rows, 1, ASTCENC_TYPE_F32, &source_slice };
     const astcenc_swizzle swizzle{ ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A };
@@ -215,18 +157,20 @@ bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t c
     return status == ASTCENC_SUCCESS;
 }
 
-std::vector<float> make_scalar_latents(const std::vector<float> & weights,
-                                       float minimum, float range) {
-    std::vector<float> result(weights.size() * 4);
+latent_representation make_scalar_latents(const std::vector<float> & weights,
+                                          float minimum, float range) {
+    latent_representation result;
+    result.texels.resize(weights.size() * 4);
+    result.decoder = { range, 0.0, minimum };
     for (size_t index = 0; index < weights.size(); ++index) {
         const float normalized = (weights[index] - minimum) / range;
-        std::fill_n(result.data() + index * 4, 4, normalized);
+        std::fill_n(result.texels.data() + index * 4, 4, normalized);
     }
     return result;
 }
 
-std::vector<float> make_row_column_latents(const std::vector<float> & weights,
-                                           uint32_t rows, uint32_t columns) {
+latent_representation make_row_column_latents(const std::vector<float> & weights,
+                                              uint32_t rows, uint32_t columns) {
     std::vector<float> row_means(rows, 0.0f);
     std::vector<float> column_means(columns, 0.0f);
     for (uint32_t row = 0; row < rows; ++row) {
@@ -243,10 +187,12 @@ std::vector<float> make_row_column_latents(const std::vector<float> & weights,
         std::minmax_element(column_means.begin(), column_means.end());
     const float row_range = std::max(*row_max_it - *row_min_it, 1e-6f);
     const float column_range = std::max(*column_max_it - *column_min_it, 1e-6f);
-    std::vector<float> result(weights.size() * 4);
+    latent_representation result;
+    result.texels.resize(weights.size() * 4);
+    result.decoder = { row_range, column_range, *row_min_it + *column_min_it };
     for (uint32_t row = 0; row < rows; ++row) {
         for (uint32_t column = 0; column < columns; ++column) {
-            float * texel = result.data() +
+            float * texel = result.texels.data() +
                 (static_cast<size_t>(row) * columns + column) * 4;
             texel[0] = texel[1] = texel[2] =
                 (row_means[row] - *row_min_it) / row_range;
@@ -256,14 +202,16 @@ std::vector<float> make_row_column_latents(const std::vector<float> & weights,
     return result;
 }
 
-std::vector<float> make_additive_latents(const std::vector<float> & weights,
-                                         float minimum, float range,
-                                         uint32_t rows, uint32_t columns,
-                                         uint32_t block, bool block_residual,
-                                         uint32_t coarse_levels) {
-    std::vector<float> result(weights.size() * 4);
+latent_representation make_additive_latents(const std::vector<float> & weights,
+                                            float minimum, float range,
+                                            uint32_t rows, uint32_t columns,
+                                            uint32_t block, bool block_residual,
+                                            uint32_t coarse_levels) {
+    latent_representation result;
+    result.texels.resize(weights.size() * 4);
     const float step = range / (coarse_levels - 1);
     const float residual_radius = std::max(step * 0.5f, 1e-6f);
+    result.decoder = { range, 2.0 * residual_radius, minimum - residual_radius };
     std::vector<float> residuals(weights.size());
     for (size_t index = 0; index < weights.size(); ++index) {
         const float level = std::round((weights[index] - minimum) / step);
@@ -303,7 +251,7 @@ std::vector<float> make_additive_latents(const std::vector<float> & weights,
         const float l = (coarse - minimum) / range;
         const float a = std::clamp(0.5f + residuals[index] / (2.0f * residual_radius),
                                    0.0f, 1.0f);
-        float * texel = result.data() + index * 4;
+        float * texel = result.texels.data() + index * 4;
         texel[0] = l;
         texel[1] = l;
         texel[2] = l;
@@ -313,15 +261,14 @@ std::vector<float> make_additive_latents(const std::vector<float> & weights,
 }
 
 double run_case(const char * name, const std::vector<float> & weights,
-                const std::vector<float> & latents, uint32_t rows, uint32_t columns,
+                const latent_representation & latents, uint32_t rows, uint32_t columns,
                 const ggml_vk_astc_format_contract & format,
-                const activations & inputs, const activations * selection_inputs = nullptr) {
+                const activations & inputs, const activations * selection_inputs = nullptr,
+                bool neural_rank = false) {
     astc_roundtrip_result roundtrip;
-    if (!astc_roundtrip(latents, rows, columns, format, roundtrip)) return NAN;
-    const affine_decoder decoder = std::string(name) == "scalar-rgba"
-        ? fit_scalar_decoder(weights, roundtrip.texels)
-        : fit_affine_decoder(weights, roundtrip.texels);
-    const std::vector<float> reconstructed = reconstruct(roundtrip.texels, decoder);
+    const affine_decoder * ranking_decoder = neural_rank ? &latents.decoder : nullptr;
+    if (!astc_roundtrip(latents.texels, rows, columns, format, ranking_decoder, roundtrip)) return NAN;
+    const std::vector<float> reconstructed = reconstruct(roundtrip.texels, latents.decoder);
     const double mse = elementwise_mse(weights, reconstructed);
     const double activation_mse = activation_relative_mse(
         weights, reconstructed, rows, columns, inputs);
@@ -330,8 +277,8 @@ double run_case(const char * name, const std::vector<float> & weights,
                 format.name, name, roundtrip.compressed_bytes,
                 roundtrip.compressed_bytes * 8.0 / weights.size(),
                 roundtrip.dual_plane_blocks, roundtrip.block_count,
-                roundtrip.alpha_dual_plane_blocks, decoder.scale_l, decoder.scale_a,
-                decoder.offset, mse, activation_mse);
+                roundtrip.alpha_dual_plane_blocks, latents.decoder.scale_l, latents.decoder.scale_a,
+                latents.decoder.offset, mse, activation_mse);
     double score = activation_mse;
     if (selection_inputs != nullptr) {
         score = activation_relative_mse(weights, reconstructed, rows, columns,
@@ -350,10 +297,13 @@ int main(int argc, char ** argv) {
     std::string trace_path;
     std::string calibration_trace_path;
     bool search_levels = false;
+    bool neural_rank = false;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
             search_levels = true;
+        } else if (option == "--neural-rank") {
+            neural_rank = true;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace") &&
                    index + 1 < argc) {
@@ -364,7 +314,7 @@ int main(int argc, char ** argv) {
             else calibration_trace_path = value;
         } else {
             std::fprintf(stderr,
-                         "usage: %s [--search-levels] [--model path --tensor name] "
+                         "usage: %s [--search-levels] [--neural-rank] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path]\n",
                          argv[0]);
             return 2;
@@ -374,6 +324,12 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "--model and --tensor must be supplied together\n");
         return 2;
     }
+#if !defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+    if (neural_rank) {
+        std::fprintf(stderr, "this build does not include the experimental neural astcenc fork\n");
+        return 2;
+    }
+#endif
 
     uint32_t rows = kRows;
     uint32_t columns = kColumns;
@@ -402,8 +358,8 @@ int main(int argc, char ** argv) {
     const auto [minimum_it, maximum_it] = std::minmax_element(weights.begin(), weights.end());
     const float minimum = *minimum_it;
     const float range = std::max(*maximum_it - minimum, 1e-6f);
-    const std::vector<float> scalar_latents = make_scalar_latents(weights, minimum, range);
-    const std::vector<float> row_column_latents = make_row_column_latents(weights, rows, columns);
+    const latent_representation scalar_latents = make_scalar_latents(weights, minimum, range);
+    const latent_representation row_column_latents = make_row_column_latents(weights, rows, columns);
     activations inputs = make_default_activations(columns);
     activations calibration_inputs = inputs;
     if (!trace_path.empty()) {
@@ -430,10 +386,10 @@ int main(int argc, char ** argv) {
     for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,
                                  ggml_vk_astc_5x5_unorm_rgba,
                                  ggml_vk_astc_6x6_unorm_rgba }) {
-        const std::vector<float> additive_latents = make_additive_latents(
+        const latent_representation additive_latents = make_additive_latents(
             weights, minimum, range, rows, columns, format.block_width, false,
             kDefaultCoarseLevels);
-        const std::vector<float> block_latents = make_additive_latents(
+        const latent_representation block_latents = make_additive_latents(
             weights, minimum, range, rows, columns, format.block_width, true,
             kDefaultCoarseLevels);
         if (!std::isfinite(run_case("scalar-rgba", weights, scalar_latents,
@@ -447,17 +403,24 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "ASTC latent smoke failed\n");
             return 1;
         }
+        if (neural_rank &&
+            !std::isfinite(run_case("luminance-alpha-additive-neural-rank", weights,
+                                    additive_latents, rows, columns, format, inputs,
+                                    nullptr, true))) {
+            std::fprintf(stderr, "ASTC latent neural-rank smoke failed\n");
+            return 1;
+        }
         if (search_levels) {
             double best_score = INFINITY;
             uint32_t best_levels = 0;
             for (const uint32_t coarse_levels : { 3u, 5u, 8u, 16u, 32u }) {
-                const std::vector<float> candidate = make_additive_latents(
+                const latent_representation candidate = make_additive_latents(
                     weights, minimum, range, rows, columns, format.block_width, false,
                     coarse_levels);
                 char name[64];
                 std::snprintf(name, sizeof(name), "projection-levels-%u", coarse_levels);
                 const double score = run_case(name, weights, candidate, rows, columns,
-                                              format, inputs, &calibration_inputs);
+                                              format, inputs, &calibration_inputs, neural_rank);
                 if (!std::isfinite(score)) {
                     std::fprintf(stderr, "ASTC latent projection search failed\n");
                     return 1;

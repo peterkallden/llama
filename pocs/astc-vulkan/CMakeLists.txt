@@ -37,6 +37,12 @@ endif()
 
 find_package(astcenc CONFIG QUIET)
 if (TARGET astcenc::astcenc-static)
+    option(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK
+        "Enable the side-fork ASTC neural-ranking API in the latent PoC" OFF)
+    set(GGML_VK_ASTC_NEURAL_RANK_LIBRARY "" CACHE FILEPATH
+        "Static library from the isolated ASTC neural-ranking fork")
+    set(GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR "" CACHE PATH
+        "Source include directory from the isolated ASTC neural-ranking fork")
     add_executable(astc-vulkan-astcenc-smoke
         astc-vulkan-astcenc-smoke.cpp)
     target_include_directories(astc-vulkan-astcenc-smoke PRIVATE
@@ -85,9 +91,26 @@ if (TARGET astcenc::astcenc-static)
     target_include_directories(astc-vulkan-latent-smoke PRIVATE
         ${ASTC_VULKAN_POC_INCLUDE_DIR}
         ${CMAKE_SOURCE_DIR}/ggml/include)
-    target_link_libraries(astc-vulkan-latent-smoke PRIVATE
-        astcenc::astcenc-static ggml-base)
+    if (GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+        if (NOT EXISTS "${GGML_VK_ASTC_NEURAL_RANK_LIBRARY}" OR
+            NOT EXISTS "${GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR}/astcenc.h")
+            message(FATAL_ERROR
+                "GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK requires an isolated "
+                "ASTC fork library and include directory")
+        endif()
+        target_include_directories(astc-vulkan-latent-smoke BEFORE PRIVATE
+            ${GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR})
+        target_link_libraries(astc-vulkan-latent-smoke PRIVATE
+            ${GGML_VK_ASTC_NEURAL_RANK_LIBRARY} ggml-base)
+    else()
+        target_link_libraries(astc-vulkan-latent-smoke PRIVATE
+            astcenc::astcenc-static ggml-base)
+    endif()
     target_compile_features(astc-vulkan-latent-smoke PRIVATE cxx_std_17)
+    if (GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+        target_compile_definitions(astc-vulkan-latent-smoke PRIVATE
+            GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK=1)
+    endif()
     if (TARGET ggml-base)
         add_executable(astc-vulkan-quality-smoke
             astc-vulkan-quality-smoke.cpp
@@ -213,6 +236,11 @@ if (BUILD_TESTING)
         add_test(NAME astc-vulkan-latent-smoke
             COMMAND astc-vulkan-latent-smoke)
         set_property(TEST astc-vulkan-latent-smoke PROPERTY LABELS astc)
+        if (GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+            add_test(NAME astc-vulkan-latent-neural-rank-smoke
+                COMMAND astc-vulkan-latent-smoke --neural-rank)
+            set_property(TEST astc-vulkan-latent-neural-rank-smoke PROPERTY LABELS astc)
+        endif()
     endif()
 
     if (TARGET astc-vulkan-input-smoke)
