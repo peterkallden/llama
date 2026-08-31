@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -16,7 +17,6 @@
 
 namespace {
 
-constexpr float kResidualFraction = 0.01f;
 constexpr float kQualityGateRelativeActivationMse = 0.10f;
 
 struct activation_set {
@@ -93,6 +93,7 @@ bool encode_format(const std::vector<float> & weights,
                    const activation_set & activations,
                    uint32_t block_width, uint32_t block_height,
                    bool block_affine,
+                   float residual_fraction,
                    result & output) {
     const uint32_t texel_columns = (columns + 3) / 4;
     const uint32_t padded_columns = texel_columns * 4;
@@ -181,15 +182,17 @@ bool encode_format(const std::vector<float> & weights,
     output.activation_relative_mse = activation_relative_mse(
         weights, reconstructed, rows, columns, activations);
 
-    const size_t residual_count = std::max<size_t>(1, static_cast<size_t>(
-        std::ceil(kResidualFraction * weights.size())));
+    const size_t residual_count = residual_fraction <= 0.0f ? 0 : std::max<size_t>(1,
+        static_cast<size_t>(std::ceil(residual_fraction * weights.size())));
     std::vector<size_t> order(weights.size());
     std::iota(order.begin(), order.end(), 0);
-    std::partial_sort(order.begin(), order.begin() + residual_count, order.end(),
-                      [&](size_t lhs, size_t rhs) {
-                          return std::fabs(weights[lhs] - reconstructed[lhs]) >
-                                 std::fabs(weights[rhs] - reconstructed[rhs]);
-                      });
+    if (residual_count > 0) {
+        std::partial_sort(order.begin(), order.begin() + residual_count, order.end(),
+                          [&](size_t lhs, size_t rhs) {
+                              return std::fabs(weights[lhs] - reconstructed[lhs]) >
+                                     std::fabs(weights[rhs] - reconstructed[rhs]);
+                          });
+    }
     std::vector<float> corrected = reconstructed;
     for (size_t i = 0; i < residual_count; ++i) {
         const size_t index = order[i];
@@ -224,18 +227,28 @@ bool make_q4_reference(const std::vector<float> & weights,
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc != 5 && argc != 7) {
-        std::fprintf(stderr, "usage: %s --model path --tensor name [--trace path]\n", argv[0]);
+    if (argc != 5 && argc != 7 && argc != 9) {
+        std::fprintf(stderr, "usage: %s --model path --tensor name [--trace path] [--residual-percent n]\n", argv[0]);
         return 2;
     }
     std::string model;
     std::string tensor;
     std::string trace_path;
+    float residual_fraction = 0.01f;
     for (int i = 1; i < argc; i += 2) {
         const std::string option = argv[i];
         if (option == "--model") model = argv[i + 1];
         else if (option == "--tensor") tensor = argv[i + 1];
-        else if (option == "--trace" && argc == 7) trace_path = argv[i + 1];
+        else if (option == "--trace") trace_path = argv[i + 1];
+        else if (option == "--residual-percent") {
+            char * end = nullptr;
+            const float percent = std::strtof(argv[i + 1], &end);
+            if (end == argv[i + 1] || *end != '\0' || percent < 0.0f || percent > 100.0f) {
+                std::fprintf(stderr, "invalid residual percentage: %s\n", argv[i + 1]);
+                return 2;
+            }
+            residual_fraction = percent / 100.0f;
+        }
         else {
             std::fprintf(stderr, "unknown or misplaced option: %s\n", option.c_str());
             return 2;
@@ -282,14 +295,15 @@ int main(int argc, char ** argv) {
         for (const bool block_affine : { false, true }) {
             result output;
             if (!encode_format(matrix.values, matrix.rows, matrix.columns, activations,
-                               block, block, block_affine, output)) {
+                               block, block, block_affine, residual_fraction, output)) {
                 std::fprintf(stderr, "ASTC %ux%u encode/decode failed\n", block, block);
                 return 1;
             }
             const size_t total_bytes = output.astc_bytes + output.metadata_bytes;
             const size_t corrected_total = total_bytes + output.residual_bytes;
-            std::printf("ASTC %ux%u mode=%s bytes=%zu (+%zu residual=%zu) MSE %.8g activation-relative-MSE %.8g corrected-MSE %.8g corrected-activation-relative-MSE %.8g\n",
+            std::printf("ASTC %ux%u mode=%s residual=%.3g%% bytes=%zu (+%zu residual=%zu) MSE %.8g activation-relative-MSE %.8g corrected-MSE %.8g corrected-activation-relative-MSE %.8g\n",
                         block, block, block_affine ? "block-affine" : "global",
+                        residual_fraction * 100.0f,
                         total_bytes, output.astc_bytes, output.residual_bytes,
                         output.mse, output.activation_relative_mse, output.corrected_mse,
                         output.corrected_activation_relative_mse);

@@ -503,6 +503,27 @@ metadata raises totals to 124,416 and 55,296 bytes respectively, before the
 26,544-byte 1% residual sidecar. Metadata and residuals must therefore be
 counted as resident bandwidth, not treated as free compression overhead.
 
+## Thirty-third sweep: residual frontier and layer spread
+
+The quality probe now accepts `--residual-percent`, allowing the sparse
+sidecar budget to be swept without recompiling. On `blk.0.attn_q.weight`, the
+best shared block-affine 4x4 result moved from 0.15572 relative activation MSE
+at 1% residuals to 0.14208 at 2% and 0.11766 at 5%; it still missed the 0.10
+gate. The corresponding 6x6 results were 0.38467, 0.35303, and 0.27153. The
+sidecar grows linearly from 26,544 bytes at 1% to 132,712 bytes at 5% for this
+576x576 matrix, so the quality gain is not free bandwidth.
+
+The same 1% comparison was run on `blk.0.attn_k.weight`,
+`blk.0.attn_v.weight`, and `blk.0.ffn_down.weight`. Q4_0 activation-relative
+MSE was 0.01123, 0.01072, and 0.00844 respectively. Shared block-affine ASTC
+4x4 after residual correction measured 0.20587, 0.21486, and 0.21572; ASTC
+6x6 measured 0.43791, 0.45376, and 0.45442. This spread is sufficiently
+consistent to keep the Phase-3 gate closed for the generic ASTC baseline.
+
+The residual parameter remains an offline research control. It is not yet a
+runtime format field, and no ASTC artifact is emitted until a multi-layer
+quality/storage frontier passes review.
+
 ## Updated next sweep
 
 1. Capture representative activation traces from the llama evaluation path and
