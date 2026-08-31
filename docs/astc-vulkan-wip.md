@@ -1639,3 +1639,41 @@ its model-derived binary fixtures are not checked into the repository.
 5. [ ] Only after the controls are stable, prototype activation-aware
    candidate ranking and re-run the earlier 4x4/5x5/6x6, TQ1/TQ2, scalar,
    and ASTC-Q evaluations from the same source artifacts.
+
+## Sixty-ninth sweep: full-size FP16-derived buffer comparison
+
+The latent exporter now writes the cropped source matrix as an explicit F32
+binary fixture with `--export-weights`. This is the F16 GGUF tensor converted
+to F32 by the shared ggml reader; it is not a re-read of an ASTC payload. The
+same 576x576 `blk.0.attn_q.weight` tensor was exported alongside independent
+4x4, 5x5, and 6x6 ASTC payload/reference files. The Vulkan buffer control was
+updated to accept that exact source through `--weights` and to validate its
+own CPU dot-product oracle.
+
+For timing, each path executed 1,000 matvec dispatches in one command buffer;
+the host reports the timestamp interval divided by the repeat count. The
+workgroup geometry and activation function are identical between paths. On
+the Intel UHD Graphics 620 (Kaby Lake, ANV/Mesa 26.0.8) the result was:
+
+| Path | Resident weight payload | Per-dispatch GPU timestamp |
+|---|---:|---:|
+| FP32 storage-buffer control | 1.27 MiB | ~144.6 us |
+| ASTC 4x4 sampled image | 324 KiB | ~153.9 us |
+| ASTC 5x5 sampled image | 211 KiB | ~157.8 us |
+| ASTC 6x6 sampled image | 144 KiB | ~160.7 us |
+
+The ASTC sampled path is therefore about 6%, 9%, and 11% slower than this
+buffer control in this first full-size steady-state probe, despite reducing
+resident weight bytes by roughly 4x, 6x, and 9x respectively. This is a
+useful correction to the earlier tiny-fixture hint: compression density does
+not automatically translate into faster shader execution. Texture decode and
+sampling latency can dominate, and the current kernel still performs the same
+floating-point reduction in both cases.
+
+This is not yet a whole-model inference conclusion. It excludes activation
+traffic, cache warm-up policy, batching, other matrix shapes, and Q4/TQ2
+controls. It also measures one native Intel implementation; other adapters may
+have different ASTC sampler throughput. The result does, however, establish a
+credible baseline for the next experiments: any ASTC variant must beat this
+same-source buffer timing while preserving its quality gate, or demonstrate a
+separate memory/energy benefit that justifies the decode cost.

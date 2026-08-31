@@ -537,6 +537,7 @@ int main(int argc, char ** argv) {
     uint32_t maximum_columns = 0;
     std::string export_astc_path;
     std::string export_reference_path;
+    std::string export_weights_path;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
@@ -559,10 +560,12 @@ int main(int argc, char ** argv) {
             maximum_rows = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if (option == "--max-columns" && index + 1 < argc) {
             maximum_columns = static_cast<uint32_t>(std::stoul(argv[++index]));
-        } else if ((option == "--export-astc" || option == "--export-reference") && index + 1 < argc) {
+        } else if ((option == "--export-astc" || option == "--export-reference" ||
+                    option == "--export-weights") && index + 1 < argc) {
             const std::string value = argv[++index];
             if (option == "--export-astc") export_astc_path = value;
-            else export_reference_path = value;
+            else if (option == "--export-reference") export_reference_path = value;
+            else export_weights_path = value;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace") &&
                    index + 1 < argc) {
@@ -575,7 +578,8 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-rows N] [--max-columns N]\n",
+                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-rows N] [--max-columns N] "
+                         "[--export-astc path --export-reference path --export-weights path]\n",
                          argv[0]);
             return 2;
         }
@@ -655,6 +659,15 @@ int main(int argc, char ** argv) {
         weights = std::move(cropped);
         std::printf("latent-submatrix rows=%u columns=%u source-rows=%u source-columns=%u\n",
                     rows, columns, source_rows, trace_columns);
+    }
+
+    if (!export_weights_path.empty()) {
+        if (!write_binary(export_weights_path, weights)) {
+            std::fprintf(stderr, "FP32 weight export failed\n");
+            return 1;
+        }
+        std::printf("latent-weight-export rows=%u columns=%u weights=%s\n",
+                    rows, columns, export_weights_path.c_str());
     }
 
     const auto [minimum_it, maximum_it] = std::minmax_element(weights.begin(), weights.end());

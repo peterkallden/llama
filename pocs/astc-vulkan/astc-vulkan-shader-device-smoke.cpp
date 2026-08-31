@@ -167,6 +167,7 @@ int main(int argc, char ** argv) {
     float scale_l = 1.0f;
     float scale_a = 0.0f;
     float offset = 0.0f;
+    uint32_t requested_repeats = 0;
     int index = 3;
     if (index < argc && argv[index][0] != '-') pattern_name = argv[index++];
     while (index < argc) {
@@ -176,7 +177,7 @@ int main(int argc, char ** argv) {
         else if (option == "--buffer-matvec") { matvec = true; buffer_matvec = true; }
         else if ((option == "--payload" || option == "--reference" || option == "--weights" ||
                   option == "--width" || option == "--height" || option == "--scale-l" ||
-                  option == "--scale-a" || option == "--offset") && index < argc) {
+                  option == "--scale-a" || option == "--offset" || option == "--repeats") && index < argc) {
             const std::string value = argv[index++];
             if (option == "--payload") payload_path = value;
             else if (option == "--reference") reference_path = value;
@@ -185,7 +186,8 @@ int main(int argc, char ** argv) {
             else if (option == "--height") supplied_height = static_cast<uint32_t>(std::stoul(value));
             else if (option == "--scale-l") scale_l = std::stof(value);
             else if (option == "--scale-a") scale_a = std::stof(value);
-            else offset = std::stof(value);
+            else if (option == "--offset") offset = std::stof(value);
+            else requested_repeats = static_cast<uint32_t>(std::stoul(value));
         } else {
             std::fprintf(stderr, "unknown or incomplete option: %s\n", option.c_str());
             return 2;
@@ -203,7 +205,7 @@ int main(int argc, char ** argv) {
                      "[sequential|nonlocal] [--benchmark] "
                      "[--payload astc.bin --reference decoded-rgba-f32.bin --width N --height N] "
                      "[--matvec|--buffer-matvec --weights weights-f32.bin "
-                     "--scale-l S --scale-a S --offset B]\n",
+                     "--scale-l S --scale-a S --offset B --repeats N]\n",
                      argv[0]);
         return 2;
     }
@@ -290,7 +292,8 @@ int main(int argc, char ** argv) {
         format_name == "5x5" ? ggml_vk_astc_5x5_unorm_rgba : ggml_vk_astc_6x6_unorm_rgba,
         width, height);
     VkDeviceSize staging_bytes = block_count * kAstcBlockBytes;
-    const uint32_t dispatch_repeats = benchmark ? kBenchmarkDispatchRepeats : 1;
+    const uint32_t dispatch_repeats = requested_repeats != 0 ? requested_repeats :
+                                      (benchmark ? kBenchmarkDispatchRepeats : 1);
     const std::vector<uint8_t> payload = payload_path.empty() ? std::vector<uint8_t>() :
                                          read_binary<uint8_t>(payload_path);
     const std::vector<float> expected_values = reference_path.empty() ? std::vector<float>() :
@@ -546,9 +549,14 @@ int main(int argc, char ** argv) {
                     expected = 0.0f;
                     for (uint32_t column = 0; column < width; ++column) {
                         const size_t texel = (value_index * width + column) * 4;
-                        const float l = (expected_values[texel] + expected_values[texel + 1] +
-                                         expected_values[texel + 2]) / 3.0f;
-                        const float weight = scale_l * l + scale_a * expected_values[texel + 3] + offset;
+                        float weight = 0.0f;
+                        if (buffer_matvec && !source_weights.empty()) {
+                            weight = source_weights[value_index * width + column];
+                        } else {
+                            const float l = (expected_values[texel] + expected_values[texel + 1] +
+                                             expected_values[texel + 2]) / 3.0f;
+                            weight = scale_l * l + scale_a * expected_values[texel + 3] + offset;
+                        }
                         const float activation = 0.5f * std::sin(0.017f * (column + 1)) +
                                                  0.2f * std::cos(0.031f * (column + 3));
                         expected += weight * activation;
