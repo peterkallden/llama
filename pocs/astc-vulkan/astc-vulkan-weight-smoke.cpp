@@ -302,7 +302,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
     std::vector<float> weights(static_cast<size_t>(rows) * columns);
-    std::vector<std::vector<float>> activation_samples(4, std::vector<float>(columns));
+    std::vector<std::vector<float>> activation_samples(6, std::vector<float>(columns));
     for (uint32_t row = 0; row < rows; ++row) {
         for (uint32_t column = 0; column < columns; ++column) {
             weights[static_cast<size_t>(row) * columns + column] =
@@ -314,6 +314,17 @@ int main(int argc, char ** argv) {
         activation_samples[1][column] = 0.5f * std::sin(0.07f * (column + 3));
         activation_samples[2][column] = 0.25f * std::cos(0.19f * (column + 5));
         activation_samples[3][column] = (static_cast<int>(column % 7) - 3) * 0.1f;
+        activation_samples[4][column] = 0.0f;
+        activation_samples[5][column] = 0.0f;
+    }
+    uint32_t random_state = 0x9e3779b9u;
+    for (uint32_t column = 0; column < columns; ++column) {
+        random_state = random_state * 1664525u + 1013904223u;
+        activation_samples[4][column] =
+            (static_cast<float>(random_state >> 8) / 16777215.0f - 0.5f) * 0.8f;
+        if (column % 13 == 0) {
+            activation_samples[5][column] = (column % 26 == 0) ? 1.0f : -1.0f;
+        }
     }
 
     const auto identity_order = identity_texel_order(layout);

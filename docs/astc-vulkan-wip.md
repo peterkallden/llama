@@ -353,6 +353,15 @@ be evaluated per tensor shape and activation distribution rather than frozen
 from one toy matrix. The absolute errors remain far too high for inference;
 this is a search-harness result only.
 
+The twenty-third sweep broadened both fixtures to six activation distributions:
+three smooth patterns, one bounded pseudo-random pattern, and one sparse
+outlier pattern in addition to the existing baseline. The selected formats did
+not change, but channel orders and activation losses did. For the larger
+fixture, 4x4 identity/thorough scored 0.46121455 while 6x6 identity/medium
+scored 1.11635062; the sparse/random samples exposed much larger 6x6
+activation error than the smooth-only run. This reinforces that representative
+activation data is a prerequisite for trusting an offline encoder choice.
+
 The twenty-first sweep added a conservative block-tail term to the candidate
 objective:
 `MSE + activation_MSE + 0.25 * max_block_MSE`. The coefficient is intentionally

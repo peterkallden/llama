@@ -82,6 +82,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
     keeping its weight explicit for later calibration.
 15. [x] Add a larger host fixture and CTest target so block-error percentiles
     are exercised beyond the tiny smoke matrix.
+16. [x] Include smooth, pseudo-random, and sparse/outlier activation samples so
+    candidate ranking is not tuned to one activation shape.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
