@@ -668,6 +668,14 @@ the search or integrating GPU execution, improve candidate-direction
 coverage and test activation-weighted/Hessian-whitened scoring with local as
 the mandatory fallback.
 
+An opt-in angular shortlist experiment is complete. Selecting extra legal
+ASTC candidates by cosine separation in activation-error space leaves the
+6x6 `attn_q` Block-LDLQ result essentially unchanged (`0.34425` versus
+`0.34428`) and does not change the winner in the six-case matrix. It gives a
+larger secondary improvement on `attn_k` 5x5 but remains above local. Keep it
+as a candidate-direction diagnostic; the next required gate is larger,
+sharded calibration data and fixed holdout evaluation, with local fallback.
+
 The damping ablation did not change the current 6x6 decisions across
 `1e-5`--`1e-3`. Keep the parameter exposed for future ill-conditioned traces,
 but prioritize calibration diversity, block ordering, and candidate direction

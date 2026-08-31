@@ -22,6 +22,7 @@ float g_astc_preset = ASTCENC_PRE_THOROUGH;
 double g_block_ldlq_damping = 1e-4;
 enum class ldlq_order_mode { forward, reverse, pivot };
 ldlq_order_mode g_block_ldlq_order = ldlq_order_mode::forward;
+bool g_directional_shortlists = false;
 
 struct affine_decoder {
     double scale_l = 0.0;
@@ -745,7 +746,8 @@ std::vector<std::vector<uint32_t>> make_diverse_block_shortlists(
         uint32_t rows, uint32_t columns,
         const ggml_vk_astc_format_contract & format,
         const activations & calibration,
-        uint32_t maximum_candidates) {
+        uint32_t maximum_candidates,
+        bool angular_distance) {
     const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
     const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
     const uint32_t block_count = blocks_x * blocks_y;
@@ -762,6 +764,7 @@ std::vector<std::vector<uint32_t>> make_diverse_block_shortlists(
         std::vector<std::vector<double>> errors(candidates.size(),
                                                 std::vector<double>(vector_size, 0.0));
         std::vector<double> local_scores(candidates.size(), 0.0);
+        std::vector<double> error_norms(candidates.size(), 0.0);
         for (size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
             for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
                 const float * input = calibration.values.data() +
@@ -778,6 +781,7 @@ std::vector<std::vector<uint32_t>> make_diverse_block_shortlists(
                     local_scores[candidate_index] += delta * delta;
                 }
             }
+            error_norms[candidate_index] = std::sqrt(local_scores[candidate_index]);
         }
 
         const size_t local_best = static_cast<size_t>(std::min_element(
@@ -800,9 +804,20 @@ std::vector<std::vector<uint32_t>> make_diverse_block_shortlists(
                 double distance = std::numeric_limits<double>::infinity();
                 for (uint32_t chosen : shortlists[block]) {
                     double difference = 0.0;
-                    for (size_t index = 0; index < vector_size; ++index) {
-                        const double value = errors[candidate_index][index] - errors[chosen][index];
-                        difference += value * value;
+                    if (angular_distance) {
+                        const double denominator = error_norms[candidate_index] * error_norms[chosen];
+                        if (denominator > 1e-18) {
+                            double dot = 0.0;
+                            for (size_t index = 0; index < vector_size; ++index) {
+                                dot += errors[candidate_index][index] * errors[chosen][index];
+                            }
+                            difference = 1.0 - std::clamp(dot / denominator, -1.0, 1.0);
+                        }
+                    } else {
+                        for (size_t index = 0; index < vector_size; ++index) {
+                            const double value = errors[candidate_index][index] - errors[chosen][index];
+                            difference += value * value;
+                        }
                     }
                     distance = std::min(distance, difference);
                 }
@@ -1472,7 +1487,8 @@ bool run_coordinate_case(const std::vector<float> & weights,
     std::vector<std::vector<uint32_t>> shortlists;
     if (include_diverse_candidates) {
         shortlists = make_diverse_block_shortlists(weights, candidates, rows, columns,
-                                                    format, selection_inputs, 4);
+                                                    format, selection_inputs, 4,
+                                                    g_directional_shortlists);
     }
     if (selector_compare) {
         const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
@@ -1570,6 +1586,7 @@ bool run_coordinate_case(const std::vector<float> & weights,
                     "stability-recovered-coordinate-gain=%.8g feedback-round-changes=%u "
                     "conflict-aware-accepted=%u stability-accepted=%u "
                     "candidate-coverage-min=%zu candidate-coverage-max=%zu candidate-coverage-average=%.2f "
+                    "candidate-shortlist-distance=%s "
                     "local-unique-choices=%zu conflict-unique-choices=%zu stability-unique-choices=%zu\n",
                     format.name, candidates.size(), local_calibration, coordinate_calibration,
                     ldlq_calibration, feedback_calibration, conflict_calibration, stability_calibration, local_loss,
@@ -1581,6 +1598,7 @@ bool run_coordinate_case(const std::vector<float> & weights,
                     conflict_aware.forward_changes, stability.forward_changes,
                     minimum_coverage == std::numeric_limits<size_t>::max() ? 0 : minimum_coverage,
                     maximum_coverage, average_coverage,
+                    g_directional_shortlists ? "angular" : "euclidean",
                     unique_choices(local), unique_choices(conflict_aware), unique_choices(stability));
         return std::isfinite(local_loss) && std::isfinite(feedback_loss) &&
                std::isfinite(conflict_loss) && std::isfinite(stability_loss) &&
@@ -1695,6 +1713,8 @@ int main(int argc, char ** argv) {
             selector_compare = true;
         } else if (option == "--candidate-sweep") {
             candidate_sweep = true;
+        } else if (option == "--candidate-angular") {
+            g_directional_shortlists = true;
         } else if (option == "--footprint" && index + 1 < argc) {
             footprint = argv[++index];
         } else if (option == "--preset" && index + 1 < argc) {
@@ -1736,9 +1756,9 @@ int main(int argc, char ** argv) {
             else calibration_trace_path = value;
         } else {
             std::fprintf(stderr,
-                         "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] "
+                         "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-mode scalar|additive]\n",
                          argv[0]);
             return 2;

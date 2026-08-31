@@ -2401,3 +2401,35 @@ calibration objective before adding more search complexity. In particular,
 retain local as the fallback, compare activation-weighted/Hessian-whitened
 candidate ranking on the same snapshots, and repeat only the promising 6x6
 case before any GPU timing claim.
+
+## Ninety-eighth sweep: angular candidate-direction shortlists
+
+The shortlist builder now has an opt-in `--candidate-angular` mode. It keeps
+the local-best and baseline candidates, but selects additional candidates by
+cosine-direction separation in activation-error space instead of raw squared
+distance. This tests whether the pool was missing compensating error
+directions rather than simply low-MSE alternatives. The default Euclidean
+shortlist remains unchanged.
+
+On the same SmolLM2 fixture and fixed traces, the angular mode produced these
+Block-LDLQ holdout values:
+
+| Tensor | Footprint | Euclidean shortlist | Angular shortlist |
+| --- | --- | ---: | ---: |
+| `attn_q` | 4x4 | 0.03347 | 0.03347 |
+| `attn_q` | 5x5 | 0.17326 | 0.17320 |
+| `attn_q` | 6x6 | 0.34428 | **0.34425** |
+| `attn_k` | 4x4 | 0.01720 | 0.01720 |
+| `attn_k` | 5x5 | 0.13145 | **0.12709** |
+| `attn_k` | 6x6 | 0.25469 | 0.25469 |
+
+The direction-aware pool is therefore safe and occasionally helpful, but it
+does not remove the tensor sensitivity or make Block-LDLQ a general winner.
+The tiny `attn_q` 6x6 change is within the scale of this bounded probe; no
+quality claim should rely on it alone. Keep angular shortlists available for
+future candidate-pool experiments, with Euclidean mode as the regression
+baseline and local ranking as the mandatory fallback.
+
+The next gate is a larger and more diverse calibration trace, not another
+order heuristic: measure whether angular candidate coverage and Block-LDLQ
+holdout behavior persist when calibration samples are increased and sharded.
