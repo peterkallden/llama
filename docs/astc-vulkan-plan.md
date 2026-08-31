@@ -46,6 +46,10 @@ these tests on hosts that expose no physical ASTC-capable device.
 Exit criterion: the selected target GPU accepts both formats as sampled images
 and the benchmark produces deterministic, validated values.
 
+Phase 1 result: met on Intel UHD Graphics 620 with Mesa 26.0.8. The benchmark
+harness is deterministic for correctness and now supports scaled repeated
+dispatches; its timing data is still exploratory and not a performance claim.
+
 ## Phase 2: offline ASTC-aware weight packer
 
 1. [x] Define an experimental input tensor layout and metadata record; do not

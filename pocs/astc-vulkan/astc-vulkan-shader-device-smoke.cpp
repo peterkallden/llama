@@ -13,6 +13,8 @@ namespace {
 
 constexpr VkDeviceSize kAstcBlockBytes = ggml_vk_astc_4x4_unorm_rgba.block_size_bytes;
 constexpr float kExpectedChannel = 0.5f;
+constexpr uint32_t kBenchmarkTexelExtent = 192;
+constexpr uint32_t kBenchmarkDispatchRepeats = 20;
 
 // A valid 2D LDR ASTC void-extent block.  Bits 10 and 11 are set as required;
 // all-ones s/t extents make this a constant-color block.  Each RGBA component
@@ -133,10 +135,17 @@ void destroy_image(VkDevice device, image_resources & resources) {
 int main(int argc, char ** argv) {
     const std::string format_name = argc >= 3 ? argv[2] : "";
     const std::string pattern_name = argc == 4 ? argv[3] : "sequential";
-    if ((argc != 3 && argc != 4) || (format_name != "4x4" && format_name != "6x6") ||
+    const bool benchmark = argc == 5 && std::string(argv[4]) == "--benchmark";
+    if ((argc < 3 || argc > 5) || (format_name != "4x4" && format_name != "6x6") ||
         (pattern_name != "sequential" && pattern_name != "nonlocal")) {
-        std::fprintf(stderr, "usage: %s <validation.spv> <4x4|6x6> [sequential|nonlocal]\n",
+        std::fprintf(stderr,
+                     "usage: %s <validation.spv> <4x4|6x6> "
+                     "[sequential|nonlocal] [--benchmark]\n",
                      argv[0]);
+        return 2;
+    }
+    if (argc == 5 && !benchmark) {
+        std::fprintf(stderr, "unknown option: %s\n", argv[4]);
         return 2;
     }
     const uint32_t access_pattern = pattern_name == "nonlocal" ? 1u : 0u;
@@ -212,8 +221,14 @@ int main(int argc, char ** argv) {
     VkQueue queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, queue_family, 0, &queue);
 
-    const uint32_t width = format_name == "4x4" ? 4 : 6;
+    const uint32_t block_extent = format_name == "4x4" ? 4 : 6;
+    const uint32_t width = benchmark ? kBenchmarkTexelExtent : block_extent;
     const uint32_t height = width;
+    const uint64_t block_count = ggml_vk_astc_image_block_count(
+        format_name == "4x4" ? ggml_vk_astc_4x4_unorm_rgba : ggml_vk_astc_6x6_unorm_rgba,
+        width, height);
+    const VkDeviceSize staging_bytes = block_count * kAstcBlockBytes;
+    const uint32_t dispatch_repeats = benchmark ? kBenchmarkDispatchRepeats : 1;
     image_resources image;
     bool success = create_image(physical_device, device, format, width, height, image);
     VkBuffer staging_buffer = VK_NULL_HANDLE;
@@ -232,7 +247,7 @@ int main(int argc, char ** argv) {
     do {
         if (!success) break;
         const VkBufferCreateInfo staging_info{
-            VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, kAstcBlockBytes,
+            VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, staging_bytes,
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_SHARING_MODE_EXCLUSIVE, 0, nullptr,
         };
         if (vkCreateBuffer(device, &staging_info, nullptr, &staging_buffer) != VK_SUCCESS) break;
@@ -248,8 +263,11 @@ int main(int argc, char ** argv) {
         if (vkAllocateMemory(device, &staging_allocate, nullptr, &staging_memory) != VK_SUCCESS ||
             vkBindBufferMemory(device, staging_buffer, staging_memory, 0) != VK_SUCCESS) break;
         void * mapped = nullptr;
-        if (vkMapMemory(device, staging_memory, 0, kAstcBlockBytes, 0, &mapped) != VK_SUCCESS) break;
-        std::memcpy(mapped, kConstantHalfBlock, kAstcBlockBytes);
+        if (vkMapMemory(device, staging_memory, 0, staging_bytes, 0, &mapped) != VK_SUCCESS) break;
+        for (uint64_t block = 0; block < block_count; ++block) {
+            std::memcpy(static_cast<unsigned char *>(mapped) + block * kAstcBlockBytes,
+                        kConstantHalfBlock, kAstcBlockBytes);
+        }
         vkUnmapMemory(device, staging_memory);
 
         const VkDeviceSize output_bytes = static_cast<VkDeviceSize>(width) * height * 4 * sizeof(float);
@@ -349,11 +367,7 @@ int main(int argc, char ** argv) {
             VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr,
         };
         if (vkBeginCommandBuffer(command_buffer, &begin_info) != VK_SUCCESS) break;
-        if (query_pool != VK_NULL_HANDLE) {
-            vkCmdResetQueryPool(command_buffer, query_pool, 0, 2);
-            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                query_pool, 0);
-        }
+        if (query_pool != VK_NULL_HANDLE) vkCmdResetQueryPool(command_buffer, query_pool, 0, 2);
         const VkImageMemoryBarrier to_transfer{
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, 0,
             VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
@@ -376,13 +390,20 @@ int main(int argc, char ** argv) {
         };
         vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_shader);
+        if (query_pool != VK_NULL_HANDLE) {
+            vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                query_pool, 0);
+        }
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
             pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
         const uint32_t dimensions[3] = { width, height, access_pattern };
         vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, sizeof(dimensions), dimensions);
-        vkCmdDispatch(command_buffer, 1, 1, 1);
+        const uint32_t workgroup_count = (width * height + 63) / 64;
+        for (uint32_t repeat = 0; repeat < dispatch_repeats; ++repeat) {
+            vkCmdDispatch(command_buffer, workgroup_count, 1, 1);
+        }
         if (query_pool != VK_NULL_HANDLE) {
             vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                 query_pool, 1);

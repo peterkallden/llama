@@ -198,6 +198,24 @@ claim. The images are too small and the variance too large to establish a
 locality effect. The next benchmark must use larger ASTC images and repeated
 dispatches while keeping upload and pipeline setup outside the timed region.
 
+The twelfth sweep added an explicit `--benchmark` mode. It fills a 192x192
+image (36,864 bytes for 4x4 and 16,384 bytes for 6x6), dispatches 20 times, and
+places timestamps around only the post-upload compute section. Five samples per
+configuration on the same Intel/Mesa setup were:
+
+| Format | Pattern | Min (ns) | Median (ns) | Mean (ns) | Max (ns) |
+|---|---|---:|---:|---:|---:|
+| 4x4 | sequential | 341,083 | 414,833 | 423,233 | 490,833 |
+| 4x4 | nonlocal | 343,417 | 374,500 | 381,867 | 432,667 |
+| 6x6 | sequential | 351,000 | 433,917 | 438,717 | 527,333 |
+| 6x6 | nonlocal | 363,667 | 394,833 | 397,967 | 436,333 |
+
+The nonlocal pattern happened to be faster in this short sample, so the data
+does not establish a locality benefit. Driver scheduling, cache state, and the
+small benchmark size still dominate. The result is useful as a repeatable
+harness baseline and reinforces that a larger, statistically controlled sweep
+is needed before comparing 4x4 and 6x6.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -212,14 +230,12 @@ After each implementation sweep:
 
 ## Next sweep
 
-1. Scale the test image and repeat dispatches so texture-cache behavior is
-   measurable independently of setup overhead.
-2. Record driver version, shader workgroup shape, repeated-run variance, and
-   represented bytes for each benchmark configuration.
-3. Revisit the plan after numerical and bandwidth evidence, before designing a
-   weight packer or changing any ggml tensor path.
-3. Revisit the plan after numerical and bandwidth evidence, before designing a
-   weight packer or changing any ggml tensor path.
+1. Expand the benchmark matrix and repeat count enough to report stable
+   distributions across image sizes and workgroup shapes.
+2. Start the offline packer prototype using an external ASTC encoder boundary;
+   keep encoder availability separate from Vulkan runtime tests.
+3. Revisit the plan after numerical and bandwidth evidence, before changing any
+   ggml tensor path.
 
 ## Open questions
 
