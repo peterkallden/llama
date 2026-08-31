@@ -250,6 +250,37 @@ on its calibration trace. Error feedback is useful only if it reaches a better
 holdout tradeoff at materially lower search cost or with a larger candidate
 space.
 
+The first comparison must be deliberately narrower. Given the *same fixed
+pool of legal ASTC candidates*, compare local neural ranking, exact
+cached-residual coordinate descent, and Hessian feedback. Coordinate descent
+is an oracle-ish offline reference because it sees the actual current layer
+residual. Fixed-pool feedback tests whether a compact curvature approximation
+recovers that information; it must not be mixed with the separate benefit of
+regenerating later candidates from a changed source target. Conditional target
+regeneration is the stronger second-stage encoder experiment.
+
+For comparable layers, report both absolute losses and the recovered
+coordinate-descent gain
+
+\[
+G_{HF} = \frac{L_{local} - L_{HF}}{L_{local} - L_{CD}}.
+\]
+
+This ratio is reported only when `L_local > L_CD`; finite holdout noise can
+otherwise make it undefined, negative, or greater than one. During selection,
+record the residual before and after every accepted block and the alignment
+between the proposed output delta and that residual. With
+`R_next = R - DeltaY`, positive `cos(R, DeltaY)` is direct evidence of error
+cancellation rather than merely a different ASTC block choice.
+
+Candidate diversity must also be measured in neural space. The practical form
+is `D_c = E_c X^T`, the candidate's output-error delta over calibration
+examples. This avoids constructing a full Hessian. If a whitened basis is
+needed, use a thin QR or SVD of `X`, because typical trace counts make
+`H_I = X^T X` rank-deficient. Retain a bounded set containing a local optimum,
+low-correlation and negative-correlation alternatives, and candidates covering
+the next principal error direction, each subject to an activation-loss bound.
+
 ### Two-sided sensitivity is a later, stronger objective
 
 ASTC blocks span both output and input dimensions. If a defensible

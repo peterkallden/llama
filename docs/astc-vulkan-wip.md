@@ -1974,6 +1974,25 @@ allowed to be expensive but must use streaming candidate storage and a compact
 sensitivity basis; deployed Vulkan work remains unchanged. Attention and FFN
 projections are separate cohorts rather than interchangeable measurements.
 
+## Eighty-first sweep: selector-comparison criteria
+
+The next Hessian-feedback result will use a fixed pool of legal ASTC blocks and
+compare three selectors only: local neural ranking, exact cached-residual
+coordinate descent, and Hessian feedback. This keeps candidate generation out
+of the first comparison. Coordinate descent is treated as an oracle-ish offline
+upper reference, while feedback is judged by how much of its improvement it
+recovers at lower search cost.
+
+Alongside absolute activation losses, the result will report recovered gain
+`(L_local - L_HF) / (L_local - L_CD)` only when the denominator is positive.
+The selector will also log residual norm and `cos(R, DeltaY)` for accepted
+blocks. Candidate diversity will be computed from calibration output deltas
+`E_c X^T`, rather than visual RGBA difference; this is essential because the
+trace Hessian is low rank when there are far fewer calibration samples than
+weight columns. A feedback method that later regenerates ASTC blocks from
+modified targets is a separate, stronger encoder experiment and must not be
+presented as the same fixed-pool comparison.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact

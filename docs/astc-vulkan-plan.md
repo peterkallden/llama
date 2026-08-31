@@ -242,6 +242,28 @@ dispatches; its timing data is still exploratory and not a performance claim.
     low-rank input-sensitivity basis and modify only targets of later blocks.
     First compare it with exact coordinate descent on small fixtures; it must
     beat a matched greedy baseline on holdout before a real-layer run.
+59a. On one fixed legal ASTC candidate pool, compare exactly three selectors:
+     local neural ranking, cached-residual coordinate descent, and Hessian
+     feedback. Coordinate descent is the offline oracle-ish reference; the
+     first feedback test may only choose from the fixed pool, so candidate
+     generation cannot confound selector quality.
+59b. Report recovered coordinate-descent gain when the denominator is positive:
+     `G_HF = (L_local - L_HF) / (L_local - L_CD)`. Also report all three
+     absolute losses, since the ratio is undefined when local and coordinate
+     descent tie and can be negative or exceed one on a finite holdout.
+59c. Log an error-cancellation budget for every accepted block decision:
+     residual norm before/after and `cos(R, DeltaY)`. Since `R_next = R -
+     DeltaY`, positive alignment identifies a direct residual-reducing choice.
+     Keep forward and reverse coordinate sweeps separate in the log.
+59d. Measure candidate diversity in the activation-weighted error space, not
+     RGBA space. Use `D_c = E_c X^T` directly, or a thin QR/SVD basis of the
+     calibration trace when `H_I = X^T X` is rank-deficient. Retain local-best,
+     low-correlation, negative-correlation, and principal-direction candidates
+     only when each has an explicit activation-loss bound.
+59e. Only after the fixed-pool comparison is interpretable, allow Hessian
+     feedback to alter the source target for later ASTC blocks and regenerate
+     their legal candidates. Report this stronger encoder jointly with the
+     fixed-pool result; it is not a like-for-like selector comparison.
 60. Add a two-sided objective only after input-only shaping is stable. Capture
     output sensitivity separately and evaluate `tr(H_O E H_I E^T)` first with
     a diagonal `H_O`, then a bounded Kronecker-factored approximation. A plain
