@@ -1,6 +1,7 @@
 #include <vulkan/vulkan.h>
 
 #include "astc-vulkan-contract.h"
+#include "astc-vulkan-resource.h"
 
 #include <cmath>
 #include <cstring>
@@ -23,13 +24,6 @@ constexpr uint32_t kBenchmarkDispatchRepeats = 20;
 constexpr unsigned char kConstantHalfBlock[kAstcBlockBytes] = {
     0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x00, 0x80,
-};
-
-struct image_resources {
-    VkImage image = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE;
-    VkSampler sampler = VK_NULL_HANDLE;
 };
 
 struct push_constants {
@@ -80,27 +74,6 @@ float packed_weight(const std::vector<uint8_t> & payload, uint32_t width,
     return static_cast<float>(static_cast<int>(code) - (tq2 ? 1 : 8)) * half_to_float(scale_bits);
 }
 
-uint32_t find_memory_type(VkPhysicalDevice physical_device, uint32_t type_bits,
-                          VkMemoryPropertyFlags properties) {
-    VkPhysicalDeviceMemoryProperties memory_properties{};
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
-    for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i) {
-        if ((type_bits & (1u << i)) != 0 &&
-            (memory_properties.memoryTypes[i].propertyFlags & properties) == properties) {
-            return i;
-        }
-    }
-    return UINT32_MAX;
-}
-
-bool supports_format(VkPhysicalDevice device, VkFormat format) {
-    VkFormatProperties properties{};
-    vkGetPhysicalDeviceFormatProperties(device, format, &properties);
-    constexpr VkFormatFeatureFlags required =
-        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-    return (properties.optimalTilingFeatures & required) == required;
-}
-
 std::vector<uint32_t> read_spirv(const char * path) {
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input) {
@@ -126,69 +99,6 @@ std::vector<T> read_binary(const std::string & path) {
     input.seekg(0);
     input.read(reinterpret_cast<char *>(values.data()), size);
     return input ? values : std::vector<T>();
-}
-
-bool create_image(VkPhysicalDevice physical_device, VkDevice device, VkFormat format,
-                  uint32_t width, uint32_t height, image_resources & resources) {
-    const VkImageCreateInfo image_info{
-        VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, nullptr, 0, VK_IMAGE_TYPE_2D,
-        format, { width, height, 1 }, 1, 1, VK_SAMPLE_COUNT_1_BIT,
-        VK_IMAGE_TILING_OPTIMAL,
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        VK_SHARING_MODE_EXCLUSIVE, 0, nullptr, VK_IMAGE_LAYOUT_UNDEFINED,
-    };
-    if (vkCreateImage(device, &image_info, nullptr, &resources.image) != VK_SUCCESS) {
-        return false;
-    }
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(device, resources.image, &requirements);
-    const uint32_t memory_type = find_memory_type(
-        physical_device, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (memory_type == UINT32_MAX) {
-        return false;
-    }
-    const VkMemoryAllocateInfo allocate_info{
-        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, requirements.size, memory_type,
-    };
-    if (vkAllocateMemory(device, &allocate_info, nullptr, &resources.memory) != VK_SUCCESS ||
-        vkBindImageMemory(device, resources.image, resources.memory, 0) != VK_SUCCESS) {
-        return false;
-    }
-    const VkImageViewCreateInfo view_info{
-        VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, nullptr, 0, resources.image,
-        VK_IMAGE_VIEW_TYPE_2D, format,
-        { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
-          VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY },
-        { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-    };
-    if (vkCreateImageView(device, &view_info, nullptr, &resources.view) != VK_SUCCESS) {
-        return false;
-    }
-    const VkSamplerCreateInfo sampler_info{
-        VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, nullptr, 0, VK_FILTER_NEAREST,
-        VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST,
-        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0.0f, VK_FALSE, 1.0f, VK_FALSE,
-        VK_COMPARE_OP_ALWAYS, 0.0f, 0.0f, VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
-        VK_FALSE,
-    };
-    return vkCreateSampler(device, &sampler_info, nullptr, &resources.sampler) == VK_SUCCESS;
-}
-
-void destroy_image(VkDevice device, image_resources & resources) {
-    if (resources.sampler != VK_NULL_HANDLE) {
-        vkDestroySampler(device, resources.sampler, nullptr);
-    }
-    if (resources.view != VK_NULL_HANDLE) {
-        vkDestroyImageView(device, resources.view, nullptr);
-    }
-    if (resources.memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, resources.memory, nullptr);
-    }
-    if (resources.image != VK_NULL_HANDLE) {
-        vkDestroyImage(device, resources.image, nullptr);
-    }
-    resources = {};
 }
 
 } // namespace
@@ -290,7 +200,7 @@ int main(int argc, char ** argv) {
     uint32_t queue_family = UINT32_MAX;
     uint32_t timestamp_valid_bits = 0;
     for (VkPhysicalDevice device : devices) {
-        if (!supports_format(device, image_format)) {
+        if (!astc_vulkan_supports_sampled_transfer(device, image_format)) {
             continue;
         }
         uint32_t queue_count = 0;
@@ -387,8 +297,9 @@ int main(int argc, char ** argv) {
         vkDestroyInstance(instance, nullptr);
         return 2;
     }
-    image_resources image;
-    bool success = buffer_matvec || packed_matvec || create_image(physical_device, device, image_format, width, height, image);
+    astc_vulkan_image_resources image;
+    bool success = buffer_matvec || packed_matvec || astc_vulkan_create_sampled_image(
+        physical_device, device, image_format, width, height, image);
     if (buffer_matvec) staging_bytes = static_cast<VkDeviceSize>(width) * height * sizeof(float);
     if (packed_matvec) staging_bytes = payload.size();
     if (sampled_f32) staging_bytes = static_cast<VkDeviceSize>(width) * height * sizeof(float);
@@ -415,7 +326,7 @@ int main(int argc, char ** argv) {
         if (vkCreateBuffer(device, &staging_info, nullptr, &staging_buffer) != VK_SUCCESS) break;
         VkMemoryRequirements staging_requirements{};
         vkGetBufferMemoryRequirements(device, staging_buffer, &staging_requirements);
-        const uint32_t staging_type = find_memory_type(
+        const uint32_t staging_type = astc_vulkan_find_memory_type(
             physical_device, staging_requirements.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         if (staging_type == UINT32_MAX) break;
@@ -463,7 +374,7 @@ int main(int argc, char ** argv) {
         if (vkCreateBuffer(device, &output_info, nullptr, &output_buffer) != VK_SUCCESS) break;
         VkMemoryRequirements output_requirements{};
         vkGetBufferMemoryRequirements(device, output_buffer, &output_requirements);
-        const uint32_t output_type = find_memory_type(
+        const uint32_t output_type = astc_vulkan_find_memory_type(
             physical_device, output_requirements.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         if (output_type == UINT32_MAX) break;
@@ -688,7 +599,7 @@ int main(int argc, char ** argv) {
     if (output_buffer != VK_NULL_HANDLE) vkDestroyBuffer(device, output_buffer, nullptr);
     if (staging_memory != VK_NULL_HANDLE) vkFreeMemory(device, staging_memory, nullptr);
     if (staging_buffer != VK_NULL_HANDLE) vkDestroyBuffer(device, staging_buffer, nullptr);
-    destroy_image(device, image);
+    astc_vulkan_destroy_sampled_image(device, image);
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
     if (!success) {

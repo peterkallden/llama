@@ -37,6 +37,13 @@ target_compile_features(test-astc-vulkan-driver PRIVATE cxx_std_17)
 
 find_package(Vulkan QUIET)
 if (Vulkan_FOUND)
+    add_library(astc-vulkan-resource STATIC
+        astc-vulkan-resource.cpp)
+    target_include_directories(astc-vulkan-resource PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-resource PUBLIC Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-resource PUBLIC cxx_std_17)
+
     add_executable(astc-vulkan-capability-probe
         astc-vulkan-capability-probe.cpp)
     target_link_libraries(astc-vulkan-capability-probe PRIVATE Vulkan::Vulkan)
@@ -280,6 +287,7 @@ if (ASTC_VULKAN_GLSLC)
         target_include_directories(astc-vulkan-shader-device-smoke PRIVATE
             ${ASTC_VULKAN_POC_INCLUDE_DIR})
         target_link_libraries(astc-vulkan-shader-device-smoke PRIVATE Vulkan::Vulkan)
+        target_link_libraries(astc-vulkan-shader-device-smoke PRIVATE astc-vulkan-resource)
         target_compile_features(astc-vulkan-shader-device-smoke PRIVATE cxx_std_17)
         add_dependencies(astc-vulkan-shader-device-smoke
             astc-vulkan-shader-smoke

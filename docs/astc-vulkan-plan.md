@@ -793,3 +793,8 @@ not a production-backend integration.
 7. After the sidecar path is clean, perform a refactor pass and decide whether
    any narrow, upstreamable interface belongs in ggml-vulkan. Until then all
    code remains under `pocs/astc-vulkan`.
+
+The repeated GPU controls and sidecar resource refactor are now complete. The
+next implementation gate is a manifest-backed upload/session object with
+explicit ownership and fallback behavior; only after that should a narrow
+llama-facing FFN-down adapter be attempted.

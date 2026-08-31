@@ -2763,3 +2763,16 @@ it does not alter `ggml-vulkan`, scheduler behavior, or production shaders.
 The round-trip and malformed-range checks are covered by
 `test-astc-vulkan-driver`. It gives the later image allocator and atlas code a
 stable input without prematurely coupling model loading to Vulkan resources.
+
+## One-hundred-seventeenth sweep: Vulkan resource refactor
+
+The PoC image/view/sampler and memory-type helpers are now isolated in
+`astc-vulkan-resource`. The existing shader-device smoke consumes that module
+without changing its descriptor layout, upload barriers, dispatch structure,
+or shader interface. A post-refactor Intel run passed ASTC 4x4, 5x5, and 6x6
+validation plus the 1,536-column matvec contract.
+
+This is an intentional boundary: the resource module is reusable by the
+future manifest-backed session, while `ggml-vulkan` remains untouched. Error
+cleanup and ownership still belong to the caller for now; a later RAII wrapper
+can be introduced once the upload/session API is fixed rather than guessed.
