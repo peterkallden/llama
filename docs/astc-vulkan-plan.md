@@ -624,3 +624,8 @@ gate, while the next implementation target is a side-fork-only per-block
 top-K snapshot. That snapshot must be opt-in, thread-safe or explicitly
 single-threaded for diagnostics, and must return only legal 16-byte ASTC
 blocks. No Vulkan runtime or standard llama backend path may depend on it.
+
+Per-block candidate ownership and coverage diagnostics are now enforced. The
+next selector experiments can therefore be interpreted as genuine block-local
+comparisons. Keep the baseline streams available as escape candidates and
+reject any block with insufficient legal coverage from quality claims.

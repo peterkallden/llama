@@ -2280,3 +2280,13 @@ this tensor; stability gating is best by a small margin. This is an important
 boundary: the 6x6 Block-LDLQ gain on `attn_q` is not yet universal. Keep the
 method as a candidate, but require multiple tensors and larger traces before
 claiming a model-level advantage.
+
+## Ninety-second sweep: per-block candidate ownership
+
+Each captured top-K candidate now carries its source block, and every selector
+filters candidates so a block only sees the baseline streams plus alternatives
+captured for that same block. The comparison also reports minimum, maximum,
+and average candidate coverage. On the synthetic 6x6 fixture coverage was
+6--8 candidates per block (7.5 average), with no change to the previously
+observed selector ordering. This removes a misleading global-pool degree of
+freedom and makes subsequent Block-LDLQ/stability results easier to interpret.

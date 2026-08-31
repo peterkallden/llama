@@ -292,7 +292,12 @@ struct astc_candidate {
     const char * name = nullptr;
     std::vector<float> reconstructed;
     std::vector<uint8_t> compressed;
+    int32_t source_block = -1;
 };
+
+bool candidate_allowed_for_block(const astc_candidate & candidate, uint32_t block) {
+    return candidate.source_block < 0 || candidate.source_block == static_cast<int32_t>(block);
+}
 
 struct feedback_proposal {
     uint32_t block = 0;
@@ -422,6 +427,7 @@ bool local_select_astc_blocks(const std::vector<float> & reference,
         uint32_t best_index = 0;
         for (uint32_t candidate_index : candidate_indices) {
             if (candidate_index >= candidates.size()) return false;
+            if (!candidate_allowed_for_block(candidates[candidate_index], block)) continue;
             const double error = block_activation_error(reference, candidates[candidate_index],
                                                         block, blocks_x, rows, columns,
                                                         format, calibration);
@@ -477,6 +483,7 @@ bool hessian_feedback_select_astc_blocks(
             uint32_t best_index = result.selected_indices[block];
             for (uint32_t candidate_index : candidate_indices) {
                 if (candidate_index >= candidates.size()) return false;
+                if (!candidate_allowed_for_block(candidates[candidate_index], block)) continue;
                 const astc_candidate & candidate = candidates[candidate_index];
                 const uint32_t column0 = (block % blocks_x) * format.block_width;
                 const uint32_t column_end = std::min(column0 + format.block_width, columns);
@@ -561,6 +568,7 @@ bool conflict_aware_select_astc_blocks(
         best.predicted_gain = 0.0;
         for (uint32_t candidate_index : candidate_indices) {
             if (candidate_index >= candidates.size()) return false;
+            if (!candidate_allowed_for_block(candidates[candidate_index], block)) continue;
             double residual_dot_delta = 0.0;
             double delta_norm = 0.0;
             for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
@@ -680,6 +688,7 @@ bool stability_select_astc_blocks(
         best.predicted_gain = 0.0;
         for (uint32_t candidate_index : candidate_indices) {
             if (candidate_index >= candidates.size()) return false;
+            if (!candidate_allowed_for_block(candidates[candidate_index], block)) continue;
             double score = INFINITY;
             for (uint32_t shard = 0; shard < 2; ++shard) {
                 const double gain = block_output_gain(
@@ -861,6 +870,7 @@ bool coordinate_select_astc_blocks(const std::vector<float> & reference,
             const double current_objective = residual_error +
                 penalty_unit * (selected_indices[block] == regularization_baseline ? 0.0 : 1.0);
             for (uint32_t candidate_index : candidate_indices) {
+                if (!candidate_allowed_for_block(candidates[candidate_index], block)) continue;
                 const astc_candidate & candidate = candidates[candidate_index];
                 std::vector<double> delta(static_cast<size_t>(calibration.samples) * row_count);
                 double residual_dot_delta = 0.0;
@@ -1014,6 +1024,7 @@ bool block_ldlq_select_astc_blocks(const std::vector<float> & reference,
         uint32_t best_candidate = candidates.size();
         for (uint32_t candidate_index : candidate_indices) {
             if (candidate_index >= candidates.size()) return false;
+            if (!candidate_allowed_for_block(candidates[candidate_index], block)) continue;
             const auto & candidate = candidates[candidate_index];
             double score = 0.0;
             for (uint32_t row = row0; row < row_end; ++row) {
@@ -1400,7 +1411,7 @@ bool run_coordinate_case(const std::vector<float> & weights,
                 std::snprintf(name, sizeof(name), "astc-topk-block-%zu-candidate-%zu",
                               block, candidate_index);
                 candidates.push_back({ name, reconstruct(texels, latents.decoder),
-                                       std::move(compressed) });
+                                       std::move(compressed), static_cast<int32_t>(block) });
             }
         }
         std::printf("latent-candidate-pool format=%s callbacks=%u blocks=%zu candidates=%zu "
@@ -1421,6 +1432,9 @@ bool run_coordinate_case(const std::vector<float> & weights,
                                                     format, selection_inputs, 4);
     }
     if (selector_compare) {
+        const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
+        const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
+        const uint32_t block_count = blocks_x * blocks_y;
         const hessian_stats stats = estimate_hessian_stats(calibration);
         std::printf("latent-hessian-stats samples=%u columns=%u rank=%u "
                     "max-eigen=%.8g min-positive-eigen=%.8g damped-condition=%.8g\n",
@@ -1487,6 +1501,20 @@ bool run_coordinate_case(const std::vector<float> & weights,
             choices.erase(std::unique(choices.begin(), choices.end()), choices.end());
             return choices.size();
         };
+        size_t minimum_coverage = std::numeric_limits<size_t>::max();
+        size_t maximum_coverage = 0;
+        size_t total_coverage = 0;
+        for (uint32_t block = 0; block < blocks_x * blocks_y; ++block) {
+            size_t coverage = 0;
+            for (const auto & candidate : candidates) {
+                if (candidate_allowed_for_block(candidate, block)) ++coverage;
+            }
+            minimum_coverage = std::min(minimum_coverage, coverage);
+            maximum_coverage = std::max(maximum_coverage, coverage);
+            total_coverage += coverage;
+        }
+        const double average_coverage = block_count == 0 ? 0.0 :
+            static_cast<double>(total_coverage) / block_count;
         std::printf("latent-selector-compare format=%s pool=%zu "
                     "local-calibration=%.8g coordinate-calibration=%.8g "
                     "block-ldlq-calibration=%.8g "
@@ -1498,12 +1526,15 @@ bool run_coordinate_case(const std::vector<float> & weights,
                     "hessian-recovered-coordinate-gain=%.8g conflict-aware-recovered-coordinate-gain=%.8g "
                     "stability-recovered-coordinate-gain=%.8g feedback-round-changes=%u "
                     "conflict-aware-accepted=%u stability-accepted=%u "
+                    "candidate-coverage-min=%zu candidate-coverage-max=%zu candidate-coverage-average=%.2f "
                     "local-unique-choices=%zu conflict-unique-choices=%zu stability-unique-choices=%zu\n",
                     format.name, candidates.size(), local_calibration, coordinate_calibration,
                     ldlq_calibration, feedback_calibration, conflict_calibration, stability_calibration, local_loss,
                     coordinate_loss, ldlq_loss, ldlq.forward_changes, feedback_loss, conflict_loss, stability_loss, recovered_gain,
                     conflict_gain, stability_gain, feedback.forward_changes,
                     conflict_aware.forward_changes, stability.forward_changes,
+                    minimum_coverage == std::numeric_limits<size_t>::max() ? 0 : minimum_coverage,
+                    maximum_coverage, average_coverage,
                     unique_choices(local), unique_choices(conflict_aware), unique_choices(stability));
         return std::isfinite(local_loss) && std::isfinite(feedback_loss) &&
                std::isfinite(conflict_loss) && std::isfinite(stability_loss) &&
