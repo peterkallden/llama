@@ -65,7 +65,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
    the uncompressed host tensor.
 7. Evaluate error distribution per block versus FP16/FP32 and an existing
    low-bit reference.
-8. Iterate on channel assignment and tensor permutation only when it improves
+8. [x] Evaluate all 24 RGBA channel assignments against the initial objective.
+9. Iterate on spatial block layout and tensor permutation only when it improves
    the measured objective.
 
 The packer must optimize a numerical objective. A generic image compressor is

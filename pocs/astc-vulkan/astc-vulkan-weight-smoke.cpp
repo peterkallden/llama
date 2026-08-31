@@ -1,6 +1,7 @@
 #include <astcenc.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -18,12 +19,14 @@ struct roundtrip_result {
     double mse = 0.0;
     float max_error = 0.0f;
     double dot_error = 0.0;
+    std::array<uint32_t, 4> channel_order{ 0, 1, 2, 3 };
 };
 
 bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
                       const ggml_vk_astc_weight_layout & layout,
                       const std::vector<float> & weights,
                       const std::vector<float> & activations,
+                      const std::array<uint32_t, 4> & channel_order,
                       roundtrip_result & result) {
     const unsigned int width = layout.texel_columns();
     const unsigned int height = layout.rows;
@@ -35,7 +38,8 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
             const size_t weight_offset = static_cast<size_t>(row) * layout.columns + texel * 4;
             for (uint32_t channel = 0; channel < 4; ++channel) {
                 texels[texel_offset + channel] =
-                    (weights[weight_offset + channel] - kWeightMin) / kWeightScale;
+                    (weights[weight_offset + channel_order[channel]] - kWeightMin) /
+                    kWeightScale;
             }
         }
     }
@@ -75,7 +79,12 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
     for (uint32_t row = 0; row < layout.rows; ++row) {
         for (uint32_t column = 0; column < layout.columns; ++column) {
             const size_t weight_index = static_cast<size_t>(row) * layout.columns + column;
-            const size_t texel_index = (static_cast<size_t>(row) * width + column / 4) * 4 + column % 4;
+            const uint32_t logical_channel = column % 4;
+            const auto decoded_channel = std::find(
+                channel_order.begin(), channel_order.end(), logical_channel);
+            const size_t texel_index =
+                (static_cast<size_t>(row) * width + column / 4) * 4 +
+                static_cast<size_t>(decoded_channel - channel_order.begin());
             const float reconstructed = decoded[texel_index] * kWeightScale + kWeightMin;
             const float error = std::fabs(weights[weight_index] - reconstructed);
             squared_error += static_cast<double>(error) * error;
@@ -89,15 +98,48 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
     for (size_t i = 0; i < weights.size(); ++i) {
         const uint32_t column = static_cast<uint32_t>(i % layout.columns);
         const uint32_t row = static_cast<uint32_t>(i / layout.columns);
-        const size_t texel_index = (static_cast<size_t>(row) * width + column / 4) * 4 + column % 4;
+        const uint32_t logical_channel = column % 4;
+        const auto decoded_channel = std::find(
+            channel_order.begin(), channel_order.end(), logical_channel);
+        const size_t texel_index =
+            (static_cast<size_t>(row) * width + column / 4) * 4 +
+            static_cast<size_t>(decoded_channel - channel_order.begin());
         const float reconstructed = decoded[texel_index] * kWeightScale + kWeightMin;
         reference_dot += weights[i] * activations[column];
         reconstructed_dot += reconstructed * activations[column];
     }
     result.dot_error = std::fabs(reference_dot - reconstructed_dot);
-    std::printf("ASTC weight %s: %zu bytes, MSE %.8f, max error %.6f, dot error %.6f\n",
-                format.name, compressed_bytes, result.mse, result.max_error, result.dot_error);
     return std::isfinite(result.mse) && std::isfinite(result.dot_error);
+}
+
+bool search_channel_orders(const ggml_vk_astc_format_contract & format,
+                           const ggml_vk_astc_weight_layout & layout,
+                           const std::vector<float> & weights,
+                           const std::vector<float> & activations,
+                           roundtrip_result & best_result) {
+    std::array<uint32_t, 4> channel_order{ 0, 1, 2, 3 };
+    bool found_result = false;
+    do {
+        roundtrip_result candidate;
+        if (!encode_roundtrip(format, layout, weights, activations,
+                              channel_order, candidate)) {
+            return false;
+        }
+        if (!found_result || candidate.mse < best_result.mse ||
+            (candidate.mse == best_result.mse && candidate.dot_error < best_result.dot_error)) {
+            best_result = candidate;
+            best_result.channel_order = channel_order;
+            found_result = true;
+        }
+    } while (std::next_permutation(channel_order.begin(), channel_order.end()));
+
+    std::printf(
+        "ASTC weight %s best-order %u%u%u%u: %zu bytes, MSE %.8f, max error %.6f, dot error %.6f\n",
+        format.name, best_result.channel_order[0], best_result.channel_order[1],
+        best_result.channel_order[2], best_result.channel_order[3],
+        layout.storage_bytes(format), best_result.mse, best_result.max_error,
+        best_result.dot_error);
+    return true;
 }
 
 } // namespace
@@ -119,14 +161,13 @@ int main() {
 
     roundtrip_result format_4x4;
     roundtrip_result format_6x6;
-    if (!encode_roundtrip(ggml_vk_astc_4x4_unorm_rgba, layout,
-                          weights, activations, format_4x4) ||
-        !encode_roundtrip(ggml_vk_astc_6x6_unorm_rgba, layout,
-                          weights, activations, format_6x6)) {
+    if (!search_channel_orders(ggml_vk_astc_4x4_unorm_rgba, layout,
+                               weights, activations, format_4x4) ||
+        !search_channel_orders(ggml_vk_astc_6x6_unorm_rgba, layout,
+                               weights, activations, format_6x6)) {
         std::fprintf(stderr, "ASTC weight smoke failed\n");
         return 1;
     }
     std::printf("ASTC weight smoke passed\n");
     return 0;
 }
-

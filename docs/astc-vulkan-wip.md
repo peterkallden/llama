@@ -256,6 +256,15 @@ current row-major matrix mapping has no corresponding spatial correlation. This
 rules out treating a generic image encode as a usable weight packer. The
 adapter is retained as a baseline and regression fixture only.
 
+The fifteenth sweep searched all 24 RGBA channel assignments for the same
+12x48 matrix and fixed activation vector. The best MSE order was `0231` for
+both formats. It reduced the 4x4 dot-product error from 0.133961 to 0.041689,
+but left MSE at 0.03734365; for 6x6 it left MSE at 0.09071333 and increased
+dot-product error to 0.513958. Channel assignment is therefore worth exposing
+as a packer degree of freedom, but it cannot compensate for the larger spatial
+correlation mismatch. Spatial block layout and objective-driven packing remain
+the next research target.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -270,8 +279,8 @@ After each implementation sweep:
 
 ## Next sweep
 
-1. Test block-local tensor permutations and channel assignments against the
-   elementwise and dot-product objective.
+1. Test block-local tensor permutations against the elementwise and dot-product
+   objective; channel search alone is insufficient.
 2. Expand the benchmark matrix and repeat count enough to report stable
    distributions across image sizes and workgroup shapes.
 3. Keep encoder availability separate from Vulkan runtime tests and do not alter
