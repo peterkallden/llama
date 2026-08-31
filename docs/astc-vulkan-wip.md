@@ -793,3 +793,54 @@ the ideal ternary byte count. This rules out claiming that ASTC storage alone
 turns an ordinary pretrained matrix into a useful BitNet model. It strengthens
 the ASTC-aware-training hypothesis: the model must learn both the few-level
 alphabet and the spatial/block structure that 6x6 can reconstruct.
+
+## Forty-third sweep: matched tiny-model baseline
+
+To make the next model-level comparison reproducible, the validation fixture is
+the `shibatch/tinybpe1m` family. It provides the same tokenizer, architecture,
+and training source as F16, Q4_0, TQ1_0, and TQ2_0 GGUF files. The files are
+kept outside the repository under `/tmp/llama-astc-models/tinybpe1m`; the
+repository only commits the short evaluation corpus and records the source
+repository, not a model binary.
+
+The downloaded artifact checksums are:
+
+| File | SHA-256 |
+|---|---|
+| `tinybpe1m.F16.gguf` | `17d21f397845a9ce92f18a55c7f0698a4016ef475041b996fd5a39b3f30d8d89` |
+| `tinybpe1m.TQ1_0.gguf` | `944bfa1694ae5683b5e5e39f496e71f3ea4c0240d5d1a7cef53bf4fda699f2aa` |
+| `tinybpe1m.TQ2_0.gguf` | `18c653e44063a5589d748658319b3e8b03a5c8e35dc1ff9f2c6091b09ded2d44` |
+| `tinybpe1m.Q4_0.gguf` | `8f37ac9de3a907abf512ce20ac4545de5091a2509e059289fb1eefde14342d79` |
+
+The source is [shibatch/tinybpe1m](https://huggingface.co/shibatch/tinybpe1m),
+which publishes the matched quantization family and documents the model as a
+small llama.cpp validation model.
+
+With a fixed prompt (`Tom and Jerry are`), seed 42, temperature 0, and 16
+predicted tokens, the variants produced:
+
+| Variant | Deterministic continuation |
+|---|---|
+| F16 | `ly. Every day, Jerry would go` |
+| TQ1_0 | `low. Every day, Jerry would g` |
+| TQ2_0 | `low. Every day, Jerry would g` |
+| Q4_0 | `ed. Every day, Jerry would go` |
+
+On the committed 256-token-context evaluation corpus, one perplexity chunk
+gave F16 `44.1675`, TQ1_0 `52.1643`, TQ2_0 `52.1643`, and Q4_0 `53.3438`.
+These numbers have a large uncertainty because the tiny model and one chunk
+are only a smoke baseline; they are not a quality claim.
+
+Running `astc-vulkan-quality-smoke` on the same model's F16
+`blk.0.attn_q.weight` (128x128) measured Q4_0 activation-relative MSE
+`0.00709`. The existing ASTC 4x4 and 6x6 block-affine paths with a 1% sparse
+sidecar reached `0.25143` and `0.45726` respectively before activation-aware
+selection (`0.13744` and `0.26716` after selection). The native ASTC-Q smoke
+also reported 6x6 resident rate `3.78125` bits/weight after edge padding, with
+level-16 element MSE `0.000464` versus level-3 `0.005926`.
+
+The immediate conclusion is that F16 is required as the same-source teacher
+for a fair ASTC comparison, while TQ/Q4 are useful controls. A complete
+model-level ASTC result still requires a loader/runtime path that can fetch
+ASTC-resident weights during inference; the current measurements are the
+weight and matvec gates that must pass before changing the GGUF format.

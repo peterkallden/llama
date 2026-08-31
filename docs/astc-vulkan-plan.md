@@ -116,6 +116,10 @@ dispatches; its timing data is still exploratory and not a performance claim.
     preceding quality and storage gates pass.
 27. [x] Validate packed channel-order metadata as an actual four-channel
     permutation before any artifact can be consumed.
+28. [x] Select a matched small-model baseline for end-to-end checks. The
+    `shibatch/tinybpe1m` repository supplies F16, TQ1_0, TQ2_0, and Q4_0 GGUF
+    files with the same tokenizer and architecture. Keep model binaries out
+    of git; record their source and checksums in the WIP log.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
@@ -231,8 +235,11 @@ ASTC enabled and automatically fall back when disabled or unsupported.
 
 ## Phase 5: model-level validation
 
-1. Compare output logits against the baseline for fixed prompts.
-2. Run perplexity or another model-appropriate quality evaluation.
+1. Compare output logits against the F16 baseline for fixed prompts. The
+   matched tinybpe1m family is the first smoke fixture; an ASTC runtime must
+   consume the same F16 tensor source before comparing against TQ/Q4.
+2. Run perplexity or another model-appropriate quality evaluation on the same
+   corpus and tokenizer.
 3. Measure prompt processing and token generation separately.
 4. Test at least two distinct GPU/driver families where practical.
 5. Profile with vendor tools when available; do not infer texture-decoder
