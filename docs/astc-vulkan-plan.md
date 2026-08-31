@@ -128,6 +128,10 @@ dispatches; its timing data is still exploratory and not a performance claim.
     residual pairs, and an RG16 high/low-byte control. Treat high/low bytes as
     a robustness control rather than a storage proposal; retain a residual
     only if its post-ASTC error improves the measured activation objective.
+30. [x] Add a channel-layout search over the three canonical pairs and all 24
+    ordered coarse/residual channel permutations. Keep the regression fixture
+    small, and permit an explicit F16 GGUF tensor as the input for expensive
+    real-layer sweeps.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

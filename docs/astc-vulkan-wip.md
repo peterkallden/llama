@@ -948,3 +948,25 @@ it. This does not invalidate a two-component representation; it narrows the
 next hypothesis. A residual must be structured before it enters ASTC (for
 example block-local, low-rank, sparse sidecar, or ASTC-aware-trained), rather
 than treating decoded RG bytes as a lossless 16-bit container.
+
+The same tool now retains a channel-layout optimizer. The default CTest sweep
+uses the three semantically distinct pairings `RG+BA`, `RB+GA`, and `RA+GB`.
+`--all-pair-permutations` expands this to all 24 ordered assignments of
+`coarse(value0), residual(value0), coarse(value1), residual(value1)`. The
+tool also accepts `--model path --tensor name`, loading a real F16 GGUF matrix
+through the same PoC reader used by the other quality tools.
+
+The exhaustive small-fixture search found that pairing affects the objective,
+but does not change the residual conclusion:
+
+| Format | Best coarse-only pair | Relative MSE | Best coarse+residual pair | Relative MSE |
+|---|---|---:|---|---:|
+| 4x4 | `BR+GA` | 0.00373 | `RB+GA` | 0.01807 |
+| 5x5 | `RG+BA` | 0.00834 | `RB+GA` | 0.03310 |
+| 6x6 | `AR+GB` | 0.00643 | `RA+GB` | 0.03101 |
+
+On the real SmolLM2 F16 `blk.0.attn_q.weight` matrix, the 6x6 pair layout is
+only 1.7778 bpw because it stores two logical weights per texel. The best of
+the three canonical coarse-only pairings reached `0.83658` relative matvec
+MSE; the best naive residual pairing reached `4.36999`. This is deliberately
+retained as a capacity stress test, not promoted as an ASTC-Q candidate.

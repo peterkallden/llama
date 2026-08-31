@@ -59,10 +59,13 @@ if (TARGET astcenc::astcenc-static)
     target_compile_features(astc-vulkan-level-smoke PRIVATE cxx_std_17)
 
     add_executable(astc-vulkan-channel-semantic-smoke
-        astc-vulkan-channel-semantic-smoke.cpp)
+        astc-vulkan-channel-semantic-smoke.cpp
+        astc-vulkan-input.cpp)
     target_include_directories(astc-vulkan-channel-semantic-smoke PRIVATE
-        ${ASTC_VULKAN_POC_INCLUDE_DIR})
-    target_link_libraries(astc-vulkan-channel-semantic-smoke PRIVATE astcenc::astcenc-static)
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/ggml/include)
+    target_link_libraries(astc-vulkan-channel-semantic-smoke PRIVATE
+        astcenc::astcenc-static ggml-base)
     target_compile_features(astc-vulkan-channel-semantic-smoke PRIVATE cxx_std_17)
     if (TARGET ggml-base)
         add_executable(astc-vulkan-quality-smoke
