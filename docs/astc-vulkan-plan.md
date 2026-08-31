@@ -213,6 +213,10 @@ dispatches; its timing data is still exploratory and not a performance claim.
     decode when using those parameters in an ASTC candidate score. Add an
     isolated llama PoC build that can link the side-fork encoder only when
     explicitly supplied with its static library and headers.
+53. [x] Run the scalar Track-4 weight-aware control under the same fixed
+    decoder, model tensor, and holdout trace. Treat matching standard output
+    as the expected result for replicated RGBA scalar storage; a scalar gain
+    requires the subsequent activation-aware global selector.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

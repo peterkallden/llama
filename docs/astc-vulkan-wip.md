@@ -1347,3 +1347,29 @@ candidate-ranking mechanism on real weights, not that L+A is ready to replace
 the scalar baseline. The next required step is exact calibration-trace ranking
 with cached output-error cross terms and an untouched holdout. Only then should
 we revisit neural texture layouts, permutations, or TQ controls.
+
+## Fifty-eighth sweep: scalar Track-4 weight-aware control
+
+The isolated run was repeated with scalar RGBA storage also passed through the
+Track-4 hook. Scalar uses the fixed runtime-valid mapping
+`W = range * mean(R, G, B) + minimum`, with `s_A = 0`. Because the source
+replicates the same scalar in all four channels, ordinary RGBA MSE is already
+proportional to the relevant scalar reconstruction error. The expected control
+outcome is therefore no material change.
+
+That is exactly what the SmolLM2 `blk.0.attn_q.weight` holdout run produced:
+
+| Footprint | Standard scalar relative MSE | Track-4 scalar relative MSE |
+|---|---:|---:|
+| 4x4 | 0.0014914023 | 0.0014914023 |
+| 5x5 | 0.014381453 | 0.014382067 |
+| 6x6 | 0.065508788 | 0.065508788 |
+
+No scalar block chose a dual plane in either encoding. This validates the
+interpretation of the preceding L+A improvement: it is not a generic effect of
+turning on a new encoder flag, but comes from scoring the tradeoff between two
+latent channels according to their fixed neural reconstruction. It also sets a
+clear boundary: weight-aware late ranking alone cannot improve scalar storage.
+The next scalar experiment must score candidate assignments against exact
+calibration layer output, using an offline shortlist and cached residual so the
+block cross terms are retained.
