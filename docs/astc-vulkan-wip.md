@@ -2492,3 +2492,24 @@ offline; the default two-shard behavior is preserved for regression.
 
 Next compare four-shard stability and Block-LDLQ under a larger calibration
 trace, then add an explicit worst-shard guard if the ordering persists.
+
+## One-hundred-second sweep: stricter shard counts
+
+With only ten calibration samples available, increasing the stability shard
+count quickly becomes conservative. On the angular 6x6 probe:
+
+| Tensor | Local | Stability, 4 shards | Stability, 5 shards | Stability, 10 shards |
+| --- | ---: | ---: | ---: | ---: |
+| `attn_q` | 0.36614 | **0.35735** | 0.36614 | 0.36614 |
+| `attn_k` | 0.24283 | **0.24139** | 0.24317 | 0.24283 |
+
+Five shards accept only a small number of changes; ten shards accept none and
+therefore reproduce local exactly. This is expected when each shard contains
+only one or two samples, and it establishes a useful guardrail: shard count
+must scale with calibration size. Four shards is the current experimental
+sweet spot for the ten-sample fixture, but it must not become a hard default
+for larger models without revalidation.
+
+The next gate remains a genuinely larger calibration trace. Until one is
+available, keep strict shard counts as diagnostics and do not add a separate
+worst-shard penalty that would duplicate this conservative behavior.

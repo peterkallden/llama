@@ -683,6 +683,11 @@ minimum-trace/data-diversity gate, not as a quality threshold. Add explicit
 shard-stability reporting and conservative cross-shard acceptance before
 testing larger traces or GPU performance.
 
+Five- and ten-shard ablations show that strict gating collapses to local when
+the calibration set is too small. Keep four shards as an opt-in probe for the
+current ten-sample fixture, scale shard count with trace size, and defer a
+separate worst-shard penalty until larger calibration data exists.
+
 The stability selector now supports a configurable shard count. Four-shard
 gating improved the 6x6 holdout on both real tensor controls and beat local on
 `attn_k`, making it the current robust fallback. Keep the default at two for
