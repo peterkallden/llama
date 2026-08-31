@@ -35,6 +35,16 @@ if (Vulkan_FOUND)
     target_compile_features(astc-vulkan-device-smoke PRIVATE cxx_std_17)
 endif()
 
+find_package(astcenc CONFIG QUIET)
+if (TARGET astcenc::astcenc-static)
+    add_executable(astc-vulkan-astcenc-smoke
+        astc-vulkan-astcenc-smoke.cpp)
+    target_include_directories(astc-vulkan-astcenc-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-astcenc-smoke PRIVATE astcenc::astcenc-static)
+    target_compile_features(astc-vulkan-astcenc-smoke PRIVATE cxx_std_17)
+endif()
+
 find_program(ASTC_VULKAN_GLSLC glslc)
 if (ASTC_VULKAN_GLSLC)
     set(ASTC_VULKAN_SHADER_OUTPUT
@@ -73,6 +83,12 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-tensor-contract
         COMMAND test-astc-vulkan-tensor-contract)
     set_property(TEST test-astc-vulkan-tensor-contract PROPERTY LABELS astc)
+
+    if (TARGET astc-vulkan-astcenc-smoke)
+        add_test(NAME astc-vulkan-astcenc-smoke
+            COMMAND astc-vulkan-astcenc-smoke)
+        set_property(TEST astc-vulkan-astcenc-smoke PROPERTY LABELS astc)
+    endif()
 
     if (TARGET astc-vulkan-capability-probe)
         add_test(NAME astc-vulkan-capability-probe

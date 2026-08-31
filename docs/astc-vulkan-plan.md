@@ -54,12 +54,14 @@ dispatches; its timing data is still exploratory and not a performance claim.
 
 1. [x] Define an experimental input tensor layout and metadata record; do not
    add it to the public GGUF specification.
-2. Implement 4x4 and 6x6 packing paths.
-3. Encode static weight blocks offline and preserve any scale, offset, outlier,
+2. [x] Add a host-only baseline encoder adapter that exercises 4x4 and 6x6
+   through the external astcenc library.
+3. Implement 4x4 and 6x6 tensor packing paths.
+4. Encode static weight blocks offline and preserve any scale, offset, outlier,
    or layout metadata needed by the shader in a companion buffer.
-4. Evaluate elementwise error, dot-product error, and error distribution per
+5. Evaluate elementwise error, dot-product error, and error distribution per
    block versus FP16/FP32 and an existing low-bit reference.
-5. Iterate on channel assignment and tensor permutation only when it improves
+6. Iterate on channel assignment and tensor permutation only when it improves
    the measured objective.
 
 The packer must optimize a numerical objective. A generic image compressor is

@@ -216,11 +216,21 @@ small benchmark size still dominate. The result is useful as a repeatable
 harness baseline and reinforces that a larger, statistically controlled sweep
 is needed before comparing 4x4 and 6x6.
 
-The host does not currently provide the optional `astcenc` executable. Phase 2
-will therefore treat encoding as an external offline tool boundary and will
-not add a local ASTC bitstream implementation until its format and numerical
+Earlier, the host did not provide the optional `astcenc` executable. Phase 2
+therefore treats encoding as an external offline tool boundary and does not add
+a local ASTC bitstream implementation until its format and numerical
 requirements are justified. Vulkan runtime tests remain independent of that
 tool.
+
+The thirteenth sweep used the newly installed `libastcenc-dev` CMake package to
+run a host-only encoder/decode smoke. It compresses a deterministic RGBA float
+fixture at 4x4 and 6x6, decompresses both outputs, and reports MSE/max error.
+The fixture produced MSE 0.00060992 (4x4) and 0.00067205 (6x6), with maximum
+channel errors of about 0.0557 and 0.0771 respectively. The smoke therefore
+uses MSE <= 0.005 as its baseline contract and reports max error for visibility;
+these values are not acceptable neural-weight quality limits yet. The Vulkan
+path remains independent: this is an offline baseline adapter, not yet a
+neural-weight-aware packer or a GGUF format change.
 
 ## Test sweep policy
 
