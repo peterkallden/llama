@@ -92,6 +92,17 @@ dispatches; its timing data is still exploratory and not a performance claim.
     metadata overhead separately from compressed ASTC bytes.
 20. [x] Evaluate per-channel block affine calibration; retain it only as a
     measured negative candidate because of its quality/metadata tradeoff.
+21. Define a versioned offline pack artifact and companion metadata contract
+    containing format, layout/permutation, mapping mode, encoder quality, and
+    block calibration fields.
+22. Add an input path for real GGUF weight slices and representative activation
+    traces; keep the fixture path for deterministic regression tests.
+23. Compare ASTC candidates against FP16 and the closest existing low-bit
+    reference with explicit acceptance thresholds for relative matvec error.
+24. Evaluate a sparse residual/outlier sidecar and include its bytes in the
+    pressure-aware storage decision.
+25. Implement the first reproducible offline packer artifact only after the
+    preceding quality and storage gates pass.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

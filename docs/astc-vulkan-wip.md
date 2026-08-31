@@ -400,6 +400,15 @@ instead of 8. The large fixture likewise selected shared/global mappings. The
 per-channel mode remains useful as a documented negative control, but is not a
 recommended representation.
 
+The twenty-eighth sweep wired the affine mapping modes into the same candidate
+search as channel order, block order, and encoder quality. Shared block-affine
+stores one scale/offset pair per ASTC block; per-channel affine stores four.
+The latter never won the normalized objective and multiplies metadata by four,
+so future pressure-aware selection should consider only global and shared
+block-affine mappings. The host smoke now prints compressed bytes and metadata
+bytes for every candidate, making this tradeoff observable before any Vulkan
+resource format is designed.
+
 The twenty-first sweep added a conservative block-tail term to the candidate
 objective:
 `MSE + activation_MSE + 0.25 * max_block_MSE`. The coefficient is intentionally
