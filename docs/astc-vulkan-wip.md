@@ -1725,3 +1725,56 @@ these exact 576x512 artifacts, using the captured layer trace, then repeat the
 timing with a batched/multi-row workload. TQ1 remains a separate follow-up:
 its base-3 unpacking and 1.6875 bpw layout should not be conflated with TQ2's
 two-bit shader.
+
+## Seventy-first sweep: common-shape FP32 baseline
+
+The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact
+same 576x512 source shape. The buffer control consumed the exported F16-derived
+F32 matrix with 1,000 dispatches and reported approximately 167.0 us per
+dispatch on the UHD 620. Combining this with the immediately preceding
+common-shape run gives the provisional mechanism table:
+
+| Path | Per-dispatch GPU timestamp |
+|---|---:|
+| FP32 storage-buffer control | ~167.0 us |
+| ASTC 4x4 sampled image | ~158.1 us |
+| Q4_0 SSBO dequant | ~173.4 us |
+| ASTC 5x5 sampled image | ~172.3 us |
+| TQ2_0 SSBO dequant | ~187.9 us |
+| ASTC 6x6 sampled image | ~196.5 us |
+
+This puts ASTC 4x4 about 5% below the FP32 control and about 9% below the
+standalone Q4 shader for this shape, while ASTC 5x5 is essentially tied with
+Q4. These measurements were collected in separate process runs, so they are a
+directional result until the forthcoming harness executes all paths under one
+controlled warm-up/timing protocol. The quality axis is still intentionally
+open: the next report must join this timing table with elementwise and
+activation-relative errors from the same source and trace.
+
+## Seventy-second sweep: sampled-FP32 texture isolation
+
+To separate generic texture sampling from ASTC block decoding, the PoC now has
+an `R32_SFLOAT` sampled-image shader. It uses the same 64-thread reduction and
+the same affine reconstruction arithmetic as the ASTC shader; each scalar texel
+is replicated across the synthetic RGBA lanes only to keep the ALU shape
+comparable. The image is populated from the exact F16-derived 576x512 FP32
+source, and the CPU oracle validates the original source weights.
+
+On the UHD 620, 1,000 dispatches measured approximately 56.4 us per dispatch.
+The corresponding SSBO FP32 control was ~167.0 us and ASTC 4x4 was ~158.1 us on
+the same common shape. This strongly suggests that the current scalar SSBO
+control is limited by its buffer access path and that ASTC's extra cost is not
+just “being a texture”: ASTC block reconstruction remains materially more
+expensive than a plain sampled FP32 texel on this adapter.
+
+This result must not be overinterpreted as a production-kernel comparison. The
+SSBO and sampled controls are intentionally transparent scalar shaders, and
+the ASTC path performs real four-channel decode plus affine reconstruction. The
+useful conclusion is methodological: future profiling must report at least
+three mechanisms (buffer load, sampled-FP32 load, ASTC load) before attributing
+a timing difference to bandwidth or fixed-function parallelism.
+
+The immediate next quality gate remains unchanged: evaluate FP32, Q4_0, TQ2_0,
+and ASTC 4x4/5x5/6x6 on the same source and activation trace. Only after that
+should a streaming working-set test decide whether ASTC's resident-size saving
+can compensate for its sampler/decode latency.

@@ -196,6 +196,8 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/q4-matvec.comp.spv)
     set(ASTC_VULKAN_TQ2_MATVEC_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/tq2-matvec.comp.spv)
+    set(ASTC_VULKAN_SAMPLED_F32_MATVEC_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/sampled-f32-matvec.comp.spv)
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -249,6 +251,16 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling TQ2 Vulkan matvec shader")
     add_custom_target(astc-vulkan-tq2-matvec-shader
         DEPENDS ${ASTC_VULKAN_TQ2_MATVEC_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_SAMPLED_F32_MATVEC_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1 -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/sampled-f32-matvec.comp
+            -o ${ASTC_VULKAN_SAMPLED_F32_MATVEC_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/sampled-f32-matvec.comp
+        COMMENT "Compiling sampled FP32 Vulkan matvec shader")
+    add_custom_target(astc-vulkan-sampled-f32-matvec-shader
+        DEPENDS ${ASTC_VULKAN_SAMPLED_F32_MATVEC_SHADER_OUTPUT})
     if (TARGET astc-vulkan-device-smoke)
         add_executable(astc-vulkan-shader-device-smoke
             astc-vulkan-shader-device-smoke.cpp)
@@ -256,7 +268,13 @@ if (ASTC_VULKAN_GLSLC)
             ${ASTC_VULKAN_POC_INCLUDE_DIR})
         target_link_libraries(astc-vulkan-shader-device-smoke PRIVATE Vulkan::Vulkan)
         target_compile_features(astc-vulkan-shader-device-smoke PRIVATE cxx_std_17)
-        add_dependencies(astc-vulkan-shader-device-smoke astc-vulkan-shader-smoke)
+        add_dependencies(astc-vulkan-shader-device-smoke
+            astc-vulkan-shader-smoke
+            astc-vulkan-matvec-shader
+            astc-vulkan-buffer-matvec-shader
+            astc-vulkan-q4-matvec-shader
+            astc-vulkan-tq2-matvec-shader
+            astc-vulkan-sampled-f32-matvec-shader)
     endif()
 endif()
 

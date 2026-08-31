@@ -201,6 +201,7 @@ int main(int argc, char ** argv) {
     bool buffer_matvec = false;
     bool q4_matvec = false;
     bool tq2_matvec = false;
+    bool sampled_f32 = false;
     std::string payload_path;
     std::string reference_path;
     std::string weights_path;
@@ -219,6 +220,7 @@ int main(int argc, char ** argv) {
         else if (option == "--buffer-matvec") { matvec = true; buffer_matvec = true; }
         else if (option == "--q4-matvec") { matvec = true; q4_matvec = true; }
         else if (option == "--tq2-matvec") { matvec = true; tq2_matvec = true; }
+        else if (option == "--sampled-f32") { matvec = true; sampled_f32 = true; }
         else if ((option == "--payload" || option == "--reference" || option == "--weights" ||
                   option == "--width" || option == "--height" || option == "--scale-l" ||
                   option == "--scale-a" || option == "--offset" || option == "--repeats") && index < argc) {
@@ -239,16 +241,17 @@ int main(int argc, char ** argv) {
     }
     if (argc < 3 || (format_name != "4x4" && format_name != "5x5" && format_name != "6x6") ||
         (pattern_name != "sequential" && pattern_name != "nonlocal") ||
-        ((payload_path.empty() != reference_path.empty()) && !buffer_matvec) ||
+        ((payload_path.empty() != reference_path.empty()) && !buffer_matvec && !sampled_f32) ||
         (buffer_matvec && reference_path.empty()) ||
         (q4_matvec && tq2_matvec) ||
-        ((!payload_path.empty() || buffer_matvec) && (supplied_width == 0 || supplied_height == 0)) ||
-        (matvec && ((!buffer_matvec && payload_path.empty()) || pattern_name != "sequential"))) {
+        (sampled_f32 && (buffer_matvec || q4_matvec || tq2_matvec)) ||
+        ((!payload_path.empty() || buffer_matvec || sampled_f32) && (supplied_width == 0 || supplied_height == 0)) ||
+        (matvec && ((!buffer_matvec && !sampled_f32 && payload_path.empty()) || pattern_name != "sequential"))) {
         std::fprintf(stderr,
                      "usage: %s <validation.spv> <4x4|5x5|6x6> "
                      "[sequential|nonlocal] [--benchmark] "
                      "[--payload astc.bin --reference decoded-rgba-f32.bin --width N --height N] "
-                     "[--matvec|--buffer-matvec|--q4-matvec|--tq2-matvec --weights weights-f32.bin "
+                     "[--matvec|--buffer-matvec|--q4-matvec|--tq2-matvec|--sampled-f32 --weights weights-f32.bin "
                      "--scale-l S --scale-a S --offset B --repeats N]\n",
                      argv[0]);
         return 2;
@@ -282,11 +285,12 @@ int main(int argc, char ** argv) {
     const VkFormat format = format_name == "4x4" ? VK_FORMAT_ASTC_4x4_UNORM_BLOCK :
                             format_name == "5x5" ? VK_FORMAT_ASTC_5x5_UNORM_BLOCK :
                                                    VK_FORMAT_ASTC_6x6_UNORM_BLOCK;
+    const VkFormat image_format = sampled_f32 ? VK_FORMAT_R32_SFLOAT : format;
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
     uint32_t queue_family = UINT32_MAX;
     uint32_t timestamp_valid_bits = 0;
     for (VkPhysicalDevice device : devices) {
-        if (!supports_format(device, format)) {
+        if (!supports_format(device, image_format)) {
             continue;
         }
         uint32_t queue_count = 0;
@@ -336,7 +340,8 @@ int main(int argc, char ** argv) {
         format_name == "5x5" ? ggml_vk_astc_5x5_unorm_rgba : ggml_vk_astc_6x6_unorm_rgba,
         width, height);
     const bool packed_matvec = q4_matvec || tq2_matvec;
-    const char * path_name = buffer_matvec ? "buffer" : q4_matvec ? "Q4_0" : tq2_matvec ? "TQ2_0" : "ASTC";
+    const char * path_name = buffer_matvec ? "buffer" : q4_matvec ? "Q4_0" :
+                              tq2_matvec ? "TQ2_0" : sampled_f32 ? "sampled-F32" : "ASTC";
     const uint32_t packed_block_elements = q4_matvec ? 32u : 256u;
     const uint32_t packed_block_bytes = q4_matvec ? 18u : 66u;
     VkDeviceSize staging_bytes = block_count * kAstcBlockBytes;
@@ -348,7 +353,7 @@ int main(int argc, char ** argv) {
                                                read_binary<float>(reference_path);
     const std::vector<float> source_weights = weights_path.empty() ? std::vector<float>() :
                                               read_binary<float>(weights_path);
-    if (!buffer_matvec && !packed_matvec && !weights_path.empty()) {
+    if (!buffer_matvec && !packed_matvec && !sampled_f32 && !weights_path.empty()) {
         std::fprintf(stderr, "--weights is only valid with a buffer or packed matvec shader\n");
         vkDestroyDevice(device, nullptr);
         vkDestroyInstance(instance, nullptr);
@@ -360,7 +365,13 @@ int main(int argc, char ** argv) {
         vkDestroyInstance(instance, nullptr);
         return 2;
     }
-    if ((!buffer_matvec && !packed_matvec && !payload_path.empty() && payload.size() != staging_bytes) ||
+    if (sampled_f32 && source_weights.empty()) {
+        std::fprintf(stderr, "sampled FP32 matvec requires --weights with the source matrix\n");
+        vkDestroyDevice(device, nullptr);
+        vkDestroyInstance(instance, nullptr);
+        return 2;
+    }
+    if ((!buffer_matvec && !packed_matvec && !sampled_f32 && !payload_path.empty() && payload.size() != staging_bytes) ||
         (packed_matvec && (width % packed_block_elements != 0 ||
                            payload.size() != static_cast<size_t>(height) *
                                (width / packed_block_elements) * packed_block_bytes)) ||
@@ -377,9 +388,10 @@ int main(int argc, char ** argv) {
         return 2;
     }
     image_resources image;
-    bool success = buffer_matvec || packed_matvec || create_image(physical_device, device, format, width, height, image);
+    bool success = buffer_matvec || packed_matvec || create_image(physical_device, device, image_format, width, height, image);
     if (buffer_matvec) staging_bytes = static_cast<VkDeviceSize>(width) * height * sizeof(float);
     if (packed_matvec) staging_bytes = payload.size();
+    if (sampled_f32) staging_bytes = static_cast<VkDeviceSize>(width) * height * sizeof(float);
     VkBuffer staging_buffer = VK_NULL_HANDLE;
     VkDeviceMemory staging_memory = VK_NULL_HANDLE;
     VkBuffer output_buffer = VK_NULL_HANDLE;
@@ -431,6 +443,8 @@ int main(int argc, char ** argv) {
             }
         } else if (packed_matvec) {
             std::memcpy(mapped, payload.data(), payload.size());
+        } else if (sampled_f32) {
+            std::memcpy(mapped, source_weights.data(), source_weights.size() * sizeof(float));
         } else if (payload.empty()) {
             for (uint64_t block = 0; block < block_count; ++block) {
                 std::memcpy(static_cast<unsigned char *>(mapped) + block * kAstcBlockBytes,
@@ -619,7 +633,7 @@ int main(int argc, char ** argv) {
                         float weight = 0.0f;
                         if (packed_matvec) {
                             weight = packed_weight(payload, width, static_cast<uint32_t>(value_index), column, tq2_matvec);
-                        } else if (buffer_matvec && !source_weights.empty()) {
+                        } else if ((buffer_matvec || sampled_f32) && !source_weights.empty()) {
                             weight = source_weights[value_index * width + column];
                         } else {
                             const float l = (expected_values[texel] + expected_values[texel + 1] +

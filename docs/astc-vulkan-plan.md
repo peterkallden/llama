@@ -369,7 +369,9 @@ The next required gates are:
    elementwise plus activation-relative error from one calibration/holdout
    trace.
 2. Separate raw buffer loads, sampled FP32 loads, ASTC decode, and packed
-   dequantization with minimal microbench shaders.
+   dequantization with minimal microbench shaders. The first sampled-FP32
+   control is now present; its scalar result is provisional until the common
+   warm-up harness is added.
 3. Repeat hot-cache and streaming/capacity regimes, then test batch sizes
    1, 2, 4, 8, and 16.
 4. Add true TQ1 only after the TQ2 control is stable; its base-3 unpacking is a

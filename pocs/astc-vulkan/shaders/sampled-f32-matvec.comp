@@ -1,0 +1,35 @@
+#version 450
+
+// FP32 sampled-texture control. It shares the ASTC matvec geometry, but uses
+// an ordinary R32_SFLOAT sampled image so sampler overhead is isolated from
+// ASTC block decoding.
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) uniform sampler2D f32_weights;
+layout(std430, set = 0, binding = 1) buffer MatvecOutput { vec4 values[]; } output_data;
+layout(push_constant) uniform PushConstants {
+    uint width; uint height; uint access_pattern;
+    float scale_l; float scale_a; float offset;
+} params;
+float activation(uint column) {
+    return 0.5 * sin(0.017 * float(column + 1)) +
+           0.2 * cos(0.031 * float(column + 3));
+}
+shared float partial[64];
+void main() {
+    const uint row = gl_WorkGroupID.x;
+    if (row >= params.height) return;
+    float sum = 0.0;
+    for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64u) {
+        const vec4 texel = vec4(texelFetch(f32_weights, ivec2(column, row), 0).r);
+        const float l = (texel.r + texel.g + texel.b) / 3.0;
+        const float weight = params.scale_l * l + params.scale_a * texel.a + params.offset;
+        sum += weight * activation(column);
+    }
+    partial[gl_LocalInvocationID.x] = sum;
+    barrier();
+    for (uint stride = 32u; stride > 0u; stride >>= 1u) {
+        if (gl_LocalInvocationID.x < stride) partial[gl_LocalInvocationID.x] += partial[gl_LocalInvocationID.x + stride];
+        barrier();
+    }
+    if (gl_LocalInvocationID.x == 0u) output_data.values[row] = vec4(partial[0], 0.0, 0.0, 0.0);
+}
