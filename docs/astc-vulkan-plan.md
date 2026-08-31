@@ -66,6 +66,11 @@ The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
 weights.
 
+The first implementation should invoke an explicitly versioned external
+ASTC encoder (for example `astcenc`) behind a host-side adapter. If the encoder
+is unavailable, the adapter must skip with a clear diagnostic; it must not
+silently produce a non-standard or incomplete ASTC bitstream.
+
 Exit criterion: both formats can represent a small known matrix and report
 reconstruction and dot-product error reproducibly.
 

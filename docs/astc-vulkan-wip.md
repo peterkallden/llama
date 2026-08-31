@@ -216,6 +216,12 @@ small benchmark size still dominate. The result is useful as a repeatable
 harness baseline and reinforces that a larger, statistically controlled sweep
 is needed before comparing 4x4 and 6x6.
 
+The host does not currently provide the optional `astcenc` executable. Phase 2
+will therefore treat encoding as an external offline tool boundary and will
+not add a local ASTC bitstream implementation until its format and numerical
+requirements are justified. Vulkan runtime tests remain independent of that
+tool.
+
 ## Test sweep policy
 
 After each implementation sweep:
