@@ -1957,6 +1957,23 @@ low-rank calibration-sensitivity basis for larger matrices, and compare against
 the exact cached-residual coordinate selector on matched synthetic ASTC
 fixtures. Only then is a real-layer feedback run justified.
 
+## Eightieth sweep: scaling and generalization implications
+
+The 32x64 selection probe contains 2,048 weights. The full 576x576 attention
+projection contains 331,776 weights, or 162 times as many; it has 20,736,
+13,456, and 9,216 ASTC blocks at 4x4, 5x5, and 6x6 respectively. This gives a
+global selector more possible compensating choices, so the small-probe negative
+results do not reject block-level error shaping. It also gives the selector far
+more opportunities to fit accidental details of a trace.
+
+The project policy is therefore updated: full-layer size is not treated as a
+quality argument by itself. Every larger run must increase and partition its
+trace evidence, report selection/validation/holdout cohort sizes and candidate
+freedom, and beat its uniform baseline on untouched data. Offline search is
+allowed to be expensive but must use streaming candidate storage and a compact
+sensitivity basis; deployed Vulkan work remains unchanged. Attention and FFN
+projections are separate cohorts rather than interchangeable measurements.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact

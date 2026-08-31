@@ -262,6 +262,26 @@ dispatches; its timing data is still exploratory and not a performance claim.
     after the post-training tracks above are measured. Inject exact projected
     ASTC decode error rather than generic Gaussian noise, preserve the normal
     llama.cpp build, and gate it on model-level validation.
+65. Add a scaling/generalization gate before interpreting any full-layer
+    selector result. A 32x64 probe has 2,048 weights, whereas the 576x576
+    attention matrix has 331,776 weights and thousands of selectable ASTC
+    blocks. Report the number of blocks, candidates per block, calibration
+    samples, validation samples, and held-out samples for every result.
+66. Scale calibration evidence with selector freedom. Split prompts or token
+    positions into selection, validation, and untouched holdout cohorts; do
+    not use a larger matrix as a reason to reuse the holdout or tune directly
+    on it. Repeat on attention and FFN projections, because their activation
+    covariance and useful ASTC layout may differ materially.
+67. Report the offline search budget separately from runtime. Candidate
+    generation, covariance sketches, coordinate sweeps, and feedback are
+    allowed to be expensive at pack time, but memory must remain bounded by
+    streaming block candidates and a compact sensitivity basis. Runtime remains
+    a standard ASTC image fetch plus the fixed reconstruction only.
+68. Require a full-layer result to beat its uniform scalar or neural ASTC
+    baseline on a predeclared holdout before attributing any gain to block
+    cooperation. More blocks create more opportunities for cancellation only
+    when their legal candidate errors span useful sensitivity directions; they
+    also create more degrees of freedom for overfit.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

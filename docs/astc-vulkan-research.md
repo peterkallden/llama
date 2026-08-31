@@ -293,6 +293,31 @@ meaningful than generic Gaussian noise, but it belongs after the post-training
 experiments because it introduces training cost and can hide a weak codec
 representation behind model adaptation.
 
+### Scaling interpretation
+
+The bounded 32x64 selection probe must not be extrapolated directly to a full
+model layer. A 576x576 projection contains 162 times as many weights and,
+depending on ASTC footprint, thousands rather than tens of independently
+selectable blocks. This is favorable only conditionally: more blocks provide
+more opportunities for cancellation, but they also multiply the selector's
+degrees of freedom and its ability to overfit a small calibration trace.
+
+The relevant quantity is therefore not matrix size alone. A larger layer helps
+only if the calibration covariance is representative and the legal ASTC
+candidate errors span directions that the layer can usefully cancel. Every
+full-layer claim must record the candidate count, block count, calibration,
+validation, and holdout cohort sizes; it must beat the corresponding uniform
+ASTC stream on an untouched holdout. Attention and FFN matrices must be
+reported separately, since their activation geometry and ASTC-compatible
+structure need not agree.
+
+Search complexity is deliberately an offline concern. It may grow with model
+size, but the implementation must stream candidate blocks and retain only a
+compact sensitivity sketch rather than a full candidate-by-trace tensor. None
+of this changes the runtime contract: the deployed resource remains an ordinary
+ASTC image, and the shader performs the same sampled reconstruction regardless
+of how its blocks were selected.
+
 ## Encoder boundary decision
 
 The research does not need a custom Vulkan decoder. A legal ASTC block stream
