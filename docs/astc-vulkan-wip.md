@@ -732,3 +732,30 @@ surrogate followed by legal-ASTC projection. This is intentionally separate
 from the existing Q4 path. The common runtime hypothesis is not minimum
 bit-density, but whether fixed-function texture reconstruction decreases the
 total cost of delivering usable weights to the shader ALU.
+
+## Forty-first sweep: ASTC-Q few-level representability smoke
+
+`astc-vulkan-level-smoke` now exercises legal standard ASTC encoding and CPU
+decode for ternary, five-level, eight-level, and sixteen-level scalar alphabets
+on both 4x4 and 6x6 blocks. Each scalar is represented by one texel (replicated
+across RGBA only to satisfy the sampled image contract), so the reported rate
+does not incorrectly count four independent weights per texel. The patterns
+cover smooth gradients, clustered regions, deterministic random levels, and
+rare outliers.
+
+The 6x6 results are a useful boundary rather than a blanket success. Ternary
+and five-level values stayed at 100% near-level recovery with MSE below
+`3e-6` across the tested patterns. Random eight-level values fell to 35.07%
+near-level recovery (MSE `0.00262`), and random sixteen-level values reached
+61.63% (MSE `0.00233`); smooth and clustered patterns remained near-exact.
+The corresponding 4x4 random cases were much stronger (99.22% and 97.66%
+near-level recovery). This is direct evidence that 6x6's 3.56 physical
+bits/texel are useful for structured few-level weights, but insufficient for
+arbitrary high-entropy Q3/Q4-like symbols.
+
+The smoke is intentionally a representability test, not a model-quality gate.
+The next step is to feed real ternary/few-level weight matrices through the
+same path, then compare against a packed ternary reference and include the
+shader-side unpack/dequantization cost. ASTC-aware training remains justified
+only if real weights can be made more like the successful smooth/clustered
+cases without unacceptable model loss.

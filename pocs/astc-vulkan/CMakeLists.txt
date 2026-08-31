@@ -50,6 +50,13 @@ if (TARGET astcenc::astcenc-static)
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_link_libraries(astc-vulkan-weight-smoke PRIVATE astcenc::astcenc-static)
     target_compile_features(astc-vulkan-weight-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-level-smoke
+        astc-vulkan-level-smoke.cpp)
+    target_include_directories(astc-vulkan-level-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-level-smoke PRIVATE astcenc::astcenc-static)
+    target_compile_features(astc-vulkan-level-smoke PRIVATE cxx_std_17)
     if (TARGET ggml-base)
         add_executable(astc-vulkan-quality-smoke
             astc-vulkan-quality-smoke.cpp
@@ -142,6 +149,9 @@ if (BUILD_TESTING)
         add_test(NAME astc-vulkan-weight-smoke-large
             COMMAND astc-vulkan-weight-smoke --large)
         set_property(TEST astc-vulkan-weight-smoke-large PROPERTY LABELS astc)
+        add_test(NAME astc-vulkan-level-smoke
+            COMMAND astc-vulkan-level-smoke)
+        set_property(TEST astc-vulkan-level-smoke PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-input-smoke)
