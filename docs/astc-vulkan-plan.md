@@ -274,6 +274,10 @@ dispatches; its timing data is still exploratory and not a performance claim.
      proposal only when the lower shard gain remains positive. Compare it with
      local, coordinate, feedback, and conflict-aware results before collecting
      larger traces.
+59h. Add input-Hessian diagnostics (sample/column count, rank, eigenvalue range,
+     and damping reference) to the selector harness. Do not interpret
+     Block-LDLQ target regeneration until the trace rank and conditioning are
+     adequate for the selected column panel size.
 59g. Add a stability-gated fixed-pool selector using two equal calibration
      shards. Normalize each shard gain by its residual energy and accept a
      proposal only when the lower shard gain remains positive. Compare it with

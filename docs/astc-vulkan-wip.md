@@ -2067,6 +2067,18 @@ It has not yet produced a robust quality win, but it supports calibration
 stability as the correct regularization axis and should remain in the comparison
 matrix while larger activation traces are collected.
 
+## Eighty-fifth sweep: input-Hessian diagnostics
+
+The selector comparison now prints a small-probe diagnostic for
+`H_I = X^T X`: calibration sample count, column count, estimated positive
+rank, eigenvalue range, and a reference damped condition number. The current
+SmolLM2 probe reports 10 samples, 64 columns, and rank 10; the synthetic 32-
+column fixture reports 4 samples and rank 4. This confirms that the present
+trace is intentionally a mechanism probe, not enough evidence for a full
+Block-LDLQ claim. Larger traces must precede interpretation of target
+regeneration, and the factorization contract will explicitly cover damping and
+rank-deficient inputs.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact

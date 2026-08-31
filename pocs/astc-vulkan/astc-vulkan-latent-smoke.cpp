@@ -122,6 +122,91 @@ activations slice_activation_samples(const activations & inputs,
     return result;
 }
 
+struct hessian_stats {
+    uint32_t rank = 0;
+    double maximum_eigenvalue = 0.0;
+    double minimum_positive_eigenvalue = 0.0;
+    double damped_condition = 0.0;
+};
+
+// Estimate the input Hessian H_I = X^T X on small probes. The Jacobi sweep is
+// intentionally diagnostic, not a production factorization; large layers use
+// the sample-count rank bound and skip the cubic eigensolve.
+hessian_stats estimate_hessian_stats(const activations & inputs) {
+    hessian_stats result;
+    const uint32_t columns = inputs.columns;
+    if (columns == 0 || inputs.samples == 0) return result;
+    if (columns > 128) {
+        result.rank = std::min(inputs.samples, columns);
+        return result;
+    }
+    std::vector<double> gram(static_cast<size_t>(columns) * columns, 0.0);
+    for (uint32_t sample = 0; sample < inputs.samples; ++sample) {
+        const float * row = inputs.values.data() + static_cast<size_t>(sample) * columns;
+        for (uint32_t i = 0; i < columns; ++i) {
+            for (uint32_t j = 0; j <= i; ++j) {
+                gram[static_cast<size_t>(i) * columns + j] += row[i] * row[j];
+            }
+        }
+    }
+    for (uint32_t i = 0; i < columns; ++i) {
+        for (uint32_t j = 0; j < i; ++j) {
+            gram[static_cast<size_t>(j) * columns + i] = gram[static_cast<size_t>(i) * columns + j];
+        }
+    }
+    for (uint32_t iteration = 0; iteration < 32 * columns; ++iteration) {
+        uint32_t p = 0;
+        uint32_t q = 0;
+        double largest = 0.0;
+        for (uint32_t i = 0; i < columns; ++i) {
+            for (uint32_t j = i + 1; j < columns; ++j) {
+                const double value = std::abs(gram[static_cast<size_t>(i) * columns + j]);
+                if (value > largest) {
+                    largest = value;
+                    p = i;
+                    q = j;
+                }
+            }
+        }
+        if (largest < 1e-12) break;
+        const double app = gram[static_cast<size_t>(p) * columns + p];
+        const double aqq = gram[static_cast<size_t>(q) * columns + q];
+        const double apq = gram[static_cast<size_t>(p) * columns + q];
+        const double angle = 0.5 * std::atan2(2.0 * apq, aqq - app);
+        const double cosine = std::cos(angle);
+        const double sine = std::sin(angle);
+        for (uint32_t k = 0; k < columns; ++k) {
+            const double gpk = gram[static_cast<size_t>(p) * columns + k];
+            const double gqk = gram[static_cast<size_t>(q) * columns + k];
+            gram[static_cast<size_t>(p) * columns + k] = cosine * gpk - sine * gqk;
+            gram[static_cast<size_t>(q) * columns + k] = sine * gpk + cosine * gqk;
+        }
+        for (uint32_t k = 0; k < columns; ++k) {
+            const double gkp = gram[static_cast<size_t>(k) * columns + p];
+            const double gkq = gram[static_cast<size_t>(k) * columns + q];
+            gram[static_cast<size_t>(k) * columns + p] = cosine * gkp - sine * gkq;
+            gram[static_cast<size_t>(k) * columns + q] = sine * gkp + cosine * gkq;
+        }
+    }
+    std::vector<double> eigenvalues(columns);
+    for (uint32_t i = 0; i < columns; ++i) {
+        eigenvalues[i] = std::max(gram[static_cast<size_t>(i) * columns + i], 0.0);
+        result.maximum_eigenvalue = std::max(result.maximum_eigenvalue, eigenvalues[i]);
+    }
+    const double threshold = result.maximum_eigenvalue * 1e-8;
+    double minimum = INFINITY;
+    for (double eigenvalue : eigenvalues) {
+        if (eigenvalue > threshold) {
+            ++result.rank;
+            minimum = std::min(minimum, eigenvalue);
+        }
+    }
+    result.minimum_positive_eigenvalue = std::isfinite(minimum) ? minimum : 0.0;
+    const double damping = std::max(result.maximum_eigenvalue * 1e-4, 1e-12);
+    result.damped_condition = (result.maximum_eigenvalue + damping) / damping;
+    return result;
+}
+
 template<typename T>
 bool write_binary(const std::string & path, const std::vector<T> & values) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
@@ -1073,6 +1158,12 @@ bool run_coordinate_case(const std::vector<float> & weights,
                                                     format, selection_inputs, 4);
     }
     if (selector_compare) {
+        const hessian_stats stats = estimate_hessian_stats(calibration);
+        std::printf("latent-hessian-stats samples=%u columns=%u rank=%u "
+                    "max-eigen=%.8g min-positive-eigen=%.8g damped-condition=%.8g\n",
+                    calibration.samples, calibration.columns, stats.rank,
+                    stats.maximum_eigenvalue, stats.minimum_positive_eigenvalue,
+                    stats.damped_condition);
         coordinate_result local;
         coordinate_result feedback;
         coordinate_result conflict_aware;
