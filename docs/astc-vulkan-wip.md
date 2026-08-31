@@ -760,6 +760,12 @@ shader-side unpack/dequantization cost. ASTC-aware training remains justified
 only if real weights can be made more like the successful smooth/clustered
 cases without unacceptable model loss.
 
+The focused ASTC regression run after this addition passed 14/14 tests (the
+intentionally long large encoder fixture was excluded from that quick pass;
+it had already completed successfully in the preceding full run). This covers
+the new level smoke together with the existing contracts, encoder, input, and
+Vulkan shader/device checks.
+
 ## Forty-second sweep: post-training ASTC-Q on real weights
 
 `astc-vulkan-native-quant-smoke` applies global ternary, five-, eight-, and
