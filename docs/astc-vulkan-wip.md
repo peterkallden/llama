@@ -400,6 +400,14 @@ instead of 8. The large fixture likewise selected shared/global mappings. The
 per-channel mode remains useful as a documented negative control, but is not a
 recommended representation.
 
+The twenty-ninth sweep added a private versioned pack-metadata contract to
+`astc-vulkan-tensor-contract.h`. It records the ASTC format, logical tensor
+shape, texel width, packed channel order, layout ID, mapping ID, encoder
+quality, compressed bytes, and calibration bytes. The contract validates
+version, shape, supported IDs, and non-zero compressed storage; it intentionally
+does not define GGUF serialization or host endianness yet. The tensor-contract
+CTest now covers both a valid record and an inconsistent-shape rejection.
+
 The twenty-eighth sweep wired the affine mapping modes into the same candidate
 search as channel order, block order, and encoder quality. Shared block-affine
 stores one scale/offset pair per ASTC block; per-channel affine stores four.

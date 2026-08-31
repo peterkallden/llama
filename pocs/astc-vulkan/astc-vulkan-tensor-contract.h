@@ -45,3 +45,39 @@ struct ggml_vk_astc_weight_metadata {
     float offset;
 };
 
+// Versioned, private metadata for a future offline ASTC pack artifact. The
+// record is intentionally composed of fixed-width scalar fields so a later
+// serializer can define an explicit byte order without exposing a GGUF type.
+inline constexpr uint32_t ggml_vk_astc_pack_metadata_version = 1;
+inline constexpr uint32_t ggml_vk_astc_pack_format_4x4 = 1;
+inline constexpr uint32_t ggml_vk_astc_pack_format_6x6 = 2;
+inline constexpr uint32_t ggml_vk_astc_pack_mapping_global = 0;
+inline constexpr uint32_t ggml_vk_astc_pack_mapping_block_affine = 1;
+inline constexpr uint32_t ggml_vk_astc_pack_layout_identity = 0;
+inline constexpr uint32_t ggml_vk_astc_pack_layout_grouped = 1;
+inline constexpr uint32_t ggml_vk_astc_pack_layout_block_reversed = 2;
+
+struct ggml_vk_astc_pack_metadata {
+    uint32_t version;
+    uint32_t format_id;
+    uint32_t logical_rows;
+    uint32_t logical_columns;
+    uint32_t texel_columns;
+    uint32_t channel_order_packed;
+    uint32_t layout_id;
+    uint32_t mapping_id;
+    uint32_t encoder_quality_percent;
+    uint64_t compressed_bytes;
+    uint64_t calibration_bytes;
+
+    constexpr bool is_valid() const {
+        return version == ggml_vk_astc_pack_metadata_version &&
+            (format_id == ggml_vk_astc_pack_format_4x4 ||
+             format_id == ggml_vk_astc_pack_format_6x6) &&
+            logical_rows != 0 && logical_columns != 0 &&
+            texel_columns == (logical_columns + 3) / 4 &&
+            layout_id <= ggml_vk_astc_pack_layout_block_reversed &&
+            mapping_id <= ggml_vk_astc_pack_mapping_block_affine &&
+            encoder_quality_percent <= 100 && compressed_bytes != 0;
+    }
+};

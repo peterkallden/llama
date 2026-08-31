@@ -92,9 +92,9 @@ dispatches; its timing data is still exploratory and not a performance claim.
     metadata overhead separately from compressed ASTC bytes.
 20. [x] Evaluate per-channel block affine calibration; retain it only as a
     measured negative candidate because of its quality/metadata tradeoff.
-21. Define a versioned offline pack artifact and companion metadata contract
-    containing format, layout/permutation, mapping mode, encoder quality, and
-    block calibration fields.
+21. [x] Define a versioned offline pack artifact and companion metadata
+    contract containing format, layout/permutation, mapping mode, encoder
+    quality, and block calibration fields.
 22. Add an input path for real GGUF weight slices and representative activation
     traces; keep the fixture path for deterministic regression tests.
 23. Compare ASTC candidates against FP16 and the closest existing low-bit
