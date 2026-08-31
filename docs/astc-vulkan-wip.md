@@ -1408,3 +1408,30 @@ traces. Its first candidate pool should remain bounded and non-invasive: legal
 full-matrix encodes from several astcenc quality/mapping settings, split into
 their independently decodable blocks. Only a positive real-layer result
 justifies modifying astcenc further to retain deeper internal candidates.
+
+## Sixtieth sweep: real-trace coordinate-selection adapter
+
+`astc-vulkan-latent-smoke` now implements that adapter without changing the
+production Vulkan backend or ASTC bitstream. With `--neural-rank
+--coordinate-select`, it creates two complete standard-compatible L+A streams:
+ordinary astcenc ranking and the Track-4 fixed-decoder ranking. It selects only
+whole 16-byte ASTC blocks, using the calibration trace and the exact update
+
+```
+||R - Delta Y||^2 = ||R||^2 - 2 R . Delta Y + ||Delta Y||^2.
+```
+
+The held-out trace is passed only after selection and is printed separately.
+A forward and reverse sweep are used. The selected bytes are decoded again and
+must reproduce the exact matrix used by the selector; this guards against
+accidentally treating ASTC candidates as an abstract, non-serializable format.
+
+The focused synthetic contract passes. For the 576x576 SmolLM2 projection, the
+interactive runner terminates an end-to-end encode before it can return a
+result, even with a small activation subset. This is an execution-window limit,
+not a negative model result. The tool therefore also exposes `--coordinate-only`,
+`--footprint`, `--preset`, and `--max-samples` so the real experiment can be
+run in a batch environment without encoding unrelated controls. `thorough`
+remains the default; lower presets are only adapter/debug probes and must be
+reported separately. The next run must use a batchable runner, report both
+trace sample counts, and repeat 4x4, 5x5, and 6x6 before interpreting quality.

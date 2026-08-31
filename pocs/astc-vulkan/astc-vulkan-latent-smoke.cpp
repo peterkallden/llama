@@ -16,6 +16,7 @@ namespace {
 constexpr uint32_t kRows = 32;
 constexpr uint32_t kColumns = 256;
 constexpr uint32_t kDefaultCoarseLevels = 16;
+float g_astc_preset = ASTCENC_PRE_THOROUGH;
 
 struct affine_decoder {
     double scale_l = 0.0;
@@ -36,6 +37,7 @@ struct activations {
 
 struct astc_roundtrip_result {
     std::vector<float> texels;
+    std::vector<uint8_t> compressed;
     size_t compressed_bytes = 0;
     uint32_t block_count = 0;
     uint32_t dual_plane_blocks = 0;
@@ -90,6 +92,12 @@ activations make_default_activations(uint32_t columns) {
     return result;
 }
 
+void limit_activation_samples(activations & inputs, uint32_t maximum_samples) {
+    if (maximum_samples == 0 || inputs.samples <= maximum_samples) return;
+    inputs.samples = maximum_samples;
+    inputs.values.resize(static_cast<size_t>(inputs.samples) * inputs.columns);
+}
+
 std::vector<float> reconstruct(const std::vector<float> & texels,
                                const affine_decoder & decoder) {
     std::vector<float> result(texels.size() / 4);
@@ -100,6 +108,107 @@ std::vector<float> reconstruct(const std::vector<float> & texels,
                                            decoder.scale_a * texel[3] + decoder.offset);
     }
     return result;
+}
+
+bool astc_decode(const std::vector<uint8_t> & compressed, uint32_t rows, uint32_t columns,
+                 const ggml_vk_astc_format_contract & format, std::vector<float> & texels);
+std::vector<double> matvec_outputs(const std::vector<float> & weights, uint32_t rows,
+                                   uint32_t columns, const activations & inputs);
+
+struct coordinate_result {
+    std::vector<float> reconstructed;
+    std::vector<uint8_t> compressed;
+    uint32_t forward_changes = 0;
+    uint32_t reverse_changes = 0;
+};
+
+// Choose whole, independently decodable ASTC blocks from either stream. The
+// calibration activations are the only selection signal; evaluation is outside.
+bool coordinate_select_astc_blocks(const std::vector<float> & reference,
+                                   const std::vector<float> & standard,
+                                   const std::vector<float> & neural,
+                                   const std::vector<uint8_t> & standard_compressed,
+                                   const std::vector<uint8_t> & neural_compressed,
+                                   uint32_t rows, uint32_t columns,
+                                   const ggml_vk_astc_format_contract & format,
+                                   const activations & calibration,
+                                   const affine_decoder & decoder,
+                                   coordinate_result & result) {
+    const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
+    const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
+    const std::vector<double> expected = matvec_outputs(reference, rows, columns, calibration);
+    std::vector<double> actual = matvec_outputs(standard, rows, columns, calibration);
+    std::vector<double> residual(expected.size());
+    double residual_error = 0.0;
+    for (size_t index = 0; index < residual.size(); ++index) {
+        residual[index] = expected[index] - actual[index];
+        residual_error += residual[index] * residual[index];
+    }
+    result.reconstructed = standard;
+    result.compressed = standard_compressed;
+
+    auto sweep = [&](bool reverse) {
+        uint32_t changes = 0;
+        for (uint32_t ordinal = 0; ordinal < blocks_x * blocks_y; ++ordinal) {
+            const uint32_t block = reverse ? blocks_x * blocks_y - ordinal - 1 : ordinal;
+            const uint32_t row0 = (block / blocks_x) * format.block_height;
+            const uint32_t column0 = (block % blocks_x) * format.block_width;
+            const uint32_t row_count = std::min(row0 + format.block_height, rows) - row0;
+            std::vector<double> delta(static_cast<size_t>(calibration.samples) * row_count);
+            for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
+                for (uint32_t row = row0; row < std::min(row0 + format.block_height, rows); ++row) {
+                    double value = 0.0;
+                    for (uint32_t column = column0; column < std::min(column0 + format.block_width, columns); ++column) {
+                        const size_t index = static_cast<size_t>(row) * columns + column;
+                        value += (neural[index] - result.reconstructed[index]) * input[column];
+                    }
+                    delta[static_cast<size_t>(sample) * row_count + row - row0] = value;
+                }
+            }
+            double residual_dot_delta = 0.0;
+            double delta_norm = 0.0;
+            for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                for (uint32_t row = row0; row < std::min(row0 + format.block_height, rows); ++row) {
+                    const size_t index = static_cast<size_t>(sample) * rows + row;
+                    const double value = delta[static_cast<size_t>(sample) * row_count + row - row0];
+                    residual_dot_delta += residual[index] * value;
+                    delta_norm += value * value;
+                }
+            }
+            const double candidate_error = residual_error - 2.0 * residual_dot_delta + delta_norm;
+            if (candidate_error + 1e-18 < residual_error) {
+                for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                    for (uint32_t row = row0; row < std::min(row0 + format.block_height, rows); ++row) {
+                        const size_t index = static_cast<size_t>(sample) * rows + row;
+                        residual[index] -= delta[static_cast<size_t>(sample) * row_count + row - row0];
+                    }
+                }
+                residual_error = candidate_error;
+                for (uint32_t row = row0; row < std::min(row0 + format.block_height, rows); ++row) {
+                    for (uint32_t column = column0; column < std::min(column0 + format.block_width, columns); ++column) {
+                        const size_t index = static_cast<size_t>(row) * columns + column;
+                        result.reconstructed[index] = neural[index];
+                    }
+                }
+                std::copy_n(neural_compressed.data() + static_cast<size_t>(block) * 16, 16,
+                            result.compressed.data() + static_cast<size_t>(block) * 16);
+                ++changes;
+            }
+        }
+        return changes;
+    };
+    result.forward_changes = sweep(false);
+    result.reverse_changes = sweep(true);
+    std::vector<float> texels;
+    if (!astc_decode(result.compressed, rows, columns, format, texels)) return false;
+    const std::vector<float> verified = reconstruct(texels, decoder);
+    double maximum_error = 0.0;
+    for (size_t index = 0; index < verified.size(); ++index) {
+        maximum_error = std::max(maximum_error,
+                                 std::abs(static_cast<double>(verified[index] - result.reconstructed[index])));
+    }
+    return maximum_error <= 1e-6;
 }
 
 bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t columns,
@@ -115,7 +224,7 @@ bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t c
     const unsigned int flags = 0;
 #endif
     if (astcenc_config_init(ASTCENC_PRF_LDR, format.block_width, format.block_height, 1,
-                            ASTCENC_PRE_THOROUGH, flags, &config) != ASTCENC_SUCCESS) return false;
+                            g_astc_preset, flags, &config) != ASTCENC_SUCCESS) return false;
 #if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
     if (ranking_decoder != nullptr) {
         config.neural_l_scale = static_cast<float>(ranking_decoder->scale_l);
@@ -131,14 +240,14 @@ bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t c
     void * source_slice = const_cast<float *>(source.data());
     astcenc_image source_image{ columns, rows, 1, ASTCENC_TYPE_F32, &source_slice };
     const astcenc_swizzle swizzle{ ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A };
-    std::vector<uint8_t> compressed(result.compressed_bytes);
+    result.compressed.resize(result.compressed_bytes);
     astcenc_error status = astcenc_compress_image(
-        context, &source_image, &swizzle, compressed.data(), compressed.size(), 0);
+        context, &source_image, &swizzle, result.compressed.data(), result.compressed.size(), 0);
     if (status == ASTCENC_SUCCESS) {
-        result.block_count = static_cast<uint32_t>(compressed.size() / 16);
-        for (size_t offset = 0; offset < compressed.size(); offset += 16) {
+        result.block_count = static_cast<uint32_t>(result.compressed.size() / 16);
+        for (size_t offset = 0; offset < result.compressed.size(); offset += 16) {
             astcenc_block_info info{};
-            status = astcenc_get_block_info(context, compressed.data() + offset, &info);
+            status = astcenc_get_block_info(context, result.compressed.data() + offset, &info);
             if (status != ASTCENC_SUCCESS) break;
             if (info.is_dual_plane_block) {
                 ++result.dual_plane_blocks;
@@ -151,10 +260,59 @@ bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t c
     astcenc_image decoded_image{ columns, rows, 1, ASTCENC_TYPE_F32, &decoded_slice };
     if (status == ASTCENC_SUCCESS) {
         status = astcenc_decompress_image(
-            context, compressed.data(), compressed.size(), &decoded_image, &swizzle, 0);
+            context, result.compressed.data(), result.compressed.size(), &decoded_image, &swizzle, 0);
     }
     astcenc_context_free(context);
     return status == ASTCENC_SUCCESS;
+}
+
+bool astc_decode(const std::vector<uint8_t> & compressed, uint32_t rows, uint32_t columns,
+                 const ggml_vk_astc_format_contract & format, std::vector<float> & texels) {
+    astcenc_config config{};
+    if (astcenc_config_init(ASTCENC_PRF_LDR, format.block_width, format.block_height, 1,
+                            g_astc_preset, 0, &config) != ASTCENC_SUCCESS) return false;
+    astcenc_context * context = nullptr;
+#if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+    if (astcenc_context_alloc(&config, 1, &context, nullptr) != ASTCENC_SUCCESS) return false;
+#else
+    if (astcenc_context_alloc(&config, 1, &context) != ASTCENC_SUCCESS) return false;
+#endif
+    texels.resize(static_cast<size_t>(rows) * columns * 4);
+    void * decoded_slice = texels.data();
+    astcenc_image image{ columns, rows, 1, ASTCENC_TYPE_F32, &decoded_slice };
+    const astcenc_swizzle swizzle{ ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A };
+    const astcenc_error status = astcenc_decompress_image(
+        context, compressed.data(), compressed.size(), &image, &swizzle, 0);
+    astcenc_context_free(context);
+    return status == ASTCENC_SUCCESS;
+}
+
+std::vector<double> matvec_outputs(const std::vector<float> & weights, uint32_t rows,
+                                   uint32_t columns, const activations & inputs) {
+    std::vector<double> result(static_cast<size_t>(inputs.samples) * rows);
+    for (uint32_t sample = 0; sample < inputs.samples; ++sample) {
+        const float * input = inputs.values.data() + static_cast<size_t>(sample) * columns;
+        for (uint32_t row = 0; row < rows; ++row) {
+            double value = 0.0;
+            for (uint32_t column = 0; column < columns; ++column) {
+                value += weights[static_cast<size_t>(row) * columns + column] * input[column];
+            }
+            result[static_cast<size_t>(sample) * rows + row] = value;
+        }
+    }
+    return result;
+}
+
+double relative_output_mse(const std::vector<double> & reference,
+                           const std::vector<double> & candidate) {
+    double error_sum = 0.0;
+    double reference_sum = 0.0;
+    for (size_t index = 0; index < reference.size(); ++index) {
+        const double error = reference[index] - candidate[index];
+        error_sum += error * error;
+        reference_sum += reference[index] * reference[index];
+    }
+    return error_sum / std::max(reference_sum, 1e-12);
 }
 
 latent_representation make_scalar_latents(const std::vector<float> & weights,
@@ -289,6 +447,32 @@ double run_case(const char * name, const std::vector<float> & weights,
     return std::isfinite(mse) && std::isfinite(activation_mse) ? score : NAN;
 }
 
+bool run_coordinate_case(const std::vector<float> & weights,
+                         const latent_representation & latents, uint32_t rows, uint32_t columns,
+                         const ggml_vk_astc_format_contract & format,
+                         const activations & calibration, const activations & holdout) {
+    astc_roundtrip_result standard;
+    astc_roundtrip_result neural;
+    if (!astc_roundtrip(latents.texels, rows, columns, format, nullptr, standard) ||
+        !astc_roundtrip(latents.texels, rows, columns, format, &latents.decoder, neural)) return false;
+    const std::vector<float> standard_weights = reconstruct(standard.texels, latents.decoder);
+    const std::vector<float> neural_weights = reconstruct(neural.texels, latents.decoder);
+    coordinate_result selected;
+    if (!coordinate_select_astc_blocks(weights, standard_weights, neural_weights,
+                                       standard.compressed, neural.compressed,
+                                       rows, columns, format, calibration, latents.decoder, selected)) return false;
+    const double calibration_mse = activation_relative_mse(
+        weights, selected.reconstructed, rows, columns, calibration);
+    const double holdout_mse = activation_relative_mse(
+        weights, selected.reconstructed, rows, columns, holdout);
+    std::printf("latent-coordinate format=%s mode=luminance-alpha-additive "
+                "calibration-relative-MSE=%.8g holdout-relative-MSE=%.8g "
+                "forward-changes=%u reverse-changes=%u candidates=2 calibration-samples=%u holdout-samples=%u\n",
+                format.name, calibration_mse, holdout_mse,
+                selected.forward_changes, selected.reverse_changes, calibration.samples, holdout.samples);
+    return std::isfinite(calibration_mse) && std::isfinite(holdout_mse);
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -298,12 +482,27 @@ int main(int argc, char ** argv) {
     std::string calibration_trace_path;
     bool search_levels = false;
     bool neural_rank = false;
+    bool coordinate_select = false;
+    bool coordinate_only = false;
+    std::string footprint;
+    std::string preset = "thorough";
+    uint32_t maximum_samples = 0;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
             search_levels = true;
         } else if (option == "--neural-rank") {
             neural_rank = true;
+        } else if (option == "--coordinate-select") {
+            coordinate_select = true;
+        } else if (option == "--coordinate-only") {
+            coordinate_only = true;
+        } else if (option == "--footprint" && index + 1 < argc) {
+            footprint = argv[++index];
+        } else if (option == "--preset" && index + 1 < argc) {
+            preset = argv[++index];
+        } else if (option == "--max-samples" && index + 1 < argc) {
+            maximum_samples = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace") &&
                    index + 1 < argc) {
@@ -314,14 +513,31 @@ int main(int argc, char ** argv) {
             else calibration_trace_path = value;
         } else {
             std::fprintf(stderr,
-                         "usage: %s [--search-levels] [--neural-rank] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path]\n",
+                         "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] "
+                         "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
+                         "[--trace path] [--calibration-trace path] [--max-samples N]\n",
                          argv[0]);
             return 2;
         }
     }
     if (model_path.empty() != tensor_name.empty()) {
         std::fprintf(stderr, "--model and --tensor must be supplied together\n");
+        return 2;
+    }
+    if (coordinate_select && !neural_rank) {
+        std::fprintf(stderr, "--coordinate-select requires --neural-rank\n");
+        return 2;
+    }
+    if (coordinate_only && !coordinate_select) {
+        std::fprintf(stderr, "--coordinate-only requires --coordinate-select\n");
+        return 2;
+    }
+    if (preset == "medium") {
+        g_astc_preset = ASTCENC_PRE_MEDIUM;
+    } else if (preset == "fast") {
+        g_astc_preset = ASTCENC_PRE_FAST;
+    } else if (preset != "thorough") {
+        std::fprintf(stderr, "unsupported --preset value: %s\n", preset.c_str());
         return 2;
     }
 #if !defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
@@ -383,27 +599,33 @@ int main(int argc, char ** argv) {
         calibration_inputs.samples = loaded.samples;
         calibration_inputs.values = std::move(loaded.values);
     }
+    limit_activation_samples(inputs, maximum_samples);
+    limit_activation_samples(calibration_inputs, maximum_samples);
     for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,
                                  ggml_vk_astc_5x5_unorm_rgba,
                                  ggml_vk_astc_6x6_unorm_rgba }) {
+        const std::string format_footprint = std::to_string(format.block_width) + "x" +
+                                             std::to_string(format.block_height);
+        if (!footprint.empty() && footprint != format_footprint) continue;
         const latent_representation additive_latents = make_additive_latents(
             weights, minimum, range, rows, columns, format.block_width, false,
             kDefaultCoarseLevels);
         const latent_representation block_latents = make_additive_latents(
             weights, minimum, range, rows, columns, format.block_width, true,
             kDefaultCoarseLevels);
-        if (!std::isfinite(run_case("scalar-rgba", weights, scalar_latents,
+        if (!coordinate_only &&
+            (!std::isfinite(run_case("scalar-rgba", weights, scalar_latents,
                                     rows, columns, format, inputs)) ||
             !std::isfinite(run_case("row-column-additive", weights, row_column_latents,
                                     rows, columns, format, inputs)) ||
             !std::isfinite(run_case("luminance-alpha-additive", weights, additive_latents,
                                     rows, columns, format, inputs)) ||
             !std::isfinite(run_case("luminance-alpha-block-residual", weights, block_latents,
-                                    rows, columns, format, inputs))) {
+                                    rows, columns, format, inputs)))) {
             std::fprintf(stderr, "ASTC latent smoke failed\n");
             return 1;
         }
-        if (neural_rank &&
+        if (!coordinate_only && neural_rank &&
             (!std::isfinite(run_case("scalar-rgba-neural-rank", weights, scalar_latents,
                                      rows, columns, format, inputs, nullptr, true)) ||
              !std::isfinite(run_case("luminance-alpha-additive-neural-rank", weights,
@@ -412,7 +634,13 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "ASTC latent neural-rank smoke failed\n");
             return 1;
         }
-        if (search_levels) {
+        if (coordinate_select &&
+            !run_coordinate_case(weights, additive_latents, rows, columns, format,
+                                 calibration_inputs, inputs)) {
+            std::fprintf(stderr, "ASTC coordinate selection smoke failed\n");
+            return 1;
+        }
+        if (!coordinate_only && search_levels) {
             double best_score = INFINITY;
             uint32_t best_levels = 0;
             for (const uint32_t coarse_levels : { 3u, 5u, 8u, 16u, 32u }) {
@@ -436,6 +664,10 @@ int main(int argc, char ** argv) {
                         "calibration-relative-MSE=%.8g\n",
                         format.name, best_levels, best_score);
         }
+    }
+    if (!footprint.empty() && footprint != "4x4" && footprint != "5x5" && footprint != "6x6") {
+        std::fprintf(stderr, "unsupported --footprint value: %s\n", footprint.c_str());
+        return 2;
     }
     return 0;
 }
