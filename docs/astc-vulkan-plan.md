@@ -613,6 +613,12 @@ report showing how many retained candidates are actually reachable per ASTC
 block. Any mixed-format decision must wait for those regressions and for a
 second real tensor.
 
+The second-tensor control did not reproduce the `attn_q` Block-LDLQ win;
+stability gating was marginally better on `attn_k`. The plan therefore treats
+Block-LDLQ as tensor-sensitive and requires per-tensor selector choice only as
+an offline research result. No automatic mixed-format/runtime policy is
+allowed until the trace size, tensor coverage, and GPU timing gates are met.
+
 The bounded proxy has now been run. It is retained as a regression/evaluation
 gate, while the next implementation target is a side-fork-only per-block
 top-K snapshot. That snapshot must be opt-in, thread-safe or explicitly

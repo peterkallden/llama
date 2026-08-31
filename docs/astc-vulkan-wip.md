@@ -2259,3 +2259,24 @@ The previous diagonal Block-LDLQ prototype measured `0.35580` holdout, so the
 compact future-block solve recovers additional quality. The result is a
 promising 6x6 signal, not yet a cross-footprint claim; 4x4 and 5x5 remain
 required regression points in the next full sweep.
+
+## Ninety-first sweep: cross-tensor 6x6 control
+
+The same per-block pool and compact block-LDL update were run on
+`blk.0.attn_k.weight` from the same SmolLM2 FP16 model, using the same
+calibration and holdout traces and the same 32x64 crop. Holdout
+activation-relative MSE was:
+
+| Selector | Holdout |
+| --- | ---: |
+| Local | 0.24283 |
+| Coordinate | 0.29983 |
+| Block-LDLQ | 0.25469 |
+| Conflict-aware | 0.27234 |
+| Stability | **0.25335** |
+
+The target-regeneration result is close but does not beat local ranking on
+this tensor; stability gating is best by a small margin. This is an important
+boundary: the 6x6 Block-LDLQ gain on `attn_q` is not yet universal. Keep the
+method as a candidate, but require multiple tensors and larger traces before
+claiming a model-level advantage.
