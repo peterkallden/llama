@@ -652,6 +652,14 @@ as a negative control. The next implementation should derive a bounded
 Hessian-pivoted order offline and compare it against forward order without
 changing the runtime texture layout.
 
+The first bounded pivot probe is complete. Sorting row-local ASTC blocks by
+absolute Hessian connectivity improved calibration in one case but regressed
+fixed-holdout error on both `attn_q` and `attn_k`. Treat this heuristic as a
+negative control, not as the default order. The next gate is a three-way
+comparison on identical candidate snapshots (local ranking, forward
+Block-LDLQ, and improved Hessian feedback/target regeneration) across 4x4,
+5x5, and 6x6, with fixed holdout traces and at least two real tensors.
+
 The damping ablation did not change the current 6x6 decisions across
 `1e-5`--`1e-3`. Keep the parameter exposed for future ill-conditioned traces,
 but prioritize calibration diversity, block ordering, and candidate direction

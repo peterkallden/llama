@@ -2339,3 +2339,35 @@ confirms that target regeneration is directional: it shifts information to
 future blocks and cannot be treated as an order-independent score. A future
 Hessian-pivoted or head-aware order is therefore more promising than further
 damping tuning.
+
+## Ninety-sixth sweep: Hessian pivot-order probe
+
+The order control now also accepts `--ldlq-order pivot`. This probe sorts the
+ASTC-width blocks within each row by a simple Hessian connectivity score (the
+sum of absolute Gram-matrix entries for the block's input columns). It keeps
+the candidate pool, footprint, calibration trace, and reconstruction code
+unchanged; only the directional target-regeneration order changes.
+
+On the SmolLM2 32x64 crop with the per-block 6x6 pool, the results were:
+
+| Tensor | Order | Calibration | Holdout |
+| --- | --- | ---: | ---: |
+| `attn_q` | forward | 0.29496 | **0.34428** |
+| `attn_q` | reverse | 0.32263 | 0.34564 |
+| `attn_q` | pivot | 0.30718 | 0.36120 |
+| `attn_k` | forward | 0.25548 | **0.25469** |
+| `attn_k` | pivot | 0.25236 | 0.26147 |
+
+The pivot heuristic improves calibration over reverse on `attn_q`, but loses
+the forward holdout result on both tensors. This is a useful negative control:
+Hessian magnitude alone is not a sufficient pivot criterion for ASTC target
+regeneration. The spatial/block direction and the calibration distribution
+still dominate. Keep forward order as the reference, retain pivot as a
+regression control, and do not claim a general order improvement.
+
+The next experiment is therefore a clean three-way selector comparison on the
+same legal candidate snapshots: local neural ranking, forward Block-LDLQ, and
+an improved Hessian-feedback/target-regeneration variant. It must be run over
+the 4x4, 5x5, and 6x6 footprints, both calibration and fixed holdout traces,
+and at least the `attn_q`/`attn_k` tensor pair before any GPU performance
+interpretation.

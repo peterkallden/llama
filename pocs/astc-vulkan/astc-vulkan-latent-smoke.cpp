@@ -20,7 +20,8 @@ constexpr uint32_t kColumns = 256;
 constexpr uint32_t kDefaultCoarseLevels = 16;
 float g_astc_preset = ASTCENC_PRE_THOROUGH;
 double g_block_ldlq_damping = 1e-4;
-bool g_block_ldlq_reverse_order = false;
+enum class ldlq_order_mode { forward, reverse, pivot };
+ldlq_order_mode g_block_ldlq_order = ldlq_order_mode::forward;
 
 struct affine_decoder {
     double scale_l = 0.0;
@@ -417,8 +418,7 @@ bool local_select_astc_blocks(const std::vector<float> & reference,
     result.reconstructed = candidates.front().reconstructed;
     result.compressed = candidates.front().compressed;
     result.selected_indices.assign(block_count, 0);
-    for (uint32_t ordinal = 0; ordinal < block_count; ++ordinal) {
-        const uint32_t block = g_block_ldlq_reverse_order ? block_count - ordinal - 1 : ordinal;
+    for (uint32_t block = 0; block < block_count; ++block) {
         const std::vector<uint32_t> fallback = [&]() {
             std::vector<uint32_t> all(candidates.size());
             for (uint32_t index = 0; index < candidates.size(); ++index) all[index] = index;
@@ -1011,7 +1011,41 @@ bool block_ldlq_select_astc_blocks(const std::vector<float> & reference,
         return true;
     };
 
-    for (uint32_t block = 0; block < block_count; ++block) {
+    std::vector<uint32_t> block_order;
+    block_order.reserve(block_count);
+    for (uint32_t row_block = 0; row_block < blocks_y; ++row_block) {
+        std::vector<uint32_t> row_order;
+        for (uint32_t column_block = 0; column_block < blocks_x; ++column_block) {
+            row_order.push_back(row_block * blocks_x + column_block);
+        }
+        if (g_block_ldlq_order == ldlq_order_mode::reverse) {
+            std::reverse(row_order.begin(), row_order.end());
+        } else if (g_block_ldlq_order == ldlq_order_mode::pivot) {
+            std::sort(row_order.begin(), row_order.end(), [&](uint32_t left, uint32_t right) {
+                const uint32_t left_column0 = (left % blocks_x) * format.block_width;
+                const uint32_t right_column0 = (right % blocks_x) * format.block_width;
+                double left_score = 0.0;
+                double right_score = 0.0;
+                for (uint32_t column = left_column0;
+                     column < std::min(left_column0 + format.block_width, columns); ++column) {
+                    for (uint32_t other = 0; other < columns; ++other) {
+                        left_score += std::abs(gram[static_cast<size_t>(column) * columns + other]);
+                    }
+                }
+                for (uint32_t column = right_column0;
+                     column < std::min(right_column0 + format.block_width, columns); ++column) {
+                    for (uint32_t other = 0; other < columns; ++other) {
+                        right_score += std::abs(gram[static_cast<size_t>(column) * columns + other]);
+                    }
+                }
+                return left_score > right_score;
+            });
+        }
+        block_order.insert(block_order.end(), row_order.begin(), row_order.end());
+    }
+
+    for (uint32_t ordinal = 0; ordinal < block_count; ++ordinal) {
+        const uint32_t block = block_order[ordinal];
         const uint32_t row0 = (block / blocks_x) * format.block_height;
         const uint32_t column0 = (block % blocks_x) * format.block_width;
         const uint32_t row_end = std::min(row0 + format.block_height, rows);
@@ -1055,7 +1089,8 @@ bool block_ldlq_select_astc_blocks(const std::vector<float> & reference,
                     chosen.reconstructed[static_cast<size_t>(row) * columns + column] -
                     reference[static_cast<size_t>(row) * columns + column];
             }
-            const auto update_future_block = [&](uint32_t future_column0) {
+            const auto update_future_block = [&](uint32_t future_block) {
+                const uint32_t future_column0 = (future_block % blocks_x) * format.block_width;
                 const uint32_t future_count = std::min(format.block_width, columns - future_column0);
                 std::vector<double> rhs(future_count, 0.0);
                 for (uint32_t future = 0; future < future_count; ++future) {
@@ -1071,18 +1106,10 @@ bool block_ldlq_select_astc_blocks(const std::vector<float> & reference,
                 }
                 return true;
             };
-            if (!g_block_ldlq_reverse_order) {
-                for (uint32_t future_column0 = column_end; future_column0 < columns;
-                     future_column0 += format.block_width) {
-                    if (!update_future_block(future_column0)) return false;
-                }
-            } else if (column0 != 0) {
-                uint32_t future_column0 = ((column0 - 1) / format.block_width) * format.block_width;
-                while (true) {
-                    if (!update_future_block(future_column0)) return false;
-                    if (future_column0 == 0) break;
-                    future_column0 -= format.block_width;
-                }
+            for (uint32_t future_ordinal = ordinal + 1; future_ordinal < block_count; ++future_ordinal) {
+                const uint32_t future_block = block_order[future_ordinal];
+                if ((future_block / blocks_x) != (block / blocks_x)) continue;
+                if (!update_future_block(future_block)) return false;
             }
         }
         if (best_candidate != 0) ++result.forward_changes;
@@ -1547,7 +1574,8 @@ bool run_coordinate_case(const std::vector<float> & weights,
                     format.name, candidates.size(), local_calibration, coordinate_calibration,
                     ldlq_calibration, feedback_calibration, conflict_calibration, stability_calibration, local_loss,
                     coordinate_loss, ldlq_loss, ldlq.forward_changes,
-                    g_block_ldlq_reverse_order ? "reverse" : "forward",
+                    g_block_ldlq_order == ldlq_order_mode::reverse ? "reverse" :
+                    (g_block_ldlq_order == ldlq_order_mode::pivot ? "pivot" : "forward"),
                     feedback_loss, conflict_loss, stability_loss, recovered_gain,
                     conflict_gain, stability_gain, feedback.forward_changes,
                     conflict_aware.forward_changes, stability.forward_changes,
@@ -1679,8 +1707,9 @@ int main(int argc, char ** argv) {
             g_block_ldlq_damping = std::stod(argv[++index]);
         } else if (option == "--ldlq-order" && index + 1 < argc) {
             const std::string order = argv[++index];
-            if (order == "forward") g_block_ldlq_reverse_order = false;
-            else if (order == "reverse") g_block_ldlq_reverse_order = true;
+            if (order == "forward") g_block_ldlq_order = ldlq_order_mode::forward;
+            else if (order == "reverse") g_block_ldlq_order = ldlq_order_mode::reverse;
+            else if (order == "pivot") g_block_ldlq_order = ldlq_order_mode::pivot;
             else {
                 std::fprintf(stderr, "unsupported --ldlq-order value: %s\n", order.c_str());
                 return 2;
