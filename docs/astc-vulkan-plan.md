@@ -129,6 +129,63 @@ silently produce a non-standard or incomplete ASTC bitstream.
 Exit criterion: both formats can represent a small known matrix and report
 reconstruction and dot-product error reproducibly.
 
+## Research track: ASTC-native few-level weights
+
+This is a parallel research track, not a replacement for the Q4 comparison.
+Its objective is not the smallest possible model file. It asks whether standard
+ASTC sampled-image decoding can deliver a useful few-level weight
+representation to the shader ALU with lower runtime pressure than a packed
+low-bit buffer plus shader-side unpack/dequantization.
+
+The first design uses **one scalar weight per ASTC texel**. Therefore a 6x6
+block provides `128 / 36 = 3.56` physical bits per weight before any external
+metadata. The existing four-scalars-per-RGBA-texel packing must not be used to
+claim this rate: it would provide only 0.89 physical bits per scalar and cannot
+losslessly represent independently chosen ternary or five-level weights. RGBA
+packing remains a separate structured-compression candidate.
+
+The representation family is called **ASTC-Q** provisionally. Candidate weight
+alphabets are:
+
+| Candidate | Target alphabet | Initial ASTC layouts | Purpose |
+|---|---|---|---|
+| ASTC-QT | `{-1, 0, +1}` | 4x4, 6x6 | ternary semantic baseline |
+| ASTC-Q5 | five symmetric or learned affine levels | 6x6 | few-level/BitNet-adjacent candidate |
+| ASTC-Q8 | eight levels | 4x4, 6x6 | approximately Q3-like comparison |
+| ASTC-Q16 | sixteen levels | 4x4, 6x6 | approximately Q4-like comparison |
+
+An ASTC block may use asymmetric local endpoints, partitions, and a separate
+per-block scale only when their resident bytes are included in the comparison.
+Endpoint interpolation is not assumed to produce exact desired levels; this is
+an empirical representability question for legal standard ASTC blocks and the
+target driver. Larger ASTC footprints (8x8 through 12x12) are deferred until
+their sampled-image support is queried per Vulkan device.
+
+### Three staged experiments
+
+1. **Representation microbenchmark.** Encode synthetic ternary and few-level
+   block patterns with standard `astcenc`; measure exact/near-level recovery,
+   level drift, block error, byte pressure, and sampled shader values. Include
+   smooth, clustered, random, and outlier patterns. Compare one scalar/texel
+   with the existing RGBA structured layout without conflating their rates.
+2. **Post-training weight experiment.** Apply ASTC-QT/Q5/Q8/Q16 to a small
+   existing ternary or few-level model matrix. Compare quality and bytes with a
+   conventional packed ternary/few-level representation and with Q4. The
+   runtime comparison must include shader unpack/dequant instructions, not
+   merely compressed storage size.
+3. **ASTC-aware training experiment.** Train or fine-tune through a
+   differentiable surrogate for the constrained endpoint/interpolation grid,
+   then project and validate against legal ASTC blocks. Compare model loss and
+   held-out quality with the post-training experiment. The discrete `astcenc`
+   search remains an offline projection/validation stage, not an operation in
+   the backward pass.
+
+The acceptance gate for entering a Vulkan ASTC-Q matvec scaffold is a
+reproducible, held-out quality/byte frontier that is competitive with the
+packed baseline on the same small model. A capacity win alone is insufficient;
+the experiment must also measure whether texture decoding reduces total shader
+work or improves latency/energy on a real device.
+
 ## Phase 3: compute matvec kernel
 
 1. Add dedicated experimental compute shaders following the existing Vulkan

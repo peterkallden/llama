@@ -707,3 +707,28 @@ and Q4_0's 0.00770. Accordingly this is a retained calibration tool, not a
 runtime design decision. The next objective must calibrate on a larger, more
 representative prompt set and use a strict holdout before a candidate is
 allowed into a packed artifact.
+
+## Fortieth sweep: ASTC-native few-level weight direction
+
+The next research track distinguishes an ASTC-native quantizer from the
+current "encode a normal FP16 weight matrix as an image" baseline. The
+provisional family name is **ASTC-Q**: a weight is assigned a small semantic
+alphabet (ternary, five-level, eight-level, or sixteen-level), while ASTC
+endpoints, interpolation weights, and possibly partitions provide the physical
+representation and hardware reconstruction.
+
+The byte arithmetic is deliberately explicit. For the proposed initial layout,
+one scalar weight occupies one ASTC texel, so 6x6 is `128 / 36 = 3.56` physical
+bits per scalar before companion data. This is a meaningful Q3/Q4-adjacent
+format. It is not valid to quote 3.56 bits per scalar while storing four
+independent weights in RGBA channels: that layout is nominally 0.89 bits per
+scalar and can only work if the weights have substantial ASTC-exploitable
+structure.
+
+Three experiments are now recorded in the implementation plan: a legal-ASTC
+representability microbenchmark, a post-training comparison against packed
+ternary/few-level weights, and ASTC-aware training through a differentiable
+surrogate followed by legal-ASTC projection. This is intentionally separate
+from the existing Q4 path. The common runtime hypothesis is not minimum
+bit-density, but whether fixed-function texture reconstruction decreases the
+total cost of delivering usable weights to the shader ALU.
