@@ -381,6 +381,13 @@ The next required gates are:
 No Phase-4 integration is authorized by this plan until these gates produce a
 quality/storage/latency Pareto result on more than one representative workload.
 
+Target-device policy: the current Intel integrated-GPU measurements validate
+the Vulkan ASTC mechanism, not portable performance. Repeat the fixed harness
+on at least one native ASTC mobile family (Mali, Adreno, or Apple) before
+using timing results to select a representation. Keep scalar ASTC as the
+runtime baseline and L+A as a retained activation-aware/codec-aware research
+track. The related BCn/CUDA experiment is intentionally outside this plan.
+
 1. Add dedicated experimental compute shaders following the existing Vulkan
    shader source/build conventions.
 2. Bind ASTC images through sampled-image descriptors and bind companion

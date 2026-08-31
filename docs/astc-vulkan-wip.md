@@ -1781,6 +1781,44 @@ quality/runtime comparison should use scalar ASTC, L+A ASTC, Q4, and TQ2 in
 one run, then move to a streaming working set. L+A-specific training should be
 deprioritized until it can close this scalar quality gap.
 
+## Seventy-fifth sweep: execution boundary and target-device interpretation
+
+The timed ASTC matvec performs `texelFetch` from a Vulkan ASTC image. At that
+point the shader requests a sampled texel; ASTC block decoding occurs in the
+GPU's texture/sampler implementation, not in the CPU and not in shader source
+code. CPU work is deliberately outside that path: `astcenc` creates payloads
+offline, and the CPU decoder supplies correctness references. The Vulkan image
+upload occurs before the timestamp interval. Therefore the reported interval
+measures resident GPU execution, not model loading or host-to-device transfer.
+
+The Intel UHD 620 is an integrated GPU, so its CPU and GPU share system memory
+rather than crossing a discrete-GPU PCIe link during resident texture fetches.
+On a discrete target, an initial ASTC upload may cross PCIe, but repeated
+inference still samples the resident GPU image and does not perform a per-fetch
+CPU or PCIe round trip. Model-load transfer and steady-state inference must be
+reported as separate measurements.
+
+UHD 620 establishes a Vulkan resource/correctness contract and gives a useful
+mechanism signal; it is not a performance proxy for Mali, Adreno, Apple, or
+other mobile ASTC targets. Relative texture throughput, ASTC decoder design,
+cache hierarchy, unified-memory behavior, driver scheduling, and shader-ALU
+balance can all change the result. A target-device matrix is therefore a
+required later gate, with each run recording adapter, driver, ASTC footprint,
+and whether native decode evidence is available.
+
+L+A remains a retained research representation. Its current post-training
+mapping loses to scalar ASTC on this layer, but it still exposes two useful
+ideas unavailable to scalar replication: dual-plane-compatible latent fields
+and cancellation-aware reconstruction after decode. It should be revisited
+through activation-aware candidate ranking and codec-aware optimization, not
+discarded. Scalar ASTC is the immediate practical baseline; L+A is the
+neural-dequantization hypothesis to test once the runtime controls are stable.
+
+The parallel BCn/CUDA work is related only at the architectural level
+(fixed-function texture decompression as neural dequantization). This branch
+remains ASTC/Vulkan-focused so that its format, hardware, quality, and runtime
+claims stay independently interpretable.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact
