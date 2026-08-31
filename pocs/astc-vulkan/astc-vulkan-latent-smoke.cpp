@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -148,6 +149,89 @@ struct astc_candidate {
     std::vector<uint8_t> compressed;
 };
 
+// Build a bounded per-block pool that preserves both the local optimum and
+// candidates with different activation-space error directions. This is an
+// offline selector aid; every candidate remains a complete legal ASTC stream.
+std::vector<std::vector<uint32_t>> make_diverse_block_shortlists(
+        const std::vector<float> & reference,
+        const std::vector<astc_candidate> & candidates,
+        uint32_t rows, uint32_t columns,
+        const ggml_vk_astc_format_contract & format,
+        const activations & calibration,
+        uint32_t maximum_candidates) {
+    const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
+    const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
+    const uint32_t block_count = blocks_x * blocks_y;
+    std::vector<std::vector<uint32_t>> shortlists(block_count);
+    if (candidates.empty() || maximum_candidates == 0) return shortlists;
+
+    for (uint32_t block = 0; block < block_count; ++block) {
+        const uint32_t row0 = (block / blocks_x) * format.block_height;
+        const uint32_t column0 = (block % blocks_x) * format.block_width;
+        const uint32_t row_end = std::min(row0 + format.block_height, rows);
+        const uint32_t column_end = std::min(column0 + format.block_width, columns);
+        const uint32_t row_count = row_end - row0;
+        const size_t vector_size = static_cast<size_t>(calibration.samples) * row_count;
+        std::vector<std::vector<double>> errors(candidates.size(),
+                                                std::vector<double>(vector_size, 0.0));
+        std::vector<double> local_scores(candidates.size(), 0.0);
+        for (size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
+            for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                const float * input = calibration.values.data() +
+                    static_cast<size_t>(sample) * columns;
+                for (uint32_t row = row0; row < row_end; ++row) {
+                    double delta = 0.0;
+                    for (uint32_t column = column0; column < column_end; ++column) {
+                        const size_t weight_index = static_cast<size_t>(row) * columns + column;
+                        delta += (candidates[candidate_index].reconstructed[weight_index] -
+                                  reference[weight_index]) * input[column];
+                    }
+                    const size_t vector_index = static_cast<size_t>(sample) * row_count + row - row0;
+                    errors[candidate_index][vector_index] = delta;
+                    local_scores[candidate_index] += delta * delta;
+                }
+            }
+        }
+
+        const size_t local_best = static_cast<size_t>(std::min_element(
+            local_scores.begin(), local_scores.end()) - local_scores.begin());
+        // Candidate zero is the stable ordinary-stream baseline. Keeping it in
+        // every shortlist makes the comparison and the initial residual exact.
+        shortlists[block].push_back(0);
+        if (maximum_candidates > 1 && local_best != 0) {
+            shortlists[block].push_back(static_cast<uint32_t>(local_best));
+        }
+        const double loss_limit = std::max(local_scores[local_best] * 8.0, 1e-24);
+        std::vector<bool> selected(candidates.size(), false);
+        selected[0] = true;
+        selected[local_best] = true;
+        while (shortlists[block].size() < maximum_candidates) {
+            size_t best_index = candidates.size();
+            double best_distance = -1.0;
+            for (size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
+                if (selected[candidate_index] || local_scores[candidate_index] > loss_limit) continue;
+                double distance = std::numeric_limits<double>::infinity();
+                for (uint32_t chosen : shortlists[block]) {
+                    double difference = 0.0;
+                    for (size_t index = 0; index < vector_size; ++index) {
+                        const double value = errors[candidate_index][index] - errors[chosen][index];
+                        difference += value * value;
+                    }
+                    distance = std::min(distance, difference);
+                }
+                if (distance > best_distance) {
+                    best_distance = distance;
+                    best_index = candidate_index;
+                }
+            }
+            if (best_index == candidates.size()) break;
+            selected[best_index] = true;
+            shortlists[block].push_back(static_cast<uint32_t>(best_index));
+        }
+    }
+    return shortlists;
+}
+
 // Choose whole, independently decodable ASTC blocks from a legal stream pool.
 // Calibration activations are the only selection signal; evaluation is outside.
 bool coordinate_select_astc_blocks(const std::vector<float> & reference,
@@ -156,10 +240,22 @@ bool coordinate_select_astc_blocks(const std::vector<float> & reference,
                                    const ggml_vk_astc_format_contract & format,
                                    const activations & calibration,
                                    const affine_decoder & decoder,
-                                   coordinate_result & result) {
+                                   coordinate_result & result,
+                                   const std::vector<std::vector<uint32_t>> * shortlists = nullptr) {
     if (candidates.empty()) return false;
     const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
     const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
+    const uint32_t block_count = blocks_x * blocks_y;
+    if (shortlists != nullptr && shortlists->size() != block_count) return false;
+    if (shortlists != nullptr) {
+        for (const auto & shortlist : *shortlists) {
+            for (uint32_t candidate_index : shortlist) {
+                if (candidate_index >= candidates.size()) return false;
+            }
+        }
+    }
+    std::vector<uint32_t> all_candidate_indices(candidates.size());
+    for (uint32_t index = 0; index < candidates.size(); ++index) all_candidate_indices[index] = index;
     const std::vector<double> expected = matvec_outputs(reference, rows, columns, calibration);
     std::vector<double> actual = matvec_outputs(candidates.front().reconstructed, rows, columns, calibration);
     std::vector<double> residual(expected.size());
@@ -178,7 +274,10 @@ bool coordinate_select_astc_blocks(const std::vector<float> & reference,
             const uint32_t row0 = (block / blocks_x) * format.block_height;
             const uint32_t column0 = (block % blocks_x) * format.block_width;
             const uint32_t row_count = std::min(row0 + format.block_height, rows) - row0;
-            for (const astc_candidate & candidate : candidates) {
+            const std::vector<uint32_t> & candidate_indices =
+                shortlists == nullptr ? all_candidate_indices : (*shortlists)[block];
+            for (uint32_t candidate_index : candidate_indices) {
+                const astc_candidate & candidate = candidates[candidate_index];
                 std::vector<double> delta(static_cast<size_t>(calibration.samples) * row_count);
                 double residual_dot_delta = 0.0;
                 double delta_norm = 0.0;
@@ -471,7 +570,7 @@ bool run_coordinate_case(const std::vector<float> & weights,
                          const latent_representation & latents, uint32_t rows, uint32_t columns,
                          const ggml_vk_astc_format_contract & format,
                          const activations & calibration, const activations & holdout,
-                         bool include_fast_candidate) {
+                         bool include_fast_candidate, bool include_diverse_candidates) {
     astc_roundtrip_result standard;
     astc_roundtrip_result neural;
     if (!astc_roundtrip(latents.texels, rows, columns, format, nullptr, standard) ||
@@ -490,7 +589,7 @@ bool run_coordinate_case(const std::vector<float> & weights,
         { "standard", standard_weights, standard.compressed },
         { "neural-rank", neural_weights, neural.compressed },
     };
-    if (include_fast_candidate) {
+    if (include_fast_candidate || include_diverse_candidates) {
         const float saved_preset = g_astc_preset;
         g_astc_preset = ASTCENC_PRE_FAST;
         astc_roundtrip_result fast;
@@ -500,9 +599,26 @@ bool run_coordinate_case(const std::vector<float> & weights,
         candidates.push_back({ "neural-rank-fast", reconstruct(fast.texels, latents.decoder),
                                std::move(fast.compressed) });
     }
+    if (include_diverse_candidates) {
+        const float saved_preset = g_astc_preset;
+        g_astc_preset = ASTCENC_PRE_MEDIUM;
+        astc_roundtrip_result medium;
+        const bool encoded = astc_roundtrip(latents.texels, rows, columns, format,
+                                             &latents.decoder, medium);
+        g_astc_preset = saved_preset;
+        if (!encoded) return false;
+        candidates.push_back({ "neural-rank-medium", reconstruct(medium.texels, latents.decoder),
+                               std::move(medium.compressed) });
+    }
+    std::vector<std::vector<uint32_t>> shortlists;
+    if (include_diverse_candidates) {
+        shortlists = make_diverse_block_shortlists(weights, candidates, rows, columns,
+                                                    format, calibration, 4);
+    }
     coordinate_result selected;
     if (!coordinate_select_astc_blocks(weights, candidates,
-                                       rows, columns, format, calibration, latents.decoder, selected)) return false;
+                                       rows, columns, format, calibration, latents.decoder, selected,
+                                       include_diverse_candidates ? &shortlists : nullptr)) return false;
     const double calibration_mse = activation_relative_mse(
         weights, selected.reconstructed, rows, columns, calibration);
     const double holdout_mse = activation_relative_mse(
@@ -515,6 +631,22 @@ bool run_coordinate_case(const std::vector<float> & weights,
                 format.name, standard_calibration, standard_holdout, neural_calibration, neural_holdout,
                 calibration_mse, holdout_mse,
                 selected.forward_changes, selected.reverse_changes, candidates.size(), calibration.samples, holdout.samples);
+    if (include_diverse_candidates) {
+        size_t minimum = std::numeric_limits<size_t>::max();
+        size_t maximum = 0;
+        size_t total = 0;
+        for (const auto & shortlist : shortlists) {
+            minimum = std::min(minimum, shortlist.size());
+            maximum = std::max(maximum, shortlist.size());
+            total += shortlist.size();
+        }
+        const double average = shortlists.empty() ? 0.0 :
+            static_cast<double>(total) / shortlists.size();
+        std::printf("latent-coordinate-diverse format=%s shortlist-min=%zu shortlist-max=%zu "
+                    "shortlist-average=%.3f blocks=%zu\n",
+                    format.name, minimum == std::numeric_limits<size_t>::max() ? 0 : minimum,
+                    maximum, average, shortlists.size());
+    }
     return std::isfinite(calibration_mse) && std::isfinite(holdout_mse);
 }
 
@@ -530,6 +662,7 @@ int main(int argc, char ** argv) {
     bool coordinate_select = false;
     bool coordinate_only = false;
     bool coordinate_fast_candidate = false;
+    bool coordinate_diverse = false;
     std::string footprint;
     std::string preset = "thorough";
     uint32_t maximum_samples = 0;
@@ -551,6 +684,8 @@ int main(int argc, char ** argv) {
             coordinate_only = true;
         } else if (option == "--coordinate-fast-candidate") {
             coordinate_fast_candidate = true;
+        } else if (option == "--coordinate-diverse") {
+            coordinate_diverse = true;
         } else if (option == "--footprint" && index + 1 < argc) {
             footprint = argv[++index];
         } else if (option == "--preset" && index + 1 < argc) {
@@ -579,7 +714,7 @@ int main(int argc, char ** argv) {
             else calibration_trace_path = value;
         } else {
             std::fprintf(stderr,
-                         "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] "
+                         "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--max-samples N] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-mode scalar|additive]\n",
@@ -601,6 +736,10 @@ int main(int argc, char ** argv) {
     }
     if (coordinate_fast_candidate && !coordinate_select) {
         std::fprintf(stderr, "--coordinate-fast-candidate requires --coordinate-select\n");
+        return 2;
+    }
+    if (coordinate_diverse && !coordinate_select) {
+        std::fprintf(stderr, "--coordinate-diverse requires --coordinate-select\n");
         return 2;
     }
     if (export_astc_path.empty() != export_reference_path.empty() ||
@@ -757,7 +896,7 @@ int main(int argc, char ** argv) {
         }
         if (coordinate_select &&
             !run_coordinate_case(weights, additive_latents, rows, columns, format,
-                                 calibration_inputs, inputs, coordinate_fast_candidate)) {
+                                 calibration_inputs, inputs, coordinate_fast_candidate, coordinate_diverse)) {
             std::fprintf(stderr, "ASTC coordinate selection smoke failed\n");
             return 1;
         }

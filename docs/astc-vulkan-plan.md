@@ -225,15 +225,15 @@ dispatches; its timing data is still exploratory and not a performance claim.
     bounded pool from complete legal encodes (quality presets and mapping
     metrics), then expose a richer internal astcenc shortlist only if that pool
     demonstrates a calibration/holdout improvement.
-56. Expose a bounded per-block shortlist from the experimental encoder while
+56. [x] Expose a bounded per-block shortlist from the experimental encoder while
     preserving ordinary ASTC candidate generation, legal bit packing, and CPU
     decode. A candidate record must include decoded weight error, transformed
     calibration-output delta, ASTC mode diagnostics, and exact 16-byte payload.
-57. Select shortlists for **both** low local activation loss and diversity of
+57. [x] Select shortlists for **both** low local activation loss and diversity of
     activation-weighted error direction. Start from the best candidate and add
     candidates by farthest-point or clustering distance in `E_c L`, where
     `H_I = L L^T`; retain the ordinary lowest-loss candidate as a control.
-58. Re-run scalar ASTC 4x4, 5x5, and 6x6 with that candidate pool, exact
+58. [~] Re-run scalar ASTC 4x4, 5x5, and 6x6 with that candidate pool, exact
     cached-residual coordinate selection, nested calibration/validation splits,
     and an untouched holdout. Add an explicit penalty for replacing the
     uniform baseline so a larger pool cannot silently overfit calibration.

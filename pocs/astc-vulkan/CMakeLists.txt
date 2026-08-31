@@ -317,6 +317,10 @@ if (BUILD_TESTING)
             add_test(NAME astc-vulkan-latent-neural-rank-smoke
                 COMMAND astc-vulkan-latent-smoke --neural-rank)
             set_property(TEST astc-vulkan-latent-neural-rank-smoke PROPERTY LABELS astc)
+            add_test(NAME astc-vulkan-latent-diverse-coordinate-smoke
+                COMMAND astc-vulkan-latent-smoke --neural-rank --coordinate-select
+                    --coordinate-diverse)
+            set_property(TEST astc-vulkan-latent-diverse-coordinate-smoke PROPERTY LABELS astc)
         endif()
     endif()
 

@@ -1864,6 +1864,37 @@ are algorithmic precedents, not claims that those quantizers or their runtime
 kernels can be substituted for ASTC. The final payload of every proposed ASTC
 experiment remains standard, independently decodable 128-bit blocks.
 
+## Seventy-seventh sweep: diverse scalar candidate-pool control
+
+The latent selector now exposes `--coordinate-diverse`. It creates a bounded
+pool of four complete, legal L+A ASTC streams: ordinary ranking, neural
+ranking at `thorough`, `medium`, and `fast` encoder presets. For every ASTC
+block, the selector retains the ordinary stream as a stable baseline, the
+lowest local activation-loss candidate, and up to two additional candidates
+chosen by farthest-point distance between their calibration output-error
+vectors. The resulting stream is still assembled from complete 16-byte blocks;
+no Vulkan shader or production backend is involved.
+
+The contract and the existing neural-rank smoke both pass. On the bounded
+SmolLM2 F16 `blk.0.attn_q.weight` probe (32x64 region, 10 calibration and 25
+holdout samples), the new pool reduced calibration error but did not beat the
+uniform neural-ranked stream on holdout:
+
+| Footprint | Uniform neural holdout | Diverse-pool calibration | Diverse-pool holdout | Shortlist average |
+|---|---:|---:|---:|---:|
+| 4x4 | 0.02782733 | 0.02415803 | 0.03129320 | 3.852 / 4 |
+| 5x5 | 0.15407998 | 0.10975492 | 0.16197053 | 3.934 / 4 |
+| 6x6 | 0.33293869 | 0.28715630 | 0.38492473 | 4.000 / 4 |
+
+This is a useful negative control. Directional diversity alone does not
+prevent overfitting when the calibration set is still small and the candidate
+streams are correlated by construction. It does, however, demonstrate that
+the per-block shortlist is populated and that the selector can lower the
+in-sample objective. The next required change is nested calibration/validation
+selection plus a replacement penalty, followed by an untouched holdout. The
+Hessian-feedback and two-sided objectives remain deferred until that gate is
+passed.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact
