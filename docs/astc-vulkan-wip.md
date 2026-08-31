@@ -362,6 +362,15 @@ scored 1.11635062; the sparse/random samples exposed much larger 6x6
 activation error than the smooth-only run. This reinforces that representative
 activation data is a prerequisite for trusting an offline encoder choice.
 
+The twenty-fourth sweep tested a block-local texel reversal that preserves
+independent ASTC blocks while changing the order within each block. On the
+small fixture it improved the selected objective to 0.11280460 for 4x4 and
+0.31777791 for 6x6, compared with 0.13701558 and 0.33248337 for identity.
+On the larger fixture it was worse than identity for both formats (0.53930804
+versus 0.46121455 for 4x4, and 1.21237273 versus 1.11635062 for 6x6). The
+candidate remains in the search harness, but selection is now explicitly
+fixture-dependent; no universal permutation is assumed.
+
 The twenty-first sweep added a conservative block-tail term to the candidate
 objective:
 `MSE + activation_MSE + 0.25 * max_block_MSE`. The coefficient is intentionally

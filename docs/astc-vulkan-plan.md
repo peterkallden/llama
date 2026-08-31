@@ -84,6 +84,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
     are exercised beyond the tiny smoke matrix.
 16. [x] Include smooth, pseudo-random, and sparse/outlier activation samples so
     candidate ranking is not tuned to one activation shape.
+17. [x] Evaluate a block-local texel permutation and require it to win the
+    measured objective per fixture before selecting it.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

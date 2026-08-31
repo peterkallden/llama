@@ -52,6 +52,30 @@ std::vector<uint32_t> identity_texel_order(const ggml_vk_astc_weight_layout & la
     return order;
 }
 
+std::vector<uint32_t> block_reversed_texel_order(
+        const ggml_vk_astc_weight_layout & layout,
+        const ggml_vk_astc_format_contract & format) {
+    const uint32_t width = layout.texel_columns();
+    const uint32_t height = layout.rows;
+    const uint32_t blocks_x = ggml_vk_astc_block_count(width, format.block_width);
+    const uint32_t blocks_y = ggml_vk_astc_block_count(height, format.block_height);
+    std::vector<std::vector<uint32_t>> block_members(static_cast<size_t>(blocks_x) * blocks_y);
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            const size_t block_index = static_cast<size_t>(y / format.block_height) * blocks_x +
+                x / format.block_width;
+            block_members[block_index].push_back(y * width + x);
+        }
+    }
+    std::vector<uint32_t> order(width * height);
+    for (const std::vector<uint32_t> & members : block_members) {
+        for (size_t i = 0; i < members.size(); ++i) {
+            order[members[i]] = members[members.size() - 1 - i];
+        }
+    }
+    return order;
+}
+
 std::vector<uint32_t> grouped_texel_order(const ggml_vk_astc_weight_layout & layout,
                                           const std::vector<float> & weights) {
     const uint32_t texel_columns = layout.texel_columns();
@@ -329,32 +353,44 @@ int main(int argc, char ** argv) {
 
     const auto identity_order = identity_texel_order(layout);
     const auto grouped_order = grouped_texel_order(layout, weights);
+    const auto reversed_4x4_order = block_reversed_texel_order(layout, ggml_vk_astc_4x4_unorm_rgba);
+    const auto reversed_6x6_order = block_reversed_texel_order(layout, ggml_vk_astc_6x6_unorm_rgba);
     roundtrip_result format_4x4_identity;
     roundtrip_result format_4x4_grouped;
+    roundtrip_result format_4x4_reversed;
     roundtrip_result format_6x6_identity;
     roundtrip_result format_6x6_grouped;
+    roundtrip_result format_6x6_reversed;
     if (!search_layout_qualities(ggml_vk_astc_4x4_unorm_rgba, layout,
                                  weights, activation_samples, "identity", identity_order,
                                format_4x4_identity) ||
         !search_layout_qualities(ggml_vk_astc_4x4_unorm_rgba, layout,
                                  weights, activation_samples, "grouped", grouped_order,
                                format_4x4_grouped) ||
+        !search_layout_qualities(ggml_vk_astc_4x4_unorm_rgba, layout,
+                                 weights, activation_samples, "block-reversed", reversed_4x4_order,
+                               format_4x4_reversed) ||
         !search_layout_qualities(ggml_vk_astc_6x6_unorm_rgba, layout,
                                  weights, activation_samples, "identity", identity_order,
                                format_6x6_identity) ||
         !search_layout_qualities(ggml_vk_astc_6x6_unorm_rgba, layout,
                                  weights, activation_samples, "grouped", grouped_order,
-                               format_6x6_grouped)) {
+                               format_6x6_grouped) ||
+        !search_layout_qualities(ggml_vk_astc_6x6_unorm_rgba, layout,
+                                 weights, activation_samples, "block-reversed", reversed_6x6_order,
+                               format_6x6_reversed)) {
         std::fprintf(stderr, "ASTC weight smoke failed\n");
         return 1;
     }
-    const roundtrip_result & best_4x4 =
-        format_4x4_grouped.objective < format_4x4_identity.objective ? format_4x4_grouped : format_4x4_identity;
-    const roundtrip_result & best_6x6 =
-        format_6x6_grouped.objective < format_6x6_identity.objective ? format_6x6_grouped : format_6x6_identity;
+    const roundtrip_result * best_4x4 = &format_4x4_identity;
+    if (format_4x4_grouped.objective < best_4x4->objective) best_4x4 = &format_4x4_grouped;
+    if (format_4x4_reversed.objective < best_4x4->objective) best_4x4 = &format_4x4_reversed;
+    const roundtrip_result * best_6x6 = &format_6x6_identity;
+    if (format_6x6_grouped.objective < best_6x6->objective) best_6x6 = &format_6x6_grouped;
+    if (format_6x6_reversed.objective < best_6x6->objective) best_6x6 = &format_6x6_reversed;
     std::printf("ASTC weight selected 4x4 %s/%s, 6x6 %s/%s\n",
-                best_4x4.layout_name, best_4x4.quality_name,
-                best_6x6.layout_name, best_6x6.quality_name);
+                best_4x4->layout_name, best_4x4->quality_name,
+                best_6x6->layout_name, best_6x6->quality_name);
     std::printf("ASTC weight smoke passed\n");
     return 0;
 }
