@@ -1464,3 +1464,29 @@ The required next experiment is therefore a broader legal candidate pool
 larger calibration set and evaluated on an untouched holdout. It is not yet
 justified to change ASTCENC's internal candidate generation or claim a model
 quality win over uniform neural ranking.
+
+## Sixty-second sweep: legal three-stream pool control
+
+The coordinate selector was generalized from two hard-coded streams to a pool
+of complete legal ASTC streams. The first diversity control adds a third L+A
+candidate encoded with the neural metric at `fast` quality, alongside ordinary
+ranking and neural `thorough` ranking. This is deliberately not a new format,
+decoder, or ASTCENC candidate generator.
+
+On the same bounded SmolLM2 submatrix and all available 10/25 calibration/
+holdout samples, the larger pool lowers calibration error but worsens holdout:
+
+| Footprint | Two-stream holdout | Three-stream holdout | Uniform neural holdout |
+|---|---:|---:|---:|
+| 4x4 | 0.02974956 | 0.03142205 | 0.02782733 |
+| 5x5 | 0.16202227 | 0.17937036 | 0.15407998 |
+| 6x6 | 0.34494348 | 0.39039515 | 0.33293869 |
+
+This is a useful control rather than a setback. The extra stream is useful
+enough to reduce the in-sample objective, so the selector is functioning, but
+the small calibration trace cannot safely support this number of per-block
+degrees of freedom. Freeze the current pool and prioritize a larger,
+representative calibration corpus plus a regularized selection objective
+(for example, a penalty for departing from the uniform neural stream). Only
+after that should we revisit richer ASTC latent layouts or internal encoder
+shortlists.
