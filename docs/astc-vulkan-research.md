@@ -190,6 +190,41 @@ on a straight-through estimator. The immediate experiment should remain much
 simpler: establish a post-training two-latent control, optimize by held-out
 activation error, and only then move to codec-aware latent or codebook tuning.
 
+## Encoder boundary decision
+
+The research does not need a custom Vulkan decoder. A legal ASTC block stream
+is interpreted by the standard Vulkan driver and its fixed-function texture
+unit; the shader still sees an ordinary sampled `vec4`. The missing control is
+offline: the public `astcenc` API exposes quality/tuning knobs and block
+diagnostics, but it does not make the complete block-mode, endpoint-mode,
+partition, dual-plane, and BISE search space a stable application contract.
+
+The preferred implementation is consequently a **constrained astcenc fork or
+upstreamable encoder extension**, not a clean-room ASTC rewrite:
+
+1. Keep the current external `astcenc` adapter as the scalar/Q4 and generic
+   baseline.
+2. Reuse its legal ASTC bit packing, endpoint quantization, BISE packing, and
+   reference decode. Add a neural objective and candidate restrictions in the
+   offline search layer.
+3. Initially expose candidate preferences for L+A endpoint modes, alpha
+   dual-plane, weight-grid size, partitions, and few-level endpoint/weight
+   alphabets. Do not force a mode until block-info statistics and quality show
+   that forcing it helps.
+4. Validate each output three ways: `astcenc_get_block_info`, CPU
+   encode/decode roundtrip, and the existing Vulkan `texelFetch` smoke on a
+   capable target device.
+
+Only if the fork cannot express the needed search should we consider writing a
+small constrained packer from the ASTC specification. That packer would still
+emit standard 128-bit blocks. A non-standard block format would require a
+shader decoder and storage-buffer path, removing the fixed-function bandwidth
+hypothesis and therefore belongs to a separate experiment.
+
+This boundary also keeps upstream risk manageable: the encoder is an optional
+offline tool, while llama.cpp retains the ordinary Vulkan buffer path and a
+clear fallback when ASTC support or the experimental encoder is unavailable.
+
 ## References
 
 - [Khronos Vulkan format definitions](https://docs.vulkan.org/spec/latest/chapters/formats.html)

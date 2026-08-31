@@ -1143,3 +1143,28 @@ The holdout ordering remains below the scalar controls (`0.001471`, `0.014349`,
 and `0.065283`). The selected alphabet therefore generalizes, but the current
 hand-designed L+A family still does not win. The calibration/holdout split is
 now the acceptance oracle for the next learned-latent projection loop.
+
+## Fifty-second sweep: encoder boundary decision
+
+The experiments now make the encoder requirement clearer. Standard `astcenc`
+is sufficient to prove the Vulkan resource, shader, bitrate, and scalar
+quality baselines, but its public API does not provide a stable way to request
+the exact endpoint mode, weight grid, dual-plane component, partition, or BISE
+alphabet that an ASTC-Latent representation may need.
+
+The selected architecture is therefore an **offline constrained astcenc
+fork/extension**, not a new runtime decoder:
+
+- keep standard `astcenc` as the baseline and fallback;
+- reuse its legal ASTC bit packing, endpoint quantization, BISE handling, and
+  reference decode;
+- add neural-objective candidate restrictions/preferences in the offline
+  search; and
+- validate emitted blocks with block-info inspection, CPU roundtrip, and the
+  Vulkan sampled-image smoke.
+
+If this cannot express the required latent forms, a small constrained packer
+may be written from the ASTC specification, but it must still emit standard
+128-bit blocks. A non-standard format would require a shader decoder and would
+no longer test the fixed-function texture-bandwidth hypothesis. No vendor
+assembler is needed for either path.

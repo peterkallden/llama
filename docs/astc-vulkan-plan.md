@@ -172,6 +172,17 @@ dispatches; its timing data is still exploratory and not a performance claim.
     to separate spatially structured additive semantics from a residual tail.
 43. [x] Split projection scoring into calibration and holdout activation traces;
     report the selected coarse alphabet and its held-out error.
+44. [x] Decide the encoder boundary: retain standard `astcenc` for baselines,
+    and treat a constrained `astcenc` fork as an offline research component,
+    never as a Vulkan runtime decoder.
+45. Define a constrained encoder experiment that can prefer or restrict legal
+    ASTC block modes (L+A endpoint modes, dual-plane alpha, weight grids, and
+    BISE alphabets), while reusing the standard bit packing and reference
+    decoder. Validate every emitted block with `astcenc_get_block_info`, CPU
+    decode, and the existing Vulkan sampled-image smoke.
+46. Add a fallback-preserving encoder adapter so a missing or experimental
+    encoder cannot affect normal llama.cpp builds or silently emit a
+    non-standard block stream.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
