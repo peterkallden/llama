@@ -88,6 +88,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
     measured objective per fixture before selecting it.
 18. [x] Normalize activation loss by reference output energy so activation
     samples with different norms are comparable during candidate search.
+19. [x] Evaluate per-block affine scale/offset reconstruction and report its
+    metadata overhead separately from compressed ASTC bytes.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

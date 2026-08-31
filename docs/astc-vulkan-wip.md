@@ -380,6 +380,17 @@ On the small fixture, block-reversed candidates reached objectives 0.09723277
 and 0.59842254. The normalization reduces sensitivity to activation amplitude,
 but it does not remove the need for representative layer data.
 
+The twenty-sixth sweep added a per-block affine mapping candidate. Each ASTC
+block can use its own weight `scale` and `offset`, with 8 bytes of host-side
+metadata per block; the compressed image remains a standard ASTC resource. On
+the small fixture, block-reversed/block-affine reached objectives 0.11169542
+for 4x4 and 0.23868437 for 6x6, but required 72 and 32 metadata bytes
+respectively. On the large fixture, identity/block-affine 6x6 reached
+0.52582064 versus 0.55860837 for global mapping, at the cost of 968 metadata
+bytes; 4x4 global mapping remained best at 0.23307591 versus 0.23746265 for
+block-affine. This makes affine calibration a plausible 6x6 option, but its
+metadata must be included in any bandwidth or capacity comparison.
+
 The twenty-first sweep added a conservative block-tail term to the candidate
 objective:
 `MSE + activation_MSE + 0.25 * max_block_MSE`. The coefficient is intentionally

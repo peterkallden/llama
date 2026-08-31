@@ -27,6 +27,16 @@ struct encoder_quality {
     float value;
 };
 
+struct mapping_mode {
+    const char * name;
+    bool block_affine;
+};
+
+const std::array<mapping_mode, 2> kMappingModes{{
+    { "global", false },
+    { "block-affine", true },
+}};
+
 const std::array<encoder_quality, 3> kEncoderQualities{{
     { "fast", ASTCENC_PRE_FAST },
     { "medium", ASTCENC_PRE_MEDIUM },
@@ -45,6 +55,8 @@ struct roundtrip_result {
     std::array<uint32_t, 4> channel_order{ 0, 1, 2, 3 };
     const char * layout_name = "identity";
     const char * quality_name = "medium";
+    const char * mapping_name = "global";
+    uint64_t metadata_bytes = 0;
 };
 
 std::vector<uint32_t> identity_texel_order(const ggml_vk_astc_weight_layout & layout) {
@@ -119,10 +131,41 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
                       const std::array<uint32_t, 4> & channel_order,
                       const std::vector<uint32_t> & texel_order,
                       const encoder_quality & quality,
+                      const mapping_mode & mapping,
                       roundtrip_result & result) {
     const unsigned int width = layout.texel_columns();
     const unsigned int height = layout.rows;
     const size_t texel_components = static_cast<size_t>(width) * height * 4;
+    const uint32_t blocks_x = ggml_vk_astc_block_count(width, format.block_width);
+    const uint32_t blocks_y = ggml_vk_astc_block_count(height, format.block_height);
+    std::vector<uint32_t> inverse_texel_order(texel_order.size());
+    for (size_t encoded_index = 0; encoded_index < texel_order.size(); ++encoded_index) {
+        inverse_texel_order[texel_order[encoded_index]] = static_cast<uint32_t>(encoded_index);
+    }
+    std::vector<float> block_scale(static_cast<size_t>(blocks_x) * blocks_y, kWeightScale);
+    std::vector<float> block_offset(block_scale.size(), kWeightMin);
+    if (mapping.block_affine) {
+        std::vector<float> block_min(block_scale.size(), kWeightScale);
+        std::vector<float> block_max(block_scale.size(), kWeightMin);
+        for (uint32_t row = 0; row < layout.rows; ++row) {
+            for (uint32_t column = 0; column < layout.columns; ++column) {
+                const uint32_t logical_texel = row * width + column / 4;
+                const uint32_t encoded_texel = inverse_texel_order[logical_texel];
+                const uint32_t encoded_x = encoded_texel % width;
+                const uint32_t encoded_y = encoded_texel / width;
+                const size_t block_index = static_cast<size_t>(encoded_y / format.block_height) * blocks_x +
+                    encoded_x / format.block_width;
+                const float weight = weights[static_cast<size_t>(row) * layout.columns + column];
+                block_min[block_index] = std::min(block_min[block_index], weight);
+                block_max[block_index] = std::max(block_max[block_index], weight);
+            }
+        }
+        for (size_t i = 0; i < block_scale.size(); ++i) {
+            block_offset[i] = block_min[i];
+            block_scale[i] = std::max(block_max[i] - block_min[i], 1e-6f);
+        }
+        result.metadata_bytes = block_scale.size() * sizeof(float) * 2;
+    }
     std::vector<float> texels(texel_components);
     for (uint32_t encoded_row = 0; encoded_row < layout.rows; ++encoded_row) {
         for (uint32_t encoded_texel = 0; encoded_texel < width; ++encoded_texel) {
@@ -133,10 +176,13 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
             const size_t texel_offset = encoded_index * 4;
             const size_t weight_offset =
                 static_cast<size_t>(logical_row) * layout.columns + logical_texel * 4;
+            const size_t block_index = static_cast<size_t>(encoded_row / format.block_height) * blocks_x +
+                encoded_texel / format.block_width;
             for (uint32_t channel = 0; channel < 4; ++channel) {
-                texels[texel_offset + channel] =
-                    (weights[weight_offset + channel_order[channel]] - kWeightMin) /
-                    kWeightScale;
+                const float weight = weights[weight_offset + channel_order[channel]];
+                texels[texel_offset + channel] = mapping.block_affine ?
+                    (weight - block_offset[block_index]) / block_scale[block_index] :
+                    (weight - kWeightMin) / kWeightScale;
             }
         }
     }
@@ -172,13 +218,7 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
     astcenc_context_free(context);
     if (status != ASTCENC_SUCCESS) return false;
 
-    std::vector<uint32_t> inverse_texel_order(texel_order.size());
-    for (size_t encoded_index = 0; encoded_index < texel_order.size(); ++encoded_index) {
-        inverse_texel_order[texel_order[encoded_index]] = static_cast<uint32_t>(encoded_index);
-    }
     std::vector<float> reconstructed_weights(weights.size());
-    const uint32_t blocks_x = ggml_vk_astc_block_count(width, format.block_width);
-    const uint32_t blocks_y = ggml_vk_astc_block_count(height, format.block_height);
     std::vector<double> block_squared_error(static_cast<size_t>(blocks_x) * blocks_y, 0.0);
     std::vector<uint32_t> block_value_count(block_squared_error.size(), 0);
     double squared_error = 0.0;
@@ -192,15 +232,17 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
             const uint32_t encoded_texel = inverse_texel_order[logical_texel];
             const size_t texel_index = static_cast<size_t>(encoded_texel) * 4 +
                 static_cast<size_t>(decoded_channel - channel_order.begin());
-            const float reconstructed = decoded[texel_index] * kWeightScale + kWeightMin;
-            reconstructed_weights[weight_index] = reconstructed;
-            const float error = std::fabs(weights[weight_index] - reconstructed);
-            squared_error += static_cast<double>(error) * error;
-            result.max_error = std::max(result.max_error, error);
             const uint32_t encoded_x = encoded_texel % width;
             const uint32_t encoded_y = encoded_texel / width;
             const size_t block_index = static_cast<size_t>(encoded_y / format.block_height) * blocks_x +
                 encoded_x / format.block_width;
+            const float reconstructed = mapping.block_affine ?
+                decoded[texel_index] * block_scale[block_index] + block_offset[block_index] :
+                decoded[texel_index] * kWeightScale + kWeightMin;
+            reconstructed_weights[weight_index] = reconstructed;
+            const float error = std::fabs(weights[weight_index] - reconstructed);
+            squared_error += static_cast<double>(error) * error;
+            result.max_error = std::max(result.max_error, error);
             block_squared_error[block_index] += static_cast<double>(error) * error;
             ++block_value_count[block_index];
         }
@@ -247,6 +289,7 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
         reconstructed_dot += reconstructed_weights[i] * first_activations[i % layout.columns];
     }
     result.dot_error = std::fabs(reference_dot - reconstructed_dot);
+    result.mapping_name = mapping.name;
     return std::isfinite(result.mse) && std::isfinite(result.max_block_mse) &&
         std::isfinite(result.p95_block_mse) && std::isfinite(result.activation_mse) &&
         std::isfinite(result.activation_relative_mse) &&
@@ -260,13 +303,14 @@ bool search_channel_orders(const ggml_vk_astc_format_contract & format,
                            const char * layout_name,
                            const std::vector<uint32_t> & texel_order,
                            const encoder_quality & quality,
+                           const mapping_mode & mapping,
                            roundtrip_result & best_result) {
     std::array<uint32_t, 4> channel_order{ 0, 1, 2, 3 };
     bool found_result = false;
     do {
         roundtrip_result candidate;
         if (!encode_roundtrip(format, layout, weights, activation_samples,
-                              channel_order, texel_order, quality, candidate)) {
+                              channel_order, texel_order, quality, mapping, candidate)) {
             return false;
         }
         if (!found_result || candidate.objective < best_result.objective ||
@@ -275,17 +319,18 @@ bool search_channel_orders(const ggml_vk_astc_format_contract & format,
             best_result.channel_order = channel_order;
             best_result.layout_name = layout_name;
             best_result.quality_name = quality.name;
+            best_result.mapping_name = mapping.name;
             found_result = true;
         }
     } while (std::next_permutation(channel_order.begin(), channel_order.end()));
 
     std::printf(
-        "ASTC weight %s %s/%s order %u%u%u%u: %zu bytes, MSE %.8f, block P95/max %.8f/%.8f, activation MSE %.8f, relative activation MSE %.8f, objective %.8f, max error %.6f, dot error %.6f\n",
-        format.name, best_result.layout_name, best_result.quality_name,
+        "ASTC weight %s %s/%s/%s order %u%u%u%u: %zu bytes + %zu metadata, MSE %.8f, block P95/max %.8f/%.8f, activation MSE %.8f, relative activation MSE %.8f, objective %.8f, max error %.6f, dot error %.6f\n",
+        format.name, best_result.layout_name, best_result.quality_name, best_result.mapping_name,
         best_result.channel_order[0],
         best_result.channel_order[1],
         best_result.channel_order[2], best_result.channel_order[3],
-        layout.storage_bytes(format), best_result.mse, best_result.p95_block_mse,
+        layout.storage_bytes(format), best_result.metadata_bytes, best_result.mse, best_result.p95_block_mse,
         best_result.max_block_mse, best_result.activation_mse,
         best_result.activation_relative_mse, best_result.objective,
         best_result.max_error, best_result.dot_error);
@@ -300,16 +345,18 @@ bool search_layout_qualities(const ggml_vk_astc_format_contract & format,
                              const std::vector<uint32_t> & texel_order,
                              roundtrip_result & best_result) {
     bool found_result = false;
-    for (const encoder_quality & quality : kEncoderQualities) {
-        roundtrip_result candidate;
-        if (!search_channel_orders(format, layout, weights, activation_samples,
-                                   layout_name, texel_order, quality, candidate)) {
-            return false;
-        }
-        if (!found_result || candidate.objective < best_result.objective ||
-            (candidate.objective == best_result.objective && candidate.mse < best_result.mse)) {
-            best_result = candidate;
-            found_result = true;
+    for (const mapping_mode & mapping : kMappingModes) {
+        for (const encoder_quality & quality : kEncoderQualities) {
+            roundtrip_result candidate;
+            if (!search_channel_orders(format, layout, weights, activation_samples,
+                                       layout_name, texel_order, quality, mapping, candidate)) {
+                return false;
+            }
+            if (!found_result || candidate.objective < best_result.objective ||
+                (candidate.objective == best_result.objective && candidate.mse < best_result.mse)) {
+                best_result = candidate;
+                found_result = true;
+            }
         }
     }
     return found_result;
@@ -395,9 +442,9 @@ int main(int argc, char ** argv) {
     const roundtrip_result * best_6x6 = &format_6x6_identity;
     if (format_6x6_grouped.objective < best_6x6->objective) best_6x6 = &format_6x6_grouped;
     if (format_6x6_reversed.objective < best_6x6->objective) best_6x6 = &format_6x6_reversed;
-    std::printf("ASTC weight selected 4x4 %s/%s, 6x6 %s/%s\n",
-                best_4x4->layout_name, best_4x4->quality_name,
-                best_6x6->layout_name, best_6x6->quality_name);
+    std::printf("ASTC weight selected 4x4 %s/%s/%s, 6x6 %s/%s/%s\n",
+                best_4x4->layout_name, best_4x4->quality_name, best_4x4->mapping_name,
+                best_6x6->layout_name, best_6x6->quality_name, best_6x6->mapping_name);
     std::printf("ASTC weight smoke passed\n");
     return 0;
 }
