@@ -1240,3 +1240,64 @@ therefore to widen or preserve that shortlist and score candidates against
 captured activations. A diagonal activation-energy score is a useful first
 approximation, but final selection must use exact incremental activation loss
 because activation columns can be correlated.
+
+## Fifty-fifth sweep: ASTC error-shaping objective and evaluation cohorts
+
+Track 4 is now interpreted as the first **ASTC error-shaping** experiment. For
+a layer `Y = W X^T`, ASTC reconstruction `W_hat = W + E`, and calibration
+activation covariance `H = E[X^T X]`, the relevant objective is:
+
+```
+Delta Y = (W - W_hat) X^T
+L_act   = ||Delta Y||_F^2 = tr((W - W_hat) H (W - W_hat)^T)
+```
+
+ASTC is therefore allowed to make large local texel errors when they either
+cancel in the latent decoder or lie in directions that the layer inputs rarely
+use. This is deliberately different from maximizing image fidelity. A
+candidate report must retain ASTC/RGBA MSE, decoded-weight MSE, calibration and
+holdout activation loss, endpoint mode, partition count, weight grid, and
+dual-plane component, so the source of any gain remains inspectable.
+
+Exact activation loss is globally coupled across blocks in a matrix row: the
+cross terms in `H` mean that independently minimizing one block's weighted MSE
+does not necessarily minimize the whole-layer loss. The initial diagonal
+activation-energy approximation is useful for cheap pruning only. Final
+selection must maintain cached layer-output error and evaluate each candidate
+incrementally against a calibration trace, then report the untouched holdout
+trace.
+
+The new opt-in astcenc metric does **not** invalidate previous standard-ASTC,
+scalar, Q4_0, or native TQ decode measurements; those calls retain ordinary
+astcenc ranking. It does require a new cohort for every L+A/latent result,
+because those results previously used image-oriented candidate selection. The
+old and new cohorts must not be compared as though they used the same encoder
+objective.
+
+TQ coverage also needs a deliberate follow-up. The input contract proves that
+the local SmolLM2 FFn-down fixture contains genuine 256-aligned TQ1_0 and
+TQ2_0 data, but their current equal decoded values and `0.70405` relative
+matvec MSE come from one post-training quantization and a deterministic input
+fixture. That is not a sufficient TQ baseline. The future comparison will run
+true TQ1_0, TQ2_0, Q4_0, scalar ASTC, ASTC-Q, and Track-4 L+A candidates over
+the same calibration/holdout traces on multiple 256-aligned projections. It
+will report quality, resident bytes, and shader availability separately:
+TQ2 has an existing Vulkan matvec route in this checkout, whereas TQ1 does
+not, so their runtime comparison cannot be assumed symmetric.
+
+## Fifty-sixth sweep: exact synthetic activation-loss contract
+
+The side-fork CTest now additionally treats each 18x18 L+A fixture as a linear
+weight matrix and evaluates the exact output loss `||(W - W_hat) X^T||_F^2` on
+five deterministic, correlated activation samples. This is intentionally not
+a diagonal weighted-MSE proxy. The Track-4 encoder still chooses blocks using
+decoded-weight MSE in this test; the activation loss is measured afterward to
+test whether semantic error cancellation transfers to the layer output.
+
+The neural-ranked stream reduced exact activation MSE in seven of eight
+fixtures, while retaining the earlier eight-of-eight decoded-weight MSE gains.
+The remaining fixture is an explicit reminder that weight-MSE selection is not
+the final objective. The CTest requires a majority activation-loss improvement,
+not universal improvement. The next integration must select candidate blocks
+against calibration-trace output error and confirm the selected result on a
+holdout trace.

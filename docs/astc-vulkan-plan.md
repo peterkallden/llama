@@ -197,6 +197,17 @@ dispatches; its timing data is still exploratory and not a performance claim.
     incremental `||X(W - W_hat)^T||_F^2` scoring, including cross terms, on a
     held-out trace. Do not move the metric into a Vulkan shader or normal
     llama.cpp build.
+50. Treat activation-aware ASTC selection as **error shaping**: minimize
+    `tr((W - W_hat) H (W - W_hat)^T)`, with `H = E[x x^T]`, rather than raw
+    ASTC or weight MSE. Log each retained candidate's ASTC MSE, reconstructed
+    weight MSE, activation loss, endpoint mode, partition count, weight grid,
+    and dual-plane component.
+51. Re-run all L+A/latent experiments under the Track-4 metric and the common
+    calibration/holdout traces. Preserve prior standard-ASTC scalar results as
+    their own baseline cohort; they are unaffected because the experimental
+    metric is opt-in. Re-evaluate true TQ1_0 and TQ2_0 separately on the same
+    256-aligned real layers and traces, across more than one projection, before
+    using either as an ASTC-Q quality or throughput control.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
