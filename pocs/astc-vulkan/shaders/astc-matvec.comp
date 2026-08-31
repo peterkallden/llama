@@ -1,0 +1,41 @@
+#version 450
+
+// Correctness-first ASTC matvec. One invocation owns one output row; a later
+// kernel may parallelize the reduction only after this fixed decoder contract
+// has been verified against the CPU ASTC decoder.
+layout(local_size_x = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D astc_weights;
+
+layout(std430, set = 0, binding = 1) buffer MatvecOutput {
+    vec4 values[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint width;
+    uint height;
+    uint access_pattern;
+    float scale_l;
+    float scale_a;
+    float offset;
+} params;
+
+float activation(uint column) {
+    return 0.5 * sin(0.017 * float(column + 1)) +
+           0.2 * cos(0.031 * float(column + 3));
+}
+
+void main() {
+    const uint row = gl_GlobalInvocationID.x;
+    if (row >= params.height) {
+        return;
+    }
+    float sum = 0.0;
+    for (uint column = 0; column < params.width; ++column) {
+        const vec4 texel = texelFetch(astc_weights, ivec2(column, row), 0);
+        const float l = (texel.r + texel.g + texel.b) / 3.0;
+        const float weight = params.scale_l * l + params.scale_a * texel.a + params.offset;
+        sum += weight * activation(column);
+    }
+    values[row] = vec4(sum, 0.0, 0.0, 0.0);
+}

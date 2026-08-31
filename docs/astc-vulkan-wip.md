@@ -1513,3 +1513,20 @@ the affine reconstruction nor a matrix-vector kernel. Those remain separate
 gates. The F16 GGUF is the correct source-of-truth for future GPU experiments;
 all ASTC, metadata, and reference artifacts must be derived from the same
 tensor and recorded footprint.
+
+## Sixty-fourth sweep: correctness-first GPU ASTC matvec
+
+The validation path now has a distinct compute shader which, for each output
+row, samples all ASTC texels with `texelFetch`, applies the fixed runtime L+A
+decoder, and accumulates a dot product with a deterministic activation vector.
+The host computes the same dot product from the CPU-decoded RGBA payload; no
+FP16 source weights are used as the numerical reference after encoding.
+
+The exported 32x64 SmolLM2 FP16-derived 4x4 payload passed this CPU/GPU matvec
+comparison on the Intel UHD 620. The timestamp was approximately 52.2 us for
+the 32 row results. This is a **correctness-first** number only: the shader has
+one invocation per output row and serially reduces 64 columns, so it does not
+represent a viable inference kernel or a comparison with ggml Vulkan. The next
+GPU change is a workgroup-parallel row reduction, retaining this serial kernel
+as the oracle contract. Only then should we compare texture-path timing against
+an ordinary buffer-backed FP16/Q4 reference on the same device.

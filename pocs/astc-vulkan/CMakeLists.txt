@@ -179,6 +179,8 @@ find_program(ASTC_VULKAN_GLSLC glslc)
 if (ASTC_VULKAN_GLSLC)
     set(ASTC_VULKAN_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-validate.comp.spv)
+    set(ASTC_VULKAN_MATVEC_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-matvec.comp.spv)
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -190,6 +192,17 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling ASTC Vulkan validation shader")
     add_custom_target(astc-vulkan-shader-smoke
         DEPENDS ${ASTC_VULKAN_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_MATVEC_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-matvec.comp
+            -o ${ASTC_VULKAN_MATVEC_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-matvec.comp
+        COMMENT "Compiling ASTC Vulkan matvec shader")
+    add_custom_target(astc-vulkan-matvec-shader
+        DEPENDS ${ASTC_VULKAN_MATVEC_SHADER_OUTPUT})
     if (TARGET astc-vulkan-device-smoke)
         add_executable(astc-vulkan-shader-device-smoke
             astc-vulkan-shader-device-smoke.cpp)

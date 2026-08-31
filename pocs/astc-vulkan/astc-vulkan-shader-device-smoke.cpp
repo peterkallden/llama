@@ -31,6 +31,15 @@ struct image_resources {
     VkSampler sampler = VK_NULL_HANDLE;
 };
 
+struct push_constants {
+    uint32_t width;
+    uint32_t height;
+    uint32_t access_pattern;
+    float scale_l;
+    float scale_a;
+    float offset;
+};
+
 uint32_t find_memory_type(VkPhysicalDevice physical_device, uint32_t type_bits,
                           VkMemoryPropertyFlags properties) {
     VkPhysicalDeviceMemoryProperties memory_properties{};
@@ -148,22 +157,31 @@ int main(int argc, char ** argv) {
     const std::string format_name = argc >= 3 ? argv[2] : "";
     std::string pattern_name = "sequential";
     bool benchmark = false;
+    bool matvec = false;
     std::string payload_path;
     std::string reference_path;
     uint32_t supplied_width = 0;
     uint32_t supplied_height = 0;
+    float scale_l = 1.0f;
+    float scale_a = 0.0f;
+    float offset = 0.0f;
     int index = 3;
     if (index < argc && argv[index][0] != '-') pattern_name = argv[index++];
     while (index < argc) {
         const std::string option = argv[index++];
         if (option == "--benchmark") benchmark = true;
+        else if (option == "--matvec") matvec = true;
         else if ((option == "--payload" || option == "--reference" ||
-                  option == "--width" || option == "--height") && index < argc) {
+                  option == "--width" || option == "--height" || option == "--scale-l" ||
+                  option == "--scale-a" || option == "--offset") && index < argc) {
             const std::string value = argv[index++];
             if (option == "--payload") payload_path = value;
             else if (option == "--reference") reference_path = value;
             else if (option == "--width") supplied_width = static_cast<uint32_t>(std::stoul(value));
-            else supplied_height = static_cast<uint32_t>(std::stoul(value));
+            else if (option == "--height") supplied_height = static_cast<uint32_t>(std::stoul(value));
+            else if (option == "--scale-l") scale_l = std::stof(value);
+            else if (option == "--scale-a") scale_a = std::stof(value);
+            else offset = std::stof(value);
         } else {
             std::fprintf(stderr, "unknown or incomplete option: %s\n", option.c_str());
             return 2;
@@ -172,11 +190,13 @@ int main(int argc, char ** argv) {
     if (argc < 3 || (format_name != "4x4" && format_name != "5x5" && format_name != "6x6") ||
         (pattern_name != "sequential" && pattern_name != "nonlocal") ||
         (payload_path.empty() != reference_path.empty()) ||
-        (!payload_path.empty() && (supplied_width == 0 || supplied_height == 0))) {
+        (!payload_path.empty() && (supplied_width == 0 || supplied_height == 0)) ||
+        (matvec && (payload_path.empty() || benchmark || pattern_name != "sequential"))) {
         std::fprintf(stderr,
                      "usage: %s <validation.spv> <4x4|5x5|6x6> "
                      "[sequential|nonlocal] [--benchmark] "
-                     "[--payload astc.bin --reference decoded-rgba-f32.bin --width N --height N]\n",
+                     "[--payload astc.bin --reference decoded-rgba-f32.bin --width N --height N] "
+                     "[--matvec --scale-l S --scale-a S --offset B]\n",
                      argv[0]);
         return 2;
     }
@@ -376,7 +396,7 @@ int main(int argc, char ** argv) {
         };
         if (vkCreateShaderModule(device, &shader_info, nullptr, &shader_module) != VK_SUCCESS) break;
         const VkPushConstantRange push_constants{
-            VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t) * 3,
+            VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(::push_constants),
         };
         const VkPipelineLayoutCreateInfo layout_info{
             VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1,
@@ -447,10 +467,10 @@ int main(int argc, char ** argv) {
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
             pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
-        const uint32_t dimensions[3] = { width, height, access_pattern };
+        const ::push_constants dimensions{ width, height, access_pattern, scale_l, scale_a, offset };
         vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
-            0, sizeof(dimensions), dimensions);
-        const uint32_t workgroup_count = (width * height + 63) / 64;
+            0, sizeof(dimensions), &dimensions);
+        const uint32_t workgroup_count = matvec ? height : (width * height + 63) / 64;
         for (uint32_t repeat = 0; repeat < dispatch_repeats; ++repeat) {
             vkCmdDispatch(command_buffer, workgroup_count, 1, 1);
         }
@@ -480,12 +500,30 @@ int main(int argc, char ** argv) {
         if (vkMapMemory(device, output_memory, 0, output_bytes, 0, &output_mapped) != VK_SUCCESS) break;
         std::memcpy(values.data(), output_mapped, static_cast<size_t>(output_bytes));
         vkUnmapMemory(device, output_memory);
-        for (size_t value_index = 0; value_index < values.size(); ++value_index) {
-            const float expected = expected_values.empty() ? kExpectedChannel : expected_values[value_index];
-            if (!std::isfinite(values[value_index]) || std::fabs(values[value_index] - expected) > 1e-3f) {
+        const size_t validation_count = matvec ? height : values.size();
+        for (size_t value_index = 0; value_index < validation_count; ++value_index) {
+            float expected = kExpectedChannel;
+            if (!expected_values.empty()) {
+                if (matvec) {
+                    expected = 0.0f;
+                    for (uint32_t column = 0; column < width; ++column) {
+                        const size_t texel = (value_index * width + column) * 4;
+                        const float l = (expected_values[texel] + expected_values[texel + 1] +
+                                         expected_values[texel + 2]) / 3.0f;
+                        const float weight = scale_l * l + scale_a * expected_values[texel + 3] + offset;
+                        const float activation = 0.5f * std::sin(0.017f * (column + 1)) +
+                                                 0.2f * std::cos(0.031f * (column + 3));
+                        expected += weight * activation;
+                    }
+                } else {
+                    expected = expected_values[value_index];
+                }
+            }
+            const float actual = matvec ? values[value_index * 4] : values[value_index];
+            if (!std::isfinite(actual) || std::fabs(actual - expected) > 1e-3f) {
                 std::fprintf(stderr,
                              "ASTC %s %s shader smoke failed: decoded value %.7f\n",
-                             format_name.c_str(), pattern_name.c_str(), values[value_index]);
+                             format_name.c_str(), pattern_name.c_str(), actual);
                 success = false;
                 break;
             }
