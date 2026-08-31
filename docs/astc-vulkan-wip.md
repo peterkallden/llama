@@ -2570,3 +2570,31 @@ footprints is still deferred.
 The next gate is an end-to-end layer/model evaluation using the captured larger
 trace, followed by GPU sampled-image validation. No selector default or
 upstream-facing API should be changed before those gates.
+
+## One-hundred-sixth sweep: cross-layer attention control
+
+Layer 1 now has its own 1,872-sample calibration trace and a disjoint
+1,191-sample holdout trace. On 6x6 with 256 calibration samples and angular
+shortlists:
+
+| Tensor | Local | Block-LDLQ | Stability-4 | Conflict-aware |
+| --- | ---: | ---: | ---: | ---: |
+| `blk.1.attn_q` | 0.24256 | 0.24428 | **0.23767** | 0.24112 |
+| `blk.1.attn_k` | 0.26326 | 0.26350 | **0.26072** | 0.26222 |
+
+The cross-layer control strengthens the current policy: four-shard stability
+generalizes better than Block-LDLQ on both layer-1 attention tensors, while
+Block-LDLQ remains a close alternative. This is still a layer-crop measurement,
+not end-to-end token quality.
+
+## One-hundred-seventh sweep: wide-input contract
+
+The ASTC input smoke now writes and reloads a 1,536-column activation trace.
+This confirms that the private trace format and selector plumbing support the
+FFN down-projection width; ASTC itself has no 576-column limit. A real
+`ffn_down` quality run still requires capturing the post-FFN intermediate
+activation (1,536 columns), which the current layer-input capture API does not
+expose. Do not pad or reuse 576-column layer inputs as a quality proxy.
+
+The next implementation task is therefore a PoC-only intermediate activation
+capture hook, kept outside the production Vulkan path.

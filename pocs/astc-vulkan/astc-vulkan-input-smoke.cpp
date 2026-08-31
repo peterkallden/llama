@@ -89,6 +89,7 @@ int main(int argc, char ** argv) {
 
     const std::string gguf_path = temp_path(".gguf");
     const std::string trace_path = temp_path(".trace");
+    const std::string wide_trace_path = temp_path("-wide.trace");
     assert(write_fixture(gguf_path));
     ggml_vk_astc_activation_trace expected_trace;
     expected_trace.samples = 2;
@@ -108,8 +109,24 @@ int main(int argc, char ** argv) {
     ggml_vk_astc_activation_trace trace;
     assert(ggml_vk_astc_load_activation_trace(trace_path, trace, error));
     assert(trace.samples == 2 && trace.columns == 4 && trace.values[7] == -4.0f);
+    ggml_vk_astc_activation_trace wide_trace;
+    wide_trace.samples = 2;
+    wide_trace.columns = 1536;
+    wide_trace.values.resize(static_cast<size_t>(wide_trace.samples) * wide_trace.columns);
+    for (uint32_t sample = 0; sample < wide_trace.samples; ++sample) {
+        for (uint32_t column = 0; column < wide_trace.columns; ++column) {
+            wide_trace.values[static_cast<size_t>(sample) * wide_trace.columns + column] =
+                static_cast<float>((sample + 1) * (column % 17)) * 0.01f;
+        }
+    }
+    assert(ggml_vk_astc_write_activation_trace(wide_trace_path, wide_trace, error));
+    ggml_vk_astc_activation_trace loaded_wide_trace;
+    assert(ggml_vk_astc_load_activation_trace(wide_trace_path, loaded_wide_trace, error));
+    assert(loaded_wide_trace.samples == 2 && loaded_wide_trace.columns == 1536 &&
+           loaded_wide_trace.values.back() == wide_trace.values.back());
     std::remove(gguf_path.c_str());
     std::remove(trace_path.c_str());
+    std::remove(wide_trace_path.c_str());
     std::printf("ASTC GGUF/input smoke passed\n");
     return 0;
 }

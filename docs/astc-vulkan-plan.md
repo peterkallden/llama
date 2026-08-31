@@ -719,3 +719,10 @@ stability or conflict-aware often wins by a larger margin. The current policy
 is therefore per-tensor offline selector choice with local fallback, not a
 global Block-LDLQ default. The next gates are end-to-end layer/model scoring
 and then device-backed Vulkan sampled-image validation.
+
+Layer-1 attention controls now favor four-shard stability on both `attn_q` and
+`attn_k`, reinforcing per-tensor offline selection with local fallback. A wide
+1,536-column trace serialization contract is also covered by the input smoke.
+The remaining FFN limitation is data capture, not ASTC or selector width:
+`ffn_down` needs post-FFN intermediate activations. Add that PoC-only capture
+hook before making FFN quality claims.
