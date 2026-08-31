@@ -598,6 +598,14 @@ small row/column block, and compare local, coordinate, conflict-aware, and
 regenerated-target selectors on identical candidate snapshots. Keep the
 callback and collector out of normal Vulkan execution.
 
+The first target-regeneration prototype is now measured. It is a useful 6x6
+signal but regresses 4x4/5x5, so it remains an experimental selector. Before
+any GPU integration, replace the diagonal approximation with a bounded
+block-LDL update, add a candidate-coverage diagnostic, and repeat the exact
+three-way comparison on larger calibration traces and at least one additional
+real tensor. The current CTest smoke is a contract/regression gate, not a
+quality threshold.
+
 The bounded proxy has now been run. It is retained as a regression/evaluation
 gate, while the next implementation target is a side-fork-only per-block
 top-K snapshot. That snapshot must be opt-in, thread-safe or explicitly

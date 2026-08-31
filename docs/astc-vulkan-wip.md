@@ -2218,3 +2218,28 @@ that candidate generation and candidate selection must be separated: the
 callback proves that legal alternatives are available, while the next engine
 must regenerate future targets using Block-LDLQ/GPTVQ-style Hessian feedback
 and evaluate candidates in a block-local, calibration-stable way.
+
+## Eighty-ninth sweep: first Block-LDLQ target regeneration
+
+The selector matrix now includes a small Block-LDLQ-style path. It forms the
+input Gram/Hessian `H = X^T X`, processes ASTC blocks in scan order, selects a
+legal candidate against a regenerated continuous target, and shifts future
+column targets with a damped cross-Hessian update. This is intentionally a
+diagonal/damped PoC, not yet a full block-LDL factorization; the independent
+two-block contract remains the mathematical reference.
+
+On the bounded SmolLM2 layer with the per-block top-K pool, holdout
+activation-relative MSE was:
+
+| Footprint | Local | Block-LDLQ | Conflict-aware | Stability |
+| --- | ---: | ---: | ---: | ---: |
+| 4x4 | 0.03034 | 0.03201 | 0.03184 | 0.03030 |
+| 5x5 | 0.14707 | 0.18849 | 0.16330 | 0.15644 |
+| 6x6 | 0.36614 | 0.35580 | 0.37485 | 0.37095 |
+
+The 6x6 result is the first real-model holdout improvement from target
+regeneration: it beats local and the other selectors in this bounded probe,
+although it does not yet beat the earlier whole-image conflict-aware proxy.
+The 4x4 and 5x5 results are negative, so no general quality claim is allowed.
+The next refinement is a true block-LDL update (not diagonal damping), with
+explicit candidate validity/coverage checks and larger calibration traces.
