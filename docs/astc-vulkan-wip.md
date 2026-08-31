@@ -371,6 +371,15 @@ versus 0.46121455 for 4x4, and 1.21237273 versus 1.11635062 for 6x6). The
 candidate remains in the search harness, but selection is now explicitly
 fixture-dependent; no universal permutation is assumed.
 
+The twenty-fifth sweep added reference-energy normalization to the activation
+loss. The smoke now reports both raw activation MSE and relative activation MSE;
+candidate ranking uses the latter together with weight MSE and block-tail loss.
+On the small fixture, block-reversed candidates reached objectives 0.09723277
+(4x4) and 0.26363581 (6x6). On the large fixture, identity remained better at
+0.23307591 (4x4) and 0.55860837 (6x6), while block reversal scored 0.26691154
+and 0.59842254. The normalization reduces sensitivity to activation amplitude,
+but it does not remove the need for representative layer data.
+
 The twenty-first sweep added a conservative block-tail term to the candidate
 objective:
 `MSE + activation_MSE + 0.25 * max_block_MSE`. The coefficient is intentionally

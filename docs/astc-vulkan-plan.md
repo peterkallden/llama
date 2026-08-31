@@ -86,6 +86,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
     candidate ranking is not tuned to one activation shape.
 17. [x] Evaluate a block-local texel permutation and require it to win the
     measured objective per fixture before selecting it.
+18. [x] Normalize activation loss by reference output energy so activation
+    samples with different norms are comparable during candidate search.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

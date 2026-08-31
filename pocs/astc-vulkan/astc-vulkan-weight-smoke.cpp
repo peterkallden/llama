@@ -36,6 +36,7 @@ const std::array<encoder_quality, 3> kEncoderQualities{{
 struct roundtrip_result {
     double mse = 0.0;
     double activation_mse = 0.0;
+    double activation_relative_mse = 0.0;
     double objective = 0.0;
     double max_block_mse = 0.0;
     double p95_block_mse = 0.0;
@@ -215,6 +216,7 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
     result.p95_block_mse = block_mse[p95_index];
 
     double activation_squared_error = 0.0;
+    double activation_reference_energy = 0.0;
     for (const std::vector<float> & activations : activation_samples) {
         for (uint32_t row = 0; row < layout.rows; ++row) {
             double reference_dot = 0.0;
@@ -226,12 +228,15 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
             }
             const double error = reference_dot - reconstructed_dot;
             activation_squared_error += error * error;
+            activation_reference_energy += reference_dot * reference_dot;
         }
     }
     result.activation_mse = activation_squared_error /
         static_cast<double>(activation_samples.size() * layout.rows);
+    result.activation_relative_mse = activation_squared_error /
+        std::max(activation_reference_energy, 1e-12);
     result.objective = kElementwiseLossWeight * result.mse +
-        kActivationLossWeight * result.activation_mse +
+        kActivationLossWeight * result.activation_relative_mse +
         kBlockTailLossWeight * result.max_block_mse;
 
     double reference_dot = 0.0;
@@ -244,6 +249,7 @@ bool encode_roundtrip(const ggml_vk_astc_format_contract & format,
     result.dot_error = std::fabs(reference_dot - reconstructed_dot);
     return std::isfinite(result.mse) && std::isfinite(result.max_block_mse) &&
         std::isfinite(result.p95_block_mse) && std::isfinite(result.activation_mse) &&
+        std::isfinite(result.activation_relative_mse) &&
         std::isfinite(result.objective) && std::isfinite(result.dot_error);
 }
 
@@ -274,13 +280,14 @@ bool search_channel_orders(const ggml_vk_astc_format_contract & format,
     } while (std::next_permutation(channel_order.begin(), channel_order.end()));
 
     std::printf(
-        "ASTC weight %s %s/%s order %u%u%u%u: %zu bytes, MSE %.8f, block P95/max %.8f/%.8f, activation MSE %.8f, objective %.8f, max error %.6f, dot error %.6f\n",
+        "ASTC weight %s %s/%s order %u%u%u%u: %zu bytes, MSE %.8f, block P95/max %.8f/%.8f, activation MSE %.8f, relative activation MSE %.8f, objective %.8f, max error %.6f, dot error %.6f\n",
         format.name, best_result.layout_name, best_result.quality_name,
         best_result.channel_order[0],
         best_result.channel_order[1],
         best_result.channel_order[2], best_result.channel_order[3],
         layout.storage_bytes(format), best_result.mse, best_result.p95_block_mse,
-        best_result.max_block_mse, best_result.activation_mse, best_result.objective,
+        best_result.max_block_mse, best_result.activation_mse,
+        best_result.activation_relative_mse, best_result.objective,
         best_result.max_error, best_result.dot_error);
     return true;
 }
