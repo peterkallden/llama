@@ -2598,3 +2598,36 @@ expose. Do not pad or reuse 576-column layer inputs as a quality proxy.
 
 The next implementation task is therefore a PoC-only intermediate activation
 capture hook, kept outside the production Vulkan path.
+
+## One-hundred-eighth sweep: FFN intermediate capture and 1,536-column validation
+
+The PoC now has an opt-in graph capture for the tensor immediately before an
+FFN down projection. It is exposed through the staging extension API as
+`llama_set_embeddings_ffn_down_inp()` / `llama_get_embeddings_ffn_down_inp()`;
+the trace utility enables it with `--ffn-down-input`. The hook is backend
+agnostic: the graph marks the tensor as an output and the context copies it
+from the scheduler-selected backend into a host trace buffer. No Vulkan shader,
+sampler, allocator, or production backend code is changed.
+
+On SmolLM2-135M F16, layer 0 was captured as 11 samples x 1,536 columns. The
+reported width comes from `hparams.n_ff(layer)` rather than a hard-coded model
+constant. A bounded ASTC 6x6 run over 32 rows and all 1,536 input columns
+completed successfully:
+
+| Decode mode | MSE | Activation-relative MSE |
+| --- | ---: | ---: |
+| scalar RGBA | 0.00237795 | 0.0362345 |
+| row/column additive | 0.0366488 | 0.9906600 |
+| luminance/alpha additive | 0.0295539 | 0.6078731 |
+| luminance/alpha block residual | 0.00378130 | 0.0517496 |
+
+The result is a width/capture contract, not yet a model-quality claim: the
+trace is intentionally short and the row crop is bounded. It does establish
+that 1,536 columns flow through the existing ASTC candidate machinery without
+padding, truncation, or a 576-column assumption. The edge padding of a small
+32-row ASTC image also makes the observed byte/weight rate higher than the
+asymptotic 6x6 rate; full-height tiles are needed for bandwidth measurements.
+
+The focused regression suite remains green (8/8 tests). The next gate is to
+capture a disjoint FFN holdout, exercise larger row tiles, and compare selectors
+on the same 1,536-column candidate pool before making any runtime-layout claim.

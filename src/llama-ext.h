@@ -114,6 +114,14 @@ LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint32
 // LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
 LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid);
 
+// PoC-only: capture the activation immediately before a layer's FFN down
+// projection.  The returned rows are token-major and have n_ff(lid) columns.
+LLAMA_API void llama_set_embeddings_ffn_down_inp(struct llama_context * ctx, uint32_t lid, bool value);
+LLAMA_API float * llama_get_embeddings_ffn_down_inp(struct llama_context * ctx, uint32_t lid);
+
+// PoC helper exposing the FFN width needed to interpret the capture above.
+LLAMA_API int32_t llama_model_n_ff(const struct llama_model * model, uint32_t layer);
+
 LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
 
 //

@@ -16,11 +16,12 @@ struct trace_capture_params {
     std::string output_path;
     std::string prompt;
     uint32_t layer = 0;
+    bool ffn_down_input = false;
 };
 
 void print_usage(const char * program) {
     std::fprintf(stderr,
-                 "usage: %s --model model.gguf --output trace.astc --layer N --prompt text\n",
+                 "usage: %s --model model.gguf --output trace.astc --layer N --prompt text [--ffn-down-input]\n",
                  program);
 }
 
@@ -42,6 +43,10 @@ bool parse_args(int argc, char ** argv, trace_capture_params & params) {
         const char * option = argv[i];
         if (std::strcmp(option, "--help") == 0 || std::strcmp(option, "-h") == 0) {
             return false;
+        }
+        if (std::strcmp(option, "--ffn-down-input") == 0) {
+            params.ffn_down_input = true;
+            continue;
         }
         if (i + 1 == argc) {
             return false;
@@ -118,7 +123,11 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    llama_set_embeddings_layer_inp(context, params.layer, true);
+    if (params.ffn_down_input) {
+        llama_set_embeddings_ffn_down_inp(context, params.layer, true);
+    } else {
+        llama_set_embeddings_layer_inp(context, params.layer, true);
+    }
     llama_batch batch = llama_batch_init(static_cast<int32_t>(tokens.size()), 0, 1);
     batch.n_tokens = static_cast<int32_t>(tokens.size());
     for (size_t i = 0; i < tokens.size(); ++i) {
@@ -138,8 +147,18 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    const int32_t columns = llama_model_n_embd(model);
-    const float * layer_input = llama_get_embeddings_layer_inp(context, params.layer);
+    const int32_t columns = params.ffn_down_input ? llama_model_n_ff(model, params.layer) : llama_model_n_embd(model);
+    const float * layer_input = params.ffn_down_input ?
+        llama_get_embeddings_ffn_down_inp(context, params.layer) :
+        llama_get_embeddings_layer_inp(context, params.layer);
+    if (columns <= 0 || layer_input == nullptr) {
+        std::fprintf(stderr, "failed to obtain requested activation capture\n");
+        llama_batch_free(batch);
+        llama_free(context);
+        llama_model_free(model);
+        llama_backend_free();
+        return 1;
+    }
     ggml_vk_astc_activation_trace trace;
     trace.samples = static_cast<uint32_t>(tokens.size());
     trace.columns = static_cast<uint32_t>(columns);
@@ -149,8 +168,9 @@ int main(int argc, char ** argv) {
     if (!write_ok) {
         std::fprintf(stderr, "%s\n", error.c_str());
     } else {
-        std::printf("captured %u layer-%u input activations with %u columns to %s\n",
-                    trace.samples, params.layer, trace.columns, params.output_path.c_str());
+        std::printf("captured %u %s activations for layer-%u with %u columns to %s\n",
+                    trace.samples, params.ffn_down_input ? "ffn-down-input" : "layer-input",
+                    params.layer, trace.columns, params.output_path.c_str());
     }
 
     llama_batch_free(batch);

@@ -56,6 +56,11 @@ struct llama_cparams {
 
     std::vector<bool> embeddings_layer_inp; // [n_layer()] extract input embeddings for layer
 
+    // PoC-only capture of the activation immediately before each layer's FFN
+    // down projection.  This is deliberately separate from layer inputs: for
+    // gated FFNs its width is n_ff(il), which may be larger than n_embd.
+    std::vector<bool> embeddings_ffn_down_inp;
+
     enum llama_context_type ctx_type;
     enum llama_pooling_type pooling_type;
 

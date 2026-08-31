@@ -726,3 +726,21 @@ Layer-1 attention controls now favor four-shard stability on both `attn_q` and
 The remaining FFN limitation is data capture, not ASTC or selector width:
 `ffn_down` needs post-FFN intermediate activations. Add that PoC-only capture
 hook before making FFN quality claims.
+
+### Current execution gate: wide FFN traces
+
+The PoC-only capture hook is now implemented. It taps the activation before
+`build_lora_mm(down, cur)` and exposes the per-layer `n_ff(layer)` width to the
+trace tool. This keeps the production Vulkan path unchanged while allowing
+real FFN-down inputs to be evaluated. The first SmolLM2 validation produced an
+11 x 1,536 trace and a bounded 6x6 ASTC run over all 1,536 columns.
+
+Required follow-up before GPU/runtime work:
+
+1. Capture a disjoint FFN calibration/holdout pair with enough samples.
+2. Evaluate 4x4, 5x5, and 6x6 using the same candidate snapshot and selector
+   matrix (local, Block-LDLQ, stability, conflict-aware).
+3. Increase the row tile while retaining the full 1,536-column width; report
+   edge-padding separately from asymptotic block bandwidth.
+4. Keep the capture API opt-in and staging-only until end-to-end quality and
+   device-backed Vulkan sampling have been measured.

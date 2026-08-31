@@ -124,6 +124,8 @@ llama_context::llama_context(
     // +1: id n_layer() taps the output of the last layer ("input" of the head)
     cparams.embeddings_layer_inp.resize(hparams.n_layer() + 1, false);
     embd_layer_inp.resize(hparams.n_layer() + 1);
+    cparams.embeddings_ffn_down_inp.resize(hparams.n_layer(), false);
+    embd_ffn_down_inp.resize(hparams.n_layer());
 
     cparams.ctx_type     = params.ctx_type;
     cparams.pooling_type = params.pooling_type;
@@ -979,6 +981,14 @@ float * llama_context::get_embeddings_layer_inp(uint32_t lid) {
     return embd_layer_inp[lid].data;
 }
 
+float * llama_context::get_embeddings_ffn_down_inp(uint32_t lid) {
+    output_reorder();
+
+    GGML_ASSERT(lid < embd_ffn_down_inp.size() && embd_ffn_down_inp[lid].has_data());
+
+    return embd_ffn_down_inp[lid].data;
+}
+
 llama_token llama_context::get_sampled_token_ith(int32_t idx) {
     output_reorder();
 
@@ -1174,6 +1184,15 @@ void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
     cparams.embeddings_layer_inp[lid] = enable;
 
     // note: without this reserve, the draft acceptance drops to zero. not sure why - this is unexpected
+    sched_need_reserve = true;
+}
+
+void llama_context::set_embeddings_ffn_down_inp(uint32_t lid, bool enable) {
+    LLAMA_LOG_DEBUG("%s: lid = %d, enable = %d\n", __func__, lid, enable);
+
+    GGML_ASSERT(lid < model.hparams.n_layer());
+
+    cparams.embeddings_ffn_down_inp[lid] = enable;
     sched_need_reserve = true;
 }
 
@@ -1935,6 +1954,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
         }
 
         extract_layer_inputs(res, n_tokens_prev, ubatch.n_tokens);
+        extract_ffn_down_inputs(res, n_tokens_prev, ubatch.n_tokens);
 
         // extract nextn embeddings before
         // only meaningful in LLAMA_POOLING_TYPE_NONE (per-token); other pooling modes are ignored.
@@ -2053,6 +2073,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
     size_t backend_float_count = 0;
     size_t backend_token_count = 0;
     size_t embd_layer_inp_float_count = 0;
+    size_t embd_ffn_down_inp_float_count = 0;
 
     logits.size     = has_logits     ? n_vocab*n_outputs_max     : 0;
     embd.size       = has_embd       ? n_embd_out*n_outputs_max  : 0;
@@ -2070,6 +2091,12 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
         }
     }
 
+    for (uint32_t il = 0; il < cparams.embeddings_ffn_down_inp.size(); ++il) {
+        if (cparams.embeddings_ffn_down_inp[il]) {
+            embd_ffn_down_inp_float_count += (size_t) hparams.n_ff(il) * n_batch;
+        }
+    }
+
     // Allocate backend sampling output buffers if there are backend samplers configured.
     const bool has_sampling = !sampling.samplers.empty();
     if (has_sampling) {
@@ -2084,7 +2111,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
 
     const size_t prev_size = buf_output ? ggml_backend_buffer_get_size(buf_output.get()) : 0;
     const size_t new_size  =
-        (logits.size + embd.size + embd_nextn.size + embd_layer_inp_float_count + backend_float_count) * sizeof(float) +
+        (logits.size + embd.size + embd_nextn.size + embd_layer_inp_float_count + embd_ffn_down_inp_float_count + backend_float_count) * sizeof(float) +
         (                                                                         backend_token_count) * sizeof(llama_token);
 
     // alloc only when more than the current capacity is required
@@ -2104,6 +2131,9 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
             embd_nextn.data = nullptr;
             for (auto & layer_inp : embd_layer_inp) {
                 layer_inp = {nullptr, 0};
+            }
+            for (auto & ffn_down_inp : embd_ffn_down_inp) {
+                ffn_down_inp = {nullptr, 0};
             }
         }
 
@@ -2142,6 +2172,15 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
             offset += embd_layer_inp[il].size * sizeof(float);
         } else {
             embd_layer_inp[il] = buffer_view<float>{nullptr, 0};
+        }
+    }
+
+    for (uint32_t il = 0; il < embd_ffn_down_inp.size(); ++il) {
+        if (cparams.embeddings_ffn_down_inp[il]) {
+            embd_ffn_down_inp[il] = buffer_view<float>{(float *) (base + offset), (size_t) hparams.n_ff(il) * n_batch};
+            offset += embd_ffn_down_inp[il].size * sizeof(float);
+        } else {
+            embd_ffn_down_inp[il] = buffer_view<float>{nullptr, 0};
         }
     }
 
@@ -2216,6 +2255,34 @@ void llama_context::extract_layer_inputs(const llm_graph_result * res, size_t to
         ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched.get(), t);
         GGML_ASSERT(backend != nullptr);
         ggml_backend_tensor_get_async(backend, t, embd_layer_inp[il].data + dst_offset, 0, nbytes);
+    }
+}
+
+void llama_context::extract_ffn_down_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens) {
+    for (uint32_t il = 0; il < cparams.embeddings_ffn_down_inp.size(); ++il) {
+        if (!cparams.embeddings_ffn_down_inp[il]) {
+            continue;
+        }
+        if (!embd_ffn_down_inp[il].has_data()) {
+            GGML_ABORT("FFN down input buffer not allocated");
+        }
+        ggml_tensor * t = res->get_ffn_down_inp((int) il);
+        if (!t) {
+            GGML_ABORT("FFN down input tensor not found");
+        }
+
+        const size_t nbytes = ggml_nbytes(t);
+        const size_t nfloats = nbytes / sizeof(float);
+        GGML_ASSERT(n_tokens > 0);
+        GGML_ASSERT(nfloats % n_tokens == 0);
+
+        const size_t row_floats = nfloats / n_tokens;
+        const size_t dst_offset = token_offset * row_floats;
+        GGML_ASSERT(dst_offset + nfloats <= embd_ffn_down_inp[il].size);
+
+        ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched.get(), t);
+        GGML_ASSERT(backend != nullptr);
+        ggml_backend_tensor_get_async(backend, t, embd_ffn_down_inp[il].data + dst_offset, 0, nbytes);
     }
 }
 
@@ -3810,6 +3877,16 @@ float * llama_get_embeddings_layer_inp(llama_context * ctx, uint32_t lid) {
     ctx->synchronize();
 
     return ctx->get_embeddings_layer_inp(lid);
+}
+
+void llama_set_embeddings_ffn_down_inp(llama_context * ctx, uint32_t lid, bool value) {
+    ctx->set_embeddings_ffn_down_inp(lid, value);
+}
+
+float * llama_get_embeddings_ffn_down_inp(llama_context * ctx, uint32_t lid) {
+    ctx->synchronize();
+
+    return ctx->get_embeddings_ffn_down_inp(lid);
 }
 
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {

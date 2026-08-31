@@ -2530,6 +2530,13 @@ int32_t llama_model_n_embd_out(const llama_model * model) {
     return model->hparams.n_embd_out();
 }
 
+int32_t llama_model_n_ff(const llama_model * model, uint32_t layer) {
+    if (model == nullptr || layer >= model->hparams.n_layer()) {
+        return 0;
+    }
+    return static_cast<int32_t>(model->hparams.n_ff(layer));
+}
+
 int32_t llama_model_n_layer(const llama_model * model) {
     return model->hparams.n_layer();
 }

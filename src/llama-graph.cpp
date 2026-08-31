@@ -1303,6 +1303,9 @@ void llm_graph_result::reset() {
     t_layer_inp.resize(LLAMA_MAX_LAYERS + 1);
     std::fill(t_layer_inp.begin(), t_layer_inp.end(), nullptr);
 
+    t_ffn_down_inp.resize(LLAMA_MAX_LAYERS + 1);
+    std::fill(t_ffn_down_inp.begin(), t_ffn_down_inp.end(), nullptr);
+
     t_sampled.clear();
     t_sampled_probs.clear();
     t_sampled_logits.clear();
@@ -1351,6 +1354,15 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
             if (embeddings_layer_inp[il]) {
                 GGML_ASSERT(t_layer_inp[il] != nullptr && "layer input tensor is null");
                 ggml_set_output(t_layer_inp[il]);
+            }
+        }
+    }
+    {
+        const auto & embeddings_ffn_down_inp = params.cparams.embeddings_ffn_down_inp;
+        for (size_t il = 0; il < embeddings_ffn_down_inp.size(); ++il) {
+            if (embeddings_ffn_down_inp[il]) {
+                GGML_ASSERT(t_ffn_down_inp[il] != nullptr && "FFN down input tensor is null");
+                ggml_set_output(t_ffn_down_inp[il]);
             }
         }
     }
@@ -1473,6 +1485,13 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
 void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
     if (cb_func) {
         cb_func(ubatch, cur, name, il);
+    }
+
+    // Keep this capture in the graph-result layer rather than in any backend
+    // callback.  That makes it backend agnostic and keeps the Vulkan PoC from
+    // changing the production scheduler or shader paths.
+    if (strcmp(name, "ffn_down_input") == 0 && il >= 0) {
+        res->set_ffn_down_inp(il, cur);
     }
 }
 
@@ -1847,6 +1866,7 @@ ggml_tensor * llm_graph_context::build_ffn(
     }
 
     if (down) {
+        cb(cur, "ffn_down_input", il);
         cur = build_lora_mm(down, cur);
         if (arch == LLM_ARCH_GLM4 || arch == LLM_ARCH_GLM4_MOE || arch == LLM_ARCH_JAIS2) {
             // GLM4, GLM4_MOE, and JAIS2 seem to have numerical issues with half-precision accumulators

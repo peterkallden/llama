@@ -869,6 +869,12 @@ public:
     ggml_tensor * get_h_nextn()     const { return t_h_nextn; }
 
     ggml_tensor * get_layer_inp(int il) const { return t_layer_inp[il]; }
+    ggml_tensor * get_ffn_down_inp(int il) const { return t_ffn_down_inp[il]; }
+
+    void set_ffn_down_inp(int il, ggml_tensor * tensor) {
+        GGML_ASSERT(il >= 0 && il < (int) t_ffn_down_inp.size());
+        t_ffn_down_inp[il] = tensor;
+    }
 
     ggml_cgraph  * get_gf()  const { return gf; }
     ggml_context * get_ctx() const { return ctx_compute.get(); }
@@ -904,6 +910,7 @@ public:
     ggml_tensor * t_h_nextn     = nullptr; // [n_embd, n_outputs] hidden state before final output norm
 
     std::vector<ggml_tensor *> t_layer_inp;
+    std::vector<ggml_tensor *> t_ffn_down_inp;
 
     std::vector<ggml_tensor *> t_sampled;
     std::vector<ggml_tensor *> t_sampled_probs;
