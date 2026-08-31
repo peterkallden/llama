@@ -1530,3 +1530,22 @@ represent a viable inference kernel or a comparison with ggml Vulkan. The next
 GPU change is a workgroup-parallel row reduction, retaining this serial kernel
 as the oracle contract. Only then should we compare texture-path timing against
 an ordinary buffer-backed FP16/Q4 reference on the same device.
+
+## Sixty-fifth sweep: native ASTC evidence for the Intel validation device
+
+The exposed validation adapter reports `Intel(R) UHD Graphics 620 (KBL GT2)`,
+PCI device `0x5917`, using ANV/Mesa 26.0.8. No ASTC- or Mesa-forcing
+environment variable was present during the Vulkan tests. This is Kaby Lake
+Gen9 hardware, not llvmpipe or the separately enumerated NVIDIA device.
+
+The evidence for native sampler decode on this device is stronger than format
+advertisement alone: Mesa's Gen9 history includes a dedicated workaround for a
+hardware ASTC 5x5 sampler defect. The runtime accepts sampled 4x4, 5x5, and
+6x6 images and the shader tests exercise all three. This supports interpreting
+the UHD 620 results as native ASTC texture-hardware behavior for this driver.
+
+It remains a device-specific conclusion, not a portability assertion. Mesa can
+implement ASTC emulation on hardware that lacks it, and a future benchmark must
+record adapter PCI ID, driver, environment, and format features. The generic
+runtime contract remains: unsupported or emulated configurations may validate
+correctness but cannot substantiate the compressed-bandwidth hypothesis.
