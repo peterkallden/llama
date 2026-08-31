@@ -1120,3 +1120,26 @@ alpha dual-plane frequently for this layout, but the factorization has thrown
 away too much weight information. It is retained as a negative control: an
 AQLM-like additive representation must learn vector/group codebooks jointly
 with model loss; simple row/column statistics are not sufficient.
+
+## Fifty-first sweep: calibration versus holdout projection selection
+
+The projection search now accepts separate `--calibration-trace` and `--trace`
+files. It selects the coarse alphabet using the calibration trace while
+printing the holdout activation error for the same exact ASTC projection. This
+prevents the search from being rewarded for overfitting the vectors used to
+choose a candidate.
+
+On the SmolLM2 `blk.0.attn_q.weight` layer, using
+`smollm2-layer0.trace` for calibration and `smollm2-layer0-holdout.trace` for
+evaluation, the best searched alphabet was 3 levels for all three footprints:
+
+| Format | Selected levels | Calibration relative MSE | Holdout relative MSE |
+|---|---:|---:|---:|
+| 4x4 | 3 | 0.003241 | 0.003588 |
+| 5x5 | 3 | 0.018776 | 0.021264 |
+| 6x6 | 3 | 0.072968 | 0.083220 |
+
+The holdout ordering remains below the scalar controls (`0.001471`, `0.014349`,
+and `0.065283`). The selected alphabet therefore generalizes, but the current
+hand-designed L+A family still does not win. The calibration/holdout split is
+now the acceptance oracle for the next learned-latent projection loop.

@@ -312,12 +312,12 @@ std::vector<float> make_additive_latents(const std::vector<float> & weights,
     return result;
 }
 
-bool run_case(const char * name, const std::vector<float> & weights,
-              const std::vector<float> & latents, uint32_t rows, uint32_t columns,
-              const ggml_vk_astc_format_contract & format,
-              const activations & inputs) {
+double run_case(const char * name, const std::vector<float> & weights,
+                const std::vector<float> & latents, uint32_t rows, uint32_t columns,
+                const ggml_vk_astc_format_contract & format,
+                const activations & inputs, const activations * selection_inputs = nullptr) {
     astc_roundtrip_result roundtrip;
-    if (!astc_roundtrip(latents, rows, columns, format, roundtrip)) return false;
+    if (!astc_roundtrip(latents, rows, columns, format, roundtrip)) return NAN;
     const affine_decoder decoder = std::string(name) == "scalar-rgba"
         ? fit_scalar_decoder(weights, roundtrip.texels)
         : fit_affine_decoder(weights, roundtrip.texels);
@@ -332,7 +332,14 @@ bool run_case(const char * name, const std::vector<float> & weights,
                 roundtrip.dual_plane_blocks, roundtrip.block_count,
                 roundtrip.alpha_dual_plane_blocks, decoder.scale_l, decoder.scale_a,
                 decoder.offset, mse, activation_mse);
-    return std::isfinite(mse) && std::isfinite(activation_mse);
+    double score = activation_mse;
+    if (selection_inputs != nullptr) {
+        score = activation_relative_mse(weights, reconstructed, rows, columns,
+                                        *selection_inputs);
+        std::printf("latent-selection mode=%s calibration-relative-MSE=%.8g\n",
+                    name, score);
+    }
+    return std::isfinite(mse) && std::isfinite(activation_mse) ? score : NAN;
 }
 
 } // namespace
@@ -341,20 +348,24 @@ int main(int argc, char ** argv) {
     std::string model_path;
     std::string tensor_name;
     std::string trace_path;
+    std::string calibration_trace_path;
     bool search_levels = false;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
             search_levels = true;
-        } else if ((option == "--model" || option == "--tensor" || option == "--trace") &&
+        } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
+                    option == "--calibration-trace") &&
                    index + 1 < argc) {
             const std::string value = argv[++index];
             if (option == "--model") model_path = value;
             else if (option == "--tensor") tensor_name = value;
-            else trace_path = value;
+            else if (option == "--trace") trace_path = value;
+            else calibration_trace_path = value;
         } else {
             std::fprintf(stderr,
-                         "usage: %s [--search-levels] [--model path --tensor name] [--trace path]\n",
+                         "usage: %s [--search-levels] [--model path --tensor name] "
+                         "[--trace path] [--calibration-trace path]\n",
                          argv[0]);
             return 2;
         }
@@ -394,6 +405,7 @@ int main(int argc, char ** argv) {
     const std::vector<float> scalar_latents = make_scalar_latents(weights, minimum, range);
     const std::vector<float> row_column_latents = make_row_column_latents(weights, rows, columns);
     activations inputs = make_default_activations(columns);
+    activations calibration_inputs = inputs;
     if (!trace_path.empty()) {
         ggml_vk_astc_activation_trace loaded;
         if (!ggml_vk_astc_load_activation_trace(trace_path, loaded, error) ||
@@ -404,6 +416,17 @@ int main(int argc, char ** argv) {
         inputs.samples = loaded.samples;
         inputs.values = std::move(loaded.values);
     }
+    if (calibration_trace_path.empty()) calibration_inputs = inputs;
+    if (!calibration_trace_path.empty()) {
+        ggml_vk_astc_activation_trace loaded;
+        if (!ggml_vk_astc_load_activation_trace(calibration_trace_path, loaded, error) ||
+            loaded.columns != columns) {
+            std::fprintf(stderr, "invalid calibration activation trace: %s\n", error.c_str());
+            return 1;
+        }
+        calibration_inputs.samples = loaded.samples;
+        calibration_inputs.values = std::move(loaded.values);
+    }
     for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,
                                  ggml_vk_astc_5x5_unorm_rgba,
                                  ggml_vk_astc_6x6_unorm_rgba }) {
@@ -413,28 +436,40 @@ int main(int argc, char ** argv) {
         const std::vector<float> block_latents = make_additive_latents(
             weights, minimum, range, rows, columns, format.block_width, true,
             kDefaultCoarseLevels);
-        if (!run_case("scalar-rgba", weights, scalar_latents, rows, columns, format, inputs) ||
-            !run_case("row-column-additive", weights, row_column_latents,
-                      rows, columns, format, inputs) ||
-            !run_case("luminance-alpha-additive", weights, additive_latents,
-                      rows, columns, format, inputs) ||
-            !run_case("luminance-alpha-block-residual", weights, block_latents,
-                      rows, columns, format, inputs)) {
+        if (!std::isfinite(run_case("scalar-rgba", weights, scalar_latents,
+                                    rows, columns, format, inputs)) ||
+            !std::isfinite(run_case("row-column-additive", weights, row_column_latents,
+                                    rows, columns, format, inputs)) ||
+            !std::isfinite(run_case("luminance-alpha-additive", weights, additive_latents,
+                                    rows, columns, format, inputs)) ||
+            !std::isfinite(run_case("luminance-alpha-block-residual", weights, block_latents,
+                                    rows, columns, format, inputs))) {
             std::fprintf(stderr, "ASTC latent smoke failed\n");
             return 1;
         }
         if (search_levels) {
+            double best_score = INFINITY;
+            uint32_t best_levels = 0;
             for (const uint32_t coarse_levels : { 3u, 5u, 8u, 16u, 32u }) {
                 const std::vector<float> candidate = make_additive_latents(
                     weights, minimum, range, rows, columns, format.block_width, false,
                     coarse_levels);
                 char name[64];
                 std::snprintf(name, sizeof(name), "projection-levels-%u", coarse_levels);
-                if (!run_case(name, weights, candidate, rows, columns, format, inputs)) {
+                const double score = run_case(name, weights, candidate, rows, columns,
+                                              format, inputs, &calibration_inputs);
+                if (!std::isfinite(score)) {
                     std::fprintf(stderr, "ASTC latent projection search failed\n");
                     return 1;
                 }
+                if (score < best_score) {
+                    best_score = score;
+                    best_levels = coarse_levels;
+                }
             }
+            std::printf("latent-selection format=%s best-coarse-levels=%u "
+                        "calibration-relative-MSE=%.8g\n",
+                        format.name, best_levels, best_score);
         }
     }
     return 0;

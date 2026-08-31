@@ -170,6 +170,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
     candidates can be scored on held-out layer inputs.
 42. [x] Add an AQLM-inspired row/column additive control, `W ~= row + column`,
     to separate spatially structured additive semantics from a residual tail.
+43. [x] Split projection scoring into calibration and holdout activation traces;
+    report the selected coarse alphabet and its held-out error.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
