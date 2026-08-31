@@ -2720,3 +2720,46 @@ encoder, TQ/weight, latent-selector, input-trace, ASTC capability, image
 resource, shader compilation, and six device shader-access tests. The suite
 does not change the production Vulkan backend; it exercises the isolated PoC
 targets and the existing generic Vulkan test infrastructure.
+## One-hundred-fifteenth sweep: repeated GPU and packed-format controls
+
+The 32-row x 1,536-column Intel UHD 620 matvec was repeated at 20, 100, and
+1,000 dispatches. ASTC 6x6 completed all three runs (approximately 8.61 us,
+8.14 us, and 17.78 us per dispatch as reported by the device timestamp
+query). The absolute values vary with queue/timestamp behavior at this small
+work size, but no correctness drift appeared.
+
+The same source matrix and dimensions were then sent through the matched
+buffer-backed FP32, Q4_0, and TQ2_0 shaders. All runs passed their output
+contracts. At 20/100/1,000 dispatches the reported times were respectively:
+
+| Path | 20 | 100 | 1,000 |
+| --- | ---: | ---: | ---: |
+| ASTC 6x6 sampled | ~8.61 us | ~8.14 us | ~17.78 us |
+| FP32 storage buffer | ~7.75 us | ~6.35 us | ~12.48 us |
+| Q4_0 packed buffer | ~12.27 us | ~15.16 us | ~25.30 us |
+| TQ2_0 packed buffer | ~13.70 us | ~13.22 us | ~22.76 us |
+
+These are dispatch-level Intel/Mesa PoC timings, not a claim about a Mali or
+Adreno implementation and not a full llama throughput result. They do show
+that ASTC sampling is a viable fixed-function decode path at the tested width;
+the next meaningful performance work needs larger tiles, batching, and a real
+backend scheduling context.
+
+The previously incomplete TQ control is now covered by both offline export
+and the device shader smoke. Its measured relative activation error remains
+substantially above Q4 and ASTC on this tensor, so TQ2 is retained as a
+reference/low-bit baseline rather than the current quality candidate.
+
+## One-hundred-sixteenth sweep: sidecar driver metadata contract
+
+The PoC now contains an isolated `astc-vulkan-driver` static library. It owns
+only format geometry, block-byte accounting, and a deterministic binary
+manifest for model/tensor payload ranges. The manifest records tensor name,
+extent, ASTC footprint, and byte range; it validates non-overlap, exact image
+size, supported 4x4/5x5/6x6 footprints, and bounded strings/record counts.
+
+This is deliberately a sidecar contract, not a replacement Vulkan backend:
+it does not alter `ggml-vulkan`, scheduler behavior, or production shaders.
+The round-trip and malformed-range checks are covered by
+`test-astc-vulkan-driver`. It gives the later image allocator and atlas code a
+stable input without prematurely coupling model loading to Vulkan resources.

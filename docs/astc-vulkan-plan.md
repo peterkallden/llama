@@ -766,3 +766,30 @@ NVIDIA 920MX and llvmpipe are recorded as unsupported for sampled ASTC. A
 32x1,536 scalar ASTC payload also passes the GPU matvec contract on Intel. The
 next gate is a larger repeated workload plus a matched buffer-backed control,
 not a production-backend integration.
+
+### Remaining path to an ASTC Vulkan driver
+
+1. Keep the sidecar manifest and format geometry as the stable boundary. Add
+   versioned atlas/page metadata and deterministic payload validation before
+   model-loader work.
+2. Extract the existing PoC Vulkan image, view, sampler, staging upload, and
+   descriptor setup into a reusable sidecar resource module. Preserve the
+   current shader smoke as a consumer so behavior remains regression-tested.
+3. Add an ASTC matvec resource/session API that accepts a manifest record,
+   uploads its blocks, binds the sampled image, and exposes scale/bias and
+   reconstruction mode as explicit parameters. Keep one-tensor-per-image as
+   the first implementation; atlas packing is an optimization after the
+   resource contract is proven.
+4. Define the first llama-facing adapter at the PoC boundary (FFN-down
+   weights, 1,536-column support, 4x4/5x5/6x6 selection). Do not hook the
+   production scheduler until correctness against the FP16 reference and
+   fallback behavior are tested end to end.
+5. Add device capability selection and a hard fallback for devices without
+   sampled ASTC. Record that Intel/Mesa timings are only one implementation;
+   ARM/Mali, Adreno, and Apple measurements remain required target-specific
+   work.
+6. Add larger-tile and batched dispatch benchmarks, then compare ASTC against
+   FP16, Q4_0, TQ2_0, and sampled-FP32 using the same matrix and launch shape.
+7. After the sidecar path is clean, perform a refactor pass and decide whether
+   any narrow, upstreamable interface belongs in ggml-vulkan. Until then all
+   code remains under `pocs/astc-vulkan`.

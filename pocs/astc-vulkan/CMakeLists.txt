@@ -22,6 +22,19 @@ target_include_directories(test-astc-vulkan-tensor-contract PRIVATE
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(test-astc-vulkan-tensor-contract PRIVATE cxx_std_17)
 
+add_library(astc-vulkan-driver STATIC
+    astc-vulkan-driver.cpp)
+target_include_directories(astc-vulkan-driver PUBLIC
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_compile_features(astc-vulkan-driver PUBLIC cxx_std_17)
+
+add_executable(test-astc-vulkan-driver
+    tests/test-astc-vulkan-driver.cpp)
+target_link_libraries(test-astc-vulkan-driver PRIVATE astc-vulkan-driver)
+target_include_directories(test-astc-vulkan-driver PRIVATE
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_compile_features(test-astc-vulkan-driver PRIVATE cxx_std_17)
+
 find_package(Vulkan QUIET)
 if (Vulkan_FOUND)
     add_executable(astc-vulkan-capability-probe
@@ -304,6 +317,10 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-tensor-contract
         COMMAND test-astc-vulkan-tensor-contract)
     set_property(TEST test-astc-vulkan-tensor-contract PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-driver
+        COMMAND test-astc-vulkan-driver)
+    set_property(TEST test-astc-vulkan-driver PROPERTY LABELS astc)
 
     if (TARGET astc-vulkan-astcenc-smoke)
         add_test(NAME astc-vulkan-astcenc-smoke
