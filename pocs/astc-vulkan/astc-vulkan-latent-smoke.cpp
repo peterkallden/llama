@@ -1,0 +1,311 @@
+#include <astcenc.h>
+
+#include "astc-vulkan-contract.h"
+#include "astc-vulkan-input.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+namespace {
+
+constexpr uint32_t kRows = 32;
+constexpr uint32_t kColumns = 256;
+constexpr uint32_t kCoarseLevels = 16;
+
+struct affine_decoder {
+    double scale_l = 0.0;
+    double scale_a = 0.0;
+    double offset = 0.0;
+};
+
+struct astc_roundtrip_result {
+    std::vector<float> texels;
+    size_t compressed_bytes = 0;
+    uint32_t block_count = 0;
+    uint32_t dual_plane_blocks = 0;
+    uint32_t alpha_dual_plane_blocks = 0;
+};
+
+double elementwise_mse(const std::vector<float> & reference,
+                       const std::vector<float> & candidate) {
+    double sum = 0.0;
+    for (size_t i = 0; i < reference.size(); ++i) {
+        const double error = reference[i] - candidate[i];
+        sum += error * error;
+    }
+    return sum / std::max<size_t>(reference.size(), 1);
+}
+
+double activation_relative_mse(const std::vector<float> & reference,
+                               const std::vector<float> & candidate,
+                               uint32_t rows, uint32_t columns) {
+    double error_sum = 0.0;
+    double reference_sum = 0.0;
+    for (uint32_t sample = 1; sample <= 4; ++sample) {
+        for (uint32_t row = 0; row < rows; ++row) {
+            double expected = 0.0;
+            double actual = 0.0;
+            for (uint32_t column = 0; column < columns; ++column) {
+                const float activation = 0.5f * std::sin(0.017f * sample * (column + 1)) +
+                    0.2f * std::cos(0.031f * (sample + 1) * (column + 3));
+                const size_t index = static_cast<size_t>(row) * columns + column;
+                expected += reference[index] * activation;
+                actual += candidate[index] * activation;
+            }
+            const double error = expected - actual;
+            error_sum += error * error;
+            reference_sum += expected * expected;
+        }
+    }
+    return error_sum / std::max(reference_sum, 1e-12);
+}
+
+bool solve_3x3(double matrix[3][3], double rhs[3], affine_decoder & result) {
+    for (uint32_t column = 0; column < 3; ++column) {
+        uint32_t pivot = column;
+        for (uint32_t row = column + 1; row < 3; ++row) {
+            if (std::fabs(matrix[row][column]) > std::fabs(matrix[pivot][column])) {
+                pivot = row;
+            }
+        }
+        if (std::fabs(matrix[pivot][column]) < 1e-12) return false;
+        for (uint32_t entry = column; entry < 3; ++entry) {
+            std::swap(matrix[column][entry], matrix[pivot][entry]);
+        }
+        std::swap(rhs[column], rhs[pivot]);
+        const double inverse = 1.0 / matrix[column][column];
+        for (uint32_t entry = column; entry < 3; ++entry) matrix[column][entry] *= inverse;
+        rhs[column] *= inverse;
+        for (uint32_t row = 0; row < 3; ++row) {
+            if (row == column) continue;
+            const double factor = matrix[row][column];
+            for (uint32_t entry = column; entry < 3; ++entry) {
+                matrix[row][entry] -= factor * matrix[column][entry];
+            }
+            rhs[row] -= factor * rhs[column];
+        }
+    }
+    result.scale_l = rhs[0];
+    result.scale_a = rhs[1];
+    result.offset = rhs[2];
+    return true;
+}
+
+affine_decoder fit_affine_decoder(const std::vector<float> & weights,
+                                  const std::vector<float> & texels) {
+    double normal[3][3]{};
+    double rhs[3]{};
+    for (size_t index = 0; index < weights.size(); ++index) {
+        const float * texel = texels.data() + index * 4;
+        // RGB stores the first (luminance-like) latent. Alpha stores the
+        // second latent. Averaging RGB makes the contract robust to minor
+        // encoder channel asymmetry while preserving the intended semantics.
+        const double features[3] = {
+            (texel[0] + texel[1] + texel[2]) / 3.0,
+            texel[3],
+            1.0,
+        };
+        for (uint32_t row = 0; row < 3; ++row) {
+            rhs[row] += features[row] * weights[index];
+            for (uint32_t column = 0; column < 3; ++column) {
+                normal[row][column] += features[row] * features[column];
+            }
+        }
+    }
+    affine_decoder result;
+    return solve_3x3(normal, rhs, result) ? result : affine_decoder{};
+}
+
+affine_decoder fit_scalar_decoder(const std::vector<float> & weights,
+                                  const std::vector<float> & texels) {
+    double sum_l = 0.0;
+    double sum_ll = 0.0;
+    double sum_w = 0.0;
+    double sum_lw = 0.0;
+    for (size_t index = 0; index < weights.size(); ++index) {
+        const float * texel = texels.data() + index * 4;
+        const double luminance = (texel[0] + texel[1] + texel[2]) / 3.0;
+        sum_l += luminance;
+        sum_ll += luminance * luminance;
+        sum_w += weights[index];
+        sum_lw += luminance * weights[index];
+    }
+    const double count = weights.size();
+    const double determinant = sum_ll * count - sum_l * sum_l;
+    if (std::fabs(determinant) < 1e-12) return {};
+    return {
+        (sum_lw * count - sum_l * sum_w) / determinant,
+        0.0,
+        (sum_ll * sum_w - sum_l * sum_lw) / determinant,
+    };
+}
+
+std::vector<float> reconstruct(const std::vector<float> & texels,
+                               const affine_decoder & decoder) {
+    std::vector<float> result(texels.size() / 4);
+    for (size_t index = 0; index < result.size(); ++index) {
+        const float * texel = texels.data() + index * 4;
+        const double luminance = (texel[0] + texel[1] + texel[2]) / 3.0;
+        result[index] = static_cast<float>(decoder.scale_l * luminance +
+                                           decoder.scale_a * texel[3] + decoder.offset);
+    }
+    return result;
+}
+
+bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t columns,
+                    const ggml_vk_astc_format_contract & format,
+                    astc_roundtrip_result & result) {
+    result.compressed_bytes = ggml_vk_astc_image_storage_bytes(format, columns, rows);
+    astcenc_config config{};
+    if (astcenc_config_init(ASTCENC_PRF_LDR, format.block_width, format.block_height, 1,
+                            ASTCENC_PRE_THOROUGH, 0, &config) != ASTCENC_SUCCESS) return false;
+    astcenc_context * context = nullptr;
+    if (astcenc_context_alloc(&config, 1, &context) != ASTCENC_SUCCESS) return false;
+    void * source_slice = const_cast<float *>(source.data());
+    astcenc_image source_image{ columns, rows, 1, ASTCENC_TYPE_F32, &source_slice };
+    const astcenc_swizzle swizzle{ ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A };
+    std::vector<uint8_t> compressed(result.compressed_bytes);
+    astcenc_error status = astcenc_compress_image(
+        context, &source_image, &swizzle, compressed.data(), compressed.size(), 0);
+    if (status == ASTCENC_SUCCESS) {
+        result.block_count = static_cast<uint32_t>(compressed.size() / 16);
+        for (size_t offset = 0; offset < compressed.size(); offset += 16) {
+            astcenc_block_info info{};
+            status = astcenc_get_block_info(context, compressed.data() + offset, &info);
+            if (status != ASTCENC_SUCCESS) break;
+            if (info.is_dual_plane_block) {
+                ++result.dual_plane_blocks;
+                if (info.dual_plane_component == 3) ++result.alpha_dual_plane_blocks;
+            }
+        }
+    }
+    result.texels.resize(source.size());
+    void * decoded_slice = result.texels.data();
+    astcenc_image decoded_image{ columns, rows, 1, ASTCENC_TYPE_F32, &decoded_slice };
+    if (status == ASTCENC_SUCCESS) {
+        status = astcenc_decompress_image(
+            context, compressed.data(), compressed.size(), &decoded_image, &swizzle, 0);
+    }
+    astcenc_context_free(context);
+    return status == ASTCENC_SUCCESS;
+}
+
+std::vector<float> make_scalar_latents(const std::vector<float> & weights,
+                                       float minimum, float range) {
+    std::vector<float> result(weights.size() * 4);
+    for (size_t index = 0; index < weights.size(); ++index) {
+        const float normalized = (weights[index] - minimum) / range;
+        std::fill_n(result.data() + index * 4, 4, normalized);
+    }
+    return result;
+}
+
+std::vector<float> make_additive_latents(const std::vector<float> & weights,
+                                         float minimum, float range) {
+    std::vector<float> result(weights.size() * 4);
+    const float step = range / (kCoarseLevels - 1);
+    const float residual_radius = std::max(step * 0.5f, 1e-6f);
+    for (size_t index = 0; index < weights.size(); ++index) {
+        const float level = std::round((weights[index] - minimum) / step);
+        const float coarse = minimum +
+            std::clamp(level, 0.0f, static_cast<float>(kCoarseLevels - 1)) * step;
+        const float l = (coarse - minimum) / range;
+        const float a = std::clamp(0.5f + (weights[index] - coarse) / (2.0f * residual_radius),
+                                   0.0f, 1.0f);
+        float * texel = result.data() + index * 4;
+        texel[0] = l;
+        texel[1] = l;
+        texel[2] = l;
+        texel[3] = a;
+    }
+    return result;
+}
+
+bool run_case(const char * name, const std::vector<float> & weights,
+              const std::vector<float> & latents, uint32_t rows, uint32_t columns,
+              const ggml_vk_astc_format_contract & format) {
+    astc_roundtrip_result roundtrip;
+    if (!astc_roundtrip(latents, rows, columns, format, roundtrip)) return false;
+    const affine_decoder decoder = std::string(name) == "scalar-rgba"
+        ? fit_scalar_decoder(weights, roundtrip.texels)
+        : fit_affine_decoder(weights, roundtrip.texels);
+    const std::vector<float> reconstructed = reconstruct(roundtrip.texels, decoder);
+    const double mse = elementwise_mse(weights, reconstructed);
+    const double activation_mse = activation_relative_mse(weights, reconstructed, rows, columns);
+    std::printf("latent format=%s mode=%s bytes=%zu bpw=%.5f dual-plane=%u/%u alpha-plane=%u "
+                "sL=%.8g sA=%.8g b=%.8g MSE=%.8g activation-relative-MSE=%.8g\n",
+                format.name, name, roundtrip.compressed_bytes,
+                roundtrip.compressed_bytes * 8.0 / weights.size(),
+                roundtrip.dual_plane_blocks, roundtrip.block_count,
+                roundtrip.alpha_dual_plane_blocks, decoder.scale_l, decoder.scale_a,
+                decoder.offset, mse, activation_mse);
+    return std::isfinite(mse) && std::isfinite(activation_mse);
+}
+
+} // namespace
+
+int main(int argc, char ** argv) {
+    std::string model_path;
+    std::string tensor_name;
+    for (int index = 1; index < argc; ++index) {
+        const std::string option = argv[index];
+        if ((option == "--model" || option == "--tensor") && index + 1 < argc) {
+            const std::string value = argv[++index];
+            if (option == "--model") model_path = value;
+            else tensor_name = value;
+        } else {
+            std::fprintf(stderr, "usage: %s [--model path --tensor name]\n", argv[0]);
+            return 2;
+        }
+    }
+    if (model_path.empty() != tensor_name.empty()) {
+        std::fprintf(stderr, "--model and --tensor must be supplied together\n");
+        return 2;
+    }
+
+    uint32_t rows = kRows;
+    uint32_t columns = kColumns;
+    std::vector<float> weights;
+    if (model_path.empty()) {
+        weights.resize(static_cast<size_t>(rows) * columns);
+        for (uint32_t row = 0; row < rows; ++row) {
+            for (uint32_t column = 0; column < columns; ++column) {
+                weights[static_cast<size_t>(row) * columns + column] =
+                    0.70f * std::sin(0.037f * (row + 1) * (column + 1)) +
+                    0.15f * std::cos(0.113f * (row + 3) + 0.029f * column);
+            }
+        }
+    } else {
+        ggml_vk_astc_loaded_matrix matrix;
+        std::string error;
+        if (!ggml_vk_astc_load_gguf_matrix(model_path, tensor_name, matrix, error)) {
+            std::fprintf(stderr, "%s\n", error.c_str());
+            return 1;
+        }
+        rows = matrix.rows;
+        columns = matrix.columns;
+        weights = std::move(matrix.values);
+    }
+
+    const auto [minimum_it, maximum_it] = std::minmax_element(weights.begin(), weights.end());
+    const float minimum = *minimum_it;
+    const float range = std::max(*maximum_it - minimum, 1e-6f);
+    const std::vector<float> scalar_latents = make_scalar_latents(weights, minimum, range);
+    const std::vector<float> additive_latents = make_additive_latents(weights, minimum, range);
+    for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,
+                                 ggml_vk_astc_5x5_unorm_rgba,
+                                 ggml_vk_astc_6x6_unorm_rgba }) {
+        if (!run_case("scalar-rgba", weights, scalar_latents, rows, columns, format) ||
+            !run_case("luminance-alpha-additive", weights, additive_latents,
+                      rows, columns, format)) {
+            std::fprintf(stderr, "ASTC latent smoke failed\n");
+            return 1;
+        }
+    }
+    return 0;
+}

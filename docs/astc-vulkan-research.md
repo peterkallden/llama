@@ -160,12 +160,45 @@ a naive magnitude-grouped spatial order was worse than identity. Basis-style
 candidate search is therefore a promising next step, while blindly adopting
 UASTC or image-oriented heuristics is not.
 
+## Additive latents and codec-aware optimization
+
+ASTC-Latent is a separate hypothesis from storing a conventional Q4 tensor in
+an ASTC image. The proposed runtime contract is a sampled, cheap additive
+reconstruction:
+
+\[
+\hat w = s_L L' + s_A A' + b.
+\]
+
+The initial `RGB=L, A=A` layout should be understood as a luminance-plus-alpha
+*source signal*, not as an instruction to the decoder. ASTC dual-plane blocks
+have two interpolation weight grids, with the second grid applied to one
+selected component. They do not expose two arbitrary independent endpoint
+planes, and Vulkan exposes no API to request a dual-plane block at sampling
+time. The offline packer must inspect its final bitstream, and a future
+constrained encoder must prove that any intended dual-plane selection is legal
+and effective.
+
+This direction is inspired by two complementary research strands. AQLM shows
+that learned additive, input-adaptive representations can be useful for LLMs
+at very low rates, but its learned vector codebooks are not automatically
+provided by ASTC. Neural-material work demonstrates the relevant systems
+pattern: train through a block-codec approximation, export ordinary compressed
+textures, and use fixed-function texture decode at runtime. PV-Tuning is a
+candidate method for optimizing a discrete representation without relying only
+on a straight-through estimator. The immediate experiment should remain much
+simpler: establish a post-training two-latent control, optimize by held-out
+activation error, and only then move to codec-aware latent or codebook tuning.
+
 ## References
 
 - [Khronos Vulkan format definitions](https://docs.vulkan.org/spec/latest/chapters/formats.html)
 - [Khronos compressed image formats](https://docs.vulkan.org/spec/latest/appendices/compressedtex.html)
 - [Arm: ASTC Does It](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/astc-does-it)
 - [Arm ASTC encoder format overview](https://github.com/ARM-software/astc-encoder/blob/main/Docs/FormatOverview.md)
+- [Khronos ASTC data-format specification](https://github.com/KhronosGroup/DataFormat/blob/main/astc.txt)
+- [AQLM: Extreme Compression of LLMs via Additive Quantization](https://arxiv.org/abs/2401.06118)
+- [PV-Tuning: Beyond Straight-Through Estimation for Extreme LLM Compression](https://arxiv.org/abs/2405.14852)
 - [Real-Time Neural Materials using Block-Compressed Features](https://arxiv.org/abs/2311.16121)
 - [Hardware Accelerated Neural Block Texture Compression with Cooperative Vectors](https://arxiv.org/abs/2506.06040)
 - [Khronos Vulkan ML tutorial: sampler-assisted resizing](https://github.khronos.org/Vulkan-Site/tutorial/latest/ML_Inference/Desktop_Applications/05_real_time_camera.html)

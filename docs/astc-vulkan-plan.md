@@ -132,6 +132,29 @@ dispatches; its timing data is still exploratory and not a performance claim.
     ordered coarse/residual channel permutations. Keep the regression fixture
     small, and permit an explicit F16 GGUF tensor as the input for expensive
     real-layer sweeps.
+31. [x] Add a one-weight-per-texel luminance-plus-alpha baseline which reports
+    the *actual* dual-plane decisions made by the standard encoder. This keeps
+    a learned/additive two-latent experiment distinct from the rejected
+    two-independent-weights-per-texel residual layout.
+32. Evaluate a calibrated two-latent decoder, `w = s_L L' + s_A A' + b`, with
+    one scalar per texel. Include the three scalar decoder parameters in byte
+    pressure and compare it to the scalar ASTC baseline on held-out
+    activations.
+33. [x] Add an ASTC block-mode audit to distinguish a L+A source image from blocks
+    that actually use dual-plane, and report the second-plane component. Do
+    not claim dual-plane benefits unless the encoded block stream demonstrates
+    them.
+34. Investigate a constrained offline encoder or encoder search only if the
+    unconstrained audit shows that `astcenc` rarely selects the alpha plane.
+    Vulkan sampling cannot request a block mode or BISE alphabet at runtime.
+35. Prototype codec-aware optimization with a differentiable ASTC surrogate
+    and exact `astcenc` projection/evaluation. Begin with alternating
+    optimization of the latent fields and decoder parameters; assess
+    PV-Tuning-style representation optimization only against held-out
+    activation or model loss.
+36. Evaluate AQLM-inspired learned additive codebooks only after the direct
+    two-latent baseline is characterized. This is an analogy, not a claim that
+    an ASTC texture automatically implements AQLM's vector codebooks.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
@@ -203,6 +226,54 @@ reproducible, held-out quality/byte frontier that is competitive with the
 packed baseline on the same small model. A capacity win alone is insufficient;
 the experiment must also measure whether texture decoding reduces total shader
 work or improves latency/energy on a real device.
+
+## Research track: ASTC-Latent additive weights
+
+**ASTC-Latent** is a second, deliberately separate hypothesis. It asks whether
+one logical weight per ASTC texel can be represented as two learned numerical
+latents and reconstructed after standard texture sampling:
+
+\[
+\hat w = s_L L' + s_A A' + b.
+\]
+
+The initial source layout is `R=G=B=L, A=A`. It is chosen to resemble a
+luminance-plus-alpha signal, but it must not be confused with a promise that
+every encoded block uses ASTC dual-plane. In dual-plane mode, ASTC assigns a
+second interpolation weight grid to **one selected component**, while the
+other components share the first grid; it does not provide two arbitrary,
+independent endpoint planes. The offline encoder selects this mode per block,
+and the Vulkan sampler exposes only the decoded values. The PoC therefore
+queries the public `astcenc_get_block_info` API and reports both the total
+dual-plane count and the count whose second component is alpha.
+
+This layout still has one scalar weight per texel, hence the physical rate is
+8.00, 5.12, and 3.56 bits per weight for 4x4, 5x5, and 6x6 respectively before
+image-edge padding and the three decoder scalars. It is not the earlier
+two-weights-per-texel experiment, whose apparent rate was lower only by asking
+the same 128-bit ASTC block to represent more independent values.
+
+The research inspiration is additive quantization and codec-aware training,
+not a claim of equivalence. AQLM learns additive vector codebooks and optimizes
+them with model-aware objectives; ASTC-Latent initially only supplies two
+sampled latent fields. The progression is therefore:
+
+1. **Post-training control.** Compare scalar replicated RGBA with a fixed
+   coarse-plus-residual L+A construction, then fit `s_L`, `s_A`, and `b` after
+   the real ASTC roundtrip. This validates the contract and likely rejects a
+   naive high-frequency residual.
+2. **Codec-aware representation.** Optimize L and A through a differentiable
+   surrogate, repeatedly project them through the real encoder, and choose
+   candidates by held-out `||XW-X\hat W||^2` rather than weight MSE alone.
+3. **Model-aware fine-tuning.** If the small-model gate is promising, use
+   calibration/model loss and compare limited representation optimization with
+   PV-Tuning-style alternatives. AQLM-like codebooks are then a candidate
+   parameterization, not an assumption.
+
+Standard ASTC footprints 8x6 (2.67 bits/texel) and 8x8 (2.00 bits/texel) are
+valid future rungs. They remain outside the initial contract until the Vulkan
+capability probe verifies them on the target device and the 4x4/5x5/6x6
+one-weight-per-texel result establishes a useful quality trend.
 
 ## Phase 3: compute matvec kernel
 

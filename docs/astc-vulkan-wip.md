@@ -970,3 +970,73 @@ only 1.7778 bpw because it stores two logical weights per texel. The best of
 the three canonical coarse-only pairings reached `0.83658` relative matvec
 MSE; the best naive residual pairing reached `4.36999`. This is deliberately
 retained as a capacity stress test, not promoted as an ASTC-Q candidate.
+
+## Forty-seventh sweep: additive luminance-plus-alpha latent contract
+
+The next research direction is **ASTC-Latent**: one logical weight per texel
+is reconstructed from two decoded numerical components,
+
+\[
+\hat w = s_L L' + s_A A' + b.
+\]
+
+The first source layout is `R=G=B=L, A=A`. This is intentionally unlike the
+previous residual-pair test: it does not try to place two unrelated weights in
+one texel. It retains 8.00, 5.12, and 3.56 physical bits per logical weight at
+4x4, 5x5, and 6x6 before padding and three decoder scalars.
+
+The first executable, `astc-vulkan-latent-smoke`, contains two controls. The
+`scalar-rgba` control replicates a normalized scalar weight in all four
+channels. The `luminance-alpha-additive` control stores a 16-level coarse
+value as RGB and the bounded residual as alpha. Both make a real `astcenc`
+roundtrip and fit the three affine reconstruction constants from the decoded
+values. This is a post-training contract test, not yet codec-aware training.
+
+The smoke also inspects every final 128-bit block through
+`astcenc_get_block_info`. It reports `dual-plane=N/M` and the subset whose
+second interpolation component is alpha. This is material: a L+A source image
+does not guarantee dual-plane use. ASTC dual-plane gives one chosen component
+a second interpolation weight grid; it is not two independent arbitrary
+channels, and Vulkan sampling gives the application no runtime block-mode
+control.
+
+This sweep makes three design decisions before collecting quality numbers:
+
+- retain L+A as the primary codec-aware-training hypothesis;
+- keep the initial implementation encoder-observed rather than claiming a
+  forced dual-plane mode; and
+- call the relation to AQLM *inspiration*, not equivalence. AQLM's learned
+  additive codebooks are a stronger later parameterization than the two raw
+  per-texel fields tested here.
+
+The next measurement must compare the scalar and L+A controls on the
+deterministic fixture and a real F16 layer, record actual dual-plane selection,
+then decide whether a constrained encoder search is justified. The loss gate
+will be held-out activation error before model-loss fine-tuning. The 8x6 and
+8x8 ASTC rungs remain deferred until device capability is verified.
+
+The first real-layer measurement used SmolLM2 F16
+`blk.0.attn_q.weight` (576 x 576) and the deterministic activation suite. It
+also corrected an initial test-harness issue: the scalar RGBA control has
+collinear RGB and alpha features, so it must fit a two-parameter
+`s_L L' + b` decoder rather than a singular three-parameter regression.
+
+| Format | Mode | Effective bpw | Relative matvec MSE | Dual-plane blocks | Alpha-plane blocks |
+|---|---|---:|---:|---:|---:|
+| 4x4 | scalar RGBA | 8.0000 | 0.00206 | 0 / 20736 | 0 |
+| 4x4 | coarse L + residual A | 8.0000 | 0.14506 | 3250 / 20736 | 3250 |
+| 5x5 | scalar RGBA | 5.1914 | 0.01992 | 0 / 13456 | 0 |
+| 5x5 | coarse L + residual A | 5.1914 | 0.69131 | 103 / 13456 | 103 |
+| 6x6 | scalar RGBA | 3.5556 | 0.08391 | 0 / 9216 | 0 |
+| 6x6 | coarse L + residual A | 3.5556 | 0.91305 | 0 / 9216 | 0 |
+
+The precise finding is not that two latents cannot work. It is that splitting
+an ordinary post-training weight into a 16-level coarse field and an
+independent high-frequency residual field makes the second component poorly
+compressible. At 4x4 the encoder does recognize the deliberately
+luminance-plus-alpha-like signal and selects alpha dual-plane in 15.7% of
+blocks, but this is still far below the scalar control. At 6x6 it selects no
+dual-plane blocks and loses almost all useful activation fidelity. This is
+evidence for the proposed next stage — jointly structured/codec-aware latents
+and model-aware loss — rather than support for adding a residual to an
+unmodified model.

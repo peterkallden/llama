@@ -67,6 +67,19 @@ if (TARGET astcenc::astcenc-static)
     target_link_libraries(astc-vulkan-channel-semantic-smoke PRIVATE
         astcenc::astcenc-static ggml-base)
     target_compile_features(astc-vulkan-channel-semantic-smoke PRIVATE cxx_std_17)
+
+    # One logical weight per texel, stored either as a scalar replicated across
+    # RGBA or as a luminance-plus-alpha additive latent. The tool reports the
+    # encoder's actual dual-plane decisions; it never assumes one was used.
+    add_executable(astc-vulkan-latent-smoke
+        astc-vulkan-latent-smoke.cpp
+        astc-vulkan-input.cpp)
+    target_include_directories(astc-vulkan-latent-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/ggml/include)
+    target_link_libraries(astc-vulkan-latent-smoke PRIVATE
+        astcenc::astcenc-static ggml-base)
+    target_compile_features(astc-vulkan-latent-smoke PRIVATE cxx_std_17)
     if (TARGET ggml-base)
         add_executable(astc-vulkan-quality-smoke
             astc-vulkan-quality-smoke.cpp
@@ -186,6 +199,9 @@ if (BUILD_TESTING)
         add_test(NAME astc-vulkan-channel-semantic-smoke
             COMMAND astc-vulkan-channel-semantic-smoke)
         set_property(TEST astc-vulkan-channel-semantic-smoke PROPERTY LABELS astc)
+        add_test(NAME astc-vulkan-latent-smoke
+            COMMAND astc-vulkan-latent-smoke)
+        set_property(TEST astc-vulkan-latent-smoke PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-input-smoke)
