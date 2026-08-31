@@ -2433,3 +2433,25 @@ baseline and local ranking as the mandatory fallback.
 The next gate is a larger and more diverse calibration trace, not another
 order heuristic: measure whether angular candidate coverage and Block-LDLQ
 holdout behavior persist when calibration samples are increased and sharded.
+
+## Ninety-ninth sweep: angular shortlist calibration-size ablation
+
+Using the same fixed holdout as the earlier ablation, angular shortlists gave
+the following `attn_q` 6x6 Block-LDLQ results:
+
+| Calibration samples | Local holdout | Block-LDLQ holdout |
+| ---: | ---: | ---: |
+| 4 | 0.35908 | 0.39132 |
+| 8 | 0.35378 | **0.35142** |
+| 10 | 0.36614 | **0.34425** |
+
+The extra angular candidates do not fix the four-sample overfit, but the
+eight-sample run moves just below local and the ten-sample run preserves the
+earlier 6x6 gain. This strengthens the requirement for calibration diversity:
+Block-LDLQ is only competitive once the trace contains enough independent
+directions. The result is still a bounded crop and must not be generalized to
+full-model quality.
+
+The next implementation gate is to add explicit calibration-shard reporting
+and a conservative cross-shard acceptance score, then rerun the 6x6 probe. The
+runtime fallback remains local ranking; no GPU integration is justified yet.

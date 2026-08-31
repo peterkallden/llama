@@ -676,6 +676,13 @@ larger secondary improvement on `attn_k` 5x5 but remains above local. Keep it
 as a candidate-direction diagnostic; the next required gate is larger,
 sharded calibration data and fixed holdout evaluation, with local fallback.
 
+The angular calibration-size ablation confirms the same pattern: four
+calibration samples overfit, while eight and ten samples make 6x6 Block-LDLQ
+slightly better than local on the `attn_q` crop. Treat this as evidence for a
+minimum-trace/data-diversity gate, not as a quality threshold. Add explicit
+shard-stability reporting and conservative cross-shard acceptance before
+testing larger traces or GPU performance.
+
 The damping ablation did not change the current 6x6 decisions across
 `1e-5`--`1e-3`. Keep the parameter exposed for future ill-conditioned traces,
 but prioritize calibration diversity, block ordering, and candidate direction
