@@ -2473,3 +2473,22 @@ and does not alter selector decisions yet.
 Next implement the conservative gate as an offline ablation (mean gain minus
 dispersion penalty and a worst-shard guard), then compare it with the existing
 two-shard stability selector on the same candidate snapshots.
+
+## One-hundred-first sweep: four-shard stability selector
+
+The stability selector now accepts `--stability-shards N` (default `2`). With
+four contiguous shards and the angular shortlist, the 6x6 results were:
+
+| Tensor | Local holdout | Block-LDLQ | Stability, 2 shards | Stability, 4 shards |
+| --- | ---: | ---: | ---: | ---: |
+| `attn_q` | 0.36614 | **0.34425** | 0.37097 | 0.35735 |
+| `attn_k` | 0.24283 | 0.25469 | 0.25230 | **0.24139** |
+
+Four-shard gating materially improves stability on both tensor controls and
+beats local on `attn_k`, while accepting only three/four block changes. It does
+not replace the `attn_q` Block-LDLQ signal, but it is the more robust fallback
+when calibration dispersion is high. The implementation remains opt-in and
+offline; the default two-shard behavior is preserved for regression.
+
+Next compare four-shard stability and Block-LDLQ under a larger calibration
+trace, then add an explicit worst-shard guard if the ordering persists.

@@ -683,6 +683,12 @@ minimum-trace/data-diversity gate, not as a quality threshold. Add explicit
 shard-stability reporting and conservative cross-shard acceptance before
 testing larger traces or GPU performance.
 
+The stability selector now supports a configurable shard count. Four-shard
+gating improved the 6x6 holdout on both real tensor controls and beat local on
+`attn_k`, making it the current robust fallback. Keep the default at two for
+compatibility, but prioritize four-shard stability versus Block-LDLQ on larger
+traces before GPU timing or runtime policy work.
+
 Four-shard diagnostics are now emitted for selector comparisons. The current
 6x6 `attn_q` Block-LDLQ result has lower mean calibration error but higher
 dispersion and a worse worst shard than local, so the next implementation is

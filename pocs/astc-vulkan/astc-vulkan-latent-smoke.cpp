@@ -23,6 +23,7 @@ double g_block_ldlq_damping = 1e-4;
 enum class ldlq_order_mode { forward, reverse, pivot };
 ldlq_order_mode g_block_ldlq_order = ldlq_order_mode::forward;
 bool g_directional_shortlists = false;
+uint32_t g_stability_shards = 2;
 
 struct affine_decoder {
     double scale_l = 0.0;
@@ -682,19 +683,21 @@ bool stability_select_astc_blocks(
         const activations & calibration,
         coordinate_result & result,
         const std::vector<std::vector<uint32_t>> * shortlists) {
-    if (calibration.samples < 2) return false;
+    if (calibration.samples < g_stability_shards || g_stability_shards < 2) return false;
     if (!local_select_astc_blocks(reference, candidates, rows, columns, format,
                                   calibration, result, shortlists)) return false;
     const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
     const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
     const uint32_t block_count = blocks_x * blocks_y;
-    const uint32_t first_count = calibration.samples / 2;
-    const std::array<activations, 2> shards = {
-        slice_activation_samples(calibration, 0, first_count),
-        slice_activation_samples(calibration, first_count, calibration.samples - first_count) };
-    std::array<std::vector<double>, 2> residuals;
-    std::array<double, 2> residual_energy = { 0.0, 0.0 };
-    for (uint32_t shard = 0; shard < 2; ++shard) {
+    const uint32_t shard_count = std::min(g_stability_shards, calibration.samples);
+    const uint32_t shard_size = (calibration.samples + shard_count - 1) / shard_count;
+    std::vector<activations> shards;
+    std::vector<std::vector<double>> residuals(shard_count);
+    std::vector<double> residual_energy(shard_count, 0.0);
+    for (uint32_t shard = 0; shard < shard_count; ++shard) {
+        const uint32_t first = shard * shard_size;
+        const uint32_t count = std::min(shard_size, calibration.samples - first);
+        shards.push_back(slice_activation_samples(calibration, first, count));
         const std::vector<double> shard_expected = matvec_outputs(reference, rows, columns, shards[shard]);
         const std::vector<double> shard_actual = matvec_outputs(result.reconstructed, rows, columns, shards[shard]);
         residuals[shard].resize(shard_expected.size());
@@ -720,7 +723,7 @@ bool stability_select_astc_blocks(
             if (candidate_index >= candidates.size()) return false;
             if (!candidate_allowed_for_block(candidates[candidate_index], block)) continue;
             double score = INFINITY;
-            for (uint32_t shard = 0; shard < 2; ++shard) {
+            for (uint32_t shard = 0; shard < shard_count; ++shard) {
                 const double gain = block_output_gain(
                     residuals[shard], candidates[result.selected_indices[block]],
                     candidates[candidate_index], block, blocks_x, rows, columns,
@@ -742,7 +745,7 @@ bool stability_select_astc_blocks(
         const uint32_t block = proposal.block;
         const uint32_t current_index = result.selected_indices[block];
         double robust_gain = INFINITY;
-        for (uint32_t shard = 0; shard < 2; ++shard) {
+        for (uint32_t shard = 0; shard < shard_count; ++shard) {
             const double gain = block_output_gain(
                 residuals[shard], candidates[current_index], candidates[proposal.candidate],
                 block, blocks_x, rows, columns, format, shards[shard]);
@@ -1614,7 +1617,7 @@ bool run_coordinate_case(const std::vector<float> & weights,
                     "hessian-feedback-holdout=%.8g conflict-aware-holdout=%.8g stability-holdout=%.8g "
                     "hessian-recovered-coordinate-gain=%.8g conflict-aware-recovered-coordinate-gain=%.8g "
                     "stability-recovered-coordinate-gain=%.8g feedback-round-changes=%u "
-                    "conflict-aware-accepted=%u stability-accepted=%u "
+                    "conflict-aware-accepted=%u stability-accepted=%u stability-shards=%u "
                     "candidate-coverage-min=%zu candidate-coverage-max=%zu candidate-coverage-average=%.2f "
                     "candidate-shortlist-distance=%s "
                     "local-unique-choices=%zu conflict-unique-choices=%zu stability-unique-choices=%zu\n",
@@ -1626,6 +1629,7 @@ bool run_coordinate_case(const std::vector<float> & weights,
                     feedback_loss, conflict_loss, stability_loss, recovered_gain,
                     conflict_gain, stability_gain, feedback.forward_changes,
                     conflict_aware.forward_changes, stability.forward_changes,
+                    g_stability_shards,
                     minimum_coverage == std::numeric_limits<size_t>::max() ? 0 : minimum_coverage,
                     maximum_coverage, average_coverage,
                     g_directional_shortlists ? "angular" : "euclidean",
@@ -1745,6 +1749,8 @@ int main(int argc, char ** argv) {
             candidate_sweep = true;
         } else if (option == "--candidate-angular") {
             g_directional_shortlists = true;
+        } else if (option == "--stability-shards" && index + 1 < argc) {
+            g_stability_shards = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if (option == "--footprint" && index + 1 < argc) {
             footprint = argv[++index];
         } else if (option == "--preset" && index + 1 < argc) {
@@ -1786,7 +1792,7 @@ int main(int argc, char ** argv) {
             else calibration_trace_path = value;
         } else {
             std::fprintf(stderr,
-                         "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] "
+                         "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-mode scalar|additive]\n",
@@ -1850,6 +1856,10 @@ int main(int argc, char ** argv) {
     }
     if (!std::isfinite(g_block_ldlq_damping) || g_block_ldlq_damping < 0.0) {
         std::fprintf(stderr, "--ldlq-damping must be a finite non-negative value\n");
+        return 2;
+    }
+    if (g_stability_shards < 2) {
+        std::fprintf(stderr, "--stability-shards must be at least 2\n");
         return 2;
     }
 #if !defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
