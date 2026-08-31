@@ -749,3 +749,9 @@ The first disjoint FFN control (32 rows, all 1,536 columns) is complete. Local
 ranking remained best on 4x4 and 5x5 holdout error; two-shard stability tied
 local on 6x6. This is consistent with the conservative fallback policy and
 does not justify a global selector or footprint default.
+
+The tile-height follow-up confirmed the bandwidth accounting: at full 1,536
+columns, a 32-row 6x6 crop measured 4.000 b/w because of edge blocks, while a
+128-row crop measured 3.6667 b/w and approached the 3.5556 b/w asymptote. Use
+tall/full-height tiles for rate studies and keep short crops only for functional
+contracts.

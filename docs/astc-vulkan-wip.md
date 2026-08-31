@@ -2651,3 +2651,17 @@ generalize to this holdout. This reinforces the existing policy: selector
 choice is an offline, holdout-gated decision and local is always a valid
 fallback. The run is a wide-dimension plumbing/control result, not evidence
 that 6x6 is universally best.
+
+## One-hundred-tenth sweep: tile-height bandwidth convergence
+
+Keeping all 1,536 columns and increasing the crop from 32 to 128 rows changed
+the 6x6 encoded size from 24,576 bytes (4.000 b/w) to 90,112 bytes
+(3.6667 b/w). The 128-row image has 22 block rows, so the remaining gap to the
+3.5556 b/w asymptote is the expected partial edge-block overhead. The decoded
+scalar mode remained numerically stable (MSE 0.00237999 versus 0.00237795 on
+the 32-row crop), while the additive variants remained worse.
+
+This confirms that bandwidth comparisons must use sufficiently tall tiles or
+full tensors; a short diagnostic crop overstates ASTC's rate. The large-tile
+candidate search is intentionally kept as an offline CPU reference and is not
+being interpreted as runtime latency.
