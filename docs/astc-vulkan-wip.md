@@ -1373,3 +1373,38 @@ clear boundary: weight-aware late ranking alone cannot improve scalar storage.
 The next scalar experiment must score candidate assignments against exact
 calibration layer output, using an offline shortlist and cached residual so the
 block cross terms are retained.
+
+## Fifty-ninth sweep: exact coordinate descent over legal ASTC blocks
+
+The side fork now contains a small exact coordinate-descent contract. For each
+6x6 block it retains two independently encoded, legal candidates: the normal
+RGBA-ranked block and the fixed L+A neural-ranked block. It starts from the
+normal stream, computes `R = Y - Y_hat`, and for each candidate replacement
+uses:
+
+```
+Delta Y = (W_hat_candidate - W_hat_current) X_block^T
+score   = ||R - Delta Y||_F^2
+```
+
+After accepting a replacement it updates `R` immediately. It runs a forward
+block sweep followed by a reverse sweep, so the score includes cross terms with
+previously selected blocks rather than approximating them with independent
+weight errors. The test also concatenates the selected 16-byte blocks into a
+new ASTC stream, CPU-decodes it, and requires an exact match to the mixed-block
+matrix used for scoring.
+
+On all eight deterministic L+A fixtures, the selected mixed stream has lower
+activation MSE than the initial normal stream. It also beats the best uniform
+whole-image choice on every fixture in this small candidate pool. In particular,
+fixture 2 had a worse uniform neural-ranked stream than standard
+(`0.00240484` versus `0.00224996`), yet coordinate selection reached
+`0.00090233`. Reverse sweeps further improved fixtures 0, 4, and 7. This is a
+proof that candidate blocks can cooperate through output-error cancellation;
+it is not yet a real-model result or an exhaustive astcenc internal shortlist.
+
+The next adapter will apply the same algorithm to real calibration and holdout
+traces. Its first candidate pool should remain bounded and non-invasive: legal
+full-matrix encodes from several astcenc quality/mapping settings, split into
+their independently decodable blocks. Only a positive real-layer result
+justifies modifying astcenc further to retain deeper internal candidates.

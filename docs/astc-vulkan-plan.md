@@ -217,6 +217,14 @@ dispatches; its timing data is still exploratory and not a performance claim.
     decoder, model tensor, and holdout trace. Treat matching standard output
     as the expected result for replicated RGBA scalar storage; a scalar gain
     requires the subsequent activation-aware global selector.
+54. [x] Implement a side-fork synthetic coordinate-descent contract over a
+    block-local shortlist of legal ASTC candidates. Maintain the exact cached
+    layer residual, run forward and reverse sweeps, and verify that concatenated
+    selected 128-bit blocks decode identically to the chosen mixed matrix.
+55. Extend coordinate selection to a real-layer offline adapter. Start with a
+    bounded pool from complete legal encodes (quality presets and mapping
+    metrics), then expose a richer internal astcenc shortlist only if that pool
+    demonstrates a calibration/holdout improvement.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
