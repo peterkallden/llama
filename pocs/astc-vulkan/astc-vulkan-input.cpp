@@ -46,14 +46,17 @@ bool ggml_vk_astc_load_gguf_matrix(const std::string & path,
         return false;
     }
     const ggml_type type = gguf_get_tensor_type(context, tensor_id);
-    if (type != GGML_TYPE_F32 && type != GGML_TYPE_F16) {
-        error = "only F32 and F16 GGUF tensors are supported by the PoC reader";
+    const ggml_type_traits * traits = ggml_get_type_traits(type);
+    if (traits == nullptr || traits->to_float == nullptr) {
+        error = "GGUF tensor type has no host dequantizer: " +
+                std::string(ggml_type_name(type));
         gguf_free(context);
         return false;
     }
     const size_t value_count = static_cast<size_t>(dimensions[0]) * dimensions[1];
-    const size_t element_size = type == GGML_TYPE_F32 ? sizeof(float) : sizeof(ggml_fp16_t);
-    if (gguf_get_tensor_size(context, tensor_id) != value_count * element_size) {
+    const size_t row_size = ggml_row_size(type, dimensions[0]);
+    const size_t tensor_size = row_size * static_cast<size_t>(dimensions[1]);
+    if (row_size == 0 || gguf_get_tensor_size(context, tensor_id) != tensor_size) {
         error = "tensor byte size does not match its dimensions";
         gguf_free(context);
         return false;
@@ -77,14 +80,13 @@ bool ggml_vk_astc_load_gguf_matrix(const std::string & path,
     matrix.rows = static_cast<uint32_t>(dimensions[1]);
     matrix.columns = static_cast<uint32_t>(dimensions[0]);
     matrix.values.resize(value_count);
-    bool read_ok = false;
-    if (type == GGML_TYPE_F32) {
-        read_ok = read_exact(file, matrix.values.data(), value_count * sizeof(float));
-    } else {
-        std::vector<ggml_fp16_t> values(value_count);
-        read_ok = read_exact(file, values.data(), value_count * sizeof(ggml_fp16_t));
-        if (read_ok) {
-            ggml_fp16_to_fp32_row(values.data(), matrix.values.data(), static_cast<int64_t>(value_count));
+    std::vector<uint8_t> encoded(tensor_size);
+    const bool read_ok = read_exact(file, encoded.data(), encoded.size());
+    if (read_ok) {
+        for (uint32_t row = 0; row < matrix.rows; ++row) {
+            traits->to_float(encoded.data() + static_cast<size_t>(row) * row_size,
+                             matrix.values.data() + static_cast<size_t>(row) * matrix.columns,
+                             matrix.columns);
         }
     }
     std::fclose(file);

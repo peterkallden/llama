@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -129,14 +130,48 @@ bool astc_roundtrip(const std::vector<float> & quantized,
     return true;
 }
 
+bool parse_levels(const std::string & text, std::vector<uint32_t> & levels) {
+    std::stringstream stream(text);
+    std::string token;
+    std::vector<uint32_t> parsed;
+    while (std::getline(stream, token, ',')) {
+        char * end = nullptr;
+        const unsigned long value = std::strtoul(token.c_str(), &end, 10);
+        if (token.empty() || end == nullptr || *end != '\0' || value < 2 || value > UINT32_MAX) {
+            return false;
+        }
+        parsed.push_back(static_cast<uint32_t>(value));
+    }
+    if (parsed.empty()) return false;
+    levels = std::move(parsed);
+    return true;
+}
+
+bool parse_blocks(const std::string & text, std::vector<uint32_t> & blocks) {
+    std::vector<uint32_t> parsed;
+    if (!parse_levels(text, parsed)) return false;
+    for (const uint32_t block : parsed) {
+        if (block != 4 && block != 5 && block != 6) return false;
+    }
+    blocks = std::move(parsed);
+    return true;
+}
+
 bool parse_args(int argc, char ** argv, std::string & model, std::string & tensor,
-                std::string & trace) {
+                std::string & trace, std::vector<uint32_t> & levels,
+                std::vector<uint32_t> & blocks) {
     if (argc < 5 || argc % 2 == 0) return false;
     for (int i = 1; i < argc; i += 2) {
         const std::string option = argv[i];
         if (option == "--model") model = argv[i + 1];
         else if (option == "--tensor") tensor = argv[i + 1];
         else if (option == "--trace") trace = argv[i + 1];
+        else if (option == "--levels") {
+            if (!parse_levels(argv[i + 1], levels)) return false;
+        }
+        else if (option == "--blocks") {
+            if (!parse_blocks(argv[i + 1], blocks)) return false;
+        }
         else return false;
     }
     return !model.empty() && !tensor.empty();
@@ -148,8 +183,12 @@ int main(int argc, char ** argv) {
     std::string model;
     std::string tensor;
     std::string trace_path;
-    if (!parse_args(argc, argv, model, tensor, trace_path)) {
-        std::fprintf(stderr, "usage: %s --model path --tensor name [--trace path]\n", argv[0]);
+    std::vector<uint32_t> levels = { 3u, 5u, 8u, 16u };
+    std::vector<uint32_t> blocks = { 4u, 6u };
+    if (!parse_args(argc, argv, model, tensor, trace_path, levels, blocks)) {
+        std::fprintf(stderr,
+                     "usage: %s --model path --tensor name [--trace path] [--levels 3,5,8,16] [--blocks 4,5,6]\n",
+                     argv[0]);
         return 2;
     }
     ggml_vk_astc_loaded_matrix matrix;
@@ -173,25 +212,25 @@ int main(int argc, char ** argv) {
         inputs.values = make_default_activations(matrix.columns);
     }
 
-    for (const uint32_t levels : { 3u, 5u, 8u, 16u }) {
-        const std::vector<float> quantized = quantize_levels(matrix.values, levels);
+    for (const uint32_t level_count : levels) {
+        const std::vector<float> quantized = quantize_levels(matrix.values, level_count);
         std::printf("native-quant levels=%u packed-ideal-bytes=%zu MSE=%.8g activation-relative-MSE=%.8g\n",
-                    levels,
-                    static_cast<size_t>(std::ceil(matrix.values.size() * std::log2(levels) / 8.0)),
+                    level_count,
+                    static_cast<size_t>(std::ceil(matrix.values.size() * std::log2(level_count) / 8.0)),
                     elementwise_mse(matrix.values, quantized),
                     activation_relative_mse(matrix.values, quantized,
                                              matrix.rows, matrix.columns, inputs));
-        for (const uint32_t block : { 4u, 6u }) {
+        for (const uint32_t block : blocks) {
             std::vector<float> reconstructed;
             size_t compressed_bytes = 0;
             if (!astc_roundtrip(quantized, matrix.rows, matrix.columns, block,
                                 reconstructed, compressed_bytes)) {
                 std::fprintf(stderr, "ASTC-Q roundtrip failed for %ux%u levels=%u\n",
-                             block, block, levels);
+                             block, block, level_count);
                 return 1;
             }
             std::printf("ASTC-Q %ux%u levels=%u bytes=%zu bits-per-weight=%.5f MSE=%.8g activation-relative-MSE=%.8g\n",
-                        block, block, levels, compressed_bytes,
+                        block, block, level_count, compressed_bytes,
                         compressed_bytes * 8.0 / matrix.values.size(),
                         elementwise_mse(matrix.values, reconstructed),
                         activation_relative_mse(matrix.values, reconstructed,

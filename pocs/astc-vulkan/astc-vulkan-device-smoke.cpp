@@ -265,6 +265,7 @@ int main() {
         const VkFormatFeatureFlags required =
             VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
         if (!format_supports(device, VK_FORMAT_ASTC_4x4_UNORM_BLOCK, required) ||
+            !format_supports(device, VK_FORMAT_ASTC_5x5_UNORM_BLOCK, required) ||
             !format_supports(device, VK_FORMAT_ASTC_6x6_UNORM_BLOCK, required)) {
             continue;
         }
@@ -309,16 +310,19 @@ int main() {
     const bool success_4x4 = create_and_upload_image(
         selected_device, device, queue, selected_queue_family,
         VK_FORMAT_ASTC_4x4_UNORM_BLOCK, { 4, 4, 1 });
+    const bool success_5x5 = create_and_upload_image(
+        selected_device, device, queue, selected_queue_family,
+        VK_FORMAT_ASTC_5x5_UNORM_BLOCK, { 5, 5, 1 });
     const bool success_6x6 = create_and_upload_image(
         selected_device, device, queue, selected_queue_family,
         VK_FORMAT_ASTC_6x6_UNORM_BLOCK, { 6, 6, 1 });
     vkDeviceWaitIdle(device);
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
-    if (!success_4x4 || !success_6x6) {
+    if (!success_4x4 || !success_5x5 || !success_6x6) {
         std::fprintf(stderr, "ASTC device smoke failed: image upload or layout transition failed\n");
         return 1;
     }
-    std::puts("ASTC 4x4 and 6x6 image resource smoke passed");
+    std::puts("ASTC 4x4, 5x5, and 6x6 image resource smoke passed");
     return 0;
 }

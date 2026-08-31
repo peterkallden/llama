@@ -90,8 +90,9 @@ bool run_format(const ggml_vk_astc_format_contract & format) {
 
 int main() {
     const bool format_4x4_ok = run_format(ggml_vk_astc_4x4_unorm_rgba);
+    const bool format_5x5_ok = run_format(ggml_vk_astc_5x5_unorm_rgba);
     const bool format_6x6_ok = run_format(ggml_vk_astc_6x6_unorm_rgba);
-    if (!format_4x4_ok || !format_6x6_ok) {
+    if (!format_4x4_ok || !format_5x5_ok || !format_6x6_ok) {
         std::fprintf(stderr, "ASTC encoder smoke failed\n");
         return 1;
     }

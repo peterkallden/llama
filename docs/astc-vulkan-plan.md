@@ -25,9 +25,10 @@ into `ggml-vulkan` is a later decision gate after device-backed evidence.
 1. [x] Add host-neutral format contracts and focused CTest targets.
 2. [x] Add a small standalone Vulkan test utility, outside the normal inference
    path.
-3. [x] Query `VK_FORMAT_ASTC_4x4_UNORM_BLOCK` and
-   `VK_FORMAT_ASTC_6x6_UNORM_BLOCK` for optimal-tiling sampled-image support.
-4. [x] Verify that ASTC 4x4 and 6x6 images can be allocated, uploaded, and
+3. [x] Query `VK_FORMAT_ASTC_4x4_UNORM_BLOCK`,
+   `VK_FORMAT_ASTC_5x5_UNORM_BLOCK`, and `VK_FORMAT_ASTC_6x6_UNORM_BLOCK`
+   for optimal-tiling sampled-image support.
+4. [x] Verify that ASTC 4x4, 5x5, and 6x6 images can be allocated, uploaded, and
    transitioned for shader reads on a compatible device.
 5. [x] Compile the minimal `texelFetch` validation shader when `glslc` is
    available.
@@ -43,7 +44,7 @@ device execution/readback, and initial access-pattern instrumentation are
 implemented and validated on the Intel UHD Graphics 620. CTest still skips
 these tests on hosts that expose no physical ASTC-capable device.
 
-Exit criterion: the selected target GPU accepts both formats as sampled images
+Exit criterion: the selected target GPU accepts the selected formats as sampled images
 and the benchmark produces deterministic, validated values.
 
 Phase 1 result: met on Intel UHD Graphics 620 with Mesa 26.0.8. The benchmark
@@ -54,11 +55,11 @@ dispatches; its timing data is still exploratory and not a performance claim.
 
 1. [x] Define an experimental input tensor layout and metadata record; do not
    add it to the public GGUF specification.
-2. [x] Add a host-only baseline encoder adapter that exercises 4x4 and 6x6
+2. [x] Add a host-only baseline encoder adapter that exercises 4x4, 5x5, and 6x6
    through the external astcenc library.
-3. [x] Add a host-only tensor-to-RGBA staging and roundtrip smoke for 4x4 and
-   6x6 using the same external encoder boundary.
-4. Implement 4x4 and 6x6 tensor packing paths.
+3. [x] Add a host-only tensor-to-RGBA staging and roundtrip smoke for 4x4, 5x5,
+   and 6x6 using the same external encoder boundary.
+4. Implement 4x4, 5x5, and 6x6 tensor packing paths.
 5. Encode static weight blocks offline and preserve any scale, offset, outlier,
    or layout metadata needed by the shader in a companion buffer.
 6. [x] Collect an initial elementwise and dot-product error measurement against
@@ -117,9 +118,11 @@ dispatches; its timing data is still exploratory and not a performance claim.
 27. [x] Validate packed channel-order metadata as an actual four-channel
     permutation before any artifact can be consumed.
 28. [x] Select a matched small-model baseline for end-to-end checks. The
-    `shibatch/tinybpe1m` repository supplies F16, TQ1_0, TQ2_0, and Q4_0 GGUF
-    files with the same tokenizer and architecture. Keep model binaries out
-    of git; record their source and checksums in the WIP log.
+    `shibatch/tinybpe1m` F16 and Q4_0 artifacts provide the compact smoke
+    fixture. Its files named TQ1_0/TQ2_0 were audited and are not true TQ
+    tensor artifacts, so actual TQ tests use locally quantized 256-aligned
+    SmolLM2 FFn-down matrices. Keep model binaries out of git; record their
+    source and checksums in the WIP log.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
@@ -130,7 +133,7 @@ ASTC encoder (for example `astcenc`) behind a host-side adapter. If the encoder
 is unavailable, the adapter must skip with a clear diagnostic; it must not
 silently produce a non-standard or incomplete ASTC bitstream.
 
-Exit criterion: both formats can represent a small known matrix and report
+Exit criterion: every selected format can represent a small known matrix and report
 reconstruction and dot-product error reproducibly.
 
 ## Research track: ASTC-native few-level weights
@@ -153,10 +156,10 @@ alphabets are:
 
 | Candidate | Target alphabet | Initial ASTC layouts | Purpose |
 |---|---|---|---|
-| ASTC-QT | `{-1, 0, +1}` | 4x4, 6x6 | ternary semantic baseline |
-| ASTC-Q5 | five symmetric or learned affine levels | 6x6 | few-level/BitNet-adjacent candidate |
-| ASTC-Q8 | eight levels | 4x4, 6x6 | approximately Q3-like comparison |
-| ASTC-Q16 | sixteen levels | 4x4, 6x6 | approximately Q4-like comparison |
+| ASTC-QT | `{-1, 0, +1}` | 4x4, 5x5, 6x6 | ternary semantic baseline |
+| ASTC-Q5 | five symmetric or learned affine levels | 5x5, 6x6 | few-level/BitNet-adjacent candidate |
+| ASTC-Q8 | eight levels | 4x4, 5x5, 6x6 | approximately Q3-like comparison |
+| ASTC-Q16+ | sixteen or more levels | 4x4, 5x5, 6x6 | rate-distortion ladder |
 
 An ASTC block may use asymmetric local endpoints, partitions, and a separate
 per-block scale only when their resident bytes are included in the comparison.
@@ -201,7 +204,7 @@ work or improves latency/energy on a real device.
 3. Use `texelFetch` at a fixed mip level; do not enable filtering or sRGB.
 4. Map adjacent invocations to adjacent tensor values and make the reduction
    dimension cache-friendly in image coordinates.
-5. Implement 4x4 and 6x6 variants, or compile-time specializations, using the
+5. Implement 4x4, 5x5, and 6x6 variants, or compile-time specializations, using the
    same observable numerical contract.
 6. Compare against the closest existing Vulkan Q4-style matvec kernel with
    identical tensor shapes and activations.
@@ -237,7 +240,8 @@ ASTC enabled and automatically fall back when disabled or unsupported.
 
 1. Compare output logits against the F16 baseline for fixed prompts. The
    matched tinybpe1m family is the first smoke fixture; an ASTC runtime must
-   consume the same F16 tensor source before comparing against TQ/Q4.
+   consume the same F16 tensor source before comparing against Q4 or a true,
+   block-compatible TQ variant.
 2. Run perplexity or another model-appropriate quality evaluation on the same
    corpus and tokenizer.
 3. Measure prompt processing and token generation separately.
@@ -248,6 +252,8 @@ ASTC enabled and automatically fall back when disabled or unsupported.
 Decision points:
 
 - Prefer 4x4 where accuracy dominates.
+- Evaluate 5x5 as the intermediate rate/quality point before assuming that
+  4x4 or 6x6 is optimal.
 - Prefer 6x6 where real measured bandwidth or capacity gains dominate and
   quality remains acceptable.
 - Consider mixed per-tensor/per-layer selection only after each individual

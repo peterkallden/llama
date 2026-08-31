@@ -93,6 +93,17 @@ if (TARGET ggml-base)
     target_link_libraries(astc-vulkan-input-smoke PRIVATE ggml-base)
     target_compile_features(astc-vulkan-input-smoke PRIVATE cxx_std_17)
 
+    # Compare existing packed GGUF formats against the same F16 source. This
+    # remains an offline research measurement; it does not modify ggml-vulkan.
+    add_executable(astc-vulkan-format-smoke
+        astc-vulkan-format-smoke.cpp
+        astc-vulkan-input.cpp)
+    target_include_directories(astc-vulkan-format-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/ggml/include)
+    target_link_libraries(astc-vulkan-format-smoke PRIVATE ggml-base)
+    target_compile_features(astc-vulkan-format-smoke PRIVATE cxx_std_17)
+
     # This tool intentionally uses the current internal layer-input capture
     # extension. It stays in the PoC until an upstream-facing capture API is
     # justified by the measurements it enables.
@@ -195,6 +206,11 @@ if (BUILD_TESTING)
                     ${ASTC_VULKAN_SHADER_OUTPUT} 4x4)
             set_property(TEST astc-vulkan-shader-device-smoke-4x4 PROPERTY LABELS astc)
             set_property(TEST astc-vulkan-shader-device-smoke-4x4 PROPERTY SKIP_RETURN_CODE 77)
+            add_test(NAME astc-vulkan-shader-device-smoke-5x5
+                COMMAND astc-vulkan-shader-device-smoke
+                    ${ASTC_VULKAN_SHADER_OUTPUT} 5x5)
+            set_property(TEST astc-vulkan-shader-device-smoke-5x5 PROPERTY LABELS astc)
+            set_property(TEST astc-vulkan-shader-device-smoke-5x5 PROPERTY SKIP_RETURN_CODE 77)
             add_test(NAME astc-vulkan-shader-device-smoke-6x6
                 COMMAND astc-vulkan-shader-device-smoke
                     ${ASTC_VULKAN_SHADER_OUTPUT} 6x6)
@@ -205,6 +221,11 @@ if (BUILD_TESTING)
                     ${ASTC_VULKAN_SHADER_OUTPUT} 4x4 nonlocal)
             set_property(TEST astc-vulkan-shader-device-smoke-4x4-nonlocal PROPERTY LABELS astc)
             set_property(TEST astc-vulkan-shader-device-smoke-4x4-nonlocal PROPERTY SKIP_RETURN_CODE 77)
+            add_test(NAME astc-vulkan-shader-device-smoke-5x5-nonlocal
+                COMMAND astc-vulkan-shader-device-smoke
+                    ${ASTC_VULKAN_SHADER_OUTPUT} 5x5 nonlocal)
+            set_property(TEST astc-vulkan-shader-device-smoke-5x5-nonlocal PROPERTY LABELS astc)
+            set_property(TEST astc-vulkan-shader-device-smoke-5x5-nonlocal PROPERTY SKIP_RETURN_CODE 77)
             add_test(NAME astc-vulkan-shader-device-smoke-6x6-nonlocal
                 COMMAND astc-vulkan-shader-device-smoke
                     ${ASTC_VULKAN_SHADER_OUTPUT} 6x6 nonlocal)

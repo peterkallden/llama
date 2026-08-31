@@ -11,6 +11,8 @@
 
 namespace {
 
+constexpr int kTernaryBlockElements = 256;
+
 std::string temp_path(const char * suffix) {
     return "/tmp/astc-vulkan-input-" + std::to_string(getpid()) + suffix;
 }
@@ -32,6 +34,20 @@ bool write_fixture(const std::string & path) {
     ggml_set_name(half, "astc.test.f16");
     for (int i = 0; i < 12; ++i) static_cast<ggml_fp16_t *>(half->data)[i] = ggml_fp32_to_fp16(0.125f * (i - 3));
     gguf_add_tensor(file, half);
+
+    std::vector<float> ternary(kTernaryBlockElements);
+    for (int i = 0; i < kTernaryBlockElements; ++i) ternary[i] = static_cast<float>((i % 3) - 1);
+    for (const ggml_type type : { GGML_TYPE_TQ1_0, GGML_TYPE_TQ2_0 }) {
+        ggml_tensor * quantized = ggml_new_tensor_2d(context, type, kTernaryBlockElements, 1);
+        ggml_set_name(quantized, type == GGML_TYPE_TQ1_0 ? "astc.test.tq1" : "astc.test.tq2");
+        if (ggml_quantize_chunk(type, ternary.data(), quantized->data,
+                                0, 1, kTernaryBlockElements, nullptr) != ggml_nbytes(quantized)) {
+            ggml_free(context);
+            gguf_free(file);
+            return false;
+        }
+        gguf_add_tensor(file, quantized);
+    }
     const bool ok = gguf_write_to_file(file, path.c_str(), false);
     ggml_free(context);
     gguf_free(file);
@@ -85,6 +101,10 @@ int main(int argc, char ** argv) {
     assert(matrix.rows == 3 && matrix.columns == 4 && matrix.values[0] == -1.0f);
     assert(ggml_vk_astc_load_gguf_matrix(gguf_path, "astc.test.f16", matrix, error));
     assert(matrix.rows == 3 && matrix.columns == 4 && matrix.values[0] == -0.375f);
+    assert(ggml_vk_astc_load_gguf_matrix(gguf_path, "astc.test.tq1", matrix, error));
+    assert(matrix.rows == 1 && matrix.columns == kTernaryBlockElements && matrix.values[0] == -1.0f && matrix.values[2] == 1.0f);
+    assert(ggml_vk_astc_load_gguf_matrix(gguf_path, "astc.test.tq2", matrix, error));
+    assert(matrix.rows == 1 && matrix.columns == kTernaryBlockElements && matrix.values[0] == -1.0f && matrix.values[2] == 1.0f);
     ggml_vk_astc_activation_trace trace;
     assert(ggml_vk_astc_load_activation_trace(trace_path, trace, error));
     assert(trace.samples == 2 && trace.columns == 4 && trace.values[7] == -4.0f);

@@ -794,14 +794,12 @@ turns an ordinary pretrained matrix into a useful BitNet model. It strengthens
 the ASTC-aware-training hypothesis: the model must learn both the few-level
 alphabet and the spatial/block structure that 6x6 can reconstruct.
 
-## Forty-third sweep: matched tiny-model baseline
+## Forty-third sweep: matched tiny-model baseline and artifact audit
 
-To make the next model-level comparison reproducible, the validation fixture is
-the `shibatch/tinybpe1m` family. It provides the same tokenizer, architecture,
-and training source as F16, Q4_0, TQ1_0, and TQ2_0 GGUF files. The files are
-kept outside the repository under `/tmp/llama-astc-models/tinybpe1m`; the
-repository only commits the short evaluation corpus and records the source
-repository, not a model binary.
+The `shibatch/tinybpe1m` F16 and Q4_0 artifacts are a compact, reproducible
+model-level smoke fixture. The files are kept outside the repository under
+`/tmp/llama-astc-models/tinybpe1m`; the repository only commits the short
+evaluation corpus and records the source repository, not a model binary.
 
 The downloaded artifact checksums are:
 
@@ -817,19 +815,23 @@ which publishes the matched quantization family and documents the model as a
 small llama.cpp validation model.
 
 With a fixed prompt (`Tom and Jerry are`), seed 42, temperature 0, and 16
-predicted tokens, the variants produced:
+predicted tokens, the F16 and Q4 files produced:
 
 | Variant | Deterministic continuation |
 |---|---|
 | F16 | `ly. Every day, Jerry would go` |
-| TQ1_0 | `low. Every day, Jerry would g` |
-| TQ2_0 | `low. Every day, Jerry would g` |
 | Q4_0 | `ed. Every day, Jerry would go` |
 
 On the committed 256-token-context evaluation corpus, one perplexity chunk
-gave F16 `44.1675`, TQ1_0 `52.1643`, TQ2_0 `52.1643`, and Q4_0 `53.3438`.
-These numbers have a large uncertainty because the tiny model and one chunk
-are only a smoke baseline; they are not a quality claim.
+gave F16 `44.1675` and Q4_0 `53.3438`. These numbers have a large uncertainty
+because the tiny model and one chunk are only a smoke baseline; they are not a
+quality claim.
+
+The two downloaded artifacts whose filenames claim `TQ1_0` and `TQ2_0` must
+not be used as ternary controls. A GGUF tensor audit found 28 `q4_0` tensors,
+one `q5_0` tensor, and one `q8_0` tensor in each file. Their matching outputs
+and PPL are therefore expected but do **not** measure TQ behavior. The files
+are retained only as provenance evidence for this validation check.
 
 Running `astc-vulkan-quality-smoke` on the same model's F16
 `blk.0.attn_q.weight` (128x128) measured Q4_0 activation-relative MSE
@@ -840,20 +842,29 @@ also reported 6x6 resident rate `3.78125` bits/weight after edge padding, with
 level-16 element MSE `0.000464` versus level-3 `0.005926`.
 
 The immediate conclusion is that F16 is required as the same-source teacher
-for a fair ASTC comparison, while TQ/Q4 are useful controls. A complete
-model-level ASTC result still requires a loader/runtime path that can fetch
-ASTC-resident weights during inference; the current measurements are the
+for a fair ASTC comparison, while Q4 is the initial model-level control. A
+complete model-level ASTC result still requires a loader/runtime path that can
+fetch ASTC-resident weights during inference; the current measurements are the
 weight and matvec gates that must pass before changing the GGUF format.
 
-## Forty-fourth sweep: TQ1 versus TQ2 behavior
+## Forty-fourth sweep: true TQ1 versus TQ2 behavior and alignment limit
 
-The TQ controls were run with four additional fixed prompts, temperature 0,
-seed 42, and 12 generated tokens. TQ1_0 and TQ2_0 produced the same
-continuation for every prompt in this smoke set, and both produced PPL
-`52.1643` on the one-chunk corpus. This is expected behavior rather than
-evidence that the formats are interchangeable in general: both formats encode
-the same ternary alphabet and can differ only when quantization or conversion
-pipelines choose different values.
+The PoC GGUF reader now uses ggml's registered host dequantizer for any
+rank-two tensor type that provides one. Its contract smoke creates and
+roundtrips actual TQ1_0 and TQ2_0 tensors, so the reader can no longer mistake
+a filename or metadata field for a tensor's physical type.
+
+Running `llama-quantize --pure` on tinybpe1m proved that this model is not a
+valid TQ fixture: its 128- and 352-wide rows are not divisible by TQ's 256
+element block, so llama.cpp correctly falls back to Q4_0. SmolLM2 has a valid
+case: each `ffn_down` matrix is 576x1536, and 1536 is divisible by 256. Local
+TQ1_0 and TQ2_0 files generated from the same SmolLM2 F16 source contain true
+TQ tensors for that projection.
+
+On `blk.0.ffn_down.weight`, TQ1_0 and TQ2_0 decoded to the same values under
+the reference post-training quantizer, producing element MSE `0.02509` and
+relative matvec MSE `0.70405` on the deterministic activation fixture. This
+is a storage-packing comparison, not a trained ternary-model result.
 
 The storage and implementation tradeoff is:
 
@@ -869,3 +880,40 @@ how to execute it and its two-bit code layout is closer to a shader-friendly
 ASTC comparison. Neither result changes the ASTC quality gate: ASTC must still
 beat or approach the TQ/Q4 matvec frontier on the same F16 source before it is
 considered a runtime replacement.
+
+## Forty-fifth sweep: ASTC rate ladder and retained-format tests
+
+The test structure now preserves every investigated format as a named,
+reproducible probe. Fast contract and encoder tests run under the `astc` CTest
+label. The model-backed `format-smoke` and `native-quant-smoke` tools are
+explicit opt-in because they require a local model path and are intentionally
+not silently folded into routine CTest. `native-quant-smoke` accepts explicit
+`--levels` and `--blocks` lists, so each rate/semantic hypothesis is recorded
+by its invocation rather than replaced by the next experiment.
+
+The scalar-per-texel ASTC ladder now includes 4x4, 5x5, and 6x6. The standard
+ASTC storage rates before edge padding and companion metadata are 8.00, 5.12,
+and 3.56 bits per scalar respectively. Intel UHD Graphics 620 with Mesa
+reported sampled-image support for all three formats. The Vulkan capability
+probe, resource smoke, shader-device smoke, and nonlocal shader-device smoke
+all retain separate 4x4/5x5/6x6 names.
+
+On the same 576x1536 SmolLM2 FFn-down matrix, with 1024 source levels to make
+the post-quantization error negligible, the current offline encoder frontier
+was:
+
+| Format | Effective bpw | Relative matvec MSE |
+|---|---:|---:|
+| Q3_K | 3.4375 | 0.02432 |
+| Q4_0 | 4.5000 | 0.00844 |
+| ASTC 6x6 | 3.5556 | 0.06502 |
+| ASTC 5x5 | 5.1690 | 0.01639 |
+| ASTC 4x4 | 8.0000 | 0.00163 |
+
+These measurements use the deterministic activation fixture because the
+existing trace capture records layer input, whereas FFn-down consumes an
+intermediate activation. They establish a rate-distortion frontier, not model
+quality or GPU throughput. The important result is nevertheless clear: 6x6
+has a real capacity/bandwidth experiment at Q3-adjacent density but needs a
+better ASTC-aware representation; 5x5 is the intermediate research point;
+and 4x4 is a deliberately less dense, high-fidelity texture-resident control.

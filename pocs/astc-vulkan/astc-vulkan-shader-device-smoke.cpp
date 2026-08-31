@@ -136,10 +136,11 @@ int main(int argc, char ** argv) {
     const std::string format_name = argc >= 3 ? argv[2] : "";
     const std::string pattern_name = argc == 4 ? argv[3] : "sequential";
     const bool benchmark = argc == 5 && std::string(argv[4]) == "--benchmark";
-    if ((argc < 3 || argc > 5) || (format_name != "4x4" && format_name != "6x6") ||
+    if ((argc < 3 || argc > 5) ||
+        (format_name != "4x4" && format_name != "5x5" && format_name != "6x6") ||
         (pattern_name != "sequential" && pattern_name != "nonlocal")) {
         std::fprintf(stderr,
-                     "usage: %s <validation.spv> <4x4|6x6> "
+                     "usage: %s <validation.spv> <4x4|5x5|6x6> "
                      "[sequential|nonlocal] [--benchmark]\n",
                      argv[0]);
         return 2;
@@ -174,8 +175,9 @@ int main(int argc, char ** argv) {
     }
     std::vector<VkPhysicalDevice> devices(device_count);
     vkEnumeratePhysicalDevices(instance, &device_count, devices.data());
-    const VkFormat format = format_name == "4x4"
-        ? VK_FORMAT_ASTC_4x4_UNORM_BLOCK : VK_FORMAT_ASTC_6x6_UNORM_BLOCK;
+    const VkFormat format = format_name == "4x4" ? VK_FORMAT_ASTC_4x4_UNORM_BLOCK :
+                            format_name == "5x5" ? VK_FORMAT_ASTC_5x5_UNORM_BLOCK :
+                                                   VK_FORMAT_ASTC_6x6_UNORM_BLOCK;
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
     uint32_t queue_family = UINT32_MAX;
     uint32_t timestamp_valid_bits = 0;
@@ -221,11 +223,12 @@ int main(int argc, char ** argv) {
     VkQueue queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, queue_family, 0, &queue);
 
-    const uint32_t block_extent = format_name == "4x4" ? 4 : 6;
+    const uint32_t block_extent = format_name == "4x4" ? 4 : format_name == "5x5" ? 5 : 6;
     const uint32_t width = benchmark ? kBenchmarkTexelExtent : block_extent;
     const uint32_t height = width;
     const uint64_t block_count = ggml_vk_astc_image_block_count(
-        format_name == "4x4" ? ggml_vk_astc_4x4_unorm_rgba : ggml_vk_astc_6x6_unorm_rgba,
+        format_name == "4x4" ? ggml_vk_astc_4x4_unorm_rgba :
+        format_name == "5x5" ? ggml_vk_astc_5x5_unorm_rgba : ggml_vk_astc_6x6_unorm_rgba,
         width, height);
     const VkDeviceSize staging_bytes = block_count * kAstcBlockBytes;
     const uint32_t dispatch_repeats = benchmark ? kBenchmarkDispatchRepeats : 1;
