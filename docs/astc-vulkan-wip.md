@@ -626,8 +626,10 @@ on a single fixed mask.
 
 ## Updated next sweep
 
-1. Capture representative activation traces from the llama evaluation path and
-   feed them to the quality probe for several layers, not only synthetic input.
+1. [x] Capture representative attention-layer input activations from the llama
+   evaluation path and feed them to the quality probe. Extend this from the
+   first prompt/layer to a calibrated prompt suite and the remaining projection
+   sites before making a layer-wide quality claim.
 2. [x] Add a direct dequantized Q4_0 matvec comparison and report per-layer
    gate results rather than one aggregate tensor. The current probe covers
    four real SmolLM2 layers using deterministic activation vectors; captured
@@ -653,3 +655,55 @@ on a single fixed mask.
 - Does 6x6 reduce actual DRAM traffic enough to offset texture-pipeline latency?
 - Can a mixed 4x4/6x6 policy improve quality/performance over either global
   choice?
+
+## Thirty-eighth sweep: real layer-input trace and an activation-aware gate
+
+The new `astc-vulkan-trace-capture` PoC tool loads a normal GGUF through
+llama.cpp, enables its existing internal layer-input extraction hook, decodes a
+prompt, and writes a versioned F32 trace through the same reader/writer
+contract used by the quality probe. It has no production backend changes and
+does not create a public API: the layer-input hook remains an explicitly
+documented internal dependency of the isolated research tool.
+
+For the prompt `The quick brown fox uses a compact neural network.`, layer 0 of
+SmolLM2 produced ten 576-wide activation vectors. Evaluated against
+`blk.0.attn_q.weight`, Q4_0 measured 0.00721 relative activation MSE. The best
+current generic ASTC result, 4x4 shared block-affine with a 1% elementwise
+sparse sidecar, measured 0.13778; 6x6 measured 0.29117. This confirms the
+earlier synthetic result's qualitative conclusion on genuine model inputs, and
+keeps the Phase-3 kernel gate closed.
+
+The trace also changes the immediate research priority. Sparse residuals are
+currently selected by largest *elementwise* errors, even though the relevant
+loss is output error over the captured activations. The next test will compare
+that baseline against an activation-energy-weighted residual selector, then
+move to full activation-aware analysis-by-synthesis only if it yields a real
+quality/byte improvement. This is the smallest practical reuse of the
+preserve-then-quantize/EoRA lesson without prematurely writing a bespoke ASTC
+encoder.
+
+## Thirty-ninth sweep: activation-aware sparse residual selection
+
+The quality probe now has a second sparse-sidecar selector. Instead of taking
+the largest elementwise reconstruction errors, it greedily takes the weight
+whose correction gives the largest exact reduction in the calibration matvec
+loss. The selector maintains the current output-error vector for each matrix
+row, so each selection scores cross terms with already selected coefficients;
+it is more faithful than ranking `error^2 * activation_energy` independently.
+The artifact size is deliberately unchanged: index plus F32 residual value for
+each selected coefficient.
+
+With the ten-token calibration trace, the 1% sidecar changed 4x4 shared
+block-affine from 0.13778 to 0.04934 relative activation MSE, and 6x6 from
+0.29117 to 0.09359. This shows that a neural objective can materially change
+the *usefulness* of an ASTC base without adding bytes. It does not yet make the
+format viable because selection on the same trace is optimistic.
+
+The new `--selection-trace` separates calibration from evaluation. On a second,
+semantically different 25-token prompt, selected from the first ten-token
+trace, 4x4 improved from 0.14688 (elementwise) to 0.11600 and 6x6 from 0.33208
+to 0.25247. The gain generalizes partly but misses both the 0.10 Phase-2 gate
+and Q4_0's 0.00770. Accordingly this is a retained calibration tool, not a
+runtime design decision. The next objective must calibrate on a larger, more
+representative prompt set and use a strict holdout before a candidate is
+allowed into a packed artifact.

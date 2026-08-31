@@ -5,7 +5,6 @@
 
 #include <cassert>
 #include <cstdio>
-#include <fstream>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -37,15 +36,6 @@ bool write_fixture(const std::string & path) {
     ggml_free(context);
     gguf_free(file);
     return ok;
-}
-
-bool write_trace(const std::string & path) {
-    const uint32_t header[4] = { 0x43545341, 1, 2, 4 };
-    const float values[8] = { 1, 2, 3, 4, -1, -2, -3, -4 };
-    std::ofstream file(path, std::ios::binary);
-    file.write(reinterpret_cast<const char *>(header), sizeof(header));
-    file.write(reinterpret_cast<const char *>(values), sizeof(values));
-    return static_cast<bool>(file);
 }
 
 } // namespace
@@ -84,9 +74,13 @@ int main(int argc, char ** argv) {
     const std::string gguf_path = temp_path(".gguf");
     const std::string trace_path = temp_path(".trace");
     assert(write_fixture(gguf_path));
-    assert(write_trace(trace_path));
-    ggml_vk_astc_loaded_matrix matrix;
+    ggml_vk_astc_activation_trace expected_trace;
+    expected_trace.samples = 2;
+    expected_trace.columns = 4;
+    expected_trace.values = { 1, 2, 3, 4, -1, -2, -3, -4 };
     std::string error;
+    assert(ggml_vk_astc_write_activation_trace(trace_path, expected_trace, error));
+    ggml_vk_astc_loaded_matrix matrix;
     assert(ggml_vk_astc_load_gguf_matrix(gguf_path, "astc.test.f32", matrix, error));
     assert(matrix.rows == 3 && matrix.columns == 4 && matrix.values[0] == -1.0f);
     assert(ggml_vk_astc_load_gguf_matrix(gguf_path, "astc.test.f16", matrix, error));

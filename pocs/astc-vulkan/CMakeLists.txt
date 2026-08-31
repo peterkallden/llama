@@ -75,6 +75,22 @@ if (TARGET ggml-base)
         ${CMAKE_SOURCE_DIR}/ggml/include)
     target_link_libraries(astc-vulkan-input-smoke PRIVATE ggml-base)
     target_compile_features(astc-vulkan-input-smoke PRIVATE cxx_std_17)
+
+    # This tool intentionally uses the current internal layer-input capture
+    # extension. It stays in the PoC until an upstream-facing capture API is
+    # justified by the measurements it enables.
+    if (TARGET llama AND TARGET llama-common)
+        add_executable(astc-vulkan-trace-capture
+            astc-vulkan-trace-capture.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-trace-capture PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include
+            ${CMAKE_SOURCE_DIR}/src)
+        target_link_libraries(astc-vulkan-trace-capture PRIVATE
+            llama-common llama ggml-base ${CMAKE_THREAD_LIBS_INIT})
+        target_compile_features(astc-vulkan-trace-capture PRIVATE cxx_std_17)
+    endif()
 endif()
 
 find_program(ASTC_VULKAN_GLSLC glslc)

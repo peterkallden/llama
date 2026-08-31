@@ -39,3 +39,7 @@ bool ggml_vk_astc_list_gguf_tensors(const std::string & path,
 bool ggml_vk_astc_load_activation_trace(const std::string & path,
                                         ggml_vk_astc_activation_trace & trace,
                                         std::string & error);
+
+bool ggml_vk_astc_write_activation_trace(const std::string & path,
+                                         const ggml_vk_astc_activation_trace & trace,
+                                         std::string & error);

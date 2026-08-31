@@ -13,6 +13,7 @@
 #include <cstring>
 #include <limits>
 #include <numeric>
+#include <queue>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,13 @@ struct low_rank_point {
     double activation_relative_mse = 0.0;
 };
 
+struct sparse_residual_point {
+    const char * selection_name = "elementwise";
+    size_t bytes = 0;
+    double mse = 0.0;
+    double activation_relative_mse = 0.0;
+};
+
 enum class transform_mode {
     linear,
     signed_sqrt,
@@ -57,6 +65,11 @@ enum class basis_mode {
     identity,
     hadamard4,
     wht64,
+};
+
+enum class residual_selection_mode {
+    elementwise,
+    activation_greedy,
 };
 
 void hadamard_transform(float * values, uint32_t count) {
@@ -181,6 +194,104 @@ double elementwise_mse(const std::vector<float> & reference,
         error += delta * delta;
     }
     return error / std::max<size_t>(reference.size(), 1);
+}
+
+sparse_residual_point evaluate_sparse_residual(
+        const std::vector<float> & reference,
+        const std::vector<float> & candidate,
+        uint32_t rows, uint32_t columns,
+        const activation_set & evaluation_activations,
+        const activation_set & selection_activations,
+        float residual_fraction,
+        residual_selection_mode selection) {
+    const size_t residual_count = residual_fraction <= 0.0f ? 0 : std::max<size_t>(1,
+        static_cast<size_t>(std::ceil(residual_fraction * reference.size())));
+    std::vector<float> corrected = candidate;
+    if (selection == residual_selection_mode::elementwise) {
+        std::vector<size_t> order(reference.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::partial_sort(order.begin(), order.begin() + residual_count, order.end(),
+                          [&](size_t lhs, size_t rhs) {
+                              return std::fabs(reference[lhs] - candidate[lhs]) >
+                                     std::fabs(reference[rhs] - candidate[rhs]);
+                          });
+        for (size_t i = 0; i < residual_count; ++i) {
+            corrected[order[i]] = reference[order[i]];
+        }
+    } else {
+        struct row_choice {
+            double gain;
+            uint32_t row;
+            uint32_t column;
+            uint32_t version;
+
+            bool operator<(const row_choice & other) const {
+                return gain < other.gain;
+            }
+        };
+        std::vector<float> output_error(static_cast<size_t>(rows) * selection_activations.samples, 0.0f);
+        for (uint32_t row = 0; row < rows; ++row) {
+            for (uint32_t sample = 0; sample < selection_activations.samples; ++sample) {
+                double value = 0.0;
+                for (uint32_t column = 0; column < columns; ++column) {
+                    const size_t index = static_cast<size_t>(row) * columns + column;
+                    value += (reference[index] - candidate[index]) *
+                        selection_activations.values[static_cast<size_t>(sample) * columns + column];
+                }
+                output_error[static_cast<size_t>(row) * selection_activations.samples + sample] =
+                    static_cast<float>(value);
+            }
+        }
+        std::vector<bool> selected(reference.size(), false);
+        std::vector<uint32_t> versions(rows, 0);
+        std::priority_queue<row_choice> choices;
+        const auto refresh_row = [&](uint32_t row) {
+            double best_gain = -std::numeric_limits<double>::infinity();
+            uint32_t best_column = 0;
+            for (uint32_t column = 0; column < columns; ++column) {
+                const size_t index = static_cast<size_t>(row) * columns + column;
+                if (selected[index]) continue;
+                const float delta = reference[index] - candidate[index];
+                double gain = 0.0;
+                for (uint32_t sample = 0; sample < selection_activations.samples; ++sample) {
+                    const float contribution = delta * selection_activations.values[
+                        static_cast<size_t>(sample) * columns + column];
+                    const float error = output_error[
+                        static_cast<size_t>(row) * selection_activations.samples + sample];
+                    gain += 2.0 * error * contribution - contribution * contribution;
+                }
+                if (gain > best_gain) {
+                    best_gain = gain;
+                    best_column = column;
+                }
+            }
+            ++versions[row];
+            if (std::isfinite(best_gain)) {
+                choices.push({ best_gain, row, best_column, versions[row] });
+            }
+        };
+        for (uint32_t row = 0; row < rows; ++row) refresh_row(row);
+        for (size_t count = 0; count < residual_count && !choices.empty();) {
+            const row_choice choice = choices.top();
+            choices.pop();
+            const size_t index = static_cast<size_t>(choice.row) * columns + choice.column;
+            if (choice.version != versions[choice.row] || selected[index]) continue;
+            const float delta = reference[index] - candidate[index];
+            for (uint32_t sample = 0; sample < selection_activations.samples; ++sample) {
+                output_error[static_cast<size_t>(choice.row) * selection_activations.samples + sample] -=
+                    delta * selection_activations.values[
+                        static_cast<size_t>(sample) * columns + choice.column];
+            }
+            corrected[index] = reference[index];
+            selected[index] = true;
+            ++count;
+            refresh_row(choice.row);
+        }
+    }
+    return { selection == residual_selection_mode::elementwise ? "elementwise" : "activation-greedy",
+             residual_count * (sizeof(uint32_t) + sizeof(float)),
+             elementwise_mse(reference, corrected),
+             activation_relative_mse(reference, corrected, rows, columns, evaluation_activations) };
 }
 
 std::vector<low_rank_point> evaluate_low_rank_residual(
@@ -406,19 +517,21 @@ bool make_q4_reference(const std::vector<float> & weights,
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc != 5 && argc != 7 && argc != 9) {
-        std::fprintf(stderr, "usage: %s --model path --tensor name [--trace path] [--residual-percent n]\n", argv[0]);
+    if (argc < 5 || argc % 2 == 0) {
+        std::fprintf(stderr, "usage: %s --model path --tensor name [--trace path] [--selection-trace path] [--residual-percent n]\n", argv[0]);
         return 2;
     }
     std::string model;
     std::string tensor;
     std::string trace_path;
+    std::string selection_trace_path;
     float residual_fraction = 0.01f;
     for (int i = 1; i < argc; i += 2) {
         const std::string option = argv[i];
         if (option == "--model") model = argv[i + 1];
         else if (option == "--tensor") tensor = argv[i + 1];
         else if (option == "--trace") trace_path = argv[i + 1];
+        else if (option == "--selection-trace") selection_trace_path = argv[i + 1];
         else if (option == "--residual-percent") {
             char * end = nullptr;
             const float percent = std::strtof(argv[i + 1], &end);
@@ -454,6 +567,18 @@ int main(int argc, char ** argv) {
     } else if (!make_default_activations(matrix.columns, activations)) {
         return 1;
     }
+    activation_set selection_activations = activations;
+    if (!selection_trace_path.empty()) {
+        ggml_vk_astc_activation_trace trace;
+        if (!ggml_vk_astc_load_activation_trace(selection_trace_path, trace, error) ||
+            trace.columns != matrix.columns) {
+            std::fprintf(stderr, "invalid selection activation trace: %s\n", error.c_str());
+            return 1;
+        }
+        selection_activations.samples = trace.samples;
+        selection_activations.columns = trace.columns;
+        selection_activations.values = std::move(trace.values);
+    }
 
     size_t q4_bytes = 0;
     std::vector<float> q4;
@@ -467,6 +592,8 @@ int main(int argc, char ** argv) {
     std::printf("tensor=%s rows=%u columns=%u FP16-bytes=%zu Q4_0-bytes=%zu\n",
                 tensor.c_str(), matrix.rows, matrix.columns,
                 matrix.values.size() * sizeof(ggml_fp16_t), q4_bytes);
+    std::printf("evaluation-activations=%u selection-activations=%u\n",
+                activations.samples, selection_activations.samples);
     std::printf("Q4_0 MSE %.8g activation-relative-MSE %.8g\n", q4_mse, q4_activation);
 
     bool gate_passed = true;
@@ -512,6 +639,17 @@ int main(int argc, char ** argv) {
                 matrix.values, base_reconstructed, matrix.rows, matrix.columns, activations)) {
             std::printf("ASTC %ux%u mode=block-affine basis=identity transform=linear low-rank=%u residual-bytes=%zu MSE %.8g activation-relative-MSE %.8g total-with-residual-bytes=%zu\n",
                         block, block, point.rank, point.bytes, point.mse,
+                        point.activation_relative_mse,
+                        base_result.astc_bytes + base_result.metadata_bytes + point.bytes);
+        }
+        for (const residual_selection_mode selection : { residual_selection_mode::elementwise,
+                                                        residual_selection_mode::activation_greedy }) {
+            const sparse_residual_point point = evaluate_sparse_residual(
+                matrix.values, base_reconstructed, matrix.rows, matrix.columns, activations,
+                selection_activations,
+                residual_fraction, selection);
+            std::printf("ASTC %ux%u mode=block-affine basis=identity transform=linear sparse-selection=%s residual-bytes=%zu MSE %.8g activation-relative-MSE %.8g total-with-residual-bytes=%zu\n",
+                        block, block, point.selection_name, point.bytes, point.mse,
                         point.activation_relative_mse,
                         base_result.astc_bytes + base_result.metadata_bytes + point.bytes);
         }

@@ -159,3 +159,27 @@ bool ggml_vk_astc_load_activation_trace(const std::string & path,
     }
     return true;
 }
+
+bool ggml_vk_astc_write_activation_trace(const std::string & path,
+                                         const ggml_vk_astc_activation_trace & trace,
+                                         std::string & error) {
+    const size_t value_count = static_cast<size_t>(trace.samples) * trace.columns;
+    if (trace.samples == 0 || trace.columns == 0 || trace.values.size() != value_count) {
+        error = "activation trace has invalid dimensions or value count";
+        return false;
+    }
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        error = "failed to create activation trace: " + path;
+        return false;
+    }
+    const uint32_t header[4] = { kTraceMagic, kTraceVersion, trace.samples, trace.columns };
+    file.write(reinterpret_cast<const char *>(header), sizeof(header));
+    file.write(reinterpret_cast<const char *>(trace.values.data()),
+               static_cast<std::streamsize>(value_count * sizeof(float)));
+    if (!file) {
+        error = "failed to write activation trace: " + path;
+        return false;
+    }
+    return true;
+}
