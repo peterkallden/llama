@@ -37,6 +37,11 @@ int main() {
     assert(placements[0].page == 0 && placements[0].x == 0 && placements[0].y == 0);
     assert(placements[1].page == 0 && placements[1].footprint == astc_vulkan_footprint::k4x4);
     assert(!astc_vulkan_pack_atlas({1024, 1024}, expected.tensors, placements, error));
+    std::vector<astc_vulkan_tensor_record> edge = {
+        {"edge", 4093, 1, astc_vulkan_footprint::k6x6, 0,
+         astc_vulkan_image_bytes(astc_vulkan_footprint::k6x6, 4093, 1)},
+    };
+    assert(!astc_vulkan_pack_atlas({4096, 4096}, edge, placements, error));
     std::remove(path.c_str());
     std::puts("ASTC Vulkan driver metadata contract passed");
     return 0;

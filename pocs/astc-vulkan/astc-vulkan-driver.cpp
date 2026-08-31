@@ -184,7 +184,13 @@ bool astc_vulkan_pack_atlas(const astc_vulkan_atlas_config & config,
             return false;
         }
         cursor & state = cursors[static_cast<size_t>(tensor.footprint)];
-        if (state.x + tensor.width > config.max_width) {
+        const uint32_t aligned_width = ((tensor.width + info.block_width - 1) / info.block_width) * info.block_width;
+        const uint32_t aligned_height = ((tensor.height + info.block_height - 1) / info.block_height) * info.block_height;
+        if (aligned_width > config.max_width || aligned_height > config.max_height) {
+            error = "ASTC Vulkan tensor block extent exceeds atlas dimensions";
+            return false;
+        }
+        if (static_cast<uint64_t>(state.x) + aligned_width > config.max_width) {
             state.x = 0;
             state.y += state.row_height;
             state.row_height = 0;
@@ -193,14 +199,13 @@ bool astc_vulkan_pack_atlas(const astc_vulkan_atlas_config & config,
             ++state.page;
             state.x = state.y = state.row_height = 0;
         }
-        if (state.x + tensor.width > config.max_width || state.y + tensor.height > config.max_height) {
+        if (static_cast<uint64_t>(state.x) + aligned_width > config.max_width ||
+            static_cast<uint64_t>(state.y) + aligned_height > config.max_height) {
             error = "ASTC Vulkan tensor cannot be placed in atlas";
             return false;
         }
         placements.push_back({tensor.name, tensor.footprint, state.page, state.x, state.y,
                               tensor.width, tensor.height});
-        const uint32_t aligned_width = ((tensor.width + info.block_width - 1) / info.block_width) * info.block_width;
-        const uint32_t aligned_height = ((tensor.height + info.block_height - 1) / info.block_height) * info.block_height;
         state.x += aligned_width;
         state.row_height = std::max(state.row_height, aligned_height);
     }
