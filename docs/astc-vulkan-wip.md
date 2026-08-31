@@ -759,3 +759,31 @@ same path, then compare against a packed ternary reference and include the
 shader-side unpack/dequantization cost. ASTC-aware training remains justified
 only if real weights can be made more like the successful smooth/clustered
 cases without unacceptable model loss.
+
+## Forty-second sweep: post-training ASTC-Q on real weights
+
+`astc-vulkan-native-quant-smoke` applies global ternary, five-, eight-, and
+sixteen-level quantization to the real 576x576 `blk.0.attn_q.weight` matrix,
+then roundtrips the quantized values through legal ASTC 4x4 and 6x6 blocks.
+It reports an ideal packed few-level byte count, actual ASTC resident bytes,
+element MSE, and activation-relative matvec MSE using the captured holdout
+trace.
+
+The result separates two effects cleanly. ASTC adds almost no error beyond the
+already quantized values for ternary, five-level, and sixteen-level cases; for
+the eight-level random-like matrix it adds a modest additional distortion in
+6x6. The dominant problem is the post-training few-level projection itself:
+
+| Levels | Ideal packed bytes | 6x6 ASTC bytes | 6x6 activation-relative MSE |
+|---:|---:|---:|---:|
+| 3 | 65,732 | 147,456 | 0.9552 |
+| 5 | 96,296 | 147,456 | 1.3333 |
+| 8 | 124,416 | 147,456 | 2.0843 |
+| 16 | 165,888 | 147,456 | 0.2781 |
+
+For reference, the same trace gave Q4_0 `0.00770`. The 6x6 ASTC rate is
+3.5556 bits/weight for this one-scalar-per-texel layout, but it is still 2.24x
+the ideal ternary byte count. This rules out claiming that ASTC storage alone
+turns an ordinary pretrained matrix into a useful BitNet model. It strengthens
+the ASTC-aware-training hypothesis: the model must learn both the few-level
+alphabet and the spatial/block structure that 6x6 can reconstruct.

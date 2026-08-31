@@ -168,11 +168,13 @@ their sampled-image support is queried per Vulkan device.
    level drift, block error, byte pressure, and sampled shader values. Include
    smooth, clustered, random, and outlier patterns. Compare one scalar/texel
    with the existing RGBA structured layout without conflating their rates.
-2. **Post-training weight experiment.** Apply ASTC-QT/Q5/Q8/Q16 to a small
-   existing ternary or few-level model matrix. Compare quality and bytes with a
-   conventional packed ternary/few-level representation and with Q4. The
-   runtime comparison must include shader unpack/dequant instructions, not
-   merely compressed storage size.
+2. **Post-training weight experiment.** [initial smoke complete] Apply
+   ASTC-QT/Q5/Q8/Q16 to a small existing ternary or few-level model matrix.
+   Compare quality and bytes with a conventional packed ternary/few-level
+   representation and with Q4. The runtime comparison must include shader
+   unpack/dequant instructions, not merely compressed storage size. The first
+   SmolLM2 projection fails the quality gate, so it is evidence for training,
+   not a candidate packed artifact.
 3. **ASTC-aware training experiment.** Train or fine-tune through a
    differentiable surrogate for the constrained endpoint/interpolation grid,
    then project and validate against legal ASTC blocks. Compare model loss and

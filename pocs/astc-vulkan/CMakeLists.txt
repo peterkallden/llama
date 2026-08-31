@@ -67,6 +67,16 @@ if (TARGET astcenc::astcenc-static)
         target_link_libraries(astc-vulkan-quality-smoke PRIVATE
             astcenc::astcenc-static ggml-base)
         target_compile_features(astc-vulkan-quality-smoke PRIVATE cxx_std_17)
+
+        add_executable(astc-vulkan-native-quant-smoke
+            astc-vulkan-native-quant-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-native-quant-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-native-quant-smoke PRIVATE
+            astcenc::astcenc-static ggml-base)
+        target_compile_features(astc-vulkan-native-quant-smoke PRIVATE cxx_std_17)
     endif()
 endif()
 
