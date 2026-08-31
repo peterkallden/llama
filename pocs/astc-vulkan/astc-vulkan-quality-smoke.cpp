@@ -32,11 +32,31 @@ struct result {
     size_t metadata_bytes = 0;
     size_t residual_bytes = 0;
     bool block_affine = false;
+    const char * transform_name = "linear";
     double mse = 0.0;
     double activation_relative_mse = 0.0;
     double corrected_mse = 0.0;
     double corrected_activation_relative_mse = 0.0;
 };
+
+enum class transform_mode {
+    linear,
+    signed_sqrt,
+};
+
+float encode_value(float value, float offset, float scale, transform_mode mode) {
+    const float normalized = std::clamp((value - offset) / scale, 0.0f, 1.0f);
+    if (mode == transform_mode::linear) return normalized;
+    const float centered = 2.0f * normalized - 1.0f;
+    return 0.5f + 0.5f * std::copysign(std::sqrt(std::fabs(centered)), centered);
+}
+
+float decode_value(float value, float offset, float scale, transform_mode mode) {
+    if (mode == transform_mode::linear) return value * scale + offset;
+    const float centered = 2.0f * value - 1.0f;
+    const float normalized = 0.5f + 0.5f * std::copysign(centered * centered, centered);
+    return normalized * scale + offset;
+}
 
 bool make_default_activations(uint32_t columns, activation_set & activations) {
     activations.samples = 8;
@@ -94,6 +114,7 @@ bool encode_format(const std::vector<float> & weights,
                    uint32_t block_width, uint32_t block_height,
                    bool block_affine,
                    float residual_fraction,
+                   transform_mode transform,
                    result & output) {
     const uint32_t texel_columns = (columns + 3) / 4;
     const uint32_t padded_columns = texel_columns * 4;
@@ -133,7 +154,8 @@ bool encode_format(const std::vector<float> & weights,
             const size_t destination = static_cast<size_t>(row) * padded_columns + column;
             const size_t block = static_cast<size_t>(row / block_height) * blocks_x +
                                  (column / 4) / block_width;
-            texels[destination] = (weights[source] - block_offsets[block]) / block_scales[block];
+            texels[destination] = encode_value(weights[source], block_offsets[block],
+                                                block_scales[block], transform);
         }
     }
 
@@ -170,12 +192,11 @@ bool encode_format(const std::vector<float> & weights,
     std::vector<float> reconstructed(weights.size());
     for (uint32_t row = 0; row < rows; ++row) {
         for (uint32_t column = 0; column < columns; ++column) {
-            reconstructed[static_cast<size_t>(row) * columns + column] =
-                decoded[static_cast<size_t>(row) * padded_columns + column] *
-                    block_scales[static_cast<size_t>(row / block_height) * blocks_x +
-                                 (column / 4) / block_width] +
-                block_offsets[static_cast<size_t>(row / block_height) * blocks_x +
-                              (column / 4) / block_width];
+            const size_t block = static_cast<size_t>(row / block_height) * blocks_x +
+                                 (column / 4) / block_width;
+            reconstructed[static_cast<size_t>(row) * columns + column] = decode_value(
+                decoded[static_cast<size_t>(row) * padded_columns + column],
+                block_offsets[block], block_scales[block], transform);
         }
     }
     output.mse = elementwise_mse(weights, reconstructed);
@@ -205,6 +226,7 @@ bool encode_format(const std::vector<float> & weights,
     output.block_width = block_width;
     output.block_height = block_height;
     output.block_affine = block_affine;
+    output.transform_name = transform == transform_mode::linear ? "linear" : "signed-sqrt";
     return std::isfinite(output.mse) && std::isfinite(output.activation_relative_mse);
 }
 
@@ -293,24 +315,28 @@ int main(int argc, char ** argv) {
     bool gate_passed = true;
     for (const uint32_t block : { 4u, 6u }) {
         for (const bool block_affine : { false, true }) {
+            for (const transform_mode transform : { transform_mode::linear,
+                                                     transform_mode::signed_sqrt }) {
             result output;
             if (!encode_format(matrix.values, matrix.rows, matrix.columns, activations,
-                               block, block, block_affine, residual_fraction, output)) {
+                               block, block, block_affine, residual_fraction, transform, output)) {
                 std::fprintf(stderr, "ASTC %ux%u encode/decode failed\n", block, block);
                 return 1;
             }
             const size_t total_bytes = output.astc_bytes + output.metadata_bytes;
             const size_t corrected_total = total_bytes + output.residual_bytes;
-            std::printf("ASTC %ux%u mode=%s residual=%.3g%% bytes=%zu (+%zu residual=%zu) MSE %.8g activation-relative-MSE %.8g corrected-MSE %.8g corrected-activation-relative-MSE %.8g\n",
-                        block, block, block_affine ? "block-affine" : "global",
+            std::printf("ASTC %ux%u mode=%s transform=%s residual=%.3g%% bytes=%zu (+%zu residual=%zu) MSE %.8g activation-relative-MSE %.8g corrected-MSE %.8g corrected-activation-relative-MSE %.8g\n",
+                        block, block, block_affine ? "block-affine" : "global", output.transform_name,
                         residual_fraction * 100.0f,
                         total_bytes, output.astc_bytes, output.residual_bytes,
                         output.mse, output.activation_relative_mse, output.corrected_mse,
                         output.corrected_activation_relative_mse);
-            std::printf("ASTC %ux%u mode=%s total-with-residual-bytes=%zu\n",
-                        block, block, block_affine ? "block-affine" : "global", corrected_total);
+            std::printf("ASTC %ux%u mode=%s transform=%s total-with-residual-bytes=%zu\n",
+                        block, block, block_affine ? "block-affine" : "global",
+                        output.transform_name, corrected_total);
             gate_passed = gate_passed &&
                 output.corrected_activation_relative_mse <= kQualityGateRelativeActivationMse;
+            }
         }
     }
     std::printf("quality-gate corrected activation-relative-MSE <= %.3f: %s\n",

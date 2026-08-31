@@ -528,6 +528,17 @@ The residual parameter remains an offline research control. It is not yet a
 runtime format field, and no ASTC artifact is emitted until a multi-layer
 quality/storage frontier passes review.
 
+## Thirty-fourth sweep: nonlinear transform negative control
+
+The quality probe now includes a reversible signed-square-root transform as a
+candidate before ASTC encoding. It was intended to allocate more code points
+near zero while keeping the standard LDR ASTC resource unchanged. On the real
+attention-Q layer it made the result worse: 4x4 block-affine corrected
+activation-relative MSE rose from 0.15572 (linear) to 0.22766 (signed-sqrt),
+and 6x6 rose from 0.38467 to 0.53908. The global mappings showed the same
+direction. The transform is therefore retained only as a reproducible negative
+control and is not part of the proposed representation.
+
 ## Updated next sweep
 
 1. Capture representative activation traces from the llama evaluation path and
