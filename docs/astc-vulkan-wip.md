@@ -2526,3 +2526,47 @@ The local real-model calibration trace is only ten samples, so the planned
 larger-trace experiment cannot be inferred from this fixture. We must obtain a
 separate calibration capture with a fixed, disjoint holdout before treating
 four-shard stability or Block-LDLQ as model-level evidence.
+
+## One-hundred-fourth sweep: larger-trace selector matrix
+
+The capture utility produced a separate calibration trace with 1,872 token
+positions. To keep the comparison bounded and reproducible, the selector
+matrix used the first 256 calibration samples, the existing disjoint holdout,
+the same 32x64 crops, angular shortlists, and four-shard stability.
+
+| Tensor | Footprint | Local | Block-LDLQ | Stability-4 | Conflict-aware |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `attn_q` | 4x4 | 0.02649 | **0.02571** | 0.02580 | 0.02759 |
+| `attn_q` | 5x5 | 0.14937 | 0.13292 | **0.13092** | 0.13129 |
+| `attn_q` | 6x6 | 0.33365 | 0.33101 | 0.33346 | **0.31227** |
+| `attn_k` | 4x4 | 0.01579 | **0.01465** | 0.01578 | 0.01521 |
+| `attn_k` | 5x5 | 0.11483 | 0.12302 | **0.10677** | 0.10683 |
+| `attn_k` | 6x6 | 0.23773 | 0.23643 | **0.22404** | 0.22488 |
+
+The larger trace changes the interpretation materially. Block-LDLQ is no
+longer limited to the original `attn_q` 6x6 signal: it is competitive or
+better than local in five of six cases, but stability/conflict-aware can still
+win by a larger margin. The best selector is therefore data- and
+tensor-dependent; local remains the required fallback. These are still layer
+crops, not end-to-end language-model scores.
+
+## One-hundred-fifth sweep: selector decision and quality gate
+
+The evidence supports a conservative research policy:
+
+* keep one ASTC footprint per tensor for the initial runtime layout;
+* allow the offline encoder to choose local, four-shard stability,
+  conflict-aware, or Block-LDLQ per tensor;
+* choose by fixed-holdout validation, with local as the fallback when the
+  calibration gain is not stable;
+* do not promote Block-LDLQ or any footprint to a global default yet.
+
+For the current fixture, four-shard stability is the strongest robust choice on
+`attn_k` 5x5/6x6, conflict-aware is strongest on `attn_q` 6x6, and Block-LDLQ
+is strongest on `attn_q` 4x4 and `attn_k` 4x4. This is exactly the variable
+coding behavior the design permits, but the runtime metadata format for mixed
+footprints is still deferred.
+
+The next gate is an end-to-end layer/model evaluation using the captured larger
+trace, followed by GPU sampled-image validation. No selector default or
+upstream-facing API should be changed before those gates.

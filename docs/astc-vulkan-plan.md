@@ -711,3 +711,11 @@ stability smoke; the focused ASTC suite is 4/4 green. The current real-model
 calibration capture has only ten samples, which is insufficient for a genuine
 larger-trace claim. Acquire or generate a disjoint, larger calibration trace
 before changing selector defaults or starting GPU performance interpretation.
+
+The larger 1,872-position capture is now available, with a 256-sample bounded
+matrix evaluated against the fixed holdout. Block-LDLQ is competitive or
+better than local in five of six tensor/footprint cases, while four-shard
+stability or conflict-aware often wins by a larger margin. The current policy
+is therefore per-tensor offline selector choice with local fallback, not a
+global Block-LDLQ default. The next gates are end-to-end layer/model scoring
+and then device-backed Vulkan sampled-image validation.
