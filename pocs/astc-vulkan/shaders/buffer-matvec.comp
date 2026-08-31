@@ -1,0 +1,47 @@
+#version 450
+
+// Buffer-backed FP32 control for the ASTC matvec experiment. It intentionally
+// uses the same workgroup geometry and activation function as astc-matvec.
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Weights {
+    float weights[];
+};
+
+layout(std430, set = 0, binding = 1) buffer MatvecOutput {
+    vec4 values[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint width;
+    uint height;
+    uint access_pattern;
+    float scale_l;
+    float scale_a;
+    float offset;
+} params;
+
+float activation(uint column) {
+    return 0.5 * sin(0.017 * float(column + 1)) +
+           0.2 * cos(0.031 * float(column + 3));
+}
+
+shared float partial[64];
+
+void main() {
+    const uint row = gl_WorkGroupID.x;
+    if (row >= params.height) return;
+    float sum = 0.0;
+    for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64) {
+        sum += weights[row * params.width + column] * activation(column);
+    }
+    partial[gl_LocalInvocationID.x] = sum;
+    barrier();
+    for (uint stride = 32; stride > 0; stride >>= 1) {
+        if (gl_LocalInvocationID.x < stride) {
+            partial[gl_LocalInvocationID.x] += partial[gl_LocalInvocationID.x + stride];
+        }
+        barrier();
+    }
+    if (gl_LocalInvocationID.x == 0) values[row] = vec4(partial[0], 0.0, 0.0, 0.0);
+}

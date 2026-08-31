@@ -1555,6 +1555,15 @@ buffer/Q4 kernel. The immediate next runtime control is a buffer-backed
 FP16-equivalent matvec with the same output shape and activation formula;
 Q4 follows only when its unpack/dequant contract is equally explicit.
 
+## Sixty-seventh sweep: buffer control prepared
+
+A buffer-backed FP32 matvec shader is now compiled beside the ASTC shader. It
+uses the same 64-thread row workgroup, activation formula, and shared-memory
+reduction, but reads one float weight per element from an SSBO. This establishes
+the intended apples-to-apples control. The remaining work is host binding and
+readback for this shader; no ASTC-versus-buffer timing is reported until both
+paths run against the same exported FP16-derived matrix and CPU oracle.
+
 ## Sixty-fifth sweep: native ASTC evidence for the Intel validation device
 
 The exposed validation adapter reports `Intel(R) UHD Graphics 620 (KBL GT2)`,
