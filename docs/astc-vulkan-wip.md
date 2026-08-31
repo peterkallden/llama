@@ -168,6 +168,13 @@ physical device's `timestampPeriod`; otherwise correctness still runs without a
 timing claim. This is instrumentation only: sequential/non-local access
 patterns and a bandwidth comparison are intentionally not inferred yet.
 
+In the ninth sweep, the host render nodes were exposed to the test process and
+the full ASTC CTest label passed (`8/8`). The Intel UHD Graphics 620 accepted
+both ASTC formats; image-resource smoke and shader readback passed for 4x4 and
+6x6. One run reported approximately 18.5 microseconds for the 4x4 dispatch and
+20.17 microseconds for 6x6 with the current 64-invocation workgroup. These are
+smoke-test timestamps, not a bandwidth benchmark or a decoder-throughput claim.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -182,13 +189,13 @@ After each implementation sweep:
 
 ## Next sweep
 
-1. Run the new shader-device smoke on the Intel/target GPU and capture decoded
-   values for both block sizes.
-2. Add sequential versus non-local fetch patterns and compare their timestamp
+1. Add sequential versus non-local fetch patterns and compare their timestamp
    distributions on the target GPU.
-3. Record device name, driver version, shader workgroup shape, elapsed GPU time,
-   and represented bytes.
-4. Revisit the plan after numerical and bandwidth evidence, before designing a
+2. Record driver version, shader workgroup shape, repeated-run variance, and
+   represented bytes.
+3. Revisit the plan after numerical and bandwidth evidence, before designing a
+   weight packer or changing any ggml tensor path.
+3. Revisit the plan after numerical and bandwidth evidence, before designing a
    weight packer or changing any ggml tensor path.
 
 ## Open questions

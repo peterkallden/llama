@@ -40,8 +40,8 @@ into `ggml-vulkan` is a later decision gate after device-backed evidence.
    remain pending timestamp measurements.
 
 Current status: capability, resource allocation/upload, shader compilation, and
-the device-execution/readback path are implemented. Numerical execution is
-conditionally validated by CTest and is skipped when the host exposes no
+the device-execution/readback path are implemented and validated on the Intel
+UHD Graphics 620. CTest still skips these tests on hosts that expose no
 physical ASTC-capable device.
 
 Exit criterion: the selected target GPU accepts both formats as sampled images
