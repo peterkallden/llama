@@ -556,6 +556,53 @@ larger storage budget, but the current generic ASTC base still misses the
 quality gate by a wide margin. The algorithm is therefore evidence for a
 possible hybrid design, not a runtime format decision yet.
 
+## Thirty-sixth sweep: Geldreich/XUASTC and adjacent quantization research
+
+Rich Geldreich's XUASTC work is directly relevant as an encoder-design
+reference. XUASTC treats ASTC endpoints, partitions, and interpolation weights
+as a structured latent space, then performs analysis-by-synthesis: it evaluates
+candidate ASTC configurations after transform/quantization and selects the
+lowest-distortion reconstruction. Its optional DCT/DPCM representation is a
+CPU-side supercompression layer which reconstructs legal ASTC block weights
+before ordinary ASTC decoding. It is therefore not a direct GPU-resident format
+for this PoC, but its candidate-search discipline is applicable.
+
+The key design decision is to replace image MSE inside the offline ASTC search
+with an activation-aware loss. Given captured input activations `X`, score a
+candidate reconstruction using `|| (W - W_hat) X^T ||_F^2`, optionally with a
+tail penalty. This makes ASTC mode, partition, endpoint, channel-layout, and
+calibration selection answer the inference question rather than the image
+question. Block candidates can be evaluated incrementally by applying their
+output delta to cached calibration outputs; a simple independent-block MSE is
+not sufficient when activation columns are correlated.
+
+The small H4 rotation tested earlier was not a faithful test of the stronger
+rotation methods used by QuaRot, QuIP#, and SpinQuant. Their useful direction is
+larger randomized signed Hadamard rotations and/or learned orthogonal rotations
+over hidden dimensions. The next test should use fixed 64-wide or 128-wide
+Walsh-Hadamard groups with signed permutations, chosen offline and applied to
+both the weight columns and activation groups. A 64-wide group divides this
+model's 576-wide hidden dimension and aligns naturally with sixteen RGBA texels
+or a 4x4 ASTC block. Full learned rotations are a later option because they add
+metadata and model-wide fusion constraints.
+
+The low-rank work also changes the residual experiment. EoRA and the newer
+preserve-then-quantize/SRR formulation make the residual activation-aware, and
+reserve some rank to preserve dominant directions *before* quantizing the
+remaining matrix. The next low-rank experiment should use activation covariance
+from captured traces, compare rank splits `k`/`r-k`, and quantize the F16
+sidecar itself before accepting its byte count.
+
+References:
+
+- Rich Geldreich, [XUASTC LDR Weight Grid DCT](https://github.com/BinomialLLC/basis_universal/wiki/XUASTC-LDR-Weight-Grid-DCT)
+  and [JPEG for ASTC](https://github.com/BinomialLLC/basis_universal/wiki/JPEG-for-ASTC).
+- Ashkboos et al., [QuaRot](https://arxiv.org/abs/2404.00456);
+  Tseng et al., [QuIP#](https://arxiv.org/abs/2402.04396); Liu et al.,
+  [SpinQuant](https://arxiv.org/abs/2405.16406).
+- Liu et al., [EoRA](https://arxiv.org/abs/2410.21271); Cho et al.,
+  [Preserve-Then-Quantize / SRR](https://arxiv.org/abs/2602.02001).
+
 ## Updated next sweep
 
 1. Capture representative activation traces from the llama evaluation path and
@@ -566,9 +613,13 @@ possible hybrid design, not a runtime format decision yet.
    model traces remain the next fidelity step.
 3. [x] Sweep residual budgets (0.25%, 1%, 2%, 5%) and make the
    quality/storage frontier explicit for 4x4 and 6x6.
-4. Investigate whether endpoint/partition search or a neural-aware ASTC input
-   transform can close the measured gap before any shader integration.
-5. Keep Phase 3 Vulkan matvec work limited to a correctness scaffold until a
+4. Implement an activation-aware ASTC analysis-by-synthesis score, then sweep
+   ASTC modes/layouts under that score before any shader integration.
+5. Evaluate signed-permuted WHT64 rotation candidates; retain only choices that
+   improve the quality/storage frontier on multiple real layers.
+6. Replace residual-only low-rank fitting with activation-aware
+   preserve-then-quantize rank allocation.
+7. Keep Phase 3 Vulkan matvec work limited to a correctness scaffold until a
    candidate passes the real-layer quality gate.
 
 ## Open questions
