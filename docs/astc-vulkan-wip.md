@@ -1677,3 +1677,49 @@ have different ASTC sampler throughput. The result does, however, establish a
 credible baseline for the next experiments: any ASTC variant must beat this
 same-source buffer timing while preserving its quality gate, or demonstrate a
 separate memory/energy benefit that justifies the decode cost.
+
+## Seventieth sweep: isolated Q4_0 and TQ2_0 Vulkan controls
+
+The PoC now includes named Q4_0 and TQ2_0 compute shaders. They read the
+standard ggml packed layouts directly from an SSBO and perform dequantization
+inside the same 64-thread row-reduction structure as the FP32 and ASTC paths.
+The host has a small `astc-vulkan-quant-export` tool that quantizes the exact
+F16-derived GGUF matrix with ggml's reference quantizers, preserving the
+packed bytes as the fixture under test. A CPU oracle decodes the same packed
+bytes, so a pass cannot be caused by comparing a quantized result with the
+unquantized source.
+
+TQ2 requires a 256-element block. For a common shape, the leading 576x512
+region of `blk.0.attn_q.weight` was exported in all four forms:
+
+| Path | Packed weight payload | Nominal rate |
+|---|---:|---:|
+| FP32 buffer source | 1,179,648 bytes | 32.00 bpw |
+| Q4_0 | 165,888 bytes | 4.50 bpw (including 16-bit scale/block) |
+| TQ2_0 | 76,032 bytes | 2.0625 bpw |
+| ASTC 4x4 / 5x5 / 6x6 | 294,912 / 191,488 / 132,096 bytes | 8.00 / 5.6875 / 4.03125 bpw |
+
+All five shaders passed the Vulkan/CPU correctness gate. With 1,000
+dispatches in one command buffer on the Intel UHD Graphics 620, the first
+steady-state timestamps were:
+
+| Path | Per-dispatch GPU timestamp |
+|---|---:|
+| Q4_0 SSBO dequant | ~173.4 us |
+| TQ2_0 SSBO dequant | ~187.9 us |
+| ASTC 4x4 sampled image | ~158.1 us |
+| ASTC 5x5 sampled image | ~172.3 us |
+| ASTC 6x6 sampled image | ~196.5 us |
+
+This is a mechanism comparison, not a quality ranking. On this adapter and
+shape, ASTC 4x4 is faster than the standalone Q4_0 shader despite its larger
+resident payload; ASTC 5x5 is close to Q4_0, while 6x6 is slower than both Q4
+and TQ2. The result reinforces that block density and sampler/dequant latency
+must be measured together. It also gives TQ2 a real GPU control rather than
+the earlier offline-only result.
+
+The next gate is to calculate elementwise and activation-relative error for
+these exact 576x512 artifacts, using the captured layer trace, then repeat the
+timing with a batched/multi-row workload. TQ1 remains a separate follow-up:
+its base-3 unpacking and 1.6875 bpw layout should not be conflated with TQ2's
+two-bit shader.

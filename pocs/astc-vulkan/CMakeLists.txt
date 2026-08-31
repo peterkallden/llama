@@ -158,6 +158,15 @@ if (TARGET ggml-base)
     target_link_libraries(astc-vulkan-format-smoke PRIVATE ggml-base)
     target_compile_features(astc-vulkan-format-smoke PRIVATE cxx_std_17)
 
+    add_executable(astc-vulkan-quant-export
+        astc-vulkan-quant-export.cpp
+        astc-vulkan-input.cpp)
+    target_include_directories(astc-vulkan-quant-export PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/ggml/include)
+    target_link_libraries(astc-vulkan-quant-export PRIVATE ggml-base)
+    target_compile_features(astc-vulkan-quant-export PRIVATE cxx_std_17)
+
     # This tool intentionally uses the current internal layer-input capture
     # extension. It stays in the PoC until an upstream-facing capture API is
     # justified by the measurements it enables.
@@ -183,6 +192,10 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-matvec.comp.spv)
     set(ASTC_VULKAN_BUFFER_MATVEC_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/buffer-matvec.comp.spv)
+    set(ASTC_VULKAN_Q4_MATVEC_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/q4-matvec.comp.spv)
+    set(ASTC_VULKAN_TQ2_MATVEC_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/tq2-matvec.comp.spv)
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -216,6 +229,26 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling buffer Vulkan matvec shader")
     add_custom_target(astc-vulkan-buffer-matvec-shader
         DEPENDS ${ASTC_VULKAN_BUFFER_MATVEC_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_Q4_MATVEC_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1 -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/q4-matvec.comp
+            -o ${ASTC_VULKAN_Q4_MATVEC_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/q4-matvec.comp
+        COMMENT "Compiling Q4 Vulkan matvec shader")
+    add_custom_target(astc-vulkan-q4-matvec-shader
+        DEPENDS ${ASTC_VULKAN_Q4_MATVEC_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_TQ2_MATVEC_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1 -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tq2-matvec.comp
+            -o ${ASTC_VULKAN_TQ2_MATVEC_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tq2-matvec.comp
+        COMMENT "Compiling TQ2 Vulkan matvec shader")
+    add_custom_target(astc-vulkan-tq2-matvec-shader
+        DEPENDS ${ASTC_VULKAN_TQ2_MATVEC_SHADER_OUTPUT})
     if (TARGET astc-vulkan-device-smoke)
         add_executable(astc-vulkan-shader-device-smoke
             astc-vulkan-shader-device-smoke.cpp)

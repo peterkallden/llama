@@ -1,0 +1,46 @@
+#version 450
+
+// Isolated Q4_0 control. The packed layout matches ggml block_q4_0:
+// fp16 scale followed by 32 four-bit values in 18 bytes per block.
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) readonly buffer PackedWeights { uint data[]; } weights;
+layout(std430, set = 0, binding = 1) buffer MatvecOutput { vec4 values[]; } output_data;
+layout(push_constant) uniform PushConstants {
+    uint width; uint height; uint access_pattern;
+    float scale_l; float scale_a; float offset;
+} params;
+
+uint load_byte(uint byte_offset) {
+    const uint word = weights.data[byte_offset >> 2];
+    return (word >> ((byte_offset & 3u) * 8u)) & 0xffu;
+}
+float load_half(uint byte_offset) {
+    const uint lo = load_byte(byte_offset);
+    const uint hi = load_byte(byte_offset + 1u);
+    return unpackHalf2x16(lo | (hi << 8u)).x;
+}
+float activation(uint column) {
+    return 0.5 * sin(0.017 * float(column + 1)) +
+           0.2 * cos(0.031 * float(column + 3));
+}
+shared float partial[64];
+void main() {
+    const uint row = gl_WorkGroupID.x;
+    if (row >= params.height) return;
+    float sum = 0.0;
+    for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64u) {
+        const uint block = row * (params.width / 32u) + column / 32u;
+        const uint base = block * 18u;
+        const uint packed = load_byte(base + 2u + (column % 16u));
+        const uint q = (column % 32u) < 16u ? packed & 0x0fu : packed >> 4u;
+        const float weight = float(int(q) - 8) * load_half(base);
+        sum += weight * activation(column);
+    }
+    partial[gl_LocalInvocationID.x] = sum;
+    barrier();
+    for (uint stride = 32u; stride > 0u; stride >>= 1u) {
+        if (gl_LocalInvocationID.x < stride) partial[gl_LocalInvocationID.x] += partial[gl_LocalInvocationID.x + stride];
+        barrier();
+    }
+    if (gl_LocalInvocationID.x == 0u) output_data.values[row] = vec4(partial[0], 0.0, 0.0, 0.0);
+}
