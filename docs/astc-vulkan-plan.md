@@ -221,10 +221,47 @@ dispatches; its timing data is still exploratory and not a performance claim.
     block-local shortlist of legal ASTC candidates. Maintain the exact cached
     layer residual, run forward and reverse sweeps, and verify that concatenated
     selected 128-bit blocks decode identically to the chosen mixed matrix.
-55. Extend coordinate selection to a real-layer offline adapter. Start with a
+55. [x] Extend coordinate selection to a real-layer offline adapter. Start with a
     bounded pool from complete legal encodes (quality presets and mapping
     metrics), then expose a richer internal astcenc shortlist only if that pool
     demonstrates a calibration/holdout improvement.
+56. Expose a bounded per-block shortlist from the experimental encoder while
+    preserving ordinary ASTC candidate generation, legal bit packing, and CPU
+    decode. A candidate record must include decoded weight error, transformed
+    calibration-output delta, ASTC mode diagnostics, and exact 16-byte payload.
+57. Select shortlists for **both** low local activation loss and diversity of
+    activation-weighted error direction. Start from the best candidate and add
+    candidates by farthest-point or clustering distance in `E_c L`, where
+    `H_I = L L^T`; retain the ordinary lowest-loss candidate as a control.
+58. Re-run scalar ASTC 4x4, 5x5, and 6x6 with that candidate pool, exact
+    cached-residual coordinate selection, nested calibration/validation splits,
+    and an untouched holdout. Add an explicit penalty for replacing the
+    uniform baseline so a larger pool cannot silently overfit calibration.
+59. Prototype Hessian-guided **block error feedback** as an offline encoder
+    alternative. After locking a legal ASTC block, project its error into a
+    low-rank input-sensitivity basis and modify only targets of later blocks.
+    First compare it with exact coordinate descent on small fixtures; it must
+    beat a matched greedy baseline on holdout before a real-layer run.
+60. Add a two-sided objective only after input-only shaping is stable. Capture
+    output sensitivity separately and evaluate `tr(H_O E H_I E^T)` first with
+    a diagonal `H_O`, then a bounded Kronecker-factored approximation. A plain
+    layer-output trace has `H_O = I`; it is not a full-model Hessian.
+61. Test a projected-residual beam/trellis selector only if a diverse shortlist
+    and Hessian feedback both show holdout gains. Its state must be a bounded
+    4--16-dimensional sensitivity projection, and its emitted result remains
+    independently decodable standard ASTC blocks.
+62. Treat layout as part of error shaping: test zero-runtime-cost row/column
+    permutations and sign flips before rotations. The WHT64 result is a
+    negative control, so dense rotations require a separate quality gain large
+    enough to pay for fusion and metadata.
+63. Revisit L+A only after scalar error shaping has a holdout improvement.
+    Test the invariant redundant latent family `L <- L + alpha R`,
+    `A <- A - (s_L/s_A) alpha R`, which preserves the pre-codec reconstructed
+    weight but may give ASTC a more favorable signal.
+64. Consider ASTC-noise-aware adapter tuning or codec-aware fine-tuning only
+    after the post-training tracks above are measured. Inject exact projected
+    ASTC decode error rather than generic Gaussian noise, preserve the normal
+    llama.cpp build, and gate it on model-level validation.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural

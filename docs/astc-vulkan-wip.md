@@ -1819,6 +1819,51 @@ The parallel BCn/CUDA work is related only at the architectural level
 remains ASTC/Vulkan-focused so that its format, hardware, quality, and runtime
 claims stay independently interpretable.
 
+## Seventy-sixth sweep: neural error-shaping research direction
+
+The research direction is now named **neural error shaping for block codecs**:
+the encoder should coordinate independently legal ASTC blocks so the aggregate
+error falls in directions to which the layer or model is insensitive. For a
+weight error `E` and calibration input covariance `H_I`, the current objective
+is `tr(E H_I E^T)`, equivalently the exact squared layer-output error on the
+captured input trace. This is an offline encoder/selector concern; Vulkan still
+samples an ordinary standard ASTC image and has no knowledge of calibration,
+Hessians, candidates, or selection state.
+
+Some of this mechanism has already been evaluated. The legal-block
+coordinate-descent contract (sweep 59) demonstrated cross-block cancellation
+on every deterministic fixture. The real-trace adapter (sweeps 61--62) then
+showed the necessary caution: two and three whole-image streams improve the
+calibration objective, but neither beats uniform neural ranking on the small
+independent holdout. The present evidence is therefore **not** a quality win;
+it shows that a narrow, highly correlated candidate pool can overfit.
+
+The next practical experiment is consequently not a custom ASTC encoder and
+not a new shader. It is a side-fork encoder interface that retains a bounded
+per-block set of legal candidates. The shortlist must include the local
+activation-loss optimum and several candidates whose transformed errors
+`E_c L`, for `H_I = L L^T`, differ in direction. Coordinate selection can then
+be rerun on scalar ASTC 4x4, 5x5, and 6x6 with nested calibration/validation
+splits, a replacement penalty, and a strictly untouched holdout.
+
+Hessian-guided block error feedback is retained as the first more exotic
+algorithm: committed block error is projected into a compact
+input-sensitivity basis and used to alter future offline encoding targets.
+It must first be measured against exact coordinate selection on controlled
+fixtures. Two-sided Kronecker scoring, `tr(H_O E H_I E^T)`, is a later
+experiment: the present layer-output trace has only `H_O = I`; a nontrivial
+output factor requires separately captured downstream/model-loss sensitivity.
+Projected-residual beam/trellis selection, latent gauge redundancy for L+A,
+and ASTC-noise-aware fine-tuning are explicitly deferred until these scalar
+post-training gates show holdout value.
+
+This positioning is supported by GPTQ and QuIP's sensitivity-aware adaptive
+rounding, QTIP's high-dimensional trellis search, YAQA's model-aware
+Kronecker-factored objective, and BaKron's efficient two-sided solver. They
+are algorithmic precedents, not claims that those quantizers or their runtime
+kernels can be substituted for ASTC. The final payload of every proposed ASTC
+experiment remains standard, independently decodable 128-bit blocks.
+
 ## Seventy-first sweep: common-shape FP32 baseline
 
 The missing FP32 point for the Q4/TQ2 comparison is now measured on the exact

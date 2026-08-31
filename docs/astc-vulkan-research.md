@@ -190,6 +190,109 @@ on a straight-through estimator. The immediate experiment should remain much
 simpler: establish a post-training two-latent control, optimize by held-out
 activation error, and only then move to codec-aware latent or codebook tuning.
 
+## Neural error shaping for independently decodable blocks
+
+The central research principle is broader than ASTC: a hardware-decodable block
+codec does not need to minimize the numerical error of every block. It should
+select legal blocks whose *aggregate* error lies in directions that a layer or
+model is least sensitive to. For a linear layer with weight error
+`E = W - W_hat` and calibration inputs `X`, the immediate layer-output error is
+
+\[
+\|X E^T\|_F^2 = \operatorname{tr}(E H_I E^T),
+\qquad H_I = X^T X.
+\]
+
+This is the input-side, GPTQ-like objective already used by the offline
+adapter. It differs from texture RGBA MSE and decoded weight MSE: it can accept
+a larger numerical error if the error is in an input direction the layer does
+not use.
+
+The existing ASTC coordinate-selection contract gives a small but important
+proof of mechanism. It replaces only complete, legal 128-bit ASTC blocks and
+updates the exact cached output residual. On synthetic fixtures it beat either
+uniform stream, so cross-block error cancellation is real. On the first
+real-weight run it improved ordinary image ranking but did not beat the uniform
+neural-ranked stream on held-out activations. A third whole-image stream made
+the holdout result worse. This is evidence of insufficient candidate diversity
+and calibration overfit, not evidence that global selection is intrinsically
+beneficial. Every later error-shaping experiment must therefore use nested
+calibration/validation splits and retain the uniform stream as a control.
+
+### Candidate diversity before global optimization
+
+For a legal candidate `c` for one ASTC block, let `E_c` be its decoded weight
+error and let `L` satisfy `H_I = L L^T`. Its sensitivity-weighted error is
+
+\[
+Z_c = E_c L.
+\]
+
+The candidate list should not be merely the `K` smallest values of
+`||Z_c||_F`. Those candidates can be nearly identical and leave coordinate
+selection no useful tradeoff. The first candidate should be the local optimum;
+the remaining bounded candidates should cover different directions of `Z_c`,
+for example via a loss threshold followed by farthest-point selection or
+clustering. Exact cached-residual selection can then exploit genuinely opposed
+or complementary output deltas. This is the immediate next experiment because
+it improves the information available to the current legal-block selector
+without changing the runtime, ASTC stream, or Vulkan shader.
+
+### From coordinate selection to Hessian-guided error feedback
+
+The next offline algorithm is a block-codec analogue of adaptive rounding.
+Once a block has been committed, its error can be projected into a bounded
+input-sensitivity basis and fed forward as a target correction for blocks that
+are not yet encoded. This is *error diffusion in sensitivity space*, not image
+space. It must first be checked against exact coordinate descent on small
+fixtures, because coordinate descent already accounts for cross terms exactly
+on its calibration trace. Error feedback is useful only if it reaches a better
+holdout tradeoff at materially lower search cost or with a larger candidate
+space.
+
+### Two-sided sensitivity is a later, stronger objective
+
+ASTC blocks span both output and input dimensions. If a defensible
+output-sensitivity factor becomes available, candidate ranking can use
+
+\[
+\mathcal L_{2D} = \operatorname{tr}(H_O E H_I E^T).
+\]
+
+The normal activation reconstruction loss is the special case `H_O = I`.
+It must not be described as a full-model Hessian. A nontrivial `H_O` requires
+separate downstream/model-loss sensitivity capture or a Kronecker-factored
+approximation. This added information is promising for 5x5 and 6x6 blocks but
+should follow, not replace, the one-sided holdout gate.
+
+### Deliberately exotic follow-ons
+
+A projected-residual beam or trellis can choose a sequence of ASTC candidates
+using a compact 4--16-dimensional state rather than a full residual matrix.
+This borrows the *search principle* of trellis-coded quantization while keeping
+the final representation as ordinary, randomly addressable ASTC blocks. It is
+not justified until a diverse candidate shortlist shows a holdout gain.
+
+The L+A representation has a second, more unusual opportunity. With
+`W = s_L L + s_A A + b`, the change
+
+\[
+L' = L + \alpha R, \qquad
+A' = A - \frac{s_L}{s_A}\alpha R
+\]
+
+leaves the uncompressed reconstructed weight unchanged. It creates a family of
+redundant latent signals that can be searched for ASTC-friendly correlation,
+dual-plane use, and sensitivity-shaped post-decode error. This is a later
+offline representation search; it does not imply that Vulkan exposes new ASTC
+operations or that the two latent fields survive ASTC independently.
+
+Finally, codec-aware fine-tuning can inject *measured projected ASTC decode
+error* or the real encode/decode operation in the forward path. This is more
+meaningful than generic Gaussian noise, but it belongs after the post-training
+experiments because it introduces training cost and can hide a weak codec
+representation behind model adaptation.
+
 ## Encoder boundary decision
 
 The research does not need a custom Vulkan decoder. A legal ASTC block stream
@@ -233,6 +336,11 @@ clear fallback when ASTC support or the experimental encoder is unavailable.
 - [Arm ASTC encoder format overview](https://github.com/ARM-software/astc-encoder/blob/main/Docs/FormatOverview.md)
 - [Khronos ASTC data-format specification](https://github.com/KhronosGroup/DataFormat/blob/main/astc.txt)
 - [AQLM: Extreme Compression of LLMs via Additive Quantization](https://arxiv.org/abs/2401.06118)
+- [GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers](https://arxiv.org/abs/2210.17323)
+- [QuIP: 2-Bit Quantization of Large Language Models with Guarantees](https://arxiv.org/abs/2307.13304)
+- [QTIP: Quantization with Trellises and Incoherence Processing](https://arxiv.org/abs/2406.11235)
+- [YAQA: Model-Preserving Adaptive Rounding](https://arxiv.org/abs/2505.22988)
+- [BaKron: Efficient Quantization with Kronecker-Factored Hessians](https://arxiv.org/abs/2608.06291)
 - [PV-Tuning: Beyond Straight-Through Estimation for Extreme LLM Compression](https://arxiv.org/abs/2405.14852)
 - [Real-Time Neural Materials using Block-Compressed Features](https://arxiv.org/abs/2311.16121)
 - [Hardware Accelerated Neural Block Texture Compression with Cooperative Vectors](https://arxiv.org/abs/2506.06040)
