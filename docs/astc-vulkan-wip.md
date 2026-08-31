@@ -473,6 +473,10 @@ F16, 271 MB as published) and `blk.0.attn_q.weight` is a 576x576 matrix. The
 download was verified against the published SHA-256 before use. No model file
 is checked into the repository.
 
+Reproduction uses the published Hugging Face file and verifies SHA-256
+`5157ca60744d21631818364854ac8e4452e1b8022d2ab4c8a2f9cda2344afb30` before
+running the probe.
+
 ## Thirty-second sweep: ASTC/Q4 reference and residual budget
 
 `astc-vulkan-quality-smoke` now compares the loaded F16 matrix with a Q4_0
@@ -528,10 +532,12 @@ quality/storage frontier passes review.
 
 1. Capture representative activation traces from the llama evaluation path and
    feed them to the quality probe for several layers, not only synthetic input.
-2. Add a direct dequantized Q4_0 matvec comparison and report per-layer gate
-   results rather than one aggregate tensor.
-3. Sweep residual budgets (0.25%, 1%, 2%, 5%) and make the quality/storage
-   frontier explicit for 4x4 and 6x6.
+2. [x] Add a direct dequantized Q4_0 matvec comparison and report per-layer
+   gate results rather than one aggregate tensor. The current probe covers
+   four real SmolLM2 layers using deterministic activation vectors; captured
+   model traces remain the next fidelity step.
+3. [x] Sweep residual budgets (0.25%, 1%, 2%, 5%) and make the
+   quality/storage frontier explicit for 4x4 and 6x6.
 4. Investigate whether endpoint/partition search or a neural-aware ASTC input
    transform can close the measured gap before any shader integration.
 5. Keep Phase 3 Vulkan matvec work limited to a correctness scaffold until a
