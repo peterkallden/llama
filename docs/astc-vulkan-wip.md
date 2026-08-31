@@ -1631,12 +1631,14 @@ its model-derived binary fixtures are not checked into the repository.
    shaders and verify both with the same CPU reconstruction oracle.
 2. [x] Add repeated GPU timestamping and report per-dispatch values for 4x4,
    5x5, and 6x6.
-3. [ ] Export one exact FP32/F16-derived source matrix and matching ASTC
+3. [x] Export one exact FP32/F16-derived source matrix and matching ASTC
    payload/reference fixtures from the same tensor; run both paths over a
    larger matrix and a larger batch of rows.
-4. [ ] Add an explicit Q4/TQ2 buffer control with named shaders and preserved
+4. [x] Add an explicit Q4/TQ2 buffer control with named shaders and preserved
    CTests, then compare quality, bytes/weight, and GPU time against ASTC.
-5. [ ] Only after the controls are stable, prototype activation-aware
+5. [ ] Measure quality on the exact common-shape artifacts, add a sampled-FP32
+   microbenchmark, and test hot-cache versus streaming/capacity regimes.
+6. [ ] Only after the controls are stable, prototype activation-aware
    candidate ranking and re-run the earlier 4x4/5x5/6x6, TQ1/TQ2, scalar,
    and ASTC-Q evaluations from the same source artifacts.
 

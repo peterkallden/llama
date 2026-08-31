@@ -347,6 +347,37 @@ one-weight-per-texel result establishes a useful quality trend.
 
 ## Phase 3: compute matvec kernel
 
+### Current status after the first device-backed controls
+
+The isolated Phase-3 scaffold now has separate, reproducible shaders for
+FP32-buffer, ASTC 4x4/5x5/6x6, Q4_0, and TQ2_0. All use the same 64-invocation
+row reduction and the same deterministic activation fixture. Exact F16-derived
+weights are exported from the GGUF reader; ASTC payloads and packed Q4/TQ2
+fixtures are generated from that same source tensor. The Intel UHD 620 probe
+validated all paths on ANV/Mesa without modifying `ggml-vulkan`.
+
+The first 576x512 steady-state timing sweep showed ASTC4 at approximately
+158.1 us per dispatch, Q4_0 at 173.4 us, ASTC5 at 172.3 us, TQ2 at 187.9 us,
+and ASTC6 at 196.5 us. These are mechanism measurements, not quality claims:
+the Q4/TQ2 shaders are correctness-first controls and should be compared with
+the production kernel only after a fair profiling pass. The result supports a
+bandwidth/capacity hypothesis but does not establish an end-to-end speedup.
+
+The next required gates are:
+
+1. Measure FP32, Q4, TQ2, and ASTC on exactly the same shape and report
+   elementwise plus activation-relative error from one calibration/holdout
+   trace.
+2. Separate raw buffer loads, sampled FP32 loads, ASTC decode, and packed
+   dequantization with minimal microbench shaders.
+3. Repeat hot-cache and streaming/capacity regimes, then test batch sizes
+   1, 2, 4, 8, and 16.
+4. Add true TQ1 only after the TQ2 control is stable; its base-3 unpacking is a
+   separate stress case, not a drop-in replacement for TQ2.
+
+No Phase-4 integration is authorized by this plan until these gates produce a
+quality/storage/latency Pareto result on more than one representative workload.
+
 1. Add dedicated experimental compute shaders following the existing Vulkan
    shader source/build conventions.
 2. Bind ASTC images through sampled-image descriptors and bind companion
