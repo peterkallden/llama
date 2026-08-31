@@ -1,9 +1,8 @@
 #version 450
 
-// Correctness-first ASTC matvec. One invocation owns one output row; a later
-// kernel may parallelize the reduction only after this fixed decoder contract
-// has been verified against the CPU ASTC decoder.
-layout(local_size_x = 1) in;
+// Correctness-first parallel ASTC matvec. One workgroup owns one output row;
+// invocations stride across columns and reduce their partial sums locally.
+layout(local_size_x = 64) in;
 
 layout(set = 0, binding = 0) uniform sampler2D astc_weights;
 
@@ -25,17 +24,29 @@ float activation(uint column) {
            0.2 * cos(0.031 * float(column + 3));
 }
 
+shared float partial[64];
+
 void main() {
-    const uint row = gl_GlobalInvocationID.x;
+    const uint row = gl_WorkGroupID.x;
     if (row >= params.height) {
         return;
     }
     float sum = 0.0;
-    for (uint column = 0; column < params.width; ++column) {
+    for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64) {
         const vec4 texel = texelFetch(astc_weights, ivec2(column, row), 0);
         const float l = (texel.r + texel.g + texel.b) / 3.0;
         const float weight = params.scale_l * l + params.scale_a * texel.a + params.offset;
         sum += weight * activation(column);
     }
-    values[row] = vec4(sum, 0.0, 0.0, 0.0);
+    partial[gl_LocalInvocationID.x] = sum;
+    barrier();
+    for (uint stride = 32; stride > 0; stride >>= 1) {
+        if (gl_LocalInvocationID.x < stride) {
+            partial[gl_LocalInvocationID.x] += partial[gl_LocalInvocationID.x + stride];
+        }
+        barrier();
+    }
+    if (gl_LocalInvocationID.x == 0) {
+        values[row] = vec4(partial[0], 0.0, 0.0, 0.0);
+    }
 }

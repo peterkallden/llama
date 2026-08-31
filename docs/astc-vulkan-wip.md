@@ -1531,6 +1531,30 @@ GPU change is a workgroup-parallel row reduction, retaining this serial kernel
 as the oracle contract. Only then should we compare texture-path timing against
 an ordinary buffer-backed FP16/Q4 reference on the same device.
 
+## Sixty-sixth sweep: workgroup-parallel ASTC matvec across footprints
+
+The ASTC matvec shader now uses one 64-invocation workgroup per output row.
+Each invocation samples strided columns, performs the fixed L+A reconstruction,
+and contributes to a shared-memory tree reduction. CPU results are still
+computed from the ASTC-decoded RGBA reference, not the original F16 weights.
+
+For the same FP16-derived 32x64 SmolLM2 probe and 32 output rows, all formats
+passed CPU/GPU comparison on UHD 620:
+
+| Footprint | ASTC payload bytes | GPU timestamp |
+|---|---:|---:|
+| 4x4 | 2,048 | ~9.33 us |
+| 5x5 | 1,456 | ~10.00 us |
+| 6x6 | 1,056 | ~10.33 us |
+
+The earlier serial 4x4 oracle measured ~52.2 us, so the workgroup reduction
+is materially faster while retaining the numerical contract. These timings are
+still too small and too isolated to compare formats or claim a bandwidth gain:
+they contain no activation upload, no realistic batching, and no ordinary
+buffer/Q4 kernel. The immediate next runtime control is a buffer-backed
+FP16-equivalent matvec with the same output shape and activation formula;
+Q4 follows only when its unpack/dequant contract is equally explicit.
+
 ## Sixty-fifth sweep: native ASTC evidence for the Intel validation device
 
 The exposed validation adapter reports `Intel(R) UHD Graphics 620 (KBL GT2)`,
