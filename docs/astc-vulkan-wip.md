@@ -2675,9 +2675,39 @@ useful as a concrete sampler target, but it is not an ARM/Mali proxy: format
 support, cache behavior, and texture-unit throughput remain implementation
 specific.
 
-The Vulkan build is currently blocked by the missing `SPIRV-Headers` CMake
-package. A non-interactive system install is not possible in this session
-because sudo requires the user's password. The CPU reference and all eight
-focused ASTC tests remain unaffected; once the package is installed, the next
-step is to build the existing device/shader smokes and validate sampled ASTC
-decode on the Intel target.
+At the time of this inventory the Vulkan build was blocked by the missing
+`SPIRV-Headers` CMake package. The dependency has since been installed; the
+CPU reference and focused ASTC tests remained unaffected during the transition.
+
+## One-hundred-twelfth sweep: device-backed ASTC capability and shader smoke
+
+After `spirv-headers` was installed, the isolated Vulkan build completed. The
+capability probe reports sampled ASTC 4x4, 5x5, and 6x6 support on Intel UHD
+Graphics 620; NVIDIA GeForce 920MX and llvmpipe report no sampled ASTC support.
+The image-resource device smoke passed all three formats. The shader-device
+CTest matrix also passed all six access variants (sequential and non-local for
+each footprint).
+
+This is the first real fixed-function sampler validation in the project. It
+must still be treated as an Intel/Mesa result, not as a proxy for Mali, Adreno,
+or Apple texture-unit behavior.
+
+## One-hundred-thirteenth sweep: 1,536-column GPU matvec contract
+
+A scalar-RGBA ASTC payload was exported from the F16 SmolLM2
+`blk.0.ffn_down.weight` region with 32 rows and all 1,536 columns. The same
+payload was uploaded to the Intel ASTC image and consumed by the parallel
+workgroup matvec shader. CPU-decoded texels are the oracle, so the test checks
+the complete payload upload, hardware decode, reconstruction, and reduction
+path without comparing against unencoded source values.
+
+| Footprint | Payload bytes | GPU shader timestamp (20 dispatches) |
+| --- | ---: | ---: |
+| 4x4 | 49,152 | ~9,375 ns |
+| 5x5 | 34,496 | ~9,617 ns |
+| 6x6 | 24,576 | ~9,050 ns |
+
+All three passed. The workload is deliberately small and correctness-first;
+the timestamps include neither realistic batching nor comparison with ggml's
+FP16/Q4 kernels. The next performance gate is a larger row count with repeated
+dispatches and an explicitly matched buffer-backed control.
