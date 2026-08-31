@@ -70,12 +70,23 @@ struct ggml_vk_astc_pack_metadata {
     uint64_t compressed_bytes;
     uint64_t calibration_bytes;
 
+    constexpr bool has_valid_channel_order() const {
+        const uint32_t order = channel_order_packed;
+        if ((order & ~0xffu) != 0) return false;
+        const uint32_t a = (order >> 0) & 3;
+        const uint32_t b = (order >> 2) & 3;
+        const uint32_t c = (order >> 4) & 3;
+        const uint32_t d = (order >> 6) & 3;
+        return a != b && a != c && a != d && b != c && b != d && c != d;
+    }
+
     constexpr bool is_valid() const {
         return version == ggml_vk_astc_pack_metadata_version &&
             (format_id == ggml_vk_astc_pack_format_4x4 ||
              format_id == ggml_vk_astc_pack_format_6x6) &&
             logical_rows != 0 && logical_columns != 0 &&
             texel_columns == (logical_columns + 3) / 4 &&
+            has_valid_channel_order() &&
             layout_id <= ggml_vk_astc_pack_layout_block_reversed &&
             mapping_id <= ggml_vk_astc_pack_mapping_block_affine &&
             encoder_quality_percent <= 100 && compressed_bytes != 0;

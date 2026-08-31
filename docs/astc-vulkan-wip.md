@@ -408,6 +408,12 @@ version, shape, supported IDs, and non-zero compressed storage; it intentionally
 does not define GGUF serialization or host endianness yet. The tensor-contract
 CTest now covers both a valid record and an inconsistent-shape rejection.
 
+The thirtieth sweep strengthened that metadata contract by validating the
+packed RGBA channel order as exactly one occurrence of channels 0 through 3 and
+rejecting non-zero bits outside the packed byte. A duplicate-channel record is
+now a compile-time negative test. This keeps malformed offline artifacts from
+reaching a future shader path.
+
 The twenty-eighth sweep wired the affine mapping modes into the same candidate
 search as channel order, block order, and encoder quality. Shared block-affine
 stores one scale/offset pair per ASTC block; per-channel affine stores four.

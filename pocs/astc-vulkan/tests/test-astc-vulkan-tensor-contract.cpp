@@ -34,7 +34,7 @@ int main() {
         100,
         4096,
         1024,
-        0x00000396,
+        0x000000e4,
         ggml_vk_astc_pack_layout_block_reversed,
         ggml_vk_astc_pack_mapping_block_affine,
         98,
@@ -42,6 +42,7 @@ int main() {
         23256,
     };
     static_assert(pack_metadata.is_valid(), "versioned pack metadata should be valid");
+    static_assert(pack_metadata.has_valid_channel_order(), "channel order should be a permutation");
     static_assert(pack_metadata.compressed_bytes == wide.storage_bytes(ggml_vk_astc_6x6_unorm_rgba),
                   "pack byte accounting must use the ASTC contract");
 
@@ -59,5 +60,20 @@ int main() {
         0,
     };
     static_assert(!invalid_pack_metadata.is_valid(), "inconsistent texel columns must be rejected");
+
+    constexpr ggml_vk_astc_pack_metadata invalid_channel_order = {
+        ggml_vk_astc_pack_metadata_version,
+        ggml_vk_astc_pack_format_4x4,
+        2,
+        8,
+        2,
+        0x00000055,
+        ggml_vk_astc_pack_layout_identity,
+        ggml_vk_astc_pack_mapping_global,
+        60,
+        16,
+        0,
+    };
+    static_assert(!invalid_channel_order.is_valid(), "duplicate channels must be rejected");
     return 0;
 }

@@ -103,6 +103,8 @@ dispatches; its timing data is still exploratory and not a performance claim.
     pressure-aware storage decision.
 25. Implement the first reproducible offline packer artifact only after the
     preceding quality and storage gates pass.
+26. [x] Validate packed channel-order metadata as an actual four-channel
+    permutation before any artifact can be consumed.
 
 The packer must optimize a numerical objective. A generic image compressor is
 useful as an initial baseline but is not assumed to be optimal for neural
