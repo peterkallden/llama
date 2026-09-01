@@ -27,6 +27,8 @@ int main() {
     assert(actual.tensors.size() == expected.tensors.size());
     assert(actual.tensors[0].name == expected.tensors[0].name);
     assert(actual.tensors[1].byte_offset == expected.tensors[1].byte_offset);
+    assert(astc_vulkan_find_tensor(actual, "blk.0.attn_q.weight") != nullptr);
+    assert(astc_vulkan_find_tensor(actual, "missing") == nullptr);
 
     astc_vulkan_manifest invalid = expected;
     invalid.tensors[1].byte_offset = 1;
