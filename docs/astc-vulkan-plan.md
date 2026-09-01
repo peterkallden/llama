@@ -910,3 +910,11 @@ Required measurements:
 
 The sidecar boundary stays unchanged. No production `ggml-vulkan` routing,
 shader ABI, or standard Vulkan path is modified by this model transition.
+
+The quality harness now supports `--max-rows` for explicitly labelled large
+model screening and `--skip-residual-analysis` to avoid the small-fixture
+low-rank/sparse pass on matrices with tens of millions of values. These are
+measurement controls only; the ASTC encoder and sidecar ABI are unchanged.
+The Pythia 256-row screen is a parameter-ranking checkpoint. Before using it
+to select a format, run the full 2,048-row layer and then the model-level
+capture/replay on disjoint prompts.

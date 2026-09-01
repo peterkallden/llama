@@ -517,8 +517,8 @@ bool make_q4_reference(const std::vector<float> & weights,
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc < 5 || argc % 2 == 0) {
-        std::fprintf(stderr, "usage: %s --model path --tensor name [--trace path] [--selection-trace path] [--residual-percent n]\n", argv[0]);
+    if (argc < 5) {
+        std::fprintf(stderr, "usage: %s --model path --tensor name [--trace path] [--selection-trace path] [--residual-percent n] [--max-rows n] [--skip-residual-analysis]\n", argv[0]);
         return 2;
     }
     std::string model;
@@ -526,12 +526,32 @@ int main(int argc, char ** argv) {
     std::string trace_path;
     std::string selection_trace_path;
     float residual_fraction = 0.01f;
-    for (int i = 1; i < argc; i += 2) {
+    uint32_t max_rows = 0;
+    bool skip_residual_analysis = false;
+    for (int i = 1; i < argc;) {
         const std::string option = argv[i];
+        if (option == "--skip-residual-analysis") {
+            skip_residual_analysis = true;
+            ++i;
+            continue;
+        }
+        if (i + 1 >= argc) {
+            std::fprintf(stderr, "missing value for option: %s\n", option.c_str());
+            return 2;
+        }
         if (option == "--model") model = argv[i + 1];
         else if (option == "--tensor") tensor = argv[i + 1];
         else if (option == "--trace") trace_path = argv[i + 1];
         else if (option == "--selection-trace") selection_trace_path = argv[i + 1];
+        else if (option == "--max-rows") {
+            char * end = nullptr;
+            const unsigned long value = std::strtoul(argv[i + 1], &end, 10);
+            if (end == argv[i + 1] || *end != '\0' || value == 0 || value > UINT32_MAX) {
+                std::fprintf(stderr, "invalid max rows: %s\n", argv[i + 1]);
+                return 2;
+            }
+            max_rows = static_cast<uint32_t>(value);
+        }
         else if (option == "--residual-percent") {
             char * end = nullptr;
             const float percent = std::strtof(argv[i + 1], &end);
@@ -545,6 +565,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "unknown or misplaced option: %s\n", option.c_str());
             return 2;
         }
+        i += 2;
     }
     if (model.empty() || tensor.empty()) return 2;
     ggml_vk_astc_loaded_matrix matrix;
@@ -552,6 +573,10 @@ int main(int argc, char ** argv) {
     if (!ggml_vk_astc_load_gguf_matrix(model, tensor, matrix, error)) {
         std::fprintf(stderr, "%s\n", error.c_str());
         return 1;
+    }
+    if (max_rows != 0 && max_rows < matrix.rows) {
+        matrix.rows = max_rows;
+        matrix.values.resize(static_cast<size_t>(matrix.rows) * matrix.columns);
     }
     activation_set activations;
     if (!trace_path.empty()) {
@@ -626,7 +651,7 @@ int main(int argc, char ** argv) {
             }
         }
     }
-    for (const uint32_t block : { 4u, 6u }) {
+    if (!skip_residual_analysis) for (const uint32_t block : { 4u, 6u }) {
         result base_result;
         std::vector<float> base_reconstructed;
         if (!encode_format(matrix.values, matrix.rows, matrix.columns, activations,

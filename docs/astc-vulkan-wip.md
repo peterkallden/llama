@@ -3182,3 +3182,21 @@ codec reference at 2,048 hidden / 8,192 FFN width, while Qwen remains the
 code-oriented 1,536 hidden / 8,960 FFN stress target. The full ASTC 4x4/6x6
 quality sweep is intentionally running separately because it is substantially
 larger than the earlier SmolLM2 matrix.
+
+The first scalable parameter screen used `--max-rows 256` while retaining all
+8,192 input columns and the 15 captured activation positions. This is a
+screening result, not a full-layer quality claim:
+
+| Candidate | Stored bytes | Activation-relative MSE after 1% residual |
+| --- | ---: | ---: |
+| Q4_0 reference conversion | 1,179,648 | 0.00308243 |
+| ASTC 4x4, block-affine, Hadamard4, linear | 786,432 (+167,776 residual) | 0.147502 |
+| ASTC 6x6, block-affine, Hadamard4, linear | 352,944 (+167,776 residual) | 0.382088 |
+
+The reduced screen failed the `<=0.10` quality gate for both ASTC footprints,
+while Q4_0 remained substantially closer to the FP16 tensor. This is useful as
+an early warning that Pythia's wider FFN exposes more difficult weight
+statistics; it does not invalidate L+A or ASTC, but it raises the bar for
+neural-aware ranking and/or learned error shaping. The `--max-rows` option was
+added only to make large-model parameter screens tractable; final claims must
+use all 2,048 output rows and a disjoint holdout trace.
