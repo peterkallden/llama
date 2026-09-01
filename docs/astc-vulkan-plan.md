@@ -1194,3 +1194,13 @@ selection with four candidate threads. Eight threads reduced generation to
 18.35 seconds and retained byte-identical payload and commit CSV. Thus the
 near-term full-tensor bottleneck is offline ASTC encoding; do not redesign the
 exact selector before a full-width strip profile proves it necessary.
+
+The full-width gate has passed. One layer-0 `6x8192` strip has 1,366 ASTC
+blocks, 8,150 unique non-neutral candidates, and a 7,628,400-byte candidate
+workset. With eight candidate threads it takes 95.95 seconds for legal ASTC
+generation/decode and 1.35 seconds for exact conflict-aware selection. A
+conservative 342-strip estimate is therefore about 9–10 hours, dominated by
+offline ASTC encoding. This is now an authorized full-tensor gauge-only run:
+use chunked selection, light diagnostics, a global commit log, a per-strip log,
+and a final payload artifact. Do not change the candidate family or inspect
+holdout until validation has selected its prefix.

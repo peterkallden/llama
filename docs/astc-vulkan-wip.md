@@ -3829,3 +3829,28 @@ practical constraint. The speedup from four to eight threads is real but not
 linear, so the next gate is a full-width `6x8192` strip with light diagnostics
 and eight candidate threads. It will establish real per-strip residency and
 time before a multi-hour full-height study is started.
+
+## One-hundred-sixty-first sweep: full-width strip gate
+
+The exact layer-0 `6x8192` strip gate was run with eight candidate threads and
+light diagnostics. It has the same 1,366 ASTC blocks as every interior strip
+of the target `2048x8192` tensor.
+
+| Metric | Result |
+| --- | ---: |
+| Unique non-neutral candidates | 8,150 |
+| Compact selected steps | 470 |
+| Peak candidate workset | 7,628,400 bytes (7.27 MiB) |
+| Candidate generation/decode | 95.952 s |
+| Exact local selection | 1.355 s |
+| Scalar/gauge-neutral holdout | 0.0317474 |
+| Validation-stopped gauge holdout | 0.0174506 |
+
+The candidate workset remains bounded by a single strip despite the full
+reduction width. The timing is the decisive engineering result: projected over
+342 six-row strips it gives roughly 9–10 hours of offline work, overwhelmingly
+in legal ASTC candidate generation. Exact conflict-aware selection contributes
+only several minutes at that scale. The project should therefore keep the
+selector definition intact and start the full-tensor gauge-only study with
+light diagnostics, eight generator threads, the global validation commit log,
+the per-strip metrics log, and a final payload stream.
