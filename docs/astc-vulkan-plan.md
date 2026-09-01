@@ -992,3 +992,10 @@ GPU-vs-CPU synchronization, and shader occupancy where the driver exposes it.
 The existing E2E smoke is a correctness harness, not an inference-speed
 claim; a full token-loop benchmark must use identical prompts, batch shapes,
 workgroup geometry, and warm-up policy for all three paths.
+
+The first dispatch benchmark is complete on the full Pythia-shaped matrix:
+buffer FP32 `14.632 ms`, ASTC 4x4 `9.047 ms`, ASTC 6x6 `7.816 ms`, and sampled
+R32F `2.208 ms` per dispatch. Thus ASTC is `1.62x`/`1.87x` faster than the
+current storage-buffer control, but slower than ordinary sampled F32 on this
+device. Treat these as steady-state GPU timestamps only; upload amortization,
+Q4 comparison, and end-to-end token throughput remain separate gates.

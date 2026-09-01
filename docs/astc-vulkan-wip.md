@@ -3316,3 +3316,24 @@ L+A encoding, but a positive bandwidth/path result: the 6x6 image is legal,
 resident, and decoded on the GPU. Keep it as a research control until
 block-local residuals, neural-aware ranking, or codec-aware training improve
 the model error.
+
+## One-hundred-forty-second sweep: Vulkan dispatch benchmark
+
+A matched timestamp run used the full Pythia-shaped `8192x2048` matrix,
+identical 64-lane workgroups, and 20 repeated dispatches. The timestamp covers
+GPU dispatch execution only; it excludes host upload, model scheduling, and
+PCIe transfer. Results:
+
+| Path | GPU time/dispatch | Relative to buffer | Stored weight bytes |
+| --- | ---: | ---: | ---: |
+| Vulkan storage buffer FP32 | 14.632 ms | 1.00x | 67,108,864 |
+| ASTC 4x4 L+A | 9.047 ms | 1.62x faster | 16,777,216 |
+| ASTC 6x6 L+A | 7.816 ms | 1.87x faster | 7,474,752 |
+| sampled R32F control | 2.208 ms | 6.63x faster | 67,108,864 |
+
+The result is encouraging for ASTC as a bandwidth-saving alternative to the
+current buffer shader, but it also separates sampler cost from decompression:
+ordinary sampled F32 is substantially faster on this device. The ASTC result
+is therefore a device-specific dispatch observation, not a general inference
+claim. The next benchmark should include Q4 and a full token loop, and should
+report upload amortization separately from steady-state dispatch time.
