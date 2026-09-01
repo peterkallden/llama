@@ -1144,3 +1144,10 @@ over 4,096 blocks, so the full-tensor path must not assume one global low-rank
 correction basis. Keep diagnostics local/chunkable and preserve the exact
 conflict-aware commit contract. The next quality gate is the same protocol on
 layer 1 before full-tensor engineering.
+
+The layer-1 192x192 gate also remains positive: scalar holdout `0.0567970`
+versus validation-stopped gauge holdout `0.0533107` (about 6.1% lower). The
+large layer-0 gain is therefore not universal, but the mechanism survives on a
+second tensor. Full-tensor work must retain per-tensor calibration, candidate
+selection, and validation stopping; a single global gauge policy is not
+supported by the evidence.

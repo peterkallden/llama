@@ -3714,3 +3714,28 @@ not globally low-rank, but its local correlations remain strong enough to make
 conflict-aware assembly essential. The mode pattern is also consistent: gauge
 primarily crosses quantization-level boundaries, with occasional partition or
 weight-grid changes and no observed dual-plane transition.
+
+## One-hundred-fifty-seventh sweep: parallel cross-tensor gate
+
+The four-thread gauge selector was repeated on `blk.1.ffn_down.weight` with a
+192x192 crop and the layer-1 calibration/validation/holdout traces. This
+checks whether the scaling result is specific to layer 0 while keeping the
+same ASTC 6x6 format and candidate family.
+
+| Metric | Layer 1 result |
+| --- | ---: |
+| Scalar / gauge-neutral holdout | 0.0567970 |
+| Full conflict-aware gauge holdout | 0.0536337 |
+| Validation-stopped gauge holdout | **0.0533107** |
+| Local gauge wins | 810 / 1,024 |
+| Accepted proposals | 754 / 810 |
+| Effective rank | 552.9 |
+| Mean positive cosine | 0.1329 |
+| Mode changes: dual-plane / endpoint / partition / grid / levels | 0 / 0 / 14 / 8 / 233 |
+
+The validation-selected result improves untouched holdout by about 6.1%.
+This is materially smaller than layer 0's 44.3% improvement, but it remains
+positive and uses the same scalar-anchored fallback. The mechanism is therefore
+not a layer-0-only artifact; its magnitude depends on the tensor and activation
+geometry. Keep per-tensor selection and do not assume a universal gauge budget
+or correction rank.
