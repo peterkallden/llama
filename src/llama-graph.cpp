@@ -1306,6 +1306,9 @@ void llm_graph_result::reset() {
     t_ffn_down_inp.resize(LLAMA_MAX_LAYERS + 1);
     std::fill(t_ffn_down_inp.begin(), t_ffn_down_inp.end(), nullptr);
 
+    t_ffn_down_out.resize(LLAMA_MAX_LAYERS + 1);
+    std::fill(t_ffn_down_out.begin(), t_ffn_down_out.end(), nullptr);
+
     t_sampled.clear();
     t_sampled_probs.clear();
     t_sampled_logits.clear();
@@ -1363,6 +1366,15 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
             if (embeddings_ffn_down_inp[il]) {
                 GGML_ASSERT(t_ffn_down_inp[il] != nullptr && "FFN down input tensor is null");
                 ggml_set_output(t_ffn_down_inp[il]);
+            }
+        }
+    }
+    {
+        const auto & embeddings_ffn_down_out = params.cparams.embeddings_ffn_down_out;
+        for (size_t il = 0; il < embeddings_ffn_down_out.size(); ++il) {
+            if (embeddings_ffn_down_out[il]) {
+                GGML_ASSERT(t_ffn_down_out[il] != nullptr && "FFN down output tensor is null");
+                ggml_set_output(t_ffn_down_out[il]);
             }
         }
     }
@@ -1492,6 +1504,9 @@ void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
     // changing the production scheduler or shader paths.
     if (strcmp(name, "ffn_down_input") == 0 && il >= 0) {
         res->set_ffn_down_inp(il, cur);
+    }
+    if (strcmp(name, "ffn_down_output") == 0 && il >= 0) {
+        res->set_ffn_down_out(il, cur);
     }
 }
 
@@ -1872,6 +1887,7 @@ ggml_tensor * llm_graph_context::build_ffn(
             // GLM4, GLM4_MOE, and JAIS2 seem to have numerical issues with half-precision accumulators
             ggml_mul_mat_set_prec(cur, GGML_PREC_F32);
         }
+        cb(cur, "ffn_down_output", il);
     }
 
     if (down_b) {

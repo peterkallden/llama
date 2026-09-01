@@ -118,6 +118,10 @@ LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uin
 // projection.  The returned rows are token-major and have n_ff(lid) columns.
 LLAMA_API void llama_set_embeddings_ffn_down_inp(struct llama_context * ctx, uint32_t lid, bool value);
 LLAMA_API float * llama_get_embeddings_ffn_down_inp(struct llama_context * ctx, uint32_t lid);
+// PoC-only: capture the output of a layer's FFN down projection, before the
+// residual path. Rows are token-major and have n_embd columns.
+LLAMA_API void llama_set_embeddings_ffn_down_out(struct llama_context * ctx, uint32_t lid, bool value);
+LLAMA_API float * llama_get_embeddings_ffn_down_out(struct llama_context * ctx, uint32_t lid);
 
 // PoC helper exposing the FFN width needed to interpret the capture above.
 LLAMA_API int32_t llama_model_n_ff(const struct llama_model * model, uint32_t layer);

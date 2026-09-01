@@ -17,11 +17,12 @@ struct trace_capture_params {
     std::string prompt;
     uint32_t layer = 0;
     bool ffn_down_input = false;
+    bool ffn_down_output = false;
 };
 
 void print_usage(const char * program) {
     std::fprintf(stderr,
-                 "usage: %s --model model.gguf --output trace.astc --layer N --prompt text [--ffn-down-input]\n",
+                 "usage: %s --model model.gguf --output trace.astc --layer N --prompt text [--ffn-down-input|--ffn-down-output]\n",
                  program);
 }
 
@@ -46,6 +47,10 @@ bool parse_args(int argc, char ** argv, trace_capture_params & params) {
         }
         if (std::strcmp(option, "--ffn-down-input") == 0) {
             params.ffn_down_input = true;
+            continue;
+        }
+        if (std::strcmp(option, "--ffn-down-output") == 0) {
+            params.ffn_down_output = true;
             continue;
         }
         if (i + 1 == argc) {
@@ -123,8 +128,17 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    if (params.ffn_down_input && params.ffn_down_output) {
+        std::fprintf(stderr, "choose only one FFN capture mode\n");
+        llama_free(context);
+        llama_model_free(model);
+        llama_backend_free();
+        return 2;
+    }
     if (params.ffn_down_input) {
         llama_set_embeddings_ffn_down_inp(context, params.layer, true);
+    } else if (params.ffn_down_output) {
+        llama_set_embeddings_ffn_down_out(context, params.layer, true);
     } else {
         llama_set_embeddings_layer_inp(context, params.layer, true);
     }
@@ -148,9 +162,14 @@ int main(int argc, char ** argv) {
     }
 
     const int32_t columns = params.ffn_down_input ? llama_model_n_ff(model, params.layer) : llama_model_n_embd(model);
-    const float * layer_input = params.ffn_down_input ?
-        llama_get_embeddings_ffn_down_inp(context, params.layer) :
-        llama_get_embeddings_layer_inp(context, params.layer);
+    const float * layer_input = nullptr;
+    if (params.ffn_down_input) {
+        layer_input = llama_get_embeddings_ffn_down_inp(context, params.layer);
+    } else if (params.ffn_down_output) {
+        layer_input = llama_get_embeddings_ffn_down_out(context, params.layer);
+    } else {
+        layer_input = llama_get_embeddings_layer_inp(context, params.layer);
+    }
     if (columns <= 0 || layer_input == nullptr) {
         std::fprintf(stderr, "failed to obtain requested activation capture\n");
         llama_batch_free(batch);
@@ -169,7 +188,8 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "%s\n", error.c_str());
     } else {
         std::printf("captured %u %s activations for layer-%u with %u columns to %s\n",
-                    trace.samples, params.ffn_down_input ? "ffn-down-input" : "layer-input",
+                    trace.samples,
+                    params.ffn_down_input ? "ffn-down-input" : (params.ffn_down_output ? "ffn-down-output" : "layer-input"),
                     params.layer, trace.columns, params.output_path.c_str());
     }
 

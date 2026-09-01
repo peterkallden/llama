@@ -90,6 +90,7 @@ struct llama_context {
 
     float * get_embeddings_layer_inp(uint32_t lid);
     float * get_embeddings_ffn_down_inp(uint32_t lid);
+    float * get_embeddings_ffn_down_out(uint32_t lid);
 
     llama_token * get_sampled_tokens() const;
     llama_token   get_sampled_token_ith(int32_t idx);
@@ -117,6 +118,7 @@ struct llama_context {
     void set_embeddings_nextn(bool value, bool masked);
     void set_embeddings_layer_inp(uint32_t lid, bool enable);
     void set_embeddings_ffn_down_inp(uint32_t lid, bool enable);
+    void set_embeddings_ffn_down_out(uint32_t lid, bool enable);
     void set_nextn_layer_offset(int32_t offset);
     void set_causal_attn(bool value);
     void set_warmup(bool value);
@@ -236,6 +238,7 @@ private:
     // from backend into host-side embd_layer_inp buffers
     void extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
     void extract_ffn_down_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
+    void extract_ffn_down_outputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
 
     //
     // graph
@@ -310,6 +313,7 @@ private:
     // Host buffers for the optional PoC FFN-down input capture.  The width is
     // model.hparams.n_ff(il), not model.hparams.n_embd.
     std::vector<buffer_view<float>> embd_ffn_down_inp;
+    std::vector<buffer_view<float>> embd_ffn_down_out;
 
     struct sampling_info {
         // !samplers.empty() to check if any samplers are active

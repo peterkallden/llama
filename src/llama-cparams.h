@@ -60,6 +60,7 @@ struct llama_cparams {
     // down projection.  This is deliberately separate from layer inputs: for
     // gated FFNs its width is n_ff(il), which may be larger than n_embd.
     std::vector<bool> embeddings_ffn_down_inp;
+    std::vector<bool> embeddings_ffn_down_out;
 
     enum llama_context_type ctx_type;
     enum llama_pooling_type pooling_type;
