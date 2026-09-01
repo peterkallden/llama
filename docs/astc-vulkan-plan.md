@@ -887,3 +887,26 @@ opt-in graph input selected only for an exact token-batch shape; ordinary
 reserve shapes and all default contexts continue to use the normal FFN-down
 matmul. This keeps the production Vulkan backend untouched while giving us a
 model-level oracle for the future GPU replacement design.
+
+### Next model-validation sweep: Pythia before Qwen FP16 conversion
+
+Use Pythia-1.4B as the first larger FP16 codec reference. Preserve the official
+EleutherAI safetensors as provenance, validate the locally runnable F16 GGUF,
+and compare a same-source Q4_K_M baseline before any ASTC ranking claims.
+
+Required measurements:
+
+1. Capture matched layer-0 FFN-down traces with disjoint calibration and
+   holdout prompts.
+2. Run the ASTC quality harness for 4x4 and 6x6, recording model dimensions,
+   bytes, layer-output error, activation-relative error, logits, loss, and
+   top-1 agreement.
+3. Compare ASTC against FP16 and same-source Q4_K_M; retain 5x5 only as a
+   compromise diagnostic if the full sweep is too expensive.
+4. Repeat the selected measurements on Qwen2.5-Coder after obtaining an
+   F16 oracle, because Pythia does not cover the 1,536-column target.
+5. Keep all model-specific outputs labelled by architecture and source type;
+   do not combine Pythia and Qwen numbers into one aggregate.
+
+The sidecar boundary stays unchanged. No production `ggml-vulkan` routing,
+shader ABI, or standard Vulkan path is modified by this model transition.

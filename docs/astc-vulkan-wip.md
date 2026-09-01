@@ -3153,3 +3153,32 @@ no FP16 GGUF. The downloaded Q4_K_M is suitable for loader, dimension, prompt,
 and runtime smoke tests. For ASTC quality against an unquantized oracle,
 convert the original Qwen safetensors model to F16 GGUF, or use Q8_0 only as
 an explicitly labelled near-FP16 proxy.
+
+## One-hundred-thirty-eighth sweep: Pythia-1.4B FP16 reference
+
+Pythia-1.4B was selected as the first larger-model codec reference because the
+official EleutherAI checkpoint declares `float16` weights. The source files are
+stored under `/home/prbm/models/pythia-1.4b-hf/`; the downloaded safetensors
+file is 2,930,002,184 bytes and its configuration identifies
+`GPTNeoXForCausalLM`, 24 layers, hidden size 2,048, FFN size 8,192, vocabulary
+size 50,304, and `torch_dtype=float16`.
+
+For immediate execution a community F16 GGUF was validated with the current
+llama loader and is stored as
+`/home/prbm/models/Pythia-1.4B-F16-community.gguf`. It reports GGUF F16,
+GPT-NeoX architecture, 1.41B parameters, and 2.64 GiB resident model data.
+This file is a convenience runtime artifact; the official safetensors remain
+the provenance reference and should be converted locally when the conversion
+environment is available.
+
+The Pythia layer-0 trace capture succeeded with 15 token positions and 8,192
+FFN-down input columns. A Q4_K_M model was generated locally from the same F16
+GGUF, producing an 872.94 MiB quantized file. On the initial matched prompt,
+full-model FP16 versus Q4_K_M measured logits MSE `0.25712294`, relative logits
+MSE `0.028562965`, top-1 agreement `60%`, and loss delta `+0.21477446`.
+
+This target complements rather than replaces Qwen: Pythia gives a clean FP16
+codec reference at 2,048 hidden / 8,192 FFN width, while Qwen remains the
+code-oriented 1,536 hidden / 8,960 FFN stress target. The full ASTC 4x4/6x6
+quality sweep is intentionally running separately because it is substantially
+larger than the earlier SmolLM2 matrix.
