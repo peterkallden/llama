@@ -3629,3 +3629,40 @@ decode path. Before introducing an actual correction `c`, scale this exact
 gauge-only protocol further and add payload/mode-transition diagnostics for
 the selected blocks (endpoint mode, partition count, dual-plane state and
 payload change relative to scalar).
+
+## One-hundred-fifty-fourth sweep: gauge mode-transition diagnosis
+
+The 192x192 layer-0 result was reproduced after adding an offline-only
+inspection pass based on the public `astcenc_get_block_info` API. The selector
+also now writes its entire path to an optional CSV with calibration MSE,
+validation MSE, marginal residual gain, and cumulative gain; validation chose
+commit 580 of 710 without accessing holdout.
+
+| Measurement | Result |
+| --- | ---: |
+| Scalar / gauge-neutral holdout MSE | 0.0426420 |
+| Full conflict-aware gauge holdout MSE | 0.0239173 |
+| Validation-stopped gauge holdout MSE | **0.0237592** |
+| Accepted non-zero-gauge blocks | 710 / 1,024 |
+| Payload changes relative to scalar | 710 |
+| Dual-plane changes | 0 |
+| First endpoint-mode changes | 0 |
+| Partition-count changes | 15 |
+| Weight-grid changes | 5 |
+| Endpoint/weight-level changes | 177 |
+
+The validation-selected result is 44.3% below scalar on untouched holdout.
+The transition table narrows the interpretation. Gauge does *not* win here by
+merely enabling a dual-plane path, and it rarely changes the coarse weight
+grid. Instead, a semantically null signal changes the legal 16-byte payload
+and frequently crosses endpoint/weight quantization-level boundaries, with a
+small number of partition transitions. This is direct evidence that the useful
+object is the complete post-codec feasible set, not a pre-codec Alpha residual.
+
+The selector remains entirely offline and standard-compatible. Its sparse
+candidate deltas affect only the output rows covered by each ASTC block, while
+the validation residual is updated through those same decoded deltas. This
+preserves the exact candidate order while making larger crops feasible. The
+next engineering task is parallel, deterministic candidate generation before a
+full `2048x8192` tensor gate; the global residual commit order itself must stay
+serial and exact.

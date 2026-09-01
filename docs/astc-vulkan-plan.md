@@ -1116,3 +1116,17 @@ relative MSE, marginal residual gain, and cumulative gain. This log is for
 choosing a validation-only stopping prefix; holdout remains read only after a
 prefix is fixed. Gauge diagnostics compare every accepted candidate payload
 against its scalar baseline using the public `astcenc_get_block_info` API.
+
+The 192x192 diagnosis shows that all 710 accepted gauge blocks changed payload,
+while none changed dual-plane state or first endpoint mode; 177 changed an
+endpoint/weight quantization-level count, 15 changed partition count, and five
+changed the weight grid. Treat null-space steering as a way to traverse the
+whole discrete ASTC feasible set, particularly its quantization boundaries,
+not as an attempt to force a specific Alpha or dual-plane mode.
+
+For full-tensor scaling, parallelize only independent per-block source
+candidate generation and exact ASTC encode/decode. Preserve deterministic
+block indexing and collect candidates before the existing serial,
+conflict-aware residual commit. This separation keeps the experiment
+reproducible: parallel work expands the legal dictionary, while the global
+selection definition stays unchanged.
