@@ -227,6 +227,16 @@ if (TARGET ggml-base)
         target_link_libraries(astc-vulkan-model-replay-smoke PRIVATE
             llama-common llama ggml-base ${CMAKE_THREAD_LIBS_INIT})
         target_compile_features(astc-vulkan-model-replay-smoke PRIVATE cxx_std_17)
+
+        add_executable(astc-vulkan-model-baseline-smoke
+            astc-vulkan-model-baseline-smoke.cpp)
+        target_include_directories(astc-vulkan-model-baseline-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include
+            ${CMAKE_SOURCE_DIR}/src)
+        target_link_libraries(astc-vulkan-model-baseline-smoke PRIVATE
+            llama-common llama ggml-base ${CMAKE_THREAD_LIBS_INIT})
+        target_compile_features(astc-vulkan-model-baseline-smoke PRIVATE cxx_std_17)
     endif()
 endif()
 

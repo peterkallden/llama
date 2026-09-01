@@ -858,6 +858,12 @@ conservative path and retains 5x5 as a tunable compromise, but does not select
 a production default. The next gate is the same suite against FP16, Q4_0,
 TQ1_0, and TQ2_0, followed by a larger model.
 
+The baseline smoke is now implemented and the four-prompt Q4/TQ comparison is
+recorded in the WIP log. Q4_0 is materially closer to FP16 than the current
+single-layer ASTC replay. TQ1_0 and TQ2_0 are both valid GGUF types but produce
+identical very poor metrics in the local fixtures, so the next TQ step is a
+fixture/dequantization audit before drawing algorithmic conclusions.
+
 The implementation remains intentionally sidecar-only. The override is an
 opt-in graph input selected only for an exact token-batch shape; ordinary
 reserve shapes and all default contexts continue to use the normal FFN-down

@@ -3077,3 +3077,25 @@ ranking and test design rather than establish general model quality.
 The next required comparison is explicit: run the same prompt suite through
 the unmodified FP16, Q4_0, TQ1_0, and TQ2_0 fixtures, then compare loss and
 greedy agreement to this ASTC sidecar replay.
+
+## One-hundred-thirty-fourth sweep: FP16/Q4/TQ baseline comparison
+
+A new sidecar baseline smoke runs the same token batch and all-token metrics
+for a candidate GGUF against the FP16 reference. On the four-prompt suite,
+the Q4_0 candidate averaged logits MSE `5.3262`, relative logits MSE
+`0.05751`, top-1 agreement `39.1%`, and loss delta `+0.5069`. This is a full
+model quantization baseline, so it is not directly equivalent to the
+single-layer ASTC replay, but it provides the required scale reference.
+
+The local TQ1_0 and TQ2_0 fixtures both averaged logits MSE `185.12`, relative
+logits MSE `2.0478`, top-1 agreement `4.8%`, and loss delta `+15.34`. Loader
+metadata confirms that the files are distinct valid types (`TQ1_0 - 1.69 bpw`
+and `TQ2_0 - 2.06 bpw`), yet their measured outputs are identical on all four
+prompts. This is a strong signal to audit how these local ternary fixtures were
+created or dequantized before using them as quality baselines; it is not
+evidence that TQ1 and TQ2 are inherently equivalent.
+
+The ASTC replay remains substantially better than these current TQ fixtures,
+but Q4_0 is still a stronger full-model quality baseline than the present
+ASTC 4x4 single-layer result. The comparison therefore supports continued
+ASTC error shaping rather than a claim of superiority over mature quantizers.
