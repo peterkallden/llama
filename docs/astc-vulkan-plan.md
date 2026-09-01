@@ -1028,3 +1028,10 @@ The next error-correction step is instead codec-aware candidate scoring:
 This preserves the key hypothesis—Alpha is a low-dimensional neural
 error-correction side channel—while aligning the optimization objective with
 the actual fixed-function decoder.
+
+The existing experimental `MAP_NEURAL_LA` ASTC-fork mode is not that objective.
+On the Pythia 6x6 block-residual control it measured `0.1104824` relative
+activation MSE, versus `0.0281505` for standard ASTC. Keep it only as a
+negative regression control. The next candidate scorer must be supplied with
+activation traces and score decoded candidate blocks after the complete
+`L + A` reconstruction; passing decoder scales alone is insufficient.

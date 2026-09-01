@@ -2256,6 +2256,9 @@ int main(int argc, char ** argv) {
                                      rows, columns, format, inputs, nullptr, true)) ||
              !std::isfinite(run_case("luminance-alpha-additive-neural-rank", weights,
                                      additive_latents, rows, columns, format, inputs,
+                                     nullptr, true)) ||
+             !std::isfinite(run_case("luminance-alpha-block-residual-neural-rank", weights,
+                                     block_latents, rows, columns, format, inputs,
                                      nullptr, true)))) {
             std::fprintf(stderr, "ASTC latent neural-rank smoke failed\n");
             return 1;

@@ -3393,3 +3393,26 @@ assume its effect survives encoding. The shard split here is used only as a
 gating signal on the same trace, so it is not a calibration/holdout
 generalization result. A disjoint trace is required before accepting or
 rejecting confidence gating as a generalization method.
+
+## One-hundred-forty-fifth sweep: existing neural-rank fork on block Alpha
+
+The isolated ASTC fork already exposes a `MAP_NEURAL_LA` ranking mode. It was
+previously exercised with the free additive latent, but not with the much
+stronger block-constant Alpha representation. A matched Pythia 6x6 screen
+(256x8,192 weights, 15 positions, fast preset) therefore compared the normal
+encoder with that ranking mode:
+
+| Representation | Encoder ranking | Activation-relative MSE | Dual-plane blocks |
+| --- | --- | ---: | ---: |
+| scalar RGBA | standard | 0.0301863 | 0 / 58,738 |
+| scalar RGBA | current neural rank | 0.0960036 | 0 / 58,738 |
+| L+A block residual | standard | 0.0281505 | 0 / 58,738 |
+| L+A block residual | current neural rank | 0.1104824 | 0 / 58,738 |
+
+The current fork's per-block L+A proxy is therefore not a valid neural
+objective for this use: it is roughly four times worse than standard ASTC for
+the block-residual control. This does not invalidate decoded candidate
+selection. It narrows the requirement: the replacement score must use the
+actual decoded block and activation-space loss, rather than merely passing
+L/A affine scales to the encoder. Retain this negative control so a future
+candidate callback cannot silently regress to the current proxy.
