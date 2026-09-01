@@ -3239,3 +3239,24 @@ quality path; 6x6 remains a bandwidth-first research mode that needs stronger
 neural-aware ranking or a larger correction budget. These numbers are still
 layer-output measurements and must be followed by full-model logits/loss
 replay on holdout prompts before any runtime default is chosen.
+
+## One-hundred-fortieth sweep: Pythia L+A latent control
+
+The latent smoke was run on a labelled 256-row Pythia submatrix with all 8,192
+input columns and the same 15 activation positions:
+
+| Footprint | Latent mode | ASTC bytes | Bits/value | Activation-relative MSE |
+| --- | --- | ---: | ---: | ---: |
+| 4x4 | scalar RGBA | 2,097,152 | 8.000 | 0.00268319 |
+| 4x4 | luminance+alpha additive | 2,097,152 | 8.000 | 0.0159568 |
+| 4x4 | luminance+alpha block-residual | 2,097,152 | 8.000 | 0.0288079 |
+| 6x6 | scalar RGBA | 939,808 | 3.585 | 0.0301863 |
+| 6x6 | luminance+alpha additive | 939,808 | 3.585 | 0.690284 |
+| 6x6 | luminance+alpha block-residual | 939,808 | 3.585 | 0.0281505 |
+
+L+A additive is materially better than the earlier generic 4x4 ASTC path, but
+it loses badly at 6x6. The block-residual form recovers the 6x6 result to
+slightly better than scalar 6x6. This supports keeping L+A as a representation
+family while prioritizing block-local residual/error shaping and
+activation-aware candidate ranking. These are screening numbers, not a
+model-level logits result.

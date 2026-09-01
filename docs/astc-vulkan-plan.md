@@ -936,3 +936,10 @@ full-model result is logits-relative-MSE `1.3086276`, top-1 agreement `0%`, and
 loss delta `+8.060108`; do not compare this directly to the single-layer ASTC
 metric. Keep TQ2 in the bandwidth matrix, but reserve quality conclusions for
 the ASTC layer-output and model-replay gates.
+
+The Pythia L+A screening is complete on a labelled 256-row submatrix. At 4x4,
+luminance+alpha additive reaches activation-relative-MSE `0.0159568`; at 6x6
+it degrades to `0.690284`, while the block-residual form reaches `0.0281505`.
+Keep L+A as a viable representation family, but prioritize block-local
+residual/error shaping and activation-aware candidate ranking before attempting
+a full-row L+A default.
