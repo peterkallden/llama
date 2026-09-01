@@ -3032,3 +3032,25 @@ same all-token metrics, followed by a comparison against the existing FP16,
 Q4, and TQ fixtures. GPU-side replacement is still a separate implementation
 track: this replay runs the normal CPU graph around an experimental input and
 does not change the production Vulkan scheduler.
+
+## One-hundred-thirty-second sweep: matched prompt holdout
+
+A second prompt was captured with the same FP16 model, layer, and 1,536-column
+FFN-down input contract, then replayed against the same three ASTC payloads:
+`Describe how GPUs save memory bandwidth with compressed textures.` The trace
+contains ten token positions and is a genuine prompt/activation match, unlike
+an arbitrary reuse of an older holdout trace.
+
+| Footprint | All-token logits MSE | Relative logits MSE | Top-1 agreement | FP16 loss | ASTC replay loss | Loss delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4x4 | 0.00841562 | 1.2536e-04 | 90% | 6.79535 | 6.81499 | +0.01964 |
+| 5x5 | 0.06200645 | 9.2367e-04 | 70% | 6.79535 | 6.75309 | -0.04226 |
+| 6x6 | 0.32417793 | 4.8291e-03 | 70% | 6.79535 | 7.02192 | +0.22657 |
+
+This short holdout confirms two points. First, the expected logit-error order
+still holds: 4x4 is safest and 6x6 is most sensitive. Second, loss and greedy
+agreement can disagree (5x5 improves this prompt's mean loss while changing
+three of ten greedy positions), so no single scalar should decide a future
+format default. The result is a real matched holdout signal, not a claim of
+generalization from one prompt; the next comparison should use several prompt
+pairs and include FP16/Q4/TQ baselines under the same token targets.

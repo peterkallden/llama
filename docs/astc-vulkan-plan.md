@@ -843,6 +843,13 @@ quality ordering, but the short prompt is not enough to select a production
 default. Before any scheduler work, repeat the measurement on disjoint
 calibration and holdout prompts and add the existing FP16/Q4/TQ baselines.
 
+A second matched prompt/activation trace has now been captured and replayed.
+It confirms the footprint ordering in logit error, but also demonstrates that
+cross-entropy and greedy agreement can diverge on a short prompt. Treat this
+as a holdout diagnostic only; require a multi-prompt aggregate before selecting
+4x4, 5x5, or 6x6, and compare against FP16, Q4_0, TQ1_0, and TQ2_0 using the
+same targets.
+
 The implementation remains intentionally sidecar-only. The override is an
 opt-in graph input selected only for an exact token-batch shape; ordinary
 reserve shapes and all default contexts continue to use the normal FFN-down
