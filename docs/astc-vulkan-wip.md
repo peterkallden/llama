@@ -3099,3 +3099,26 @@ The ASTC replay remains substantially better than these current TQ fixtures,
 but Q4_0 is still a stronger full-model quality baseline than the present
 ASTC 4x4 single-layer result. The comparison therefore supports continued
 ASTC error shaping rather than a claim of superiority over mature quantizers.
+
+## One-hundred-thirty-fifth sweep: tensor-level TQ audit
+
+The format smoke was run directly on the real 576x1,536
+`blk.0.ffn_down.weight` tensor using the captured FFN-down activations:
+
+| Candidate | Stored bytes | Bits/weight | Tensor MSE | Activation-relative MSE |
+| --- | ---: | ---: | ---: | ---: |
+| Q4_0 | 497,664 | 4.5000 | 0.00029861 | 0.00321564 |
+| TQ1_0 | 186,624 | 1.6875 | 0.02509079 | 0.25695442 |
+| TQ2_0 | 228,096 | 2.0625 | 0.02509079 | 0.25695442 |
+
+The TQ1/TQ2 equality is therefore present already at tensor dequantization,
+not only in the full-model logits. Their different resident rates are real,
+but these local fixtures use the same reconstructed ternary values for this
+matrix. A separate tensor-type inspection shows that some tensors in the
+quantized GGUFs remain Q4_0, so full-model TQ results must be interpreted as a
+mixed-format fixture rather than a pure TQ experiment.
+
+This audit makes the comparison useful but not final: TQ remains a bandwidth
+control, while its quality ranking requires freshly generated, consistently
+quantized fixtures or a tensor-by-tensor type manifest. The ASTC sidecar
+results are unaffected and remain isolated from this baseline issue.
