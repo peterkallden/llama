@@ -3487,3 +3487,11 @@ next version should retain this exact encode/decode candidate generator but
 replace independent commit with the existing conflict-aware residual commit
 policy. It must compare neutral and Alpha candidates on the same shared ABI,
 then accept a proposal only when it reduces the current global residual.
+
+The resulting model is more precise than "Alpha is a residual channel": Alpha
+perturbs the ASTC feasible set and yields alternative, legal decoded error
+directions. Its utility is global and sparse. The next selector must log
+candidate output-delta correlations and the effective rank of their span, then
+start from neutral Alpha and repeatedly accept the currently best positive
+gain against the updated residual. A holdout win over neutral Alpha is the
+mandatory gate before LDLQ is reconsidered.

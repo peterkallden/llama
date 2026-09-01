@@ -1063,3 +1063,9 @@ propose the best decoded candidate per block in parallel, then accept only a
 non-conflicting proposal that reduces the current activation residual. Edge
 padding and full Pythia dimensions remain out of scope until this small gate
 beats neutral Alpha on holdout.
+
+Log pairwise cosine/correlation and a compact SVD summary of the decoded
+candidate output deltas. This tests whether many locally useful Alpha blocks
+occupy only a few effective correction directions. The conflict-aware selector
+must re-evaluate gain after every accepted proposal; an initial static sort is
+not sufficient because each commit changes the residual.
