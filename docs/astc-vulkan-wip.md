@@ -3885,3 +3885,33 @@ than 9–10 hours. The full study should be restarted with this path. Do not mix
 in source-block cache reuse, lower-level block analysis reuse, preset changes,
 or an adaptive gauge grid yet: each is a distinct next experiment once the new
 full baseline has completed.
+
+## One-hundred-sixty-third sweep: full-tensor gauge-only completion
+
+The restarted layer-0 `2048x8192` gauge-only run completed with the frozen
+configuration: six-row streaming strips, eight candidate workers, persistent
+worker contexts, thorough preset, scalar-anchored gauge candidates, light
+diagnostics, and deterministic conflict-aware selection.
+
+| Metric | Result |
+| --- | ---: |
+| Row strips | 342 |
+| Generated candidates | 2,803,019 |
+| Accepted commit steps | 327,125 |
+| Candidate generation time (sum of strips) | 1,788.972 s |
+| Selection time (sum of strips) | 304.542 s |
+| Best validation relative MSE | 0.0159402 (commit 323,020) |
+| Final validation relative MSE | ~0.0159572 |
+
+The final ASTC payload contains 7,474,752 bytes and has SHA-256
+`eb8cf938307703012900453dd4767bcb09433e3ab9f2a083c4732c1190ac0d54`.
+The commit log has SHA-256
+`b13e55c1b689f65e384f99b7531b9bd6470c37b0c0f1898ac1ea17563d0f81de`.
+The strip log and payload are preserved as reproducible artifacts.
+
+This run validates that the persistent-context path scales to the complete
+tensor without changing the streamed candidate/commit contract. The numerical
+summary line from the interactive process was not redirected to a file, so the
+next sweep must independently reproduce the final holdout summary before
+making a quality claim. The payload, commit path, validation trajectory, and
+timing data are already available for that follow-up.
