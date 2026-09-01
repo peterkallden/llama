@@ -918,3 +918,11 @@ measurement controls only; the ASTC encoder and sidecar ABI are unchanged.
 The Pythia 256-row screen is a parameter-ranking checkpoint. Before using it
 to select a format, run the full 2,048-row layer and then the model-level
 capture/replay on disjoint prompts.
+
+The full selected Pythia run is now complete. The 4x4 candidate passes the
+activation gate at `0.0902300` with 7,633,640 total bytes, while 6x6 measures
+`0.227049` with 4,149,320 total bytes and fails the gate. Treat 4x4 as the
+current quality-oriented ASTC candidate and 6x6 as an explicitly bandwidth-
+oriented mode. The next required step is exporting the chosen ASTC payload and
+running the existing model replay harness on multiple holdout prompts; these
+layer metrics alone do not justify scheduler integration.

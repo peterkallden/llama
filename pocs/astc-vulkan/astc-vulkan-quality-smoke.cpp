@@ -518,7 +518,7 @@ bool make_q4_reference(const std::vector<float> & weights,
 
 int main(int argc, char ** argv) {
     if (argc < 5) {
-        std::fprintf(stderr, "usage: %s --model path --tensor name [--trace path] [--selection-trace path] [--residual-percent n] [--max-rows n] [--skip-residual-analysis]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s --model path --tensor name [--trace path] [--selection-trace path] [--residual-percent n] [--max-rows n] [--screen-only] [--skip-residual-analysis]\n", argv[0]);
         return 2;
     }
     std::string model;
@@ -527,11 +527,17 @@ int main(int argc, char ** argv) {
     std::string selection_trace_path;
     float residual_fraction = 0.01f;
     uint32_t max_rows = 0;
+    bool screen_only = false;
     bool skip_residual_analysis = false;
     for (int i = 1; i < argc;) {
         const std::string option = argv[i];
         if (option == "--skip-residual-analysis") {
             skip_residual_analysis = true;
+            ++i;
+            continue;
+        }
+        if (option == "--screen-only") {
+            screen_only = true;
             ++i;
             continue;
         }
@@ -628,6 +634,10 @@ int main(int argc, char ** argv) {
                                             basis_mode::wht64 }) {
                 for (const transform_mode transform : { transform_mode::linear,
                                                          transform_mode::signed_sqrt }) {
+            if (screen_only && (!block_affine || basis != basis_mode::hadamard4 ||
+                                transform != transform_mode::linear)) {
+                continue;
+            }
             result output;
             if (!encode_format(matrix.values, matrix.rows, matrix.columns, activations,
                                block, block, block_affine, residual_fraction, transform, basis, output)) {

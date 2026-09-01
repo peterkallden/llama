@@ -3200,3 +3200,22 @@ statistics; it does not invalidate L+A or ASTC, but it raises the bar for
 neural-aware ranking and/or learned error shaping. The `--max-rows` option was
 added only to make large-model parameter screens tractable; final claims must
 use all 2,048 output rows and a disjoint holdout trace.
+
+The selected full-layer run used all 2,048 output rows and the same 15 captured
+activation positions. It selected block-affine + Hadamard4 + linear encoding
+for both footprints:
+
+| Candidate | ASTC bytes | Residual bytes | Total bytes | Activation-relative MSE |
+| --- | ---: | ---: | ---: | ---: |
+| FP16 source | 33,554,432 | 0 | 33,554,432 | 0 |
+| Q4_0 reference conversion | 9,437,184 | 0 | 9,437,184 | 0.00171322 |
+| ASTC 4x4 | 6,291,456 | 1,342,184 | 7,633,640 | 0.0902300 |
+| ASTC 6x6 | 2,807,136 | 1,342,184 | 4,149,320 | 0.227049 |
+
+The 4x4 full-layer result passes the current `<=0.10` activation gate, while
+6x6 fails it despite its lower resident footprint. This is the first Pythia
+result that supports a concrete split in the design: 4x4 is the conservative
+quality path; 6x6 remains a bandwidth-first research mode that needs stronger
+neural-aware ranking or a larger correction budget. These numbers are still
+layer-output measurements and must be followed by full-model logits/loss
+replay on holdout prompts before any runtime default is chosen.
