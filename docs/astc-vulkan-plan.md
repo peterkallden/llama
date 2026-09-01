@@ -1042,3 +1042,15 @@ Pythia positions, scalar 6x6 is `0.0292211` and block-mean Alpha is
 representations and tests, but require a material held-out improvement over
 the scalar control before running a full-layer L+A export or changing runtime
 planning.
+
+### Decode-in-the-loop block-Alpha gate
+
+Before any further LDLQ or full-layer work, implement a small offline search
+over legal ASTC blocks. Use a single shared L+A affine decoder per tensor and
+include neutral Alpha as a first-class candidate. For every block, encode a
+bounded set of constant-Alpha source perturbations, deduplicate their decoded
+16-byte blocks, and rank their marginal activation loss against neutral Alpha
+on calibration shards. Evaluate the chosen per-block result on the disjoint
+trace. Promote this track only when it beats the neutral/scalar control on
+holdout; otherwise keep Alpha as a documented negative control and move to a
+different representation family.

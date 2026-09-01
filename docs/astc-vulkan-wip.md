@@ -3439,3 +3439,26 @@ also do not transfer. Treat block Alpha as a tensor-/distribution-dependent
 candidate and retain it in the matrix; do not promote it as a general 6x6
 default. The next decoder-aware candidate scorer must demonstrate a holdout
 gain over scalar before it is expanded to full-layer export.
+
+## Next hypothesis: decode-in-the-loop block Alpha search
+
+The holdout controls sharpen the representation model. Alpha is neither a
+general second weight field nor a correction that can be chosen analytically
+before encoding. It is a sparse, low-dimensional codec-control channel. For
+each block, the selector must compare a neutral-Alpha candidate with a small
+set of constant-Alpha perturbations after the *real* ASTC encode/decode:
+
+\[
+c_b^*=\arg\min_{c\in C_b}
+\left\|(W_b-\hat W_{b,c})X_b^T\right\|^2,
+\qquad C_b=\{\text{neutral Alpha},\text{block-mean},\ldots\}.
+\]
+
+All candidates must use one shared L+A decoder contract; "no Alpha" means
+the neutral Alpha value within that contract, not a switch to a different
+per-block affine decoder. Candidate ranking must be based on the decoded
+16-byte ASTC block and its reconstructed weights. Record the source and
+decoded Alpha, decoded L change, block mode metadata, partition/dual-plane
+state, scalar and candidate activation loss, calibration-shard gains, and
+held-out gain. This distinguishes an additive correction from Alpha steering
+ASTC toward a different legal L reconstruction.
