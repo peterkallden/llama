@@ -969,3 +969,13 @@ sampler precision, cache and dispatch geometry), so CPU replay remains the
 portable quality reference and Vulkan remains the execution-path reference.
 Large model exports are measurement jobs rather than CTests; CTests cover
 contracts, input validation, and shader compilation.
+
+### Follow-up benchmark gate
+
+After correctness is established, compare a matched FFN dispatch suite for
+plain Vulkan buffer weights (FP16/Q4 control) versus ASTC 4x4 and 6x6 sampled
+weights. Report dispatch latency, effective tokens/s, bytes transferred,
+GPU-vs-CPU synchronization, and shader occupancy where the driver exposes it.
+The existing E2E smoke is a correctness harness, not an inference-speed
+claim; a full token-loop benchmark must use identical prompts, batch shapes,
+workgroup geometry, and warm-up policy for all three paths.
