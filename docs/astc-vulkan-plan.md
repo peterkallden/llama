@@ -1075,3 +1075,8 @@ relative MSE from `0.0603581` (neutral) to `0.0574917`, while independent
 local selection regressed to `0.0686602`. Proceed to diagnostics and scaling,
 not LDLQ yet: log candidate-direction diversity, add deterministic edge-block
 handling, and repeat on a larger Pythia crop with the same disjoint traces.
+
+Deterministic clamp-padded edges pass the 25x25 gate and preserve the held-out
+conflict-aware gain. Scale next to successively larger Pythia crops, logging
+local-positive, accepted, and total-block ratios alongside rank, cosine and
+cumulative residual reduction.

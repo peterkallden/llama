@@ -1305,8 +1305,10 @@ double decoded_block_activation_error(const std::vector<float> & reference,
     for (uint32_t sample = 0; sample < inputs.samples; ++sample) {
         const float * input = inputs.values.data() + static_cast<size_t>(sample) * columns;
         for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+            if (row0 + local_row >= rows) continue;
             double expected = 0.0, actual = 0.0;
             for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                if (column0 + local_column >= columns) continue;
                 const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
                 const size_t global = static_cast<size_t>(row0 + local_row) * columns + column0 + local_column;
                 expected += reference[global] * input[column0 + local_column];
@@ -1325,10 +1327,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               const ggml_vk_astc_format_contract & format,
                               const activations & calibration,
                               const activations & holdout) {
-    // This initial contract fixture intentionally excludes edge blocks. It proves
-    // candidate legality and decoder semantics before an edge-padding policy is
-    // introduced for full tensors.
-    if (rows % format.block_height != 0 || columns % format.block_width != 0) return false;
+    // Partial blocks use deterministic clamp padding. Padding is never perturbed
+    // and is excluded from the neural objective.
     struct alpha_option {
         uint32_t row0;
         uint32_t column0;
@@ -1352,12 +1352,15 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 std::vector<float> source(static_cast<size_t>(format.block_width) * format.block_height * 4);
                 for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
                     for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
-                        const size_t global = static_cast<size_t>(row0 + local_row) * columns + column0 + local_column;
+                        const uint32_t source_row = std::min(row0 + local_row, rows - 1);
+                        const uint32_t source_column = std::min(column0 + local_column, columns - 1);
+                        const bool valid = row0 + local_row < rows && column0 + local_column < columns;
+                        const size_t global = static_cast<size_t>(source_row) * columns + source_column;
                         float * dst = source.data() +
                             (static_cast<size_t>(local_row) * format.block_width + local_column) * 4;
                         const float * src = block_latents.texels.data() + global * 4;
                         std::copy_n(src, 4, dst);
-                        dst[3] = std::clamp(0.5f + factors[factor_index] * (src[3] - 0.5f), 0.0f, 1.0f);
+                        if (valid) dst[3] = std::clamp(0.5f + factors[factor_index] * (src[3] - 0.5f), 0.0f, 1.0f);
                     }
                 }
                 astc_roundtrip_result roundtrip;
@@ -1387,6 +1390,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             if (best_factor == 0) ++neutral_wins; else ++non_neutral_wins;
             for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
                 for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                    if (row0 + local_row >= rows || column0 + local_column >= columns) continue;
                     const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
                     const size_t global = static_cast<size_t>(row0 + local_row) * columns + column0 + local_column;
                     neutral[global] = neutral_decoded[local];
@@ -1409,8 +1413,10 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
             const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
             for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                if (option.row0 + local_row >= rows) continue;
                 double value = 0.0;
                 for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                    if (option.column0 + local_column >= columns) continue;
                     const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
                     const size_t global = static_cast<size_t>(option.row0 + local_row) * columns +
                                           option.column0 + local_column;
@@ -1443,8 +1449,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         }
     }
     const double effective_rank = gram_energy > 1e-18 ? delta_energy * delta_energy / gram_energy : 0.0;
-    const uint32_t blocks_x = columns / format.block_width;
-    std::vector<bool> committed(static_cast<size_t>(rows / format.block_height) * blocks_x, false);
+    const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
+    std::vector<bool> committed(static_cast<size_t>((rows + format.block_height - 1) / format.block_height) * blocks_x, false);
     uint32_t commits = 0;
     for (;;) {
         double best_gain = 0.0;
@@ -1476,6 +1482,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         for (size_t index = 0; index < residual.size(); ++index) residual[index] -= best_delta[index];
         for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
             for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                if (option.row0 + local_row >= rows || option.column0 + local_column >= columns) continue;
                 const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
                 conflict_aware[static_cast<size_t>(option.row0 + local_row) * columns +
                                option.column0 + local_column] = option.decoded[local];

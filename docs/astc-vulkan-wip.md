@@ -3517,3 +3517,13 @@ direction diversity diagnostics and edge-block handling before scaling.
 The diversity diagnostic now reports an effective candidate-direction rank of
 `4.77` and mean positive cosine `0.684` on this fixture. The directions are
 therefore substantially correlated, supporting sparse conflict-aware commit.
+
+## One-hundred-forty-ninth sweep: deterministic edge blocks
+
+Partial ASTC blocks now use clamp padding from the nearest real texel. Padding
+is identical for all candidates and excluded from activation loss. A 25x25
+Pythia crop therefore exercises real edge blocks (25 total). Conflict-aware
+selection accepted 15 proposals and improved holdout from `0.0589075` neutral
+to `0.0543585`; its effective candidate rank was `7.60` with mean positive
+cosine `0.633`. Edge handling is now a controlled implementation detail rather
+than a confounder for the larger-crop sweep.
