@@ -2957,3 +2957,12 @@ The focused regression controls `test-astc-vulkan-error-shaping`,
 Vulkan FFN smoke target also rebuilds successfully; device execution remains
 explicitly opt-in because the Intel UHD 620 result validates mechanism and
 correctness, not portable ARM/Mali performance.
+
+The follow-up Vulkan regression sweep passed all nine capability, upload,
+shader-compile, and local/non-local device tests. A second host-side sweep of
+the error-shaping, Block-LDLQ, format, driver, adapter, and encoder contracts
+also passed all nine tests. The layer-output result is therefore reproducible
+after the capture API change. Full-transformer injection remains intentionally
+unimplemented because it would require a new experimental graph input and a
+runtime ASTC replacement path; that boundary must be designed without
+changing the production scheduler.
