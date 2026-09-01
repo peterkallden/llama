@@ -34,6 +34,16 @@ bool tokenize(const llama_vocab * vocab, const std::string & prompt, std::vector
                           tokens.data(), static_cast<int32_t>(tokens.size()), true, true) >= 0;
 }
 
+double cross_entropy(const float * logits, size_t n_vocab, llama_token target) {
+    float max_logit = logits[0];
+    for (size_t i = 1; i < n_vocab; ++i) max_logit = std::max(max_logit, logits[i]);
+    double sum_exp = 0.0;
+    for (size_t i = 0; i < n_vocab; ++i) {
+        sum_exp += std::exp(static_cast<double>(logits[i] - max_logit));
+    }
+    return static_cast<double>(std::log(sum_exp) + max_logit - logits[target]);
+}
+
 llama_batch make_batch(const std::vector<llama_token> & tokens) {
     llama_batch batch = llama_batch_init(static_cast<int32_t>(tokens.size()), 0, 1);
     batch.n_tokens = static_cast<int32_t>(tokens.size());
@@ -201,15 +211,8 @@ int main(int argc, char ** argv) {
         if (target < 0 || static_cast<size_t>(target) >= reference.n_vocab) continue;
         const float * ref = reference.values.data() + token * reference.n_vocab;
         const float * got = replay.values.data() + token * replay.n_vocab;
-        const auto cross_entropy = [target](const float * logits, size_t n_vocab) {
-            float max_logit = logits[0];
-            for (size_t i = 1; i < n_vocab; ++i) max_logit = std::max(max_logit, logits[i]);
-            double sum_exp = 0.0;
-            for (size_t i = 0; i < n_vocab; ++i) sum_exp += std::exp(static_cast<double>(logits[i] - max_logit));
-            return static_cast<double>(std::log(sum_exp) + max_logit - logits[target]);
-        };
-        reference_loss += cross_entropy(ref, reference.n_vocab);
-        replay_loss += cross_entropy(got, replay.n_vocab);
+        reference_loss += cross_entropy(ref, reference.n_vocab, target);
+        replay_loss += cross_entropy(got, replay.n_vocab, target);
         ++loss_tokens;
     }
     for (size_t token = 0; token < reference.n_tokens; ++token) {
