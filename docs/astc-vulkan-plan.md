@@ -876,6 +876,12 @@ tensor fallback conversions. Keep TQ in the comparison matrix, but label it as
 a mixed-format control. The larger-model transition can proceed with FP16 and
 Q4 first; TQ should be included once a tensor-type manifest is available.
 
+Qwen2.5-Coder-1.5B-Instruct Q4_K_M is now available under `/home/prbm/models`
+and passes the trace-capture architecture gate. Its 8,960-wide FFN is the
+selected larger-model target. The official GGUF set has no F16 file, so plan a
+safetensors-to-F16-GGUF conversion before using Qwen as the definitive ASTC
+quality oracle; Q4/Q8 remain useful runtime controls.
+
 The implementation remains intentionally sidecar-only. The override is an
 opt-in graph input selected only for an exact token-batch shape; ordinary
 reserve shapes and all default contexts continue to use the normal FFN-down

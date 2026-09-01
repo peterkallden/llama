@@ -3138,3 +3138,18 @@ runtime controls, but a pure ternary quality claim would require an explicitly
 constructed tensor-type manifest with fallback behavior measured separately.
 ASTC therefore continues to use FP16 as its primary oracle and Q4_0 as the
 mature quality baseline.
+
+## One-hundred-thirty-seventh sweep: Qwen2.5-Coder-1.5B target
+
+Qwen2.5-Coder-1.5B-Instruct Q4_K_M is now installed at
+`/home/prbm/models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf`. The existing
+trace-capture utility loads the Qwen architecture successfully and captured a
+layer-0 FFN-down input trace with 14 token positions and 8,960 columns. This
+is a substantial width increase over SmolLM2's 1,536-column FFN and is the
+next practical target for ASTC capacity, layout, and GPU dispatch tests.
+
+The official Qwen GGUF repository currently lists Q2_K through Q8_0 files but
+no FP16 GGUF. The downloaded Q4_K_M is suitable for loader, dimension, prompt,
+and runtime smoke tests. For ASTC quality against an unquantized oracle,
+convert the original Qwen safetensors model to F16 GGUF, or use Q8_0 only as
+an explicitly labelled near-FP16 proxy.
