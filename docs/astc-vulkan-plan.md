@@ -794,12 +794,8 @@ not a production-backend integration.
    any narrow, upstreamable interface belongs in ggml-vulkan. Until then all
    code remains under `pocs/astc-vulkan`.
 
-The repeated GPU controls and sidecar resource refactor are now complete. The
-next implementation gate is a manifest-backed upload/session object with
-explicit ownership and fallback behavior; only after that should a narrow
-llama-facing FFN-down adapter be attempted.
-
-The manifest, atlas placement, and sampled-texture upload/session boundaries
-are now implemented and device-smoke validated. Remaining driver work is the
-descriptor/dispatch session for a manifest record, a narrow FFN-down adapter,
-and end-to-end fallback tests; these still stay under `pocs/astc-vulkan`.
+The repeated GPU controls, sidecar resource/session, FFN adapter, and real
+activation-buffer dispatch are now implemented and device-smoke validated.
+The remaining quality gate is full 576-row projection followed by model-level
+logits/loss comparison. Production scheduler integration remains deferred
+until that evidence and fallback behavior are available.

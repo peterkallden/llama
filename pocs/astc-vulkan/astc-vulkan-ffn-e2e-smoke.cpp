@@ -1,4 +1,5 @@
 #include "astc-vulkan-driver.h"
+#include "astc-vulkan-ffn-adapter.h"
 #include "astc-vulkan-input.h"
 #include "astc-vulkan-resource.h"
 
@@ -124,13 +125,18 @@ int main(int argc, char ** argv) {
         vkDestroyInstance(instance, nullptr); return 77;
     }
     VkQueue queue = VK_NULL_HANDLE; vkGetDeviceQueue(device, queue_family, 0, &queue);
-    astc_vulkan_tensor_record record{"ffn_down.weight", width, height,
+    astc_vulkan_tensor_record record{"blk.0.ffn_down.weight", width, height,
         static_cast<astc_vulkan_footprint>(footprint), 0,
         astc_vulkan_image_bytes(static_cast<astc_vulkan_footprint>(footprint), width, height)};
-    astc_vulkan_tensor_session tensor;
-    if (!tensor.upload(physical_device, device, queue, queue_family, record, {}, payload, error)) {
+    astc_vulkan_manifest manifest;
+    manifest.tensors.push_back(record);
+    astc_vulkan_ffn_adapter adapter;
+    astc_vulkan_ffn_binding binding;
+    if (!adapter.prepare(manifest, record.name, width, true, binding, error) ||
+        !adapter.upload(physical_device, device, queue, queue_family, binding, payload, error)) {
         std::fprintf(stderr, "%s\n", error.c_str()); vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr); return 1;
     }
+    const astc_vulkan_tensor_session & tensor = adapter.session();
     VkBuffer activation_buffer = VK_NULL_HANDLE, output_buffer = VK_NULL_HANDLE;
     VkDeviceMemory activation_memory = VK_NULL_HANDLE, output_memory = VK_NULL_HANDLE;
     const VkDeviceSize activation_bytes = static_cast<VkDeviceSize>(trace.samples) * width * sizeof(float);
@@ -233,7 +239,7 @@ int main(int argc, char ** argv) {
                              trace.samples, height, width, astc_error / (trace.samples * height),
                              source_error / std::max(source_energy, 1e-12));
     if (device != VK_NULL_HANDLE) vkDeviceWaitIdle(device);
-    tensor.reset();
+    adapter.reset();
     if (fence) vkDestroyFence(device, fence, nullptr); if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
     if (pipeline) vkDestroyPipeline(device, pipeline, nullptr); if (pipeline_layout) vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
     if (shader_module) vkDestroyShaderModule(device, shader_module, nullptr); if (descriptor_pool) vkDestroyDescriptorPool(device, descriptor_pool, nullptr);

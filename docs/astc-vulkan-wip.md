@@ -2856,3 +2856,25 @@ and reduction shader are wired consistently. The second column is the actual
 quality trade-off against source weights; it is not a claim about full-model
 perplexity. The next quality gate is larger row coverage and end-to-end model
 logit/loss comparison, not further sampler correctness work.
+
+## One-hundred-twenty-fourth sweep: wide FFN end-to-end coverage
+
+The same real-activation Vulkan path was extended from the 32-row diagnostic
+crop to 128 rows while retaining all 1,536 FFN input columns. The 6x6 payload
+was 90,112 bytes (3.6667 b/w including the partial edge block), and the GPU
+matched the CPU ASTC reconstruction at `2.50e-14` MSE. Relative activation
+error against the F16-derived source was `0.0396083`, consistent with the
+offline scalar encoder result for the same tile.
+
+This establishes a stable wide-tile end-to-end harness. Remaining quality work
+is now model-level aggregation (full 576-row projection, then logits/loss),
+not Vulkan plumbing or ASTC decode correctness.
+
+## One-hundred-twenty-fifth sweep: adapter-bound end-to-end path
+
+The end-to-end executable now resolves its tensor through
+`astc_vulkan_ffn_adapter` before uploading it through the tensor session. This
+means the real dispatch covers manifest lookup, FFN shape gating, fallback
+policy, ASTC image upload, activation-buffer binding, and parallel reduction
+in one path. The 32-row 6x6 run still matches CPU ASTC at `2.43e-14` MSE and
+retains `0.0362345` source-relative activation error.

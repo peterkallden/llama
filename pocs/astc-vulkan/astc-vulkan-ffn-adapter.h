@@ -28,6 +28,7 @@ public:
     bool upload(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
                 uint32_t queue_family, const astc_vulkan_ffn_binding & binding,
                 const std::vector<uint8_t> & payload, std::string & error);
+    void reset() { session_.reset(); }
     const astc_vulkan_tensor_session & session() const { return session_; }
 
 private:
