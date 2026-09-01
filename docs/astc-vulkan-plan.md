@@ -1130,3 +1130,10 @@ block indexing and collect candidates before the existing serial,
 conflict-aware residual commit. This separation keeps the experiment
 reproducible: parallel work expands the legal dictionary, while the global
 selection definition stays unchanged.
+
+This parallel candidate stage is implemented as `--candidate-threads N` and
+has passed one-versus-four-thread equality checks on 48x48 and 192x192 crops.
+The next gate is a larger crop and a second tensor with the same equality
+check. Full-tensor execution should then use chunked block results so memory
+does not grow with the entire candidate dictionary at once; only after that
+engineering gate should the project run the full `2048x8192` gauge-only study.

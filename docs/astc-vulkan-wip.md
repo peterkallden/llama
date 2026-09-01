@@ -3666,3 +3666,25 @@ preserves the exact candidate order while making larger crops feasible. The
 next engineering task is parallel, deterministic candidate generation before a
 full `2048x8192` tensor gate; the global residual commit order itself must stay
 serial and exact.
+
+## One-hundred-fifty-fifth sweep: deterministic parallel candidate generation
+
+Per-block gauge candidate generation is now parallelized behind
+`--candidate-threads N`. Each worker owns its ASTC context and writes to a
+preallocated block-indexed result slot. Candidate lists are reassembled in
+block order before the existing global conflict-aware commit, so scheduling
+cannot change the candidate dictionary or commit order.
+
+The 48x48 layer-0 check was run with one and four candidate threads. Both
+produced identical payload/mode counts and identical holdout MSE
+`0.023347282`; wall time fell from about 18.8 s to 10.0 s. A four-thread
+192x192 run was then compared byte-for-byte with the earlier one-thread run:
+all 7 summary lines and all 710 CSV commit rows match exactly. Its scalar,
+full conflict-aware, and validation-stopped holdout values remain
+`0.042641985`, `0.023917264`, and `0.023759172` respectively.
+
+This is an engineering scale gate, not a new quality claim. It demonstrates
+that independent ASTC encode/decode work can use multiple CPU cores while the
+global error-shaping semantics remain deterministic. The next scale step is a
+larger crop/second tensor with the same thread-count comparison, followed by a
+chunked full-tensor run once candidate artifacts can be bounded in memory.

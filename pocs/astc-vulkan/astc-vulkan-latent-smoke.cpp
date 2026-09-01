@@ -5,12 +5,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <limits>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -1351,7 +1353,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               const activations & validation,
                               const activations & holdout,
                               bool scalar_anchored_gauge = false,
-                              const std::string & commit_log_path = {}) {
+                              const std::string & commit_log_path = {},
+                              uint32_t candidate_threads = 1) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
@@ -1359,6 +1362,19 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         uint32_t column0;
         std::vector<float> decoded;
         std::array<uint8_t, 16> payload;
+    };
+    struct alpha_block_result {
+        bool valid = false;
+        uint32_t row0 = 0;
+        uint32_t column0 = 0;
+        std::vector<float> neutral_decoded;
+        std::vector<float> best_decoded;
+        std::array<uint8_t, 16> neutral_payload{};
+        std::vector<alpha_option> alternatives;
+        double neutral_loss = INFINITY;
+        double best_loss = INFINITY;
+        uint32_t best_factor = 0;
+        uint32_t unique_payloads = 0;
     };
     std::vector<alpha_option> options;
     std::vector<float> neutral(weights.size());
@@ -1369,87 +1385,118 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     const std::vector<float> factors = scalar_anchored_gauge ?
         std::vector<float>{ 0.0f, -0.25f, 0.25f, -0.5f, 0.5f, -0.75f, 0.75f } :
         std::vector<float>{ 0.0f, -0.5f, 0.5f, 1.0f, 1.5f, 2.0f };
-    uint32_t neutral_wins = 0, non_neutral_wins = 0, unique_blocks = 0;
-    double neutral_local_loss = 0.0, selected_local_loss = 0.0;
-    for (uint32_t row0 = 0; row0 < rows; row0 += format.block_height) {
-        for (uint32_t column0 = 0; column0 < columns; column0 += format.block_width) {
-            float gauge_headroom = 1.0f;
-            if (scalar_anchored_gauge) {
-                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
-                    for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
-                        const uint32_t source_row = std::min(row0 + local_row, rows - 1);
-                        const uint32_t source_column = std::min(column0 + local_column, columns - 1);
-                        const float q = block_latents.texels[
-                            (static_cast<size_t>(source_row) * columns + source_column) * 4];
-                        gauge_headroom = std::min(gauge_headroom, std::min(q, 1.0f - q));
-                    }
-                }
-            }
-            std::vector<std::vector<uint8_t>> seen;
-            std::vector<float> best_decoded;
-            std::vector<float> neutral_decoded;
-            double neutral_loss = INFINITY;
-            double best_loss = INFINITY;
-            uint32_t best_factor = 0;
-            for (uint32_t factor_index = 0; factor_index < factors.size(); ++factor_index) {
-                std::vector<float> source(static_cast<size_t>(format.block_width) * format.block_height * 4);
-                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
-                    for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
-                        const uint32_t source_row = std::min(row0 + local_row, rows - 1);
-                        const uint32_t source_column = std::min(column0 + local_column, columns - 1);
-                        const bool valid = row0 + local_row < rows && column0 + local_column < columns;
-                        const size_t global = static_cast<size_t>(source_row) * columns + source_column;
-                        float * dst = source.data() +
-                            (static_cast<size_t>(local_row) * format.block_width + local_column) * 4;
-                        const float * src = block_latents.texels.data() + global * 4;
-                        std::copy_n(src, 4, dst);
-                        if (scalar_anchored_gauge && valid) {
-                            const float delta = factors[factor_index] * gauge_headroom;
-                            dst[0] = dst[1] = dst[2] = src[0] + delta;
-                            dst[3] = src[0] - delta;
-                        } else if (valid) {
-                            dst[3] = std::clamp(0.5f + factors[factor_index] * (src[3] - 0.5f), 0.0f, 1.0f);
-                        }
-                    }
-                }
-                astc_roundtrip_result roundtrip;
-                if (!astc_roundtrip(source, format.block_height, format.block_width, format,
-                                    nullptr, roundtrip)) return false;
-                if (std::find(seen.begin(), seen.end(), roundtrip.compressed) != seen.end()) continue;
-                seen.push_back(roundtrip.compressed);
-                const std::vector<float> decoded = reconstruct(roundtrip.texels, block_latents.decoder);
-                if (roundtrip.compressed.size() != 16) return false;
-                std::array<uint8_t, 16> payload{};
-                std::copy_n(roundtrip.compressed.begin(), payload.size(), payload.begin());
-                const double loss = decoded_block_activation_error(
-                    weights, decoded, row0, column0, rows, columns, format, calibration);
-                if (factor_index == 0) {
-                    neutral_decoded = decoded;
-                    neutral_loss = loss;
-                    neutral_payloads[(row0 / format.block_height) * blocks_x +
-                                     column0 / format.block_width] = payload;
-                } else {
-                    options.push_back({ row0, column0, decoded, payload });
-                }
-                if (loss < best_loss) {
-                    best_loss = loss;
-                    best_decoded = decoded;
-                    best_factor = factor_index;
-                }
-            }
-            if (best_decoded.empty() || neutral_decoded.empty()) return false;
-            neutral_local_loss += neutral_loss;
-            selected_local_loss += best_loss;
-            unique_blocks += static_cast<uint32_t>(seen.size());
-            if (best_factor == 0) ++neutral_wins; else ++non_neutral_wins;
+    const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
+    const uint32_t block_count = blocks_x * blocks_y;
+    std::vector<alpha_block_result> block_results(block_count);
+    candidate_threads = std::max(1u, candidate_threads);
+    candidate_threads = std::min(candidate_threads, block_count == 0 ? 1u : block_count);
+    std::atomic<uint32_t> next_block{ 0 };
+    std::atomic<bool> failed{ false };
+    auto generate_block = [&](uint32_t block_index) {
+        alpha_block_result result;
+        result.row0 = (block_index / blocks_x) * format.block_height;
+        result.column0 = (block_index % blocks_x) * format.block_width;
+        const uint32_t row0 = result.row0;
+        const uint32_t column0 = result.column0;
+        float gauge_headroom = 1.0f;
+        if (scalar_anchored_gauge) {
             for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
                 for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
-                    if (row0 + local_row >= rows || column0 + local_column >= columns) continue;
-                    const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
-                    const size_t global = static_cast<size_t>(row0 + local_row) * columns + column0 + local_column;
-                    neutral[global] = neutral_decoded[local];
-                    selected[global] = best_decoded[local];
+                    const uint32_t source_row = std::min(row0 + local_row, rows - 1);
+                    const uint32_t source_column = std::min(column0 + local_column, columns - 1);
+                    const float q = block_latents.texels[
+                        (static_cast<size_t>(source_row) * columns + source_column) * 4];
+                    gauge_headroom = std::min(gauge_headroom, std::min(q, 1.0f - q));
                 }
+            }
+        }
+        std::vector<std::vector<uint8_t>> seen;
+        for (uint32_t factor_index = 0; factor_index < factors.size(); ++factor_index) {
+            std::vector<float> source(static_cast<size_t>(format.block_width) * format.block_height * 4);
+            for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                    const uint32_t source_row = std::min(row0 + local_row, rows - 1);
+                    const uint32_t source_column = std::min(column0 + local_column, columns - 1);
+                    const bool valid = row0 + local_row < rows && column0 + local_column < columns;
+                    const size_t global = static_cast<size_t>(source_row) * columns + source_column;
+                    float * dst = source.data() +
+                        (static_cast<size_t>(local_row) * format.block_width + local_column) * 4;
+                    const float * src = block_latents.texels.data() + global * 4;
+                    std::copy_n(src, 4, dst);
+                    if (scalar_anchored_gauge && valid) {
+                        const float delta = factors[factor_index] * gauge_headroom;
+                        dst[0] = dst[1] = dst[2] = src[0] + delta;
+                        dst[3] = src[0] - delta;
+                    } else if (valid) {
+                        dst[3] = std::clamp(0.5f + factors[factor_index] * (src[3] - 0.5f), 0.0f, 1.0f);
+                    }
+                }
+            }
+            astc_roundtrip_result roundtrip;
+            if (!astc_roundtrip(source, format.block_height, format.block_width, format, nullptr, roundtrip) ||
+                roundtrip.compressed.size() != 16) {
+                return result;
+            }
+            if (std::find(seen.begin(), seen.end(), roundtrip.compressed) != seen.end()) continue;
+            seen.push_back(roundtrip.compressed);
+            const std::vector<float> decoded = reconstruct(roundtrip.texels, block_latents.decoder);
+            std::array<uint8_t, 16> payload{};
+            std::copy_n(roundtrip.compressed.begin(), payload.size(), payload.begin());
+            const double loss = decoded_block_activation_error(
+                weights, decoded, row0, column0, rows, columns, format, calibration);
+            if (factor_index == 0) {
+                result.neutral_decoded = decoded;
+                result.neutral_payload = payload;
+                result.neutral_loss = loss;
+            } else {
+                result.alternatives.push_back({ row0, column0, decoded, payload });
+            }
+            if (loss < result.best_loss) {
+                result.best_loss = loss;
+                result.best_decoded = decoded;
+                result.best_factor = factor_index;
+            }
+        }
+        result.unique_payloads = static_cast<uint32_t>(seen.size());
+        result.valid = !result.neutral_decoded.empty() && !result.best_decoded.empty();
+        return result;
+    };
+    auto worker = [&]() {
+        for (;;) {
+            const uint32_t block_index = next_block.fetch_add(1, std::memory_order_relaxed);
+            if (block_index >= block_count || failed.load(std::memory_order_relaxed)) return;
+            alpha_block_result result = generate_block(block_index);
+            if (!result.valid) {
+                failed.store(true, std::memory_order_relaxed);
+                return;
+            }
+            block_results[block_index] = std::move(result);
+        }
+    };
+    std::vector<std::thread> workers;
+    workers.reserve(candidate_threads);
+    for (uint32_t index = 0; index < candidate_threads; ++index) workers.emplace_back(worker);
+    for (std::thread & thread : workers) thread.join();
+    if (failed.load(std::memory_order_relaxed)) return false;
+    uint32_t neutral_wins = 0, non_neutral_wins = 0, unique_blocks = 0;
+    double neutral_local_loss = 0.0, selected_local_loss = 0.0;
+    options.reserve(block_count * (factors.size() - 1));
+    for (const alpha_block_result & result : block_results) {
+        neutral_local_loss += result.neutral_loss;
+        selected_local_loss += result.best_loss;
+        unique_blocks += result.unique_payloads;
+        if (result.best_factor == 0) ++neutral_wins; else ++non_neutral_wins;
+        neutral_payloads[(result.row0 / format.block_height) * blocks_x +
+                        result.column0 / format.block_width] = result.neutral_payload;
+        options.insert(options.end(), result.alternatives.begin(), result.alternatives.end());
+        for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+            for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                if (result.row0 + local_row >= rows || result.column0 + local_column >= columns) continue;
+                const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
+                const size_t global = static_cast<size_t>(result.row0 + local_row) * columns +
+                                      result.column0 + local_column;
+                neutral[global] = result.neutral_decoded[local];
+                selected[global] = result.best_decoded[local];
             }
         }
     }
@@ -2265,6 +2312,7 @@ int main(int argc, char ** argv) {
     std::string calibration_trace_path;
     std::string validation_trace_path;
     std::string decode_loop_log_path;
+    uint32_t candidate_threads = 1;
     bool search_levels = false;
     bool neural_rank = false;
     bool coordinate_select = false;
@@ -2361,6 +2409,8 @@ int main(int argc, char ** argv) {
             scalar_anchored_gauge_sweep = true;
         } else if (option == "--decode-loop-log" && index + 1 < argc) {
             decode_loop_log_path = argv[++index];
+        } else if (option == "--candidate-threads" && index + 1 < argc) {
+            candidate_threads = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace" || option == "--validation-trace") &&
                    index + 1 < argc) {
@@ -2374,7 +2424,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--candidate-threads N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep]\n",
                          argv[0]);
             return 2;
@@ -2647,7 +2697,7 @@ int main(int argc, char ** argv) {
         if (decode_loop_alpha_sweep &&
             !decode_loop_alpha_search(weights, block_latents, rows, columns, format,
                                       calibration_inputs, validation_inputs, inputs, false,
-                                      decode_loop_log_path)) {
+                                      decode_loop_log_path, candidate_threads)) {
             std::fprintf(stderr, "ASTC decode-in-the-loop Alpha sweep failed; use whole ASTC blocks\n");
             return 1;
         }
@@ -2656,7 +2706,7 @@ int main(int argc, char ** argv) {
             gauge_latents.decoder = { range * 0.5, range * 0.5, minimum };
             if (!decode_loop_alpha_search(weights, gauge_latents, rows, columns, format,
                                           calibration_inputs, validation_inputs, inputs, true,
-                                          decode_loop_log_path)) {
+                                          decode_loop_log_path, candidate_threads)) {
                 std::fprintf(stderr, "ASTC scalar-anchored gauge sweep failed\n");
                 return 1;
             }
