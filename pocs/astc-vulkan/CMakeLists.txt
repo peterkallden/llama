@@ -233,6 +233,8 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/tq2-matvec.comp.spv)
     set(ASTC_VULKAN_SAMPLED_F32_MATVEC_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/sampled-f32-matvec.comp.spv)
+    set(ASTC_VULKAN_FFN_E2E_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-ffn-matvec.comp.spv)
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -296,6 +298,16 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling sampled FP32 Vulkan matvec shader")
     add_custom_target(astc-vulkan-sampled-f32-matvec-shader
         DEPENDS ${ASTC_VULKAN_SAMPLED_F32_MATVEC_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_FFN_E2E_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1 -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-ffn-matvec.comp
+            -o ${ASTC_VULKAN_FFN_E2E_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-ffn-matvec.comp
+        COMMENT "Compiling ASTC FFN end-to-end shader")
+    add_custom_target(astc-vulkan-ffn-e2e-shader
+        DEPENDS ${ASTC_VULKAN_FFN_E2E_SHADER_OUTPUT})
     if (TARGET astc-vulkan-device-smoke)
         add_executable(astc-vulkan-shader-device-smoke
             astc-vulkan-shader-device-smoke.cpp)
@@ -311,6 +323,18 @@ if (ASTC_VULKAN_GLSLC)
             astc-vulkan-q4-matvec-shader
             astc-vulkan-tq2-matvec-shader
             astc-vulkan-sampled-f32-matvec-shader)
+    endif()
+    if (TARGET ggml-base AND TARGET astc-vulkan-ffn-adapter)
+        add_executable(astc-vulkan-ffn-e2e-smoke
+            astc-vulkan-ffn-e2e-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-ffn-e2e-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-ffn-e2e-smoke PRIVATE
+            astc-vulkan-ffn-adapter ggml-base Vulkan::Vulkan)
+        target_compile_features(astc-vulkan-ffn-e2e-smoke PRIVATE cxx_std_17)
+        add_dependencies(astc-vulkan-ffn-e2e-smoke astc-vulkan-ffn-e2e-shader)
     endif()
 endif()
 

@@ -2834,3 +2834,25 @@ This is intentionally not a scheduler hook: fallback remains the normal llama
 execution path, and no production `ggml-vulkan` files are modified. The next
 gate is dispatch/pipeline binding against a real FFN activation trace followed
 by end-to-end FP16 quality comparison.
+
+## One-hundred-twenty-third sweep: first real FFN end-to-end dispatch
+
+The new `astc-vulkan-ffn-e2e-smoke` binds a real captured FFN activation trace
+as a storage buffer while ASTC weights are fetched through the Vulkan sampled
+image. It dispatches one workgroup per output row and compares GPU results to
+the CPU ASTC decode and the original F16-derived FP32 matrix.
+
+On the 11-sample, 32-row, 1,536-column SmolLM2 layer-0 fixture:
+
+| Footprint | GPU vs CPU ASTC MSE | ASTC vs source activation-relative MSE |
+| --- | ---: | ---: |
+| 4x4 | 2.10e-14 | 0.0007992 |
+| 5x5 | 2.22e-14 | 0.0079772 |
+| 6x6 | 2.43e-14 | 0.0362345 |
+
+The near-machine-precision GPU/CPU agreement confirms that the fixed-function
+ASTC sampler, upload session, activation buffer, reconstruction parameters,
+and reduction shader are wired consistently. The second column is the actual
+quality trade-off against source weights; it is not a claim about full-model
+perplexity. The next quality gate is larger row coverage and end-to-end model
+logit/loss comparison, not further sampler correctness work.

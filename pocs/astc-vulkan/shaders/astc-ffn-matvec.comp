@@ -1,0 +1,39 @@
+#version 450
+
+// End-to-end FFN control: ASTC weights are sampled by the texture unit while
+// activations come from a real host-captured trace buffer.
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) uniform sampler2D astc_weights;
+layout(std430, set = 0, binding = 1) readonly buffer Activations { float values[]; } activations;
+layout(std430, set = 0, binding = 2) buffer MatvecOutput { vec4 values[]; } output_values;
+
+layout(push_constant) uniform PushConstants {
+    uint width;
+    uint height;
+    uint sample_index;
+    float scale_l;
+    float scale_a;
+    float offset;
+} params;
+
+shared float partial[64];
+
+void main() {
+    const uint row = gl_WorkGroupID.x;
+    if (row >= params.height) return;
+    float sum = 0.0;
+    const uint activation_base = params.sample_index * params.width;
+    for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64) {
+        const vec4 texel = texelFetch(astc_weights, ivec2(column, row), 0);
+        const float latent = (texel.r + texel.g + texel.b) / 3.0;
+        const float weight = params.scale_l * latent + params.scale_a * texel.a + params.offset;
+        sum += weight * activations.values[activation_base + column];
+    }
+    partial[gl_LocalInvocationID.x] = sum;
+    barrier();
+    for (uint stride = 32; stride > 0; stride >>= 1) {
+        if (gl_LocalInvocationID.x < stride) partial[gl_LocalInvocationID.x] += partial[gl_LocalInvocationID.x + stride];
+        barrier();
+    }
+    if (gl_LocalInvocationID.x == 0) output_values.values[params.sample_index * params.height + row] = vec4(partial[0], 0.0, 0.0, 0.0);
+}
