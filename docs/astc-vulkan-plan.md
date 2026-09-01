@@ -1151,3 +1151,9 @@ large layer-0 gain is therefore not universal, but the mechanism survives on a
 second tensor. Full-tensor work must retain per-tensor calibration, candidate
 selection, and validation stopping; a single global gauge policy is not
 supported by the evidence.
+
+Row-strip selection is now byte-identical to the whole-crop selector at 48x48
+and 192x192, including the full validation trajectory. Use it as the mandatory
+regression baseline for chunking: a chunked implementation must first produce
+the same per-strip sequences and the same merged global prefix before it is
+allowed to run a full tensor.

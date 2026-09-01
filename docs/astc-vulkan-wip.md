@@ -3739,3 +3739,24 @@ positive and uses the same scalar-anchored fallback. The mechanism is therefore
 not a layer-0-only artifact; its magnitude depends on the tensor and activation
 geometry. Keep per-tensor selection and do not assume a universal gauge budget
 or correction rank.
+
+## One-hundred-fifty-eighth sweep: row-strip selector equivalence
+
+The selector now has an optional `--row-strip-select` mode. It exploits the
+current layer-output objective's exact six-row factorization: each strip first
+computes its local conflict-aware sequence, then a global merge selects the
+next strip head with the same gain and option-index tie break as the original
+whole-crop scan. This preserves global validation-prefix semantics; it is not
+merely an independently completed-strip approximation.
+
+The regression compared ordinary and row-strip selection with four candidate
+threads on layer-0 gauge-only fixtures. At both 48x48 and 192x192, the complete
+summary output and every CSV commit row are byte-identical. The 192x192 check
+therefore reproduces the same 710 commits, payload/mode counts, scalar and
+holdout MSE, and validation-best prefix.
+
+This proves the mathematical decomposition needed for full-tensor scaling.
+The next implementation sweep can release each strip's candidate dictionary
+after its local sequence has been recorded, then merge those compact sequences
+globally. The holdout remains untouched until the validation-selected merged
+prefix is fixed.

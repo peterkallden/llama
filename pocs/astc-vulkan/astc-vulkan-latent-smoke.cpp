@@ -1354,7 +1354,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               const activations & holdout,
                               bool scalar_anchored_gauge = false,
                               const std::string & commit_log_path = {},
-                              uint32_t candidate_threads = 1) {
+                              uint32_t candidate_threads = 1,
+                              bool row_strip_select = false) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
@@ -1586,32 +1587,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     uint32_t commits = 0;
     uint32_t best_validation_commit = 0;
     double best_validation = neutral_validation;
-    for (;;) {
-        double best_gain = 0.0;
-        size_t best_option = options.size();
-        for (size_t option_index = 0; option_index < options.size(); ++option_index) {
-            const alpha_option & option = options[option_index];
-            const uint32_t block_index = (option.row0 / format.block_height) * blocks_x +
-                                         option.column0 / format.block_width;
-            if (committed[block_index]) continue;
-            const std::vector<double> & delta = option_deltas[option_index];
-            double dot = 0.0, norm = 0.0;
-            for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
-                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
-                    if (option.row0 + local_row >= rows) continue;
-                    const size_t local = static_cast<size_t>(sample) * format.block_height + local_row;
-                    const size_t output = static_cast<size_t>(sample) * rows + option.row0 + local_row;
-                    dot += residual[output] * delta[local];
-                    norm += delta[local] * delta[local];
-                }
-            }
-            const double gain = 2.0 * dot - norm;
-            if (gain > best_gain) {
-                best_gain = gain;
-                best_option = option_index;
-            }
-        }
-        if (best_option == options.size()) break;
+    auto commit_option = [&](size_t best_option, double best_gain) {
         const alpha_option & option = options[best_option];
         const uint32_t block_index = (option.row0 / format.block_height) * blocks_x +
                                      option.column0 / format.block_width;
@@ -1648,6 +1624,96 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         if (commit_log) {
             commit_log << commits << ',' << residual_energy / expected_energy << ',' << validation_loss << ','
                        << best_gain << ',' << neutral_calibration - residual_energy / expected_energy << '\n';
+        }
+    };
+    if (!row_strip_select) for (;;) {
+        double best_gain = 0.0;
+        size_t best_option = options.size();
+        for (size_t option_index = 0; option_index < options.size(); ++option_index) {
+            const alpha_option & option = options[option_index];
+            const uint32_t block_index = (option.row0 / format.block_height) * blocks_x +
+                                         option.column0 / format.block_width;
+            if (committed[block_index]) continue;
+            const std::vector<double> & delta = option_deltas[option_index];
+            double dot = 0.0, norm = 0.0;
+            for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                    if (option.row0 + local_row >= rows) continue;
+                    const size_t local = static_cast<size_t>(sample) * format.block_height + local_row;
+                    const size_t output = static_cast<size_t>(sample) * rows + option.row0 + local_row;
+                    dot += residual[output] * delta[local];
+                    norm += delta[local] * delta[local];
+                }
+            }
+            const double gain = 2.0 * dot - norm;
+            if (gain > best_gain) {
+                best_gain = gain;
+                best_option = option_index;
+            }
+        }
+        if (best_option == options.size()) break;
+        commit_option(best_option, best_gain);
+    }
+    if (row_strip_select) {
+        struct strip_step { size_t option_index; double gain; };
+        std::vector<std::vector<strip_step>> strip_steps(blocks_y);
+        for (uint32_t strip = 0; strip < blocks_y; ++strip) {
+            std::vector<bool> strip_committed(blocks_x, false);
+            std::vector<double> strip_residual(static_cast<size_t>(calibration.samples) * format.block_height, 0.0);
+            for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                    const uint32_t row = strip * format.block_height + local_row;
+                    if (row >= rows) continue;
+                    strip_residual[static_cast<size_t>(sample) * format.block_height + local_row] =
+                        residual[static_cast<size_t>(sample) * rows + row];
+                }
+            }
+            for (;;) {
+                double best_gain = 0.0;
+                size_t best_option = options.size();
+                for (size_t option_index = 0; option_index < options.size(); ++option_index) {
+                    const alpha_option & option = options[option_index];
+                    if (option.row0 / format.block_height != strip) continue;
+                    const uint32_t local_block = option.column0 / format.block_width;
+                    if (strip_committed[local_block]) continue;
+                    const std::vector<double> & delta = option_deltas[option_index];
+                    double dot = 0.0, norm = 0.0;
+                    for (size_t index = 0; index < delta.size(); ++index) {
+                        dot += strip_residual[index] * delta[index];
+                        norm += delta[index] * delta[index];
+                    }
+                    const double gain = 2.0 * dot - norm;
+                    if (gain > best_gain) {
+                        best_gain = gain;
+                        best_option = option_index;
+                    }
+                }
+                if (best_option == options.size()) break;
+                const alpha_option & option = options[best_option];
+                strip_committed[option.column0 / format.block_width] = true;
+                const std::vector<double> & delta = option_deltas[best_option];
+                for (size_t index = 0; index < delta.size(); ++index) strip_residual[index] -= delta[index];
+                strip_steps[strip].push_back({ best_option, best_gain });
+            }
+        }
+        std::vector<size_t> strip_cursors(blocks_y, 0);
+        for (;;) {
+            double best_gain = 0.0;
+            size_t best_strip = blocks_y;
+            size_t best_option = options.size();
+            for (uint32_t strip = 0; strip < blocks_y; ++strip) {
+                if (strip_cursors[strip] == strip_steps[strip].size()) continue;
+                const strip_step & step = strip_steps[strip][strip_cursors[strip]];
+                if (step.gain > best_gain ||
+                    (step.gain == best_gain && step.option_index < best_option)) {
+                    best_gain = step.gain;
+                    best_option = step.option_index;
+                    best_strip = strip;
+                }
+            }
+            if (best_strip == blocks_y) break;
+            ++strip_cursors[best_strip];
+            commit_option(best_option, best_gain);
         }
     }
     std::vector<float> validation_stopped = neutral;
@@ -2313,6 +2379,7 @@ int main(int argc, char ** argv) {
     std::string validation_trace_path;
     std::string decode_loop_log_path;
     uint32_t candidate_threads = 1;
+    bool row_strip_select = false;
     bool search_levels = false;
     bool neural_rank = false;
     bool coordinate_select = false;
@@ -2411,6 +2478,8 @@ int main(int argc, char ** argv) {
             decode_loop_log_path = argv[++index];
         } else if (option == "--candidate-threads" && index + 1 < argc) {
             candidate_threads = static_cast<uint32_t>(std::stoul(argv[++index]));
+        } else if (option == "--row-strip-select") {
+            row_strip_select = true;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace" || option == "--validation-trace") &&
                    index + 1 < argc) {
@@ -2424,7 +2493,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--candidate-threads N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--candidate-threads N] [--row-strip-select] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep]\n",
                          argv[0]);
             return 2;
@@ -2697,7 +2766,7 @@ int main(int argc, char ** argv) {
         if (decode_loop_alpha_sweep &&
             !decode_loop_alpha_search(weights, block_latents, rows, columns, format,
                                       calibration_inputs, validation_inputs, inputs, false,
-                                      decode_loop_log_path, candidate_threads)) {
+                                      decode_loop_log_path, candidate_threads, row_strip_select)) {
             std::fprintf(stderr, "ASTC decode-in-the-loop Alpha sweep failed; use whole ASTC blocks\n");
             return 1;
         }
@@ -2706,7 +2775,7 @@ int main(int argc, char ** argv) {
             gauge_latents.decoder = { range * 0.5, range * 0.5, minimum };
             if (!decode_loop_alpha_search(weights, gauge_latents, rows, columns, format,
                                           calibration_inputs, validation_inputs, inputs, true,
-                                          decode_loop_log_path, candidate_threads)) {
+                                          decode_loop_log_path, candidate_threads, row_strip_select)) {
                 std::fprintf(stderr, "ASTC scalar-anchored gauge sweep failed\n");
                 return 1;
             }
