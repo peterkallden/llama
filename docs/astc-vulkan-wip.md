@@ -2819,3 +2819,18 @@ binding, and upload cleanup changes. All 29 tests passed with device access
 enabled, including ASTC capability, image upload, shader compilation, six
 device access patterns, and the new driver metadata contract. No production
 Vulkan backend files were changed.
+
+## One-hundred-twenty-second sweep: FFN adapter contract
+
+The PoC now has an `astc_vulkan_ffn_adapter` above the tensor session. It
+resolves an `ffn_down` record by name, validates the model's expected column
+count (including the 1,536-column SmolLM2 case), and returns an explicit
+`kFallback` status when the record is absent, the shape differs, or sampled
+ASTC is unavailable. Ready bindings carry the record and reconstruction policy
+into the upload session. A contract smoke covers all three fallback reasons
+and the ready path.
+
+This is intentionally not a scheduler hook: fallback remains the normal llama
+execution path, and no production `ggml-vulkan` files are modified. The next
+gate is dispatch/pipeline binding against a real FFN activation trace followed
+by end-to-end FP16 quality comparison.

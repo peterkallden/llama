@@ -44,6 +44,21 @@ if (Vulkan_FOUND)
     target_link_libraries(astc-vulkan-resource PUBLIC Vulkan::Vulkan astc-vulkan-driver)
     target_compile_features(astc-vulkan-resource PUBLIC cxx_std_17)
 
+    add_library(astc-vulkan-ffn-adapter STATIC
+        astc-vulkan-ffn-adapter.cpp)
+    target_include_directories(astc-vulkan-ffn-adapter PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-ffn-adapter PUBLIC
+        astc-vulkan-resource astc-vulkan-driver)
+    target_compile_features(astc-vulkan-ffn-adapter PUBLIC cxx_std_17)
+
+    add_executable(test-astc-vulkan-ffn-adapter
+        tests/test-astc-vulkan-ffn-adapter.cpp)
+    target_link_libraries(test-astc-vulkan-ffn-adapter PRIVATE astc-vulkan-ffn-adapter)
+    target_include_directories(test-astc-vulkan-ffn-adapter PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_compile_features(test-astc-vulkan-ffn-adapter PRIVATE cxx_std_17)
+
     add_executable(astc-vulkan-capability-probe
         astc-vulkan-capability-probe.cpp)
     target_link_libraries(astc-vulkan-capability-probe PRIVATE Vulkan::Vulkan)
@@ -329,6 +344,12 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-driver
         COMMAND test-astc-vulkan-driver)
     set_property(TEST test-astc-vulkan-driver PROPERTY LABELS astc)
+
+    if (TARGET test-astc-vulkan-ffn-adapter)
+        add_test(NAME test-astc-vulkan-ffn-adapter
+            COMMAND test-astc-vulkan-ffn-adapter)
+        set_property(TEST test-astc-vulkan-ffn-adapter PROPERTY LABELS astc)
+    endif()
 
     if (TARGET astc-vulkan-astcenc-smoke)
         add_test(NAME astc-vulkan-astcenc-smoke
