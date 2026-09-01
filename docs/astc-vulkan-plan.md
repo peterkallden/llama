@@ -1092,3 +1092,10 @@ reliable scalar-beating result. The next experiment should alter only the
 candidate family (for example a wider, bounded constant-Alpha dictionary) or
 calibration coverage, then repeat the same three-trace gate. Keep LDLQ behind
 that gate.
+
+The scalar-anchored gauge-only gate now passes on both layer-0 and layer-1
+96x96 crops. It makes scalar an exact candidate-family baseline and removes
+the L+A base-representation penalty. Next, either scale gauge-only to larger
+crops/full tensors or add the bounded correction-plus-gauge family; retain the
+same calibration → validation budget → untouched holdout protocol. LDLQ is now
+appropriate only after this anchored family remains beneficial at larger scale.

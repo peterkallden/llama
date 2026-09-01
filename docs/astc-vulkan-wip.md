@@ -3573,3 +3573,28 @@ strong evidence that the current candidate family and traces are
 tensor-/distribution-dependent. Do not add LDLQ yet: first improve candidate
 coverage or calibration robustness while retaining scalar as the quality
 baseline.
+
+## One-hundred-fifty-second sweep: scalar-anchored gauge-only
+
+A new L+A decoder uses equal coefficients,
+
+\[
+\hat w = b + \frac{s}{2}L + \frac{s}{2}A.
+\]
+
+With `L=A=q`, this is exactly scalar ASTC before and after the baseline
+ASTC encode/decode. Gauge candidates use `L=q+delta`, `A=q-delta`, with
+`delta` bounded per block by channel headroom so no candidate clips. Thus they
+change no intended pre-codec weight; only ASTC's discrete coding path differs.
+
+| Tensor, 96x96 | Scalar / gauge-neutral holdout | Gauge conflict holdout | Validation-stopped holdout |
+| --- | ---: | ---: | ---: |
+| `blk.0.ffn_down.weight` | 0.0407955 | **0.0191554** | 0.0193639 (commit 133/170) |
+| `blk.1.ffn_down.weight` | 0.0567739 | 0.0565048 | **0.0562734** (commit 65/185) |
+
+Layer 0 shows a large gain and layer 1 a small but validation-confirmed gain.
+This is the first cross-tensor evidence that a decoder-null-space signal can
+navigate ASTC's legal block space to improve neural reconstruction over scalar
+without carrying a residual semantic signal. The next experiment may add a
+small real correction `c` on top of this anchored gauge family, but preserve
+the mandatory scalar candidate and the three-trace gate.
