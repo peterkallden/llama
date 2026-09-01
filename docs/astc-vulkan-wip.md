@@ -3358,3 +3358,38 @@ ordinary sampled F32 is substantially faster on this device. The ASTC result
 is therefore a device-specific dispatch observation, not a general inference
 claim. The next benchmark should include Q4 and a full token loop, and should
 report upload amortization separately from steady-state dispatch time.
+
+## One-hundred-forty-fourth sweep: activation-fitted constant Alpha
+
+The structured-Alpha result motivated a deliberately narrow follow-up: retain
+the same block-constant correction family, but choose its magnitude in
+activation space. For a block residual `R_b`, input trace `X_b`, and a constant
+correction `c 1`, the unencoded optimum is
+
+\[
+c^*_b = \frac{\langle R_b X_b^T,\; \mathbf{1}X_b^T\rangle}
+               {\|\mathbf{1}X_b^T\|^2}.
+\]
+
+The experiment then encoded the resulting L+A fields with the unchanged,
+standard-compatible ASTC encoder. It compared the existing block-mean control
+with this activation optimum, a four-shard consistency gate, and that gate
+combined with an activation-complexity attenuation. The labelled Pythia 6x6
+screen used 256 rows, all 8,192 columns, and 15 trace positions:
+
+| Constant-Alpha policy | Activation-relative MSE |
+| --- | ---: |
+| block mean control | 0.0281505 |
+| activation-optimal | 0.0284773 |
+| activation-optimal + shard gate | 0.0284287 |
+| activation-optimal + shard and complexity gate | 0.0288424 |
+
+None of the pre-encode activation fits beat the simple block-mean control.
+This is an informative negative result, not a rejection of the side-channel
+idea: `c*` optimizes an unencoded correction, whereas ASTC subsequently
+perturbs both L and Alpha. The next variant must score candidate *decoded*
+blocks in activation space, rather than calculate a continuous correction and
+assume its effect survives encoding. The shard split here is used only as a
+gating signal on the same trace, so it is not a calibration/holdout
+generalization result. A disjoint trace is required before accepting or
+rejecting confidence gating as a generalization method.

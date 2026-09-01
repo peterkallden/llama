@@ -1479,6 +1479,92 @@ latent_representation make_additive_latents(const std::vector<float> & weights,
         coarse_levels);
 }
 
+latent_representation make_activation_constant_latents(
+        const std::vector<float> & weights, float minimum, float range,
+        uint32_t rows, uint32_t columns, uint32_t block,
+        const activations & calibration, bool shard_gate, bool complexity_gate,
+        uint32_t coarse_levels) {
+    latent_representation result;
+    result.texels.resize(weights.size() * 4);
+    const float step = range / (coarse_levels - 1);
+    const float residual_radius = std::max(step * 0.5f, 1e-6f);
+    result.decoder = { range, 2.0 * residual_radius, minimum - residual_radius };
+    std::vector<float> residuals(weights.size());
+    for (size_t index = 0; index < weights.size(); ++index) {
+        const float level = std::round((weights[index] - minimum) / step);
+        const float coarse = minimum +
+            std::clamp(level, 0.0f, static_cast<float>(coarse_levels - 1)) * step;
+        residuals[index] = weights[index] - coarse;
+    }
+    const uint32_t shard_count = shard_gate ? std::min<uint32_t>(4, calibration.samples) : 1;
+    for (uint32_t row0 = 0; row0 < rows; row0 += block) {
+        for (uint32_t column0 = 0; column0 < columns; column0 += block) {
+            const uint32_t row_end = std::min(row0 + block, rows);
+            const uint32_t column_end = std::min(column0 + block, columns);
+            double numerator = 0.0, denominator = 0.0, residual_energy = 0.0;
+            std::vector<double> shard_corrections;
+            for (uint32_t shard = 0; shard < shard_count; ++shard) {
+                const uint32_t first = calibration.samples * shard / shard_count;
+                const uint32_t last = calibration.samples * (shard + 1) / shard_count;
+                double shard_numerator = 0.0, shard_denominator = 0.0;
+                for (uint32_t sample = first; sample < last; ++sample) {
+                    const float * x = calibration.values.data() + static_cast<size_t>(sample) * columns;
+                    double u = 0.0;
+                    for (uint32_t column = column0; column < column_end; ++column) u += x[column];
+                    for (uint32_t row = row0; row < row_end; ++row) {
+                        double output_residual = 0.0;
+                        for (uint32_t column = column0; column < column_end; ++column) {
+                            output_residual += residuals[static_cast<size_t>(row) * columns + column] * x[column];
+                        }
+                        shard_numerator += output_residual * u;
+                        shard_denominator += u * u;
+                        residual_energy += output_residual * output_residual;
+                    }
+                }
+                numerator += shard_numerator;
+                denominator += shard_denominator;
+                shard_corrections.push_back(shard_denominator > 1e-18 ? shard_numerator / shard_denominator : 0.0);
+            }
+            double correction = denominator > 1e-18 ? numerator / denominator : 0.0;
+            double gate = 1.0;
+            if (shard_gate && shard_corrections.size() > 1) {
+                double mean = 0.0;
+                for (double value : shard_corrections) mean += value;
+                mean /= shard_corrections.size();
+                double variance = 0.0;
+                for (double value : shard_corrections) variance += (value - mean) * (value - mean);
+                variance /= shard_corrections.size();
+                const double consistency = std::abs(mean) / (std::sqrt(variance) + 1e-9);
+                gate *= std::clamp((consistency - 1.0) / 3.0, 0.0, 1.0);
+            }
+            if (complexity_gate && denominator > 1e-18 && residual_energy > 1e-18) {
+                const double projected_energy = correction * correction * denominator;
+                gate *= std::sqrt(std::clamp(projected_energy / residual_energy, 0.0, 1.0));
+            }
+            const float projected = static_cast<float>(std::clamp(
+                correction * gate, -static_cast<double>(residual_radius),
+                static_cast<double>(residual_radius)));
+            for (uint32_t row = row0; row < row_end; ++row) {
+                for (uint32_t column = column0; column < column_end; ++column) {
+                    residuals[static_cast<size_t>(row) * columns + column] = projected;
+                }
+            }
+        }
+    }
+    for (size_t index = 0; index < weights.size(); ++index) {
+        const float level = std::round((weights[index] - minimum) / step);
+        const float coarse = minimum +
+            std::clamp(level, 0.0f, static_cast<float>(coarse_levels - 1)) * step;
+        const float l = (coarse - minimum) / range;
+        const float a = std::clamp(0.5f + residuals[index] / (2.0f * residual_radius),
+                                   0.0f, 1.0f);
+        float * texel = result.texels.data() + index * 4;
+        texel[0] = texel[1] = texel[2] = l;
+        texel[3] = a;
+    }
+    return result;
+}
+
 bool parse_residual_basis(const std::string & name, residual_basis & basis) {
     if (name == "constant") basis = residual_basis::block_constant;
     else if (name == "row") basis = residual_basis::block_row;
@@ -1818,6 +1904,7 @@ int main(int argc, char ** argv) {
     bool export_only = false;
     std::string residual_basis_name;
     bool residual_basis_only = false;
+    bool activation_alpha_sweep = false;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
@@ -1880,6 +1967,8 @@ int main(int argc, char ** argv) {
             residual_basis_name = argv[++index];
         } else if (option == "--residual-basis-only") {
             residual_basis_only = true;
+        } else if (option == "--activation-alpha-sweep") {
+            activation_alpha_sweep = true;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace") &&
                    index + 1 < argc) {
@@ -1893,7 +1982,7 @@ int main(int argc, char ** argv) {
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
-                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane]\n",
+                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep]\n",
                          argv[0]);
             return 2;
         }
@@ -1967,6 +2056,10 @@ int main(int argc, char ** argv) {
     }
     if (residual_basis_only && residual_basis_name.empty()) {
         std::fprintf(stderr, "--residual-basis-only requires --residual-basis\n");
+        return 2;
+    }
+    if (activation_alpha_sweep && export_only) {
+        std::fprintf(stderr, "--activation-alpha-sweep cannot be combined with --export-only\n");
         return 2;
     }
     if (!std::isfinite(g_block_ldlq_damping) || g_block_ldlq_damping < 0.0) {
@@ -2120,6 +2213,28 @@ int main(int argc, char ** argv) {
             if (!std::isfinite(run_case(case_name.c_str(), weights, structured,
                                         rows, columns, format, inputs))) {
                 std::fprintf(stderr, "ASTC structured residual smoke failed\n");
+                return 1;
+            }
+        }
+        if (activation_alpha_sweep) {
+            const latent_representation activation_optimal = make_activation_constant_latents(
+                weights, minimum, range, rows, columns, format.block_width,
+                calibration_inputs, false, false, kDefaultCoarseLevels);
+            const latent_representation shard_gated = make_activation_constant_latents(
+                weights, minimum, range, rows, columns, format.block_width,
+                calibration_inputs, true, false, kDefaultCoarseLevels);
+            const latent_representation confidence_gated = make_activation_constant_latents(
+                weights, minimum, range, rows, columns, format.block_width,
+                calibration_inputs, true, true, kDefaultCoarseLevels);
+            if (!std::isfinite(run_case("alpha-block-mean", weights, block_latents,
+                                        rows, columns, format, inputs)) ||
+                !std::isfinite(run_case("alpha-activation-optimal", weights, activation_optimal,
+                                        rows, columns, format, inputs)) ||
+                !std::isfinite(run_case("alpha-activation-shard-gated", weights, shard_gated,
+                                        rows, columns, format, inputs)) ||
+                !std::isfinite(run_case("alpha-activation-confidence-gated", weights, confidence_gated,
+                                        rows, columns, format, inputs))) {
+                std::fprintf(stderr, "ASTC activation Alpha sweep failed\n");
                 return 1;
             }
         }

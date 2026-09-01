@@ -1006,3 +1006,25 @@ R32F `2.208 ms` per dispatch. Thus ASTC is `1.62x`/`1.87x` faster than the
 current storage-buffer control, but slower than ordinary sampled F32 on this
 device. Treat these as steady-state GPU timestamps only; upload amortization,
 Q4 comparison, and end-to-end token throughput remain separate gates.
+
+### Alpha correction follow-up: decoded candidate scoring
+
+The first activation-fitted constant-Alpha sweep did not beat block mean on
+the Pythia 256-row 6x6 screen: `0.0281505` for block mean versus `0.0284773`,
+`0.0284287`, and `0.0288424` for activation-optimal, shard-gated, and full
+confidence-gated variants. Keep the result and implementation as a regression
+experiment. Do not add row, column, or plane capacity: those were decisively
+worse.
+
+The next error-correction step is instead codec-aware candidate scoring:
+
+1. Generate the existing legal ASTC candidates for a block unchanged.
+2. Decode each candidate (software reference during offline encoding).
+3. Score its *decoded* `L + A` correction with activation loss, optionally on
+   calibration shards, so the score includes ASTC's own perturbation.
+4. Use a separate captured trace for final holdout evaluation; never use the
+   shards used for fitting as evidence of generalization.
+
+This preserves the key hypothesis—Alpha is a low-dimensional neural
+error-correction side channel—while aligning the optimization objective with
+the actual fixed-function decoder.
