@@ -1137,3 +1137,10 @@ The next gate is a larger crop and a second tensor with the same equality
 check. Full-tensor execution should then use chunked block results so memory
 does not grow with the entire candidate dictionary at once; only after that
 engineering gate should the project run the full `2048x8192` gauge-only study.
+
+The 384x384 layer-0 gate now passes with scalar holdout `0.0549210` versus
+validation-stopped gauge holdout `0.0272700`. The effective rank is `1,263`
+over 4,096 blocks, so the full-tensor path must not assume one global low-rank
+correction basis. Keep diagnostics local/chunkable and preserve the exact
+conflict-aware commit contract. The next quality gate is the same protocol on
+layer 1 before full-tensor engineering.

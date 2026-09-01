@@ -3688,3 +3688,29 @@ that independent ASTC encode/decode work can use multiple CPU cores while the
 global error-shaping semantics remain deterministic. The next scale step is a
 larger crop/second tensor with the same thread-count comparison, followed by a
 chunked full-tensor run once candidate artifacts can be bounded in memory.
+
+## One-hundred-fifty-sixth sweep: 384x384 gauge scaling
+
+The four-thread selector was scaled to a 384x384 layer-0 crop (4,096 ASTC
+blocks, 28,658 unique legal payloads) using the same disjoint 15/34/30 trace
+split. The complete commit path contains 2,763 accepted proposals; validation
+selected prefix 1,413.
+
+| Metric | Result |
+| --- | ---: |
+| Scalar / gauge-neutral holdout | 0.0549210 |
+| Full conflict-aware gauge holdout | 0.0270779 |
+| Validation-stopped gauge holdout | **0.0272700** |
+| Local gauge wins | 3,272 / 4,096 |
+| Accepted proposals | 2,763 / 3,272 |
+| Effective rank | 1,263 |
+| Mean positive cosine | 0.1857 |
+| Mode changes: dual-plane / endpoint / partition / grid / levels | 0 / 0 / 46 / 25 / 760 |
+
+The validation-selected result is 50.4% below scalar holdout. Effective rank
+continues to grow with the number of blocks, while candidate cosine remains
+similar to the 192x192 result. Gauge correction-space is therefore extensive,
+not globally low-rank, but its local correlations remain strong enough to make
+conflict-aware assembly essential. The mode pattern is also consistent: gauge
+primarily crosses quantization-level boundaries, with occasional partition or
+weight-grid changes and no observed dual-plane transition.
