@@ -3292,3 +3292,15 @@ Large exports are intentionally kept out of CTest: they are reproducible
 measurement jobs and may take several minutes on the host CPU. The next gate
 is model-level replay on the completed artifact, followed by the same payload
 through Vulkan for 4x4 and (as a bandwidth control) 6x6.
+
+The full 4x4 artifact has now passed both remaining gates. Model replay over
+15 captured prompt positions produced logits MSE `0.43888936`, relative logits
+MSE `0.048754817`, top-1 agreement `66.7%`, and loss delta `+0.54234224` versus
+the FP16 Pythia reference. The Vulkan run used the same ASTC bytes and
+reported GPU-vs-CPU matvec MSE `1.69e-12`; ASTC-vs-source activation-relative
+MSE was `0.16512259`. The tiny GPU-vs-CPU error is the important execution
+result; the larger ASTC-vs-source value is the current L+A quality limitation.
+
+The corresponding full 6x6 export is now running. It is retained as a
+bandwidth-first control and will be evaluated with the same replay and Vulkan
+metrics rather than inferred from the 4x4 result.

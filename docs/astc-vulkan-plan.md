@@ -970,6 +970,12 @@ portable quality reference and Vulkan remains the execution-path reference.
 Large model exports are measurement jobs rather than CTests; CTests cover
 contracts, input validation, and shader compilation.
 
+The 4x4 L+A artifact has completed all three gates on Pythia: export,
+model-level replay, and Vulkan sampled-image execution. Keep its metrics as a
+baseline for later neural-aware/error-shaped encoders; do not promote it to a
+runtime default yet because the model loss delta remains material. Run the
+same gates for 6x6 before comparing bandwidth and quality.
+
 ### Follow-up benchmark gate
 
 After correctness is established, compare a matched FFN dispatch suite for
