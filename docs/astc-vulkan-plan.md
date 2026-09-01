@@ -930,3 +930,9 @@ layer metrics alone do not justify scheduler integration.
 The selected-candidate run is reproducible with `--screen-only`; the default
 quality smoke still evaluates the broader transform/basis matrix for small
 fixtures.
+
+Pythia TQ2 has now been added as an explicitly labelled low-bit control. Its
+full-model result is logits-relative-MSE `1.3086276`, top-1 agreement `0%`, and
+loss delta `+8.060108`; do not compare this directly to the single-layer ASTC
+metric. Keep TQ2 in the bandwidth matrix, but reserve quality conclusions for
+the ASTC layer-output and model-replay gates.

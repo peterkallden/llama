@@ -3183,6 +3183,22 @@ code-oriented 1,536 hidden / 8,960 FFN stress target. The full ASTC 4x4/6x6
 quality sweep is intentionally running separately because it is substantially
 larger than the earlier SmolLM2 matrix.
 
+## One-hundred-thirty-ninth sweep: Pythia TQ2 control
+
+`TQ2_0` was generated from the same Pythia F16 GGUF with `llama-quantize
+--pure` and is stored at `/home/prbm/models/Pythia-1.4B-TQ2_0-local.gguf`.
+The resulting file is approximately 350 MiB (about 2.08 bits per weight).
+The full-model baseline against the Pythia F16 reference measured logits MSE
+`11.780226`, relative logits MSE `1.3086276`, top-1 agreement `0%`, and loss
+delta `+8.060108` on the matched ASTC validation prompt.
+
+This is a TQ2 baseline, not an ASTC L+A experiment. As with earlier TQ
+fixtures, `--pure` does not by itself establish that every tensor follows a
+clean ternary-only path; tensor-type manifests remain required before making a
+pure-TQ quality claim. The result reinforces the current comparison split:
+Q4 is the mature quality control, TQ2 is a very-low-bit bandwidth control, and
+ASTC 4x4 must be judged through its own layer/replay measurements.
+
 The first scalable parameter screen used `--max-rows 256` while retaining all
 8,192 input columns and the 15 captured activation positions. This is a
 screening result, not a full-layer quality claim:
