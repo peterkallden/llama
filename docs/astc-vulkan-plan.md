@@ -1204,3 +1204,33 @@ offline ASTC encoding. This is now an authorized full-tensor gauge-only run:
 use chunked selection, light diagnostics, a global commit log, a per-strip log,
 and a final payload artifact. Do not change the candidate family or inspect
 holdout until validation has selected its prefix.
+
+### Post-baseline candidate-generation optimization order
+
+The active full-tensor result is a frozen thorough-preset baseline. Do not
+change its encoder path while it is running. An inspection of the current PoC
+establishes three facts for the next sweep:
+
+1. The side-fork is already correct for this host: it links
+   `libastcenc-native-static.a`, built with `-march=native`; this i5-8250U
+   exposes AVX2, F16C, and SSE4.1. SIMD is therefore not a missing variable.
+2. The hot gauge path currently calls `astc_roundtrip()` per candidate, which
+   allocates and frees an `astcenc_context` each time. Replace this with one
+   persistent context per candidate-generation worker, preserving the exact
+   configuration, source blocks, payloads, and deterministic ordering. Gate it
+   with byte-identical payload and commit-CSV regressions before using it for a
+   quality comparison.
+3. Payload deduplication already happens immediately after encode and before
+   decode/reconstruction/delta construction. It does not avoid the encode work,
+   so it remains useful but cannot solve the dominant cost alone.
+
+After context reuse, run a controlled `thorough` / `medium` / `fast`
+ablation on the same frozen tensor and calibration/validation/holdout split.
+Measure elapsed generation time, unique payloads, accepted candidates, and
+validation-stopped holdout. This is a new encoder comparison, not a rerun of
+the frozen baseline. Only if a cheaper preset preserves useful correction space
+should the project add a two-stage preset policy, adaptive gauge grid, cache
+audit, or a neural-gauge ASTC search preset. Reuse of block analysis across
+gauge values is a later fork-level optimization: first profile preparation,
+context allocation, ASTC search, decode, reconstruction, and delta creation
+separately, then optimize only proven repeated work.
