@@ -52,7 +52,7 @@ bool create_buffer(VkPhysicalDevice physical_device, VkDevice device, VkDeviceSi
 } // namespace
 
 int main(int argc, char ** argv) {
-    std::string shader, payload_path, activation_path, decoded_path, weights_path;
+    std::string shader, payload_path, activation_path, decoded_path, weights_path, reference_output_path;
     uint32_t width = 0, height = 0, max_samples = 0;
     uint8_t footprint = 2;
     for (int i = 1; i < argc; ++i) {
@@ -63,6 +63,7 @@ int main(int argc, char ** argv) {
         else if (option == "--activations") activation_path = argv[++i];
         else if (option == "--decoded") decoded_path = argv[++i];
         else if (option == "--weights") weights_path = argv[++i];
+        else if (option == "--reference-output") reference_output_path = argv[++i];
         else if (option == "--width") width = static_cast<uint32_t>(std::stoul(argv[++i]));
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(argv[++i]));
         else if (option == "--footprint") footprint = static_cast<uint8_t>(std::stoul(argv[++i]));
@@ -76,11 +77,17 @@ int main(int argc, char ** argv) {
     const std::vector<float> decoded = read_binary<float>(decoded_path);
     const std::vector<float> weights = read_binary<float>(weights_path);
     ggml_vk_astc_activation_trace trace;
+    ggml_vk_astc_activation_trace reference_output;
     std::string error;
     if (spirv.empty() || payload.empty() || decoded.size() != static_cast<size_t>(width) * height * 4 ||
         weights.size() != static_cast<size_t>(width) * height ||
         !ggml_vk_astc_load_activation_trace(activation_path, trace, error) || trace.columns < width) {
         std::fprintf(stderr, "invalid FFN end-to-end inputs: %s\n", error.c_str()); return 2;
+    }
+    if (!reference_output_path.empty() &&
+        (!ggml_vk_astc_load_activation_trace(reference_output_path, reference_output, error) ||
+         reference_output.columns != height || reference_output.samples < trace.samples)) {
+        std::fprintf(stderr, "invalid FFN reference output: %s\n", error.c_str()); return 2;
     }
     if (max_samples != 0) trace.samples = std::min(trace.samples, max_samples);
     if (trace.samples == 0) return 2;
@@ -218,6 +225,7 @@ int main(int argc, char ** argv) {
         }
     }
     double astc_error = 0.0, source_error = 0.0, source_energy = 0.0;
+    double reference_error = 0.0, reference_energy = 0.0;
     for (uint32_t sample = 0; success && sample < trace.samples; ++sample) for (uint32_t row = 0; row < height; ++row) {
         double astc_dot = 0.0, source_dot = 0.0;
         for (uint32_t column = 0; column < width; ++column) {
@@ -232,12 +240,20 @@ int main(int argc, char ** argv) {
         astc_error += (gpu - astc_dot) * (gpu - astc_dot);
         source_error += (astc_dot - source_dot) * (astc_dot - source_dot);
         source_energy += source_dot * source_dot;
+        if (!reference_output_path.empty()) {
+            const float reference = reference_output.values[static_cast<size_t>(sample) * reference_output.columns + row];
+            reference_error += (astc_dot - reference) * (astc_dot - reference);
+            reference_energy += reference * reference;
+        }
     }
-    if (success) std::printf("ffn-e2e footprint=%ux%u samples=%u rows=%u columns=%u gpu-vs-cpu-mse=%.8g astc-vs-source-relative-mse=%.8g\n",
+    const std::string reference_metric = reference_output_path.empty() ? std::string() :
+        (" astc-vs-reference-relative-mse=" + std::to_string(reference_error / std::max(reference_energy, 1e-12)));
+    if (success) std::printf("ffn-e2e footprint=%ux%u samples=%u rows=%u columns=%u gpu-vs-cpu-mse=%.8g astc-vs-source-relative-mse=%.8g%s\n",
                              astc_vulkan_format(static_cast<astc_vulkan_footprint>(footprint)).block_width,
                              astc_vulkan_format(static_cast<astc_vulkan_footprint>(footprint)).block_height,
                              trace.samples, height, width, astc_error / (trace.samples * height),
-                             source_error / std::max(source_energy, 1e-12));
+                             source_error / std::max(source_energy, 1e-12),
+                             reference_metric.c_str());
     if (device != VK_NULL_HANDLE) vkDeviceWaitIdle(device);
     adapter.reset();
     if (fence) vkDestroyFence(device, fence, nullptr); if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);

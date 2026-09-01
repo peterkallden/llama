@@ -2910,3 +2910,50 @@ The quality curve is monotonic on this layer: 4x4 is the safest quality
 choice, 6x6 reaches the asymptotic 3.5556 b/w rate, and 5x5 is the middle
 trade-off. The harness is now ready for model-level logit/loss integration;
 no further ASTC sampler correctness work is required for this gate.
+
+## One-hundred-twenty-eighth sweep: FFN-down output capture
+
+The llama-side PoC now has a second opt-in staging hook for the output of a
+layer's FFN-down projection. It is captured immediately after the down matrix
+operation and before the residual path, with token-major `n_embd` columns. The
+existing input capture remains unchanged, and the normal graph has no extra
+output allocation unless the new flag is enabled. The trace utility accepts
+`--ffn-down-output` and rejects selecting both capture modes at once.
+
+The Vulkan FFN end-to-end smoke also accepts `--reference-output`. When given
+an output trace captured from the FP16 llama path, it reports ASTC output error
+against that reference in addition to the existing GPU-vs-CPU and
+ASTC-vs-source metrics. This is the first direct bridge from the sampled ASTC
+projection to a real llama layer-output oracle; full logits/loss injection is
+still a separate step.
+
+Both modified llama translation units and the two PoC executables pass
+standalone C++17 syntax checks. The Vulkan FFN smoke target rebuilds
+successfully. The larger trace-capture target requires the full llama library
+and is being rebuilt separately; no production `ggml-vulkan` source is touched.
+
+## One-hundred-twenty-ninth sweep: real FP16 layer-output comparison
+
+Using the same SmolLM2 F16 model, prompt, layer-0 FFN-down weights, and nine
+captured token positions, the GPU path was compared against a reference trace
+captured from llama's normal FP16 graph:
+
+| Footprint | Payload bytes | GPU vs CPU ASTC MSE | ASTC vs FP16 layer-output relative MSE |
+| --- | ---: | ---: | ---: |
+| 4x4 | 884,736 | 2.59e-14 | 0.000607 |
+| 5x5 | 571,648 | 2.53e-14 | 0.005933 |
+| 6x6 | 393,216 | 2.57e-14 | 0.027846 |
+
+The FP16-reference metric tracks the source-matrix activation metric closely,
+which confirms that the trace orientation and output capture are consistent.
+This is a complete real-layer GPU comparison, but not yet a full-transformer
+logit or perplexity measurement: the reconstructed result is not injected
+back into later residual/attention nodes. The next sweep therefore targets a
+model-level replacement or replay harness, while preserving this layer oracle
+as the stable acceptance test.
+
+The focused regression controls `test-astc-vulkan-error-shaping`,
+`test-astc-vulkan-block-ldlq`, and `astc-vulkan-input-smoke` all pass. The
+Vulkan FFN smoke target also rebuilds successfully; device execution remains
+explicitly opt-in because the Intel UHD 620 result validates mechanism and
+correctness, not portable ARM/Mali performance.

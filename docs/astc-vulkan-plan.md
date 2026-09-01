@@ -803,3 +803,20 @@ until that evidence and fallback behavior are available.
 The full 576-row FFN-down projection and 4x4/5x5/6x6 GPU comparison are now
 complete. The next implementation is model-level output capture/injection so
 we can measure logits or loss while keeping the normal FP16 path as the oracle.
+
+### Model-level validation checkpoint
+
+The first half of this gate is complete: an opt-in llama graph/output capture
+now exposes the real FFN-down result, and the Vulkan FFN smoke can compare its
+ASTC result against that FP16 reference trace. The remaining work is to run a
+matched prompt on the same model, capture input and output for a disjoint
+calibration/holdout split, and report layer-output and then logits/loss error.
+Only after that evidence should a narrow `ggml-vulkan` integration boundary be
+considered; devices without sampled ASTC must continue through the existing
+buffer-backed path.
+
+The real layer-output comparison is now complete for all three initial
+footprints. Full-transformer logits/loss injection remains the final quality
+gate before any production scheduler integration. The current implementation
+deliberately stops at an opt-in capture/replay boundary so the standard llama
+and `ggml-vulkan` execution paths remain unchanged.
