@@ -3543,3 +3543,33 @@ positive proposals and conflict-aware assembly beats neutral L+A on both
 crops. Scalar 6x6 remains `0.0407955` on the 96x96 crop, marginally better
 than conflict-aware Alpha. Alpha is therefore a validated correction-space
 mechanism, not yet a standalone quality win over scalar ASTC.
+
+## One-hundred-fifty-first sweep: correction budget and second tensor
+
+A third, disjoint layer-0 validation trace now selects the commit-prefix
+budget without reading holdout. On the layer-0 96x96 crop, validation selected
+commit 183 of 192 and slightly improved holdout from `0.0413392` to
+`0.0413268`; scalar remained `0.0407955`. The curve improves rapidly early
+and plateaus late, so a stopping criterion exists but does not close the
+representation gap in this test.
+
+The same 96x96 protocol was repeated for `blk.1.ffn_down.weight`, using new,
+separate layer-1 calibration (18 positions), validation (19), and holdout
+(19) traces:
+
+| Layer-1 policy | Holdout activation-relative MSE |
+| --- | ---: |
+| scalar 6x6 | 0.0567739 |
+| neutral block Alpha | 0.0774651 |
+| independent local Alpha | 0.0732154 |
+| conflict-aware Alpha | 0.0739762 |
+| validation-stopped Alpha (commit 152/201) | 0.0747162 |
+
+The correction-space mechanism reproduces—205/256 blocks are locally
+positive, 201 are globally accepted, effective rank is `74.7`, and
+conflict-aware improves neutral Alpha—but it is not uniformly preferable to
+either scalar or independent local selection on this tensor/holdout. This is
+strong evidence that the current candidate family and traces are
+tensor-/distribution-dependent. Do not add LDLQ yet: first improve candidate
+coverage or calibration robustness while retaining scalar as the quality
+baseline.

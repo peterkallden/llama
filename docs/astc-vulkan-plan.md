@@ -1085,3 +1085,10 @@ The 48x48 and 96x96 runs pass the internal neutral-L+A gate, but the 96x96
 result is still marginally above scalar 6x6. Add cumulative residual-gain
 logging and test a larger crop or second tensor; do not claim a format-level
 win until conflict-aware Alpha beats scalar on holdout.
+
+Validation-prefix selection has been added and a second-tensor repeat is now
+complete. Both confirm the correction-space mechanism but neither produces a
+reliable scalar-beating result. The next experiment should alter only the
+candidate family (for example a wider, bounded constant-Alpha dictionary) or
+calibration coverage, then repeat the same three-trace gate. Keep LDLQ behind
+that gate.

@@ -1326,6 +1326,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               uint32_t rows, uint32_t columns,
                               const ggml_vk_astc_format_contract & format,
                               const activations & calibration,
+                              const activations & validation,
                               const activations & holdout) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
@@ -1400,6 +1401,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         }
     }
     const double neutral_calibration = activation_relative_mse(weights, neutral, rows, columns, calibration);
+    const double neutral_validation = activation_relative_mse(weights, neutral, rows, columns, validation);
     const double neutral_holdout = activation_relative_mse(weights, neutral, rows, columns, holdout);
     const double calibration_loss = activation_relative_mse(weights, selected, rows, columns, calibration);
     const double holdout_loss = activation_relative_mse(weights, selected, rows, columns, holdout);
@@ -1452,6 +1454,9 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
     std::vector<bool> committed(static_cast<size_t>((rows + format.block_height - 1) / format.block_height) * blocks_x, false);
     uint32_t commits = 0;
+    uint32_t best_validation_commit = 0;
+    double best_validation = neutral_validation;
+    std::vector<float> validation_stopped = neutral;
     for (;;) {
         double best_gain = 0.0;
         size_t best_option = options.size();
@@ -1489,19 +1494,31 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             }
         }
         ++commits;
+        const double validation_loss = activation_relative_mse(
+            weights, conflict_aware, rows, columns, validation);
+        if (validation_loss < best_validation) {
+            best_validation = validation_loss;
+            best_validation_commit = commits;
+            validation_stopped = conflict_aware;
+        }
+        std::printf("latent-decode-loop-alpha-commit index=%u validation-relative-MSE=%.8g\n",
+                    commits, validation_loss);
     }
     const double conflict_calibration = activation_relative_mse(weights, conflict_aware, rows, columns, calibration);
     const double conflict_holdout = activation_relative_mse(weights, conflict_aware, rows, columns, holdout);
+    const double stopped_holdout = activation_relative_mse(weights, validation_stopped, rows, columns, holdout);
     std::printf("latent-decode-loop-alpha format=%s blocks=%u neutral-wins=%u alpha-wins=%u "
                 "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
                 "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g "
                 "candidate-effective-rank=%.4g mean-positive-cosine=%.4g conflict-commits=%u "
-                "conflict-calibration=%.8g conflict-holdout=%.8g\n",
+                "conflict-calibration=%.8g conflict-holdout=%.8g validation-best-commit=%u "
+                "validation-best=%.8g validation-stopped-holdout=%.8g\n",
                 format.name, neutral_wins + non_neutral_wins, neutral_wins, non_neutral_wins,
                 unique_blocks, neutral_calibration, calibration_loss, neutral_holdout, holdout_loss,
                 neutral_local_loss - selected_local_loss, effective_rank,
                 positive_cosine_pairs == 0 ? 0.0 : positive_cosine_sum / positive_cosine_pairs,
-                commits, conflict_calibration, conflict_holdout);
+                commits, conflict_calibration, conflict_holdout, best_validation_commit,
+                best_validation, stopped_holdout);
     return std::isfinite(calibration_loss) && std::isfinite(holdout_loss);
 }
 
@@ -2094,6 +2111,7 @@ int main(int argc, char ** argv) {
     std::string tensor_name;
     std::string trace_path;
     std::string calibration_trace_path;
+    std::string validation_trace_path;
     bool search_levels = false;
     bool neural_rank = false;
     bool coordinate_select = false;
@@ -2186,18 +2204,19 @@ int main(int argc, char ** argv) {
         } else if (option == "--decode-loop-alpha-sweep") {
             decode_loop_alpha_sweep = true;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
-                    option == "--calibration-trace") &&
+                    option == "--calibration-trace" || option == "--validation-trace") &&
                    index + 1 < argc) {
             const std::string value = argv[++index];
             if (option == "--model") model_path = value;
             else if (option == "--tensor") tensor_name = value;
             else if (option == "--trace") trace_path = value;
-            else calibration_trace_path = value;
+            else if (option == "--calibration-trace") calibration_trace_path = value;
+            else validation_trace_path = value;
         } else {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep]\n",
                          argv[0]);
             return 2;
@@ -2356,6 +2375,7 @@ int main(int argc, char ** argv) {
     }
     activations inputs = make_default_activations(columns);
     activations calibration_inputs = inputs;
+    activations validation_inputs = inputs;
     if (!trace_path.empty()) {
         ggml_vk_astc_activation_trace loaded;
         if (!ggml_vk_astc_load_activation_trace(trace_path, loaded, error) ||
@@ -2377,12 +2397,24 @@ int main(int argc, char ** argv) {
         calibration_inputs.samples = loaded.samples;
         calibration_inputs.values = std::move(loaded.values);
     }
+    if (validation_trace_path.empty()) validation_inputs = inputs;
+    if (!validation_trace_path.empty()) {
+        ggml_vk_astc_activation_trace loaded;
+        if (!ggml_vk_astc_load_activation_trace(validation_trace_path, loaded, error) ||
+            loaded.columns != trace_columns) {
+            std::fprintf(stderr, "invalid validation activation trace: %s\n", error.c_str());
+            return 1;
+        }
+        validation_inputs.samples = loaded.samples;
+        validation_inputs.values = std::move(loaded.values);
+    }
     limit_activation_samples(inputs, maximum_samples);
     limit_activation_samples(calibration_inputs,
                              maximum_calibration_samples == 0 ? maximum_samples :
                                                                   maximum_calibration_samples);
     crop_activation_columns(inputs, columns);
     crop_activation_columns(calibration_inputs, columns);
+    crop_activation_columns(validation_inputs, columns);
     for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,
                                  ggml_vk_astc_5x5_unorm_rgba,
                                  ggml_vk_astc_6x6_unorm_rgba }) {
@@ -2456,7 +2488,7 @@ int main(int argc, char ** argv) {
         }
         if (decode_loop_alpha_sweep &&
             !decode_loop_alpha_search(weights, block_latents, rows, columns, format,
-                                      calibration_inputs, inputs)) {
+                                      calibration_inputs, validation_inputs, inputs)) {
             std::fprintf(stderr, "ASTC decode-in-the-loop Alpha sweep failed; use whole ASTC blocks\n");
             return 1;
         }
