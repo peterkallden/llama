@@ -128,6 +128,7 @@ llama_context::llama_context(
     embd_ffn_down_inp.resize(hparams.n_layer());
     cparams.embeddings_ffn_down_out.resize(hparams.n_layer(), false);
     embd_ffn_down_out.resize(hparams.n_layer());
+    cparams.ffn_down_output_overrides.resize(hparams.n_layer());
 
     cparams.ctx_type     = params.ctx_type;
     cparams.pooling_type = params.pooling_type;
@@ -1213,6 +1214,17 @@ void llama_context::set_embeddings_ffn_down_out(uint32_t lid, bool enable) {
 
     cparams.embeddings_ffn_down_out[lid] = enable;
     sched_need_reserve = true;
+}
+
+bool llama_context::set_ffn_down_output_override(uint32_t lid, const float * data, uint32_t n_tokens, uint32_t columns) {
+    if (lid >= model.hparams.n_layer() || data == nullptr || n_tokens == 0 ||
+        columns != static_cast<uint32_t>(model.hparams.n_embd)) {
+        return false;
+    }
+
+    cparams.ffn_down_output_overrides[lid] = { data, n_tokens, columns };
+    sched_need_reserve = true;
+    return true;
 }
 
 void llama_context::set_nextn_layer_offset(int32_t offset) {
@@ -3964,6 +3976,11 @@ float * llama_get_embeddings_ffn_down_out(llama_context * ctx, uint32_t lid) {
     ctx->synchronize();
 
     return ctx->get_embeddings_ffn_down_out(lid);
+}
+
+bool llama_set_ffn_down_output_override(llama_context * ctx, uint32_t lid,
+                                        const float * data, uint32_t n_tokens, uint32_t columns) {
+    return ctx != nullptr && ctx->set_ffn_down_output_override(lid, data, n_tokens, columns);
 }
 
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {

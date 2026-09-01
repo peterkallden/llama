@@ -2966,3 +2966,38 @@ after the capture API change. Full-transformer injection remains intentionally
 unimplemented because it would require a new experimental graph input and a
 runtime ASTC replacement path; that boundary must be designed without
 changing the production scheduler.
+
+## One-hundred-thirtieth sweep: full-transformer CPU replay
+
+The PoC now has an opt-in graph input that replaces one layer's FFN-down
+output for a matching token batch. It is deliberately a CPU replay boundary:
+the normal graph, residual path, attention, and output head still run through
+the existing llama execution path, while the replacement data is produced by
+the ASTC decoded matrix and the captured real FFN input. No production Vulkan
+backend or scheduler code is involved.
+
+On the same nine-token SmolLM2-135M prompt used for the GPU layer test, the
+normal FP16 model and the ASTC-replayed model produced these final-token logit
+differences:
+
+| Footprint | Logits MSE | Relative logits MSE | Maximum absolute error |
+| --- | ---: | ---: | ---: |
+| 4x4 | 0.00117527 | 7.9298e-05 | 0.1487093 |
+| 5x5 | 0.05028896 | 0.00339312 | 0.7377062 |
+| 6x6 | 0.24931801 | 0.01682208 | 1.6761079 |
+
+This is the first model-level quality signal. It preserves the footprint
+ordering seen at the FFN layer, while showing that downstream transformer
+amplification must be measured explicitly; layer MSE alone is not a sufficient
+acceptance criterion. The replay hook also validates that a replacement can
+be represented as a normal graph input without changing the default path.
+The next quality step is prompt-suite/holdout repetition and loss or
+perplexity measurement. A true GPU replacement remains a separate integration
+track, not an assumption from this CPU replay.
+
+The replay implementation was tightened after the first run: graph-reserve
+passes use the ordinary down projection for non-matching reserve shapes, while
+the override is selected only for the exact captured token batch. Graph reuse
+also compares override pointer and shape metadata, preventing stale replay
+inputs. This keeps the hook bounded to the intended PoC batch contract and
+avoids silently reusing a graph with different replacement data.

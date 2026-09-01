@@ -154,6 +154,18 @@ public:
     const int64_t n_embd = 0;
 };
 
+class llm_graph_input_ffn_down_override : public llm_graph_input_i {
+public:
+    llm_graph_input_ffn_down_override(const llama_ffn_down_output_override & override_data) :
+        override_data(override_data) {}
+
+    void set_input(const llama_ubatch * ubatch) override;
+    bool can_reuse(const llm_graph_params & params) override;
+
+    ggml_tensor * tensor = nullptr;
+    const llama_ffn_down_output_override override_data;
+};
+
 class llm_graph_input_pos : public llm_graph_input_i {
 public:
     llm_graph_input_pos(uint32_t n_pos_per_embd) : n_pos_per_embd(n_pos_per_embd) {}
@@ -835,6 +847,17 @@ struct llm_graph_params {
         // TODO: https://github.com/ggml-org/llama.cpp/pull/24340#discussion_r3448035248
         if (cparams.nextn_layer_offset != other.cparams.nextn_layer_offset) {
             return false;
+        }
+
+        if (cparams.ffn_down_output_overrides.size() != other.cparams.ffn_down_output_overrides.size()) {
+            return false;
+        }
+        for (size_t il = 0; il < cparams.ffn_down_output_overrides.size(); ++il) {
+            const auto & lhs = cparams.ffn_down_output_overrides[il];
+            const auto & rhs = other.cparams.ffn_down_output_overrides[il];
+            if (lhs.data != rhs.data || lhs.n_tokens != rhs.n_tokens || lhs.columns != rhs.columns) {
+                return false;
+            }
         }
 
         return

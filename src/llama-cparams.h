@@ -5,6 +5,12 @@
 #include <cstdint>
 #include <vector>
 
+struct llama_ffn_down_output_override {
+    const float * data = nullptr;
+    uint32_t n_tokens = 0;
+    uint32_t columns = 0;
+};
+
 #define LLAMA_MAX_SEQ 256
 
 struct llama_cparams {
@@ -61,6 +67,7 @@ struct llama_cparams {
     // gated FFNs its width is n_ff(il), which may be larger than n_embd.
     std::vector<bool> embeddings_ffn_down_inp;
     std::vector<bool> embeddings_ffn_down_out;
+    std::vector<llama_ffn_down_output_override> ffn_down_output_overrides;
 
     enum llama_context_type ctx_type;
     enum llama_pooling_type pooling_type;

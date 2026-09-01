@@ -820,3 +820,15 @@ footprints. Full-transformer logits/loss injection remains the final quality
 gate before any production scheduler integration. The current implementation
 deliberately stops at an opt-in capture/replay boundary so the standard llama
 and `ggml-vulkan` execution paths remain unchanged.
+
+The CPU replay gate is now operational and has produced full-model logits
+comparisons for all three initial footprints. The remaining model-quality work
+is a larger prompt/holdout suite with loss or perplexity, followed by a design
+review of whether a GPU-side replacement can reuse the same graph-input
+contract. No production `ggml-vulkan` routing should be added before that
+evidence is available.
+
+The replay utility is `astc-vulkan-model-replay-smoke`. It reconstructs the
+selected ASTC footprint from the same decoded RGBA fixture and captured FFN
+input, then runs a normal reference context and an override context against
+the same prompt. It is a validation harness, not a runtime driver.

@@ -123,6 +123,17 @@ bool llm_graph_input_embd_h::can_reuse(const llm_graph_params & params) {
     return res;
 }
 
+void llm_graph_input_ffn_down_override::set_input(const llama_ubatch * ubatch) {
+    GGML_ASSERT(tensor != nullptr);
+    GGML_ASSERT(ubatch->n_tokens == override_data.n_tokens);
+    ggml_backend_tensor_set(tensor, override_data.data, 0,
+                             static_cast<size_t>(override_data.n_tokens) * override_data.columns * sizeof(float));
+}
+
+bool llm_graph_input_ffn_down_override::can_reuse(const llm_graph_params & params) {
+    return params.ubatch.n_tokens == override_data.n_tokens;
+}
+
 void llm_graph_input_pos::set_input(const llama_ubatch * ubatch) {
     if (ubatch->pos && pos) {
         const int64_t n_tokens = ubatch->n_tokens;
@@ -1882,8 +1893,21 @@ ggml_tensor * llm_graph_context::build_ffn(
 
     if (down) {
         cb(cur, "ffn_down_input", il);
-        cur = build_lora_mm(down, cur);
-        if (arch == LLM_ARCH_GLM4 || arch == LLM_ARCH_GLM4_MOE || arch == LLM_ARCH_JAIS2) {
+        const auto & override_data = cparams.ffn_down_output_overrides[il];
+        if (override_data.data != nullptr &&
+            override_data.n_tokens == static_cast<uint32_t>(n_tokens) &&
+            override_data.columns == static_cast<uint32_t>(n_embd)) {
+            auto input = std::make_unique<llm_graph_input_ffn_down_override>(override_data);
+            input->tensor = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, n_tokens);
+            ggml_set_input(input->tensor);
+            ggml_set_name(input->tensor, "ffn_down_output_override");
+            cur = input->tensor;
+            res->add_input(std::move(input));
+        } else {
+            cur = build_lora_mm(down, cur);
+        }
+        if ((arch == LLM_ARCH_GLM4 || arch == LLM_ARCH_GLM4_MOE || arch == LLM_ARCH_JAIS2) &&
+            cur->op == GGML_OP_MUL_MAT) {
             // GLM4, GLM4_MOE, and JAIS2 seem to have numerical issues with half-precision accumulators
             ggml_mul_mat_set_prec(cur, GGML_PREC_F32);
         }
