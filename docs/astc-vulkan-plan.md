@@ -1035,3 +1035,10 @@ activation MSE, versus `0.0281505` for standard ASTC. Keep it only as a
 negative regression control. The next candidate scorer must be supplied with
 activation traces and score decoded candidate blocks after the complete
 `L + A` reconstruction; passing decoder scales alone is insufficient.
+
+The first disjoint trace check confirms the need for that gate. On 30 held-out
+Pythia positions, scalar 6x6 is `0.0292211` and block-mean Alpha is
+`0.0293151`; activation-optimal and gated forms are worse still. Keep the
+representations and tests, but require a material held-out improvement over
+the scalar control before running a full-layer L+A export or changing runtime
+planning.

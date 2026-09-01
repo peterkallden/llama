@@ -3416,3 +3416,26 @@ selection. It narrows the requirement: the replacement score must use the
 actual decoded block and activation-space loss, rather than merely passing
 L/A affine scales to the encoder. Retain this negative control so a future
 candidate callback cannot silently regress to the current proxy.
+
+## One-hundred-forty-sixth sweep: disjoint Pythia Alpha holdout
+
+A second layer-0 FFN-input trace was captured from a separate Pythia prompt
+(30 positions, 8,192 columns). The earlier 15-position trace remained the
+calibration input for the activation-fitted policies. This is the first real
+holdout check for the narrow Alpha experiment:
+
+| Policy | Holdout activation-relative MSE |
+| --- | ---: |
+| scalar 6x6 | 0.0292211 |
+| block-mean Alpha | 0.0293151 |
+| activation-optimal Alpha | 0.0293497 |
+| activation-optimal + shard gate | 0.0296935 |
+| activation-optimal + shard and complexity gate | 0.0300480 |
+
+The block-constant representation remains close to scalar and far more robust
+than free L+A, but its small same-trace advantage (`0.0281505` versus
+`0.0301863`) does not transfer to this separate prompt. The activation gates
+also do not transfer. Treat block Alpha as a tensor-/distribution-dependent
+candidate and retain it in the matrix; do not promote it as a general 6x6
+default. The next decoder-aware candidate scorer must demonstrate a holdout
+gain over scalar before it is expanded to full-layer export.
