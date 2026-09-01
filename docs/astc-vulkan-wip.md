@@ -3317,6 +3317,27 @@ resident, and decoded on the GPU. Keep it as a research control until
 block-local residuals, neural-aware ranking, or codec-aware training improve
 the model error.
 
+## One-hundred-fortio-third sweep: structured Alpha residuals
+
+The L+A hypothesis was tested with a small family of residual projections on a
+Pythia 6x6 screen (256 rows, all 8,192 columns, 15 activation positions). The
+second latent was projected per ASTC block onto constant, row, column, or
+row-plus-column (plane-like) structure before encoding:
+
+| Alpha basis | Activation-relative MSE |
+| --- | ---: |
+| block constant | 0.0281505 |
+| block row | 0.280871 |
+| block column | 0.272585 |
+| block plane | 0.241808 |
+
+The extra degrees of freedom do not beat the block-constant control. This is
+useful evidence against treating Alpha as a freely varying second weight
+field. The current working model is instead a confidence-gated correction:
+retain a block correction only when its residual is low-complexity, activation-
+relevant, and stable across calibration shards. Activation-weighted fitting
+and a confidence scalar remain the next error-correction experiment.
+
 ## One-hundred-forty-second sweep: Vulkan dispatch benchmark
 
 A matched timestamp run used the full Pythia-shaped `8192x2048` matrix,

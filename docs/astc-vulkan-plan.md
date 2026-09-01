@@ -976,6 +976,13 @@ baseline for later neural-aware/error-shaped encoders; do not promote it to a
 runtime default yet because the model loss delta remains material. Run the
 same gates for 6x6 before comparing bandwidth and quality.
 
+The first structured-residual screen confirms that block-constant Alpha is a
+stronger baseline than row, column, or plane-like Alpha on the current Pythia
+6x6 fixture. Do not increase spatial degrees of freedom blindly. Add a
+confidence-gated correction experiment next: estimate residual smoothness,
+activation gain, and shard stability, then attenuate or disable Alpha for
+blocks whose correction is not reliable.
+
 The 6x6 gates are now complete. The payload is 7,474,752 bytes for the
 2,048x8,192 layer and the Vulkan path is numerically correct, but model replay
 has relative logits MSE `1.1037144` and loss delta `+5.4399957`. Treat this as

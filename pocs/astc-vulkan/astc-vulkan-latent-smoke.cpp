@@ -21,6 +21,7 @@ constexpr uint32_t kDefaultCoarseLevels = 16;
 float g_astc_preset = ASTCENC_PRE_THOROUGH;
 double g_block_ldlq_damping = 1e-4;
 enum class ldlq_order_mode { forward, reverse, pivot };
+enum class residual_basis { free, block_constant, block_row, block_column, block_plane };
 ldlq_order_mode g_block_ldlq_order = ldlq_order_mode::forward;
 bool g_directional_shortlists = false;
 uint32_t g_stability_shards = 2;
@@ -1364,11 +1365,11 @@ latent_representation make_row_column_latents(const std::vector<float> & weights
     return result;
 }
 
-latent_representation make_additive_latents(const std::vector<float> & weights,
-                                            float minimum, float range,
-                                            uint32_t rows, uint32_t columns,
-                                            uint32_t block, bool block_residual,
-                                            uint32_t coarse_levels) {
+latent_representation make_additive_latents_with_basis(const std::vector<float> & weights,
+                                                       float minimum, float range,
+                                                       uint32_t rows, uint32_t columns,
+                                                       uint32_t block, residual_basis basis,
+                                                       uint32_t coarse_levels) {
     latent_representation result;
     result.texels.resize(weights.size() * 4);
     const float step = range / (coarse_levels - 1);
@@ -1381,26 +1382,71 @@ latent_representation make_additive_latents(const std::vector<float> & weights,
             std::clamp(level, 0.0f, static_cast<float>(coarse_levels - 1)) * step;
         residuals[index] = weights[index] - coarse;
     }
-    if (block_residual) {
-        // A block-constant residual is deliberately low frequency. This is a
-        // cheap control for the hypothesis that ASTC can preserve a structured
-        // second latent even when it destroys an independent per-value tail.
+    if (basis != residual_basis::free) {
+        // Remove high-frequency residual detail with an ASTC-friendly local
+        // basis. The constant/row/column controls are intentionally simple;
+        // plane and confidence gating remain separate experiments.
         for (uint32_t row0 = 0; row0 < rows; row0 += block) {
             for (uint32_t column0 = 0; column0 < columns; column0 += block) {
-                double sum = 0.0;
-                uint32_t count = 0;
-                for (uint32_t row = row0; row < std::min(row0 + block, rows); ++row) {
-                    for (uint32_t column = column0;
-                         column < std::min(column0 + block, columns); ++column) {
-                        sum += residuals[static_cast<size_t>(row) * columns + column];
-                        ++count;
+                const uint32_t row_end = std::min(row0 + block, rows);
+                const uint32_t column_end = std::min(column0 + block, columns);
+                if (basis == residual_basis::block_plane) {
+                    std::vector<float> row_means(row_end - row0, 0.0f);
+                    std::vector<float> column_means(column_end - column0, 0.0f);
+                    double total = 0.0;
+                    for (uint32_t row = row0; row < row_end; ++row) {
+                        for (uint32_t column = column0; column < column_end; ++column) {
+                            const float value = residuals[static_cast<size_t>(row) * columns + column];
+                            row_means[row - row0] += value;
+                            column_means[column - column0] += value;
+                            total += value;
+                        }
                     }
-                }
-                const float mean = static_cast<float>(sum / std::max(count, 1u));
-                for (uint32_t row = row0; row < std::min(row0 + block, rows); ++row) {
-                    for (uint32_t column = column0;
-                         column < std::min(column0 + block, columns); ++column) {
-                        residuals[static_cast<size_t>(row) * columns + column] = mean;
+                    const float overall = static_cast<float>(total / std::max((row_end - row0) * (column_end - column0), 1u));
+                    for (float & value : row_means) value /= std::max(column_end - column0, 1u);
+                    for (float & value : column_means) value /= std::max(row_end - row0, 1u);
+                    for (uint32_t row = row0; row < row_end; ++row) {
+                        for (uint32_t column = column0; column < column_end; ++column) {
+                            residuals[static_cast<size_t>(row) * columns + column] =
+                                row_means[row - row0] + column_means[column - column0] - overall;
+                        }
+                    }
+                } else if (basis == residual_basis::block_row) {
+                    for (uint32_t row = row0; row < row_end; ++row) {
+                        double sum = 0.0;
+                        for (uint32_t column = column0; column < column_end; ++column) {
+                            sum += residuals[static_cast<size_t>(row) * columns + column];
+                        }
+                        const float mean = static_cast<float>(sum / std::max(column_end - column0, 1u));
+                        for (uint32_t column = column0; column < column_end; ++column) {
+                            residuals[static_cast<size_t>(row) * columns + column] = mean;
+                        }
+                    }
+                } else if (basis == residual_basis::block_column) {
+                    for (uint32_t column = column0; column < column_end; ++column) {
+                        double sum = 0.0;
+                        for (uint32_t row = row0; row < row_end; ++row) {
+                            sum += residuals[static_cast<size_t>(row) * columns + column];
+                        }
+                        const float mean = static_cast<float>(sum / std::max(row_end - row0, 1u));
+                        for (uint32_t row = row0; row < row_end; ++row) {
+                            residuals[static_cast<size_t>(row) * columns + column] = mean;
+                        }
+                    }
+                } else {
+                    double sum = 0.0;
+                    uint32_t count = 0;
+                    for (uint32_t row = row0; row < row_end; ++row) {
+                        for (uint32_t column = column0; column < column_end; ++column) {
+                            sum += residuals[static_cast<size_t>(row) * columns + column];
+                            ++count;
+                        }
+                    }
+                    const float mean = static_cast<float>(sum / std::max(count, 1u));
+                    for (uint32_t row = row0; row < row_end; ++row) {
+                        for (uint32_t column = column0; column < column_end; ++column) {
+                            residuals[static_cast<size_t>(row) * columns + column] = mean;
+                        }
                     }
                 }
             }
@@ -1420,6 +1466,26 @@ latent_representation make_additive_latents(const std::vector<float> & weights,
         texel[3] = a;
     }
     return result;
+}
+
+latent_representation make_additive_latents(const std::vector<float> & weights,
+                                            float minimum, float range,
+                                            uint32_t rows, uint32_t columns,
+                                            uint32_t block, bool block_residual,
+                                            uint32_t coarse_levels) {
+    return make_additive_latents_with_basis(
+        weights, minimum, range, rows, columns, block,
+        block_residual ? residual_basis::block_constant : residual_basis::free,
+        coarse_levels);
+}
+
+bool parse_residual_basis(const std::string & name, residual_basis & basis) {
+    if (name == "constant") basis = residual_basis::block_constant;
+    else if (name == "row") basis = residual_basis::block_row;
+    else if (name == "column") basis = residual_basis::block_column;
+    else if (name == "plane") basis = residual_basis::block_plane;
+    else return false;
+    return true;
 }
 
 double run_case(const char * name, const std::vector<float> & weights,
@@ -1750,6 +1816,8 @@ int main(int argc, char ** argv) {
     std::string export_metadata_path;
     std::string export_mode = "additive";
     bool export_only = false;
+    std::string residual_basis_name;
+    bool residual_basis_only = false;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
@@ -1808,6 +1876,10 @@ int main(int argc, char ** argv) {
             export_mode = argv[++index];
         } else if (option == "--export-only") {
             export_only = true;
+        } else if (option == "--residual-basis" && index + 1 < argc) {
+            residual_basis_name = argv[++index];
+        } else if (option == "--residual-basis-only") {
+            residual_basis_only = true;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace") &&
                    index + 1 < argc) {
@@ -1821,7 +1893,7 @@ int main(int argc, char ** argv) {
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
-                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only]\n",
+                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane]\n",
                          argv[0]);
             return 2;
         }
@@ -1886,6 +1958,15 @@ int main(int argc, char ** argv) {
     }
     if (export_mode != "scalar" && export_mode != "additive") {
         std::fprintf(stderr, "unsupported --export-mode value: %s\n", export_mode.c_str());
+        return 2;
+    }
+    residual_basis selected_basis = residual_basis::free;
+    if (!residual_basis_name.empty() && !parse_residual_basis(residual_basis_name, selected_basis)) {
+        std::fprintf(stderr, "unsupported --residual-basis value: %s\n", residual_basis_name.c_str());
+        return 2;
+    }
+    if (residual_basis_only && residual_basis_name.empty()) {
+        std::fprintf(stderr, "--residual-basis-only requires --residual-basis\n");
         return 2;
     }
     if (!std::isfinite(g_block_ldlq_damping) || g_block_ldlq_damping < 0.0) {
@@ -2031,6 +2112,18 @@ int main(int argc, char ** argv) {
                         export_latents.decoder.offset);
         }
         if (export_only) continue;
+        if (!residual_basis_name.empty()) {
+            const latent_representation structured = make_additive_latents_with_basis(
+                weights, minimum, range, rows, columns, format.block_width,
+                selected_basis, kDefaultCoarseLevels);
+            const std::string case_name = "luminance-alpha-" + residual_basis_name;
+            if (!std::isfinite(run_case(case_name.c_str(), weights, structured,
+                                        rows, columns, format, inputs))) {
+                std::fprintf(stderr, "ASTC structured residual smoke failed\n");
+                return 1;
+            }
+        }
+        if (residual_basis_only) continue;
         if (!coordinate_only &&
             (!std::isfinite(run_case("scalar-rgba", weights, scalar_latents,
                                     rows, columns, format, inputs)) ||
