@@ -943,3 +943,29 @@ it degrades to `0.690284`, while the block-residual form reaches `0.0281505`.
 Keep L+A as a viable representation family, but prioritize block-local
 residual/error shaping and activation-aware candidate ranking before attempting
 a full-row L+A default.
+
+### Current execution gate: end-to-end ASTC path
+
+The next three steps are executed in order on the isolated sidecar:
+
+1. Export a legal ASTC payload, decoded RGBA32F companion, source FP32 matrix,
+   and self-describing decoder metadata. Use the real Pythia FFN-down shape
+   (2,048 rows x 8,192 columns) and keep 4x4 and 6x6 as separate artifacts.
+2. Replay the exported L+A representation through the model override and
+   record logits MSE, relative logits MSE, loss delta, and top-1 agreement
+   against the same FP16 model and prompt trace.
+3. Submit the identical ASTC bytes to the Vulkan sampled-image path. Compare
+   GPU output with the CPU reconstruction and with the source FP16 matvec.
+
+The metadata decoder contract is:
+
+\[
+\hat w = s_L (R+G+B)/3 + s_A A + b.
+\]
+
+This is deliberately a PoC ABI, not production `ggml-vulkan` integration.
+The GPU result is hardware- and-driver-specific (ASTC format support,
+sampler precision, cache and dispatch geometry), so CPU replay remains the
+portable quality reference and Vulkan remains the execution-path reference.
+Large model exports are measurement jobs rather than CTests; CTests cover
+contracts, input validation, and shader compilation.

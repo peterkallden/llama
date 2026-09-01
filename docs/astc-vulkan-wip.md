@@ -3260,3 +3260,35 @@ slightly better than scalar 6x6. This supports keeping L+A as a representation
 family while prioritizing block-local residual/error shaping and
 activation-aware candidate ranking. These are screening numbers, not a
 model-level logits result.
+
+## One-hundred-forty-first sweep: export/replay/GPU path
+
+The sidecar export path now writes three explicit companions: the raw 128-bit
+ASTC block stream, decoded RGBA32F texels, and the source FP32 matrix. An
+optional key/value metadata file records matrix dimensions, footprint, latent
+mode, byte counts, and affine decoder parameters (`scale_l`, `scale_a`,
+`offset`). This keeps each artifact self-describing and prevents scalar
+reconstruction from being applied silently to an L+A payload.
+
+The model-replay and FFN Vulkan smoke tools accept the same metadata file.
+They reconstruct weights as
+
+\[
+\hat w = s_L (R+G+B)/3 + s_A A + b,
+\]
+
+so CPU replay and the GPU shader use the identical L+A policy. The scalar path
+remains the default when metadata is omitted.
+
+The first actual Vulkan E2E run used a 32x8192 Pythia-shaped L+A fixture and
+ASTC 4x4. GPU-vs-CPU matvec MSE was `1.23e-14`, confirming that the sampled
+ASTC image, shader push constants, and host reference agree to numerical
+precision. ASTC-vs-source activation-relative MSE was `0.0170748` for this
+fixture. This validates the execution path, not yet a full-model quality
+claim.
+
+The full 2,048x8,192 Pythia L+A export is running as a separate offline job.
+Large exports are intentionally kept out of CTest: they are reproducible
+measurement jobs and may take several minutes on the host CPU. The next gate
+is model-level replay on the completed artifact, followed by the same payload
+through Vulkan for 4x4 and (as a bandwidth control) 6x6.
