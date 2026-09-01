@@ -3760,3 +3760,43 @@ The next implementation sweep can release each strip's candidate dictionary
 after its local sequence has been recorded, then merge those compact sequences
 globally. The holdout remains untouched until the validation-selected merged
 prefix is fixed.
+
+## One-hundred-fifty-ninth sweep: streaming row-strip candidate residency
+
+`--row-strip-chunked` now implements the required serial streaming form. For
+each six-row output strip it generates legal scalar-anchored gauge candidates,
+runs exact ASTC encode/decode, forms the local conflict-aware sequence, and
+then releases the candidate dictionary. Only a compact selected sequence
+(`block id`, decoded block, payload, and local gain) remains for the global
+merge. The merge uses the same gain and deterministic tie break as
+`--row-strip-select`, so validation-prefix semantics are unchanged.
+
+`--decode-loop-payloads PATH` writes the final conflict-aware ASTC stream in
+row-major block order. This makes the scaling contract directly testable rather
+than inferred from matching aggregate metrics.
+
+| Fixture | Payload | Commit CSV | Ordinary summary | Peak candidates | Candidate workset |
+| --- | --- | --- | --- | ---: | ---: |
+| Layer-0 48x48 | byte-identical | byte-identical | byte-identical | 48 | 44,928 bytes |
+| Layer-0 192x192 | byte-identical | byte-identical | byte-identical | 192 | 179,712 bytes |
+
+For the 192x192 fixture, both payload files are 16,384 bytes and have SHA-256
+`5fdbdf87995b80acb619644fc27ae2155cf759893f17770d02bc82ddae535929`.
+The common commit path has 721 commits and the selected validation prefix ends
+at 532 commits. The chunked mode reports 32 strips and retains 721 compact
+steps after selection; the latter is deliberately much smaller than the full
+candidate dictionary and is sufficient for exact global ordering.
+
+`peak-candidate-workset-bytes` deliberately measures only the bounded,
+strip-local candidate structure: candidate metadata, decoded samples, and
+calibration deltas. It excludes persistent tensor/output buffers, the encoder's
+private workspace, and process allocator overhead, so it is not presented as
+RSS. It is the correct regression metric for the intended scaling law:
+candidate residency scales with strip width rather than total tensor height.
+
+The implementation also moves decoded alternatives into the strip dictionary
+instead of retaining a second copy in the per-block results. Thus the reported
+workset and the actual candidate ownership now agree. The next engineering
+gate is selector time at a full-width strip. Preserve exactness on the small
+fixtures before changing the exhaustive diagnostic or greedy-recheck cost; the
+streaming result proves memory factorization, not yet full-tensor runtime.

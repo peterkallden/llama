@@ -1354,8 +1354,10 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               const activations & holdout,
                               bool scalar_anchored_gauge = false,
                               const std::string & commit_log_path = {},
+                              const std::string & selected_payload_path = {},
                               uint32_t candidate_threads = 1,
-                              bool row_strip_select = false) {
+                              bool row_strip_select = false,
+                              bool row_strip_chunked = false) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
@@ -1388,7 +1390,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         std::vector<float>{ 0.0f, -0.5f, 0.5f, 1.0f, 1.5f, 2.0f };
     const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
     const uint32_t block_count = blocks_x * blocks_y;
-    std::vector<alpha_block_result> block_results(block_count);
+    std::vector<alpha_block_result> block_results;
+    if (!row_strip_chunked) block_results.resize(block_count);
     candidate_threads = std::max(1u, candidate_threads);
     candidate_threads = std::min(candidate_threads, block_count == 0 ? 1u : block_count);
     std::atomic<uint32_t> next_block{ 0 };
@@ -1462,6 +1465,323 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         result.valid = !result.neutral_decoded.empty() && !result.best_decoded.empty();
         return result;
     };
+    if (row_strip_chunked) {
+        // Keep only one six-row candidate dictionary resident. Each strip has
+        // independent calibration residual support; its compact commit sequence
+        // is merged globally below using the same gain/tie-break rule.
+        struct strip_step {
+            uint32_t row0 = 0;
+            uint32_t column0 = 0;
+            std::array<float, 36> decoded{};
+            std::array<uint8_t, 16> payload{};
+            double gain = 0.0;
+        };
+        if (format.block_width * format.block_height > 36) return false;
+        std::vector<alpha_option> strip_options;
+        std::vector<std::vector<strip_step>> strip_steps(blocks_y);
+        std::vector<float> neutral(weights.size());
+        std::vector<float> selected(weights.size());
+        std::vector<std::array<uint8_t, 16>> neutral_payloads(block_count);
+        uint32_t neutral_wins = 0, non_neutral_wins = 0, unique_blocks = 0;
+        double neutral_local_loss = 0.0, selected_local_loss = 0.0;
+        double delta_energy = 0.0, gram_energy = 0.0, positive_cosine_sum = 0.0;
+        uint32_t positive_cosine_pairs = 0;
+        size_t peak_candidate_count = 0, peak_candidate_workset_bytes = 0;
+        for (uint32_t strip = 0; strip < blocks_y; ++strip) {
+            std::vector<alpha_block_result> strip_results(blocks_x);
+            std::atomic<uint32_t> next_column{ 0 };
+            std::atomic<bool> strip_failed{ false };
+            auto strip_worker = [&]() {
+                for (;;) {
+                    const uint32_t column_block = next_column.fetch_add(1, std::memory_order_relaxed);
+                    if (column_block >= blocks_x || strip_failed.load(std::memory_order_relaxed)) return;
+                    alpha_block_result result = generate_block(strip * blocks_x + column_block);
+                    if (!result.valid) {
+                        strip_failed.store(true, std::memory_order_relaxed);
+                        return;
+                    }
+                    strip_results[column_block] = std::move(result);
+                }
+            };
+            std::vector<std::thread> strip_workers;
+            strip_workers.reserve(candidate_threads);
+            for (uint32_t index = 0; index < candidate_threads; ++index) strip_workers.emplace_back(strip_worker);
+            for (std::thread & thread : strip_workers) thread.join();
+            if (strip_failed.load(std::memory_order_relaxed)) return false;
+
+            strip_options.clear();
+            strip_options.reserve(blocks_x * (factors.size() - 1));
+            for (alpha_block_result & result : strip_results) {
+                neutral_local_loss += result.neutral_loss;
+                selected_local_loss += result.best_loss;
+                unique_blocks += result.unique_payloads;
+                if (result.best_factor == 0) ++neutral_wins; else ++non_neutral_wins;
+                neutral_payloads[strip * blocks_x + result.column0 / format.block_width] = result.neutral_payload;
+                // Move, rather than copy, the decoded alternatives into the
+                // strip-local dictionary. This is the resident candidate pool
+                // that is released at the end of the loop iteration.
+                for (alpha_option & alternative : result.alternatives) {
+                    strip_options.push_back(std::move(alternative));
+                }
+                result.alternatives.clear();
+                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                    for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                        if (result.row0 + local_row >= rows || result.column0 + local_column >= columns) continue;
+                        const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
+                        const size_t global = static_cast<size_t>(result.row0 + local_row) * columns +
+                                              result.column0 + local_column;
+                        neutral[global] = result.neutral_decoded[local];
+                        selected[global] = result.best_decoded[local];
+                    }
+                }
+            }
+            std::vector<double> strip_residual(static_cast<size_t>(calibration.samples) * format.block_height, 0.0);
+            for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
+                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                    const uint32_t row = strip * format.block_height + local_row;
+                    if (row >= rows) continue;
+                    double expected = 0.0, actual = 0.0;
+                    for (uint32_t column = 0; column < columns; ++column) {
+                        expected += weights[static_cast<size_t>(row) * columns + column] * input[column];
+                        actual += neutral[static_cast<size_t>(row) * columns + column] * input[column];
+                    }
+                    strip_residual[static_cast<size_t>(sample) * format.block_height + local_row] = expected - actual;
+                }
+            }
+            auto make_strip_delta = [&](const alpha_option & option) {
+                std::vector<double> delta(static_cast<size_t>(calibration.samples) * format.block_height, 0.0);
+                for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                    const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
+                    for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                        if (option.row0 + local_row >= rows) continue;
+                        double value = 0.0;
+                        for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                            if (option.column0 + local_column >= columns) continue;
+                            const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
+                            const size_t global = static_cast<size_t>(option.row0 + local_row) * columns +
+                                                  option.column0 + local_column;
+                            value += (option.decoded[local] - neutral[global]) * input[option.column0 + local_column];
+                        }
+                        delta[static_cast<size_t>(sample) * format.block_height + local_row] = value;
+                    }
+                }
+                return delta;
+            };
+            std::vector<std::vector<double>> strip_deltas;
+            strip_deltas.reserve(strip_options.size());
+            for (const alpha_option & option : strip_options) strip_deltas.push_back(make_strip_delta(option));
+            size_t candidate_workset_bytes = strip_options.size() * sizeof(alpha_option) +
+                                             strip_deltas.size() * sizeof(std::vector<double>);
+            for (size_t index = 0; index < strip_options.size(); ++index) {
+                candidate_workset_bytes += strip_options[index].decoded.capacity() * sizeof(float);
+                candidate_workset_bytes += strip_deltas[index].capacity() * sizeof(double);
+            }
+            peak_candidate_count = std::max(peak_candidate_count, strip_options.size());
+            peak_candidate_workset_bytes = std::max(peak_candidate_workset_bytes, candidate_workset_bytes);
+            for (size_t left = 0; left < strip_deltas.size(); ++left) {
+                for (size_t right = 0; right < strip_deltas.size(); ++right) {
+                    double dot = 0.0, left_norm = 0.0, right_norm = 0.0;
+                    for (size_t index = 0; index < strip_deltas[left].size(); ++index) {
+                        dot += strip_deltas[left][index] * strip_deltas[right][index];
+                        left_norm += strip_deltas[left][index] * strip_deltas[left][index];
+                        right_norm += strip_deltas[right][index] * strip_deltas[right][index];
+                    }
+                    if (left == right) delta_energy += left_norm;
+                    gram_energy += dot * dot;
+                    if (left < right && dot > 0.0 && left_norm > 1e-18 && right_norm > 1e-18) {
+                        positive_cosine_sum += dot / std::sqrt(left_norm * right_norm);
+                        ++positive_cosine_pairs;
+                    }
+                }
+            }
+            std::vector<bool> strip_committed(blocks_x, false);
+            for (;;) {
+                double best_gain = 0.0;
+                size_t best_option = strip_options.size();
+                for (size_t option_index = 0; option_index < strip_options.size(); ++option_index) {
+                    const alpha_option & option = strip_options[option_index];
+                    const uint32_t block = option.column0 / format.block_width;
+                    if (strip_committed[block]) continue;
+                    double dot = 0.0, norm = 0.0;
+                    for (size_t index = 0; index < strip_deltas[option_index].size(); ++index) {
+                        dot += strip_residual[index] * strip_deltas[option_index][index];
+                        norm += strip_deltas[option_index][index] * strip_deltas[option_index][index];
+                    }
+                    const double gain = 2.0 * dot - norm;
+                    if (gain > best_gain) {
+                        best_gain = gain;
+                        best_option = option_index;
+                    }
+                }
+                if (best_option == strip_options.size()) break;
+                const alpha_option & option = strip_options[best_option];
+                strip_committed[option.column0 / format.block_width] = true;
+                for (size_t index = 0; index < strip_deltas[best_option].size(); ++index) {
+                    strip_residual[index] -= strip_deltas[best_option][index];
+                }
+                strip_step step;
+                step.row0 = option.row0;
+                step.column0 = option.column0;
+                std::copy_n(option.decoded.begin(), option.decoded.size(), step.decoded.begin());
+                step.payload = option.payload;
+                step.gain = best_gain;
+                strip_steps[strip].push_back(step);
+            }
+        }
+        const double neutral_calibration = activation_relative_mse(weights, neutral, rows, columns, calibration);
+        const double neutral_validation = activation_relative_mse(weights, neutral, rows, columns, validation);
+        const double neutral_holdout = activation_relative_mse(weights, neutral, rows, columns, holdout);
+        const double calibration_loss = activation_relative_mse(weights, selected, rows, columns, calibration);
+        const double holdout_loss = activation_relative_mse(weights, selected, rows, columns, holdout);
+        const std::vector<double> expected = matvec_outputs(weights, rows, columns, calibration);
+        const std::vector<double> neutral_output = matvec_outputs(neutral, rows, columns, calibration);
+        double residual_energy = 0.0, expected_energy = 0.0;
+        for (size_t index = 0; index < expected.size(); ++index) {
+            const double error = expected[index] - neutral_output[index];
+            residual_energy += error * error;
+            expected_energy += expected[index] * expected[index];
+        }
+        const std::vector<double> validation_expected = matvec_outputs(weights, rows, columns, validation);
+        const std::vector<double> validation_neutral = matvec_outputs(neutral, rows, columns, validation);
+        std::vector<double> validation_residual(validation_expected.size());
+        double validation_energy = 0.0, validation_expected_energy = 0.0;
+        for (size_t index = 0; index < validation_residual.size(); ++index) {
+            validation_residual[index] = validation_expected[index] - validation_neutral[index];
+            validation_energy += validation_residual[index] * validation_residual[index];
+            validation_expected_energy += validation_expected[index] * validation_expected[index];
+        }
+        std::ofstream commit_log;
+        if (!commit_log_path.empty()) {
+            commit_log.open(commit_log_path);
+            if (!commit_log) return false;
+            commit_log << "commit,calibration_relative_mse,validation_relative_mse,"
+                       << "marginal_residual_gain,cumulative_residual_gain\n";
+        }
+        std::vector<size_t> strip_cursors(blocks_y, 0);
+        std::vector<const strip_step *> committed_steps;
+        uint32_t commits = 0, best_validation_commit = 0;
+        double best_validation = neutral_validation;
+        for (;;) {
+            double best_gain = 0.0;
+            uint32_t best_strip = blocks_y;
+            for (uint32_t strip = 0; strip < blocks_y; ++strip) {
+                if (strip_cursors[strip] == strip_steps[strip].size()) continue;
+                const strip_step & step = strip_steps[strip][strip_cursors[strip]];
+                if (step.gain > best_gain ||
+                    (step.gain == best_gain && best_strip != blocks_y && strip < best_strip)) {
+                    best_gain = step.gain;
+                    best_strip = strip;
+                }
+            }
+            if (best_strip == blocks_y) break;
+            const strip_step & step = strip_steps[best_strip][strip_cursors[best_strip]++];
+            committed_steps.push_back(&step);
+            residual_energy -= best_gain;
+            for (uint32_t sample = 0; sample < validation.samples; ++sample) {
+                const float * input = validation.values.data() + static_cast<size_t>(sample) * columns;
+                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                    if (step.row0 + local_row >= rows) continue;
+                    double delta = 0.0;
+                    for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                        if (step.column0 + local_column >= columns) continue;
+                        const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
+                        const size_t global = static_cast<size_t>(step.row0 + local_row) * columns +
+                                              step.column0 + local_column;
+                        delta += (step.decoded[local] - neutral[global]) * input[step.column0 + local_column];
+                    }
+                    const size_t output = static_cast<size_t>(sample) * rows + step.row0 + local_row;
+                    const double previous = validation_residual[output];
+                    validation_residual[output] -= delta;
+                    validation_energy += validation_residual[output] * validation_residual[output] - previous * previous;
+                }
+            }
+            ++commits;
+            const double validation_loss = validation_energy / validation_expected_energy;
+            if (validation_loss < best_validation) {
+                best_validation = validation_loss;
+                best_validation_commit = commits;
+            }
+            if (commit_log) {
+                commit_log << commits << ',' << residual_energy / expected_energy << ',' << validation_loss << ','
+                           << best_gain << ',' << neutral_calibration - residual_energy / expected_energy << '\n';
+            }
+        }
+        std::vector<float> conflict_aware = neutral;
+        std::vector<float> validation_stopped = neutral;
+        for (size_t index = 0; index < committed_steps.size(); ++index) {
+            const strip_step & step = *committed_steps[index];
+            for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                    if (step.row0 + local_row >= rows || step.column0 + local_column >= columns) continue;
+                    const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
+                    const size_t global = static_cast<size_t>(step.row0 + local_row) * columns +
+                                          step.column0 + local_column;
+                    conflict_aware[global] = step.decoded[local];
+                    if (index < best_validation_commit) validation_stopped[global] = step.decoded[local];
+                }
+            }
+        }
+        const double conflict_calibration = activation_relative_mse(weights, conflict_aware, rows, columns, calibration);
+        const double conflict_holdout = activation_relative_mse(weights, conflict_aware, rows, columns, holdout);
+        const double stopped_holdout = activation_relative_mse(weights, validation_stopped, rows, columns, holdout);
+        if (!selected_payload_path.empty()) {
+            std::vector<std::array<uint8_t, 16>> final_payloads = neutral_payloads;
+            for (const strip_step * step : committed_steps) {
+                final_payloads[(step->row0 / format.block_height) * blocks_x +
+                               step->column0 / format.block_width] = step->payload;
+            }
+            if (!write_binary(selected_payload_path, final_payloads)) return false;
+        }
+        std::vector<std::array<uint8_t, 16>> selected_payloads;
+        std::vector<std::array<uint8_t, 16>> baseline_payloads;
+        selected_payloads.reserve(committed_steps.size());
+        baseline_payloads.reserve(committed_steps.size());
+        for (const strip_step * step : committed_steps) {
+            selected_payloads.push_back(step->payload);
+            baseline_payloads.push_back(neutral_payloads[(step->row0 / format.block_height) * blocks_x +
+                                                         step->column0 / format.block_width]);
+        }
+        std::vector<astcenc_block_info> selected_infos, baseline_infos;
+        if (!inspect_astc_blocks(selected_payloads, format, selected_infos) ||
+            !inspect_astc_blocks(baseline_payloads, format, baseline_infos)) return false;
+        uint32_t changed_payloads = 0, changed_dual_plane = 0, changed_partition_count = 0;
+        uint32_t changed_endpoint_mode = 0, changed_weight_grid = 0, changed_weight_levels = 0;
+        for (size_t index = 0; index < selected_infos.size(); ++index) {
+            const astcenc_block_info & selected_info = selected_infos[index];
+            const astcenc_block_info & baseline_info = baseline_infos[index];
+            if (selected_payloads[index] != baseline_payloads[index]) ++changed_payloads;
+            if (selected_info.is_dual_plane_block != baseline_info.is_dual_plane_block ||
+                selected_info.dual_plane_component != baseline_info.dual_plane_component) ++changed_dual_plane;
+            if (selected_info.partition_count != baseline_info.partition_count) ++changed_partition_count;
+            if (selected_info.color_endpoint_modes[0] != baseline_info.color_endpoint_modes[0]) ++changed_endpoint_mode;
+            if (selected_info.weight_x != baseline_info.weight_x || selected_info.weight_y != baseline_info.weight_y ||
+                selected_info.weight_z != baseline_info.weight_z) ++changed_weight_grid;
+            if (selected_info.weight_level_count != baseline_info.weight_level_count ||
+                selected_info.color_level_count != baseline_info.color_level_count) ++changed_weight_levels;
+        }
+        const double effective_rank = gram_energy > 1e-18 ? delta_energy * delta_energy / gram_energy : 0.0;
+        std::printf("latent-decode-loop-alpha-chunked strips=%u peak-candidates=%zu "
+                    "peak-candidate-workset-bytes=%zu compact-steps=%zu\n",
+                    blocks_y, peak_candidate_count, peak_candidate_workset_bytes, committed_steps.size());
+        std::printf("latent-decode-loop-alpha-gauge-modes accepted=%zu payload-changed=%u dual-plane-changed=%u "
+                    "partition-changed=%u endpoint-mode-changed=%u weight-grid-changed=%u weight-levels-changed=%u\n",
+                    committed_steps.size(), changed_payloads, changed_dual_plane, changed_partition_count,
+                    changed_endpoint_mode, changed_weight_grid, changed_weight_levels);
+        std::printf("latent-decode-loop-alpha format=%s mode=scalar-anchored-gauge blocks=%u neutral-wins=%u alpha-wins=%u "
+                    "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
+                    "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g "
+                    "candidate-effective-rank=%.4g mean-positive-cosine=%.4g conflict-commits=%u "
+                    "conflict-calibration=%.8g conflict-holdout=%.8g validation-best-commit=%u "
+                    "validation-best=%.8g validation-stopped-holdout=%.8g\n",
+                    format.name, block_count, neutral_wins, non_neutral_wins, unique_blocks,
+                    neutral_calibration, calibration_loss, neutral_holdout, holdout_loss,
+                    neutral_local_loss - selected_local_loss, effective_rank,
+                    positive_cosine_pairs == 0 ? 0.0 : positive_cosine_sum / positive_cosine_pairs,
+                    commits, conflict_calibration, conflict_holdout, best_validation_commit,
+                    best_validation, stopped_holdout);
+        return std::isfinite(calibration_loss) && std::isfinite(holdout_loss);
+    }
     auto worker = [&]() {
         for (;;) {
             const uint32_t block_index = next_block.fetch_add(1, std::memory_order_relaxed);
@@ -1735,6 +2055,15 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     const double conflict_calibration = activation_relative_mse(weights, conflict_aware, rows, columns, calibration);
     const double conflict_holdout = activation_relative_mse(weights, conflict_aware, rows, columns, holdout);
     const double stopped_holdout = activation_relative_mse(weights, validation_stopped, rows, columns, holdout);
+    if (!selected_payload_path.empty()) {
+        std::vector<std::array<uint8_t, 16>> final_payloads = neutral_payloads;
+        for (const alpha_option * option : committed_options) {
+            const uint32_t block_index = (option->row0 / format.block_height) * blocks_x +
+                                         option->column0 / format.block_width;
+            final_payloads[block_index] = option->payload;
+        }
+        if (!write_binary(selected_payload_path, final_payloads)) return false;
+    }
     if (scalar_anchored_gauge && !committed_options.empty()) {
         std::vector<std::array<uint8_t, 16>> selected_payloads;
         selected_payloads.reserve(committed_options.size());
@@ -2378,8 +2707,10 @@ int main(int argc, char ** argv) {
     std::string calibration_trace_path;
     std::string validation_trace_path;
     std::string decode_loop_log_path;
+    std::string decode_loop_payloads_path;
     uint32_t candidate_threads = 1;
     bool row_strip_select = false;
+    bool row_strip_chunked = false;
     bool search_levels = false;
     bool neural_rank = false;
     bool coordinate_select = false;
@@ -2476,10 +2807,15 @@ int main(int argc, char ** argv) {
             scalar_anchored_gauge_sweep = true;
         } else if (option == "--decode-loop-log" && index + 1 < argc) {
             decode_loop_log_path = argv[++index];
+        } else if (option == "--decode-loop-payloads" && index + 1 < argc) {
+            decode_loop_payloads_path = argv[++index];
         } else if (option == "--candidate-threads" && index + 1 < argc) {
             candidate_threads = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if (option == "--row-strip-select") {
             row_strip_select = true;
+        } else if (option == "--row-strip-chunked") {
+            row_strip_select = true;
+            row_strip_chunked = true;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace" || option == "--validation-trace") &&
                    index + 1 < argc) {
@@ -2493,7 +2829,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--candidate-threads N] [--row-strip-select] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep]\n",
                          argv[0]);
             return 2;
@@ -2766,7 +3102,8 @@ int main(int argc, char ** argv) {
         if (decode_loop_alpha_sweep &&
             !decode_loop_alpha_search(weights, block_latents, rows, columns, format,
                                       calibration_inputs, validation_inputs, inputs, false,
-                                      decode_loop_log_path, candidate_threads, row_strip_select)) {
+                                      decode_loop_log_path, decode_loop_payloads_path, candidate_threads, row_strip_select,
+                                      row_strip_chunked)) {
             std::fprintf(stderr, "ASTC decode-in-the-loop Alpha sweep failed; use whole ASTC blocks\n");
             return 1;
         }
@@ -2775,7 +3112,8 @@ int main(int argc, char ** argv) {
             gauge_latents.decoder = { range * 0.5, range * 0.5, minimum };
             if (!decode_loop_alpha_search(weights, gauge_latents, rows, columns, format,
                                           calibration_inputs, validation_inputs, inputs, true,
-                                          decode_loop_log_path, candidate_threads, row_strip_select)) {
+                                          decode_loop_log_path, decode_loop_payloads_path, candidate_threads, row_strip_select,
+                                          row_strip_chunked)) {
                 std::fprintf(stderr, "ASTC scalar-anchored gauge sweep failed\n");
                 return 1;
             }

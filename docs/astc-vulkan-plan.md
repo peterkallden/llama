@@ -1157,3 +1157,29 @@ and 192x192, including the full validation trajectory. Use it as the mandatory
 regression baseline for chunking: a chunked implementation must first produce
 the same per-strip sequences and the same merged global prefix before it is
 allowed to run a full tensor.
+
+That streaming gate is now complete. `--row-strip-chunked` generates, decodes,
+selects, and releases one six-output-row strip at a time, retaining only a
+compact sequence of selected blocks for the exact global merge. Its
+`--decode-loop-payloads` artifact contains the final conflict-aware ASTC
+payload stream in row-major block order. On layer-0 48x48 and 192x192 fixtures,
+chunked and resident row-strip selection have byte-identical final payloads,
+CSV commit trajectories, validation prefixes, and ordinary summary fields.
+
+The 192x192 fixture has 32 strips and peaks at 192 resident alternatives,
+with a measured candidate workset of 179,712 bytes. This counter includes
+candidate metadata, decoded values, and calibration deltas; it intentionally
+does not claim whole-process RSS or include the persistent full-matrix buffers.
+It is therefore a reproducible measure of the object the streaming design is
+meant to bound. The next full-tensor sweep may scale candidate residency only
+with one `6 x 8192` row strip, while retaining the compact selected sequence
+needed to perform the global validation-prefix merge exactly.
+
+Before a full `2048x8192` run, keep the current candidate family and selection
+semantics frozen. First audit selector cost at strip width: exhaustive
+candidate-pair diagnostics and repeated greedy rescans are acceptable at
+192x192 but not automatically at 1,366 blocks per strip. Any speed-up must
+have a small-fixture byte-identical regression against the present chunked
+selector; streaming reduces memory, not the definition of conflict-aware
+selection. Only then run the full-tensor gauge-only gate, record per-strip
+gain/acceptance statistics, and proceed to bounded `c + delta` or LDLQ work.
