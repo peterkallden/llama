@@ -832,3 +832,19 @@ The replay utility is `astc-vulkan-model-replay-smoke`. It reconstructs the
 selected ASTC footprint from the same decoded RGBA fixture and captured FFN
 input, then runs a normal reference context and an override context against
 the same prompt. It is a validation harness, not a runtime driver.
+
+### Latest quality checkpoint
+
+The replay utility now compares logits at every prompt position and reports a
+small next-token cross-entropy metric in addition to MSE, relative MSE, and
+top-1 agreement. This closes the first model-level quality gate for the
+single-prompt fixture. The observed 4x4/5x5/6x6 results preserve the expected
+quality ordering, but the short prompt is not enough to select a production
+default. Before any scheduler work, repeat the measurement on disjoint
+calibration and holdout prompts and add the existing FP16/Q4/TQ baselines.
+
+The implementation remains intentionally sidecar-only. The override is an
+opt-in graph input selected only for an exact token-batch shape; ordinary
+reserve shapes and all default contexts continue to use the normal FFN-down
+matmul. This keeps the production Vulkan backend untouched while giving us a
+model-level oracle for the future GPU replacement design.

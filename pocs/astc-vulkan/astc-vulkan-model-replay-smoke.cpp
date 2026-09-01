@@ -49,6 +49,8 @@ llama_batch make_batch(const std::vector<llama_token> & tokens) {
 
 struct logits_result {
     std::vector<float> values;
+    size_t n_tokens = 0;
+    size_t n_vocab = 0;
     int32_t status = 1;
 };
 
@@ -75,8 +77,17 @@ logits_result run_model(llama_model * model, const std::vector<llama_token> & to
     result.status = status;
     if (status == 0) {
         const int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
-        const float * logits = llama_get_logits_ith(context, static_cast<int32_t>(tokens.size() - 1));
-        if (logits != nullptr) result.values.assign(logits, logits + n_vocab);
+        result.n_tokens = tokens.size();
+        result.n_vocab = static_cast<size_t>(n_vocab);
+        result.values.resize(result.n_tokens * result.n_vocab);
+        for (size_t token = 0; token < result.n_tokens; ++token) {
+            const float * logits = llama_get_logits_ith(context, static_cast<int32_t>(token));
+            if (logits == nullptr) {
+                result.values.clear();
+                break;
+            }
+            std::copy(logits, logits + n_vocab, result.values.begin() + token * result.n_vocab);
+        }
     }
     llama_batch_free(batch);
     llama_free(context);
@@ -166,7 +177,9 @@ int main(int argc, char ** argv) {
 
     const logits_result reference = run_model(model, tokens, layer, nullptr);
     const logits_result replay = run_model(model, tokens, layer, &override_output);
-    if (reference.status != 0 || replay.status != 0 || reference.values.size() != replay.values.size()) {
+    if (reference.status != 0 || replay.status != 0 || reference.values.size() != replay.values.size() ||
+        reference.n_tokens != replay.n_tokens || reference.n_vocab != replay.n_vocab ||
+        reference.n_tokens != tokens.size()) {
         std::fprintf(stderr, "model replay failed: reference=%d replay=%d\n", reference.status, replay.status);
         llama_model_free(model);
         llama_backend_free();
@@ -174,15 +187,46 @@ int main(int argc, char ** argv) {
     }
 
     double mse = 0.0, max_abs = 0.0, ref_energy = 0.0;
+    size_t top1_matches = 0;
     for (size_t i = 0; i < reference.values.size(); ++i) {
         const double delta = static_cast<double>(reference.values[i]) - replay.values[i];
         mse += delta * delta;
         max_abs = std::max(max_abs, std::abs(delta));
         ref_energy += static_cast<double>(reference.values[i]) * reference.values[i];
     }
-    std::printf("model-replay tokens=%zu vocab=%zu logits-mse=%.8g logits-relative-mse=%.8g max-abs=%.8g\n",
-                tokens.size(), reference.values.size(), mse / reference.values.size(),
-                mse / std::max(ref_energy, 1e-12), max_abs);
+    double reference_loss = 0.0, replay_loss = 0.0;
+    size_t loss_tokens = 0;
+    for (size_t token = 0; token + 1 < tokens.size(); ++token) {
+        const llama_token target = tokens[token + 1];
+        if (target < 0 || static_cast<size_t>(target) >= reference.n_vocab) continue;
+        const float * ref = reference.values.data() + token * reference.n_vocab;
+        const float * got = replay.values.data() + token * replay.n_vocab;
+        const auto cross_entropy = [target](const float * logits, size_t n_vocab) {
+            float max_logit = logits[0];
+            for (size_t i = 1; i < n_vocab; ++i) max_logit = std::max(max_logit, logits[i]);
+            double sum_exp = 0.0;
+            for (size_t i = 0; i < n_vocab; ++i) sum_exp += std::exp(static_cast<double>(logits[i] - max_logit));
+            return static_cast<double>(std::log(sum_exp) + max_logit - logits[target]);
+        };
+        reference_loss += cross_entropy(ref, reference.n_vocab);
+        replay_loss += cross_entropy(got, replay.n_vocab);
+        ++loss_tokens;
+    }
+    for (size_t token = 0; token < reference.n_tokens; ++token) {
+        const float * ref = reference.values.data() + token * reference.n_vocab;
+        const float * got = replay.values.data() + token * replay.n_vocab;
+        const auto ref_it = std::max_element(ref, ref + reference.n_vocab);
+        const auto got_it = std::max_element(got, got + replay.n_vocab);
+        top1_matches += static_cast<size_t>((ref_it - ref) == (got_it - got));
+    }
+    const double normalized_mse = mse / std::max(reference.values.size(), size_t(1));
+    const double normalized_relative_mse = mse / std::max(ref_energy, 1e-12);
+    std::printf("model-replay tokens=%zu vocab=%zu logits-mse=%.8g logits-relative-mse=%.8g max-abs=%.8g "
+                "top1-agreement=%.8g reference-loss=%.8g replay-loss=%.8g loss-delta=%.8g\n",
+                reference.n_tokens, reference.n_vocab, normalized_mse, normalized_relative_mse, max_abs,
+                static_cast<double>(top1_matches) / std::max(reference.n_tokens, size_t(1)),
+                reference_loss / std::max(loss_tokens, size_t(1)), replay_loss / std::max(loss_tokens, size_t(1)),
+                (replay_loss - reference_loss) / std::max(loss_tokens, size_t(1)));
 
     llama_model_free(model);
     llama_backend_free();

@@ -3001,3 +3001,34 @@ the override is selected only for the exact captured token batch. Graph reuse
 also compares override pointer and shape metadata, preventing stale replay
 inputs. This keeps the hook bounded to the intended PoC batch contract and
 avoids silently reusing a graph with different replacement data.
+
+## One-hundred-thirty-first sweep: all-token logits and cross-entropy replay
+
+The model replay smoke now retains logits for every requested token position,
+rather than only the final position. It reports all-token logits MSE, relative
+logits MSE, maximum absolute error, greedy top-1 agreement, and a first
+next-token cross-entropy comparison. The loss is intentionally a small
+validation metric: it uses the next token in this prompt as the target and is
+not a perplexity claim or a training objective.
+
+On the same nine-token SmolLM2-135M prompt and layer-0 FFN-down replacement:
+
+| Footprint | All-token logits MSE | Relative logits MSE | Top-1 agreement | FP16 loss | ASTC replay loss | Loss delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4x4 | 0.00495490 | 4.6112e-05 | 100% | 7.09777 | 7.08883 | -0.00893 |
+| 5x5 | 0.03742712 | 3.4831e-04 | 100% | 7.09777 | 7.22161 | +0.12384 |
+| 6x6 | 0.14707987 | 1.3688e-03 | 100% | 7.09777 | 7.21613 | +0.11836 |
+
+The footprint ordering remains clear in logit error, while greedy decisions
+stay unchanged for this short prompt. 4x4 is effectively loss-neutral here;
+5x5 and 6x6 increase the measured loss despite preserving top-1 choices.
+This is useful evidence that layer-output error can be amplified downstream,
+and that top-1 agreement alone is not a sufficient quality gate. The metric
+also confirms that the graph-input replay boundary works for every output
+position in the batch.
+
+The next quality sweep is a larger, disjoint prompt/activation suite with the
+same all-token metrics, followed by a comparison against the existing FP16,
+Q4, and TQ fixtures. GPU-side replacement is still a separate implementation
+track: this replay runs the normal CPU graph around an experimental input and
+does not change the production Vulkan scheduler.
