@@ -1277,6 +1277,82 @@ bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t c
     return status == ASTCENC_SUCCESS;
 }
 
+// The gauge-only selector repeatedly encodes independent 6x6 images with one
+// immutable ASTC configuration. Keep one context per outer worker and share
+// the parent's read-only tables; a context is never used concurrently.
+class astc_persistent_context_pool {
+public:
+    astc_persistent_context_pool() = default;
+    astc_persistent_context_pool(const astc_persistent_context_pool &) = delete;
+    astc_persistent_context_pool & operator=(const astc_persistent_context_pool &) = delete;
+
+    ~astc_persistent_context_pool() {
+        for (astcenc_context * worker : workers_) astcenc_context_free(worker);
+        if (parent_ != nullptr) astcenc_context_free(parent_);
+    }
+
+    bool initialize(const ggml_vk_astc_format_contract & format, uint32_t worker_count) {
+        astcenc_config config{};
+        if (astcenc_config_init(ASTCENC_PRF_LDR, format.block_width, format.block_height, 1,
+                                g_astc_preset, 0, &config) != ASTCENC_SUCCESS) return false;
+        if (astcenc_context_alloc(&config, 1, &parent_, nullptr) != ASTCENC_SUCCESS) return false;
+        workers_.resize(worker_count, nullptr);
+        source_scratch_.resize(worker_count);
+        for (astcenc_context * & worker : workers_) {
+            if (astcenc_context_alloc(nullptr, 1, &worker, parent_) != ASTCENC_SUCCESS) return false;
+        }
+        return true;
+    }
+
+    std::vector<float> & source_scratch(uint32_t worker_index, size_t texel_count) {
+        std::vector<float> & source = source_scratch_[worker_index];
+        source.resize(texel_count);
+        return source;
+    }
+
+    bool roundtrip(uint32_t worker_index, const std::vector<float> & source,
+                   uint32_t rows, uint32_t columns,
+                   const ggml_vk_astc_format_contract & format,
+                   astc_roundtrip_result & result) const {
+        if (worker_index >= workers_.size()) return false;
+        astcenc_context * context = workers_[worker_index];
+        result = {};
+        result.compressed_bytes = ggml_vk_astc_image_storage_bytes(format, columns, rows);
+        result.compressed.resize(result.compressed_bytes);
+        void * source_slice = const_cast<float *>(source.data());
+        astcenc_image source_image{ columns, rows, 1, ASTCENC_TYPE_F32, &source_slice };
+        const astcenc_swizzle swizzle{ ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A };
+        astcenc_error status = astcenc_compress_image(
+            context, &source_image, &swizzle, result.compressed.data(), result.compressed.size(), 0);
+        if (status == ASTCENC_SUCCESS) {
+            result.block_count = static_cast<uint32_t>(result.compressed.size() / 16);
+            for (size_t offset = 0; offset < result.compressed.size(); offset += 16) {
+                astcenc_block_info info{};
+                status = astcenc_get_block_info(context, result.compressed.data() + offset, &info);
+                if (status != ASTCENC_SUCCESS) break;
+                if (info.is_dual_plane_block) {
+                    ++result.dual_plane_blocks;
+                    if (info.dual_plane_component == 3) ++result.alpha_dual_plane_blocks;
+                }
+            }
+        }
+        result.texels.resize(source.size());
+        void * decoded_slice = result.texels.data();
+        astcenc_image decoded_image{ columns, rows, 1, ASTCENC_TYPE_F32, &decoded_slice };
+        if (status == ASTCENC_SUCCESS) {
+            status = astcenc_decompress_image(
+                context, result.compressed.data(), result.compressed.size(), &decoded_image, &swizzle, 0);
+        }
+        astcenc_compress_reset(context);
+        return status == ASTCENC_SUCCESS;
+    }
+
+private:
+    astcenc_context * parent_ = nullptr;
+    std::vector<astcenc_context *> workers_;
+    std::vector<std::vector<float>> source_scratch_;
+};
+
 bool astc_decode(const std::vector<uint8_t> & compressed, uint32_t rows, uint32_t columns,
                  const ggml_vk_astc_format_contract & format, std::vector<float> & texels) {
     astcenc_config config{};
@@ -1360,7 +1436,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               uint32_t candidate_threads = 1,
                               bool row_strip_select = false,
                               bool row_strip_chunked = false,
-                              bool row_strip_diagnostics = true) {
+                              bool row_strip_diagnostics = true,
+                              bool persistent_worker_contexts = false) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
@@ -1399,7 +1476,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     candidate_threads = std::min(candidate_threads, block_count == 0 ? 1u : block_count);
     std::atomic<uint32_t> next_block{ 0 };
     std::atomic<bool> failed{ false };
-    auto generate_block = [&](uint32_t block_index) {
+    auto generate_block = [&](uint32_t block_index, uint32_t worker_index,
+                              astc_persistent_context_pool * persistent_contexts) {
         alpha_block_result result;
         result.row0 = (block_index / blocks_x) * format.block_height;
         result.column0 = (block_index % blocks_x) * format.block_width;
@@ -1417,9 +1495,16 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 }
             }
         }
-        std::vector<std::vector<uint8_t>> seen;
+        constexpr size_t kMaxGaugeFactors = 8;
+        if (factors.size() > kMaxGaugeFactors) return result;
+        std::array<std::array<uint8_t, 16>, kMaxGaugeFactors> seen{};
+        uint32_t seen_count = 0;
+        std::vector<float> local_source;
         for (uint32_t factor_index = 0; factor_index < factors.size(); ++factor_index) {
-            std::vector<float> source(static_cast<size_t>(format.block_width) * format.block_height * 4);
+            std::vector<float> & source = persistent_contexts != nullptr ?
+                persistent_contexts->source_scratch(worker_index,
+                    static_cast<size_t>(format.block_width) * format.block_height * 4) : local_source;
+            source.resize(static_cast<size_t>(format.block_width) * format.block_height * 4);
             for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
                 for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
                     const uint32_t source_row = std::min(row0 + local_row, rows - 1);
@@ -1440,12 +1525,25 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 }
             }
             astc_roundtrip_result roundtrip;
-            if (!astc_roundtrip(source, format.block_height, format.block_width, format, nullptr, roundtrip) ||
+            const bool encoded = persistent_contexts != nullptr ?
+                persistent_contexts->roundtrip(worker_index, source, format.block_height, format.block_width,
+                                               format, roundtrip) :
+                astc_roundtrip(source, format.block_height, format.block_width, format, nullptr, roundtrip);
+            if (!encoded ||
                 roundtrip.compressed.size() != 16) {
                 return result;
             }
-            if (std::find(seen.begin(), seen.end(), roundtrip.compressed) != seen.end()) continue;
-            seen.push_back(roundtrip.compressed);
+            bool duplicate = false;
+            for (uint32_t seen_index = 0; seen_index < seen_count; ++seen_index) {
+                if (std::equal(seen[seen_index].begin(), seen[seen_index].end(),
+                               roundtrip.compressed.begin())) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+            std::copy_n(roundtrip.compressed.begin(), seen[seen_count].size(), seen[seen_count].begin());
+            ++seen_count;
             const std::vector<float> decoded = reconstruct(roundtrip.texels, block_latents.decoder);
             std::array<uint8_t, 16> payload{};
             std::copy_n(roundtrip.compressed.begin(), payload.size(), payload.begin());
@@ -1464,7 +1562,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 result.best_factor = factor_index;
             }
         }
-        result.unique_payloads = static_cast<uint32_t>(seen.size());
+        result.unique_payloads = seen_count;
         result.valid = !result.neutral_decoded.empty() && !result.best_decoded.empty();
         return result;
     };
@@ -1500,16 +1598,23 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         double delta_energy = 0.0, gram_energy = 0.0, positive_cosine_sum = 0.0;
         uint32_t positive_cosine_pairs = 0;
         size_t peak_candidate_count = 0, peak_candidate_workset_bytes = 0;
+        astc_persistent_context_pool persistent_context_pool;
+        astc_persistent_context_pool * persistent_contexts = nullptr;
+        if (persistent_worker_contexts && scalar_anchored_gauge) {
+            if (!persistent_context_pool.initialize(format, candidate_threads)) return false;
+            persistent_contexts = &persistent_context_pool;
+        }
         for (uint32_t strip = 0; strip < blocks_y; ++strip) {
             const auto generation_begin = std::chrono::steady_clock::now();
             std::vector<alpha_block_result> strip_results(blocks_x);
             std::atomic<uint32_t> next_column{ 0 };
             std::atomic<bool> strip_failed{ false };
-            auto strip_worker = [&]() {
+            auto strip_worker = [&](uint32_t worker_index) {
                 for (;;) {
                     const uint32_t column_block = next_column.fetch_add(1, std::memory_order_relaxed);
                     if (column_block >= blocks_x || strip_failed.load(std::memory_order_relaxed)) return;
-                    alpha_block_result result = generate_block(strip * blocks_x + column_block);
+                    alpha_block_result result = generate_block(
+                        strip * blocks_x + column_block, worker_index, persistent_contexts);
                     if (!result.valid) {
                         strip_failed.store(true, std::memory_order_relaxed);
                         return;
@@ -1519,7 +1624,9 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             };
             std::vector<std::thread> strip_workers;
             strip_workers.reserve(candidate_threads);
-            for (uint32_t index = 0; index < candidate_threads; ++index) strip_workers.emplace_back(strip_worker);
+            for (uint32_t index = 0; index < candidate_threads; ++index) {
+                strip_workers.emplace_back(strip_worker, index);
+            }
             for (std::thread & thread : strip_workers) thread.join();
             if (strip_failed.load(std::memory_order_relaxed)) return false;
             const double generation_seconds = std::chrono::duration<double>(
@@ -1823,7 +1930,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         for (;;) {
             const uint32_t block_index = next_block.fetch_add(1, std::memory_order_relaxed);
             if (block_index >= block_count || failed.load(std::memory_order_relaxed)) return;
-            alpha_block_result result = generate_block(block_index);
+            alpha_block_result result = generate_block(block_index, 0, nullptr);
             if (!result.valid) {
                 failed.store(true, std::memory_order_relaxed);
                 return;
@@ -2750,6 +2857,7 @@ int main(int argc, char ** argv) {
     bool row_strip_select = false;
     bool row_strip_chunked = false;
     bool row_strip_diagnostics = true;
+    bool persistent_worker_contexts = false;
     bool search_levels = false;
     bool neural_rank = false;
     bool coordinate_select = false;
@@ -2859,6 +2967,8 @@ int main(int argc, char ** argv) {
             row_strip_chunked = true;
         } else if (option == "--row-strip-light-diagnostics") {
             row_strip_diagnostics = false;
+        } else if (option == "--persistent-worker-contexts") {
+            persistent_worker_contexts = true;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace" || option == "--validation-trace") &&
                    index + 1 < argc) {
@@ -2872,7 +2982,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep]\n",
                          argv[0]);
             return 2;
@@ -3147,7 +3257,7 @@ int main(int argc, char ** argv) {
                                       calibration_inputs, validation_inputs, inputs, false,
                                       decode_loop_log_path, decode_loop_payloads_path, row_strip_log_path,
                                       candidate_threads, row_strip_select, row_strip_chunked,
-                                      row_strip_diagnostics)) {
+                                      row_strip_diagnostics, persistent_worker_contexts)) {
             std::fprintf(stderr, "ASTC decode-in-the-loop Alpha sweep failed; use whole ASTC blocks\n");
             return 1;
         }
@@ -3158,7 +3268,7 @@ int main(int argc, char ** argv) {
                                           calibration_inputs, validation_inputs, inputs, true,
                                           decode_loop_log_path, decode_loop_payloads_path, row_strip_log_path,
                                           candidate_threads, row_strip_select, row_strip_chunked,
-                                          row_strip_diagnostics)) {
+                                          row_strip_diagnostics, persistent_worker_contexts)) {
                 std::fprintf(stderr, "ASTC scalar-anchored gauge sweep failed\n");
                 return 1;
             }

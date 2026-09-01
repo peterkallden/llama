@@ -1234,3 +1234,15 @@ audit, or a neural-gauge ASTC search preset. Reuse of block analysis across
 gauge values is a later fork-level optimization: first profile preparation,
 context allocation, ASTC search, decode, reconstruction, and delta creation
 separately, then optimize only proven repeated work.
+
+The exact-preserving context gate has now passed. The opt-in
+`--persistent-worker-contexts` path allocates one parent context for immutable
+tables and one child context per outer candidate worker; each worker resets and
+reuses its own context. Its source staging buffer and short payload-dedup set
+are likewise worker/block local. On the full-width `6x8192` fixture it produces
+the identical payload SHA-256 and identical commit CSV as the allocation-per-
+candidate baseline, while generation falls from 95.95 seconds to 8.19 seconds
+per strip. The projected full layer-0 run is now about 55–65 minutes, including
+selection and final assembly. This is the new baseline command. Source-block
+caching remains an audit first, and a lower-level reusable block-analysis API
+remains a separate, more invasive fork experiment after the new full result.

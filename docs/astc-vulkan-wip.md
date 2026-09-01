@@ -3854,3 +3854,34 @@ only several minutes at that scale. The project should therefore keep the
 selector definition intact and start the full-tensor gauge-only study with
 light diagnostics, eight generator threads, the global validation commit log,
 the per-strip metrics log, and a final payload stream.
+
+## One-hundred-sixty-second sweep: exact persistent-context generation
+
+Inspection confirmed that the original hot path allocated and freed one
+`astcenc_context` for every gauge candidate. The ASTC fork supports a parent
+context whose immutable tables can be shared by child contexts, so the PoC now
+has an opt-in `--persistent-worker-contexts` mode. It creates one parent and
+one child context per candidate worker, then resets a child after each complete
+encode/decode operation. A worker-local source staging buffer and fixed small
+payload-dedup array remove remaining source and dedup-container allocations in
+the inner gauge loop.
+
+This changes execution mechanics only: configuration, thorough preset, gauge
+grid, candidate ordering, ASTC API calls, decoded values, selector, and
+validation prefix are unchanged.
+
+| Full-width 6x8192, 8 workers | Allocation-per-candidate | Persistent + scratch |
+| --- | ---: | ---: |
+| Candidate generation/decode | 95.952 s | **8.191 s** |
+| Payload SHA-256 | `de1d…53830` | `de1d…53830` |
+| Global commit CSV | baseline | byte-identical |
+| Selected blocks / commits | 470 / 470 | 470 / 470 |
+
+The earlier 48x48 and 192x192 payload/CSV gates also pass. Context reuse is
+therefore an exact, roughly 11.7x generation-speed improvement on the
+full-width fixture. With selection and final assembly included, the full
+`2048x8192` layer-0 gauge-only run now projects to about 55–65 minutes rather
+than 9–10 hours. The full study should be restarted with this path. Do not mix
+in source-block cache reuse, lower-level block analysis reuse, preset changes,
+or an adaptive gauge grid yet: each is a distinct next experiment once the new
+full baseline has completed.
