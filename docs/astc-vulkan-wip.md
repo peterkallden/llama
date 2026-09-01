@@ -3462,3 +3462,28 @@ decoded Alpha, decoded L change, block mode metadata, partition/dual-plane
 state, scalar and candidate activation loss, calibration-shard gains, and
 held-out gain. This distinguishes an additive correction from Alpha steering
 ASTC toward a different legal L reconstruction.
+
+## One-hundred-forty-seventh sweep: decode-in-the-loop contract fixture
+
+The first implementation uses a 24x24 Pythia crop (16 exact 6x6 blocks) to
+avoid conflating candidate semantics with edge padding. Each block received
+six constant-Alpha source choices under one L+A decoder, including neutral
+Alpha. Each choice was independently encoded, deduplicated by its legal
+16-byte ASTC payload, decoded, and scored on the calibration trace. The
+separate trace was reserved for evaluation.
+
+The fixture produced 68 unique legal blocks. Thirteen of sixteen blocks chose
+non-neutral Alpha and the sum of independent block-local calibration gains was
+positive (`1.671e-4`). Yet the assembled matrix regressed:
+
+| Matrix | Calibration relative MSE | Holdout relative MSE |
+| --- | ---: | ---: |
+| neutral Alpha | 0.0698117 | 0.0603581 |
+| independently selected Alpha | 0.0733025 | 0.0686602 |
+
+This is a successful contract result and an expected optimization result:
+local candidate gains can conflict when their output deltas are summed. The
+next version should retain this exact encode/decode candidate generator but
+replace independent commit with the existing conflict-aware residual commit
+policy. It must compare neutral and Alpha candidates on the same shared ABI,
+then accept a proposal only when it reduces the current global residual.

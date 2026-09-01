@@ -1054,3 +1054,12 @@ on calibration shards. Evaluate the chosen per-block result on the disjoint
 trace. Promote this track only when it beats the neutral/scalar control on
 holdout; otherwise keep Alpha as a documented negative control and move to a
 different representation family.
+
+The small exact-block fixture has passed candidate legality and decoder
+contract validation. It also showed positive local gain but worse assembled
+calibration/holdout error, so independent per-block commit is explicitly
+rejected. The next substep is **decode-in-the-loop conflict-aware commit**:
+propose the best decoded candidate per block in parallel, then accept only a
+non-conflicting proposal that reduces the current activation residual. Edge
+padding and full Pythia dimensions remain out of scope until this small gate
+beats neutral Alpha on holdout.

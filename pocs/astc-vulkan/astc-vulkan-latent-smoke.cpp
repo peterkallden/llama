@@ -1292,6 +1292,111 @@ bool astc_decode(const std::vector<uint8_t> & compressed, uint32_t rows, uint32_
     return status == ASTCENC_SUCCESS;
 }
 
+double decoded_block_activation_error(const std::vector<float> & reference,
+                                      const std::vector<float> & decoded_block,
+                                      uint32_t row0, uint32_t column0,
+                                      uint32_t rows, uint32_t columns,
+                                      const ggml_vk_astc_format_contract & format,
+                                      const activations & inputs) {
+    double error = 0.0;
+    for (uint32_t sample = 0; sample < inputs.samples; ++sample) {
+        const float * input = inputs.values.data() + static_cast<size_t>(sample) * columns;
+        for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+            double expected = 0.0, actual = 0.0;
+            for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
+                const size_t global = static_cast<size_t>(row0 + local_row) * columns + column0 + local_column;
+                expected += reference[global] * input[column0 + local_column];
+                actual += decoded_block[local] * input[column0 + local_column];
+            }
+            const double delta = expected - actual;
+            error += delta * delta;
+        }
+    }
+    return error;
+}
+
+bool decode_loop_alpha_search(const std::vector<float> & weights,
+                              const latent_representation & block_latents,
+                              uint32_t rows, uint32_t columns,
+                              const ggml_vk_astc_format_contract & format,
+                              const activations & calibration,
+                              const activations & holdout) {
+    // This initial contract fixture intentionally excludes edge blocks. It proves
+    // candidate legality and decoder semantics before an edge-padding policy is
+    // introduced for full tensors.
+    if (rows % format.block_height != 0 || columns % format.block_width != 0) return false;
+    std::vector<float> neutral(weights.size());
+    std::vector<float> selected(weights.size());
+    const std::array<float, 6> factors = { 0.0f, -0.5f, 0.5f, 1.0f, 1.5f, 2.0f };
+    uint32_t neutral_wins = 0, non_neutral_wins = 0, unique_blocks = 0;
+    double neutral_local_loss = 0.0, selected_local_loss = 0.0;
+    for (uint32_t row0 = 0; row0 < rows; row0 += format.block_height) {
+        for (uint32_t column0 = 0; column0 < columns; column0 += format.block_width) {
+            std::vector<std::vector<uint8_t>> seen;
+            std::vector<float> best_decoded;
+            std::vector<float> neutral_decoded;
+            double neutral_loss = INFINITY;
+            double best_loss = INFINITY;
+            uint32_t best_factor = 0;
+            for (uint32_t factor_index = 0; factor_index < factors.size(); ++factor_index) {
+                std::vector<float> source(static_cast<size_t>(format.block_width) * format.block_height * 4);
+                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                    for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                        const size_t global = static_cast<size_t>(row0 + local_row) * columns + column0 + local_column;
+                        float * dst = source.data() +
+                            (static_cast<size_t>(local_row) * format.block_width + local_column) * 4;
+                        const float * src = block_latents.texels.data() + global * 4;
+                        std::copy_n(src, 4, dst);
+                        dst[3] = std::clamp(0.5f + factors[factor_index] * (src[3] - 0.5f), 0.0f, 1.0f);
+                    }
+                }
+                astc_roundtrip_result roundtrip;
+                if (!astc_roundtrip(source, format.block_height, format.block_width, format,
+                                    nullptr, roundtrip)) return false;
+                if (std::find(seen.begin(), seen.end(), roundtrip.compressed) != seen.end()) continue;
+                seen.push_back(roundtrip.compressed);
+                const std::vector<float> decoded = reconstruct(roundtrip.texels, block_latents.decoder);
+                const double loss = decoded_block_activation_error(
+                    weights, decoded, row0, column0, rows, columns, format, calibration);
+                if (factor_index == 0) {
+                    neutral_decoded = decoded;
+                    neutral_loss = loss;
+                }
+                if (loss < best_loss) {
+                    best_loss = loss;
+                    best_decoded = decoded;
+                    best_factor = factor_index;
+                }
+            }
+            if (best_decoded.empty() || neutral_decoded.empty()) return false;
+            neutral_local_loss += neutral_loss;
+            selected_local_loss += best_loss;
+            unique_blocks += static_cast<uint32_t>(seen.size());
+            if (best_factor == 0) ++neutral_wins; else ++non_neutral_wins;
+            for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                    const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
+                    const size_t global = static_cast<size_t>(row0 + local_row) * columns + column0 + local_column;
+                    neutral[global] = neutral_decoded[local];
+                    selected[global] = best_decoded[local];
+                }
+            }
+        }
+    }
+    const double neutral_calibration = activation_relative_mse(weights, neutral, rows, columns, calibration);
+    const double neutral_holdout = activation_relative_mse(weights, neutral, rows, columns, holdout);
+    const double calibration_loss = activation_relative_mse(weights, selected, rows, columns, calibration);
+    const double holdout_loss = activation_relative_mse(weights, selected, rows, columns, holdout);
+    std::printf("latent-decode-loop-alpha format=%s blocks=%u neutral-wins=%u alpha-wins=%u "
+                "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
+                "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g\n",
+                format.name, neutral_wins + non_neutral_wins, neutral_wins, non_neutral_wins,
+                unique_blocks, neutral_calibration, calibration_loss, neutral_holdout, holdout_loss,
+                neutral_local_loss - selected_local_loss);
+    return std::isfinite(calibration_loss) && std::isfinite(holdout_loss);
+}
+
 std::vector<double> matvec_outputs(const std::vector<float> & weights, uint32_t rows,
                                    uint32_t columns, const activations & inputs) {
     std::vector<double> result(static_cast<size_t>(inputs.samples) * rows);
@@ -1905,6 +2010,7 @@ int main(int argc, char ** argv) {
     std::string residual_basis_name;
     bool residual_basis_only = false;
     bool activation_alpha_sweep = false;
+    bool decode_loop_alpha_sweep = false;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
@@ -1969,6 +2075,8 @@ int main(int argc, char ** argv) {
             residual_basis_only = true;
         } else if (option == "--activation-alpha-sweep") {
             activation_alpha_sweep = true;
+        } else if (option == "--decode-loop-alpha-sweep") {
+            decode_loop_alpha_sweep = true;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace") &&
                    index + 1 < argc) {
@@ -1982,7 +2090,7 @@ int main(int argc, char ** argv) {
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
-                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep]\n",
+                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep]\n",
                          argv[0]);
             return 2;
         }
@@ -2058,8 +2166,8 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "--residual-basis-only requires --residual-basis\n");
         return 2;
     }
-    if (activation_alpha_sweep && export_only) {
-        std::fprintf(stderr, "--activation-alpha-sweep cannot be combined with --export-only\n");
+    if ((activation_alpha_sweep || decode_loop_alpha_sweep) && export_only) {
+        std::fprintf(stderr, "Alpha sweeps cannot be combined with --export-only\n");
         return 2;
     }
     if (!std::isfinite(g_block_ldlq_damping) || g_block_ldlq_damping < 0.0) {
@@ -2237,6 +2345,12 @@ int main(int argc, char ** argv) {
                 std::fprintf(stderr, "ASTC activation Alpha sweep failed\n");
                 return 1;
             }
+        }
+        if (decode_loop_alpha_sweep &&
+            !decode_loop_alpha_search(weights, block_latents, rows, columns, format,
+                                      calibration_inputs, inputs)) {
+            std::fprintf(stderr, "ASTC decode-in-the-loop Alpha sweep failed; use whole ASTC blocks\n");
+            return 1;
         }
         if (residual_basis_only) continue;
         if (!coordinate_only &&
