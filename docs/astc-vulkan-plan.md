@@ -1246,3 +1246,35 @@ per strip. The projected full layer-0 run is now about 55–65 minutes, includin
 selection and final assembly. This is the new baseline command. Source-block
 caching remains an audit first, and a lower-level reusable block-analysis API
 remains a separate, more invasive fork experiment after the new full result.
+
+### Frozen performance reference configuration
+
+Use the following as the reproducible encoder-performance baseline on this
+host: eight outer candidate workers; one persistent parent context; one child
+context and source scratch buffer per worker; shared immutable ASTC tables;
+fixed block-local payload deduplication; streamed six-row strips; thorough
+preset; fixed scalar-anchored gauge family; light diagnostics only for
+full-width/full-height runs. The binary links the native astcenc build, so the
+record must also name the host ISA (`AVX2`, `F16C`, `SSE4.1`) and compiler
+`-march=native` configuration.
+
+Every exact-preserving optimization must match this reference on the same
+fixture by final payload SHA-256, global commit CSV, validation prefix, and
+holdout. Candidate-space-changing work (preset, grid, cache policy beyond
+exact source identity, or internal search pruning) is instead a new encoder
+experiment and must report candidate count and quality separately.
+
+After the active full-tensor run, first profile its 8.19-second strip
+generation time into source construction, ASTC search, payload packing/dedup,
+decode, reconstruction, and activation-delta construction. Then audit only the
+hit rate of an exact source-block cache. Preserve source data bitwise in such a
+cache, including footprint, deterministic edge padding, gauge family, and
+encoder configuration. Do not build a cache policy until the hit-rate audit
+justifies it.
+
+The current full run does not retain source gauge-factor identities after its
+per-strip candidate dictionary is released. Therefore it cannot report the
+selected-δ distribution retroactively. Add factor metadata to candidate,
+local-positive, and committed counters for the next fulltensor/cross-tensor
+run; use those measurements, rather than a guessed grid, before introducing a
+coarse-to-fine adaptive gauge search.
