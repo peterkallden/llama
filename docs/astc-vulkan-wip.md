@@ -3304,3 +3304,15 @@ result; the larger ASTC-vs-source value is the current L+A quality limitation.
 The corresponding full 6x6 export is now running. It is retained as a
 bandwidth-first control and will be evaluated with the same replay and Vulkan
 metrics rather than inferred from the 4x4 result.
+
+The 6x6 artifact has now completed the same gates. Its ASTC payload is
+7,474,752 bytes (versus 16,777,216 bytes for 4x4) with the same 256 MiB
+decoded companion. Model replay produced logits MSE `9.9356035`, relative
+logits MSE `1.1037144`, top-1 agreement `13.3%`, and loss delta `+5.4399957`.
+Vulkan sampled the same payload correctly (GPU-vs-CPU matvec MSE
+`1.08e-12`), while ASTC-vs-source activation-relative MSE was `17.53408`.
+This is a strong negative quality result for the current full-width additive
+L+A encoding, but a positive bandwidth/path result: the 6x6 image is legal,
+resident, and decoded on the GPU. Keep it as a research control until
+block-local residuals, neural-aware ranking, or codec-aware training improve
+the model error.

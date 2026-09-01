@@ -976,6 +976,13 @@ baseline for later neural-aware/error-shaped encoders; do not promote it to a
 runtime default yet because the model loss delta remains material. Run the
 same gates for 6x6 before comparing bandwidth and quality.
 
+The 6x6 gates are now complete. The payload is 7,474,752 bytes for the
+2,048x8,192 layer and the Vulkan path is numerically correct, but model replay
+has relative logits MSE `1.1037144` and loss delta `+5.4399957`. Treat this as
+the lower-bound bandwidth control for the current L+A encoder. The next
+quality work should target block-local residual/error shaping or neural-aware
+candidate selection before any 6x6 runtime experiment.
+
 ### Follow-up benchmark gate
 
 After correctness is established, compare a matched FFN dispatch suite for
