@@ -3527,3 +3527,19 @@ selection accepted 15 proposals and improved holdout from `0.0589075` neutral
 to `0.0543585`; its effective candidate rank was `7.60` with mean positive
 cosine `0.633`. Edge handling is now a controlled implementation detail rather
 than a confounder for the larger-crop sweep.
+
+## One-hundred-fiftieth sweep: crop scaling
+
+The unchanged selector was run with the same calibration/holdout traces on
+larger Pythia crops:
+
+| Crop | Blocks | Local positive | Accepted | Effective rank | Mean + cosine | Neutral holdout | Conflict holdout |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 48x48 | 64 | 51 | 39 | 15.9 | 0.594 | 0.0448162 | **0.0382301** |
+| 96x96 | 256 | 216 | 192 | 63.8 | 0.526 | 0.0549877 | **0.0413392** |
+
+The sparse/global mechanism scales: accepted proposals remain below local
+positive proposals and conflict-aware assembly beats neutral L+A on both
+crops. Scalar 6x6 remains `0.0407955` on the 96x96 crop, marginally better
+than conflict-aware Alpha. Alpha is therefore a validated correction-space
+mechanism, not yet a standalone quality win over scalar ASTC.

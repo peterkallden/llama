@@ -1080,3 +1080,8 @@ Deterministic clamp-padded edges pass the 25x25 gate and preserve the held-out
 conflict-aware gain. Scale next to successively larger Pythia crops, logging
 local-positive, accepted, and total-block ratios alongside rank, cosine and
 cumulative residual reduction.
+
+The 48x48 and 96x96 runs pass the internal neutral-L+A gate, but the 96x96
+result is still marginally above scalar 6x6. Add cumulative residual-gain
+logging and test a larger crop or second tensor; do not claim a format-level
+win until conflict-aware Alpha beats scalar on holdout.
