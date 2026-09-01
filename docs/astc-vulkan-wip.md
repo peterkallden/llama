@@ -3598,3 +3598,34 @@ navigate ASTC's legal block space to improve neural reconstruction over scalar
 without carrying a residual semantic signal. The next experiment may add a
 small real correction `c` on top of this anchored gauge family, but preserve
 the mandatory scalar candidate and the three-trace gate.
+
+## One-hundred-fifty-third sweep: scalar-anchored gauge scaling
+
+The gauge-only family was scaled on `blk.0.ffn_down.weight` from a 96x96 to a
+192x192 crop, with the same 15-position calibration trace, separate
+34-position validation trace, and untouched 30-position holdout trace. The
+selector was refactored first to retain each candidate's sparse output-row
+delta rather than a dense full-layer output vector. A 96x96 rerun reproduced
+the earlier result exactly, so this changes memory use and not the selection
+contract.
+
+| Crop | Blocks | Local gauge wins | Unique legal payloads | Effective rank | Mean + cosine | Scalar / neutral holdout | Full conflict holdout | Validation-stopped holdout |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 96x96 | 256 | 203 | 1,765 | 164.1 | 0.1983 | 0.0407955 | 0.0191554 | 0.0193639 (133/170) |
+| 192x192 | 1,024 | 839 | 7,151 | 505.8 | 0.1824 | 0.0426420 | 0.0239173 | **0.0237592** (580/710) |
+
+The larger result remains a scalar-beating holdout result: full conflict-aware
+commit lowers activation-relative MSE by 43.9%, and the validation-selected
+prefix lowers it by 44.3%. Effective rank grows with the crop, while the
+positive cosine falls slightly; the correction space is therefore not a tiny
+global low-rank subspace, but it still contains enough correlated alternatives
+that coordinated selection matters. The accepted 710 of 839 locally-positive
+choices also confirms that the gain is coordinated rather than strongly sparse.
+
+This is now the cleanest representation result in the project: all gauge
+candidates encode the same pre-codec semantic weight as scalar, use the same
+3.56-bit/value ASTC 6x6 payload budget, and differ only through ASTC's legal
+decode path. Before introducing an actual correction `c`, scale this exact
+gauge-only protocol further and add payload/mode-transition diagnostics for
+the selected blocks (endpoint mode, partition count, dual-plane state and
+payload change relative to scalar).

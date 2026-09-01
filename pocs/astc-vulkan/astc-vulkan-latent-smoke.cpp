@@ -1432,7 +1432,10 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     std::vector<double> residual(expected.size());
     for (size_t index = 0; index < residual.size(); ++index) residual[index] = expected[index] - neutral_output[index];
     auto make_delta = [&](const alpha_option & option) {
-        std::vector<double> delta(residual.size(), 0.0);
+        // A candidate changes only the output rows covered by its ASTC block.
+        // Keep this sparse footprint so large crop sweeps do not allocate one
+        // dense activation vector per legal candidate.
+        std::vector<double> delta(static_cast<size_t>(calibration.samples) * format.block_height, 0.0);
         for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
             const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
             for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
@@ -1445,7 +1448,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                                           option.column0 + local_column;
                     value += (option.decoded[local] - neutral[global]) * input[option.column0 + local_column];
                 }
-                delta[static_cast<size_t>(sample) * rows + option.row0 + local_row] = value;
+                delta[static_cast<size_t>(sample) * format.block_height + local_row] = value;
             }
         }
         return delta;
@@ -1457,8 +1460,9 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     for (const alpha_option & option : options) option_deltas.push_back(make_delta(option));
     for (size_t left = 0; left < option_deltas.size(); ++left) {
         for (size_t right = 0; right < option_deltas.size(); ++right) {
+            if (options[left].row0 != options[right].row0) continue;
             double dot = 0.0, left_norm = 0.0, right_norm = 0.0;
-            for (size_t index = 0; index < residual.size(); ++index) {
+            for (size_t index = 0; index < option_deltas[left].size(); ++index) {
                 dot += option_deltas[left][index] * option_deltas[right][index];
                 left_norm += option_deltas[left][index] * option_deltas[left][index];
                 right_norm += option_deltas[right][index] * option_deltas[right][index];
@@ -1481,7 +1485,6 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     for (;;) {
         double best_gain = 0.0;
         size_t best_option = options.size();
-        std::vector<double> best_delta;
         for (size_t option_index = 0; option_index < options.size(); ++option_index) {
             const alpha_option & option = options[option_index];
             const uint32_t block_index = (option.row0 / format.block_height) * blocks_x +
@@ -1489,15 +1492,19 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             if (committed[block_index]) continue;
             const std::vector<double> & delta = option_deltas[option_index];
             double dot = 0.0, norm = 0.0;
-            for (size_t index = 0; index < residual.size(); ++index) {
-                dot += residual[index] * delta[index];
-                norm += delta[index] * delta[index];
+            for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                    if (option.row0 + local_row >= rows) continue;
+                    const size_t local = static_cast<size_t>(sample) * format.block_height + local_row;
+                    const size_t output = static_cast<size_t>(sample) * rows + option.row0 + local_row;
+                    dot += residual[output] * delta[local];
+                    norm += delta[local] * delta[local];
+                }
             }
             const double gain = 2.0 * dot - norm;
             if (gain > best_gain) {
                 best_gain = gain;
                 best_option = option_index;
-                best_delta = delta;
             }
         }
         if (best_option == options.size()) break;
@@ -1505,7 +1512,15 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         const uint32_t block_index = (option.row0 / format.block_height) * blocks_x +
                                      option.column0 / format.block_width;
         committed[block_index] = true;
-        for (size_t index = 0; index < residual.size(); ++index) residual[index] -= best_delta[index];
+        const std::vector<double> & best_delta = option_deltas[best_option];
+        for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+            for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                if (option.row0 + local_row >= rows) continue;
+                const size_t local = static_cast<size_t>(sample) * format.block_height + local_row;
+                const size_t output = static_cast<size_t>(sample) * rows + option.row0 + local_row;
+                residual[output] -= best_delta[local];
+            }
+        }
         for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
             for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
                 if (option.row0 + local_row >= rows || option.column0 + local_column >= columns) continue;

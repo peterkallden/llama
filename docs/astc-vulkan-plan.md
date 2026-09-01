@@ -1093,9 +1093,16 @@ candidate family (for example a wider, bounded constant-Alpha dictionary) or
 calibration coverage, then repeat the same three-trace gate. Keep LDLQ behind
 that gate.
 
-The scalar-anchored gauge-only gate now passes on both layer-0 and layer-1
-96x96 crops. It makes scalar an exact candidate-family baseline and removes
-the L+A base-representation penalty. Next, either scale gauge-only to larger
-crops/full tensors or add the bounded correction-plus-gauge family; retain the
-same calibration → validation budget → untouched holdout protocol. LDLQ is now
-appropriate only after this anchored family remains beneficial at larger scale.
+The scalar-anchored gauge-only gate passes both layer-0 and layer-1 96x96
+crops, and now passes a layer-0 192x192 scale gate: scalar/neutral holdout is
+`0.0426420`, full conflict-aware holdout is `0.0239173`, and an independently
+validation-selected prefix reaches `0.0237592`. It makes scalar an exact
+candidate-family baseline and removes the L+A base-representation penalty.
+
+Next, scale gauge-only further before adding the bounded correction-plus-gauge
+family. Preserve the calibration → validation budget → untouched holdout
+protocol, record the complete commit path compactly, and diagnose how selected
+gauge candidates change ASTC block modes and payloads relative to scalar.
+Only after this anchored family remains beneficial at larger scale should the
+project add semantic correction `c`, Block-LDLQ, or more expensive
+full-model objectives.
