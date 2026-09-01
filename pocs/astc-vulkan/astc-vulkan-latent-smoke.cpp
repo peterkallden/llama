@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -1355,9 +1356,11 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               bool scalar_anchored_gauge = false,
                               const std::string & commit_log_path = {},
                               const std::string & selected_payload_path = {},
+                              const std::string & row_strip_log_path = {},
                               uint32_t candidate_threads = 1,
                               bool row_strip_select = false,
-                              bool row_strip_chunked = false) {
+                              bool row_strip_chunked = false,
+                              bool row_strip_diagnostics = true) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
@@ -1476,9 +1479,19 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             std::array<uint8_t, 16> payload{};
             double gain = 0.0;
         };
+        struct strip_metrics {
+            uint32_t strip = 0;
+            uint32_t candidates = 0;
+            uint32_t accepted = 0;
+            double gain = 0.0;
+            double generate_seconds = 0.0;
+            double select_seconds = 0.0;
+        };
         if (format.block_width * format.block_height > 36) return false;
         std::vector<alpha_option> strip_options;
         std::vector<std::vector<strip_step>> strip_steps(blocks_y);
+        std::vector<strip_metrics> strip_metrics_log;
+        strip_metrics_log.reserve(blocks_y);
         std::vector<float> neutral(weights.size());
         std::vector<float> selected(weights.size());
         std::vector<std::array<uint8_t, 16>> neutral_payloads(block_count);
@@ -1488,6 +1501,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         uint32_t positive_cosine_pairs = 0;
         size_t peak_candidate_count = 0, peak_candidate_workset_bytes = 0;
         for (uint32_t strip = 0; strip < blocks_y; ++strip) {
+            const auto generation_begin = std::chrono::steady_clock::now();
             std::vector<alpha_block_result> strip_results(blocks_x);
             std::atomic<uint32_t> next_column{ 0 };
             std::atomic<bool> strip_failed{ false };
@@ -1508,6 +1522,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             for (uint32_t index = 0; index < candidate_threads; ++index) strip_workers.emplace_back(strip_worker);
             for (std::thread & thread : strip_workers) thread.join();
             if (strip_failed.load(std::memory_order_relaxed)) return false;
+            const double generation_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - generation_begin).count();
 
             strip_options.clear();
             strip_options.reserve(blocks_x * (factors.size() - 1));
@@ -1579,23 +1595,27 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             }
             peak_candidate_count = std::max(peak_candidate_count, strip_options.size());
             peak_candidate_workset_bytes = std::max(peak_candidate_workset_bytes, candidate_workset_bytes);
-            for (size_t left = 0; left < strip_deltas.size(); ++left) {
-                for (size_t right = 0; right < strip_deltas.size(); ++right) {
-                    double dot = 0.0, left_norm = 0.0, right_norm = 0.0;
-                    for (size_t index = 0; index < strip_deltas[left].size(); ++index) {
-                        dot += strip_deltas[left][index] * strip_deltas[right][index];
-                        left_norm += strip_deltas[left][index] * strip_deltas[left][index];
-                        right_norm += strip_deltas[right][index] * strip_deltas[right][index];
-                    }
-                    if (left == right) delta_energy += left_norm;
-                    gram_energy += dot * dot;
-                    if (left < right && dot > 0.0 && left_norm > 1e-18 && right_norm > 1e-18) {
-                        positive_cosine_sum += dot / std::sqrt(left_norm * right_norm);
-                        ++positive_cosine_pairs;
+            if (row_strip_diagnostics) {
+                for (size_t left = 0; left < strip_deltas.size(); ++left) {
+                    for (size_t right = 0; right < strip_deltas.size(); ++right) {
+                        double dot = 0.0, left_norm = 0.0, right_norm = 0.0;
+                        for (size_t index = 0; index < strip_deltas[left].size(); ++index) {
+                            dot += strip_deltas[left][index] * strip_deltas[right][index];
+                            left_norm += strip_deltas[left][index] * strip_deltas[left][index];
+                            right_norm += strip_deltas[right][index] * strip_deltas[right][index];
+                        }
+                        if (left == right) delta_energy += left_norm;
+                        gram_energy += dot * dot;
+                        if (left < right && dot > 0.0 && left_norm > 1e-18 && right_norm > 1e-18) {
+                            positive_cosine_sum += dot / std::sqrt(left_norm * right_norm);
+                            ++positive_cosine_pairs;
+                        }
                     }
                 }
             }
+            const auto selection_begin = std::chrono::steady_clock::now();
             std::vector<bool> strip_committed(blocks_x, false);
+            double strip_gain = 0.0;
             for (;;) {
                 double best_gain = 0.0;
                 size_t best_option = strip_options.size();
@@ -1627,6 +1647,22 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 step.payload = option.payload;
                 step.gain = best_gain;
                 strip_steps[strip].push_back(step);
+                strip_gain += best_gain;
+            }
+            strip_metrics_log.push_back({ strip, static_cast<uint32_t>(strip_options.size()),
+                                          static_cast<uint32_t>(strip_steps[strip].size()), strip_gain,
+                                          generation_seconds,
+                                          std::chrono::duration<double>(
+                                              std::chrono::steady_clock::now() - selection_begin).count() });
+        }
+        if (!row_strip_log_path.empty()) {
+            std::ofstream row_strip_log(row_strip_log_path);
+            if (!row_strip_log) return false;
+            row_strip_log << "strip,candidates,accepted,local_residual_gain,generation_seconds,selection_seconds\n";
+            for (const strip_metrics & metrics : strip_metrics_log) {
+                row_strip_log << metrics.strip << ',' << metrics.candidates << ','
+                              << metrics.accepted << ',' << metrics.gain << ','
+                              << metrics.generate_seconds << ',' << metrics.select_seconds << '\n';
             }
         }
         const double neutral_calibration = activation_relative_mse(weights, neutral, rows, columns, calibration);
@@ -1762,8 +1798,9 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         }
         const double effective_rank = gram_energy > 1e-18 ? delta_energy * delta_energy / gram_energy : 0.0;
         std::printf("latent-decode-loop-alpha-chunked strips=%u peak-candidates=%zu "
-                    "peak-candidate-workset-bytes=%zu compact-steps=%zu\n",
-                    blocks_y, peak_candidate_count, peak_candidate_workset_bytes, committed_steps.size());
+                    "peak-candidate-workset-bytes=%zu compact-steps=%zu diagnostics=%s\n",
+                    blocks_y, peak_candidate_count, peak_candidate_workset_bytes, committed_steps.size(),
+                    row_strip_diagnostics ? "full" : "light");
         std::printf("latent-decode-loop-alpha-gauge-modes accepted=%zu payload-changed=%u dual-plane-changed=%u "
                     "partition-changed=%u endpoint-mode-changed=%u weight-grid-changed=%u weight-levels-changed=%u\n",
                     committed_steps.size(), changed_payloads, changed_dual_plane, changed_partition_count,
@@ -2708,9 +2745,11 @@ int main(int argc, char ** argv) {
     std::string validation_trace_path;
     std::string decode_loop_log_path;
     std::string decode_loop_payloads_path;
+    std::string row_strip_log_path;
     uint32_t candidate_threads = 1;
     bool row_strip_select = false;
     bool row_strip_chunked = false;
+    bool row_strip_diagnostics = true;
     bool search_levels = false;
     bool neural_rank = false;
     bool coordinate_select = false;
@@ -2809,6 +2848,8 @@ int main(int argc, char ** argv) {
             decode_loop_log_path = argv[++index];
         } else if (option == "--decode-loop-payloads" && index + 1 < argc) {
             decode_loop_payloads_path = argv[++index];
+        } else if (option == "--row-strip-log" && index + 1 < argc) {
+            row_strip_log_path = argv[++index];
         } else if (option == "--candidate-threads" && index + 1 < argc) {
             candidate_threads = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if (option == "--row-strip-select") {
@@ -2816,6 +2857,8 @@ int main(int argc, char ** argv) {
         } else if (option == "--row-strip-chunked") {
             row_strip_select = true;
             row_strip_chunked = true;
+        } else if (option == "--row-strip-light-diagnostics") {
+            row_strip_diagnostics = false;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace" || option == "--validation-trace") &&
                    index + 1 < argc) {
@@ -2829,7 +2872,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep]\n",
                          argv[0]);
             return 2;
@@ -3102,8 +3145,9 @@ int main(int argc, char ** argv) {
         if (decode_loop_alpha_sweep &&
             !decode_loop_alpha_search(weights, block_latents, rows, columns, format,
                                       calibration_inputs, validation_inputs, inputs, false,
-                                      decode_loop_log_path, decode_loop_payloads_path, candidate_threads, row_strip_select,
-                                      row_strip_chunked)) {
+                                      decode_loop_log_path, decode_loop_payloads_path, row_strip_log_path,
+                                      candidate_threads, row_strip_select, row_strip_chunked,
+                                      row_strip_diagnostics)) {
             std::fprintf(stderr, "ASTC decode-in-the-loop Alpha sweep failed; use whole ASTC blocks\n");
             return 1;
         }
@@ -3112,8 +3156,9 @@ int main(int argc, char ** argv) {
             gauge_latents.decoder = { range * 0.5, range * 0.5, minimum };
             if (!decode_loop_alpha_search(weights, gauge_latents, rows, columns, format,
                                           calibration_inputs, validation_inputs, inputs, true,
-                                          decode_loop_log_path, decode_loop_payloads_path, candidate_threads, row_strip_select,
-                                          row_strip_chunked)) {
+                                          decode_loop_log_path, decode_loop_payloads_path, row_strip_log_path,
+                                          candidate_threads, row_strip_select, row_strip_chunked,
+                                          row_strip_diagnostics)) {
                 std::fprintf(stderr, "ASTC scalar-anchored gauge sweep failed\n");
                 return 1;
             }

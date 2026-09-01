@@ -3800,3 +3800,32 @@ workset and the actual candidate ownership now agree. The next engineering
 gate is selector time at a full-width strip. Preserve exactness on the small
 fixtures before changing the exhaustive diagnostic or greedy-recheck cost; the
 streaming result proves memory factorization, not yet full-tensor runtime.
+
+## One-hundred-sixtieth sweep: full-width strip cost audit
+
+The streaming selector gained two observability controls:
+
+- `--row-strip-light-diagnostics` disables only the quadratic candidate-pair
+  effective-rank/cosine calculation. It does not alter candidates, decoded
+  deltas, local selection, global merge, or validation stopping.
+- `--row-strip-log PATH` emits one row per strip with candidate count, accepted
+  count, local residual gain, ASTC candidate-generation time, and selection
+  time.
+
+Light diagnostics retained byte-identical 48x48 payload and global commit CSV
+against the full-diagnostic selector. The first width study used one layer-0
+strip and the same 6x6 gauge candidate family:
+
+| Strip | Candidate threads | Candidates | Accepted | Generation | Exact selection |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 6x192 | 4 | 172 | 27 | 3.290 s | 0.00078 s |
+| 6x1536 | 4 | 1,498 | 140 | 24.431 s | 0.03330 s |
+| 6x1536 | 8 | 1,498 | 140 | **18.350 s** | 0.03867 s |
+
+The four- and eight-thread 6x1536 results have byte-identical selected payload
+streams and commit CSVs. On this eight-core host, candidate generation is by
+far the dominant offline cost; exact conflict-aware selection is not yet the
+practical constraint. The speedup from four to eight threads is real but not
+linear, so the next gate is a full-width `6x8192` strip with light diagnostics
+and eight candidate threads. It will establish real per-strip residency and
+time before a multi-hour full-height study is started.

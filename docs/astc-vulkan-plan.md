@@ -1183,3 +1183,14 @@ have a small-fixture byte-identical regression against the present chunked
 selector; streaming reduces memory, not the definition of conflict-aware
 selection. Only then run the full-tensor gauge-only gate, record per-strip
 gain/acceptance statistics, and proceed to bounded `c + delta` or LDLQ work.
+
+The cost audit now separates this cleanly. `--row-strip-light-diagnostics`
+suppresses only the quadratic effective-rank/cosine diagnostic, not candidate
+generation, decoded deltas, selection, global merge, or validation stopping.
+`--row-strip-log` records per-strip candidate count, accepted steps, local
+residual gain, candidate-generation time, and exact selection time. A layer-0
+`6x1536` strip used 24.43 seconds for generation and 0.033 seconds for
+selection with four candidate threads. Eight threads reduced generation to
+18.35 seconds and retained byte-identical payload and commit CSV. Thus the
+near-term full-tensor bottleneck is offline ASTC encoding; do not redesign the
+exact selector before a full-width strip profile proves it necessary.
