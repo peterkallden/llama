@@ -3495,3 +3495,21 @@ candidate output-delta correlations and the effective rank of their span, then
 start from neutral Alpha and repeatedly accept the currently best positive
 gain against the updated residual. A holdout win over neutral Alpha is the
 mandatory gate before LDLQ is reconsidered.
+
+## One-hundred-forty-eighth sweep: conflict-aware Alpha commit
+
+The same 24x24 candidate fixture now starts from neutral Alpha, computes each
+decoded candidate's output delta, and repeatedly commits the best current
+positive global gain while updating the calibration residual. It accepted nine
+of the thirteen locally preferred Alpha proposals:
+
+| Assembly policy | Calibration relative MSE | Holdout relative MSE |
+| --- | ---: | ---: |
+| neutral Alpha | 0.0698117 | 0.0603581 |
+| independent local choice | 0.0733025 | 0.0686602 |
+| conflict-aware commit | 0.0676571 | 0.0574917 |
+
+This passes the small-gate hypothesis: decoded Alpha perturbations provide
+useful directions, but only a sparse compatible subset is beneficial. It is a
+24x24 exact-block fixture, not a full Pythia claim. Next add candidate-
+direction diversity diagnostics and edge-block handling before scaling.

@@ -52,6 +52,9 @@ struct astc_roundtrip_result {
     uint32_t alpha_dual_plane_blocks = 0;
 };
 
+std::vector<double> matvec_outputs(const std::vector<float> & weights, uint32_t rows,
+                                   uint32_t columns, const activations & inputs);
+
 struct captured_astc_candidate {
     std::array<uint8_t, 16> block{};
     float error = 0.0f;
@@ -1326,6 +1329,12 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     // candidate legality and decoder semantics before an edge-padding policy is
     // introduced for full tensors.
     if (rows % format.block_height != 0 || columns % format.block_width != 0) return false;
+    struct alpha_option {
+        uint32_t row0;
+        uint32_t column0;
+        std::vector<float> decoded;
+    };
+    std::vector<alpha_option> options;
     std::vector<float> neutral(weights.size());
     std::vector<float> selected(weights.size());
     const std::array<float, 6> factors = { 0.0f, -0.5f, 0.5f, 1.0f, 1.5f, 2.0f };
@@ -1362,6 +1371,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 if (factor_index == 0) {
                     neutral_decoded = decoded;
                     neutral_loss = loss;
+                } else {
+                    options.push_back({ row0, column0, decoded });
                 }
                 if (loss < best_loss) {
                     best_loss = loss;
@@ -1388,12 +1399,73 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     const double neutral_holdout = activation_relative_mse(weights, neutral, rows, columns, holdout);
     const double calibration_loss = activation_relative_mse(weights, selected, rows, columns, calibration);
     const double holdout_loss = activation_relative_mse(weights, selected, rows, columns, holdout);
+    std::vector<float> conflict_aware = neutral;
+    const std::vector<double> expected = matvec_outputs(weights, rows, columns, calibration);
+    const std::vector<double> neutral_output = matvec_outputs(neutral, rows, columns, calibration);
+    std::vector<double> residual(expected.size());
+    for (size_t index = 0; index < residual.size(); ++index) residual[index] = expected[index] - neutral_output[index];
+    const uint32_t blocks_x = columns / format.block_width;
+    std::vector<bool> committed(static_cast<size_t>(rows / format.block_height) * blocks_x, false);
+    uint32_t commits = 0;
+    for (;;) {
+        double best_gain = 0.0;
+        size_t best_option = options.size();
+        std::vector<double> best_delta;
+        for (size_t option_index = 0; option_index < options.size(); ++option_index) {
+            const alpha_option & option = options[option_index];
+            const uint32_t block_index = (option.row0 / format.block_height) * blocks_x +
+                                         option.column0 / format.block_width;
+            if (committed[block_index]) continue;
+            std::vector<double> delta(residual.size(), 0.0);
+            double dot = 0.0, norm = 0.0;
+            for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
+                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                    double value = 0.0;
+                    for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                        const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
+                        const size_t global = static_cast<size_t>(option.row0 + local_row) * columns +
+                                              option.column0 + local_column;
+                        value += (option.decoded[local] - neutral[global]) *
+                                 input[option.column0 + local_column];
+                    }
+                    const size_t output = static_cast<size_t>(sample) * rows + option.row0 + local_row;
+                    delta[output] = value;
+                    dot += residual[output] * value;
+                    norm += value * value;
+                }
+            }
+            const double gain = 2.0 * dot - norm;
+            if (gain > best_gain) {
+                best_gain = gain;
+                best_option = option_index;
+                best_delta = std::move(delta);
+            }
+        }
+        if (best_option == options.size()) break;
+        const alpha_option & option = options[best_option];
+        const uint32_t block_index = (option.row0 / format.block_height) * blocks_x +
+                                     option.column0 / format.block_width;
+        committed[block_index] = true;
+        for (size_t index = 0; index < residual.size(); ++index) residual[index] -= best_delta[index];
+        for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+            for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
+                conflict_aware[static_cast<size_t>(option.row0 + local_row) * columns +
+                               option.column0 + local_column] = option.decoded[local];
+            }
+        }
+        ++commits;
+    }
+    const double conflict_calibration = activation_relative_mse(weights, conflict_aware, rows, columns, calibration);
+    const double conflict_holdout = activation_relative_mse(weights, conflict_aware, rows, columns, holdout);
     std::printf("latent-decode-loop-alpha format=%s blocks=%u neutral-wins=%u alpha-wins=%u "
                 "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
-                "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g\n",
+                "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g "
+                "conflict-commits=%u conflict-calibration=%.8g conflict-holdout=%.8g\n",
                 format.name, neutral_wins + non_neutral_wins, neutral_wins, non_neutral_wins,
                 unique_blocks, neutral_calibration, calibration_loss, neutral_holdout, holdout_loss,
-                neutral_local_loss - selected_local_loss);
+                neutral_local_loss - selected_local_loss, commits, conflict_calibration, conflict_holdout);
     return std::isfinite(calibration_loss) && std::isfinite(holdout_loss);
 }
 

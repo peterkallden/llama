@@ -1069,3 +1069,9 @@ candidate output deltas. This tests whether many locally useful Alpha blocks
 occupy only a few effective correction directions. The conflict-aware selector
 must re-evaluate gain after every accepted proposal; an initial static sort is
 not sufficient because each commit changes the residual.
+
+The initial exact-block gate passes: conflict-aware selection improved held-out
+relative MSE from `0.0603581` (neutral) to `0.0574917`, while independent
+local selection regressed to `0.0686602`. Proceed to diagnostics and scaling,
+not LDLQ yet: log candidate-direction diversity, add deterministic edge-block
+handling, and repeat on a larger Pythia crop with the same disjoint traces.
