@@ -2892,3 +2892,21 @@ This is the first complete FFN-down-layer Vulkan result. It validates the
 runtime path at the tensor's real shape and gives us a stable layer-output
 oracle for the next step: feeding the reconstructed output into the full
 transformer block and measuring logits/loss.
+
+## One-hundred-twenty-seventh sweep: complete footprint comparison
+
+All three supported footprints were exported and dispatched over the complete
+576-row x 1,536-column layer-0 FFN-down matrix with the same 11 activation
+samples:
+
+| Footprint | Payload bytes | GPU vs CPU ASTC MSE | ASTC vs source activation-relative MSE |
+| --- | ---: | ---: | ---: |
+| 4x4 | 884,736 | 3.13e-14 | 0.0006552 |
+| 5x5 | 571,648 | 3.21e-14 | 0.0063434 |
+| 6x6 | 393,216 | 2.92e-14 | 0.0317268 |
+
+The GPU/CPU agreement remains at numerical-noise level for every footprint.
+The quality curve is monotonic on this layer: 4x4 is the safest quality
+choice, 6x6 reaches the asymptotic 3.5556 b/w rate, and 5x5 is the middle
+trade-off. The harness is now ready for model-level logit/loss integration;
+no further ASTC sampler correctness work is required for this gate.

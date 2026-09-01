@@ -799,3 +799,7 @@ activation-buffer dispatch are now implemented and device-smoke validated.
 The remaining quality gate is full 576-row projection followed by model-level
 logits/loss comparison. Production scheduler integration remains deferred
 until that evidence and fallback behavior are available.
+
+The full 576-row FFN-down projection and 4x4/5x5/6x6 GPU comparison are now
+complete. The next implementation is model-level output capture/injection so
+we can measure logits or loss while keeping the normal FP16 path as the oracle.
