@@ -926,3 +926,7 @@ current quality-oriented ASTC candidate and 6x6 as an explicitly bandwidth-
 oriented mode. The next required step is exporting the chosen ASTC payload and
 running the existing model replay harness on multiple holdout prompts; these
 layer metrics alone do not justify scheduler integration.
+
+The selected-candidate run is reproducible with `--screen-only`; the default
+quality smoke still evaluates the broader transform/basis matrix for small
+fixtures.

@@ -3205,6 +3205,10 @@ The selected full-layer run used all 2,048 output rows and the same 15 captured
 activation positions. It selected block-affine + Hadamard4 + linear encoding
 for both footprints:
 
+The run used the explicit `--screen-only --skip-residual-analysis` controls:
+`screen-only` restricts the sweep to the selected candidate family, while the
+residual-analysis pass remains available for smaller fixtures.
+
 | Candidate | ASTC bytes | Residual bytes | Total bytes | Activation-relative MSE |
 | --- | ---: | ---: | ---: | ---: |
 | FP16 source | 33,554,432 | 0 | 33,554,432 | 0 |
