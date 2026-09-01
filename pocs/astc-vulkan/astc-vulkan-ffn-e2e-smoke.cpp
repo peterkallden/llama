@@ -29,6 +29,25 @@ std::vector<T> read_binary(const std::string & path) {
     return file ? values : std::vector<T>();
 }
 
+bool read_decoder_metadata(const std::string & path, float & scale_l, float & scale_a, float & offset) {
+    std::ifstream file(path);
+    if (!file) return false;
+    bool have_l = false, have_a = false, have_offset = false;
+    std::string line;
+    while (std::getline(file, line)) {
+        const size_t separator = line.find('=');
+        if (separator == std::string::npos) continue;
+        const std::string key = line.substr(0, separator);
+        const std::string value = line.substr(separator + 1);
+        try {
+            if (key == "scale_l") { scale_l = std::stof(value); have_l = true; }
+            else if (key == "scale_a") { scale_a = std::stof(value); have_a = true; }
+            else if (key == "offset") { offset = std::stof(value); have_offset = true; }
+        } catch (...) { return false; }
+    }
+    return have_l && have_a && have_offset;
+}
+
 std::vector<uint32_t> read_spirv(const std::string & path) { return read_binary<uint32_t>(path); }
 
 bool create_buffer(VkPhysicalDevice physical_device, VkDevice device, VkDeviceSize size,
@@ -52,7 +71,7 @@ bool create_buffer(VkPhysicalDevice physical_device, VkDevice device, VkDeviceSi
 } // namespace
 
 int main(int argc, char ** argv) {
-    std::string shader, payload_path, activation_path, decoded_path, weights_path, reference_output_path;
+    std::string shader, payload_path, activation_path, decoded_path, weights_path, metadata_path, reference_output_path;
     uint32_t width = 0, height = 0, max_samples = 0;
     uint8_t footprint = 2;
     for (int i = 1; i < argc; ++i) {
@@ -63,6 +82,7 @@ int main(int argc, char ** argv) {
         else if (option == "--activations") activation_path = argv[++i];
         else if (option == "--decoded") decoded_path = argv[++i];
         else if (option == "--weights") weights_path = argv[++i];
+        else if (option == "--metadata") metadata_path = argv[++i];
         else if (option == "--reference-output") reference_output_path = argv[++i];
         else if (option == "--width") width = static_cast<uint32_t>(std::stoul(argv[++i]));
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(argv[++i]));
@@ -92,8 +112,14 @@ int main(int argc, char ** argv) {
     if (max_samples != 0) trace.samples = std::min(trace.samples, max_samples);
     if (trace.samples == 0) return 2;
     const auto weight_minmax = std::minmax_element(weights.begin(), weights.end());
-    const float reconstruction_scale = *weight_minmax.second - *weight_minmax.first;
-    const float reconstruction_offset = *weight_minmax.first;
+    float reconstruction_scale = *weight_minmax.second - *weight_minmax.first;
+    float reconstruction_scale_a = 0.0f;
+    float reconstruction_offset = *weight_minmax.first;
+    if (!metadata_path.empty() && !read_decoder_metadata(metadata_path, reconstruction_scale,
+                                                         reconstruction_scale_a, reconstruction_offset)) {
+        std::fprintf(stderr, "invalid decoder metadata: %s\n", metadata_path.c_str());
+        return 2;
+    }
 
     VkInstance instance = VK_NULL_HANDLE;
     const VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "astc-vulkan-ffn-e2e", 1,
@@ -202,7 +228,8 @@ int main(int argc, char ** argv) {
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
         for (uint32_t sample = 0; success && sample < trace.samples; ++sample) {
-            const push_constants constants{width, height, sample, reconstruction_scale, 0.0f, reconstruction_offset};
+            const push_constants constants{width, height, sample, reconstruction_scale,
+                                           reconstruction_scale_a, reconstruction_offset};
             vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
             vkCmdDispatch(command_buffer, height, 1, 1);
         }
@@ -231,7 +258,9 @@ int main(int argc, char ** argv) {
         for (uint32_t column = 0; column < width; ++column) {
             const size_t index = (static_cast<size_t>(row) * width + column) * 4;
             const float latent = (decoded[index] + decoded[index + 1] + decoded[index + 2]) / 3.0f;
-            const float astc_weight = reconstruction_scale * latent + reconstruction_offset;
+            const float astc_weight = reconstruction_scale * latent +
+                                      reconstruction_scale_a * decoded[index + 3] +
+                                      reconstruction_offset;
             const float activation = trace.values[static_cast<size_t>(sample) * trace.columns + column];
             astc_dot += astc_weight * activation;
             source_dot += weights[static_cast<size_t>(row) * width + column] * activation;

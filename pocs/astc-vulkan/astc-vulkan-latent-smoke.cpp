@@ -294,6 +294,27 @@ bool write_binary(const std::string & path, const std::vector<T> & values) {
     return static_cast<bool>(output);
 }
 
+bool write_export_metadata(const std::string & path, const ggml_vk_astc_format_contract & format,
+                           const char * mode, uint32_t rows, uint32_t columns,
+                           const affine_decoder & decoder,
+                           const astc_roundtrip_result & result) {
+    std::ofstream file(path);
+    if (!file) return false;
+    file << "version=1\n"
+         << "format=" << format.name << "\n"
+         << "mode=" << mode << "\n"
+         << "rows=" << rows << "\n"
+         << "columns=" << columns << "\n"
+         << "block_width=" << format.block_width << "\n"
+         << "block_height=" << format.block_height << "\n"
+         << "scale_l=" << decoder.scale_l << "\n"
+         << "scale_a=" << decoder.scale_a << "\n"
+         << "offset=" << decoder.offset << "\n"
+         << "compressed_bytes=" << result.compressed.size() << "\n"
+         << "decoded_texels=" << result.texels.size() << "\n";
+    return static_cast<bool>(file);
+}
+
 std::vector<float> reconstruct(const std::vector<float> & texels,
                                const affine_decoder & decoder) {
     std::vector<float> result(texels.size() / 4);
@@ -1726,7 +1747,9 @@ int main(int argc, char ** argv) {
     std::string export_astc_path;
     std::string export_reference_path;
     std::string export_weights_path;
+    std::string export_metadata_path;
     std::string export_mode = "additive";
+    bool export_only = false;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
@@ -1775,13 +1798,16 @@ int main(int argc, char ** argv) {
         } else if (option == "--max-columns" && index + 1 < argc) {
             maximum_columns = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else if ((option == "--export-astc" || option == "--export-reference" ||
-                    option == "--export-weights") && index + 1 < argc) {
+                    option == "--export-weights" || option == "--export-metadata") && index + 1 < argc) {
             const std::string value = argv[++index];
             if (option == "--export-astc") export_astc_path = value;
             else if (option == "--export-reference") export_reference_path = value;
-            else export_weights_path = value;
+            else if (option == "--export-weights") export_weights_path = value;
+            else export_metadata_path = value;
         } else if (option == "--export-mode" && index + 1 < argc) {
             export_mode = argv[++index];
+        } else if (option == "--export-only") {
+            export_only = true;
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace") &&
                    index + 1 < argc) {
@@ -1795,7 +1821,7 @@ int main(int argc, char ** argv) {
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
-                         "[--export-astc path --export-reference path --export-weights path --export-mode scalar|additive]\n",
+                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only]\n",
                          argv[0]);
             return 2;
         }
@@ -1840,6 +1866,14 @@ int main(int argc, char ** argv) {
     if (export_astc_path.empty() != export_reference_path.empty() ||
         (!export_astc_path.empty() && footprint.empty())) {
         std::fprintf(stderr, "exports require --export-astc, --export-reference, and --footprint\n");
+        return 2;
+    }
+    if (export_only && export_astc_path.empty()) {
+        std::fprintf(stderr, "--export-only requires --export-astc and --export-reference\n");
+        return 2;
+    }
+    if (!export_metadata_path.empty() && export_astc_path.empty()) {
+        std::fprintf(stderr, "--export-metadata requires --export-astc and --export-reference\n");
         return 2;
     }
     if (preset == "medium") {
@@ -1922,8 +1956,14 @@ int main(int argc, char ** argv) {
     const auto [minimum_it, maximum_it] = std::minmax_element(weights.begin(), weights.end());
     const float minimum = *minimum_it;
     const float range = std::max(*maximum_it - minimum, 1e-6f);
-    const latent_representation scalar_latents = make_scalar_latents(weights, minimum, range);
-    const latent_representation row_column_latents = make_row_column_latents(weights, rows, columns);
+    latent_representation scalar_latents;
+    latent_representation row_column_latents;
+    if (!export_only || export_mode == "scalar") {
+        scalar_latents = make_scalar_latents(weights, minimum, range);
+    }
+    if (!export_only) {
+        row_column_latents = make_row_column_latents(weights, rows, columns);
+    }
     activations inputs = make_default_activations(columns);
     activations calibration_inputs = inputs;
     if (!trace_path.empty()) {
@@ -1959,25 +1999,38 @@ int main(int argc, char ** argv) {
         const std::string format_footprint = std::to_string(format.block_width) + "x" +
                                              std::to_string(format.block_height);
         if (!footprint.empty() && footprint != format_footprint) continue;
-        const latent_representation additive_latents = make_additive_latents(
-            weights, minimum, range, rows, columns, format.block_width, false,
-            kDefaultCoarseLevels);
-        const latent_representation block_latents = make_additive_latents(
-            weights, minimum, range, rows, columns, format.block_width, true,
-            kDefaultCoarseLevels);
+        latent_representation additive_latents;
+        if (!export_only || export_mode == "additive") {
+            additive_latents = make_additive_latents(
+                weights, minimum, range, rows, columns, format.block_width, false,
+                kDefaultCoarseLevels);
+        }
+        latent_representation block_latents;
+        if (!export_only) {
+            block_latents = make_additive_latents(
+                weights, minimum, range, rows, columns, format.block_width, true,
+                kDefaultCoarseLevels);
+        }
         if (!export_astc_path.empty()) {
             astc_roundtrip_result exported;
             const latent_representation & export_latents = export_mode == "scalar" ? scalar_latents : additive_latents;
             if (!astc_roundtrip(export_latents.texels, rows, columns, format, nullptr, exported) ||
                 !write_binary(export_astc_path, exported.compressed) ||
-                !write_binary(export_reference_path, exported.texels)) {
+                !write_binary(export_reference_path, exported.texels) ||
+                (!export_metadata_path.empty() && !write_export_metadata(
+                    export_metadata_path, format, export_mode.c_str(), rows, columns,
+                    export_latents.decoder, exported))) {
                 std::fprintf(stderr, "ASTC latent export failed\n");
                 return 1;
             }
-            std::printf("latent-export format=%s bytes=%zu texels=%zu astc=%s reference=%s\n",
-                        format.name, exported.compressed.size(), exported.texels.size(),
-                        export_astc_path.c_str(), export_reference_path.c_str());
+            std::printf("latent-export format=%s mode=%s bytes=%zu texels=%zu astc=%s reference=%s metadata=%s scale-l=%.8g scale-a=%.8g offset=%.8g\n",
+                        format.name, export_mode.c_str(), exported.compressed.size(), exported.texels.size(),
+                        export_astc_path.c_str(), export_reference_path.c_str(),
+                        export_metadata_path.empty() ? "" : export_metadata_path.c_str(),
+                        export_latents.decoder.scale_l, export_latents.decoder.scale_a,
+                        export_latents.decoder.offset);
         }
+        if (export_only) continue;
         if (!coordinate_only &&
             (!std::isfinite(run_case("scalar-rgba", weights, scalar_latents,
                                     rows, columns, format, inputs)) ||

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,25 @@ std::vector<T> read_binary(const std::string & path) {
     file.seekg(0);
     file.read(reinterpret_cast<char *>(result.data()), size);
     return file ? result : std::vector<T>();
+}
+
+bool read_decoder_metadata(const std::string & path, float & scale_l, float & scale_a, float & offset) {
+    std::ifstream file(path);
+    if (!file) return false;
+    bool have_l = false, have_a = false, have_offset = false;
+    std::string line;
+    while (std::getline(file, line)) {
+        const size_t separator = line.find('=');
+        if (separator == std::string::npos) continue;
+        const std::string key = line.substr(0, separator);
+        const std::string value = line.substr(separator + 1);
+        try {
+            if (key == "scale_l") { scale_l = std::stof(value); have_l = true; }
+            else if (key == "scale_a") { scale_a = std::stof(value); have_a = true; }
+            else if (key == "offset") { offset = std::stof(value); have_offset = true; }
+        } catch (...) { return false; }
+    }
+    return have_l && have_a && have_offset;
 }
 
 bool tokenize(const llama_vocab * vocab, const std::string & prompt, std::vector<llama_token> & tokens) {
@@ -107,7 +127,7 @@ logits_result run_model(llama_model * model, const std::vector<llama_token> & to
 } // namespace
 
 int main(int argc, char ** argv) {
-    std::string model_path, rgba_path, weights_path, activation_path, prompt;
+    std::string model_path, rgba_path, weights_path, activation_path, metadata_path, prompt;
     uint32_t layer = 0, width = 0, height = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string option = argv[i];
@@ -116,6 +136,7 @@ int main(int argc, char ** argv) {
         else if (option == "--rgba") rgba_path = argv[++i];
         else if (option == "--weights") weights_path = argv[++i];
         else if (option == "--activations") activation_path = argv[++i];
+        else if (option == "--metadata") metadata_path = argv[++i];
         else if (option == "--prompt") prompt = argv[++i];
         else if (option == "--layer") layer = static_cast<uint32_t>(std::stoul(argv[++i]));
         else if (option == "--width") width = static_cast<uint32_t>(std::stoul(argv[++i]));
@@ -125,7 +146,7 @@ int main(int argc, char ** argv) {
     if (model_path.empty() || rgba_path.empty() || weights_path.empty() || activation_path.empty() || prompt.empty() ||
         width == 0 || height == 0) {
         std::fprintf(stderr, "usage: %s --model model.gguf --rgba decoded.rgba --weights weights.f32 --activations trace "
-                            "--layer N --width columns --height rows --prompt text\n", argv[0]);
+                            "--layer N --width columns --height rows --metadata export.meta --prompt text\n", argv[0]);
         return 2;
     }
 
@@ -143,8 +164,13 @@ int main(int argc, char ** argv) {
         return 2;
     }
     const auto weight_minmax = std::minmax_element(weights.begin(), weights.end());
-    const float scale = *weight_minmax.second - *weight_minmax.first;
-    const float offset = *weight_minmax.first;
+    float scale_l = *weight_minmax.second - *weight_minmax.first;
+    float scale_a = 0.0f;
+    float offset = *weight_minmax.first;
+    if (!metadata_path.empty() && !read_decoder_metadata(metadata_path, scale_l, scale_a, offset)) {
+        std::fprintf(stderr, "invalid decoder metadata: %s\n", metadata_path.c_str());
+        return 2;
+    }
 
     llama_backend_init();
     llama_model * model = llama_model_load_from_file(model_path.c_str(), llama_model_default_params());
@@ -179,7 +205,7 @@ int main(int argc, char ** argv) {
                 const size_t index = (static_cast<size_t>(row) * width + column) * 4;
                 const float latent = (rgba[index] + rgba[index + 1] + rgba[index + 2]) / 3.0f;
                 const float activation = activations.values[sample * activations.columns + column];
-                value += (scale * latent + offset) * activation;
+                value += (scale_l * latent + scale_a * rgba[index + 3] + offset) * activation;
             }
             override_output[sample * height + row] = value;
         }
