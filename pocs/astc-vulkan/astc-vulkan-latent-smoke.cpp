@@ -1295,6 +1295,28 @@ bool astc_decode(const std::vector<uint8_t> & compressed, uint32_t rows, uint32_
     return status == ASTCENC_SUCCESS;
 }
 
+bool inspect_astc_blocks(const std::vector<std::array<uint8_t, 16>> & payloads,
+                         const ggml_vk_astc_format_contract & format,
+                         std::vector<astcenc_block_info> & infos) {
+    astcenc_config config{};
+    if (astcenc_config_init(ASTCENC_PRF_LDR, format.block_width, format.block_height, 1,
+                            g_astc_preset, 0, &config) != ASTCENC_SUCCESS) return false;
+    astcenc_context * context = nullptr;
+#if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+    if (astcenc_context_alloc(&config, 1, &context, nullptr) != ASTCENC_SUCCESS) return false;
+#else
+    if (astcenc_context_alloc(&config, 1, &context) != ASTCENC_SUCCESS) return false;
+#endif
+    infos.resize(payloads.size());
+    astcenc_error status = ASTCENC_SUCCESS;
+    for (size_t index = 0; index < payloads.size(); ++index) {
+        status = astcenc_get_block_info(context, payloads[index].data(), &infos[index]);
+        if (status != ASTCENC_SUCCESS) break;
+    }
+    astcenc_context_free(context);
+    return status == ASTCENC_SUCCESS;
+}
+
 double decoded_block_activation_error(const std::vector<float> & reference,
                                       const std::vector<float> & decoded_block,
                                       uint32_t row0, uint32_t column0,
@@ -1328,17 +1350,22 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               const activations & calibration,
                               const activations & validation,
                               const activations & holdout,
-                              bool scalar_anchored_gauge = false) {
+                              bool scalar_anchored_gauge = false,
+                              const std::string & commit_log_path = {}) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
         uint32_t row0;
         uint32_t column0;
         std::vector<float> decoded;
+        std::array<uint8_t, 16> payload;
     };
     std::vector<alpha_option> options;
     std::vector<float> neutral(weights.size());
     std::vector<float> selected(weights.size());
+    const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
+    std::vector<std::array<uint8_t, 16>> neutral_payloads(
+        static_cast<size_t>((rows + format.block_height - 1) / format.block_height) * blocks_x);
     const std::vector<float> factors = scalar_anchored_gauge ?
         std::vector<float>{ 0.0f, -0.25f, 0.25f, -0.5f, 0.5f, -0.75f, 0.75f } :
         std::vector<float>{ 0.0f, -0.5f, 0.5f, 1.0f, 1.5f, 2.0f };
@@ -1391,13 +1418,18 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 if (std::find(seen.begin(), seen.end(), roundtrip.compressed) != seen.end()) continue;
                 seen.push_back(roundtrip.compressed);
                 const std::vector<float> decoded = reconstruct(roundtrip.texels, block_latents.decoder);
+                if (roundtrip.compressed.size() != 16) return false;
+                std::array<uint8_t, 16> payload{};
+                std::copy_n(roundtrip.compressed.begin(), payload.size(), payload.begin());
                 const double loss = decoded_block_activation_error(
                     weights, decoded, row0, column0, rows, columns, format, calibration);
                 if (factor_index == 0) {
                     neutral_decoded = decoded;
                     neutral_loss = loss;
+                    neutral_payloads[(row0 / format.block_height) * blocks_x +
+                                     column0 / format.block_width] = payload;
                 } else {
-                    options.push_back({ row0, column0, decoded });
+                    options.push_back({ row0, column0, decoded, payload });
                 }
                 if (loss < best_loss) {
                     best_loss = loss;
@@ -1431,13 +1463,34 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     const std::vector<double> neutral_output = matvec_outputs(neutral, rows, columns, calibration);
     std::vector<double> residual(expected.size());
     for (size_t index = 0; index < residual.size(); ++index) residual[index] = expected[index] - neutral_output[index];
-    auto make_delta = [&](const alpha_option & option) {
+    double residual_energy = 0.0, expected_energy = 0.0;
+    for (size_t index = 0; index < residual.size(); ++index) {
+        residual_energy += residual[index] * residual[index];
+        expected_energy += expected[index] * expected[index];
+    }
+    const std::vector<double> validation_expected = matvec_outputs(weights, rows, columns, validation);
+    const std::vector<double> validation_neutral = matvec_outputs(neutral, rows, columns, validation);
+    std::vector<double> validation_residual(validation_expected.size());
+    double validation_energy = 0.0, validation_expected_energy = 0.0;
+    for (size_t index = 0; index < validation_residual.size(); ++index) {
+        validation_residual[index] = validation_expected[index] - validation_neutral[index];
+        validation_energy += validation_residual[index] * validation_residual[index];
+        validation_expected_energy += validation_expected[index] * validation_expected[index];
+    }
+    std::ofstream commit_log;
+    if (!commit_log_path.empty()) {
+        commit_log.open(commit_log_path);
+        if (!commit_log) return false;
+        commit_log << "commit,calibration_relative_mse,validation_relative_mse,"
+                   << "marginal_residual_gain,cumulative_residual_gain\n";
+    }
+    auto make_delta = [&](const alpha_option & option, const activations & inputs) {
         // A candidate changes only the output rows covered by its ASTC block.
         // Keep this sparse footprint so large crop sweeps do not allocate one
         // dense activation vector per legal candidate.
-        std::vector<double> delta(static_cast<size_t>(calibration.samples) * format.block_height, 0.0);
-        for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
-            const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
+        std::vector<double> delta(static_cast<size_t>(inputs.samples) * format.block_height, 0.0);
+        for (uint32_t sample = 0; sample < inputs.samples; ++sample) {
+            const float * input = inputs.values.data() + static_cast<size_t>(sample) * columns;
             for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
                 if (option.row0 + local_row >= rows) continue;
                 double value = 0.0;
@@ -1454,10 +1507,15 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         return delta;
     };
     std::vector<std::vector<double>> option_deltas;
+    std::vector<std::vector<double>> validation_option_deltas;
     option_deltas.reserve(options.size());
+    validation_option_deltas.reserve(options.size());
     double delta_energy = 0.0, gram_energy = 0.0, positive_cosine_sum = 0.0;
     uint32_t positive_cosine_pairs = 0;
-    for (const alpha_option & option : options) option_deltas.push_back(make_delta(option));
+    for (const alpha_option & option : options) {
+        option_deltas.push_back(make_delta(option, calibration));
+        validation_option_deltas.push_back(make_delta(option, validation));
+    }
     for (size_t left = 0; left < option_deltas.size(); ++left) {
         for (size_t right = 0; right < option_deltas.size(); ++right) {
             if (options[left].row0 != options[right].row0) continue;
@@ -1476,12 +1534,11 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         }
     }
     const double effective_rank = gram_energy > 1e-18 ? delta_energy * delta_energy / gram_energy : 0.0;
-    const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
     std::vector<bool> committed(static_cast<size_t>((rows + format.block_height - 1) / format.block_height) * blocks_x, false);
+    std::vector<const alpha_option *> committed_options;
     uint32_t commits = 0;
     uint32_t best_validation_commit = 0;
     double best_validation = neutral_validation;
-    std::vector<float> validation_stopped = neutral;
     for (;;) {
         double best_gain = 0.0;
         size_t best_option = options.size();
@@ -1512,6 +1569,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         const uint32_t block_index = (option.row0 / format.block_height) * blocks_x +
                                      option.column0 / format.block_width;
         committed[block_index] = true;
+        committed_options.push_back(&option);
         const std::vector<double> & best_delta = option_deltas[best_option];
         for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
             for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
@@ -1521,28 +1579,85 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 residual[output] -= best_delta[local];
             }
         }
+        residual_energy -= best_gain;
+        const std::vector<double> & validation_delta = validation_option_deltas[best_option];
+        for (uint32_t sample = 0; sample < validation.samples; ++sample) {
+            for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                if (option.row0 + local_row >= rows) continue;
+                const size_t local = static_cast<size_t>(sample) * format.block_height + local_row;
+                const size_t output = static_cast<size_t>(sample) * rows + option.row0 + local_row;
+                const double previous = validation_residual[output];
+                validation_residual[output] -= validation_delta[local];
+                validation_energy += validation_residual[output] * validation_residual[output] -
+                                     previous * previous;
+            }
+        }
+        ++commits;
+        const double validation_loss = validation_energy / validation_expected_energy;
+        if (validation_loss < best_validation) {
+            best_validation = validation_loss;
+            best_validation_commit = commits;
+        }
+        if (commit_log) {
+            commit_log << commits << ',' << residual_energy / expected_energy << ',' << validation_loss << ','
+                       << best_gain << ',' << neutral_calibration - residual_energy / expected_energy << '\n';
+        }
+    }
+    std::vector<float> validation_stopped = neutral;
+    for (size_t index = 0; index < committed_options.size(); ++index) {
+        const alpha_option & option = *committed_options[index];
         for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
             for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
                 if (option.row0 + local_row >= rows || option.column0 + local_column >= columns) continue;
                 const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
                 conflict_aware[static_cast<size_t>(option.row0 + local_row) * columns +
                                option.column0 + local_column] = option.decoded[local];
+                if (index < best_validation_commit) {
+                    validation_stopped[static_cast<size_t>(option.row0 + local_row) * columns +
+                                       option.column0 + local_column] = option.decoded[local];
+                }
             }
         }
-        ++commits;
-        const double validation_loss = activation_relative_mse(
-            weights, conflict_aware, rows, columns, validation);
-        if (validation_loss < best_validation) {
-            best_validation = validation_loss;
-            best_validation_commit = commits;
-            validation_stopped = conflict_aware;
-        }
-        std::printf("latent-decode-loop-alpha-commit index=%u validation-relative-MSE=%.8g\n",
-                    commits, validation_loss);
     }
     const double conflict_calibration = activation_relative_mse(weights, conflict_aware, rows, columns, calibration);
     const double conflict_holdout = activation_relative_mse(weights, conflict_aware, rows, columns, holdout);
     const double stopped_holdout = activation_relative_mse(weights, validation_stopped, rows, columns, holdout);
+    if (scalar_anchored_gauge && !committed_options.empty()) {
+        std::vector<std::array<uint8_t, 16>> selected_payloads;
+        selected_payloads.reserve(committed_options.size());
+        std::vector<std::array<uint8_t, 16>> baseline_payloads;
+        baseline_payloads.reserve(committed_options.size());
+        for (const alpha_option * option : committed_options) {
+            selected_payloads.push_back(option->payload);
+            const uint32_t block_index = (option->row0 / format.block_height) * blocks_x +
+                                         option->column0 / format.block_width;
+            baseline_payloads.push_back(neutral_payloads[block_index]);
+        }
+        std::vector<astcenc_block_info> selected_infos;
+        std::vector<astcenc_block_info> baseline_infos;
+        if (!inspect_astc_blocks(selected_payloads, format, selected_infos) ||
+            !inspect_astc_blocks(baseline_payloads, format, baseline_infos)) return false;
+        uint32_t changed_payloads = 0, changed_dual_plane = 0, changed_partition_count = 0;
+        uint32_t changed_endpoint_mode = 0, changed_weight_grid = 0, changed_weight_levels = 0;
+        for (size_t index = 0; index < selected_infos.size(); ++index) {
+            const astcenc_block_info & selected_info = selected_infos[index];
+            const astcenc_block_info & baseline_info = baseline_infos[index];
+            if (selected_payloads[index] != baseline_payloads[index]) ++changed_payloads;
+            if (selected_info.is_dual_plane_block != baseline_info.is_dual_plane_block ||
+                selected_info.dual_plane_component != baseline_info.dual_plane_component) ++changed_dual_plane;
+            if (selected_info.partition_count != baseline_info.partition_count) ++changed_partition_count;
+            if (selected_info.color_endpoint_modes[0] != baseline_info.color_endpoint_modes[0]) ++changed_endpoint_mode;
+            if (selected_info.weight_x != baseline_info.weight_x ||
+                selected_info.weight_y != baseline_info.weight_y ||
+                selected_info.weight_z != baseline_info.weight_z) ++changed_weight_grid;
+            if (selected_info.weight_level_count != baseline_info.weight_level_count ||
+                selected_info.color_level_count != baseline_info.color_level_count) ++changed_weight_levels;
+        }
+        std::printf("latent-decode-loop-alpha-gauge-modes accepted=%zu payload-changed=%u dual-plane-changed=%u "
+                    "partition-changed=%u endpoint-mode-changed=%u weight-grid-changed=%u weight-levels-changed=%u\n",
+                    committed_options.size(), changed_payloads, changed_dual_plane, changed_partition_count,
+                    changed_endpoint_mode, changed_weight_grid, changed_weight_levels);
+    }
     std::printf("latent-decode-loop-alpha format=%s mode=%s blocks=%u neutral-wins=%u alpha-wins=%u "
                 "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
                 "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g "
@@ -2149,6 +2264,7 @@ int main(int argc, char ** argv) {
     std::string trace_path;
     std::string calibration_trace_path;
     std::string validation_trace_path;
+    std::string decode_loop_log_path;
     bool search_levels = false;
     bool neural_rank = false;
     bool coordinate_select = false;
@@ -2243,6 +2359,8 @@ int main(int argc, char ** argv) {
             decode_loop_alpha_sweep = true;
         } else if (option == "--scalar-anchored-gauge-sweep") {
             scalar_anchored_gauge_sweep = true;
+        } else if (option == "--decode-loop-log" && index + 1 < argc) {
+            decode_loop_log_path = argv[++index];
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace" || option == "--validation-trace") &&
                    index + 1 < argc) {
@@ -2256,7 +2374,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep]\n",
                          argv[0]);
             return 2;
@@ -2528,7 +2646,8 @@ int main(int argc, char ** argv) {
         }
         if (decode_loop_alpha_sweep &&
             !decode_loop_alpha_search(weights, block_latents, rows, columns, format,
-                                      calibration_inputs, validation_inputs, inputs)) {
+                                      calibration_inputs, validation_inputs, inputs, false,
+                                      decode_loop_log_path)) {
             std::fprintf(stderr, "ASTC decode-in-the-loop Alpha sweep failed; use whole ASTC blocks\n");
             return 1;
         }
@@ -2536,7 +2655,8 @@ int main(int argc, char ** argv) {
             latent_representation gauge_latents = scalar_latents;
             gauge_latents.decoder = { range * 0.5, range * 0.5, minimum };
             if (!decode_loop_alpha_search(weights, gauge_latents, rows, columns, format,
-                                          calibration_inputs, validation_inputs, inputs, true)) {
+                                          calibration_inputs, validation_inputs, inputs, true,
+                                          decode_loop_log_path)) {
                 std::fprintf(stderr, "ASTC scalar-anchored gauge sweep failed\n");
                 return 1;
             }

@@ -1106,3 +1106,13 @@ gauge candidates change ASTC block modes and payloads relative to scalar.
 Only after this anchored family remains beneficial at larger scale should the
 project add semantic correction `c`, Block-LDLQ, or more expensive
 full-model objectives.
+
+The offline selector must keep candidate output deltas sparse: an ASTC block
+only affects its own output rows, so dense full-matrix deltas are forbidden at
+large crop sizes. Validation must be updated through the same decoded sparse
+deltas rather than by repeatedly replaying the whole matrix. The optional
+`--decode-loop-log` CSV records commit index, calibration and validation
+relative MSE, marginal residual gain, and cumulative gain. This log is for
+choosing a validation-only stopping prefix; holdout remains read only after a
+prefix is fixed. Gauge diagnostics compare every accepted candidate payload
+against its scalar baseline using the public `astcenc_get_block_info` API.
