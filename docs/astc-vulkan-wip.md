@@ -3513,3 +3513,7 @@ This passes the small-gate hypothesis: decoded Alpha perturbations provide
 useful directions, but only a sparse compatible subset is beneficial. It is a
 24x24 exact-block fixture, not a full Pythia claim. Next add candidate-
 direction diversity diagnostics and edge-block handling before scaling.
+
+The diversity diagnostic now reports an effective candidate-direction rank of
+`4.77` and mean positive cosine `0.684` on this fixture. The directions are
+therefore substantially correlated, supporting sparse conflict-aware commit.

@@ -1404,6 +1404,45 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     const std::vector<double> neutral_output = matvec_outputs(neutral, rows, columns, calibration);
     std::vector<double> residual(expected.size());
     for (size_t index = 0; index < residual.size(); ++index) residual[index] = expected[index] - neutral_output[index];
+    auto make_delta = [&](const alpha_option & option) {
+        std::vector<double> delta(residual.size(), 0.0);
+        for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+            const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
+            for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                double value = 0.0;
+                for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                    const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
+                    const size_t global = static_cast<size_t>(option.row0 + local_row) * columns +
+                                          option.column0 + local_column;
+                    value += (option.decoded[local] - neutral[global]) * input[option.column0 + local_column];
+                }
+                delta[static_cast<size_t>(sample) * rows + option.row0 + local_row] = value;
+            }
+        }
+        return delta;
+    };
+    std::vector<std::vector<double>> option_deltas;
+    option_deltas.reserve(options.size());
+    double delta_energy = 0.0, gram_energy = 0.0, positive_cosine_sum = 0.0;
+    uint32_t positive_cosine_pairs = 0;
+    for (const alpha_option & option : options) option_deltas.push_back(make_delta(option));
+    for (size_t left = 0; left < option_deltas.size(); ++left) {
+        for (size_t right = 0; right < option_deltas.size(); ++right) {
+            double dot = 0.0, left_norm = 0.0, right_norm = 0.0;
+            for (size_t index = 0; index < residual.size(); ++index) {
+                dot += option_deltas[left][index] * option_deltas[right][index];
+                left_norm += option_deltas[left][index] * option_deltas[left][index];
+                right_norm += option_deltas[right][index] * option_deltas[right][index];
+            }
+            if (left == right) delta_energy += left_norm;
+            gram_energy += dot * dot;
+            if (left < right && dot > 0.0 && left_norm > 1e-18 && right_norm > 1e-18) {
+                positive_cosine_sum += dot / std::sqrt(left_norm * right_norm);
+                ++positive_cosine_pairs;
+            }
+        }
+    }
+    const double effective_rank = gram_energy > 1e-18 ? delta_energy * delta_energy / gram_energy : 0.0;
     const uint32_t blocks_x = columns / format.block_width;
     std::vector<bool> committed(static_cast<size_t>(rows / format.block_height) * blocks_x, false);
     uint32_t commits = 0;
@@ -1416,30 +1455,17 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             const uint32_t block_index = (option.row0 / format.block_height) * blocks_x +
                                          option.column0 / format.block_width;
             if (committed[block_index]) continue;
-            std::vector<double> delta(residual.size(), 0.0);
+            const std::vector<double> & delta = option_deltas[option_index];
             double dot = 0.0, norm = 0.0;
-            for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
-                const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
-                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
-                    double value = 0.0;
-                    for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
-                        const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
-                        const size_t global = static_cast<size_t>(option.row0 + local_row) * columns +
-                                              option.column0 + local_column;
-                        value += (option.decoded[local] - neutral[global]) *
-                                 input[option.column0 + local_column];
-                    }
-                    const size_t output = static_cast<size_t>(sample) * rows + option.row0 + local_row;
-                    delta[output] = value;
-                    dot += residual[output] * value;
-                    norm += value * value;
-                }
+            for (size_t index = 0; index < residual.size(); ++index) {
+                dot += residual[index] * delta[index];
+                norm += delta[index] * delta[index];
             }
             const double gain = 2.0 * dot - norm;
             if (gain > best_gain) {
                 best_gain = gain;
                 best_option = option_index;
-                best_delta = std::move(delta);
+                best_delta = delta;
             }
         }
         if (best_option == options.size()) break;
@@ -1462,10 +1488,13 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     std::printf("latent-decode-loop-alpha format=%s blocks=%u neutral-wins=%u alpha-wins=%u "
                 "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
                 "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g "
-                "conflict-commits=%u conflict-calibration=%.8g conflict-holdout=%.8g\n",
+                "candidate-effective-rank=%.4g mean-positive-cosine=%.4g conflict-commits=%u "
+                "conflict-calibration=%.8g conflict-holdout=%.8g\n",
                 format.name, neutral_wins + non_neutral_wins, neutral_wins, non_neutral_wins,
                 unique_blocks, neutral_calibration, calibration_loss, neutral_holdout, holdout_loss,
-                neutral_local_loss - selected_local_loss, commits, conflict_calibration, conflict_holdout);
+                neutral_local_loss - selected_local_loss, effective_rank,
+                positive_cosine_pairs == 0 ? 0.0 : positive_cosine_sum / positive_cosine_pairs,
+                commits, conflict_calibration, conflict_holdout);
     return std::isfinite(calibration_loss) && std::isfinite(holdout_loss);
 }
 
