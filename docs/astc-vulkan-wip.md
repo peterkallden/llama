@@ -2798,3 +2798,16 @@ uses widened arithmetic for edge comparisons. A regression fixture covering a
 tensor that fits in texels but not in its aligned block extent now rejects the
 layout deterministically. This keeps 4K-page planning safe for arbitrary
 tensor widths, including the 1,536-column FFN path.
+
+## One-hundred-twentieth sweep: manifest-bound tensor session
+
+The sampled resource now exposes `astc_vulkan_tensor_session`. It validates a
+manifest tensor record against its exact payload range, uploads through the
+owned ASTC texture, and stores reconstruction parameters as explicit session
+state. The device smoke exercises this path for all three supported footprints.
+
+This is the first usable runtime boundary for an FFN-down adapter: a loader can
+resolve a tensor by name, select its footprint and L+A/scalar reconstruction
+parameters, and obtain a sampled image without knowing Vulkan allocation
+details. Dispatch/pipeline binding and llama scheduler integration remain
+separate gates.

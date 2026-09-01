@@ -42,6 +42,9 @@ struct astc_vulkan_manifest {
     std::vector<astc_vulkan_tensor_record> tensors;
 };
 
+const astc_vulkan_tensor_record * astc_vulkan_find_tensor(
+    const astc_vulkan_manifest & manifest, const std::string & name);
+
 struct astc_vulkan_atlas_config {
     uint32_t max_width = 4096;
     uint32_t max_height = 4096;

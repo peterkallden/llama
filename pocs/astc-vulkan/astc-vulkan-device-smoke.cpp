@@ -242,10 +242,14 @@ bool create_and_upload_image(VkPhysicalDevice physical_device, VkDevice device,
     const size_t bytes = static_cast<size_t>(astc_vulkan_image_bytes(
         fp, extent.width, extent.height));
     std::vector<uint8_t> payload(bytes, 0);
-    astc_vulkan_texture texture;
+    astc_vulkan_tensor_record record{
+        "device-smoke", extent.width, extent.height,
+        fp, 0, static_cast<uint64_t>(bytes)};
+    astc_vulkan_tensor_session session;
+    const astc_vulkan_reconstruction reconstruction{};
     std::string error;
-    return texture.upload(physical_device, device, queue, queue_family, footprint,
-                          extent.width, extent.height, payload, error);
+    return session.upload(physical_device, device, queue, queue_family, record,
+                          reconstruction, payload, error);
 }
 
 } // namespace

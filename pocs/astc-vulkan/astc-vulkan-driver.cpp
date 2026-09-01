@@ -104,6 +104,14 @@ bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
     return true;
 }
 
+const astc_vulkan_tensor_record * astc_vulkan_find_tensor(
+    const astc_vulkan_manifest & manifest, const std::string & name) {
+    for (const astc_vulkan_tensor_record & tensor : manifest.tensors) {
+        if (tensor.name == name) return &tensor;
+    }
+    return nullptr;
+}
+
 bool astc_vulkan_write_manifest(const std::string & path,
                                 const astc_vulkan_manifest & manifest,
                                 std::string & error) {
