@@ -850,6 +850,14 @@ as a holdout diagnostic only; require a multi-prompt aggregate before selecting
 4x4, 5x5, or 6x6, and compare against FP16, Q4_0, TQ1_0, and TQ2_0 using the
 same targets.
 
+Two further matched prompt/activation pairs have now been added, giving a
+four-prompt aggregate. Mean relative logits MSE is `3.15e-4`/`1.93e-3`/
+`7.82e-3` for 4x4/5x5/6x6, with mean top-1 agreement of 95.2%/88.0%/82.9%.
+Mean loss delta is +0.0043/+0.0460/+0.2351. This prioritizes 4x4 for a
+conservative path and retains 5x5 as a tunable compromise, but does not select
+a production default. The next gate is the same suite against FP16, Q4_0,
+TQ1_0, and TQ2_0, followed by a larger model.
+
 The implementation remains intentionally sidecar-only. The override is an
 opt-in graph input selected only for an exact token-batch shape; ordinary
 reserve shapes and all default contexts continue to use the normal FFN-down

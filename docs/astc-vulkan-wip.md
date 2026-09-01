@@ -3054,3 +3054,26 @@ three of ten greedy positions), so no single scalar should decide a future
 format default. The result is a real matched holdout signal, not a claim of
 generalization from one prompt; the next comparison should use several prompt
 pairs and include FP16/Q4/TQ baselines under the same token targets.
+
+## One-hundred-thirty-third sweep: four-prompt replay aggregate
+
+Two further matched prompt/trace pairs were captured with the same model,
+layer, and 1,536-column FFN-down input contract. Across four prompts total,
+the mean model-level metrics were:
+
+| Footprint | Mean all-token logits MSE | Mean relative logits MSE | Mean top-1 agreement | Mean loss delta |
+| --- | ---: | ---: | ---: | ---: |
+| 4x4 | 0.0303504 | 3.1549e-04 | 95.2% | +0.00429 |
+| 5x5 | 0.184271 | 1.9277e-03 | 88.0% | +0.04596 |
+| 6x6 | 0.716047 | 7.8229e-03 | 82.9% | +0.23510 |
+
+The aggregate strengthens the current engineering choice: 4x4 is the only
+footprint close to loss-neutral over this small suite, while 6x6 has the
+largest downstream error as well as the best asymptotic bandwidth. 5x5 remains
+a tunable compromise, but its prompt-to-prompt loss varies in sign. These are
+still single-layer-replacement measurements on a 135M model, so they guide
+ranking and test design rather than establish general model quality.
+
+The next required comparison is explicit: run the same prompt suite through
+the unmodified FP16, Q4_0, TQ1_0, and TQ2_0 fixtures, then compare loss and
+greedy agreement to this ASTC sidecar replay.
