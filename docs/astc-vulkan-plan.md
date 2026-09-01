@@ -870,6 +870,12 @@ single-layer ASTC replay. TQ1_0 and TQ2_0 are both valid GGUF types but produce
 identical very poor metrics in the local fixtures, so the next TQ step is a
 fixture/dequantization audit before drawing algorithmic conclusions.
 
+The clean re-quantization check is now complete: regenerated TQ1_0/TQ2_0 files
+match the existing fixtures byte-for-byte, and the quantizer reports 181/272
+tensor fallback conversions. Keep TQ in the comparison matrix, but label it as
+a mixed-format control. The larger-model transition can proceed with FP16 and
+Q4 first; TQ should be included once a tensor-type manifest is available.
+
 The implementation remains intentionally sidecar-only. The override is an
 opt-in graph input selected only for an exact token-batch shape; ordinary
 reserve shapes and all default contexts continue to use the normal FFN-down

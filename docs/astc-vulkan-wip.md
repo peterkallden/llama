@@ -3122,3 +3122,19 @@ This audit makes the comparison useful but not final: TQ remains a bandwidth
 control, while its quality ranking requires freshly generated, consistently
 quantized fixtures or a tensor-by-tensor type manifest. The ASTC sidecar
 results are unaffected and remain isolated from this baseline issue.
+
+## One-hundred-thirty-sixth sweep: reproducible TQ quantizer check
+
+The current `llama-quantize --pure` tool was used to regenerate TQ1_0 and
+TQ2_0 from the same SmolLM2 F16 source. The regenerated files are byte-for-byte
+identical to the earlier local fixtures, so the poor TQ replay result is
+reproducible and not caused by a stale binary. Both quantizer runs report that
+181 of 272 tensors require fallback quantization. The resulting models are
+therefore mixed-format fixtures: a subset uses TQ1_0 or TQ2_0, while many
+tensors use fallback types.
+
+This closes the immediate fixture audit. TQ1/TQ2 remain valid bandwidth and
+runtime controls, but a pure ternary quality claim would require an explicitly
+constructed tensor-type manifest with fallback behavior measured separately.
+ASTC therefore continues to use FP16 as its primary oracle and Q4_0 as the
+mature quality baseline.
