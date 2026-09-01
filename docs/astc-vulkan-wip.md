@@ -2878,3 +2878,17 @@ means the real dispatch covers manifest lookup, FFN shape gating, fallback
 policy, ASTC image upload, activation-buffer binding, and parallel reduction
 in one path. The 32-row 6x6 run still matches CPU ASTC at `2.43e-14` MSE and
 retains `0.0362345` source-relative activation error.
+
+## One-hundred-twenty-sixth sweep: full FFN-down projection
+
+The adapter-bound end-to-end harness was run over all 576 rows of
+`blk.0.ffn_down.weight` with the full 1,536-column activation width. The 6x6
+payload is 393,216 bytes, reaching the asymptotic 3.5556 bits/weight rate.
+Across 11 captured layer-0 activation samples, GPU output matched CPU ASTC
+reconstruction at `2.92e-14` MSE; the ASTC-vs-F16-source activation-relative
+MSE was `0.0317268`.
+
+This is the first complete FFN-down-layer Vulkan result. It validates the
+runtime path at the tensor's real shape and gives us a stable layer-output
+oracle for the next step: feeding the reconstructed output into the full
+transformer block and measuring logits/loss.
