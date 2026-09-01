@@ -2811,3 +2811,11 @@ resolve a tensor by name, select its footprint and L+A/scalar reconstruction
 parameters, and obtain a sampled image without knowing Vulkan allocation
 details. Dispatch/pipeline binding and llama scheduler integration remain
 separate gates.
+
+## One-hundred-twenty-first sweep: post-adapter full regression
+
+The complete ASTC selection was rerun after manifest lookup, tensor-session
+binding, and upload cleanup changes. All 29 tests passed with device access
+enabled, including ASTC capability, image upload, shader compilation, six
+device access patterns, and the new driver metadata contract. No production
+Vulkan backend files were changed.
