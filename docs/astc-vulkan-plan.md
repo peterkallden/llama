@@ -1913,3 +1913,15 @@ for scalar and `0.016833603` for gauge. This is a successful serialization and
 device-correctness gate for the bounded tensor, not a full-model quality claim.
 The next artifact must add the provenance sidecar and full-layer shape before
 the same comparison is promoted to logits/perplexity evidence.
+
+### Full-layer replay reproducibility note
+
+The existing raw layer-0 gauge payload can be independently decoded and
+replayed: the `2048x8192` payload is 7,474,752 bytes with SHA-256
+`eb8cf938307703012900453dd4767bcb09433e3ab9f2a083c4732c1190ac0d54`, and its
+decoded RGBA-F32 fixture is 256 MiB. A replay with the current 11-token prompt
+and holdout trace produced relative logits MSE `0.80219534` and loss delta
+`+6.6148289`. The earlier `0.75192497` / `+4.4685255` result used a different
+prompt/trace pair and must remain a separate historical diagnostic. This
+non-equivalence is precisely why the next full artifact must bind corpus,
+trace hashes, decoder metadata, and payload identity in its provenance record.

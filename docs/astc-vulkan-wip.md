@@ -5333,6 +5333,23 @@ result remains a bounded layer-output/activation gate. Full-layer provenance,
 source-family controls, and logits/perplexity replay are still required before
 quality or performance promotion.
 
+## Two-hundred-thirty-third sweep: full-layer replay corpus check
+
+The full layer-0 raw gauge payload was decoded independently and its payload
+identity was confirmed. The source tensor was exported from the Pythia FP16
+GGUF as `2048x8192` F32 (`67,108,864` bytes); the decoded ASTC fixture is
+`2048x8192x4` F32 (`268,435,456` bytes). The payload SHA-256 is
+`eb8cf938307703012900453dd4767bcb09433e3ab9f2a083c4732c1190ac0d54`, matching
+the historical artifact record.
+
+Using the current CPU-only replay harness, the same payload on an 11-token
+prompt produced relative logits MSE `0.80219534`, top-1 agreement `0`, and
+loss delta `+6.6148289`. The earlier WIP value `0.75192497` / `+4.4685255`
+was generated with another prompt/trace pair, so the two numbers are not
+pooled. Finding this difference is a successful provenance-gate diagnostic:
+the next artifact matrix must record exact prompt/token corpus and trace hashes
+alongside payload and decoder metadata.
+
 ## Two-hundred-thirty-second sweep: host SIMD and regression status
 
 The host capability check reports `avx2`, `f16c`, and `sse4_1` on the i5-8250U.
