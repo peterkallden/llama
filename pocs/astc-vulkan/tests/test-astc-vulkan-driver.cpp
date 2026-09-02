@@ -11,15 +11,21 @@ int main() {
                   "serialized 8x8 footprint ID changed");
     static_assert(static_cast<uint8_t>(astc_vulkan_footprint::k10x6) == 5,
                   "new serialized footprint must be appended");
+    static_assert(static_cast<uint8_t>(astc_vulkan_footprint::k10x8) == 6,
+                  "10x8 serialized footprint ID changed");
     assert(!astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k6x6));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k8x6));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k10x6));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k8x8));
+    assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k10x8));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k8x6));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k10x6));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k8x8));
+    assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k10x8));
     assert(astc_vulkan_block_count(astc_vulkan_footprint::k4x4, 1536, 32) == 384 * 8);
     assert(astc_vulkan_image_bytes(astc_vulkan_footprint::k6x6, 1536, 128) == 90112);
+    assert(astc_vulkan_image_bytes(astc_vulkan_footprint::k10x8, 1536, 128) ==
+           16u * 154u * 16u);
 
     astc_vulkan_manifest expected;
     expected.model_fingerprint = "smollm2-test";
@@ -95,12 +101,15 @@ int main() {
          astc_vulkan_image_bytes(astc_vulkan_footprint::k10x6, 80, 48)},
         {"experimental-8x8", 64, 64, astc_vulkan_footprint::k8x8, 0,
          astc_vulkan_image_bytes(astc_vulkan_footprint::k8x8, 64, 64)},
+        {"experimental-10x8", 80, 64, astc_vulkan_footprint::k10x8, 0,
+         astc_vulkan_image_bytes(astc_vulkan_footprint::k10x8, 80, 64)},
     };
     assert(astc_vulkan_pack_atlas({4096, 4096}, experimental, placements, error));
     assert(placements.size() == experimental.size());
     assert(placements[0].footprint == astc_vulkan_footprint::k8x6);
     assert(placements[1].footprint == astc_vulkan_footprint::k10x6);
     assert(placements[2].footprint == astc_vulkan_footprint::k8x8);
+    assert(placements[3].footprint == astc_vulkan_footprint::k10x8);
     std::vector<astc_vulkan_tensor_record> edge = {
         {"edge", 4093, 1, astc_vulkan_footprint::k6x6, 0,
          astc_vulkan_image_bytes(astc_vulkan_footprint::k6x6, 4093, 1)},

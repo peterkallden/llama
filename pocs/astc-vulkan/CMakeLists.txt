@@ -717,6 +717,11 @@ if (BUILD_TESTING)
                     ${ASTC_VULKAN_SHADER_OUTPUT} 8x8)
             set_property(TEST astc-vulkan-shader-device-smoke-8x8-experimental PROPERTY LABELS astc)
             set_property(TEST astc-vulkan-shader-device-smoke-8x8-experimental PROPERTY SKIP_RETURN_CODE 77)
+            add_test(NAME astc-vulkan-shader-device-smoke-10x8-experimental
+                COMMAND astc-vulkan-shader-device-smoke
+                    ${ASTC_VULKAN_SHADER_OUTPUT} 10x8)
+            set_property(TEST astc-vulkan-shader-device-smoke-10x8-experimental PROPERTY LABELS astc)
+            set_property(TEST astc-vulkan-shader-device-smoke-10x8-experimental PROPERTY SKIP_RETURN_CODE 77)
             add_test(NAME astc-vulkan-shader-device-smoke-4x4-nonlocal
                 COMMAND astc-vulkan-shader-device-smoke
                     ${ASTC_VULKAN_SHADER_OUTPUT} 4x4 nonlocal)

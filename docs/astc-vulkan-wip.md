@@ -6238,3 +6238,46 @@ This also clarifies the next gate: crop-level activation metrics can screen
 candidate families, but they cannot substitute for full-model replay. The
 model-replay utility enforces the complete FFN-down shape, so the existing
 `12x240` PV artifacts are replay/oracle artifacts, not model-quality claims.
+
+## Two-hundred-sixty-eighth sweep: driver checklist and 10x8 side-fork gate
+
+The remaining-driver review was mapped to the actual isolated implementation
+before any production integration is considered. The runtime boundary remains
+unchanged: the offline encoder/selector emits standard 128-bit ASTC blocks;
+Vulkan only capability-checks, uploads, samples, and performs the existing
+cheap semantic reconstruction. No PV optimizer, YAQA state, or custom ASTC
+decoder is shipped to the GPU. Production `ggml-vulkan` remains untouched.
+
+The side-fork format matrix now includes experimental ASTC `10x8` end to end.
+The serialized footprint ID is appended as `6`, preserving all previous IDs.
+Format arithmetic reports 80 texels per 128-bit block, or `1.60` nominal
+bits/texel. Artifact pack/decode, tensor metadata validation, Vulkan resource
+mapping, capability probing, device upload, shader format selection, and the
+latent CLI all accept `10x8`. Unsupported devices retain the deterministic
+capability-gated skip/fallback behavior.
+
+The focused isolated regression passed 8/8 tests:
+
+* format, tensor, driver metadata, and host smoke contracts;
+* latent smoke including the new `10x8` format;
+* capability and image-resource probes;
+* the experimental `10x8` Vulkan shader/device smoke.
+
+A bounded `16x80` Pythia fixture also ran through chunked persistent encoding
+and coarse PV selection. `10x8` produced `0.0029270639` validation-stopped
+activation-relative MSE at `1.60` bits/texel; the matched `8x8` control produced
+`0.0029932198` at `2.00` bits/texel. This is encouraging rate/quality
+screening only: it is not a full-model claim, and the host result says nothing
+portable about Mali/Adreno/Apple scheduling.
+
+The driver gates are now explicit. Completed: side-fork format/resource and
+artifact plumbing, deterministic fallback, isolated Vulkan sampling, and the
+10x8 contract. Open: a full-shape validation-prefix artifact per promoted
+profile, artifact-only CPU/Vulkan replay, a model-facing replay on a known-good
+device/backend, the Q4/Q3/TQ/FP16 plus ASTC timing/quality matrix, and an
+opt-in production adapter with manifest/hash/capability/lifetime checks.
+Mixed footprints remain a later offline study because Vulkan images have one
+fixed `VkFormat`; runtime mixing requires separate images/atlases and
+macro-tile metadata/addressing. The low-rate encoder work (PV, alternating
+P-step, and later YAQA-style scoring) stays offline and must not widen this
+runtime contract.

@@ -2356,3 +2356,56 @@ PV-adjacent control. It did not close the gap: validation-stopped holdout was
 worse than the corresponding PV-lite results. This is evidence against adding
 more unconstrained correction dimensions before a model-facing objective is in
 place.
+
+### Driver expansion checklist (side-fork only)
+
+The driver remains an isolated PoC under `pocs/astc-vulkan`; production
+`ggml-vulkan` is not modified. The runtime contract is deliberately narrow:
+offline tools emit ordinary legal ASTC blocks, while Vulkan performs only
+capability-gated image upload, fixed-function texture decode, sampling, and
+the existing cheap semantic reconstruction. PV/YAQA state and the neural
+encoder are never required on the device.
+
+The remaining driver gates are:
+
+1. [x] Keep footprint arithmetic, serialized IDs, artifact parsing, resource
+   mapping, capability probing, device upload smoke, and shader sampling in one
+   side-fork format matrix. `10x8` is appended as ID 6 and remains experimental;
+   existing IDs are unchanged.
+2. [x] Add contract coverage for `10x8`: 80 texels per 128-bit block, nominal
+   1.60 bits/texel, deterministic block rounding, artifact acceptance, and
+   atlas placement.
+3. [x] Capability-gate every experimental footprint. A device without the
+   sampled/transfer feature returns the existing skip/fallback result before a
+   Vulkan image is created; no format is silently substituted.
+4. [x] Exercise the same `10x8` payload path through CPU latent smoke and the
+   isolated Vulkan shader/device smokes. The bounded smoke is not a portable
+   performance claim.
+5. [ ] Materialize at least one full-shape validation-prefix artifact for each
+   promoted encoder profile and replay it from artifact bytes alone (CPU
+   oracle, then Vulkan sampled replay). Crop artifacts remain diagnostic only.
+6. [ ] Run the model-facing replay gate on a known-good Vulkan device or a
+   genuinely CPU-only backend. The current host's unrelated Vulkan model path
+   can lose the device; that is a test-environment limitation, not permission
+   to weaken the ASTC contract.
+7. [ ] Add the final format comparison matrix (Q4_K_M, Q3_K_M, TQ2_0, TQ1_0,
+   FP16 oracle, ASTC 6x6/8x6/10x6/8x8/10x8) with storage bytes, model-facing
+   quality, cold upload, hot-cache dispatch, and batched timing. Keep target
+   device and driver identity beside every timing.
+8. [ ] Define the production-facing adapter only after the full-shape gate:
+   manifest/version/hash validation, capability selection, descriptor/image
+   lifetime, dispatch synchronization, and deterministic fallback to the
+   existing quantized path. This adapter remains opt-in until mobile coverage
+   is measured.
+9. [ ] Validate on a target mobile/embedded GPU (Mali, Adreno, or Apple) before
+   making any throughput or energy claim. Desktop Intel Vulkan is a reference
+   implementation check, not a proxy for mobile texture-unit scheduling.
+
+The current 10x8 screening result is consistent with keeping it experimental:
+it supplies 1.60 bits/texel versus 2.00 for 8x8 and was viable in the bounded
+latent path, but there is not yet a full-shape model result or cross-device
+performance evidence. Mixed footprints are intentionally deferred: one
+Vulkan image has one fixed ASTC `VkFormat`, so a mixed 8x8/10x8 design needs
+separate images or atlases plus macro-tile metadata and shader address/dispatch
+logic. An offline rate/quality composition tool is safe to add later, but it
+is not part of the first driver adapter.

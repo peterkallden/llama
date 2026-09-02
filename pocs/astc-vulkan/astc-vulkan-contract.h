@@ -53,6 +53,10 @@ inline constexpr ggml_vk_astc_format_contract ggml_vk_astc_8x8_unorm_rgba = {
     "ASTC 8x8 UNORM RGBA", 8, 8, 16, 4,
 };
 
+inline constexpr ggml_vk_astc_format_contract ggml_vk_astc_10x8_unorm_rgba = {
+    "ASTC 10x8 UNORM RGBA", 10, 8, 16, 4,
+};
+
 constexpr uint32_t ggml_vk_astc_block_count(uint32_t extent, uint32_t block_extent) {
     return (extent + block_extent - 1) / block_extent;
 }
