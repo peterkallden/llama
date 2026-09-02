@@ -2237,3 +2237,19 @@ Priority is therefore: shared 10x6 source/rate matrix -> PV-lite fixed-pool
 ablation on 10x6 and 8x8 -> model-facing gate -> YAQA-style two-sided scoring
 for 10x8/10x10 and lower. This protects the central contract: GPU runtime sees
 only standard ASTC sampling plus the existing cheap semantic reconstruction.
+
+### Current sweep gates
+
+- [x] Matched 10x6/8x8 activation matrix on Pythia layer 0, with Q3/Q4/TQ
+  controls and a separate layer-1 TQ cross-check.
+- [x] Verify that the local TQ1/TQ2 crops are independent before treating them
+  as separate format evidence. They are not: both tested crops dequantize to
+  byte-identical FP32 matrices despite different GGUF type metadata.
+- [x] Compare neural candidate recall against standard search on identical
+  crops. No holdout gain was found; keep it experimental and do not replace
+  the standard candidate path.
+- [ ] Run PV-lite with a frozen legal payload pool and scalar/gauge-neutral
+  fallback. The P-step must tune only small affine/zero-sum-gauge parameters;
+  the V-step must use exact ASTC decode and validation-prefix stopping.
+- [ ] Repeat the PV-lite gate on a second tensor with a genuinely different
+  TQ source, then perform the model-facing replay gate.

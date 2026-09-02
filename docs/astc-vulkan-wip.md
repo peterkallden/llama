@@ -5976,3 +5976,25 @@ matrix. That is intentional: introducing a continuous P-step here would mix
 source quantization, candidate-space expansion, and selection objective. The
 next PV-lite gate must use a frozen payload pool on these exact crops and show
 an untouched-holdout improvement over the current validation-selected stream.
+
+## Two-hundred-fifty-ninth sweep: neural candidate-recall gate
+
+The existing `encoder-search neural` mode was compared with the standard
+candidate path on the same Pythia layer-0 traces, scalar-anchored gauge family,
+and a small `12x240` crop. The selector, validation-prefix rule, and runtime
+decoder were unchanged.
+
+| Source | Footprint | Standard validation-stopped holdout | Neural recall validation-stopped holdout |
+| --- | --- | ---: | ---: |
+| F16 | 10x6 | **0.070345475** | 0.070857981 |
+| F16 | 8x8 | 0.10284899 | 0.10284899 |
+| Q3_K_M | 10x6 | 0.08249455 | 0.08249455 |
+| Q3_K_M | 8x8 | 0.10331819 | 0.10331819 |
+
+The expanded recall pool produced only a handful of additional unique payloads
+per block and did not improve the untouched holdout. One F16/10x6 run became
+slightly worse, so neural recall remains experimental and cannot replace the
+standard path. Future gains must come from representation/P-step or a better
+objective, not simply retaining more stock-encoder candidates. Any future
+candidate-space change is accepted only under a fixed-pool,
+validation-selected holdout gate.
