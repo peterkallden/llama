@@ -1387,3 +1387,37 @@ prefix. Keep c+delta as an opt-in per-tensor candidate family with scalar
 fallback, not as the default representation. The next required experiment is
 the larger multi-prompt corpus followed by the fixed-pool three-way
 local/coordinate/Hessian comparison.
+
+### Pre-driver quality gate completion
+
+The pre-driver quality gate has now been extended to a second tensor. Full
+`blk.1.attn_output` gauge-only selection on `576x576` reached holdout
+activation-relative MSE `0.057085516` from a scalar control of `0.064070374`,
+with validation-prefix holdout `0.045835827`. A bounded layer-1 c+delta run
+reached `0.041410601` after validation stopping, but gauge-only remained
+better at `0.036094848` on that crop. These measurements confirm that the
+representation is useful but tensor-sensitive; no global default is implied.
+
+The fixed-pool layer-1 selector gate also completed. Conflict-aware selection
+was best on holdout (`0.28072521`), while coordinate descent (`0.29552618`),
+Block-LDLQ (`0.29555012`), and Hessian feedback (`0.30294451`) did not
+generalize better on this split. Keep conflict-aware selection as the current
+research default and retain the other selectors as opt-in baselines.
+
+The larger multi-prompt/model-wide corpus is still an explicit future gate,
+because the present replay traces are activation-space controls rather than a
+perplexity benchmark. It is not a blocker for beginning the isolated driver
+expansion: the driver must consume standard ASTC payloads and preserve the
+quality oracle and fallback contracts. The next implementation phase is:
+
+1. [ ] Add the ASTC driver-side manifest/atlas upload path beside the existing
+   PoC, without changing production `ggml-vulkan`.
+2. [ ] Add capability-gated sampled ASTC format selection and a deterministic
+   F32/storage-buffer fallback.
+3. [ ] Add one shader matvec/FFN dispatch over the manifest, with explicit
+   synchronization and readback contracts.
+4. [ ] Run the Intel ASTC target, NVIDIA fallback, and CPU/reference paths in
+   one CTest matrix; record bandwidth/dispatch timings separately from model
+   quality.
+5. [ ] Only after the isolated driver matrix is green, evaluate scheduler
+   integration and an upstream-facing API proposal.

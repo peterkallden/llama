@@ -4495,3 +4495,54 @@ This confirms the intended role: c+delta is a viable opt-in extension with an
 exact scalar fallback, while the null-space gauge family remains the leading
 ASTC representation on this tensor. No runtime metadata, driver contract, or
 default selector was changed.
+
+## One-hundred-ninety-second sweep: cross-tensor full-layer gauge gate
+
+The scalar-anchored gauge family was run on the complete `blk.1.attn_output`
+matrix (`576x576`) with the matching layer-1 calibration and holdout traces.
+The streamed six-row pipeline processed `9,216` blocks using a peak candidate
+workset of `51,881,472` bytes. It accepted `6,917` conflict-aware commits;
+the light full-layer run intentionally omitted the expensive rank/cosine
+diagnostics.
+
+The scalar control had holdout activation-relative MSE `0.064070374`.
+Conflict-aware gauge selection reached `0.045848073`, and the validation
+prefix reached `0.045835827`. This reproduces the gauge-only mechanism on a
+second tensor family, while the magnitude of the gain remains tensor- and
+activation-dependent. The result is still an activation-space quality gate,
+not a model-wide perplexity claim.
+
+## One-hundred-ninety-third sweep: layer-1 fixed-pool selector comparison
+
+On the same `48x192` layer-1 crop and the same legal ASTC candidate pool, the
+selector comparison produced:
+
+| Selector | Calibration | Holdout |
+| --- | ---: | ---: |
+| Local | `0.27126144` | `0.29304313` |
+| Coordinate descent | `0.23625363` | `0.29552618` |
+| Block-LDLQ | `0.24007094` | `0.29555012` |
+| Hessian feedback | `0.23650042` | `0.30294451` |
+| Conflict-aware | `0.21660192` | `0.28072521` |
+| Stability-gated | `0.21709384` | `0.28269400` |
+
+Conflict-aware selection is the only tested selector that improves both the
+local holdout and the calibration baseline on this fixed pool. Coordinate,
+Block-LDLQ, and Hessian feedback remain useful offline diagnostics but are
+not promoted to a default. This supports the existing per-tensor selector
+policy and keeps Hessian methods behind a larger-corpus gate.
+
+## One-hundred-ninety-fourth sweep: layer-1 scalar-anchored c+delta control
+
+A bounded `48x192` layer-1 c+delta run retained scalar as an exact fallback.
+Its conflict-aware holdout was `0.042723856`, with validation-prefix holdout
+`0.041410601`, compared with `0.036094848` for gauge-only on the same crop.
+The family is therefore implemented and testable, but remains an opt-in
+extension rather than the default candidate family.
+
+The quality work required before driver expansion is now complete for the
+available local traces: gauge-only has been reproduced on two tensor
+families, c+delta has scalar fallback and a cross-tensor control, and the
+fixed-pool local/coordinate/Block-LDLQ/Hessian/conflict comparison is
+recorded. A larger multi-prompt corpus remains a future model-quality gate;
+it must not be silently substituted by the short activation traces.
