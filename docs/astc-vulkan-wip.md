@@ -5280,3 +5280,37 @@ Decision: proceed next with the full-layer artifact matrix and model-output
 replay using the existing scalar-anchored gauge selector. Do not add `c+delta`,
 LDLQ, new search presets, or GPU encoding until the provenance, baseline,
 shape, validation, and full-rate contracts pass.
+
+## Two-hundred-thirtieth sweep: reproducible model baseline harness
+
+The model replay and baseline targets were rebuilt after the documentation
+gate. A parser bug was fixed in both tools: a standalone `--cpu-only` flag at
+the end of the command line was previously ignored because the parser required
+another argument before checking the flag. The corrected harness now reports
+the CPU device explicitly and produces the same Q4 result as the earlier
+correctly ordered invocation.
+
+A three-prompt CPU screen was run against the shared Pythia FP16 model. The
+prompts were:
+
+1. `Write a short C++ function that adds two integers.`
+2. `Explain why a Vulkan shader needs a storage buffer.`
+3. `List three steps for debugging a memory leak in C++.`
+
+| Candidate | Mean relative logits MSE | Mean top-1 agreement | Mean loss delta |
+| --- | ---: | ---: | ---: |
+| Q3_K_M | 0.122423 | 0.717 | +0.4607 |
+| Q4_K_M | 0.033804 | 0.654 | +0.3023 |
+| TQ1_0 | 1.414204 | 0.000 | +7.6846 |
+| TQ2_0 | 1.430479 | 0.000 | +9.4424 |
+
+These are model-level controls, not ASTC results. They show why every later
+ASTC comparison must use the same FP16 reference and source family: TQ has a
+large model-output gap on this local Pythia build even though some bounded
+activation crops were favorable. Q4 is the strongest conventional control in
+this prompt screen; the small prompt count is insufficient for a quality
+ranking.
+
+The full ASTC CTest label remains green (29/29). The next implementation sweep
+is full-layer artifact provenance/replay; the corrected harness is now suitable
+for that matrix and no production Vulkan routing was changed.

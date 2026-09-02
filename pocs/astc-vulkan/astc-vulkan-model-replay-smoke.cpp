@@ -133,6 +133,10 @@ int main(int argc, char ** argv) {
     bool cpu_only = false;
     for (int i = 1; i < argc; ++i) {
         const std::string option = argv[i];
+        if (option == "--cpu-only") {
+            cpu_only = true;
+            continue;
+        }
         if (i + 1 >= argc) break;
         if (option == "--model") model_path = argv[++i];
         else if (option == "--rgba") rgba_path = argv[++i];
@@ -143,7 +147,6 @@ int main(int argc, char ** argv) {
         else if (option == "--layer") layer = static_cast<uint32_t>(std::stoul(argv[++i]));
         else if (option == "--width") width = static_cast<uint32_t>(std::stoul(argv[++i]));
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(argv[++i]));
-        else if (option == "--cpu-only") cpu_only = true;
         else { std::fprintf(stderr, "unknown option: %s\n", option.c_str()); return 2; }
     }
     if (model_path.empty() || rgba_path.empty() || weights_path.empty() || activation_path.empty() || prompt.empty() ||

@@ -84,11 +84,14 @@ int main(int argc, char ** argv) {
     bool cpu_only = false;
     for (int i = 1; i < argc; ++i) {
         const std::string option = argv[i];
+        if (option == "--cpu-only") {
+            cpu_only = true;
+            continue;
+        }
         if (i + 1 >= argc) break;
         if (option == "--reference-model") reference_path = argv[++i];
         else if (option == "--model") candidate_path = argv[++i];
         else if (option == "--prompt") prompt = argv[++i];
-        else if (option == "--cpu-only") cpu_only = true;
         else { std::fprintf(stderr, "unknown option: %s\n", option.c_str()); return 2; }
     }
     if (reference_path.empty() || candidate_path.empty() || prompt.empty()) {

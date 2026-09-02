@@ -1885,3 +1885,20 @@ The immediate next gate is a reproducible full-layer artifact matrix with these
 controls, followed by model-output replay. Vulkan replay must consume the exact
 selected payload bytes and sidecar identity; it must not regenerate or reselect
 candidates at runtime.
+
+### Current execution order after the gap review
+
+The next sweeps are deliberately incremental:
+
+1. Keep the corrected CPU-only model baseline harness and run a fixed
+   multi-prompt control matrix for FP16, Q3, Q4, TQ1, and TQ2.
+2. Materialize full-layer scalar and validation-selected ASTC artifacts with
+   the provenance sidecar fields above; replay the exact bytes through the CPU
+   oracle and model-output harness.
+3. Add the same source-family controls to the model-output table. Treat the
+   existing bounded crop results as screening evidence only.
+4. Only when replay and provenance are reproducible, measure Vulkan cold upload,
+   hot-cache dispatch, and batching on the available device. Keep 8x6/8x8
+   experimental and retain deterministic fallback.
+5. Defer `c+delta`, Block-LDLQ, search-preset pruning, and GPU encoding until
+   the full-layer matrix establishes a trustworthy baseline.
