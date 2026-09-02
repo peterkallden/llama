@@ -4144,3 +4144,19 @@ record a per-preset wall-clock profile. Thorough remains the frozen quality
 reference for full-tensor claims. Medium is now the first candidate for a
 later speed/quality trade-off experiment, but it must be checked on a real
 cross-tensor crop before changing the production research baseline.
+
+## One-hundred-seventy-third sweep: full ASTC/Vulkan regression
+
+After the reference-export, CLI-contract, model-control, and preset changes,
+the complete relevant ASTC/Vulkan CTest cohort was rerun. All 30 tests passed
+in 263.26 seconds wall time, including the ASTC contracts, driver/resource
+smokes, standard and neural-rank latent tests, coordinate selectors, input
+reader, Vulkan capability/device probes, shader compilation, and all local and
+nonlocal 4x4/5x5/6x6 shader device smokes. This closes the regression gate for
+the current side-fork state.
+
+The next planned implementation remains a bounded GPU-feasibility probe for
+gauge source construction and candidate scoring. It will not be presented as
+ASTC encoding: standard Vulkan has no portable ASTC-encode command, so the
+offline CPU `astcenc` fork remains the reference until a restricted custom
+compute encoder is justified by measurements.
