@@ -3982,7 +3982,21 @@ The test did not cross PCIe because the current host uses the local Vulkan
 device path; it is a correctness gate, not yet a throughput benchmark.
 
 The next runtime task is to generate a matching decoded-F32 reference for a
-gauge payload and run the same FFN test. TQ2_0 is already available locally as
-`Pythia-1.4B-TQ2_0-local.gguf`; a TQ1_0 artifact still needs to be produced or
-located. TQ comparisons remain baselines after the ASTC gauge runtime path is
-validated.
+gauge payload and run the same FFN test. TQ2_0 is available locally as
+`Pythia-1.4B-TQ2_0-local.gguf`, and the TQ1_0 artifact is now produced as
+`Pythia-1.4B-TQ1_0-local.gguf`. TQ comparisons remain baselines after the ASTC
+gauge runtime path is validated.
+
+## One-hundred-sixty-sixth sweep: TQ baseline preparation
+
+The standard llama.cpp quantizer was built in the side-fork build tree and used
+to create `Pythia-1.4B-TQ1_0-local.gguf` from the FP16 source. The conversion
+completed in 20.98 seconds and produced a 384 MB model (approximately 2.26
+BPW for the complete mixed tensor set). The existing
+`Pythia-1.4B-TQ2_0-local.gguf` remains the TQ2 comparison artifact at about
+352 MB.
+
+The TQ1/TQ2 models are reference baselines only; they do not change the ASTC
+payload or runtime contract. A same-prompt/seed model smoke is queued behind
+the CLI target build, after which the comparison will report model output and
+timing for FP16, Q4, TQ1_0, and TQ2_0.
