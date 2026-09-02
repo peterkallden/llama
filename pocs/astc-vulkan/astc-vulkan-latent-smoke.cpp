@@ -1438,7 +1438,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               bool row_strip_select = false,
                               bool row_strip_chunked = false,
                               bool row_strip_diagnostics = true,
-                              bool persistent_worker_contexts = false) {
+                              bool persistent_worker_contexts = false,
+                              bool scalar_anchored_c_delta = false) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
@@ -1476,9 +1477,23 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         return astc_decode(compressed, rows, columns, format, decoded) &&
                write_binary(decoded_reference_path, decoded);
     };
-    const std::vector<float> factors = scalar_anchored_gauge ?
-        std::vector<float>{ 0.0f, -0.25f, 0.25f, -0.5f, 0.5f, -0.75f, 0.75f } :
-        std::vector<float>{ 0.0f, -0.5f, 0.5f, 1.0f, 1.5f, 2.0f };
+    struct gauge_factor {
+        float correction;
+        float gauge;
+    };
+    const std::vector<gauge_factor> factors = scalar_anchored_c_delta ?
+        std::vector<gauge_factor>{
+            {0.0f, 0.0f}, {0.0f, -0.5f}, {0.0f, 0.5f},
+            {-0.25f, 0.0f}, {0.25f, 0.0f},
+            {-0.25f, 0.25f}, {-0.25f, -0.25f}, {0.25f, 0.25f},
+        } : (scalar_anchored_gauge ?
+        std::vector<gauge_factor>{
+            {0.0f, 0.0f}, {0.0f, -0.25f}, {0.0f, 0.25f},
+            {0.0f, -0.5f}, {0.0f, 0.5f}, {0.0f, -0.75f}, {0.0f, 0.75f},
+        } : std::vector<gauge_factor>{
+            {0.0f, 0.0f}, {0.0f, -0.5f}, {0.0f, 0.5f}, {0.0f, 1.0f},
+            {0.0f, 1.5f}, {0.0f, 2.0f},
+        });
     const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
     const uint32_t block_count = blocks_x * blocks_y;
     std::vector<alpha_block_result> block_results;
@@ -1527,11 +1542,12 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     const float * src = block_latents.texels.data() + global * 4;
                     std::copy_n(src, 4, dst);
                     if (scalar_anchored_gauge && valid) {
-                        const float delta = factors[factor_index] * gauge_headroom;
-                        dst[0] = dst[1] = dst[2] = src[0] + delta;
-                        dst[3] = src[0] - delta;
+                        const float correction = factors[factor_index].correction * gauge_headroom;
+                        const float delta = factors[factor_index].gauge * gauge_headroom;
+                        dst[0] = dst[1] = dst[2] = src[0] + correction + delta;
+                        dst[3] = src[0] + correction - delta;
                     } else if (valid) {
-                        dst[3] = std::clamp(0.5f + factors[factor_index] * (src[3] - 0.5f), 0.0f, 1.0f);
+                        dst[3] = std::clamp(0.5f + factors[factor_index].gauge * (src[3] - 0.5f), 0.0f, 1.0f);
                     }
                 }
             }
@@ -1922,13 +1938,14 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     "partition-changed=%u endpoint-mode-changed=%u weight-grid-changed=%u weight-levels-changed=%u\n",
                     committed_steps.size(), changed_payloads, changed_dual_plane, changed_partition_count,
                     changed_endpoint_mode, changed_weight_grid, changed_weight_levels);
-        std::printf("latent-decode-loop-alpha format=%s mode=scalar-anchored-gauge blocks=%u neutral-wins=%u alpha-wins=%u "
+        std::printf("latent-decode-loop-alpha format=%s mode=%s blocks=%u neutral-wins=%u alpha-wins=%u "
                     "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
                     "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g "
                     "candidate-effective-rank=%.4g mean-positive-cosine=%.4g conflict-commits=%u "
                     "conflict-calibration=%.8g conflict-holdout=%.8g validation-best-commit=%u "
                     "validation-best=%.8g validation-stopped-holdout=%.8g\n",
-                    format.name, block_count, neutral_wins, non_neutral_wins, unique_blocks,
+                    format.name, scalar_anchored_c_delta ? "scalar-anchored-c-delta" : "scalar-anchored-gauge",
+                    block_count, neutral_wins, non_neutral_wins, unique_blocks,
                     neutral_calibration, calibration_loss, neutral_holdout, holdout_loss,
                     neutral_local_loss - selected_local_loss, effective_rank,
                     positive_cosine_pairs == 0 ? 0.0 : positive_cosine_sum / positive_cosine_pairs,
@@ -2894,6 +2911,7 @@ int main(int argc, char ** argv) {
     bool activation_alpha_sweep = false;
     bool decode_loop_alpha_sweep = false;
     bool scalar_anchored_gauge_sweep = false;
+    bool scalar_anchored_c_delta_sweep = false;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
@@ -2962,6 +2980,8 @@ int main(int argc, char ** argv) {
             decode_loop_alpha_sweep = true;
         } else if (option == "--scalar-anchored-gauge-sweep") {
             scalar_anchored_gauge_sweep = true;
+        } else if (option == "--scalar-anchored-c-delta-sweep") {
+            scalar_anchored_c_delta_sweep = true;
         } else if (option == "--decode-loop-log" && index + 1 < argc) {
             decode_loop_log_path = argv[++index];
         } else if (option == "--decode-loop-payloads" && index + 1 < argc) {
@@ -2995,7 +3015,7 @@ int main(int argc, char ** argv) {
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
-                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep]\n",
+                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
             return 2;
         }
@@ -3071,7 +3091,8 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "--residual-basis-only requires --residual-basis\n");
         return 2;
     }
-    if ((activation_alpha_sweep || decode_loop_alpha_sweep || scalar_anchored_gauge_sweep) && export_only) {
+    if ((activation_alpha_sweep || decode_loop_alpha_sweep || scalar_anchored_gauge_sweep ||
+         scalar_anchored_c_delta_sweep) && export_only) {
         std::fprintf(stderr, "Alpha sweeps cannot be combined with --export-only\n");
         return 2;
     }
@@ -3284,6 +3305,19 @@ int main(int argc, char ** argv) {
                                           candidate_threads, row_strip_select, row_strip_chunked,
                                           row_strip_diagnostics, persistent_worker_contexts)) {
                 std::fprintf(stderr, "ASTC scalar-anchored gauge sweep failed\n");
+                return 1;
+            }
+        }
+        if (scalar_anchored_c_delta_sweep) {
+            latent_representation c_delta_latents = scalar_latents;
+            c_delta_latents.decoder = { range * 0.5, range * 0.5, minimum };
+            if (!decode_loop_alpha_search(weights, c_delta_latents, rows, columns, format,
+                                          calibration_inputs, validation_inputs, inputs, true,
+                                          decode_loop_log_path, decode_loop_payloads_path, decode_loop_reference_path,
+                                          row_strip_log_path,
+                                          candidate_threads, row_strip_select, row_strip_chunked,
+                                          row_strip_diagnostics, persistent_worker_contexts, true)) {
+                std::fprintf(stderr, "ASTC scalar-anchored c+delta sweep failed\n");
                 return 1;
             }
         }

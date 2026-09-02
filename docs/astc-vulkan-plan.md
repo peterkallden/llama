@@ -1295,4 +1295,13 @@ The next work is intentionally model-level rather than more sampler plumbing:
 4. Revisit Block-LDLQ/GPTVQ as an offline selector per tensor, not a global
    default.
 5. Keep full transformer scheduler integration and upstreaming deferred until
-   the model-level quality gate demonstrates a repeatable benefit.
+  the model-level quality gate demonstrates a repeatable benefit.
+
+The next gate has now been partially exercised. The model replay tool has an
+explicit `--cpu-only` control and reports logits/loss for the full FFN-down
+override. Full-model Vulkan replay on this host currently reaches a device-loss
+boundary, so CPU replay is the quality oracle while isolated ASTC Vulkan FFN
+decode remains the GPU correctness oracle. A first bounded `c + delta` sweep
+also exists, but gauge-only remains better on its initial fixture; do not make
+semantic correction the default until it wins on disjoint validation and
+holdout traces.

@@ -4314,3 +4314,23 @@ CPU-only replay control. GPU ASTC decode remains validated independently by
 the FFN adapter smoke. A future full-GPU logits gate requires either fixing
 the unrelated Vulkan graph/device-loss path or using a newer/known-good Vulkan
 device; it does not justify changing the ASTC driver contract.
+
+## One-hundred-eighty-second sweep: bounded scalar-anchored c+delta
+
+The latent smoke now exposes `--scalar-anchored-c-delta-sweep` for a small
+research-only candidate family. It keeps the exact scalar point at
+`(c=0, delta=0)` and tests a few bounded semantic corrections together with
+null-space gauge perturbations. On the 8x32 6x6 fixture, conflict-aware
+selection produced:
+
+| Selector | Holdout activation-relative MSE |
+| --- | ---: |
+| Scalar fallback | `2.5711081e-5` |
+| Gauge-only (previous control) | `2.0743577e-5` |
+| c+delta | `2.1010122e-5` |
+
+The c+delta family is therefore viable as a future extension, but it did not
+beat the smaller gauge-only family in this first bounded test. It remains
+offline and opt-in; no runtime metadata or driver contract changes are
+required. Larger cross-tensor tests should only be scheduled after the
+logits/perplexity harness has a stable evaluation set.
