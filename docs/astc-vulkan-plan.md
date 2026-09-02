@@ -2167,8 +2167,11 @@ Next steps are deliberately narrow:
    The bounded layer-0 pair is byte-identical after packing, has GPU/CPU MSE
    below `4e-16`, and improves holdout activation MSE from `0.14171192` to
    `0.10563760` at the selected prefix.
-2. Add 10x6 to the shared source/rate/quality table next to Q3, Q4, TQ2, and
-   TQ1 controls; keep model-facing results separate from activation MSE.
+2. [x] Add 10x6 and 8x8 to the shared source/rate/quality table next to Q3,
+   Q4, TQ2, and TQ1 controls; keep model-facing results separate from
+   activation MSE. The first matched matrix is bounded to `12x2040` on
+   `blk.0.ffn_down.weight`; TQ1/TQ2 are byte-identical on this crop and remain
+   a shared source control pending a second tensor/crop.
 3. Only if the artifact gate holds, evaluate `10x8` and `10x10` on small,
    aligned crops. Do not expand footprint support on model tensors merely to
    collect a lower nominal rate.

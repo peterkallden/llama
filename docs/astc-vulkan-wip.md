@@ -5927,3 +5927,38 @@ first establish that the richer objective improves validation-selected,
 model-facing quality, then combine it with PV-style updates. Both methods are
 offline encoder work; the emitted bytes and Vulkan sampler remain ordinary
 standard ASTC.
+
+## Two-hundred-fifty-eighth sweep: matched 10x6/8x8 source matrix
+
+The first matched low-rate matrix uses the same Pythia `blk.0.ffn_down.weight`
+crop (`12x2040`), the same calibration/validation/holdout traces, and the same
+scalar-anchored weight-grid gauge selector. The reported value is always the
+validation-selected prefix evaluated on untouched holdout data; it is not a
+model-level perplexity or logits result.
+
+| Source GGUF | 10x6, 2.13 b/w | 8x8, 2.00 b/w |
+| --- | ---: | ---: |
+| F16 | **0.11068418** | 0.16365725 |
+| Q4_K_M | 0.12219387 | 0.15247305 |
+| Q3_K_M | **0.10873205** | 0.15454371 |
+| TQ2_0 | 0.0076449959 | 0.072521724 |
+| TQ1_0 | 0.0076449959 | 0.072521724 |
+
+The 10x6 bridge remains the safer general low-rate point for the FP16/Q3/Q4
+sources. 8x8 is not rejected: it is a useful 2.00-b/w experimental profile,
+and it is especially promising when the source is already few-level. However,
+the large TQ improvement must not be over-interpreted. The host-side exported
+FP32 weights for the TQ1 and TQ2 12x2040 crops have the same SHA-256
+(`f47841f13efbb7a7eb1c5ebaa5891e740aa991171104544186a3f274f4a499e2`), even
+though GGUF metadata reports `tq1_0` and `tq2_0` and the files have different
+sizes. Thus these two rows are currently one dequantized source control, not
+independent evidence that TQ1 and TQ2 have identical model behaviour. A
+second tensor/crop is required before promoting either result.
+
+The paired artifact and replay contract is unchanged: scalar-anchored neutral
+payload is the baseline, validation prefix is materialized, and every payload
+is a legal standard ASTC block. PV-lite has **not** been enabled in this
+matrix. That is intentional: introducing a continuous P-step here would mix
+source quantization, candidate-space expansion, and selection objective. The
+next PV-lite gate must use a frozen payload pool on these exact crops and show
+an untouched-holdout improvement over the current validation-selected stream.
