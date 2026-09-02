@@ -1348,6 +1348,23 @@ The immediate five-sweep order is:
    path against the existing buffer path, without changing production
    `ggml-vulkan`.
 
+### Model replay gate update
+
+The `--cpu-only` replay path now supplies an explicit CPU device list, and a
+Vulkan-free PoC build provides a stable quality oracle. Full-layer SmolLM2
+replay with a seven-token prompt is working. On the independent holdout trace,
+6x6 scalar ASTC had loss delta `+8.2563765`, while the scalar-anchored gauge
+stream reduced it to `+4.8854536`. This is meaningful mechanism evidence but
+still a one-layer/short-corpus diagnostic; it is not yet a model-wide quality
+claim.
+
+The same full-layer run recorded scalar 4x4/5x5 deltas of `+7.9402708` and
+`+7.9460386`, and native controls for Q4, Q3, TQ1, and TQ2. The short-prompt
+loss/MSE disagreement keeps the larger corpus gate mandatory. The next step
+is to add a deterministic multi-prompt corpus contract, then rerun all
+formats and per-tensor c+delta/selector comparisons before any scheduler or
+upstream decision.
+
 ### GPU and selector follow-up
 
 The ASTC Vulkan path and the F32 buffer control both pass on the Intel UHD

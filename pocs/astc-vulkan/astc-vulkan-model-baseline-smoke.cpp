@@ -1,3 +1,4 @@
+#include "ggml-backend.h"
 #include "llama.h"
 
 #include <algorithm>
@@ -97,7 +98,17 @@ int main(int argc, char ** argv) {
 
     llama_backend_init();
     llama_model_params model_params = llama_model_default_params();
-    if (cpu_only) model_params.n_gpu_layers = 0;
+    ggml_backend_dev_t cpu_devices[2] = { nullptr, nullptr };
+    if (cpu_only) {
+        model_params.n_gpu_layers = 0;
+        cpu_devices[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+        if (cpu_devices[0] == nullptr) {
+            std::fprintf(stderr, "CPU backend is unavailable\n");
+            llama_backend_free();
+            return 2;
+        }
+        model_params.devices = cpu_devices;
+    }
     llama_model * reference_model = llama_model_load_from_file(reference_path.c_str(), model_params);
     llama_model * candidate_model = llama_model_load_from_file(candidate_path.c_str(), model_params);
     if (reference_model == nullptr || candidate_model == nullptr) {

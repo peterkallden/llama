@@ -4445,3 +4445,39 @@ reconfirms that c+delta remains opt-in, the legal candidate pool remains
 stable, and the local/coordinate/Hessian comparison is still covered by a
 reproducible contract while the larger logits gate is blocked at model
 replay.
+
+## One-hundred-eighty-ninth sweep: isolated CPU replay gate
+
+The replay tools now force a CPU-only model device list when `--cpu-only` is
+selected. A separate Vulkan-free build was used for the quality oracle so the
+existing Vulkan backend cannot be initialized implicitly. The full
+576x1536 SmolLM2 `blk.0.ffn_down` layer and a seven-token code prompt now
+replay successfully with stable logits/loss output.
+
+The corresponding reference loss is `4.7227918`. A full-layer 6x6 scalar
+ASTC override produced loss `12.979168` (`+8.2563765`), while the
+scalar-anchored gauge stream produced loss `9.6082455` (`+4.8854536`). Gauge
+steering therefore recovers a substantial part of the scalar override gap on
+this independent holdout trace, but it does not yet match FP16 and remains a
+single-layer, short-corpus diagnostic.
+
+## One-hundred-ninetieth sweep: full-layer footprint and native controls
+
+On the same full layer and seven-token holdout, scalar ASTC footprints gave:
+
+| Candidate | Relative logits MSE | Loss delta |
+| --- | ---: | ---: |
+| ASTC 4x4 scalar | `0.42505552` | `+7.9402708` |
+| ASTC 5x5 scalar | `0.42677281` | `+7.9460386` |
+| ASTC 6x6 scalar | `0.39284702` | `+8.2563765` |
+| ASTC 6x6 gauge-only | `1.3718424` | `+4.8854536` |
+| Native Q4_0 | `0.1126797` | `-1.0955242` |
+| Native Q3_K_M | `0.28669952` | `-0.59925606` |
+| Native TQ1_0 | `2.9311841` | `+10.385247` |
+| Native TQ2_0 | `2.9311841` | `+10.385247` |
+
+The loss and logits-MSE rankings diverge on this short prompt, so none of
+these numbers is a perplexity claim. They do establish a reproducible
+full-layer comparison contract and confirm that TQ1/TQ2 must remain explicit
+controls rather than assumed quality baselines. The post-fix ASTC contract
+regression suite passed `6/6`.
