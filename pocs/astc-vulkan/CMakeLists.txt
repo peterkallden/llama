@@ -388,6 +388,17 @@ if (ASTC_VULKAN_GLSLC)
             astc-vulkan-sidecar ggml-base)
         target_compile_features(astc-vulkan-ffn-e2e-smoke PRIVATE cxx_std_17)
         add_dependencies(astc-vulkan-ffn-e2e-smoke astc-vulkan-ffn-e2e-shader)
+
+        add_executable(astc-vulkan-sidecar-compare-smoke
+            astc-vulkan-sidecar-compare-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-sidecar-compare-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-sidecar-compare-smoke PRIVATE
+            astc-vulkan-sidecar ggml-base)
+        target_compile_features(astc-vulkan-sidecar-compare-smoke PRIVATE cxx_std_17)
+        add_dependencies(astc-vulkan-sidecar-compare-smoke astc-vulkan-ffn-e2e-shader)
     endif()
 endif()
 

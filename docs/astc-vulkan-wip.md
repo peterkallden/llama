@@ -4824,3 +4824,19 @@ The scheduler comparison gate now has all offline ingredients: FP16 source,
 Q4/TQ controls, scalar ASTC and gauge ASTC. The next work is to package this
 as an explicit opt-in comparison executable rather than wiring it into the
 production scheduler.
+
+## Two-hundred-twelfth sweep: opt-in sidecar comparison executable
+
+`astc-vulkan-sidecar-compare-smoke` now compares scalar and gauge ASTC
+payloads through the same sidecar instance path, with identical shader,
+tensor shape and activation trace. On the Pythia 32x8192 crop, evaluated on
+30 holdout samples, scalar measured activation-relative-MSE `0.026625491`
+and gauge `0.016833613`; GPU-vs-CPU MSE was `4.4908241e-14` and
+`2.8224076e-15`, respectively. The earlier selector result (`0.012050252`)
+used an 8-sample bounded holdout, so the two numbers are intentionally kept
+separate rather than presented as a regression.
+
+This closes the opt-in ASTC scalar/gauge runtime comparison. Q4/TQ/FP16
+remain the offline controls from the same tensor. Scheduler integration is
+still deferred until this executable is extended to a repeatable artifact
+manifest and a model-output comparison.

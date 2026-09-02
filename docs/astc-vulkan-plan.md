@@ -1542,3 +1542,10 @@ and validation-stopped gauge holdout `0.013314081`. The selected gauge stream
 replays through the Intel sidecar with GPU-vs-CPU MSE `2.4764415e-15` and the
 same activation error. Implement item 60 as an explicit opt-in comparison
 executable; keep scheduler integration and upstream changes deferred.
+
+The opt-in `astc-vulkan-sidecar-compare-smoke` is now implemented and has
+replayed scalar and gauge payloads on the same Pythia crop. With 30 holdout
+samples it reports scalar `0.026625491` versus gauge `0.016833613` activation
+relative MSE, while both GPU results match the CPU oracle below `5e-14` MSE.
+Extend this tool next with a manifest-driven artifact set and model-output
+comparison; do not wire it into the production scheduler yet.
