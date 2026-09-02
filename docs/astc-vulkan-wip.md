@@ -6072,3 +6072,11 @@ selector references both hash to
 `10996770e80c23f3f42e56a9bbc68ccb0664b172c3ea1b588e7c40128b7278ad`). This
 proves artifact self-containment for the PV-lite payload, but is not yet a
 Vulkan-device or model-level gate.
+
+The same exported payload was then sampled through the isolated Vulkan shader
+smoke on the available Intel device (`astc-validate.comp.spv`, 10x6,
+240x12). The sequential fetch completed successfully with a reported
+timestamp of about `5.08 us` for one dispatch. This establishes the complete
+bounded artifact path—exported bytes, CPU decode, and fixed-function Vulkan
+sampling—without changing production `ggml-vulkan`. It is still not a
+model-level throughput measurement.

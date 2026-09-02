@@ -2276,3 +2276,9 @@ Q3 was effectively unchanged), so 8x6 remains standard-gauge reference plus
 PV-lite experimental opt-in. The first PV-lite 10x6 artifact replay is now
 byte-identical on CPU; Vulkan replay and a second-tensor PV-lite gate remain
 open.
+
+The PV-lite 10x6 payload has now also passed isolated Intel Vulkan sampling
+from the exported artifact bytes. The remaining PV-lite gate is a second
+tensor with genuinely different source values plus a model-facing metric;
+driver integration and broader footprint promotion remain blocked on that
+evidence.
