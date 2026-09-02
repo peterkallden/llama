@@ -1810,3 +1810,11 @@ validation commit, while retaining the full conflict stream only for
 diagnostics. This closes the largest artifact-contract gap; the next check is
 to package and replay these prefix snapshots with manifests, then run the
 common rate--distortion and fixed-prompt model-output matrix.
+
+Validation-prefix artifact replay now passes the serialization and Vulkan
+contract on a bounded `8x256` Pythia tensor: packed-byte CPU decode is exact,
+and the Intel FFN e2e path matches CPU with MSE `1.2027e-16`. A mismatched
+`8x2048` weight file is rejected before device execution, confirming shape
+validation. The next gate is to generate these prefix artifacts for the full
+rate--distortion ladder and compare model outputs against a shared FP16
+reference.

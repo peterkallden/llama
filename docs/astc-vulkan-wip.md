@@ -5179,3 +5179,20 @@ three-argument `astcenc_context_alloc()` API: one context is created per worker
 and reused, while the unavailable parent-context sharing extension is not
 assumed. The isolated latent-smoke target builds successfully with the system
 headers.
+
+## Two-hundred-twenty-sixth sweep: validation-prefix artifact replay
+
+The validation-prefix payload was packed into a manifest artifact and decoded
+again from the packed bytes. The decoded stream matched the selector-produced
+validation reference exactly (`RMSE=0`, `max_abs=0`). The artifact was then
+replayed through the Intel Vulkan FFN sidecar using the same packed payload;
+the 8x6 `8x256` run reported `gpu-vs-cpu-mse=1.2027e-16` over four samples.
+
+The e2e tool also rejected an intentionally mismatched `8x2048` weight file
+for the `8x256` artifact before device execution. This confirms that artifact
+shape validation is active and that the successful result is not explained by
+silently truncating or reshaping the source tensor.
+
+The validation prefix is now a real, replayable stream. The remaining quality
+work is to generate the same prefix artifacts for the density ladder and run
+the common FP16-reference rate--distortion and model-output matrix.
