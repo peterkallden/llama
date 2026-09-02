@@ -55,12 +55,6 @@ private:
     uint32_t height_ = 0;
 };
 
-struct astc_vulkan_reconstruction {
-    float scale_l = 1.0f;
-    float scale_a = 0.0f;
-    float offset = 0.0f;
-};
-
 // Binds one validated manifest record to one uploaded sampled image. The
 // shader consumes reconstruction separately, keeping storage and math policy
 // independent and allowing L+A or scalar modes without changing the loader.

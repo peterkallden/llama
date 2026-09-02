@@ -222,11 +222,9 @@ bool astc_vulkan_tensor_session::upload(
         uint32_t queue_family, const astc_vulkan_tensor_record & record,
         const astc_vulkan_reconstruction & reconstruction,
         const std::vector<uint8_t> & payload, std::string & error) {
-    const uint64_t expected = astc_vulkan_image_bytes(record.footprint,
-                                                       record.width, record.height);
-    if (record.name.empty() || expected == 0 || record.byte_size != expected ||
-        payload.size() != record.byte_size) {
-        error = "ASTC Vulkan tensor session record/payload mismatch";
+    if (record.name.empty() || !astc_vulkan_validate_payload(
+            record, payload.data(), payload.size(), error)) {
+        if (error.empty()) error = "ASTC Vulkan tensor session record/payload mismatch";
         return false;
     }
     if (!texture_.upload(physical_device, device, queue, queue_family,

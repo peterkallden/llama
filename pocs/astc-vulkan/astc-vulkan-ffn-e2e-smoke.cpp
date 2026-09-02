@@ -2,6 +2,7 @@
 #include "astc-vulkan-ffn-adapter.h"
 #include "astc-vulkan-input.h"
 #include "astc-vulkan-resource.h"
+#include "astc-vulkan-dispatch.h"
 
 #include <vulkan/vulkan.h>
 
@@ -14,8 +15,6 @@
 #include <vector>
 
 namespace {
-
-struct push_constants { uint32_t width, height, sample_index; float scale_l, scale_a, offset; };
 
 template<typename T>
 std::vector<T> read_binary(const std::string & path) {
@@ -211,7 +210,8 @@ int main(int argc, char ** argv) {
         vkUpdateDescriptorSets(device, 3, writes, 0, nullptr);
         const VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, spirv.size() * sizeof(uint32_t), spirv.data()};
         success = success && vkCreateShaderModule(device, &module_info, nullptr, &shader_module) == VK_SUCCESS;
-        const VkPushConstantRange push_range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push_constants)};
+        const VkPushConstantRange push_range{
+            VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(astc_vulkan_matvec_push_constants)};
         const VkPipelineLayoutCreateInfo pipeline_layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &descriptor_layout, 1, &push_range};
         success = success && vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout) == VK_SUCCESS;
         const VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, shader_module, "main", nullptr};
@@ -228,8 +228,9 @@ int main(int argc, char ** argv) {
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
         for (uint32_t sample = 0; success && sample < trace.samples; ++sample) {
-            const push_constants constants{width, height, sample, reconstruction_scale,
-                                           reconstruction_scale_a, reconstruction_offset};
+            const astc_vulkan_matvec_push_constants constants{
+                width, height, sample, reconstruction_scale,
+                reconstruction_scale_a, reconstruction_offset};
             vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
             vkCmdDispatch(command_buffer, height, 1, 1);
         }

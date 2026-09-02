@@ -23,7 +23,9 @@ target_include_directories(test-astc-vulkan-tensor-contract PRIVATE
 target_compile_features(test-astc-vulkan-tensor-contract PRIVATE cxx_std_17)
 
 add_library(astc-vulkan-driver STATIC
-    astc-vulkan-driver.cpp)
+    astc-vulkan-driver.cpp
+    astc-vulkan-format.cpp
+    astc-vulkan-manifest.cpp)
 target_include_directories(astc-vulkan-driver PUBLIC
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(astc-vulkan-driver PUBLIC cxx_std_17)

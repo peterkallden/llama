@@ -26,6 +26,7 @@ bool astc_vulkan_ffn_adapter::prepare(
     }
     binding.status = astc_vulkan_binding_status::kReady;
     binding.record = *record;
+    binding.reconstruction = {record->scale_l, record->scale_a, record->offset, 0.0f};
     error.clear();
     return true;
 }

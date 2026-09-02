@@ -1421,3 +1421,39 @@ quality oracle and fallback contracts. The next implementation phase is:
    quality.
 5. [ ] Only after the isolated driver matrix is green, evaluate scheduler
    integration and an upstream-facing API proposal.
+
+### Driver expansion checkpoint
+
+The first two driver-expansion steps are complete. Format arithmetic is now a
+standalone module, manifest version 2 records representation and affine
+reconstruction metadata, and payloads can be checked with an optional FNV-1a
+integrity hash. The upload/session path rejects size or hash mismatches before
+allocation and the FFN adapter propagates manifest reconstruction parameters.
+
+The capability gate has been exercised on the local devices: Intel UHD 620
+supports sampled ASTC 4x4/5x5/6x6, NVIDIA GeForce 920MX and llvmpipe do not.
+The resource smoke passes on Intel, while the existing fallback behavior is
+preserved for unsupported devices. The production `ggml-vulkan` backend is
+unchanged.
+
+Before writing the dispatch abstraction, move the plain reconstruction data
+structure next to the manifest contract and define its stable shader layout.
+Then implement one FFN dispatch with explicit `texelFetch`/nearest semantics,
+storage-buffer barriers and a CPU-oracle tolerance. Keep atlas, bindless
+descriptors, multiple pages, and scheduler integration deferred until this
+single-tensor dispatch is byte/metric reproducible.
+
+### First dispatch checkpoint
+
+The reconstruction data and matvec push-constant layout are now shared by the
+manifest/resource contract and `astc-ffn-matvec.comp`; the C++ layout is
+compile-time checked at 24 bytes. A full layer-0 GPU dispatch on Intel UHD 620
+passes the CPU-oracle comparison for both ASTC 4x4 and 6x6 (GPU-vs-CPU MSE
+below `3e-13`). This validates the isolated sampled-image path, but does not
+yet justify scheduler integration or a portable performance claim.
+
+Next, add explicit fallback/error-path tests to the sidecar matrix, then wrap
+the upload plus dispatch lifetime in a small RAII session. Keep the existing
+FFN smoke as an oracle-facing executable during this transition. Atlas/pages,
+descriptor indexing and integration with production `ggml-vulkan` remain
+later gates.

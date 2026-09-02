@@ -1,7 +1,9 @@
 #include "astc-vulkan-driver.h"
 
 #include <cassert>
+#include <array>
 #include <cstdio>
+#include <cmath>
 #include <string>
 
 int main() {
@@ -10,9 +12,12 @@ int main() {
 
     astc_vulkan_manifest expected;
     expected.model_fingerprint = "smollm2-test";
+    const std::array<uint8_t, 4> payload = {1, 2, 3, 4};
     expected.tensors = {
         {"blk.0.ffn_down.weight", 1536, 32, astc_vulkan_footprint::k6x6, 0,
-         astc_vulkan_image_bytes(astc_vulkan_footprint::k6x6, 1536, 32)},
+         astc_vulkan_image_bytes(astc_vulkan_footprint::k6x6, 1536, 32),
+         astc_vulkan_representation::kGaugeLumaAlpha, 1.0f, 0.25f, -0.5f,
+         astc_vulkan_payload_hash64(payload.data(), payload.size())},
         {"blk.0.attn_q.weight", 576, 32, astc_vulkan_footprint::k4x4,
          astc_vulkan_image_bytes(astc_vulkan_footprint::k6x6, 1536, 32),
          astc_vulkan_image_bytes(astc_vulkan_footprint::k4x4, 576, 32)},
@@ -27,11 +32,24 @@ int main() {
     assert(actual.tensors.size() == expected.tensors.size());
     assert(actual.tensors[0].name == expected.tensors[0].name);
     assert(actual.tensors[1].byte_offset == expected.tensors[1].byte_offset);
+    assert(actual.tensors[0].representation == astc_vulkan_representation::kGaugeLumaAlpha);
+    assert(actual.tensors[0].scale_a == 0.25f);
+    assert(actual.tensors[0].payload_hash64 == expected.tensors[0].payload_hash64);
+    assert(astc_vulkan_validate_payload(actual.tensors[0], payload.data(), payload.size(), error));
+    auto bad_payload = payload;
+    bad_payload[0] ^= 1;
+    assert(!astc_vulkan_validate_payload(actual.tensors[0], bad_payload.data(), bad_payload.size(), error));
     assert(astc_vulkan_find_tensor(actual, "blk.0.attn_q.weight") != nullptr);
     assert(astc_vulkan_find_tensor(actual, "missing") == nullptr);
 
     astc_vulkan_manifest invalid = expected;
     invalid.tensors[1].byte_offset = 1;
+    assert(!astc_vulkan_validate_manifest(invalid, error));
+    invalid = expected;
+    invalid.tensors[0].scale_l = NAN;
+    assert(!astc_vulkan_validate_manifest(invalid, error));
+    invalid = expected;
+    invalid.tensors[0].representation = static_cast<astc_vulkan_representation>(255);
     assert(!astc_vulkan_validate_manifest(invalid, error));
     std::vector<astc_vulkan_atlas_placement> placements;
     assert(astc_vulkan_pack_atlas({4096, 4096}, expected.tensors, placements, error));

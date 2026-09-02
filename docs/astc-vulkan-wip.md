@@ -4546,3 +4546,80 @@ families, c+delta has scalar fallback and a cross-tensor control, and the
 fixed-pool local/coordinate/Block-LDLQ/Hessian/conflict comparison is
 recorded. A larger multi-prompt corpus remains a future model-quality gate;
 it must not be silently substituted by the short activation traces.
+
+## One-hundred-ninety-fifth sweep: manifest and format module refactor
+
+The driver sidecar now has a one-way module boundary for the on-disk contract.
+`astc-vulkan-format.*` owns footprint dimensions and block-byte arithmetic,
+`astc-vulkan-manifest.*` owns tensor records, serialization, validation and
+payload hashing, and `astc-vulkan-driver.*` retains deterministic atlas
+placement. The public driver include remains source-compatible for the PoC,
+but the manifest implementation no longer depends on the driver module.
+
+Manifest version 2 records the offline representation (`scalar`, gauge
+`L+A`, or opt-in `c+delta`), affine reconstruction parameters, and an optional
+dependency-free FNV-1a payload hash. Version 1 remains readable with scalar
+defaults, while new manifests use version 2. The hash is an integrity check,
+not a cryptographic identity; the model fingerprint remains the packaging
+identity.
+
+## One-hundred-ninety-sixth sweep: upload metadata and fallback gate
+
+The tensor session now validates record dimensions, expected ASTC block bytes,
+and the optional payload hash before creating a Vulkan image. The FFN adapter
+copies the manifest's reconstruction parameters into the binding, making the
+shader contract derive from the same metadata as the offline export. Invalid
+payloads are rejected before allocation and unsupported devices remain on the
+normal fallback path.
+
+The focused manifest/adapter tests pass `2/2`. The real capability probe sees
+sampled `4x4`, `5x5`, and `6x6` on the Intel UHD 620, no sampled ASTC on the
+NVIDIA GeForce 920MX, and no sampled ASTC on llvmpipe. The Vulkan image-resource
+smoke passes on the Intel device. No production `ggml-vulkan` file was changed.
+
+## Refactor reflection before dispatch
+
+The split is intentionally small: format arithmetic has no Vulkan dependency,
+manifest validation has no Vulkan handle dependency, and upload/resource code
+does not need to know how candidates were generated. The remaining coupling is
+the reconstruction struct in the resource module; the next dispatch sweep
+should move that plain-data type into the manifest/contract layer so a shader
+push-constant layout cannot accidentally diverge from manifest metadata.
+
+The next implementation step is therefore a minimal dispatch contract, not a
+full scheduler integration: one descriptor set, one sampled ASTC image, input
+and output storage buffers, explicit push constants, and a CPU-oracle comparison.
+
+## One-hundred-ninety-seventh sweep: dispatch contract extraction
+
+The ASTC FFN smoke now includes the shared `astc-vulkan-dispatch.h` contract.
+It defines the six scalar-aligned push-constant fields used by
+`shaders/astc-ffn-matvec.comp`, enforces the 24-byte layout at compile time,
+and names the three descriptor bindings. The smoke no longer carries a
+duplicate local push-constant struct. This keeps shader layout, CPU setup and
+future reusable dispatch code on one contract.
+
+## One-hundred-ninety-eighth sweep: first GPU end-to-end dispatch gate
+
+The existing sidecar FFN dispatch was run against the full SmolLM2 layer-0
+scalar payload on the Intel UHD 620. With three activation samples, ASTC 6x6
+reported GPU-vs-CPU MSE `2.6163296e-13`; ASTC 4x4 reported `2.9677666e-13`.
+Both are within the expected floating-point tolerance and prove that the
+sampled ASTC image, descriptor set, push constants, barriers and matvec shader
+agree with the CPU reconstruction contract.
+
+The corresponding ASTC-vs-source activation-relative MSE was `0.030951437`
+for 6x6 and `0.0006232882` for 4x4. These are codec diagnostics for the
+exported layer, not model-wide quality claims. The NVIDIA device remains a
+capability-gated fallback target, and no production `ggml-vulkan` code was
+changed.
+
+## Refactor reflection after the first dispatch
+
+The module boundaries are now one-directional and the first dispatch uses a
+single source of truth for reconstruction data. The remaining large block of
+smoke-local Vulkan setup is intentionally not generalized yet: extracting it
+before the single-tensor contract is exercised on fallback and error paths
+would risk hiding synchronization assumptions. The next cleanup should be a
+small RAII dispatch/session object only after the Intel ASTC and NVIDIA
+fallback matrix is green.
