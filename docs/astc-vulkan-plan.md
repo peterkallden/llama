@@ -1492,3 +1492,27 @@ driver/contract tests pass. The sidecar now has a stable single-tensor driver
 boundary for both 4x4 and 6x6. Proceed next with the contained RAII
 dispatch/session extraction; keep production `ggml-vulkan`, atlas policy and
 scheduler integration out of that change.
+
+### Driver expansion implementation checkpoint
+
+55. [x] Extract the sidecar compute lifetime into a reusable RAII
+    `astc_vulkan_matvec_session`. Keep resource ownership, descriptor binding,
+    push constants, command recording, synchronization, and host readback in
+    one implementation; do not modify production `ggml-vulkan` code.
+56. [x] Route the FFN E2E smoke through the shared session and preserve the
+    scalar GPU-output contract. Repack activation traces with a wider source
+    stride into the session's contiguous input buffer.
+57. [x] Run the session on ASTC 4x4 and 6x6 with the Intel render device and
+    compare GPU output against the CPU oracle. Treat no-ASTC devices as a
+    capability-gated skip and keep fixture quality metrics separate from the
+    dispatch correctness gate.
+58. Add host-only session error-path tests for invalid handles, dimensions,
+    missing shader words, and a tensor whose image does not match the declared
+    shape. Add a render-device repeat-run test once the test harness can obtain
+    a sampled ASTC device without privileged setup.
+59. Add a thin sidecar driver facade that owns instance/device/queue selection
+    and composes manifest loading, tensor upload and matvec sessions. Keep it
+    opt-in and parallel to llama's existing Vulkan backend.
+60. Add a scheduler-facing adapter experiment behind an explicit build option;
+    compare scalar ASTC, gauge-only ASTC, Q4/TQ controls and FP16 using the
+    same activation traces and model outputs before any upstream proposal.

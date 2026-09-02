@@ -54,12 +54,27 @@ if (Vulkan_FOUND)
         astc-vulkan-resource astc-vulkan-driver)
     target_compile_features(astc-vulkan-ffn-adapter PUBLIC cxx_std_17)
 
+    add_library(astc-vulkan-dispatch STATIC
+        astc-vulkan-dispatch.cpp)
+    target_include_directories(astc-vulkan-dispatch PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-dispatch PUBLIC
+        astc-vulkan-resource astc-vulkan-driver Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-dispatch PUBLIC cxx_std_17)
+
     add_executable(test-astc-vulkan-ffn-adapter
         tests/test-astc-vulkan-ffn-adapter.cpp)
     target_link_libraries(test-astc-vulkan-ffn-adapter PRIVATE astc-vulkan-ffn-adapter)
     target_include_directories(test-astc-vulkan-ffn-adapter PRIVATE
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_compile_features(test-astc-vulkan-ffn-adapter PRIVATE cxx_std_17)
+
+    add_executable(test-astc-vulkan-dispatch
+        tests/test-astc-vulkan-dispatch.cpp)
+    target_link_libraries(test-astc-vulkan-dispatch PRIVATE astc-vulkan-dispatch)
+    target_include_directories(test-astc-vulkan-dispatch PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_compile_features(test-astc-vulkan-dispatch PRIVATE cxx_std_17)
 
     add_executable(astc-vulkan-capability-probe
         astc-vulkan-capability-probe.cpp)
@@ -355,7 +370,7 @@ if (ASTC_VULKAN_GLSLC)
             ${ASTC_VULKAN_POC_INCLUDE_DIR}
             ${CMAKE_SOURCE_DIR}/ggml/include)
         target_link_libraries(astc-vulkan-ffn-e2e-smoke PRIVATE
-            astc-vulkan-ffn-adapter ggml-base Vulkan::Vulkan)
+            astc-vulkan-ffn-adapter astc-vulkan-dispatch ggml-base Vulkan::Vulkan)
         target_compile_features(astc-vulkan-ffn-e2e-smoke PRIVATE cxx_std_17)
         add_dependencies(astc-vulkan-ffn-e2e-smoke astc-vulkan-ffn-e2e-shader)
     endif()
@@ -396,6 +411,12 @@ if (BUILD_TESTING)
         add_test(NAME test-astc-vulkan-ffn-adapter
             COMMAND test-astc-vulkan-ffn-adapter)
         set_property(TEST test-astc-vulkan-ffn-adapter PROPERTY LABELS astc)
+    endif()
+
+    if (TARGET test-astc-vulkan-dispatch)
+        add_test(NAME test-astc-vulkan-dispatch
+            COMMAND test-astc-vulkan-dispatch)
+        set_property(TEST test-astc-vulkan-dispatch PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-astcenc-smoke)

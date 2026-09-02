@@ -49,24 +49,6 @@ bool read_decoder_metadata(const std::string & path, float & scale_l, float & sc
 
 std::vector<uint32_t> read_spirv(const std::string & path) { return read_binary<uint32_t>(path); }
 
-bool create_buffer(VkPhysicalDevice physical_device, VkDevice device, VkDeviceSize size,
-                   VkBufferUsageFlags usage, VkBuffer & buffer, VkDeviceMemory & memory) {
-    const VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, size, usage,
-                                  VK_SHARING_MODE_EXCLUSIVE, 0, nullptr};
-    if (vkCreateBuffer(device, &info, nullptr, &buffer) != VK_SUCCESS) return false;
-    VkMemoryRequirements requirements{};
-    vkGetBufferMemoryRequirements(device, buffer, &requirements);
-    const uint32_t type = astc_vulkan_find_memory_type(
-        physical_device, requirements.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (type == UINT32_MAX) return false;
-    const VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr,
-                                          requirements.size, type};
-    if (vkAllocateMemory(device, &allocation, nullptr, &memory) != VK_SUCCESS ||
-        vkBindBufferMemory(device, buffer, memory, 0) != VK_SUCCESS) return false;
-    return true;
-}
-
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -174,89 +156,18 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "%s\n", error.c_str()); vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr); return 1;
     }
     const astc_vulkan_tensor_session & tensor = adapter.session();
-    VkBuffer activation_buffer = VK_NULL_HANDLE, output_buffer = VK_NULL_HANDLE;
-    VkDeviceMemory activation_memory = VK_NULL_HANDLE, output_memory = VK_NULL_HANDLE;
-    const VkDeviceSize activation_bytes = static_cast<VkDeviceSize>(trace.samples) * width * sizeof(float);
-    const VkDeviceSize output_bytes = static_cast<VkDeviceSize>(trace.samples) * height * sizeof(float);
-    bool success = create_buffer(physical_device, device, activation_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                 activation_buffer, activation_memory) &&
-                   create_buffer(physical_device, device, output_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                 output_buffer, output_memory);
-    if (success) {
-        void * mapped = nullptr;
-        success = vkMapMemory(device, activation_memory, 0, activation_bytes, 0, &mapped) == VK_SUCCESS;
-        if (success) { std::memcpy(mapped, trace.values.data(), static_cast<size_t>(activation_bytes)); vkUnmapMemory(device, activation_memory); }
+    (void) tensor;
+    std::vector<float> dispatch_activations(static_cast<size_t>(trace.samples) * width);
+    for (uint32_t sample = 0; sample < trace.samples; ++sample) {
+        std::copy_n(trace.values.begin() + static_cast<size_t>(sample) * trace.columns,
+                    width, dispatch_activations.begin() + static_cast<size_t>(sample) * width);
     }
-    VkDescriptorSetLayout descriptor_layout = VK_NULL_HANDLE; VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
-    VkDescriptorSet descriptor_set = VK_NULL_HANDLE; VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
-    VkShaderModule shader_module = VK_NULL_HANDLE; VkPipeline pipeline = VK_NULL_HANDLE;
-    VkCommandPool command_pool = VK_NULL_HANDLE; VkCommandBuffer command_buffer = VK_NULL_HANDLE; VkFence fence = VK_NULL_HANDLE;
-    if (success) {
-        const VkDescriptorSetLayoutBinding bindings[3] = {
-            {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-            {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-            {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-        };
-        const VkDescriptorSetLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 3, bindings};
-        success = vkCreateDescriptorSetLayout(device, &layout_info, nullptr, &descriptor_layout) == VK_SUCCESS;
-        const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2}};
-        const VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 2, sizes};
-        success = success && vkCreateDescriptorPool(device, &pool_info, nullptr, &descriptor_pool) == VK_SUCCESS;
-        const VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, descriptor_pool, 1, &descriptor_layout};
-        success = success && vkAllocateDescriptorSets(device, &allocation, &descriptor_set) == VK_SUCCESS;
-        const VkDescriptorImageInfo image_info{tensor.texture().sampler(), tensor.texture().view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        const VkDescriptorBufferInfo activation_info{activation_buffer, 0, activation_bytes};
-        const VkDescriptorBufferInfo output_info{output_buffer, 0, output_bytes};
-        const VkWriteDescriptorSet writes[3] = {
-            {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &image_info, nullptr, nullptr},
-            {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &activation_info, nullptr},
-            {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &output_info, nullptr},
-        };
-        vkUpdateDescriptorSets(device, 3, writes, 0, nullptr);
-        const VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, spirv.size() * sizeof(uint32_t), spirv.data()};
-        success = success && vkCreateShaderModule(device, &module_info, nullptr, &shader_module) == VK_SUCCESS;
-        const VkPushConstantRange push_range{
-            VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(astc_vulkan_matvec_push_constants)};
-        const VkPipelineLayoutCreateInfo pipeline_layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &descriptor_layout, 1, &push_range};
-        success = success && vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout) == VK_SUCCESS;
-        const VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, shader_module, "main", nullptr};
-        const VkComputePipelineCreateInfo compute{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, nullptr, 0, stage, pipeline_layout, VK_NULL_HANDLE, -1};
-        success = success && vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &compute, nullptr, &pipeline) == VK_SUCCESS;
-    }
-    if (success) {
-        const VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queue_family};
-        success = vkCreateCommandPool(device, &pool, nullptr, &command_pool) == VK_SUCCESS;
-        const VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, command_pool, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
-        success = success && vkAllocateCommandBuffers(device, &allocation, &command_buffer) == VK_SUCCESS;
-        const VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr};
-        success = success && vkBeginCommandBuffer(command_buffer, &begin) == VK_SUCCESS;
-        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-        vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
-        for (uint32_t sample = 0; success && sample < trace.samples; ++sample) {
-            const astc_vulkan_matvec_push_constants constants{
-                width, height, sample, reconstruction_scale,
-                reconstruction_scale_a, reconstruction_offset};
-            vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
-            vkCmdDispatch(command_buffer, height, 1, 1);
-        }
-        const VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT,
-            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, output_buffer, 0, output_bytes};
-        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
-        success = success && vkEndCommandBuffer(command_buffer) == VK_SUCCESS;
-        const VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, 0};
-        success = success && vkCreateFence(device, &fence_info, nullptr, &fence) == VK_SUCCESS;
-        const VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr, 1, &command_buffer, 0, nullptr};
-        success = success && vkQueueSubmit(queue, 1, &submit, fence) == VK_SUCCESS && vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
-    }
-    std::vector<float> actual(static_cast<size_t>(trace.samples) * height);
-    if (success) {
-        void * mapped = nullptr;
-        success = vkMapMemory(device, output_memory, 0, output_bytes, 0, &mapped) == VK_SUCCESS;
-        if (success) {
-            for (size_t i = 0; i < actual.size(); ++i) actual[i] = static_cast<float *>(mapped)[i];
-            vkUnmapMemory(device, output_memory);
-        }
-    }
+    astc_vulkan_matvec_session dispatch;
+    std::vector<float> actual;
+    bool success = dispatch.init(physical_device, device, queue, queue_family, tensor,
+                                 spirv, width, height, trace.samples, error) &&
+                   dispatch.run(dispatch_activations, binding.reconstruction, actual, error);
+    if (!success) std::fprintf(stderr, "%s\n", error.c_str());
     double astc_error = 0.0, source_error = 0.0, source_energy = 0.0;
     double reference_error = 0.0, reference_energy = 0.0;
     for (uint32_t sample = 0; success && sample < trace.samples; ++sample) for (uint32_t row = 0; row < height; ++row) {
@@ -289,13 +200,8 @@ int main(int argc, char ** argv) {
                              trace.samples, height, width, astc_error / (trace.samples * height),
                              source_error / std::max(source_energy, 1e-12),
                              reference_metric.c_str());
-    if (device != VK_NULL_HANDLE) vkDeviceWaitIdle(device);
+    dispatch.reset();
     adapter.reset();
-    if (fence) vkDestroyFence(device, fence, nullptr); if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
-    if (pipeline) vkDestroyPipeline(device, pipeline, nullptr); if (pipeline_layout) vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
-    if (shader_module) vkDestroyShaderModule(device, shader_module, nullptr); if (descriptor_pool) vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
-    if (descriptor_layout) vkDestroyDescriptorSetLayout(device, descriptor_layout, nullptr); if (output_memory) vkFreeMemory(device, output_memory, nullptr);
-    if (output_buffer) vkDestroyBuffer(device, output_buffer, nullptr); if (activation_memory) vkFreeMemory(device, activation_memory, nullptr);
-    if (activation_buffer) vkDestroyBuffer(device, activation_buffer, nullptr); vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr);
+    vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr);
     return success ? 0 : 1;
 }

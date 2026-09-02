@@ -4691,3 +4691,43 @@ sidecar boundary: manifest v2, capability gating, upload barriers, metadata,
 hash checking, and both planned ASTC footprints are covered. The next change
 should be a contained RAII dispatch/session extraction, with the existing E2E
 smoke kept as a reference until output and fallback behavior are identical.
+
+## Two-hundred-fifth sweep: reusable RAII dispatch session
+
+The sidecar now owns the Vulkan matvec lifetime in
+`astc_vulkan_matvec_session`. The session validates the tensor image and
+shader contract, allocates host-visible activation/output storage with a
+coherent-memory fast path and non-coherent flush support, creates the
+descriptor set and compute pipeline once, and exposes a repeatable `run()`
+operation. Destruction waits for the device and releases resources in reverse
+dependency order. This keeps scheduler integration out of production
+`ggml-vulkan` while providing the same ownership model that a future adapter
+can use.
+
+## Two-hundred-sixth sweep: E2E smoke uses the shared session
+
+The FFN end-to-end executable no longer duplicates buffer, descriptor,
+pipeline, command-buffer, fence, or cleanup code. It repacks the trace's
+possibly wider row stride into the session's contiguous activation contract,
+runs the shared session, and compares scalar GPU output with the CPU oracle.
+On the render-enabled Intel ASTC device, 4x4 and 6x6 both completed with
+GPU-vs-CPU MSE in the `1e-14` range. Using each payload's own affine defaults,
+the fixture quality diagnostics were `0.0038904295` for 4x4 and `0.068094795`
+for 6x6. The earlier 6x6 run with unrelated gauge metadata was not treated
+as a quality result.
+
+The executable returns the Vulkan skip code when no device exposes sampled
+ASTC; this is expected fallback behavior, not a dispatch failure. The
+focused host contract suite remains green (`10/10`, with device tests skipped
+in the isolated environment), and the escalated Intel resource/device smokes
+pass.
+
+## Refactor reflection after RAII extraction
+
+The dispatch boundary is now small and one-directional: manifest metadata
+feeds the adapter, the adapter owns the uploaded tensor session, and the
+dispatch session consumes only a tensor view, shader words, activations and
+reconstruction metadata. The shader still writes one scalar F32 per output,
+and no production Vulkan source was modified. The next review gate is to add
+explicit session error-path tests and then introduce a minimal sidecar driver
+facade; only after that should llama scheduler plumbing be considered.
