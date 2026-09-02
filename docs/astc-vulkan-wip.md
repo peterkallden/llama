@@ -6080,3 +6080,22 @@ timestamp of about `5.08 us` for one dispatch. This establishes the complete
 bounded artifact path—exported bytes, CPU decode, and fixed-function Vulkan
 sampling—without changing production `ggml-vulkan`. It is still not a
 model-level throughput measurement.
+
+## Two-hundred-sixty-second sweep: low-rate PV policy
+
+The bounded results support making PV-style selection a requirement of the
+*low-rate neural encoder profile*, while keeping it out of the standard ASTC
+profile. From 10x6 (`2.13 b/w`) and 8x8 (`2.00 b/w`) downward, ordinary image
+ranking is no longer a sufficient research contract: the encoder must perform
+a representation-aware P/V step (currently the conservative PV-lite
+coefficient grid plus exact discrete selector). The neutral scalar-anchored
+payload remains a mandatory member of that pool, so low-rate encoding always
+has a safe scalar-equivalent candidate.
+
+This is an encoder policy, not a GPU requirement. Runtime still receives only
+ordinary legal ASTC blocks and uses the fixed-function Vulkan sampler; no PV
+state or optimizer is shipped to the device. `standard` remains the
+reproducibility baseline, `low-rate-neural` requires PV-lite/adaptive
+selection, and 8x6 stays standard-gauge by default because its bounded PV
+gain was not repeatable. Promotion of `low-rate-neural` beyond research use
+still requires a second-tensor and model-facing holdout gate.

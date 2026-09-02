@@ -2266,6 +2266,15 @@ configuration, allow `medium` for exploratory sweeps after cross-tensor
 confirmation, and use `fast` only for candidate-space screening. Do not mix a
 preset change with the first PV-lite quality claim.
 
+Policy decision: PV-style optimization is mandatory for the experimental
+`low-rate-neural` encoder profile covering 10x6, 8x8, and lower-rate footprints
+(10x8, 10x10, and beyond). It is not mandatory for the standard reference
+profile or for runtime Vulkan code. The low-rate profile must retain the
+scalar/gauge-neutral payload as an exact fallback and must fail the artifact
+gate rather than silently exporting a standard-only stream. 8x6 remains
+standard-gauge by default with PV-lite available for research because its
+bounded PV result was inconclusive.
+
 The bounded layer-1 confirmation is complete: medium was faster than thorough
 (`0.36 s` vs `0.45 s`) and selected a better holdout prefix in that run, but
 the result remains exploratory because the preset also changes the neutral
