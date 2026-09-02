@@ -4481,3 +4481,17 @@ these numbers is a perplexity claim. They do establish a reproducible
 full-layer comparison contract and confirm that TQ1/TQ2 must remain explicit
 controls rather than assumed quality baselines. The post-fix ASTC contract
 regression suite passed `6/6`.
+
+## One-hundred-ninety-first sweep: full-layer c+delta gate
+
+The scalar-anchored c+delta family was run over the complete 576x1536
+SmolLM2 FFN-down matrix with the same 11-sample calibration trace and
+independent 17-sample holdout replay. Validation selected an early prefix
+(`12` commits). The resulting CPU-only model replay measured loss delta
+`+7.0543591`, improving the 6x6 scalar control (`+8.2563765`) but remaining
+behind gauge-only (`+4.8854536`).
+
+This confirms the intended role: c+delta is a viable opt-in extension with an
+exact scalar fallback, while the null-space gauge family remains the leading
+ASTC representation on this tensor. No runtime metadata, driver contract, or
+default selector was changed.

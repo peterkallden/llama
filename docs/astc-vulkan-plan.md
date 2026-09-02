@@ -1379,3 +1379,11 @@ These remain offline/opt-in controls. The next blocking item is still a
 genuinely CPU-only, multi-prompt logits harness; only after it is stable may
 the format and per-tensor selector results be promoted to a model-level
 comparison.
+
+The full-layer scalar-anchored c+delta gate is now measured. It reduces the
+6x6 scalar replay loss delta from `+8.2563765` to `+7.0543591`, but gauge-only
+remains better at `+4.8854536`; validation also selects an early c+delta
+prefix. Keep c+delta as an opt-in per-tensor candidate family with scalar
+fallback, not as the default representation. The next required experiment is
+the larger multi-prompt corpus followed by the fixed-pool three-way
+local/coordinate/Hessian comparison.
