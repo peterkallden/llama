@@ -1478,7 +1478,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               encoder_search_mode encoder_search = encoder_search_mode::standard,
                               uint32_t neural_candidate_limit = 16,
                               bool weight_grid_gauge = false,
-                              uint32_t source_levels = 0) {
+                              uint32_t source_levels = 0,
+                              bool pv_lite_grid = false) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
@@ -1526,18 +1527,33 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         float gauge;
         gauge_basis basis = gauge_basis::constant;
     };
+    // PV-lite v1 is deliberately a fixed coefficient grid, not a claim of a
+    // complete alternating optimizer. It supplies a small P-step candidate
+    // family while the existing exact ASTC encode/decode and V-step selector
+    // remain unchanged. The neutral scalar-anchored candidate is mandatory.
     const std::vector<gauge_factor> factors = scalar_anchored_c_delta ?
         std::vector<gauge_factor>{
             {0.0f, 0.0f}, {0.0f, -0.5f}, {0.0f, 0.5f},
             {-0.25f, 0.0f}, {0.25f, 0.0f},
             {-0.25f, 0.25f}, {-0.25f, -0.25f}, {0.25f, 0.25f},
         } : (scalar_anchored_gauge ?
-        (weight_grid_gauge ? std::vector<gauge_factor>{
+        (weight_grid_gauge ? (pv_lite_grid ? std::vector<gauge_factor>{
+            {0.0f, 0.0f, gauge_basis::constant},
+            {0.0f, -0.25f, gauge_basis::x_ramp}, {0.0f, 0.25f, gauge_basis::x_ramp},
+            {0.0f, -0.50f, gauge_basis::x_ramp}, {0.0f, 0.50f, gauge_basis::x_ramp},
+            {0.0f, -0.75f, gauge_basis::x_ramp}, {0.0f, 0.75f, gauge_basis::x_ramp},
+            {0.0f, -0.25f, gauge_basis::y_ramp}, {0.0f, 0.25f, gauge_basis::y_ramp},
+            {0.0f, -0.50f, gauge_basis::y_ramp}, {0.0f, 0.50f, gauge_basis::y_ramp},
+            {0.0f, -0.75f, gauge_basis::y_ramp}, {0.0f, 0.75f, gauge_basis::y_ramp},
+            {0.0f, -0.25f, gauge_basis::saddle}, {0.0f, 0.25f, gauge_basis::saddle},
+            {0.0f, -0.50f, gauge_basis::saddle}, {0.0f, 0.50f, gauge_basis::saddle},
+            {0.0f, -0.75f, gauge_basis::saddle}, {0.0f, 0.75f, gauge_basis::saddle},
+        } : std::vector<gauge_factor>{
             {0.0f, 0.0f, gauge_basis::constant},
             {0.0f, -0.5f, gauge_basis::x_ramp}, {0.0f, 0.5f, gauge_basis::x_ramp},
             {0.0f, -0.5f, gauge_basis::y_ramp}, {0.0f, 0.5f, gauge_basis::y_ramp},
             {0.0f, -0.5f, gauge_basis::saddle}, {0.0f, 0.5f, gauge_basis::saddle},
-        } : std::vector<gauge_factor>{
+        }) : std::vector<gauge_factor>{
             {0.0f, 0.0f}, {0.0f, -0.25f}, {0.0f, 0.25f},
             {0.0f, -0.5f}, {0.0f, 0.5f}, {0.0f, -0.75f}, {0.0f, 0.75f},
         }) : std::vector<gauge_factor>{
@@ -2206,7 +2222,9 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     "conflict-calibration=%.8g conflict-holdout=%.8g validation-best-commit=%u "
                     "validation-best=%.8g validation-stopped-holdout=%.8g\n",
                     format.name, scalar_anchored_c_delta ? "scalar-anchored-c-delta" :
-                    (weight_grid_gauge ? "scalar-anchored-weight-grid-gauge" : "scalar-anchored-gauge"),
+                    (weight_grid_gauge ?
+                        (pv_lite_grid ? "scalar-anchored-pv-lite-grid" : "scalar-anchored-weight-grid-gauge") :
+                        "scalar-anchored-gauge"),
                     encoder_search == encoder_search_mode::neural ? "neural" : "standard",
                     source_levels,
                     block_count, neutral_wins, non_neutral_wins, unique_blocks,
@@ -2543,7 +2561,9 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 "conflict-calibration=%.8g conflict-holdout=%.8g validation-best-commit=%u "
                 "validation-best=%.8g validation-stopped-holdout=%.8g\n",
                 format.name, scalar_anchored_gauge ?
-                    (weight_grid_gauge ? "scalar-anchored-weight-grid-gauge" : "scalar-anchored-gauge") :
+                    (weight_grid_gauge ?
+                        (pv_lite_grid ? "scalar-anchored-pv-lite-grid" : "scalar-anchored-weight-grid-gauge") :
+                        "scalar-anchored-gauge") :
                     "block-alpha",
                 encoder_search == encoder_search_mode::neural ? "neural" : "standard",
                 source_levels,
@@ -3199,6 +3219,7 @@ int main(int argc, char ** argv) {
     bool scalar_anchored_c_delta_sweep = false;
     bool weight_grid_gauge_sweep = false;
     bool few_level_weight_grid_gauge_sweep = false;
+    bool pv_lite_grid_sweep = false;
     encoder_search_mode encoder_search = encoder_search_mode::standard;
     uint32_t neural_candidate_limit = 16;
     for (int index = 1; index < argc; ++index) {
@@ -3275,6 +3296,9 @@ int main(int argc, char ** argv) {
             weight_grid_gauge_sweep = true;
         } else if (option == "--few-level-weight-grid-gauge-sweep") {
             few_level_weight_grid_gauge_sweep = true;
+        } else if (option == "--pv-lite-grid-sweep") {
+            pv_lite_grid_sweep = true;
+            weight_grid_gauge_sweep = true;
         } else if (option == "--decode-loop-log" && index + 1 < argc) {
             decode_loop_log_path = argv[++index];
         } else if (option == "--decode-loop-payloads" && index + 1 < argc) {
@@ -3330,7 +3354,7 @@ int main(int argc, char ** argv) {
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6|8x6|10x6|8x8] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
-                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--scalar-anchored-c-delta-sweep]\n",
+                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--pv-lite-grid-sweep] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
             return 2;
         }
@@ -3667,7 +3691,8 @@ int main(int argc, char ** argv) {
                                           row_strip_log_path,
                                           candidate_threads, row_strip_select, row_strip_chunked,
                                           row_strip_diagnostics, persistent_worker_contexts, false,
-                                          encoder_search, neural_candidate_limit, true)) {
+                                          encoder_search, neural_candidate_limit, true, 0,
+                                          pv_lite_grid_sweep)) {
                 std::fprintf(stderr, "ASTC weight-grid gauge sweep failed\n");
                 return 1;
             }

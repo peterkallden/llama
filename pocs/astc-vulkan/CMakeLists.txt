@@ -638,6 +638,11 @@ if (BUILD_TESTING)
                 --footprint 8x8 --max-rows 16 --max-columns 16
                 --max-samples 4 --max-calibration-samples 2)
         set_property(TEST astc-vulkan-latent-few-level-weight-grid-smoke PROPERTY LABELS astc)
+        add_test(NAME astc-vulkan-latent-pv-lite-grid-smoke
+            COMMAND astc-vulkan-latent-smoke --pv-lite-grid-sweep
+                --footprint 8x8 --max-rows 16 --max-columns 16
+                --max-samples 4 --max-calibration-samples 2)
+        set_property(TEST astc-vulkan-latent-pv-lite-grid-smoke PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-input-smoke)

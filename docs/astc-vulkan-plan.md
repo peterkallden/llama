@@ -2255,6 +2255,12 @@ only standard ASTC sampling plus the existing cheap semantic reconstruction.
 - [ ] Repeat the PV-lite gate on a second tensor with a genuinely different
   TQ source, then perform the model-facing replay gate.
 
+PV-lite-grid is now implemented as an opt-in coefficient-grid experiment. It
+must remain separate from the standard/thorough reference path until artifact
+replay and a second-tensor holdout gate pass. Its current cost is roughly 4.6x
+standard on a small F16/10x6 crop, so future work should seek adaptive
+coarse-to-fine coefficients or candidate reuse before considering default use.
+
 Preset policy after the current ablation: keep `thorough` as the reference
 configuration, allow `medium` for exploratory sweeps after cross-tensor
 confirmation, and use `fast` only for candidate-space screening. Do not mix a

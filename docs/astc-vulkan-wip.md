@@ -6027,3 +6027,32 @@ the preset also changes the neutral block candidate, this is evidence for an
 exploratory budget profile, not a claim that medium improves model quality.
 The reference artifact path therefore remains thorough and all preset
 comparisons must report the neutral baseline alongside the selected stream.
+
+## Two-hundred-sixty-first sweep: PV-lite coefficient grid
+
+An opt-in `--pv-lite-grid-sweep` now evaluates a deliberately small P-step
+family around the existing zero-sum gauge: neutral plus `+/-0.25`, `+/-0.50`,
+and `+/-0.75` for each of the X-ramp, Y-ramp, and saddle bases. It is explicitly
+called a coefficient grid, not full PV-Tuning: no continuous gradient update
+or learned codebook is claimed. The V-step is the existing exact ASTC
+encode/decode, payload deduplication, conflict-aware selection, and
+validation-prefix stopping. The scalar-anchored neutral candidate remains
+mandatory.
+
+On the same layer-0 F16/Q3 `12x240`/`16x240` screening crops used for the
+candidate-recall gate, the validation-stopped holdout was:
+
+| Source | Footprint | Standard grid | PV-lite grid |
+| --- | --- | ---: | ---: |
+| F16 | 10x6 | 0.070345475 | **0.060060493** |
+| F16 | 8x8 | 0.10284899 | **0.075027234** |
+| Q3_K_M | 10x6 | 0.08249455 | **0.077304235** |
+| Q3_K_M | 8x8 | 0.10331819 | **0.080012441** |
+
+The neutral baseline stayed unchanged in each pair. A timed F16/10x6 run
+took `0.86 s` for the standard grid and `3.98 s` for PV-lite (about 4.6x
+overhead); the larger family generated roughly 741 unique payloads versus
+310 for standard on that crop. This is a promising quality/compute tradeoff,
+but not a default policy. The next gate is export/replay of a PV-lite
+validation prefix from artifact bytes alone, followed by a second tensor and
+model-facing check.
