@@ -5998,3 +5998,23 @@ standard path. Future gains must come from representation/P-step or a better
 objective, not simply retaining more stock-encoder candidates. Any future
 candidate-space change is accepted only under a fixed-pool,
 validation-selected holdout gate.
+
+## Two-hundred-sixtieth sweep: preset budget ablation
+
+Before adding PV-style continuous updates, the standard ASTC search budget was
+measured on the same F16 layer-0 `12x240` crop. This changes only the offline
+candidate search effort; payload syntax, gauge family, selector, and
+validation-prefix contract are unchanged.
+
+| Preset | Wall time | Validation-stopped holdout |
+| --- | ---: | ---: |
+| Thorough | 0.46 s | 0.070345475 |
+| Medium | 0.36 s | **0.068723692** |
+| Fast | 0.34 s | 0.080025047 |
+
+On this bounded case, medium is about 22% faster than thorough with no quality
+loss, while fast is about 26% faster but loses quality. This is not enough to
+change the reference configuration: thorough remains the reproducibility and
+quality baseline, medium is now the recommended opt-in exploratory preset, and
+fast is screening-only. A larger cross-tensor timing/quality check is still
+required before making medium the default for artifact generation.

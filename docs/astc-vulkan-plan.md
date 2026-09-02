@@ -2253,3 +2253,8 @@ only standard ASTC sampling plus the existing cheap semantic reconstruction.
   the V-step must use exact ASTC decode and validation-prefix stopping.
 - [ ] Repeat the PV-lite gate on a second tensor with a genuinely different
   TQ source, then perform the model-facing replay gate.
+
+Preset policy after the current ablation: keep `thorough` as the reference
+configuration, allow `medium` for exploratory sweeps after cross-tensor
+confirmation, and use `fast` only for candidate-space screening. Do not mix a
+preset change with the first PV-lite quality claim.
