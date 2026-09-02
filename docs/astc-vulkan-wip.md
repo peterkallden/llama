@@ -4000,3 +4000,34 @@ The TQ1/TQ2 models are reference baselines only; they do not change the ASTC
 payload or runtime contract. A same-prompt/seed model smoke is queued behind
 the CLI target build, after which the comparison will report model output and
 timing for FP16, Q4, TQ1_0, and TQ2_0.
+
+## One-hundred-sixty-seventh sweep: gauge decoded-reference export and Vulkan E2E
+
+The latent smoke tool now accepts `--decode-loop-reference PATH`. For a
+decode-in-the-loop or scalar-anchored gauge run it reconstructs the final
+selected 16-byte ASTC block stream, decodes that stream with the same CPU ASTC
+oracle used by candidate generation, and writes raw RGBA F32 texels. This is
+the exact input contract consumed by `astc-vulkan-ffn-e2e-smoke`; no production
+Vulkan code or shader was changed.
+
+The new path was exercised on the existing Pythia layer-0 `32x1536` fixture:
+
+| Runtime check | Result |
+| --- | ---: |
+| Selected gauge payload | `/tmp/astc-e2e-gauge.astc` |
+| Exact decoded RGBA reference | `/tmp/astc-e2e-gauge.decoded.f32` |
+| GPU-vs-CPU output MSE | `0.0053551257` |
+| ASTC-vs-source relative MSE | `0.011264151` |
+
+The first rerun intentionally exposed a metadata-contract mistake: gauge
+reconstruction splits the scalar range between luminance and alpha, so each
+decoder scale must be half of the scalar scale. Correcting
+`scale_l=scale_a=range/2` restored the expected result. This is now recorded as
+an explicit runtime invariant rather than hidden in the fixture.
+
+The gate confirms that the selected gauge payload remains a normal,
+standard-compatible ASTC image and that the Vulkan texture path performs the
+decode on the device. CPU work is limited to reference generation and result
+checking. The next quality gate is the queued FP16/Q4/TQ1/TQ2 model smoke;
+`c+delta`, LDLQ, and GPU candidate encoding remain deferred until these runtime
+and baseline contracts are complete.

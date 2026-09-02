@@ -1432,6 +1432,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               bool scalar_anchored_gauge = false,
                               const std::string & commit_log_path = {},
                               const std::string & selected_payload_path = {},
+                              const std::string & decoded_reference_path = {},
                               const std::string & row_strip_log_path = {},
                               uint32_t candidate_threads = 1,
                               bool row_strip_select = false,
@@ -1465,6 +1466,16 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     const uint32_t blocks_x = (columns + format.block_width - 1) / format.block_width;
     std::vector<std::array<uint8_t, 16>> neutral_payloads(
         static_cast<size_t>((rows + format.block_height - 1) / format.block_height) * blocks_x);
+    auto write_decoded_reference = [&](const std::vector<std::array<uint8_t, 16>> & payloads) {
+        if (decoded_reference_path.empty()) return true;
+        std::vector<uint8_t> compressed(payloads.size() * 16);
+        for (size_t index = 0; index < payloads.size(); ++index) {
+            std::copy(payloads[index].begin(), payloads[index].end(), compressed.begin() + index * 16);
+        }
+        std::vector<float> decoded;
+        return astc_decode(compressed, rows, columns, format, decoded) &&
+               write_binary(decoded_reference_path, decoded);
+    };
     const std::vector<float> factors = scalar_anchored_gauge ?
         std::vector<float>{ 0.0f, -0.25f, 0.25f, -0.5f, 0.5f, -0.75f, 0.75f } :
         std::vector<float>{ 0.0f, -0.5f, 0.5f, 1.0f, 1.5f, 2.0f };
@@ -1868,14 +1879,13 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         const double conflict_calibration = activation_relative_mse(weights, conflict_aware, rows, columns, calibration);
         const double conflict_holdout = activation_relative_mse(weights, conflict_aware, rows, columns, holdout);
         const double stopped_holdout = activation_relative_mse(weights, validation_stopped, rows, columns, holdout);
-        if (!selected_payload_path.empty()) {
-            std::vector<std::array<uint8_t, 16>> final_payloads = neutral_payloads;
-            for (const strip_step * step : committed_steps) {
-                final_payloads[(step->row0 / format.block_height) * blocks_x +
-                               step->column0 / format.block_width] = step->payload;
-            }
-            if (!write_binary(selected_payload_path, final_payloads)) return false;
+        std::vector<std::array<uint8_t, 16>> final_payloads = neutral_payloads;
+        for (const strip_step * step : committed_steps) {
+            final_payloads[(step->row0 / format.block_height) * blocks_x +
+                           step->column0 / format.block_width] = step->payload;
         }
+        if (!selected_payload_path.empty() && !write_binary(selected_payload_path, final_payloads)) return false;
+        if (!write_decoded_reference(final_payloads)) return false;
         std::vector<std::array<uint8_t, 16>> selected_payloads;
         std::vector<std::array<uint8_t, 16>> baseline_payloads;
         selected_payloads.reserve(committed_steps.size());
@@ -2199,15 +2209,14 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
     const double conflict_calibration = activation_relative_mse(weights, conflict_aware, rows, columns, calibration);
     const double conflict_holdout = activation_relative_mse(weights, conflict_aware, rows, columns, holdout);
     const double stopped_holdout = activation_relative_mse(weights, validation_stopped, rows, columns, holdout);
-    if (!selected_payload_path.empty()) {
-        std::vector<std::array<uint8_t, 16>> final_payloads = neutral_payloads;
-        for (const alpha_option * option : committed_options) {
-            const uint32_t block_index = (option->row0 / format.block_height) * blocks_x +
-                                         option->column0 / format.block_width;
-            final_payloads[block_index] = option->payload;
-        }
-        if (!write_binary(selected_payload_path, final_payloads)) return false;
+    std::vector<std::array<uint8_t, 16>> final_payloads = neutral_payloads;
+    for (const alpha_option * option : committed_options) {
+        const uint32_t block_index = (option->row0 / format.block_height) * blocks_x +
+                                     option->column0 / format.block_width;
+        final_payloads[block_index] = option->payload;
     }
+    if (!selected_payload_path.empty() && !write_binary(selected_payload_path, final_payloads)) return false;
+    if (!write_decoded_reference(final_payloads)) return false;
     if (scalar_anchored_gauge && !committed_options.empty()) {
         std::vector<std::array<uint8_t, 16>> selected_payloads;
         selected_payloads.reserve(committed_options.size());
@@ -2852,6 +2861,7 @@ int main(int argc, char ** argv) {
     std::string validation_trace_path;
     std::string decode_loop_log_path;
     std::string decode_loop_payloads_path;
+    std::string decode_loop_reference_path;
     std::string row_strip_log_path;
     uint32_t candidate_threads = 1;
     bool row_strip_select = false;
@@ -2956,6 +2966,8 @@ int main(int argc, char ** argv) {
             decode_loop_log_path = argv[++index];
         } else if (option == "--decode-loop-payloads" && index + 1 < argc) {
             decode_loop_payloads_path = argv[++index];
+        } else if (option == "--decode-loop-reference" && index + 1 < argc) {
+            decode_loop_reference_path = argv[++index];
         } else if (option == "--row-strip-log" && index + 1 < argc) {
             row_strip_log_path = argv[++index];
         } else if (option == "--candidate-threads" && index + 1 < argc) {
@@ -2982,7 +2994,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep]\n",
                          argv[0]);
             return 2;
@@ -3255,7 +3267,8 @@ int main(int argc, char ** argv) {
         if (decode_loop_alpha_sweep &&
             !decode_loop_alpha_search(weights, block_latents, rows, columns, format,
                                       calibration_inputs, validation_inputs, inputs, false,
-                                      decode_loop_log_path, decode_loop_payloads_path, row_strip_log_path,
+                                      decode_loop_log_path, decode_loop_payloads_path, decode_loop_reference_path,
+                                      row_strip_log_path,
                                       candidate_threads, row_strip_select, row_strip_chunked,
                                       row_strip_diagnostics, persistent_worker_contexts)) {
             std::fprintf(stderr, "ASTC decode-in-the-loop Alpha sweep failed; use whole ASTC blocks\n");
@@ -3266,7 +3279,8 @@ int main(int argc, char ** argv) {
             gauge_latents.decoder = { range * 0.5, range * 0.5, minimum };
             if (!decode_loop_alpha_search(weights, gauge_latents, rows, columns, format,
                                           calibration_inputs, validation_inputs, inputs, true,
-                                          decode_loop_log_path, decode_loop_payloads_path, row_strip_log_path,
+                                          decode_loop_log_path, decode_loop_payloads_path, decode_loop_reference_path,
+                                          row_strip_log_path,
                                           candidate_threads, row_strip_select, row_strip_chunked,
                                           row_strip_diagnostics, persistent_worker_contexts)) {
                 std::fprintf(stderr, "ASTC scalar-anchored gauge sweep failed\n");
