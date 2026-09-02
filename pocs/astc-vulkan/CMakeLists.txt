@@ -654,6 +654,11 @@ if (BUILD_TESTING)
                 --validation-reference ${CMAKE_CURRENT_BINARY_DIR}/pv-lite-edge-selected.rgba.f32
                 --validation-metadata ${CMAKE_CURRENT_BINARY_DIR}/pv-lite-edge-selected.metadata)
         set_property(TEST astc-vulkan-latent-pv-lite-edge-smoke PROPERTY LABELS astc)
+        add_test(NAME astc-vulkan-latent-pv-lite-coarse-grid-smoke
+            COMMAND astc-vulkan-latent-smoke --pv-lite-coarse-grid-sweep
+                --row-strip-chunked --footprint 10x6 --max-rows 12 --max-columns 20
+                --max-samples 4 --max-calibration-samples 2)
+        set_property(TEST astc-vulkan-latent-pv-lite-coarse-grid-smoke PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-input-smoke)

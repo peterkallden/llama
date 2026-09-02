@@ -6141,3 +6141,54 @@ the artifact-backed PV gate on a second F16/Q3 tensor rather than the presently
 identical TQ crop, and (3) only then consider a true alternating affine/gauge
 P-step. A two-sided YAQA-style objective remains a later, fixed-pool experiment
 for rates below the present 10x6/8x8 range.
+
+## Two-hundred-sixty-fourth sweep: persistent PV contexts and cross-tensor gate
+
+The persistent worker-context path was benchmarked with the PV-lite grid on a
+`12x240` Pythia F16 `10x6` crop. Reusing one ASTC context and scratch storage
+per worker reduced wall time from `6.34 s` to `0.59 s` (about `10.7x`). The
+validation payload, decoded reference, and commit CSV were byte-identical. This
+is a performance-only improvement and does not change the quality contract.
+
+The second-tensor gate used `blk.1.ffn_down.weight`, matched `10x6` crops, the
+same traces, persistent contexts, and exact artifact replay. Full PV-lite
+improved the neutral scalar-anchor on both sources, but it did not beat the
+standard weight-grid gauge after validation stopping:
+
+| Source | Standard weight-grid | Full PV-lite | Result |
+| --- | ---: | ---: | --- |
+| F16 | `0.11339445` | `0.13591146` | standard wins |
+| Q3_K_M | `0.10870997` | `0.12655075` | standard wins |
+
+The exported F16 and Q3 PV payloads both replayed byte-identically through the
+standalone CPU decoder. Thus the negative result is a selection/generalization
+result, not an artifact-format failure. It indicates that the 19-member PV
+grid can overfit this tensor's calibration traces even though it has more local
+candidate freedom.
+
+## Two-hundred-sixty-fifth sweep: fixed coarse PV control
+
+A new opt-in `--pv-lite-coarse-grid-sweep` freezes the smaller family
+`constant, X-ramp, Y-ramp, saddle` with gauge amplitudes `0`, `+/-0.50`. It is
+an explicit control for a future coarse-to-fine policy, not an adaptive claim:
+the family is fixed before evaluation and no holdout statistics choose its
+members. On the second tensor it produced exactly the same candidate counts and
+validation-stopped losses as the existing standard weight-grid gauge:
+
+| Source | Coarse PV grid | Full PV-lite grid |
+| --- | ---: | ---: |
+| F16 | `0.11339445` | `0.13591146` |
+| Q3_K_M | `0.10870997` | `0.12655075` |
+
+This supports the working interpretation that the full grid's extra amplitudes
+and ramp resolutions are not automatically beneficial; they need an objective
+or a calibration protocol that controls overfit. The coarse control is useful
+for future factor-histogram experiments, but neither PV profile is promoted to
+the runtime/default encoder.
+
+The same sweep added deterministic FNV-1a-64 identities for source weights and
+calibration/validation/holdout traces to latent export metadata, together with
+the ASTC preset. These hashes are provenance identities, not cryptographic
+integrity claims; artifact payload SHA-256 remains the packer's integrity
+field. The metadata now contains enough information to reject a replay with a
+different source/trace family before model-facing evaluation.

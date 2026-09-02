@@ -2316,16 +2316,26 @@ Before another quality claim, the following implementation gates apply:
 3. [x] Preserve the selected PV factor through streamed row-strip selection
    and record factor index, basis, gauge, and correction in the commit log.
    This is the evidence needed for a later adaptive/coarse-to-fine grid.
-4. [ ] Profile PV-lite with persistent worker contexts and split generation
-   time into source construction, ASTC search, decode, deduplication, and
-   delta construction. This is a performance-only sweep; it must reproduce
-   payloads and commits byte-for-byte.
-5. [ ] Use the factor histogram from two independent tensors to define a
-   validation-frozen coarse-to-fine grid. Do not prune a basis or amplitude
-   from the same holdout used to claim quality.
+4. [x] Profile PV-lite with persistent worker contexts. The persistent path
+   reproduces payloads, decoded references, and commit CSV byte-for-byte; on a
+   12x240 10x6 crop it reduced wall time from `6.34 s` to `0.59 s`.
+   Generation/decode sub-phase profiling remains a later performance task.
+5. [x] Add a fixed coarse-grid control (`0, +/-0.50` for constant/X/Y/saddle)
+   and record factor usage. On the second tensor it matched the standard
+   weight-grid candidate family and was more robust than the full PV-lite grid.
+   A genuinely adaptive grid is still gated on independent calibration data;
+   no factor is pruned using the final holdout.
 6. [ ] Only after those gates, implement a true alternating PV step over a
    small set of group affine/gauge coefficients. Each update must reproject
    through exact ASTC encode/decode and retain the scalar-neutral fallback.
 7. [ ] Reserve YAQA-style two-sided/model-preserving scoring for `10x8`,
    `10x10`, and lower rates after a fixed-pool ablation; it must change the
    objective without simultaneously changing the candidate family.
+
+The cross-tensor result is an important negative gate: on the second
+`blk.1.ffn_down.weight` tensor, full PV-lite did not beat the standard
+weight-grid gauge on validation-stopped holdout (F16 `0.13591` vs `0.11339`,
+Q3 `0.12655` vs `0.10871`). The fixed coarse grid matched the standard control.
+PV-lite therefore remains a useful diagnostic/candidate-space experiment, but
+is not promoted to the low-rate default until a model-facing and cross-tensor
+holdout gate succeeds.

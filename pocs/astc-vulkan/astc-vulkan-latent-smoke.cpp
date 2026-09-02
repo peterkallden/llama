@@ -11,8 +11,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <map>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -36,6 +38,30 @@ const char * gauge_basis_name(gauge_basis basis) {
         case gauge_basis::saddle: return "saddle";
     }
     return "unknown";
+}
+
+const char * astc_preset_name() {
+    if (g_astc_preset == ASTCENC_PRE_FAST) return "fast";
+    if (g_astc_preset == ASTCENC_PRE_MEDIUM) return "medium";
+    return "thorough";
+}
+
+uint64_t fnv1a_bytes(const void * data, size_t size) {
+    const auto * bytes = static_cast<const uint8_t *>(data);
+    uint64_t hash = 1469598103934665603ULL;
+    for (size_t index = 0; index < size; ++index) {
+        hash ^= bytes[index];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+template<typename T>
+std::string vector_hash(const std::vector<T> & values) {
+    std::ostringstream stream;
+    stream << "fnv1a64-" << std::hex << std::setw(16) << std::setfill('0')
+           << fnv1a_bytes(values.data(), values.size() * sizeof(T));
+    return stream.str();
 }
 // Keep the reference encoder path separate from the experimental recall path.
 // The latter changes only which legal astcenc candidates reach the existing
@@ -324,7 +350,11 @@ bool write_export_metadata(const std::string & path, const ggml_vk_astc_format_c
                            size_t compressed_bytes, size_t decoded_texels,
                            const char * encoder_profile = "standard",
                            uint32_t validation_prefix = 0,
-                           const char * candidate_family = "none") {
+                           const char * candidate_family = "none",
+                           const char * source_hash = "unspecified",
+                           const char * calibration_hash = "unspecified",
+                           const char * validation_hash = "unspecified",
+                           const char * holdout_hash = "unspecified") {
     std::ofstream file(path);
     if (!file) return false;
     file << "version=1\n"
@@ -337,6 +367,11 @@ bool write_export_metadata(const std::string & path, const ggml_vk_astc_format_c
          << "encoder_profile=" << encoder_profile << "\n"
          << "candidate_family=" << candidate_family << "\n"
          << "validation_prefix=" << validation_prefix << "\n"
+         << "astc_preset=" << astc_preset_name() << "\n"
+         << "source_hash=" << source_hash << "\n"
+         << "calibration_hash=" << calibration_hash << "\n"
+         << "validation_hash=" << validation_hash << "\n"
+         << "holdout_hash=" << holdout_hash << "\n"
          << "scale_l=" << decoder.scale_l << "\n"
          << "scale_a=" << decoder.scale_a << "\n"
          << "offset=" << decoder.offset << "\n"
@@ -1495,7 +1530,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               uint32_t neural_candidate_limit = 16,
                               bool weight_grid_gauge = false,
                               uint32_t source_levels = 0,
-                              bool pv_lite_grid = false) {
+                              bool pv_lite_grid = false,
+                              bool pv_lite_coarse_grid = false) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
@@ -1544,7 +1580,10 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         float gauge;
         gauge_basis basis = gauge_basis::constant;
     };
-    const char * candidate_family = pv_lite_grid ?
+    const bool pv_grid = pv_lite_grid || pv_lite_coarse_grid;
+    const char * candidate_family = pv_lite_coarse_grid ?
+        "zero-sum-pv-lite-coarse-grid-v1(constant,x-ramp,y-ramp,saddle;gauge=0,+/-0.50)" :
+        pv_lite_grid ?
         "zero-sum-pv-lite-grid-v1(constant,x-ramp,y-ramp,saddle;gauge=0,+/-0.25,+/-0.50,+/-0.75)" :
         (weight_grid_gauge ? "zero-sum-weight-grid-gauge-v1" :
                              "scalar-anchored-gauge-v1");
@@ -1558,7 +1597,12 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             {-0.25f, 0.0f}, {0.25f, 0.0f},
             {-0.25f, 0.25f}, {-0.25f, -0.25f}, {0.25f, 0.25f},
         } : (scalar_anchored_gauge ?
-        (weight_grid_gauge ? (pv_lite_grid ? std::vector<gauge_factor>{
+        (weight_grid_gauge ? (pv_grid ? (pv_lite_coarse_grid ? std::vector<gauge_factor>{
+            {0.0f, 0.0f, gauge_basis::constant},
+            {0.0f, -0.5f, gauge_basis::x_ramp}, {0.0f, 0.5f, gauge_basis::x_ramp},
+            {0.0f, -0.5f, gauge_basis::y_ramp}, {0.0f, 0.5f, gauge_basis::y_ramp},
+            {0.0f, -0.5f, gauge_basis::saddle}, {0.0f, 0.5f, gauge_basis::saddle},
+        } : std::vector<gauge_factor>{
             {0.0f, 0.0f, gauge_basis::constant},
             {0.0f, -0.25f, gauge_basis::x_ramp}, {0.0f, 0.25f, gauge_basis::x_ramp},
             {0.0f, -0.50f, gauge_basis::x_ramp}, {0.0f, 0.50f, gauge_basis::x_ramp},
@@ -1569,7 +1613,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             {0.0f, -0.25f, gauge_basis::saddle}, {0.0f, 0.25f, gauge_basis::saddle},
             {0.0f, -0.50f, gauge_basis::saddle}, {0.0f, 0.50f, gauge_basis::saddle},
             {0.0f, -0.75f, gauge_basis::saddle}, {0.0f, 0.75f, gauge_basis::saddle},
-        } : std::vector<gauge_factor>{
+        }) : std::vector<gauge_factor>{
             {0.0f, 0.0f, gauge_basis::constant},
             {0.0f, -0.5f, gauge_basis::x_ramp}, {0.0f, 0.5f, gauge_basis::x_ramp},
             {0.0f, -0.5f, gauge_basis::y_ramp}, {0.0f, 0.5f, gauge_basis::y_ramp},
@@ -1581,6 +1625,10 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             {0.0f, 0.0f}, {0.0f, -0.5f}, {0.0f, 0.5f}, {0.0f, 1.0f},
             {0.0f, 1.5f}, {0.0f, 2.0f},
         });
+    const std::string source_hash = vector_hash(weights);
+    const std::string calibration_hash = vector_hash(calibration.values);
+    const std::string validation_hash = vector_hash(validation.values);
+    const std::string holdout_hash = vector_hash(holdout.values);
     const uint32_t blocks_y = (rows + format.block_height - 1) / format.block_height;
     const uint32_t block_count = blocks_x * blocks_y;
     std::vector<alpha_block_result> block_results;
@@ -2081,7 +2129,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             if (!commit_log) return false;
             commit_log << "commit,calibration_relative_mse,validation_relative_mse,"
                        << "marginal_residual_gain,cumulative_residual_gain";
-            if (pv_lite_grid) commit_log << ",factor_index,basis,gauge,correction";
+            if (pv_grid) commit_log << ",factor_index,basis,gauge,correction";
             commit_log << "\n";
         }
         std::vector<size_t> strip_cursors(blocks_y, 0);
@@ -2131,7 +2179,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             if (commit_log) {
                 commit_log << commits << ',' << residual_energy / expected_energy << ',' << validation_loss << ','
                            << best_gain << ',' << neutral_calibration - residual_energy / expected_energy;
-                if (pv_lite_grid) {
+                if (pv_grid) {
                     const gauge_factor & factor = factors[step.factor_index];
                     commit_log << ',' << step.factor_index << ',' << gauge_basis_name(factor.basis) << ','
                                << factor.gauge << ',' << factor.correction;
@@ -2157,7 +2205,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         const double conflict_calibration = activation_relative_mse(weights, conflict_aware, rows, columns, calibration);
         const double conflict_holdout = activation_relative_mse(weights, conflict_aware, rows, columns, holdout);
         const double stopped_holdout = activation_relative_mse(weights, validation_stopped, rows, columns, holdout);
-        const char * encoder_profile = pv_lite_grid ? "pv-lite-grid-v1" :
+        const char * encoder_profile = pv_lite_coarse_grid ? "pv-lite-coarse-grid-v1" :
+                                      pv_lite_grid ? "pv-lite-grid-v1" :
                                       weight_grid_gauge ? "weight-grid-gauge-v1" : "standard";
         std::vector<std::array<uint8_t, 16>> final_payloads = neutral_payloads;
         for (const strip_step * step : committed_steps) {
@@ -2170,7 +2219,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         if (!neutral_metadata_path.empty() && !write_export_metadata(
                 neutral_metadata_path, format, "gauge-la-neutral", rows, columns,
                 block_latents.decoder, neutral_payloads.size() * 16,
-                static_cast<size_t>(rows) * columns * 4, encoder_profile, 0, candidate_family)) return false;
+                static_cast<size_t>(rows) * columns * 4, encoder_profile, 0, candidate_family,
+                source_hash.c_str(), calibration_hash.c_str(), validation_hash.c_str(), holdout_hash.c_str())) return false;
         if (!neutral_reference_path.empty()) {
             std::vector<uint8_t> compressed(neutral_payloads.size() * 16);
             for (size_t index = 0; index < neutral_payloads.size(); ++index) {
@@ -2192,7 +2242,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 validation_metadata_path, format, "gauge-la-validation", rows, columns,
                 block_latents.decoder, validation_payloads.size() * 16,
                 static_cast<size_t>(rows) * columns * 4, encoder_profile,
-                best_validation_commit, candidate_family)) return false;
+                best_validation_commit, candidate_family,
+                source_hash.c_str(), calibration_hash.c_str(), validation_hash.c_str(), holdout_hash.c_str())) return false;
         if (!validation_reference_path.empty()) {
             std::vector<uint8_t> compressed(validation_payloads.size() * 16);
             for (size_t index = 0; index < validation_payloads.size(); ++index) {
@@ -2253,7 +2304,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     "partition-changed=%u endpoint-mode-changed=%u weight-grid-changed=%u weight-levels-changed=%u\n",
                     committed_steps.size(), changed_payloads, changed_dual_plane, changed_partition_count,
                     changed_endpoint_mode, changed_weight_grid, changed_weight_levels);
-        if (pv_lite_grid) {
+        if (pv_grid) {
             std::vector<uint32_t> factor_counts(factors.size(), 0);
             for (const strip_step * step : committed_steps) ++factor_counts[step->factor_index];
             for (uint32_t index = 0; index < factor_counts.size(); ++index) {
@@ -2272,7 +2323,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     "validation-best=%.8g validation-stopped-holdout=%.8g\n",
                     format.name, scalar_anchored_c_delta ? "scalar-anchored-c-delta" :
                     (weight_grid_gauge ?
-                        (pv_lite_grid ? "scalar-anchored-pv-lite-grid" : "scalar-anchored-weight-grid-gauge") :
+                        (pv_lite_coarse_grid ? "scalar-anchored-pv-lite-coarse-grid" :
+                         (pv_lite_grid ? "scalar-anchored-pv-lite-grid" : "scalar-anchored-weight-grid-gauge")) :
                         "scalar-anchored-gauge"),
                     encoder_search == encoder_search_mode::neural ? "neural" : "standard",
                     source_levels,
@@ -2611,7 +2663,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 "validation-best=%.8g validation-stopped-holdout=%.8g\n",
                 format.name, scalar_anchored_gauge ?
                     (weight_grid_gauge ?
-                        (pv_lite_grid ? "scalar-anchored-pv-lite-grid" : "scalar-anchored-weight-grid-gauge") :
+                        (pv_lite_coarse_grid ? "scalar-anchored-pv-lite-coarse-grid" :
+                         (pv_lite_grid ? "scalar-anchored-pv-lite-grid" : "scalar-anchored-weight-grid-gauge")) :
                         "scalar-anchored-gauge") :
                     "block-alpha",
                 encoder_search == encoder_search_mode::neural ? "neural" : "standard",
@@ -3269,6 +3322,7 @@ int main(int argc, char ** argv) {
     bool weight_grid_gauge_sweep = false;
     bool few_level_weight_grid_gauge_sweep = false;
     bool pv_lite_grid_sweep = false;
+    bool pv_lite_coarse_grid_sweep = false;
     encoder_search_mode encoder_search = encoder_search_mode::standard;
     uint32_t neural_candidate_limit = 16;
     for (int index = 1; index < argc; ++index) {
@@ -3348,6 +3402,9 @@ int main(int argc, char ** argv) {
         } else if (option == "--pv-lite-grid-sweep") {
             pv_lite_grid_sweep = true;
             weight_grid_gauge_sweep = true;
+        } else if (option == "--pv-lite-coarse-grid-sweep") {
+            pv_lite_coarse_grid_sweep = true;
+            weight_grid_gauge_sweep = true;
         } else if (option == "--decode-loop-log" && index + 1 < argc) {
             decode_loop_log_path = argv[++index];
         } else if (option == "--decode-loop-payloads" && index + 1 < argc) {
@@ -3403,7 +3460,7 @@ int main(int argc, char ** argv) {
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6|8x6|10x6|8x8] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
-                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--pv-lite-grid-sweep] [--scalar-anchored-c-delta-sweep]\n",
+                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--pv-lite-grid-sweep] [--pv-lite-coarse-grid-sweep] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
             return 2;
         }
@@ -3741,7 +3798,7 @@ int main(int argc, char ** argv) {
                                           candidate_threads, row_strip_select, row_strip_chunked,
                                           row_strip_diagnostics, persistent_worker_contexts, false,
                                           encoder_search, neural_candidate_limit, true, 0,
-                                          pv_lite_grid_sweep)) {
+                                          pv_lite_grid_sweep, pv_lite_coarse_grid_sweep)) {
                 std::fprintf(stderr, "ASTC weight-grid gauge sweep failed\n");
                 return 1;
             }
