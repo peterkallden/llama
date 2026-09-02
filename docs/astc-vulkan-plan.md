@@ -1825,3 +1825,10 @@ crop heights, so reported rates are 8.0, 5.125, 3.5625, 2.6667 and 2.0 b/w.
 Validation-selected gauge improves holdout at every rung in this bounded
 screen. This is the baseline for the next Q3_K_M/Q4_K_M/TQ1_0/TQ2_0 matrix;
 those controls must use the same aligned geometry and a common FP16 reference.
+
+The aligned Q3/Q4/TQ control sweep is complete for the planned low-rate rungs:
+6x6 against Q3/Q4/TQ, 8x6 against Q3/Q4/TQ, and 8x8 against TQ1/TQ2. The
+results are retained as activation-level controls only. The next required
+comparison is model-output/logit quality against one shared FP16 reference,
+using the materialized validation-prefix artifacts; no footprint is promoted
+from experimental status based on activation MSE alone.

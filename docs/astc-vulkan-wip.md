@@ -5217,3 +5217,32 @@ ranking. They establish a clean rate axis and show that validation-selected
 gauge remains useful at the aggressive 8x6/8x8 rates. The next comparison must
 use the same aligned geometry for Q3/Q4/TQ controls and a shared FP16 reference
 before drawing conclusions about a rate--distortion frontier.
+
+## Two-hundred-twenty-eighth sweep: aligned Q3/Q4/TQ controls
+
+The low-bit controls were rerun with footprint-aligned heights on the same
+Pythia layer-0 tensor (`8x2048`, 16 samples). The selected validation prefix is
+the comparison path; full conflict values remain diagnostics because their
+calibration loss can be overfit.
+
+| Source / footprint | Rate | Scalar holdout | Validation-stopped gauge holdout |
+| --- | ---: | ---: | ---: |
+| Q3_K_M / 6x6 | 3.5625 b/w | 0.035575332 | 0.015204525 |
+| Q4_K_M / 6x6 | 3.5625 b/w | 0.041577962 | 0.025194257 |
+| TQ2_0 / 6x6 | 3.5625 b/w | 0.086732112 | 0.001564003 |
+| Q3_K_M / 8x6 | 2.6667 b/w | 0.148521570 | 0.034371056 |
+| Q4_K_M / 8x6 | 2.6667 b/w | 0.071701420 | 0.029967259 |
+| TQ2_0 / 8x6 | 2.6667 b/w | 0.007958940 | 0.004144997 |
+| TQ1_0 / 8x6 | 2.6667 b/w | 0.007958940 | 0.004144997 |
+| TQ2_0 / 8x8 | 2.0000 b/w | 0.384814190 | 0.060061727 |
+| TQ1_0 / 8x8 | 2.0000 b/w | 0.384814190 | 0.060061727 |
+
+The controls confirm that gauge can improve an already quantized source, but
+absolute quality is tensor- and source-dependent. In particular, the very low
+TQ 6x6 number and the large TQ 8x8 improvement are bounded-crop observations,
+not evidence that ASTC replaces native TQ kernels. TQ1/TQ2 remain separate
+format controls even where this crop reconstructs identically.
+
+The next gate is model-facing: materialize validation-prefix artifacts for
+these cases, then compare model outputs/logits against the same FP16 reference
+and prompt corpus. Only after that should dispatch timing be interpreted.
