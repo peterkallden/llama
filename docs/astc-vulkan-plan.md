@@ -1506,10 +1506,10 @@ scheduler integration out of that change.
     compare GPU output against the CPU oracle. Treat no-ASTC devices as a
     capability-gated skip and keep fixture quality metrics separate from the
     dispatch correctness gate.
-58. [x] Add host-only session error-path tests for invalid handles, dimensions,
-    missing shader words, and a tensor whose image does not match the declared
-    shape. Add a render-device repeat-run test once the test harness can obtain
-    a sampled ASTC device without privileged setup.
+58. [x] Add host-only session error-path tests for invalid configuration and
+    safe reset. Add device-backed tests for dimensions, missing shader words,
+    tensor/image shape mismatch, and repeat-run behavior once the harness can
+    obtain a sampled ASTC device without privileged setup.
 59. [x] Add a thin sidecar driver facade that owns instance/device/queue
     selection and composes manifest loading, tensor upload and matvec sessions.
     Keep it opt-in and parallel to llama's existing Vulkan backend.
