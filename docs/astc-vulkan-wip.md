@@ -4276,3 +4276,41 @@ The next implementation gate is therefore model-level logits/loss replay
 using the existing FP16 reference model, followed by a carefully bounded
 `c + delta` experiment. A GPU ASTC encoder is not part of this gate because
 standard Vulkan exposes decode/sampling, not portable ASTC encoding.
+
+## One-hundred-eightieth sweep: CPU-only logits replay control
+
+The model replay smoke now accepts `--cpu-only`, which sets
+`n_gpu_layers=0` while preserving the same FP16 model, activation trace,
+FFN-down override, and logits comparison. On SmolLM2-135M with a two-token
+prompt and the full `576 x 1536` layer-0 projection, the 6x6 ASTC replay
+reported:
+
+```text
+logits-mse=9.2232363
+logits-relative-mse=0.06836609
+max-abs=16.387279
+top1-agreement=0
+reference-loss=9.7672695
+replay-loss=9.7870737
+loss-delta=0.019804208
+```
+
+This is the first model-level loss signal for the ASTC FFN replacement. It is
+a short diagnostic prompt, not a perplexity benchmark, but it verifies that
+the override reaches the later model graph and that logits/loss can be
+measured without relying on the experimental ASTC Vulkan dispatch.
+
+## One-hundred-eighty-first sweep: full-model Vulkan boundary
+
+The same replay was attempted with the normal Vulkan model path and the
+Intel device selected explicitly. Model loading succeeded, but the full graph
+terminated with `vk::DeviceLostError` while waiting for Vulkan fences. The
+isolated ASTC texture/FFN smoke continues to pass, so this failure is outside
+the ASTC sampled-image contract. It is recorded as a backend boundary rather
+than silently treated as a quality result.
+
+Consequently, model-level ASTC quality comparisons currently use the
+CPU-only replay control. GPU ASTC decode remains validated independently by
+the FFN adapter smoke. A future full-GPU logits gate requires either fixing
+the unrelated Vulkan graph/device-loss path or using a newer/known-good Vulkan
+device; it does not justify changing the ASTC driver contract.

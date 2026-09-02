@@ -129,6 +129,7 @@ logits_result run_model(llama_model * model, const std::vector<llama_token> & to
 int main(int argc, char ** argv) {
     std::string model_path, rgba_path, weights_path, activation_path, metadata_path, prompt;
     uint32_t layer = 0, width = 0, height = 0;
+    bool cpu_only = false;
     for (int i = 1; i < argc; ++i) {
         const std::string option = argv[i];
         if (i + 1 >= argc) break;
@@ -141,12 +142,13 @@ int main(int argc, char ** argv) {
         else if (option == "--layer") layer = static_cast<uint32_t>(std::stoul(argv[++i]));
         else if (option == "--width") width = static_cast<uint32_t>(std::stoul(argv[++i]));
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(argv[++i]));
+        else if (option == "--cpu-only") cpu_only = true;
         else { std::fprintf(stderr, "unknown option: %s\n", option.c_str()); return 2; }
     }
     if (model_path.empty() || rgba_path.empty() || weights_path.empty() || activation_path.empty() || prompt.empty() ||
         width == 0 || height == 0) {
         std::fprintf(stderr, "usage: %s --model model.gguf --rgba decoded.rgba --weights weights.f32 --activations trace "
-                            "--layer N --width columns --height rows --metadata export.meta --prompt text\n", argv[0]);
+                            "--layer N --width columns --height rows --metadata export.meta --prompt text [--cpu-only]\n", argv[0]);
         return 2;
     }
 
@@ -173,7 +175,9 @@ int main(int argc, char ** argv) {
     }
 
     llama_backend_init();
-    llama_model * model = llama_model_load_from_file(model_path.c_str(), llama_model_default_params());
+    llama_model_params model_params = llama_model_default_params();
+    if (cpu_only) model_params.n_gpu_layers = 0;
+    llama_model * model = llama_model_load_from_file(model_path.c_str(), model_params);
     if (model == nullptr || layer >= static_cast<uint32_t>(llama_model_n_layer(model)) ||
         width != static_cast<uint32_t>(llama_model_n_ff(model, layer)) ||
         height != static_cast<uint32_t>(llama_model_n_embd(model))) {
