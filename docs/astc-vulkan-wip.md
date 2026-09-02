@@ -4074,3 +4074,31 @@ candidate-observer API may be proposed independently if they are useful to
 ordinary ASTC users. Neural ranking, activation-aware scoring, gauge-specific
 candidate generation, and experimental payload semantics remain research-fork
 features until they have stable contracts and evidence beyond this PoC.
+
+## One-hundred-seventieth sweep: reproducible CPU model smoke baseline
+
+The previous timeouts were caused by the CLI returning to interactive mode
+after generation, not by slow model inference. Re-running with
+`--no-conversation --single-turn --simple-io`, `--device none`,
+`--n-gpu-layers 0`, and `--no-op-offload` produced clean exit-0 runs using the
+same prompt, seed, four-token budget, and four CPU threads:
+
+| Model | Elapsed | Generation rate | Peak RSS |
+| --- | ---: | ---: | ---: |
+| Pythia FP16 | 5.21 s | 2.7 tok/s | 3.15 GiB |
+| Pythia Q4_K_M | 4.51 s | 7.6 tok/s | 1.81 GiB |
+| Pythia TQ1_0 | 3.41 s | 13.8 tok/s | 0.89 GiB |
+| Pythia TQ2_0 | 2.81 s | 16.9 tok/s | 0.86 GiB |
+
+The generated snippets are not a model-quality comparison: this Pythia
+fixture's short prompt/chat-template combination produced truncated or control
+text (`Write one short C`, `<|im_`, `* * * *`, and `2KY inest`). The results are
+only an execution and memory baseline proving that all four model formats can
+load and terminate under one deterministic CLI contract. The earlier Vulkan
+`q8_0` error remains a separate missing-pipeline issue when model offload is
+enabled; it does not affect the ASTC image/decode path.
+
+The model gate is complete enough to proceed with format-size and throughput
+comparisons. Semantic perplexity/quality evaluation should use a known-good
+prompt template or a dedicated perplexity tool. ASTC work continues
+independently; no production Vulkan backend was changed.
