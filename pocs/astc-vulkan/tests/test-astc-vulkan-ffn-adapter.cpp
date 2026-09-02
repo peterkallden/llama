@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <vector>
 
 int main() {
     astc_vulkan_manifest manifest;
@@ -24,6 +25,15 @@ int main() {
     assert(binding.status == astc_vulkan_binding_status::kFallback);
     assert(adapter.prepare(manifest, "missing", 1536, true, binding, error));
     assert(binding.status == astc_vulkan_binding_status::kFallback);
+    assert(!adapter.upload(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, 0,
+                           astc_vulkan_ffn_binding{astc_vulkan_binding_status::kFallback,
+                                                   {}, {}, "unsupported"}, {}, error));
+
+    assert(adapter.prepare(manifest, "blk.0.ffn_down.weight", 1536, true, binding, error));
+    const std::vector<uint8_t> malformed_payload(16, 0);
+    assert(!adapter.upload(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, 0,
+                           binding, malformed_payload, error));
+    assert(error.find("payload") != std::string::npos);
     std::puts("ASTC Vulkan FFN adapter contract passed");
     return 0;
 }

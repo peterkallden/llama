@@ -4623,3 +4623,27 @@ before the single-tensor contract is exercised on fallback and error paths
 would risk hiding synchronization assumptions. The next cleanup should be a
 small RAII dispatch/session object only after the Intel ASTC and NVIDIA
 fallback matrix is green.
+
+## One-hundred-ninety-ninth sweep: fallback and error-path contracts
+
+The FFN adapter contract now verifies that a fallback binding cannot upload,
+and that a malformed payload is rejected before a Vulkan handle is touched.
+The manifest test also covers v1 read compatibility, v2 representation and
+reconstruction metadata, optional payload hashing, non-finite affine values,
+and invalid representation values. The host-only sidecar regression passed
+`6/6` in the broader focused run.
+
+## Two-hundredth sweep: metadata-backed GPU dispatch
+
+The FFN E2E smoke now populates its manifest record with the actual affine
+reconstruction values and a payload hash before going through the adapter and
+tensor session. A two-sample Intel UHD 620 dispatch over the full layer-0
+6x6 payload produced GPU-vs-CPU MSE `2.4060726e-13`, while the ASTC-vs-source
+activation-relative MSE was `0.033416331`. This confirms that metadata and
+integrity validation do not alter the established shader result.
+
+The first driver expansion remains sidecar-only. The next refactor is to
+extract the smoke's descriptor/pipeline lifetime into a small RAII dispatch
+session while retaining the current executable as a diagnostic oracle. Only
+after that object passes Intel ASTC, NVIDIA fallback, and CPU/reference tests
+should it be considered for any llama scheduler integration.

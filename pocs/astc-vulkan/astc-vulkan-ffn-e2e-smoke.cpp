@@ -160,6 +160,11 @@ int main(int argc, char ** argv) {
     astc_vulkan_tensor_record record{"blk.0.ffn_down.weight", width, height,
         static_cast<astc_vulkan_footprint>(footprint), 0,
         astc_vulkan_image_bytes(static_cast<astc_vulkan_footprint>(footprint), width, height)};
+    record.representation = astc_vulkan_representation::kScalar;
+    record.scale_l = reconstruction_scale;
+    record.scale_a = reconstruction_scale_a;
+    record.offset = reconstruction_offset;
+    record.payload_hash64 = astc_vulkan_payload_hash64(payload.data(), payload.size());
     astc_vulkan_manifest manifest;
     manifest.tensors.push_back(record);
     astc_vulkan_ffn_adapter adapter;

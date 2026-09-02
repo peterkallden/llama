@@ -1457,3 +1457,17 @@ the upload plus dispatch lifetime in a small RAII session. Keep the existing
 FFN smoke as an oracle-facing executable during this transition. Atlas/pages,
 descriptor indexing and integration with production `ggml-vulkan` remain
 later gates.
+
+The fallback/error-path gate is now green. Host-only tests reject malformed
+payloads before Vulkan allocation, preserve deterministic unsupported-device
+fallback, and cover manifest v1 compatibility plus v2 reconstruction/hash
+metadata. The E2E smoke passes the manifest-derived metadata and payload hash
+through the adapter; Intel ASTC dispatch still matches the CPU oracle below
+`3e-13` MSE.
+
+The next implementation item is the RAII dispatch/session extraction. It must
+retain one sampled image, one descriptor set, one pipeline, and explicit
+activation/output buffers with the current synchronization behavior. Keep the
+existing smoke as a reference implementation until the extracted object has
+the same output and fallback behavior. No scheduler integration or upstream
+API change is part of this gate.
