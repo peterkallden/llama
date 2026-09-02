@@ -4876,6 +4876,10 @@ sample/row shape does not match the trace and tensor record.
 The sidecar also rejects empty or non-divisible activation buffers before
 deriving a sample count. This prevents a cached dispatch session from ever
 being reused with a silently truncated input. Focused driver/adapter/dispatch/
-sidecar CTests remain green. The next gate is to produce a real manifest/blob
-artifact pair from the exported scalar and gauge streams and replay both with
-the new path on the Intel ASTC device.
+sidecar CTests remain green. The real manifest/blob gate was then exercised on
+the Pythia 32x8192 scalar and gauge streams. On 30 holdout samples,
+manifest-backed replay measured scalar activation/model-output relative MSE
+`0.026655061` and gauge `0.016833603`; GPU-vs-CPU MSE remained `1.79e-15`
+and `2.82e-15`. The model-output value is a layer-output comparison against
+the F16 source, not a full-token logit claim. Artifact packaging therefore
+does not alter the standard ASTC runtime path or the gauge-vs-scalar result.

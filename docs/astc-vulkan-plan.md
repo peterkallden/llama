@@ -1556,6 +1556,13 @@ setup without changing payloads or numerical contracts. The next item is to
 make the comparison artifact set manifest-driven and add a model-output
 reference metric before any scheduler-facing adapter is attempted.
 
+The manifest-backed replay gate is now green on the Pythia 32x8192 crop. With
+30 holdout samples, scalar and gauge report model-output relative MSE
+`0.026655061` and `0.016833603`, while GPU-vs-CPU dispatch MSE remains below
+`3e-15` for both. Treat this as a layer-output gate; full-model token/logit
+comparison is still a separate later step using the existing model-replay
+harness.
+
 The comparison executable now supports v2 manifest + payload-blob inputs for
 scalar and gauge artifacts, with normal range/checksum validation, and an
 optional F32 reference-output metric. It retains the old explicit-file mode
