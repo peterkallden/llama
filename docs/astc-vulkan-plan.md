@@ -1318,3 +1318,47 @@ Q3_K_M, TQ1_0, and TQ2_0. They are retained as diagnostics alongside ASTC
 4x4/5x5/6x6 layer replay. The next quality gate is a larger, disjoint token
 corpus; short-prompt layer replay must not be promoted to a model-wide
 quality claim.
+
+### Execution checkpoint after the AVX2 and replay sweeps
+
+The host-side encoder has an exact-preserving AVX2 performance variant. It
+matches the native candidate pool, payload decisions, commit sequence, and
+loss on the bounded gauge fixture while reducing wall time by about 12x. Keep
+this as a build/performance axis; it must not change the frozen quality
+baseline, and ARM builds need their own ISA selection.
+
+The next quality gate is blocked by the model-replay harness rather than the
+ASTC codec: `--cpu-only` still initializes the existing Vulkan backend on this
+host and longer full-layer prompts do not reach a stable logits result. The
+plan therefore requires a genuinely CPU-only replay (or a known-good Vulkan
+device) before a larger perplexity/logits comparison is considered valid.
+The side-by-side ASTC Vulkan driver and isolated FFN GPU decode remain valid
+and continue to be tested independently.
+
+The immediate five-sweep order is:
+
+1. Make CPU-only logits replay deterministic for a multi-prompt held-out
+   corpus.
+2. Compare FP16, Q4, Q3, TQ1/TQ2, scalar ASTC, and gauge ASTC on that corpus.
+3. Re-test scalar-anchored `c + delta` per tensor with scalar as exact
+   fallback.
+4. Run the three-way local/coordinate/Hessian selector comparison on one
+   fixed legal candidate pool per tensor.
+5. Profile native/AVX2 encoder generation and measure the side-by-side Vulkan
+   path against the existing buffer path, without changing production
+   `ggml-vulkan`.
+
+### GPU and selector follow-up
+
+The ASTC Vulkan path and the F32 buffer control both pass on the Intel UHD
+620. A small fixture showed a modest ASTC timestamp advantage, but the full
+576x1536 layer was about 4% slower with ASTC sampling. The stable measured
+benefit is therefore the roughly 8.9x lower weight payload (384 KiB versus
+3.38 MiB), not a portable compute-speed claim. Keep target-GPU benchmarking
+as a later driver gate and do not change scheduling based on this host result.
+
+The c+delta, neural-rank, and selector-compare CTests pass together (3/3).
+These remain offline/opt-in controls. The next blocking item is still a
+genuinely CPU-only, multi-prompt logits harness; only after it is stable may
+the format and per-tensor selector results be promoted to a model-level
+comparison.

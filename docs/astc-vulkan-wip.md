@@ -4373,3 +4373,75 @@ but it is not a full-model quality claim: all candidates are compared after a
 single FFN-down override and only two token positions. A larger held-out
 logits/perplexity corpus remains mandatory before drawing model-level ranking
 conclusions.
+
+## One-hundred-eighty-fifth sweep: explicit AVX2 encoder control
+
+The host CPU is an Intel Core i5-8250U with AVX2, F16C, and SSE4.1. The
+active native neural-rank build was inspected and found to use
+`ASTCENC_ISA_NATIVE=ON` with the explicit AVX2 backend disabled. A separate
+AVX2-only fork build was therefore created and linked into a parallel llama
+PoC build; the standard/native build and runtime driver were not changed.
+
+On the same 48x192, 6x6 scalar-anchored gauge fixture, the AVX2 build produced
+the same candidate count (`1048`), selected blocks (`115`), calibration and
+holdout losses, and commit sequence as the native build. Wall time dropped
+from `7.51 s` to `0.61 s` (about `12.3x` for this bounded run). This is an
+exact-preserving encoder-speed result, not a quality change. The AVX2 fork is
+kept as a performance variant until a portable runtime/build policy is
+defined; ARM targets must use their matching NEON/SVE backend instead.
+
+## One-hundred-eighty-sixth sweep: quality-gate and backend boundary
+
+The full SmolLM2 `blk.0.ffn_down` matrix was exported as a 576x1536 6x6
+scalar ASTC reference for a longer logits replay. The isolated ASTC export
+completed, but the current model-replay executable still selects the existing
+Vulkan backend on this host even with `--cpu-only`; replaying more than the
+two-token diagnostic reaches a backend/driver segmentation fault before the
+final metric is emitted. This is not treated as an ASTC quality result.
+
+The bounded contract suite remains green for the confirmed tests covering
+error shaping, Block-LDLQ, the driver, the FFN adapter, latent smoke, and the
+scalar-anchored c+delta smoke. The larger corpus gate is consequently held at
+the harness boundary: before making a model-wide claim, the replay control
+must force a genuinely CPU-only backend (or use a known-good Vulkan device)
+and report calibration, validation, and untouched holdout logits without a
+device-loss or segmentation fault.
+
+The next five implementation sweeps are therefore ordered as follows:
+
+1. Repair or isolate the CPU-only logits replay path and add a deterministic
+   multi-prompt/held-out corpus contract.
+2. Re-run FP16, Q4, Q3, TQ1, TQ2, scalar ASTC, and gauge ASTC on that corpus.
+3. Re-run the scalar-anchored `c + delta` family per tensor with exact scalar
+   fallback and validation-prefix selection.
+4. Compare local ranking, coordinate descent, and Hessian/Block-LDLQ on one
+   fixed legal candidate pool per tensor; keep LDLQ opt-in unless holdout wins.
+5. Profile native/AVX2 encoder generation and measure the side-by-side Vulkan
+   path against the existing buffer path, without changing production
+   `ggml-vulkan` yet.
+
+## One-hundred-eighty-seventh sweep: GPU ASTC versus buffer control
+
+The isolated Vulkan shader smoke was run with the same 6x6 matrix and
+matvec contract for ASTC sampling and a raw F32 storage-buffer control. On a
+small 32x256 fixture, both paths passed the output oracle; ASTC measured
+`2779.4 ns` per dispatch versus `2973.7 ns` for the buffer path. On the full
+576x1536 scalar layer, both paths again passed, but ASTC measured
+`292795.8 ns` versus `281463.3 ns` for F32, about 4% slower in this Intel
+UHD 620 shader configuration.
+
+The result is intentionally recorded as mixed rather than generalized:
+ASTC's repeatable benefit here is storage and transfer pressure, not a
+guaranteed matvec speedup. The full-layer payload is about `384 KiB` versus
+`3.38 MiB` for F32 (about `8.9x` smaller). Mali, Adreno, and Apple GPUs may
+have different texture/cache tradeoffs, so a target-device benchmark remains
+required before changing a scheduler policy.
+
+## One-hundred-eighty-eighth sweep: selector and feedback regression
+
+The bounded CTest run for the scalar-anchored c+delta smoke, neural-rank
+candidate pool, and selector comparison passed `3/3` in `25.45 s`. This
+reconfirms that c+delta remains opt-in, the legal candidate pool remains
+stable, and the local/coordinate/Hessian comparison is still covered by a
+reproducible contract while the larger logits gate is blocked at model
+replay.
