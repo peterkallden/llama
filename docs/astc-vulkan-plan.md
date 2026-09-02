@@ -1678,3 +1678,32 @@ artifacts for 8x6 and 8x8, then compare them with the same FP16 source and
 traces against Q3_K_M, Q4_K_M, TQ2_0, and TQ1_0. Device smoke proves only the
 standard Vulkan resource contract; it is not a portable performance claim for
 Mali, Adreno, or Apple GPUs.
+
+### Latest quality gate: density-ladder controls on Pythia
+
+The first comparable screen now covers FP16, Q3_K_M, Q4_K_M, TQ2_0 and TQ1_0
+as source/control files for ASTC 8x6 and 8x8. It uses one tensor and one fixed
+trace family, with scalar ASTC as the exact fallback and scalar-anchored gauge
+selection as the experimental variant. The crop is intentionally bounded
+(`8x2048`) so that all five source files can be compared without turning this
+gate into an overnight full-tensor run.
+
+The screen shows meaningful conflict-aware holdout reductions for every source
+at both footprints, but also strong calibration/holdout separation. Therefore
+the plan now treats validation stopping and an untouched holdout as mandatory,
+and reports full conflict selection only as a diagnostic upper-bound path.
+The TQ1/TQ2 equality on this tensor is recorded as an observation of the
+current loader/crop, not as a claim that the formats are interchangeable.
+
+The next implementation/evaluation order is:
+
+1. Package the scalar and validation-stopped gauge streams as manifest-backed
+   8x6/8x8 artifacts and replay them through the CPU oracle.
+2. Run the same artifact/replay protocol on a second Pythia tensor (and retain
+   the existing 6x6/Q3/Q4/TQ controls) to separate tensor effects from format
+   effects.
+3. Add the fixed-prompt/model-output matrix: FP16 reference, Q3_K_M, Q4_K_M,
+   TQ2_0, TQ1_0, scalar ASTC and gauge ASTC.
+4. Only after the quality artifacts are reproducible, run Intel Vulkan upload,
+   hot-cache and batched dispatch measurements. Keep 8x6/8x8 opt-in and do not
+   change production `ggml-vulkan` or reinterpret GGUF quant bytes as ASTC.

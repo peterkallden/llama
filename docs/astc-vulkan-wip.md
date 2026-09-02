@@ -5048,3 +5048,46 @@ step remains a real FP16/Pythia tensor export rather than a premature format
 ranking conclusion. The block-residual control did not win this screen, which
 is consistent with Alpha acting primarily as a codec-steering degree of
 freedom.
+
+## Two-hundred-twenty-second sweep: Pythia Q3/Q4/TQ controls at 8x6 and 8x8
+
+The first same-tensor density-ladder comparison used `blk.0.ffn_down.weight`
+from the local Pythia 1.4B FP16, Q3_K_M, Q4_K_M, TQ2_0 and TQ1_0 files. The
+source model and activation traces were held fixed per run; the screen used an
+8-row by 2048-column crop, 16 holdout/calibration samples, deterministic
+chunked selection, persistent worker contexts and four candidate workers. This
+is a quality screen, not a full-model perplexity result.
+
+### ASTC 8x6 (2.6667 bits/value)
+
+| Source | Scalar holdout | Conflict holdout | Validation-stopped holdout | Relative conflict change |
+| --- | ---: | ---: | ---: | ---: |
+| FP16 | 0.06246712 | 0.026205161 | 0.031169517 | -58.04% |
+| Q3_K_M | 0.20417962 | 0.028679002 | 0.027090600 | -85.95% |
+| Q4_K_M | 0.071991679 | 0.029242843 | 0.028443214 | -59.38% |
+| TQ2_0 | 0.0077527194 | 0.0037406525 | 0.003749239 | -51.75% |
+| TQ1_0 | 0.0077527194 | 0.0037406525 | 0.003749239 | -51.75% |
+
+### ASTC 8x8 (2.0000 bits/value)
+
+| Source | Scalar holdout | Conflict holdout | Validation-stopped holdout | Relative conflict change |
+| --- | ---: | ---: | ---: | ---: |
+| FP16 | 0.20344432 | 0.072044438 | 0.087210716 | -64.59% |
+| Q3_K_M | 0.14901149 | 0.055032196 | 0.070593979 | -63.06% |
+| Q4_K_M | 0.21226701 | 0.067907710 | 0.067093969 | -68.02% |
+| TQ2_0 | 0.38481419 | 0.060768465 | 0.061193595 | -84.21% |
+| TQ1_0 | 0.38481419 | 0.060768465 | 0.061193595 | -84.21% |
+
+The two TQ files are different GGUF files (different SHA-256), but this tensor
+crop reconstructs identically in the current loader, so the measured rows are
+identical and must not be interpreted as a whole-model equivalence. Across all
+sources, calibration loss was much lower than holdout loss after conflict
+selection. Validation-prefix stopping therefore remains part of the contract;
+the full commit path is useful diagnostically but is not the quality number to
+ship.
+
+The result supports keeping both experimental footprints and all four control
+families. It does not yet rank Q3/Q4/TQ against ASTC at model level: the next
+gate is an artifact-backed replay with a fixed FP16 reference, followed by the
+same prompt/output matrix and only then GPU dispatch timing. No GPU encoder was
+introduced; ASTC encoding and selection remain offline CPU work.
