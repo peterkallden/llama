@@ -4883,3 +4883,18 @@ manifest-backed replay measured scalar activation/model-output relative MSE
 and `2.82e-15`. The model-output value is a layer-output comparison against
 the F16 source, not a full-token logit claim. Artifact packaging therefore
 does not alter the standard ASTC runtime path or the gauge-vs-scalar result.
+
+## Two-hundred-fifteenth sweep: reproducible artifact packaging
+
+`astc-vulkan-artifact-pack` now converts an exported ASTC payload and its
+metadata into a version-2 manifest plus a byte-identical payload blob. It
+records tensor shape, footprint, representation, affine reconstruction,
+model fingerprint, and the FNV-1a payload checksum. The tool is intentionally
+small and sidecar-local; it does not add a loader to production `ggml-vulkan`.
+
+The generated scalar and gauge packages were replayed through the Intel ASTC
+sidecar with the same Pythia 32x8192 crop and 30 holdout samples. Scalar
+model-output relative MSE was `0.026625414`, gauge was `0.016833603`; GPU-vs-
+CPU MSE was `4.49e-14` and `2.82e-15`. The payload blob compares byte-for-byte
+with the exported `.astc` stream. This makes the next full-tensor experiment
+repeatable without hand-built metadata or one-off packaging scripts.

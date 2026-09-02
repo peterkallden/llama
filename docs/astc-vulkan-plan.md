@@ -1563,6 +1563,13 @@ The manifest-backed replay gate is now green on the Pythia 32x8192 crop. With
 comparison is still a separate later step using the existing model-replay
 harness.
 
+`astc-vulkan-artifact-pack` now provides the repeatable packaging step from
+exported ASTC + metadata files to a v2 manifest and payload blob, including
+shape, representation, affine decode and checksum. The packaged scalar/gauge
+Pythia crop replays successfully through the sidecar with model-output
+relative MSE `0.026625414` and `0.016833603`, respectively. Proceed next with
+larger/full-tensor artifacts and keep full-model logits as a separate gate.
+
 The comparison executable now supports v2 manifest + payload-blob inputs for
 scalar and gauge artifacts, with normal range/checksum validation, and an
 optional F32 reference-output metric. It retains the old explicit-file mode

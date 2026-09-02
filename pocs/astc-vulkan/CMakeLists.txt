@@ -37,6 +37,13 @@ target_include_directories(test-astc-vulkan-driver PRIVATE
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(test-astc-vulkan-driver PRIVATE cxx_std_17)
 
+add_executable(astc-vulkan-artifact-pack
+    astc-vulkan-artifact-pack.cpp)
+target_link_libraries(astc-vulkan-artifact-pack PRIVATE astc-vulkan-driver)
+target_include_directories(astc-vulkan-artifact-pack PRIVATE
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_compile_features(astc-vulkan-artifact-pack PRIVATE cxx_std_17)
+
 find_package(Vulkan QUIET)
 if (Vulkan_FOUND)
     add_library(astc-vulkan-resource STATIC
