@@ -4031,3 +4031,26 @@ decode on the device. CPU work is limited to reference generation and result
 checking. The next quality gate is the queued FP16/Q4/TQ1/TQ2 model smoke;
 `c+delta`, LDLQ, and GPU candidate encoding remain deferred until these runtime
 and baseline contracts are complete.
+
+## One-hundred-sixty-eighth sweep: ASTC encoder ownership for the driver
+
+The driver/runtime will not depend on the neural `astcenc` fork. Vulkan
+receives ordinary standard ASTC block payloads and performs texture
+decompression in the device texture path; encoding is an offline packaging and
+research operation. This keeps the runtime small, preserves compatibility with
+Mali/Adreno/Apple and other standard ASTC implementations, and prevents the
+experimental encoder from changing the production Vulkan backend.
+
+For the PoC, keep the encoder fork separate and pinned to an explicit commit
+(`astc-encoder-neural-rank`). Build it only for the side-fork tools and retain
+the unmodified packaged/system `astcenc` as the baseline and fallback. If a
+future distribution needs reproducible offline encoding, the fork can be
+vendored or added as a git subtree under the side-fork's `third_party/` area;
+it should not be copied into llama.cpp core or required by the Vulkan driver.
+
+Upstreaming is a later, split exercise rather than the current gate. Generic
+changes such as context/table reuse, worker-safe reset semantics, or a clean
+candidate-observer API may be proposed independently if they are useful to
+ordinary ASTC users. Neural ranking, activation-aware scoring, gauge-specific
+candidate generation, and experimental payload semantics remain research-fork
+features until they have stable contracts and evidence beyond this PoC.
