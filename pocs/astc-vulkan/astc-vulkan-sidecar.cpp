@@ -88,10 +88,16 @@ bool astc_vulkan_sidecar::init(astc_vulkan_footprint footprint, std::string & er
 bool astc_vulkan_sidecar::load_manifest(const std::string & path, std::string & error) {
     astc_vulkan_manifest loaded;
     if (!astc_vulkan_read_manifest(path, loaded, error)) return false;
+    return set_manifest(loaded, error);
+}
+
+bool astc_vulkan_sidecar::set_manifest(const astc_vulkan_manifest & manifest,
+                                       std::string & error) {
+    if (!astc_vulkan_validate_manifest(manifest, error)) return false;
     dispatch_.reset();
     adapter_.reset();
     binding_ = {};
-    manifest_ = std::move(loaded);
+    manifest_ = manifest;
     error.clear();
     return true;
 }

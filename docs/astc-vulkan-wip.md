@@ -4758,3 +4758,17 @@ scheduler-facing experiment behind an explicit build option, with scalar
 ASTC, gauge-only ASTC, Q4/TQ and FP16 controls measured from identical traces.
 No atlas, bindless descriptor scheme or upstream API change should be added
 before that comparison is reproducible.
+
+## Two-hundred-eighth sweep: facade-backed end-to-end gate
+
+The FFN smoke now exercises the complete isolated sidecar path: in-memory
+manifest validation, device selection, tensor binding/upload, reusable
+dispatch setup, GPU execution and scalar CPU-oracle comparison. The Intel
+render-device results remain byte/metric consistent for both footprints:
+6x6 GPU-vs-CPU MSE `1.5118848e-14` and 4x4 `1.6205632e-14`. This confirms that
+the facade is an ownership refactor, not a second shader implementation.
+
+The remaining driver-expansion work is therefore the comparison harness, not
+more Vulkan plumbing: run scalar ASTC and gauge-only ASTC beside Q4/TQ and
+FP16 controls using the same model tensors and activation traces. Scheduler
+integration stays behind that evidence gate.

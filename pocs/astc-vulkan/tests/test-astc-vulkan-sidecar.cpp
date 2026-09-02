@@ -11,6 +11,12 @@ int main() {
     assert(!sidecar.run({}, {}, output, error));
     assert(error == "ASTC Vulkan sidecar has no ready tensor");
 
+    astc_vulkan_manifest manifest;
+    manifest.tensors.push_back({
+        "blk.0.ffn_down.weight", 1536, 32, astc_vulkan_footprint::k6x6, 0,
+        astc_vulkan_image_bytes(astc_vulkan_footprint::k6x6, 1536, 32)});
+    assert(sidecar.set_manifest(manifest, error));
+
     astc_vulkan_ffn_binding binding;
     assert(!sidecar.bind_tensor("missing", 1, 1, {}, binding, error));
     assert(error == "ASTC Vulkan sidecar is not initialized");

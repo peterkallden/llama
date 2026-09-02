@@ -1516,3 +1516,10 @@ scheduler integration out of that change.
 60. Add a scheduler-facing adapter experiment behind an explicit build option;
     compare scalar ASTC, gauge-only ASTC, Q4/TQ controls and FP16 using the
     same activation traces and model outputs before any upstream proposal.
+
+The isolated sidecar facade is now also exercised by the FFN E2E executable;
+its 4x4 and 6x6 GPU outputs match the CPU oracle below `2e-14` MSE on the
+render-enabled Intel device. Begin item 60 with an offline/single-tensor
+comparison harness. It must not require scheduler changes and must report
+dispatch correctness, storage bytes and activation/model quality as separate
+metrics.

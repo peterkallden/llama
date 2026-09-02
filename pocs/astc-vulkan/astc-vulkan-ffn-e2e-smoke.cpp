@@ -1,10 +1,6 @@
 #include "astc-vulkan-driver.h"
-#include "astc-vulkan-ffn-adapter.h"
 #include "astc-vulkan-input.h"
-#include "astc-vulkan-resource.h"
-#include "astc-vulkan-dispatch.h"
-
-#include <vulkan/vulkan.h>
+#include "astc-vulkan-sidecar.h"
 
 #include <algorithm>
 #include <cmath>
@@ -102,43 +98,6 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    VkInstance instance = VK_NULL_HANDLE;
-    const VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "astc-vulkan-ffn-e2e", 1,
-                                "llama.cpp ASTC Vulkan PoC", 1, VK_API_VERSION_1_0};
-    const VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, 0,
-                                             &app, 0, nullptr, 0, nullptr};
-    if (vkCreateInstance(&instance_info, nullptr, &instance) != VK_SUCCESS) return 77;
-    uint32_t device_count = 0;
-    vkEnumeratePhysicalDevices(instance, &device_count, nullptr);
-    std::vector<VkPhysicalDevice> devices(device_count);
-    if (device_count == 0 || vkEnumeratePhysicalDevices(instance, &device_count, devices.data()) != VK_SUCCESS) {
-        vkDestroyInstance(instance, nullptr); return 77;
-    }
-    const VkFormat format = astc_vulkan_vk_format(footprint);
-    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
-    uint32_t queue_family = UINT32_MAX;
-    for (VkPhysicalDevice candidate : devices) {
-        if (!astc_vulkan_supports_sampled_transfer(candidate, format)) continue;
-        uint32_t count = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count, nullptr);
-        std::vector<VkQueueFamilyProperties> queues(count);
-        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count, queues.data());
-        for (uint32_t q = 0; q < count; ++q) if (queues[q].queueFlags & VK_QUEUE_COMPUTE_BIT) {
-            physical_device = candidate; queue_family = q; break;
-        }
-        if (physical_device != VK_NULL_HANDLE) break;
-    }
-    if (physical_device == VK_NULL_HANDLE) { vkDestroyInstance(instance, nullptr); return 77; }
-    constexpr float priority = 1.0f;
-    const VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, nullptr, 0,
-                                             queue_family, 1, &priority};
-    const VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, nullptr, 0, 1,
-                                         &queue_info, 0, nullptr, 0, nullptr, nullptr};
-    VkDevice device = VK_NULL_HANDLE;
-    if (vkCreateDevice(physical_device, &device_info, nullptr, &device) != VK_SUCCESS) {
-        vkDestroyInstance(instance, nullptr); return 77;
-    }
-    VkQueue queue = VK_NULL_HANDLE; vkGetDeviceQueue(device, queue_family, 0, &queue);
     astc_vulkan_tensor_record record{"blk.0.ffn_down.weight", width, height,
         static_cast<astc_vulkan_footprint>(footprint), 0,
         astc_vulkan_image_bytes(static_cast<astc_vulkan_footprint>(footprint), width, height)};
@@ -149,24 +108,20 @@ int main(int argc, char ** argv) {
     record.payload_hash64 = astc_vulkan_payload_hash64(payload.data(), payload.size());
     astc_vulkan_manifest manifest;
     manifest.tensors.push_back(record);
-    astc_vulkan_ffn_adapter adapter;
+    astc_vulkan_sidecar sidecar;
     astc_vulkan_ffn_binding binding;
-    if (!adapter.prepare(manifest, record.name, width, true, height, binding, error) ||
-        !adapter.upload(physical_device, device, queue, queue_family, binding, payload, error)) {
-        std::fprintf(stderr, "%s\n", error.c_str()); vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr); return 1;
+    if (!sidecar.set_manifest(manifest, error) ||
+        !sidecar.init(static_cast<astc_vulkan_footprint>(footprint), error)) return 77;
+    if (!sidecar.bind_tensor(record.name, width, height, payload, binding, error)) {
+        std::fprintf(stderr, "%s\n", error.c_str()); return 1;
     }
-    const astc_vulkan_tensor_session & tensor = adapter.session();
-    (void) tensor;
     std::vector<float> dispatch_activations(static_cast<size_t>(trace.samples) * width);
     for (uint32_t sample = 0; sample < trace.samples; ++sample) {
         std::copy_n(trace.values.begin() + static_cast<size_t>(sample) * trace.columns,
                     width, dispatch_activations.begin() + static_cast<size_t>(sample) * width);
     }
-    astc_vulkan_matvec_session dispatch;
     std::vector<float> actual;
-    bool success = dispatch.init(physical_device, device, queue, queue_family, tensor,
-                                 spirv, width, height, trace.samples, error) &&
-                   dispatch.run(dispatch_activations, binding.reconstruction, actual, error);
+    bool success = sidecar.run(spirv, dispatch_activations, actual, error);
     if (!success) std::fprintf(stderr, "%s\n", error.c_str());
     double astc_error = 0.0, source_error = 0.0, source_energy = 0.0;
     double reference_error = 0.0, reference_energy = 0.0;
@@ -200,8 +155,6 @@ int main(int argc, char ** argv) {
                              trace.samples, height, width, astc_error / (trace.samples * height),
                              source_error / std::max(source_energy, 1e-12),
                              reference_metric.c_str());
-    dispatch.reset();
-    adapter.reset();
-    vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr);
+    sidecar.reset();
     return success ? 0 : 1;
 }

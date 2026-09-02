@@ -20,6 +20,7 @@ public:
 
     bool init(astc_vulkan_footprint footprint, std::string & error);
     bool load_manifest(const std::string & path, std::string & error);
+    bool set_manifest(const astc_vulkan_manifest & manifest, std::string & error);
     bool bind_tensor(const std::string & tensor_name, uint32_t expected_columns,
                      uint32_t expected_rows, const std::vector<uint8_t> & payload,
                      astc_vulkan_ffn_binding & binding, std::string & error);

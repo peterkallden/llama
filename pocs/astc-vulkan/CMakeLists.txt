@@ -385,7 +385,7 @@ if (ASTC_VULKAN_GLSLC)
             ${ASTC_VULKAN_POC_INCLUDE_DIR}
             ${CMAKE_SOURCE_DIR}/ggml/include)
         target_link_libraries(astc-vulkan-ffn-e2e-smoke PRIVATE
-            astc-vulkan-ffn-adapter astc-vulkan-dispatch ggml-base Vulkan::Vulkan)
+            astc-vulkan-sidecar ggml-base)
         target_compile_features(astc-vulkan-ffn-e2e-smoke PRIVATE cxx_std_17)
         add_dependencies(astc-vulkan-ffn-e2e-smoke astc-vulkan-ffn-e2e-shader)
     endif()
