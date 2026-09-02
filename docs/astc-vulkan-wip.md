@@ -4032,6 +4032,26 @@ checking. The next quality gate is the queued FP16/Q4/TQ1/TQ2 model smoke;
 `c+delta`, LDLQ, and GPU candidate encoding remain deferred until these runtime
 and baseline contracts are complete.
 
+## One-hundred-sixty-ninth sweep: TQ2 CLI smoke and execution boundary
+
+The stale FP16 CLI processes from an earlier experiment were explicitly
+terminated after running for more than nineteen hours without a result. A new
+short TQ2 smoke was then attempted with the freshly built `llama-cli`. The
+default Vulkan path reported three missing `ggml_vk_test_dequant_matmul q8_0`
+pipelines and was stopped by the 180-second guard. A second run forced
+`--device none --n-gpu-layers 0 --no-op-offload`; it also reached the guard
+(180.18 seconds, peak RSS about 0.9 GB) without completing eight generated
+tokens.
+
+This is not a quality result and must not be compared with ASTC. It establishes
+an execution boundary for the current CLI build: TQ model inference needs a
+working CPU quantized path or an explicit Vulkan TQ pipeline before the planned
+FP16/Q4/TQ1/TQ2 model table can be produced. The ASTC/Vulkan payload and shader
+tests remain independent and passing. The next safe action is to diagnose the
+CLI backend selection with a tiny known-good Q4 model, then either use a
+CPU-only llama.cpp build for baseline quality or add the missing TQ pipeline as
+a separate future task.
+
 ## One-hundred-sixty-eighth sweep: ASTC encoder ownership for the driver
 
 The driver/runtime will not depend on the neural `astcenc` fork. Vulkan
