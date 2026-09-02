@@ -2061,3 +2061,16 @@ run quality and hot-dispatch measurements from the same artifact provenance;
 then replay on a representative mobile Vulkan adapter. Keep GPU ASTC encoding
 deferred until those measurements show that host candidate generation, rather
 than shader dispatch, is the limiting cost.
+
+### Larger-fixture timing checkpoint
+
+The unified 100-dispatch comparison was repeated on the common SmolLM2 fixture
+using the correct orientation (`512` columns × `576` rows). Per-dispatch GPU
+timestamps were ASTC 4x4 `210.015 us`, ASTC 5x5 `151.299 us`, ASTC 6x6
+`123.699 us`, FP32 buffer `108.608 us`, Q4_0 `183.719 us`, and TQ2_0
+`243.029 us`; every path passed its CPU/oracle validation. The corrected
+orientation matters because the payload layout is row-major and TQ2's 256-value
+blocks expose the mistake immediately. The result reinforces that footprint
+and format rankings are workload-dependent; the next quality/performance gate
+must use the same artifact dimensions and separate cold upload from hot
+dispatch timing.

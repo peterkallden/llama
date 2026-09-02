@@ -5609,3 +5609,25 @@ without larger tiled fixtures and a native target adapter. The initial ASTC
 attempt used the wrong reference file and failed as expected; rerunning with
 the artifact's own decoded RGBA oracle passed, confirming the failure was test
 input selection rather than a shader defect.
+
+## Two-hundred-forty-ninth sweep: larger unified shader timing
+
+The common SmolLM2 fixture was rerun with its actual tensor orientation
+(`512` columns × `576` rows; the filename's `576x512` denotes rows × columns).
+All paths used 100 dispatches and their own CPU/oracle reference.
+
+| Path | Per-dispatch GPU timestamp | Correctness |
+| --- | ---: | --- |
+| ASTC 4x4 sampled matvec | `210.015 us` | passed |
+| ASTC 5x5 sampled matvec | `151.299 us` | passed |
+| ASTC 6x6 sampled matvec | `123.699 us` | passed |
+| FP32 storage-buffer matvec | `108.608 us` | passed |
+| Q4_0 packed matvec | `183.719 us` | passed |
+| TQ2_0 packed matvec | `243.029 us` | passed |
+
+The earlier failed attempt used reversed dimensions and was discarded; the
+corrected run is the result recorded here. The ranking differs from the small
+fixture, demonstrating that dispatch geometry and cache behavior matter as
+much as format. ASTC 6x6 is closest to the FP32 control on this adapter, while
+Q4/TQ2 remain slower in these isolated shaders. This is still not a graph-level
+or mobile-device performance claim.
