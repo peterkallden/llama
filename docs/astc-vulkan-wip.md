@@ -5026,3 +5026,25 @@ The remaining quality work is deliberately separate from this plumbing slice:
 run scalar and gauge-only 8x6/8x8 latent artifacts, re-run the Q3_K_M/TQ2_0/
 TQ1_0 comparison matrix, and only then decide whether a footprint-specific
 candidate preset or a production-facing adapter is justified.
+
+## Two-hundred-twenty-first sweep: bounded 8x6/8x8 quality screening
+
+The newly generalized chunked selector was exercised on a larger deterministic
+fixture (`32x128`, 16 activation samples, 16 calibration samples) with the
+same scalar-anchored gauge family and persistent worker contexts. This was a
+quality screen, not a model claim, but it confirms that the new footprints are
+not limited to a one-block smoke.
+
+| Footprint | Blocks | Scalar holdout | Conflict-aware holdout | Relative change |
+| --- | ---: | ---: | ---: | ---: |
+| ASTC 8x6 | 96 | 0.0028710273 | 0.0009803218 | -65.85% |
+| ASTC 8x8 | 64 | 0.0073290377 | 0.0035127172 | -52.07% |
+
+The result is encouraging for the null-space steering hypothesis: the scalar
+stream remains the exact baseline, while coordinated gauge commits improve the
+same activation objective at both aggressive footprints. The earlier tiny
+8x6/8x8 run was too small to be decisive; this larger screen is why the next
+step remains a real FP16/Pythia tensor export rather than a premature format
+ranking conclusion. The block-residual control did not win this screen, which
+is consistent with Alpha acting primarily as a codec-steering degree of
+freedom.
