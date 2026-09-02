@@ -2002,3 +2002,12 @@ payload contains the full conflict stream while the commit log identifies
 validation-best prefix `323020`. The next gate is to rerun the full gauge
 selector with `--validation-payload`, package that exact prefix, and replay it
 against the full scalar control.
+
+### Post-gate regression checkpoint
+
+After full-layer validation-prefix export, provenance packaging, CPU/Vulkan
+replay, and same-prompt model controls, the complete ASTC-labelled CTest suite
+was rerun with **30/30 passing** in about 131 seconds. The isolated branch is
+clean and no production `ggml-vulkan` routing was modified. The next work is
+therefore a multi-prompt/full-model quality matrix and target-device timing,
+not another correctness fix.

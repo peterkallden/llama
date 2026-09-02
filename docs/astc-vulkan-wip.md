@@ -5522,3 +5522,12 @@ validation-selected prefix (the commit log's best validation prefix is
 the full tensor contains a real gauge correction space, but it must not be
 promoted to a model-quality result until the prefix payload is exported and
 replayed with the same provenance contract.
+
+## Two-hundred-forty-fourth sweep: post-gate regression
+
+After full-layer prefix export, provenance packaging, CPU/Vulkan replay, and
+same-prompt model controls, the complete ASTC-labelled CTest suite was rerun:
+**30/30 tests passed** in about 131 seconds. This includes the provenance
+contract, artifact/resource checks, error-shaping/LDLQ contracts, 8x6/8x8
+experimental shader smokes, and the larger weight smoke. The working tree is
+clean at this checkpoint; no production Vulkan routing was changed.
