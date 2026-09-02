@@ -3957,3 +3957,32 @@ The commit log has SHA-256
 The next gate is ASTC+Vulkan runtime validation, followed by TQ1_0/TQ2_0
 baselines; do not add `c+delta` or LDLQ until the runtime path reproduces the
 CPU-oracle payload semantics.
+
+## One-hundred-sixty-fifth sweep: first ASTC+Vulkan runtime gate
+
+The existing side-fork runtime path was exercised with a small scalar-anchored
+6x6 ASTC payload (`32x1536`, two activation samples). The test uploads the
+payload as a Vulkan compressed image, samples it from `astc-ffn-matvec.comp`,
+and compares the GPU output with a CPU calculation over the same decoded
+RGBA reference.
+
+| Runtime check | Result |
+| --- | ---: |
+| Vulkan ASTC device smoke (4x4/5x5/6x6) | passed |
+| 6x6 shader compile | passed |
+| 6x6 local/nonlocal shader device smoke | passed |
+| FFN end-to-end dimensions | 32 rows x 1,536 columns |
+| Activation samples | 2 |
+| GPU-vs-CPU output MSE | 0.0057790125 |
+| ASTC-vs-source relative MSE | 0.027111866 |
+
+This confirms that the runtime performs ASTC decode in the Vulkan texture path;
+the CPU is used only for input upload, oracle calculation, and result checking.
+The test did not cross PCIe because the current host uses the local Vulkan
+device path; it is a correctness gate, not yet a throughput benchmark.
+
+The next runtime task is to generate a matching decoded-F32 reference for a
+gauge payload and run the same FFN test. TQ2_0 is already available locally as
+`Pythia-1.4B-TQ2_0-local.gguf`; a TQ1_0 artifact still needs to be produced or
+located. TQ comparisons remain baselines after the ASTC gauge runtime path is
+validated.
