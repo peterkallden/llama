@@ -4856,3 +4856,26 @@ focused driver, adapter, dispatch, and sidecar tests pass after the change.
 The next comparison step remains manifest-driven artifact loading and an
 explicit model-output reference; no production scheduler or `ggml-vulkan`
 code is changed.
+
+## Two-hundred-fourteenth sweep: manifest-backed comparison contract
+
+The opt-in comparison executable now accepts a v2 ASTC manifest plus payload
+blob for each representation (`--scalar-manifest`/`--scalar-payload-blob` and
+the corresponding gauge options). It resolves the named tensor, validates the
+recorded range and checksum through the normal manifest/adapter path, and
+obtains the affine reconstruction parameters from the manifest rather than a
+parallel text metadata file. The legacy per-file arguments remain available
+for the existing bounded fixture, so this is an additive migration path.
+
+An optional `--reference-output` F32 artifact adds model/layer-output MSE and
+relative MSE to the existing dispatch and source-activation metrics. It is
+deliberately a reference-output contract, not a claim that the sidecar is
+already wired into llama's scheduler. The tool rejects output artifacts whose
+sample/row shape does not match the trace and tensor record.
+
+The sidecar also rejects empty or non-divisible activation buffers before
+deriving a sample count. This prevents a cached dispatch session from ever
+being reused with a silently truncated input. Focused driver/adapter/dispatch/
+sidecar CTests remain green. The next gate is to produce a real manifest/blob
+artifact pair from the exported scalar and gauge streams and replay both with
+the new path on the Intel ASTC device.

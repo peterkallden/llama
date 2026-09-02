@@ -1555,3 +1555,11 @@ identical shader/sample-count runs. This removes repeated descriptor/pipeline
 setup without changing payloads or numerical contracts. The next item is to
 make the comparison artifact set manifest-driven and add a model-output
 reference metric before any scheduler-facing adapter is attempted.
+
+The comparison executable now supports v2 manifest + payload-blob inputs for
+scalar and gauge artifacts, with normal range/checksum validation, and an
+optional F32 reference-output metric. It retains the old explicit-file mode
+for regression compatibility. The sidecar validates activation divisibility
+before session reuse. Next, create/replay real manifest-backed scalar and
+gauge artifacts, then use the resulting metrics as the gate for any
+scheduler-facing adapter experiment.

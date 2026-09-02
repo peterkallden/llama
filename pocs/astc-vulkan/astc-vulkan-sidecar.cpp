@@ -140,6 +140,10 @@ bool astc_vulkan_sidecar::run(const std::vector<uint32_t> & spirv,
         error = "ASTC Vulkan sidecar has no ready tensor";
         return false;
     }
+    if (activations.empty() || activations.size() % binding_.record.width != 0) {
+        error = "ASTC Vulkan sidecar activation count is not divisible by tensor width";
+        return false;
+    }
     const uint32_t samples = static_cast<uint32_t>(
         activations.size() / binding_.record.width);
     if (!dispatch_.ready() || dispatch_samples_ != samples || dispatch_spirv_ != spirv) {
