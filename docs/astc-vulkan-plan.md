@@ -1701,7 +1701,23 @@ Before scaling to a full tensor or adding Block-LDLQ, do the following:
 4. Only if the artifact and model-level results reproduce, measure Intel Vulkan
    cold upload, hot-cache dispatch and batched execution. Keep 8x6/8x8
    experimental and opt-in; no production backend or GPU encoder changes are
-   implied.
+implied.
+
+### Artifact/Vulkan replay status
+
+The scalar and gauge payload paths for 8x6 and 8x8 now pass a serialization
+gate: selector payload, packed manifest payload and CPU-decode output agree
+byte-for-byte/float-for-float where applicable. Intel UHD Graphics 620 also
+passes the isolated FFN e2e contract for both footprints with GPU-vs-CPU MSE
+below `6e-15` over four samples. This validates the current shader/resource
+plumbing only; it does not establish mobile-GPU performance or model quality.
+
+The next gate is model-facing rather than more driver plumbing: run the fixed
+prompt/output comparison for FP16, Q3_K_M, Q4_K_M, TQ2_0, TQ1_0, scalar ASTC
+and validation-stopped gauge ASTC. Keep full conflict paths as diagnostics,
+not as ship candidates, because calibration overfit is visible in the current
+screens. Only after that comparison should we benchmark cold upload,
+hot-cache and batched inference.
 
 ### Latest quality gate: density-ladder controls on Pythia
 

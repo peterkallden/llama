@@ -5130,3 +5130,31 @@ for scalar ASTC or a claim that TQ1/TQ2 are interchangeable.
 The next gate is now artifact-backed and model-facing: package the selected
 prefixes, replay them through the CPU oracle against the FP16 reference, and
 run the fixed prompt/output matrix before any larger crop or GPU timing.
+
+## Two-hundred-twenty-fourth sweep: artifact and Vulkan replay gate
+
+A scalar 8x6/8x8 export and a validation-compatible scalar-anchored gauge
+payload were packaged with the ASTC manifest tools. The packed payloads were
+byte-identical to the selector output. Decoding the packed streams produced
+the exact same float texels as the direct selector reference (RMSE `0`, max
+absolute difference `0`) for the 8x6 gauge artifact.
+
+The Intel UHD Graphics 620 render device then consumed the packed gauge
+payloads through the isolated FFN sidecar with explicit experimental opt-in:
+
+| Footprint | Samples | GPU-vs-CPU MSE | ASTC-vs-source relative MSE |
+| --- | ---: | ---: | ---: |
+| ASTC 8x6 | 4 | 5.1254e-15 | 1.5185123 |
+| ASTC 8x8 | 4 | 4.0641e-15 | 1.7254335 |
+
+The near-zero GPU-vs-CPU values verify the resource, shader and sidecar
+contract on this host. The source-relative values are expected quality loss for
+the aggressive footprints and are not portable throughput claims. Encoding,
+candidate generation and selection remain offline CPU work; the GPU is only
+decoding/sampling the standard ASTC payload during this gate.
+
+The quality gate is therefore split cleanly: direct latent-smoke metrics decide
+candidate quality, artifact replay checks serialization, and Vulkan e2e checks
+hardware execution equivalence. The remaining model-facing work is the fixed
+prompt/output matrix, followed by dispatch timing only after that matrix is
+reproducible.
