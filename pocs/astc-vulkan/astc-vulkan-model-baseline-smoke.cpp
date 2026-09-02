@@ -80,22 +80,26 @@ double cross_entropy(const float * logits, size_t n_vocab, llama_token target) {
 
 int main(int argc, char ** argv) {
     std::string reference_path, candidate_path, prompt;
+    bool cpu_only = false;
     for (int i = 1; i < argc; ++i) {
         const std::string option = argv[i];
         if (i + 1 >= argc) break;
         if (option == "--reference-model") reference_path = argv[++i];
         else if (option == "--model") candidate_path = argv[++i];
         else if (option == "--prompt") prompt = argv[++i];
+        else if (option == "--cpu-only") cpu_only = true;
         else { std::fprintf(stderr, "unknown option: %s\n", option.c_str()); return 2; }
     }
     if (reference_path.empty() || candidate_path.empty() || prompt.empty()) {
-        std::fprintf(stderr, "usage: %s --reference-model fp16.gguf --model candidate.gguf --prompt text\n", argv[0]);
+        std::fprintf(stderr, "usage: %s --reference-model fp16.gguf --model candidate.gguf --prompt text [--cpu-only]\n", argv[0]);
         return 2;
     }
 
     llama_backend_init();
-    llama_model * reference_model = llama_model_load_from_file(reference_path.c_str(), llama_model_default_params());
-    llama_model * candidate_model = llama_model_load_from_file(candidate_path.c_str(), llama_model_default_params());
+    llama_model_params model_params = llama_model_default_params();
+    if (cpu_only) model_params.n_gpu_layers = 0;
+    llama_model * reference_model = llama_model_load_from_file(reference_path.c_str(), model_params);
+    llama_model * candidate_model = llama_model_load_from_file(candidate_path.c_str(), model_params);
     if (reference_model == nullptr || candidate_model == nullptr) {
         std::fprintf(stderr, "failed to load reference or candidate model\n");
         if (reference_model) llama_model_free(reference_model);

@@ -4352,3 +4352,24 @@ benchmark, so the non-monotonic loss delta between 5x5 and 6x6 is not used
 to rank formats. The robust conclusion is that 4x4 remains the safest model
 fidelity control, while 6x6 provides the bandwidth-oriented candidate that
 must be evaluated with a larger perplexity/logits corpus.
+
+## One-hundred-eighty-fourth sweep: native quantization logits controls
+
+The native baseline replay was extended with the same explicit `--cpu-only`
+control and run against the same SmolLM2 FP16 reference and two-token prompt.
+The layer-independent model controls were:
+
+| Candidate | Relative logits MSE | Loss delta | Top-1 agreement |
+| --- | ---: | ---: | ---: |
+| Q4_0 | `0.0785207` | `+2.82271` | `0.5` |
+| Q3_K_M | `0.298921` | `+3.64269` | `0` |
+| TQ1_0 | `3.22380` | `+4.62713` | `0.5` |
+| TQ2_0 | `3.22380` | `+4.62713` | `0.5` |
+
+Against this same diagnostic, ASTC layer replay measured relative logits MSE
+of `0.05626`/`0.05800`/`0.06837` and loss deltas of `+0.00396`/`+0.03206`/
+`+0.01980` for 4x4/5x5/6x6. This is encouraging for the ASTC layer contract,
+but it is not a full-model quality claim: all candidates are compared after a
+single FFN-down override and only two token positions. A larger held-out
+logits/perplexity corpus remains mandatory before drawing model-level ranking
+conclusions.

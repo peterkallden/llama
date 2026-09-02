@@ -1312,3 +1312,9 @@ control. It confirms the expected 4x4 quality lead and provides a reproducible
 format-quality claim. The next quality run must use a larger held-out corpus
 and compare against native Q3/Q4/TQ baselines under the same CPU-only replay
 contract.
+
+The first same-prompt native logits controls are now available for Q4_0,
+Q3_K_M, TQ1_0, and TQ2_0. They are retained as diagnostics alongside ASTC
+4x4/5x5/6x6 layer replay. The next quality gate is a larger, disjoint token
+corpus; short-prompt layer replay must not be promoted to a model-wide
+quality claim.
