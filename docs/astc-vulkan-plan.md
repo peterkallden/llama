@@ -1963,3 +1963,13 @@ This is an artifact-identity/runtime gate only; the same gauge payload occupied
 both comparison slots in this check, so no scalar-versus-gauge quality claim is
 derived from it. The next required artifact remains a full-shape scalar and
 validation-prefix gauge pair bound to the same corpus.
+
+### Separated provenance quality replay
+
+The bounded `32x8192` Pythia scalar and validation-selected gauge artifacts now
+have separate provenance-bound manifests/blobs with identical source and trace
+identity. Intel Vulkan replay over 30 holdout samples reproduced scalar
+model-output relative MSE `0.026625414` and gauge `0.016833603`; GPU-vs-CPU
+MSE remained at `4.49e-14` and `2.82e-15`. This closes the bounded provenance
+quality gate without changing runtime code. It does not promote a full-model
+claim: full-shape validation-prefix payloads are still required.

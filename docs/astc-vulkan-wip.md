@@ -5417,3 +5417,20 @@ versus gauge quality: the same gauge payload was supplied to both comparison
 slots solely to exercise the new artifact identity. A full quality comparison
 still requires separately materialized scalar and validation-prefix gauge
 payloads with the same source family, shape, and corpus.
+
+## Two-hundred-thirty-seventh sweep: separated provenance quality replay
+
+The bounded Pythia scalar control was packaged with the same real corpus
+hashes and source identity as the gauge artifact, then both separate manifest /
+blob pairs were replayed through the Intel Vulkan sidecar. The 30-sample
+results were:
+
+| Artifact | GPU-vs-CPU MSE | Model-output relative MSE |
+| --- | ---: | ---: |
+| scalar 6x6 | `4.4908241e-14` | `0.026625414` |
+| validation-selected gauge 6x6 | `2.8224076e-15` | `0.016833603` |
+
+The values reproduce the earlier bounded comparison while proving that the
+new provenance sidecars do not alter payload binding or reconstruction. This
+is still a layer-output fixture, not a full-model logits claim; the next
+quality gate remains full-shape validation-prefix export.
