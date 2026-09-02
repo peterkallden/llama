@@ -4123,3 +4123,24 @@ comparisons against ASTC 6x6, Q4_K_M, TQ1_0, and TQ2_0. The next ASTC-specific
 experiment remains preset ablation (thorough/medium/fast) on a representative
 gauge fixture, followed by an explicit GPU candidate-generation feasibility
 probe.
+
+## One-hundred-seventy-second sweep: ASTC preset ablation
+
+The scalar-anchored gauge selector was rerun on the same synthetic `32x256`
+6x6 fixture with identical candidate factors, persistent worker contexts,
+strip chunking, and conflict-aware commit. Only the `astcenc` search preset
+changed:
+
+| Preset | Blocks | Unique candidates | Commits | Conflict holdout |
+| --- | ---: | ---: | ---: | ---: |
+| Thorough | 258 | 1,379 | 155 | **0.00019180046** |
+| Medium | 258 | 1,377 | 155 | 0.00020663571 |
+| Fast | 258 | 1,378 | 141 | 0.00043060175 |
+
+`medium` retains approximately 92% of the thorough preset's error reduction
+on this fixture, while `fast` is materially worse and also produces fewer
+accepted commits. This is a quality-only ablation; the command did not yet
+record a per-preset wall-clock profile. Thorough remains the frozen quality
+reference for full-tensor claims. Medium is now the first candidate for a
+later speed/quality trade-off experiment, but it must be checked on a real
+cross-tensor crop before changing the production research baseline.
