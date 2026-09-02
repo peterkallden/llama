@@ -1471,3 +1471,10 @@ activation/output buffers with the current synchronization behavior. Keep the
 existing smoke as a reference implementation until the extracted object has
 the same output and fallback behavior. No scheduler integration or upstream
 API change is part of this gate.
+
+The final pre-RAII checkpoint is green: a metadata/hash-backed ASTC 4x4 E2E
+dispatch matches the CPU oracle at `2.6461919e-13` MSE, and the six focused
+driver/contract tests pass. The sidecar now has a stable single-tensor driver
+boundary for both 4x4 and 6x6. Proceed next with the contained RAII
+dispatch/session extraction; keep production `ggml-vulkan`, atlas policy and
+scheduler integration out of that change.

@@ -4647,3 +4647,17 @@ extract the smoke's descriptor/pipeline lifetime into a small RAII dispatch
 session while retaining the current executable as a diagnostic oracle. Only
 after that object passes Intel ASTC, NVIDIA fallback, and CPU/reference tests
 should it be considered for any llama scheduler integration.
+
+## Two-hundred-first sweep: final pre-RAII driver checkpoint
+
+After manifest-derived metadata and payload hashing were connected to the E2E
+path, ASTC 4x4 was rerun on the same full layer-0 payload. The two-sample
+dispatch produced GPU-vs-CPU MSE `2.6461919e-13` and ASTC-vs-source
+activation-relative MSE `0.00073371248`. The six-test focused driver and
+contract regression passed `6/6`.
+
+The first driver expansion is therefore stable at the single-tensor
+sidecar boundary: manifest v2, capability gating, upload barriers, metadata,
+hash checking, and both planned ASTC footprints are covered. The next change
+should be a contained RAII dispatch/session extraction, with the existing E2E
+smoke kept as a reference until output and fallback behavior are identical.
