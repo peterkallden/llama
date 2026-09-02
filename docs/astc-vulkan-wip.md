@@ -5332,3 +5332,16 @@ packed bytes, manifest range, decoded RGBA fixture, and shader path agree. The
 result remains a bounded layer-output/activation gate. Full-layer provenance,
 source-family controls, and logits/perplexity replay are still required before
 quality or performance promotion.
+
+## Two-hundred-thirty-second sweep: host SIMD and regression status
+
+The host capability check reports `avx2`, `f16c`, and `sse4_1` on the i5-8250U.
+The ASTC side-fork is built with the native host configuration, so there is no
+missing AVX2 enablement to fix in this build. This remains an encoder-host
+performance fact; it must not be generalized to ARM/Mali or used as a GPU
+throughput claim.
+
+After rebuilding the model harness, the full ASTC-labelled CTest suite remains
+green: 29/29 tests passed, including 8x6/8x8 capability-gated shader tests,
+artifact/resource contracts, error-shaping checks, and the larger weight smoke.
+The working tree is clean after the replay documentation commit.
