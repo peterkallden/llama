@@ -2270,3 +2270,9 @@ The bounded layer-1 confirmation is complete: medium was faster than thorough
 (`0.36 s` vs `0.45 s`) and selected a better holdout prefix in that run, but
 the result remains exploratory because the preset also changes the neutral
 candidate. Thorough remains mandatory for reference artifacts.
+
+The 8x6 check did not show a repeatable PV-lite gain (F16 was slightly worse;
+Q3 was effectively unchanged), so 8x6 remains standard-gauge reference plus
+PV-lite experimental opt-in. The first PV-lite 10x6 artifact replay is now
+byte-identical on CPU; Vulkan replay and a second-tensor PV-lite gate remain
+open.

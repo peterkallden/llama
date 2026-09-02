@@ -6056,3 +6056,19 @@ overhead); the larger family generated roughly 741 unique payloads versus
 but not a default policy. The next gate is export/replay of a PV-lite
 validation prefix from artifact bytes alone, followed by a second tensor and
 model-facing check.
+
+The 8x6 follow-up was deliberately kept as a separate control because its
+2.6667-b/w footprint has more codec capacity than 10x6. On the same bounded
+F16/Q3 layer-0 crops, standard versus PV-lite validation-stopped holdout was
+`0.039955989` vs `0.040843482` for F16 and `0.043186661` vs `0.043115168`
+for Q3. Thus PV-lite is retained as an opt-in research mode for 8x6, but
+standard gauge remains the reference there until a larger cross-tensor gate
+shows a repeatable gain.
+
+The first PV-lite artifact gate also passed. Decoding the exported
+`/tmp/pv-lite-validation.astc` 10x6 payload with the standalone CPU artifact
+decoder produced a byte-identical RGBA reference (`cmp` passed; replay and
+selector references both hash to
+`10996770e80c23f3f42e56a9bbc68ccb0664b172c3ea1b588e7c40128b7278ad`). This
+proves artifact self-containment for the PV-lite payload, but is not yet a
+Vulkan-device or model-level gate.
