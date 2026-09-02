@@ -1952,3 +1952,14 @@ and commit-order hashes must be supplied for production measurements; synthetic
 values are allowed only in the serialization test. This keeps future 8x6/8x8,
 Q3/Q4, and TQ comparisons replayable without allowing provenance machinery to
 alter candidate selection or runtime execution.
+
+### Real provenance replay checkpoint
+
+The bounded `32x8192` Pythia gauge stream was repackaged with real calibration,
+validation, holdout, source-weight, and commit-log hashes and validation prefix
+`283`. The payload remained byte-identical, and packed manifest/blob replay on
+Intel Vulkan matched the CPU oracle at `2.8224076e-15` MSE over 30 samples.
+This is an artifact-identity/runtime gate only; the same gauge payload occupied
+both comparison slots in this check, so no scalar-versus-gauge quality claim is
+derived from it. The next required artifact remains a full-shape scalar and
+validation-prefix gauge pair bound to the same corpus.

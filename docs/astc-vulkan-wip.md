@@ -5402,3 +5402,18 @@ full-layer scalar and validation-selected artifacts with real corpus hashes,
 replay the exact bytes through the CPU oracle, and only then promote the model
 matrix or Vulkan timing results. Placeholder hashes are suitable only for
 contract tests, never for a research artifact.
+
+## Two-hundred-thirty-sixth sweep: real provenance replay
+
+The bounded `32x8192` Pythia gauge fixture was repackaged with the real trace
+SHA-256 values, the commit-log hash, the source-weight hash identity, and the
+validation-selected prefix (`283`). The packed blob is byte-identical to the
+original ASTC stream. Replaying that new manifest/blob through the existing
+Intel Vulkan sidecar produced GPU-vs-CPU MSE `2.8224076e-15` for 30 holdout
+samples, matching the earlier packed-artifact result.
+
+This run validates provenance serialization and runtime binding, not scalar
+versus gauge quality: the same gauge payload was supplied to both comparison
+slots solely to exercise the new artifact identity. A full quality comparison
+still requires separately materialized scalar and validation-prefix gauge
+payloads with the same source family, shape, and corpus.
