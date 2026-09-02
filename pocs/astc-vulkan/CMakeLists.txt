@@ -45,6 +45,8 @@ target_include_directories(astc-vulkan-artifact-pack PRIVATE
 target_compile_features(astc-vulkan-artifact-pack PRIVATE cxx_std_17)
 
 find_package(Vulkan QUIET)
+option(GGML_VK_ASTC_EXPERIMENTAL_SCHEDULER_ADAPTER
+    "Build the isolated ASTC scheduler-adapter experiment" OFF)
 if (Vulkan_FOUND)
     add_library(astc-vulkan-resource STATIC
         astc-vulkan-resource.cpp)
@@ -98,6 +100,40 @@ if (Vulkan_FOUND)
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_compile_features(test-astc-vulkan-sidecar PRIVATE cxx_std_17)
 
+    if (GGML_VK_ASTC_EXPERIMENTAL_SCHEDULER_ADAPTER)
+        add_library(astc-vulkan-scheduler-adapter STATIC
+            astc-vulkan-scheduler-adapter.cpp)
+        target_include_directories(astc-vulkan-scheduler-adapter PUBLIC
+            ${ASTC_VULKAN_POC_INCLUDE_DIR})
+        target_link_libraries(astc-vulkan-scheduler-adapter PUBLIC
+            astc-vulkan-sidecar)
+        target_compile_features(astc-vulkan-scheduler-adapter PUBLIC cxx_std_17)
+
+        add_executable(test-astc-vulkan-scheduler-adapter
+            tests/test-astc-vulkan-scheduler-adapter.cpp)
+        target_include_directories(test-astc-vulkan-scheduler-adapter PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR})
+        target_link_libraries(test-astc-vulkan-scheduler-adapter PRIVATE
+            astc-vulkan-scheduler-adapter)
+        target_compile_features(test-astc-vulkan-scheduler-adapter PRIVATE cxx_std_17)
+        if (BUILD_TESTING)
+            add_test(NAME test-astc-vulkan-scheduler-adapter
+                COMMAND test-astc-vulkan-scheduler-adapter)
+            set_property(TEST test-astc-vulkan-scheduler-adapter PROPERTY LABELS astc)
+        endif()
+
+        add_executable(astc-vulkan-scheduler-adapter-smoke
+            astc-vulkan-scheduler-adapter-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-scheduler-adapter-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-scheduler-adapter-smoke PRIVATE
+            astc-vulkan-scheduler-adapter ggml-base)
+        target_compile_features(astc-vulkan-scheduler-adapter-smoke PRIVATE cxx_std_17)
+        add_dependencies(astc-vulkan-scheduler-adapter-smoke astc-vulkan-ffn-e2e-shader)
+    endif()
+
     add_executable(astc-vulkan-capability-probe
         astc-vulkan-capability-probe.cpp)
     target_link_libraries(astc-vulkan-capability-probe PRIVATE Vulkan::Vulkan)
@@ -111,6 +147,11 @@ endif()
 
 find_package(astcenc CONFIG QUIET)
 if (TARGET astcenc::astcenc-static)
+    add_executable(astc-vulkan-artifact-decode
+        astc-vulkan-artifact-decode.cpp)
+    target_link_libraries(astc-vulkan-artifact-decode PRIVATE astcenc::astcenc-static)
+    target_compile_features(astc-vulkan-artifact-decode PRIVATE cxx_std_17)
+
     option(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK
         "Enable the side-fork ASTC neural-ranking API in the latent PoC" OFF)
     set(GGML_VK_ASTC_NEURAL_RANK_LIBRARY "" CACHE FILEPATH

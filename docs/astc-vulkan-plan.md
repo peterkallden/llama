@@ -1584,3 +1584,18 @@ for regression compatibility. The sidecar validates activation divisibility
 before session reuse. Next, create/replay real manifest-backed scalar and
 gauge artifacts, then use the resulting metrics as the gate for any
 scheduler-facing adapter experiment.
+
+The full layer-0 gauge artifact is now packaged and replayed: `2048x8192`,
+7,474,752 bytes, payload SHA-256
+`eb8cf938307703012900453dd4767bcb09433e3ab9f2a083c4732c1190ac0d54`.
+Full-model CPU replay reports relative logits MSE `0.75192497`, top-1
+agreement `10%`, and loss delta `+4.4685255`; the existing full additive 6x6
+control reports `0.90135289`, `0%`, and `+4.5750505`. Gauge improves the
+control but remains well behind Q4 quality.
+
+The isolated scheduler-adapter experiment is implemented behind
+`GGML_VK_ASTC_EXPERIMENTAL_SCHEDULER_ADAPTER`; its host contract and full
+tensor Intel dispatch smoke are green. The adapter is deliberately parallel
+to the production backend. The remaining gate before any upstream proposal
+is a same-prompt/full-model comparison matrix including FP16, Q4, TQ1/TQ2,
+scalar ASTC, and gauge ASTC, followed by performance measurements.

@@ -4907,3 +4907,36 @@ artifact packer changes, the complete ASTC-labelled CTest suite is green:
 the isolated CTest environment; the Intel render-device ASTC resource and
 sidecar replay gates were run separately and passed. No production
 `ggml-vulkan` source was modified. The branch is clean at this checkpoint.
+
+## Two-hundred-seventeenth sweep: full-tensor artifact and model gate
+
+The earlier persistent-context run already produced the complete layer-0
+scalar-anchored gauge payload for `blk.0.ffn_down.weight` (`2048x8192`,
+467,172 ASTC 6x6 blocks, 7,474,752 bytes). Its payload SHA-256 is
+`eb8cf938307703012900453dd4767bcb09433e3ab9f2a083c4732c1190ac0d54`.
+The payload was decoded to a full 256 MiB RGBA-F32 reference and packaged with
+the artifact tool. Scalar-anchored metadata uses source `min=-0.281494141`,
+`range=0.569824219`, so both latent scales are `0.2849121095` and offset is
+`-0.281494141`.
+
+CPU model replay of the full gauge artifact used the Pythia F16 reference,
+layer 0, and the existing 10-token prompt trace. It completed with logits MSE
+`7.082453`, relative logits MSE `0.75192497`, top-1 agreement `10%`, and loss
+delta `+4.4685255`. The older full additive 6x6 control measured relative
+logits MSE `0.90135289`, top-1 `0%`, and loss delta `+4.5750505`. Gauge is an
+improvement, but it is not yet quality-competitive with Q4.
+
+## Two-hundred-eighteenth sweep: opt-in scheduler adapter dispatch
+
+The sidecar now exposes an explicit `GGML_VK_ASTC_EXPERIMENTAL_SCHEDULER_ADAPTER`
+option. The adapter accepts a manifest, payload blob, tensor name and
+footprint, performs normal range/checksum/shape gating, and exposes a minimal
+FFN-down run contract. Fallback remains the caller's responsibility when the
+binding is not ready. No llama scheduler or production `ggml-vulkan` code is
+included in this option.
+
+The adapter smoke ran the full layer-0 gauge artifact through Intel ASTC
+Vulkan: 30 activation samples, 2,048 output rows and 61,440 output values.
+The full additive control ran through the same adapter boundary. This proves
+the integration and device-dispatch boundary; quality remains a separate
+full-model gate.
