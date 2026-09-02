@@ -5196,3 +5196,24 @@ silently truncating or reshaping the source tensor.
 The validation prefix is now a real, replayable stream. The remaining quality
 work is to generate the same prefix artifacts for the density ladder and run
 the common FP16-reference rate--distortion and model-output matrix.
+
+## Two-hundred-twenty-seventh sweep: block-aligned FP16 rate--distortion ladder
+
+The FP16 `blk.0.ffn_down.weight` screen was repeated with crop heights aligned
+to each ASTC footprint (`8`, `10`, `12`, `12`, and `8` rows respectively).
+This removes the large effective-rate distortion caused by partial-height
+padding in the earlier \`8\`-row comparison.
+
+| Footprint | Effective rate | Scalar holdout | Validation-stopped gauge holdout | Relative change |
+| --- | ---: | ---: | ---: | ---: |
+| 4x4 | 8.0000 b/w | 0.001160909 | 0.000355336 | -69.39% |
+| 5x5 | 5.1250 b/w | 0.005962974 | 0.002766791 | -53.59% |
+| 6x6 | 3.5625 b/w | 0.037439716 | 0.020817338 | -44.39% |
+| 8x6 | 2.6667 b/w | 0.068574237 | 0.026675156 | -61.09% |
+| 8x8 | 2.0000 b/w | 0.203444320 | 0.087210716 | -57.13% |
+
+These numbers are a footprint-local FP16 activation screen, not a model-level
+ranking. They establish a clean rate axis and show that validation-selected
+gauge remains useful at the aggressive 8x6/8x8 rates. The next comparison must
+use the same aligned geometry for Q3/Q4/TQ controls and a shared FP16 reference
+before drawing conclusions about a rate--distortion frontier.

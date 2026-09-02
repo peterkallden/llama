@@ -1818,3 +1818,10 @@ and the Intel FFN e2e path matches CPU with MSE `1.2027e-16`. A mismatched
 validation. The next gate is to generate these prefix artifacts for the full
 rate--distortion ladder and compare model outputs against a shared FP16
 reference.
+
+The first block-aligned FP16 rate--distortion ladder is now measured on
+`blk.0.ffn_down.weight`: 4x4, 5x5, 6x6, 8x6 and 8x8 use footprint-compatible
+crop heights, so reported rates are 8.0, 5.125, 3.5625, 2.6667 and 2.0 b/w.
+Validation-selected gauge improves holdout at every rung in this bounded
+screen. This is the baseline for the next Q3_K_M/Q4_K_M/TQ1_0/TQ2_0 matrix;
+those controls must use the same aligned geometry and a common FP16 reference.
