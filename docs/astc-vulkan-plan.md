@@ -2162,8 +2162,11 @@ artifact replay and model-facing evaluation establish a practical use case.
 
 Next steps are deliberately narrow:
 
-1. Materialize scalar and validation-prefix 10x6 artifacts with full
+1. [x] Materialize neutral and validation-prefix 10x6 artifacts with full
    provenance, then verify CPU and Vulkan replay from the payload bytes alone.
+   The bounded layer-0 pair is byte-identical after packing, has GPU/CPU MSE
+   below `4e-16`, and improves holdout activation MSE from `0.14171192` to
+   `0.10563760` at the selected prefix.
 2. Add 10x6 to the shared source/rate/quality table next to Q3, Q4, TQ2, and
    TQ1 controls; keep model-facing results separate from activation MSE.
 3. Only if the artifact gate holds, evaluate `10x8` and `10x10` on small,

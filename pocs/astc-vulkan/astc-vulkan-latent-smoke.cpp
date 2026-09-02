@@ -311,7 +311,7 @@ bool write_binary(const std::string & path, const std::vector<T> & values) {
 bool write_export_metadata(const std::string & path, const ggml_vk_astc_format_contract & format,
                            const char * mode, uint32_t rows, uint32_t columns,
                            const affine_decoder & decoder,
-                           const astc_roundtrip_result & result) {
+                           size_t compressed_bytes, size_t decoded_texels) {
     std::ofstream file(path);
     if (!file) return false;
     file << "version=1\n"
@@ -324,8 +324,8 @@ bool write_export_metadata(const std::string & path, const ggml_vk_astc_format_c
          << "scale_l=" << decoder.scale_l << "\n"
          << "scale_a=" << decoder.scale_a << "\n"
          << "offset=" << decoder.offset << "\n"
-         << "compressed_bytes=" << result.compressed.size() << "\n"
-         << "decoded_texels=" << result.texels.size() << "\n";
+         << "compressed_bytes=" << compressed_bytes << "\n"
+         << "decoded_texels=" << decoded_texels << "\n";
     return static_cast<bool>(file);
 }
 
@@ -1464,6 +1464,10 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               const std::string & decoded_reference_path = {},
                               const std::string & validation_payload_path = {},
                               const std::string & validation_reference_path = {},
+                              const std::string & validation_metadata_path = {},
+                              const std::string & neutral_payload_path = {},
+                              const std::string & neutral_reference_path = {},
+                              const std::string & neutral_metadata_path = {},
                               const std::string & row_strip_log_path = {},
                               uint32_t candidate_threads = 1,
                               bool row_strip_select = false,
@@ -2109,6 +2113,21 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         }
         if (!selected_payload_path.empty() && !write_binary(selected_payload_path, final_payloads)) return false;
         if (!write_decoded_reference(final_payloads)) return false;
+        if (!neutral_payload_path.empty() && !write_binary(neutral_payload_path, neutral_payloads)) return false;
+        if (!neutral_metadata_path.empty() && !write_export_metadata(
+                neutral_metadata_path, format, "gauge-la-neutral", rows, columns,
+                block_latents.decoder, neutral_payloads.size() * 16,
+                static_cast<size_t>(rows) * columns * 4)) return false;
+        if (!neutral_reference_path.empty()) {
+            std::vector<uint8_t> compressed(neutral_payloads.size() * 16);
+            for (size_t index = 0; index < neutral_payloads.size(); ++index) {
+                std::copy(neutral_payloads[index].begin(), neutral_payloads[index].end(),
+                          compressed.begin() + index * 16);
+            }
+            std::vector<float> decoded;
+            if (!astc_decode(compressed, rows, columns, format, decoded) ||
+                !write_binary(neutral_reference_path, decoded)) return false;
+        }
         std::vector<std::array<uint8_t, 16>> validation_payloads = neutral_payloads;
         for (size_t index = 0; index < committed_steps.size() && index < best_validation_commit; ++index) {
             const strip_step * step = committed_steps[index];
@@ -2116,6 +2135,10 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                                 step->column0 / format.block_width] = step->payload;
         }
         if (!validation_payload_path.empty() && !write_binary(validation_payload_path, validation_payloads)) return false;
+        if (!validation_metadata_path.empty() && !write_export_metadata(
+                validation_metadata_path, format, "gauge-la-validation", rows, columns,
+                block_latents.decoder, validation_payloads.size() * 16,
+                static_cast<size_t>(rows) * columns * 4)) return false;
         if (!validation_reference_path.empty()) {
             std::vector<uint8_t> compressed(validation_payloads.size() * 16);
             for (size_t index = 0; index < validation_payloads.size(); ++index) {
@@ -2126,11 +2149,17 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             if (!astc_decode(compressed, rows, columns, format, decoded) ||
                 !write_binary(validation_reference_path, decoded)) return false;
         }
-        if (!validation_payload_path.empty() || !validation_reference_path.empty()) {
-            std::printf("latent-validation-export format=%s commit=%u payload=%s reference=%s\n",
+        if (!validation_payload_path.empty() || !validation_reference_path.empty() ||
+            !validation_metadata_path.empty() || !neutral_payload_path.empty() ||
+            !neutral_reference_path.empty() || !neutral_metadata_path.empty()) {
+            std::printf("latent-validation-export format=%s commit=%u payload=%s reference=%s metadata=%s neutral-payload=%s neutral-reference=%s neutral-metadata=%s\n",
                         format.name, best_validation_commit,
                         validation_payload_path.empty() ? "" : validation_payload_path.c_str(),
-                        validation_reference_path.empty() ? "" : validation_reference_path.c_str());
+                        validation_reference_path.empty() ? "" : validation_reference_path.c_str(),
+                        validation_metadata_path.empty() ? "" : validation_metadata_path.c_str(),
+                        neutral_payload_path.empty() ? "" : neutral_payload_path.c_str(),
+                        neutral_reference_path.empty() ? "" : neutral_reference_path.c_str(),
+                        neutral_metadata_path.empty() ? "" : neutral_metadata_path.c_str());
         }
         std::vector<std::array<uint8_t, 16>> selected_payloads;
         std::vector<std::array<uint8_t, 16>> baseline_payloads;
@@ -3131,6 +3160,10 @@ int main(int argc, char ** argv) {
     std::string decode_loop_reference_path;
     std::string validation_payload_path;
     std::string validation_reference_path;
+    std::string validation_metadata_path;
+    std::string neutral_payload_path;
+    std::string neutral_reference_path;
+    std::string neutral_metadata_path;
     std::string row_strip_log_path;
     uint32_t candidate_threads = 1;
     bool row_strip_select = false;
@@ -3252,6 +3285,14 @@ int main(int argc, char ** argv) {
             validation_payload_path = argv[++index];
         } else if (option == "--validation-reference" && index + 1 < argc) {
             validation_reference_path = argv[++index];
+        } else if (option == "--validation-metadata" && index + 1 < argc) {
+            validation_metadata_path = argv[++index];
+        } else if (option == "--neutral-payload" && index + 1 < argc) {
+            neutral_payload_path = argv[++index];
+        } else if (option == "--neutral-reference" && index + 1 < argc) {
+            neutral_reference_path = argv[++index];
+        } else if (option == "--neutral-metadata" && index + 1 < argc) {
+            neutral_metadata_path = argv[++index];
         } else if (option == "--row-strip-log" && index + 1 < argc) {
             row_strip_log_path = argv[++index];
         } else if (option == "--candidate-threads" && index + 1 < argc) {
@@ -3288,7 +3329,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6|8x6|10x6|8x8] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
             return 2;
@@ -3338,6 +3379,14 @@ int main(int argc, char ** argv) {
     }
     if (export_only && export_astc_path.empty()) {
         std::fprintf(stderr, "--export-only requires --export-astc and --export-reference\n");
+        return 2;
+    }
+    if (!validation_metadata_path.empty() && validation_payload_path.empty()) {
+        std::fprintf(stderr, "--validation-metadata requires --validation-payload\n");
+        return 2;
+    }
+    if ((!neutral_reference_path.empty() || !neutral_metadata_path.empty()) && neutral_payload_path.empty()) {
+        std::fprintf(stderr, "neutral reference and metadata require --neutral-payload\n");
         return 2;
     }
     if (!export_metadata_path.empty() && export_astc_path.empty()) {
@@ -3517,7 +3566,7 @@ int main(int argc, char ** argv) {
                 !write_binary(export_reference_path, exported.texels) ||
                 (!export_metadata_path.empty() && !write_export_metadata(
                     export_metadata_path, format, export_mode.c_str(), rows, columns,
-                    export_latents.decoder, exported))) {
+                    export_latents.decoder, exported.compressed.size(), exported.texels.size()))) {
                 std::fprintf(stderr, "ASTC latent export failed\n");
                 return 1;
             }
@@ -3566,7 +3615,8 @@ int main(int argc, char ** argv) {
             !decode_loop_alpha_search(weights, block_latents, rows, columns, format,
                                       calibration_inputs, validation_inputs, inputs, false,
                                       decode_loop_log_path, decode_loop_payloads_path, decode_loop_reference_path,
-                                      validation_payload_path, validation_reference_path,
+                                      validation_payload_path, validation_reference_path, validation_metadata_path,
+                                      neutral_payload_path, neutral_reference_path, neutral_metadata_path,
                                       row_strip_log_path,
                                       candidate_threads, row_strip_select, row_strip_chunked,
                                       row_strip_diagnostics, persistent_worker_contexts, false,
@@ -3580,7 +3630,8 @@ int main(int argc, char ** argv) {
             if (!decode_loop_alpha_search(weights, gauge_latents, rows, columns, format,
                                           calibration_inputs, validation_inputs, inputs, true,
                                           decode_loop_log_path, decode_loop_payloads_path, decode_loop_reference_path,
-                                          validation_payload_path, validation_reference_path,
+                                          validation_payload_path, validation_reference_path, validation_metadata_path,
+                                          neutral_payload_path, neutral_reference_path, neutral_metadata_path,
                                           row_strip_log_path,
                                           candidate_threads, row_strip_select, row_strip_chunked,
                                           row_strip_diagnostics, persistent_worker_contexts, false,
@@ -3595,7 +3646,8 @@ int main(int argc, char ** argv) {
             if (!decode_loop_alpha_search(weights, c_delta_latents, rows, columns, format,
                                           calibration_inputs, validation_inputs, inputs, true,
                                           decode_loop_log_path, decode_loop_payloads_path, decode_loop_reference_path,
-                                          validation_payload_path, validation_reference_path,
+                                          validation_payload_path, validation_reference_path, validation_metadata_path,
+                                          neutral_payload_path, neutral_reference_path, neutral_metadata_path,
                                           row_strip_log_path,
                                           candidate_threads, row_strip_select, row_strip_chunked,
                                           row_strip_diagnostics, persistent_worker_contexts, true,
@@ -3610,7 +3662,8 @@ int main(int argc, char ** argv) {
             if (!decode_loop_alpha_search(weights, gauge_latents, rows, columns, format,
                                           calibration_inputs, validation_inputs, inputs, true,
                                           decode_loop_log_path, decode_loop_payloads_path, decode_loop_reference_path,
-                                          validation_payload_path, validation_reference_path,
+                                          validation_payload_path, validation_reference_path, validation_metadata_path,
+                                          neutral_payload_path, neutral_reference_path, neutral_metadata_path,
                                           row_strip_log_path,
                                           candidate_threads, row_strip_select, row_strip_chunked,
                                           row_strip_diagnostics, persistent_worker_contexts, false,
@@ -3630,7 +3683,8 @@ int main(int argc, char ** argv) {
                                               calibration_inputs, validation_inputs, inputs, true,
                                               decode_loop_log_path, decode_loop_payloads_path,
                                               decode_loop_reference_path,
-                                              validation_payload_path, validation_reference_path,
+                                              validation_payload_path, validation_reference_path, validation_metadata_path,
+                                              neutral_payload_path, neutral_reference_path, neutral_metadata_path,
                                               row_strip_log_path,
                                               candidate_threads, row_strip_select, row_strip_chunked,
                                               row_strip_diagnostics, persistent_worker_contexts, false,

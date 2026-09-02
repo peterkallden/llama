@@ -5871,3 +5871,37 @@ The next gate is artifact-backed replay of exactly these validation-selected
 payloads, followed by a matched low-rate matrix before considering 10x8 or
 10x10. Focused contract, latent, capability, resource, and 10x6 shader tests
 passed `6/6`.
+
+## Two-hundred-fifty-seventh sweep: paired 10x6 artifact replay
+
+Validation selection is now exportable as a self-contained artifact pair. The
+latent harness accepts `--validation-payload`, `--validation-reference`, and
+`--validation-metadata`; the metadata is written from the same affine decoder
+used by selection. It also exports the exact `delta = 0` scalar-anchored
+gauge stream via matching `--neutral-*` options. This distinction matters:
+ordinary scalar RGBA encoding and the scalar-anchored L+A neutral candidate
+have the same pre-codec semantic target but are different ASTC source signals,
+so the latter is the valid baseline for a gauge-selection claim.
+
+The bounded Pythia layer-0 `12x2040` 10x6 run materialized both streams. Their
+payloads are 6,528 bytes each, were packaged with model/trace/commit/padding
+provenance, and the runtime blobs compare byte-identically with the selected
+payload files. The validation-selected stream records commit `112`; its
+payload SHA-256 is
+`861c32731e0e5f8e1f1764634745993c4846c885ce98c24b5f012a962ec9d223`.
+The neutral payload SHA-256 is
+`c11cddbffcad38ead6458619ef536d285f316b296d1fab7733418f898ed9c309`.
+
+Intel Vulkan replay of the packed blobs over 30 untouched holdout samples
+matched the CPU oracle at `2.97e-16` MSE for neutral and `3.18e-16` for the
+validation-selected stream. Activation-relative MSE improved from `0.14171192`
+to `0.10563760` (25.5% lower) at the same 2.13-b/w footprint. This is a
+bounded activation artifact result, not a model-level quality claim.
+
+A new `astc-vulkan-latent-validation-artifact-smoke` CTest writes paired
+neutral/selected 10x6 payloads, references, and metadata from the streamed
+selector. It makes the artifact handoff a tested contract rather than a manual
+combination of selector output and reconstruction constants. The next quality
+step is the shared source/rate table (Q3/Q4/TQ controls) using provenance-bound
+10x6 artifacts; only then should 10x8 or 10x10 consume new implementation
+surface.

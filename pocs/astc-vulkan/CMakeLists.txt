@@ -622,6 +622,17 @@ if (BUILD_TESTING)
                 --footprint 8x8 --max-rows 16 --max-columns 16
                 --max-samples 4 --max-calibration-samples 2)
         set_property(TEST astc-vulkan-latent-weight-grid-gauge-smoke PROPERTY LABELS astc)
+        add_test(NAME astc-vulkan-latent-validation-artifact-smoke
+            COMMAND astc-vulkan-latent-smoke --weight-grid-gauge-sweep
+                --row-strip-chunked --footprint 10x6 --max-rows 12 --max-columns 20
+                --max-samples 4 --max-calibration-samples 2
+                --neutral-payload ${CMAKE_CURRENT_BINARY_DIR}/validation-neutral.astc
+                --neutral-reference ${CMAKE_CURRENT_BINARY_DIR}/validation-neutral.rgba.f32
+                --neutral-metadata ${CMAKE_CURRENT_BINARY_DIR}/validation-neutral.metadata
+                --validation-payload ${CMAKE_CURRENT_BINARY_DIR}/validation-selected.astc
+                --validation-reference ${CMAKE_CURRENT_BINARY_DIR}/validation-selected.rgba.f32
+                --validation-metadata ${CMAKE_CURRENT_BINARY_DIR}/validation-selected.metadata)
+        set_property(TEST astc-vulkan-latent-validation-artifact-smoke PROPERTY LABELS astc)
         add_test(NAME astc-vulkan-latent-few-level-weight-grid-smoke
             COMMAND astc-vulkan-latent-smoke --few-level-weight-grid-gauge-sweep
                 --footprint 8x8 --max-rows 16 --max-columns 16
