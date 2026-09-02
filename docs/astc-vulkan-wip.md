@@ -5955,6 +5955,20 @@ sizes. Thus these two rows are currently one dequantized source control, not
 independent evidence that TQ1 and TQ2 have identical model behaviour. A
 second tensor/crop is required before promoting either result.
 
+The follow-up `blk.1.ffn_down.weight` screen repeats the low-rate pattern:
+
+| Source GGUF | 10x6, 2.13 b/w | 8x8, 2.00 b/w |
+| --- | ---: | ---: |
+| TQ2_0 | **0.017426883** | 0.12815839 |
+| TQ1_0 | **0.017426883** | 0.12815839 |
+
+The TQ1/TQ2 layer-1 crop is also byte-identical after host dequantization
+(`564fdd0db0e88d9399b584ea4dc1dd940454d428fb3e1f33d97b331eb44c6585`). This
+confirms cross-tensor reproducibility of the ASTC experiment, but not an
+independent TQ1-versus-TQ2 comparison. The model files should be regenerated
+or a tensor with genuinely different dequantized values selected before a
+format-level conclusion is made.
+
 The paired artifact and replay contract is unchanged: scalar-anchored neutral
 payload is the baseline, validation prefix is materialized, and every payload
 is a legal standard ASTC block. PV-lite has **not** been enabled in this
