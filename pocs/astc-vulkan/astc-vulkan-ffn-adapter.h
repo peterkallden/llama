@@ -24,6 +24,7 @@ class astc_vulkan_ffn_adapter {
 public:
     bool prepare(const astc_vulkan_manifest & manifest, const std::string & tensor_name,
                  uint32_t expected_columns, bool sampled_astc_supported,
+                 uint32_t expected_rows,
                  astc_vulkan_ffn_binding & binding, std::string & error) const;
     bool upload(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
                 uint32_t queue_family, const astc_vulkan_ffn_binding & binding,

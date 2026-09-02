@@ -27,6 +27,22 @@ bool astc_vulkan_supports_sampled_transfer(VkPhysicalDevice physical_device,
     return (properties.optimalTilingFeatures & required) == required;
 }
 
+bool astc_vulkan_supports_sampled_transfer_extent(VkPhysicalDevice physical_device,
+                                                   VkFormat format,
+                                                   uint32_t width, uint32_t height) {
+    if (!astc_vulkan_supports_sampled_transfer(physical_device, format) ||
+        width == 0 || height == 0) {
+        return false;
+    }
+    VkImageFormatProperties properties{};
+    const VkResult result = vkGetPhysicalDeviceImageFormatProperties(
+        physical_device, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0, &properties);
+    return result == VK_SUCCESS && width <= properties.maxExtent.width &&
+           height <= properties.maxExtent.height && properties.maxMipLevels >= 1 &&
+           properties.maxArrayLayers >= 1;
+}
+
 bool astc_vulkan_create_sampled_image(VkPhysicalDevice physical_device,
                                        VkDevice device, VkFormat format,
                                        uint32_t width, uint32_t height,
@@ -125,6 +141,11 @@ bool astc_vulkan_texture::upload(VkPhysicalDevice physical_device, VkDevice devi
                                  const std::vector<uint8_t> & payload,
                                  std::string & error) {
     reset();
+    if (physical_device == VK_NULL_HANDLE || device == VK_NULL_HANDLE ||
+        queue == VK_NULL_HANDLE || queue_family == UINT32_MAX) {
+        error = "ASTC Vulkan texture upload has invalid device or queue handles";
+        return false;
+    }
     const astc_vulkan_footprint fp = static_cast<astc_vulkan_footprint>(footprint);
     const VkFormat format = astc_vulkan_vk_format(footprint);
     const uint64_t expected = astc_vulkan_image_bytes(fp, width, height);
@@ -132,7 +153,7 @@ bool astc_vulkan_texture::upload(VkPhysicalDevice physical_device, VkDevice devi
         error = "ASTC Vulkan texture payload dimensions do not match";
         return false;
     }
-    if (!astc_vulkan_supports_sampled_transfer(physical_device, format) ||
+    if (!astc_vulkan_supports_sampled_transfer_extent(physical_device, format, width, height) ||
         !astc_vulkan_create_sampled_image(physical_device, device, format, width, height, resources_)) {
         error = "ASTC Vulkan sampled image creation failed";
         astc_vulkan_destroy_sampled_image(device, resources_);
@@ -151,9 +172,14 @@ bool astc_vulkan_texture::upload(VkPhysicalDevice physical_device, VkDevice devi
         if (vkCreateBuffer(device, &buffer_info, nullptr, &staging_buffer) != VK_SUCCESS) break;
         VkMemoryRequirements requirements{};
         vkGetBufferMemoryRequirements(device, staging_buffer, &requirements);
-        const uint32_t memory_type = astc_vulkan_find_memory_type(
+        uint32_t memory_type = astc_vulkan_find_memory_type(
             physical_device, requirements.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (memory_type == std::numeric_limits<uint32_t>::max()) {
+            memory_type = astc_vulkan_find_memory_type(
+                physical_device, requirements.memoryTypeBits,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        }
         if (memory_type == std::numeric_limits<uint32_t>::max()) break;
         const VkMemoryAllocateInfo allocate_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr,
             requirements.size, memory_type};
@@ -162,6 +188,12 @@ bool astc_vulkan_texture::upload(VkPhysicalDevice physical_device, VkDevice devi
         void * mapped = nullptr;
         if (vkMapMemory(device, staging_memory, 0, payload.size(), 0, &mapped) != VK_SUCCESS) break;
         std::memcpy(mapped, payload.data(), payload.size());
+        const VkMappedMemoryRange flush_range{
+            VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE, nullptr, staging_memory, 0, VK_WHOLE_SIZE};
+        if (vkFlushMappedMemoryRanges(device, 1, &flush_range) != VK_SUCCESS) {
+            vkUnmapMemory(device, staging_memory);
+            break;
+        }
         vkUnmapMemory(device, staging_memory);
         const VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr,
             VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queue_family};

@@ -1458,6 +1458,20 @@ FFN smoke as an oracle-facing executable during this transition. Atlas/pages,
 descriptor indexing and integration with production `ggml-vulkan` remain
 later gates.
 
+The final pre-RAII review added the remaining correctness guards: manifest v1
+is fallback-only, tensor width and height are both checked, duplicate names
+and payload-blob bounds are rejected, and staging supports non-coherent
+host-visible memory with an explicit flush. The FFN output buffer now stores
+one scalar F32 per result rather than an unused `vec4`. Device preflight checks
+exact format features, image extent limits and valid queue/device handles.
+
+All focused host tests pass (`6/6`), Intel ASTC resource smoke passes, and the
+metadata-backed full-layer 6x6 dispatch continues to match the CPU oracle
+within `2.5e-13` MSE. The contract-discovery phase is complete. Proceed with
+the contained RAII dispatch/session extraction; do not add scheduler or
+upstream integration until the extracted session reproduces the existing E2E
+smoke and fallback matrix.
+
 The fallback/error-path gate is now green. Host-only tests reject malformed
 payloads before Vulkan allocation, preserve deterministic unsupported-device
 fallback, and cover manifest v1 compatibility plus v2 reconstruction/hash

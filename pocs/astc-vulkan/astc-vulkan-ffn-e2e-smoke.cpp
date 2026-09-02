@@ -169,7 +169,7 @@ int main(int argc, char ** argv) {
     manifest.tensors.push_back(record);
     astc_vulkan_ffn_adapter adapter;
     astc_vulkan_ffn_binding binding;
-    if (!adapter.prepare(manifest, record.name, width, true, binding, error) ||
+    if (!adapter.prepare(manifest, record.name, width, true, height, binding, error) ||
         !adapter.upload(physical_device, device, queue, queue_family, binding, payload, error)) {
         std::fprintf(stderr, "%s\n", error.c_str()); vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr); return 1;
     }
@@ -177,7 +177,7 @@ int main(int argc, char ** argv) {
     VkBuffer activation_buffer = VK_NULL_HANDLE, output_buffer = VK_NULL_HANDLE;
     VkDeviceMemory activation_memory = VK_NULL_HANDLE, output_memory = VK_NULL_HANDLE;
     const VkDeviceSize activation_bytes = static_cast<VkDeviceSize>(trace.samples) * width * sizeof(float);
-    const VkDeviceSize output_bytes = static_cast<VkDeviceSize>(trace.samples) * height * sizeof(float) * 4;
+    const VkDeviceSize output_bytes = static_cast<VkDeviceSize>(trace.samples) * height * sizeof(float);
     bool success = create_buffer(physical_device, device, activation_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                  activation_buffer, activation_memory) &&
                    create_buffer(physical_device, device, output_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -253,7 +253,7 @@ int main(int argc, char ** argv) {
         void * mapped = nullptr;
         success = vkMapMemory(device, output_memory, 0, output_bytes, 0, &mapped) == VK_SUCCESS;
         if (success) {
-            for (size_t i = 0; i < actual.size(); ++i) actual[i] = static_cast<float *>(mapped)[i * 4];
+            for (size_t i = 0; i < actual.size(); ++i) actual[i] = static_cast<float *>(mapped)[i];
             vkUnmapMemory(device, output_memory);
         }
     }

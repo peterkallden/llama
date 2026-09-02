@@ -6,6 +6,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <unordered_set>
 
 namespace {
 
@@ -76,6 +77,20 @@ bool astc_vulkan_validate_payload(const astc_vulkan_tensor_record & tensor,
     return true;
 }
 
+bool astc_vulkan_validate_payload_blob(const astc_vulkan_manifest & manifest,
+                                       uint64_t blob_size, std::string & error) {
+    if (!astc_vulkan_validate_manifest(manifest, error)) return false;
+    for (const astc_vulkan_tensor_record & tensor : manifest.tensors) {
+        if (tensor.byte_offset > blob_size ||
+            tensor.byte_size > blob_size - tensor.byte_offset) {
+            error = "ASTC Vulkan tensor range exceeds payload blob";
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
 bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
                                    std::string & error) {
     if (manifest.version != kLegacyManifestVersion &&
@@ -88,6 +103,8 @@ bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
         return false;
     }
     uint64_t previous_end = 0;
+    std::unordered_set<std::string> names;
+    names.reserve(manifest.tensors.size());
     for (const astc_vulkan_tensor_record & tensor : manifest.tensors) {
         if (tensor.name.empty() || tensor.name.size() > kMaxStringBytes ||
             tensor.width == 0 || tensor.height == 0 ||
@@ -96,6 +113,10 @@ bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
             !std::isfinite(tensor.scale_l) || !std::isfinite(tensor.scale_a) ||
             !std::isfinite(tensor.offset)) {
             error = "invalid ASTC Vulkan tensor record";
+            return false;
+        }
+        if (!names.insert(tensor.name).second) {
+            error = "duplicate ASTC Vulkan tensor name";
             return false;
         }
         const uint64_t expected_size = astc_vulkan_image_bytes(

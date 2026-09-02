@@ -56,6 +56,8 @@ uint64_t astc_vulkan_payload_hash64(const uint8_t * data, size_t size);
 bool astc_vulkan_validate_payload(const astc_vulkan_tensor_record & tensor,
                                   const uint8_t * data, size_t size,
                                   std::string & error);
+bool astc_vulkan_validate_payload_blob(const astc_vulkan_manifest & manifest,
+                                       uint64_t blob_size, std::string & error);
 
 bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
                                    std::string & error);

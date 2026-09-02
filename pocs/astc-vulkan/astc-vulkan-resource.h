@@ -19,6 +19,9 @@ uint32_t astc_vulkan_find_memory_type(VkPhysicalDevice physical_device,
                                       VkMemoryPropertyFlags properties);
 bool astc_vulkan_supports_sampled_transfer(VkPhysicalDevice physical_device,
                                             VkFormat format);
+bool astc_vulkan_supports_sampled_transfer_extent(VkPhysicalDevice physical_device,
+                                                   VkFormat format,
+                                                   uint32_t width, uint32_t height);
 bool astc_vulkan_create_sampled_image(VkPhysicalDevice physical_device,
                                        VkDevice device, VkFormat format,
                                        uint32_t width, uint32_t height,

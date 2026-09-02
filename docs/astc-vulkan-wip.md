@@ -4648,6 +4648,36 @@ session while retaining the current executable as a diagnostic oracle. Only
 after that object passes Intel ASTC, NVIDIA fallback, and CPU/reference tests
 should it be considered for any llama scheduler integration.
 
+## Two-hundred-second sweep: scalar output and adapter shape gate
+
+The FFN output contract was reduced from a `vec4` storage element to one F32
+per output value. The shader, output allocation, readback and CPU comparison
+were updated together, reducing output storage and transfer pressure by four
+times without changing the numerical result. The adapter now validates both
+matrix dimensions and treats manifest v1 as migration-only fallback because
+v1 has no explicit reconstruction metadata.
+
+## Two-hundred-third sweep: manifest hardening and staging portability
+
+Manifest validation now rejects duplicate tensor names and exposes a payload
+blob-range check in addition to per-record size validation. The upload path
+accepts host-visible non-coherent staging memory and flushes the mapped range;
+coherent memory remains the fast path when available. This keeps the sidecar
+usable on devices whose memory heaps differ from the local Intel setup.
+
+## Two-hundred-fourth sweep: device preflight gate
+
+Before creating an image, the resource layer now checks exact sampled/transfer
+format support, `vkGetPhysicalDeviceImageFormatProperties` extent limits, and
+non-null device/queue/queue-family handles. The focused host regression remains
+`6/6`, the Intel image-resource smoke passes, and the full layer-0 6x6 E2E
+dispatch still matches the CPU oracle at `2.4060726e-13` MSE.
+
+The pre-RAII review is complete. Remaining work is now implementation rather
+than contract discovery: extract the descriptor/pipeline/buffer lifetime into
+an RAII dispatch session, then run the complete Intel-ASTC/NVIDIA-fallback/
+CPU-reference matrix before considering scheduler integration.
+
 ## Two-hundred-first sweep: final pre-RAII driver checkpoint
 
 After manifest-derived metadata and payload hashing were connected to the E2E

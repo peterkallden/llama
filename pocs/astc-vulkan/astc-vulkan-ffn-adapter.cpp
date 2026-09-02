@@ -2,7 +2,7 @@
 
 bool astc_vulkan_ffn_adapter::prepare(
         const astc_vulkan_manifest & manifest, const std::string & tensor_name,
-        uint32_t expected_columns, bool sampled_astc_supported,
+        uint32_t expected_columns, bool sampled_astc_supported, uint32_t expected_rows,
         astc_vulkan_ffn_binding & binding, std::string & error) const {
     if (!astc_vulkan_validate_manifest(manifest, error)) return false;
     binding = {};
@@ -12,9 +12,16 @@ bool astc_vulkan_ffn_adapter::prepare(
         error.clear();
         return true;
     }
-    if (expected_columns == 0 || record->width != expected_columns) {
+    if (manifest.version == 1) {
         binding.record = *record;
-        binding.fallback_reason = "FFN tensor width does not match model shape";
+        binding.fallback_reason = "manifest v1 lacks runtime reconstruction metadata";
+        error.clear();
+        return true;
+    }
+    if (expected_columns == 0 || record->width != expected_columns ||
+        (expected_rows != 0 && record->height != expected_rows)) {
+        binding.record = *record;
+        binding.fallback_reason = "FFN tensor shape does not match model shape";
         error.clear();
         return true;
     }

@@ -5,7 +5,7 @@
 layout(local_size_x = 64) in;
 layout(set = 0, binding = 0) uniform sampler2D astc_weights;
 layout(std430, set = 0, binding = 1) readonly buffer Activations { float values[]; } activations;
-layout(std430, set = 0, binding = 2) buffer MatvecOutput { vec4 values[]; } output_values;
+layout(std430, set = 0, binding = 2) buffer MatvecOutput { float values[]; } output_values;
 
 layout(push_constant) uniform PushConstants {
     uint width;
@@ -35,5 +35,5 @@ void main() {
         if (gl_LocalInvocationID.x < stride) partial[gl_LocalInvocationID.x] += partial[gl_LocalInvocationID.x + stride];
         barrier();
     }
-    if (gl_LocalInvocationID.x == 0) output_values.values[params.sample_index * params.height + row] = vec4(partial[0], 0.0, 0.0, 0.0);
+    if (gl_LocalInvocationID.x == 0) output_values.values[params.sample_index * params.height + row] = partial[0];
 }

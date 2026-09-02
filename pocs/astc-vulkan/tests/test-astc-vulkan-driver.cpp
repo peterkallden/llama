@@ -36,6 +36,10 @@ int main() {
     assert(actual.tensors[0].scale_a == 0.25f);
     assert(actual.tensors[0].payload_hash64 == expected.tensors[0].payload_hash64);
     assert(astc_vulkan_validate_payload(actual.tensors[0], payload.data(), payload.size(), error));
+    assert(astc_vulkan_validate_payload_blob(actual, actual.tensors[1].byte_offset +
+                                             actual.tensors[1].byte_size, error));
+    assert(!astc_vulkan_validate_payload_blob(actual, actual.tensors[1].byte_offset,
+                                              error));
     auto bad_payload = payload;
     bad_payload[0] ^= 1;
     assert(!astc_vulkan_validate_payload(actual.tensors[0], bad_payload.data(), bad_payload.size(), error));
@@ -63,6 +67,9 @@ int main() {
     assert(!astc_vulkan_validate_manifest(invalid, error));
     invalid = expected;
     invalid.tensors[0].representation = static_cast<astc_vulkan_representation>(255);
+    assert(!astc_vulkan_validate_manifest(invalid, error));
+    invalid = expected;
+    invalid.tensors[1].name = invalid.tensors[0].name;
     assert(!astc_vulkan_validate_manifest(invalid, error));
     std::vector<astc_vulkan_atlas_placement> placements;
     assert(astc_vulkan_pack_atlas({4096, 4096}, expected.tensors, placements, error));
