@@ -1473,7 +1473,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               bool scalar_anchored_c_delta = false,
                               encoder_search_mode encoder_search = encoder_search_mode::standard,
                               uint32_t neural_candidate_limit = 16,
-                              bool weight_grid_gauge = false) {
+                              bool weight_grid_gauge = false,
+                              uint32_t source_levels = 0) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
@@ -2169,7 +2170,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     "partition-changed=%u endpoint-mode-changed=%u weight-grid-changed=%u weight-levels-changed=%u\n",
                     committed_steps.size(), changed_payloads, changed_dual_plane, changed_partition_count,
                     changed_endpoint_mode, changed_weight_grid, changed_weight_levels);
-        std::printf("latent-decode-loop-alpha format=%s mode=%s encoder-search=%s blocks=%u neutral-wins=%u alpha-wins=%u "
+        std::printf("latent-decode-loop-alpha format=%s mode=%s encoder-search=%s source-levels=%u blocks=%u neutral-wins=%u alpha-wins=%u "
                     "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
                     "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g "
                     "candidate-effective-rank=%.4g mean-positive-cosine=%.4g conflict-commits=%u "
@@ -2178,6 +2179,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     format.name, scalar_anchored_c_delta ? "scalar-anchored-c-delta" :
                     (weight_grid_gauge ? "scalar-anchored-weight-grid-gauge" : "scalar-anchored-gauge"),
                     encoder_search == encoder_search_mode::neural ? "neural" : "standard",
+                    source_levels,
                     block_count, neutral_wins, non_neutral_wins, unique_blocks,
                     neutral_calibration, calibration_loss, neutral_holdout, holdout_loss,
                     neutral_local_loss - selected_local_loss, effective_rank,
@@ -2505,7 +2507,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     committed_options.size(), changed_payloads, changed_dual_plane, changed_partition_count,
                     changed_endpoint_mode, changed_weight_grid, changed_weight_levels);
     }
-    std::printf("latent-decode-loop-alpha format=%s mode=%s encoder-search=%s blocks=%u neutral-wins=%u alpha-wins=%u "
+    std::printf("latent-decode-loop-alpha format=%s mode=%s encoder-search=%s source-levels=%u blocks=%u neutral-wins=%u alpha-wins=%u "
                 "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
                 "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g "
                 "candidate-effective-rank=%.4g mean-positive-cosine=%.4g conflict-commits=%u "
@@ -2515,6 +2517,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     (weight_grid_gauge ? "scalar-anchored-weight-grid-gauge" : "scalar-anchored-gauge") :
                     "block-alpha",
                 encoder_search == encoder_search_mode::neural ? "neural" : "standard",
+                source_levels,
                 neutral_wins + non_neutral_wins, neutral_wins, non_neutral_wins,
                 unique_blocks, neutral_calibration, calibration_loss, neutral_holdout, holdout_loss,
                 neutral_local_loss - selected_local_loss, effective_rank,
@@ -2553,12 +2556,21 @@ double relative_output_mse(const std::vector<double> & reference,
 }
 
 latent_representation make_scalar_latents(const std::vector<float> & weights,
-                                          float minimum, float range) {
+                                          float minimum, float range,
+                                          uint32_t source_levels = 0) {
     latent_representation result;
     result.texels.resize(weights.size() * 4);
-    result.decoder = { range, 0.0, minimum };
+    constexpr float kFewLevelLatentMargin = 1.0f / 16.0f;
+    const bool few_level = source_levels >= 2;
+    const float latent_scale = few_level ? 1.0f - 2.0f * kFewLevelLatentMargin : 1.0f;
+    result.decoder = { range / latent_scale, 0.0,
+                       minimum - range * kFewLevelLatentMargin / latent_scale };
     for (size_t index = 0; index < weights.size(); ++index) {
-        const float normalized = (weights[index] - minimum) / range;
+        float normalized = (weights[index] - minimum) / range;
+        if (few_level) {
+            normalized = std::round(normalized * (source_levels - 1)) / (source_levels - 1);
+            normalized = kFewLevelLatentMargin + normalized * latent_scale;
+        }
         std::fill_n(result.texels.data() + index * 4, 4, normalized);
     }
     return result;
@@ -3153,6 +3165,7 @@ int main(int argc, char ** argv) {
     bool scalar_anchored_gauge_sweep = false;
     bool scalar_anchored_c_delta_sweep = false;
     bool weight_grid_gauge_sweep = false;
+    bool few_level_weight_grid_gauge_sweep = false;
     encoder_search_mode encoder_search = encoder_search_mode::standard;
     uint32_t neural_candidate_limit = 16;
     for (int index = 1; index < argc; ++index) {
@@ -3227,6 +3240,8 @@ int main(int argc, char ** argv) {
             scalar_anchored_c_delta_sweep = true;
         } else if (option == "--weight-grid-gauge-sweep") {
             weight_grid_gauge_sweep = true;
+        } else if (option == "--few-level-weight-grid-gauge-sweep") {
+            few_level_weight_grid_gauge_sweep = true;
         } else if (option == "--decode-loop-log" && index + 1 < argc) {
             decode_loop_log_path = argv[++index];
         } else if (option == "--decode-loop-payloads" && index + 1 < argc) {
@@ -3274,7 +3289,7 @@ int main(int argc, char ** argv) {
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6|8x6|8x8] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
-                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--scalar-anchored-c-delta-sweep]\n",
+                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
             return 2;
         }
@@ -3601,6 +3616,28 @@ int main(int argc, char ** argv) {
                                           encoder_search, neural_candidate_limit, true)) {
                 std::fprintf(stderr, "ASTC weight-grid gauge sweep failed\n");
                 return 1;
+            }
+        }
+        if (few_level_weight_grid_gauge_sweep) {
+            for (const uint32_t source_levels : { 3u, 5u }) {
+                latent_representation gauge_latents = make_scalar_latents(
+                    weights, minimum, range, source_levels);
+                gauge_latents.decoder = { gauge_latents.decoder.scale_l * 0.5,
+                                          gauge_latents.decoder.scale_l * 0.5,
+                                          gauge_latents.decoder.offset };
+                if (!decode_loop_alpha_search(weights, gauge_latents, rows, columns, format,
+                                              calibration_inputs, validation_inputs, inputs, true,
+                                              decode_loop_log_path, decode_loop_payloads_path,
+                                              decode_loop_reference_path,
+                                              validation_payload_path, validation_reference_path,
+                                              row_strip_log_path,
+                                              candidate_threads, row_strip_select, row_strip_chunked,
+                                              row_strip_diagnostics, persistent_worker_contexts, false,
+                                              encoder_search, neural_candidate_limit, true,
+                                              source_levels)) {
+                    std::fprintf(stderr, "ASTC few-level weight-grid gauge sweep failed\n");
+                    return 1;
+                }
             }
         }
         if (residual_basis_only) continue;

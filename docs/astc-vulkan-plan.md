@@ -44,8 +44,11 @@ payloads for neural weights, particularly at `8x6` and `8x8` footprints.
    improve validation-stopped holdout over constant gauge on both Pythia
    tensors and both `8x6`/`8x8` crops. These remain in the semantic decoder
    null space before ASTC encoding.
-7. [ ] Evaluate activation-aware 3- and 5-level source fields plus gauge, then
-   `10x6` (about 2.13 b/w) before broader `10x8`/`10x10` low-rate sweeps.
+7. [x] Evaluate the first global 3- and 5-level source fields plus gauge. They
+   lose clearly on Pythia layer-0 `8x8`, so a simple few-level source is not a
+   main path. A future learned/activation-aware source projection remains a
+   separate research item. Next, add `10x6` (about 2.13 b/w) before broader
+   `10x8`/`10x10` low-rate sweeps.
 8. [ ] Only after a fixed candidate space is understood, evaluate richer
    objectives (two-sided sensitivity/Block-LDLQ) and later mixed-footprint
    macrotiles. These are not part of the neural-search-v1 gate.

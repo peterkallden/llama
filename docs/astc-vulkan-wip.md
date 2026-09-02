@@ -5795,3 +5795,28 @@ exact-decode selector path. The next representation gate is an
 activation-aware 3/5-level source field plus this gauge, followed by `10x6`;
 no semantic correction, custom ASTC decoder, or production Vulkan route is
 introduced here.
+
+## Two-hundred-fifty-fifth sweep: few-level source control
+
+The first low-entropy source control quantizes the normalized source field to
+three or five evenly spaced levels *before* applying the zero-sum weight-grid
+gauge. To preserve a usable gauge null space, the few-level values are stored
+inside `[1/16, 15/16]` and the affine decoder is adjusted so that those latent
+values still reconstruct the intended quantized source exactly before ASTC.
+This avoids endpoint clipping from silently disabling gauge.
+
+The mechanism passes its deterministic smoke, but the first Pythia layer-0
+`8x8` screen rejects this simple source projection:
+
+| Source | Validation-stopped holdout |
+| --- | ---: |
+| Continuous source + weight-grid gauge | **0.067649434** |
+| 5-level source + weight-grid gauge | 0.124113500 |
+| 3-level source + weight-grid gauge | 0.496055020 |
+
+The lower-entropy field is easier for ASTC to encode but discards too much
+weight information for this tensor. Thus “few-level source” is not promoted as
+a general low-rate profile. A later learned or activation-aware projection may
+still be worthwhile, but only once it can beat this deliberately simple
+control. The immediate next rate point is `10x6`, which reduces storage without
+introducing a new source quantizer.
