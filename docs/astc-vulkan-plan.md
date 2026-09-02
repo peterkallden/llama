@@ -1803,3 +1803,10 @@ criterion is not merely an improvement within one footprint: for example, an
 8x6 gauge artifact approaching scalar 6x6 quality at lower resident rate would
 move the practical rate--distortion frontier. Only artifacts that pass this
 gate proceed to target-device upload and dispatch measurements.
+
+The validation-prefix exporter is now implemented in the isolated latent
+smoke. It materializes a payload and decoded-reference snapshot at the best
+validation commit, while retaining the full conflict stream only for
+diagnostics. This closes the largest artifact-contract gap; the next check is
+to package and replay these prefix snapshots with manifests, then run the
+common rate--distortion and fixed-prompt model-output matrix.

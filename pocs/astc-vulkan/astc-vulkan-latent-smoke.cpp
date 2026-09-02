@@ -1288,18 +1288,16 @@ public:
 
     ~astc_persistent_context_pool() {
         for (astcenc_context * worker : workers_) astcenc_context_free(worker);
-        if (parent_ != nullptr) astcenc_context_free(parent_);
     }
 
     bool initialize(const ggml_vk_astc_format_contract & format, uint32_t worker_count) {
         astcenc_config config{};
         if (astcenc_config_init(ASTCENC_PRF_LDR, format.block_width, format.block_height, 1,
                                 g_astc_preset, 0, &config) != ASTCENC_SUCCESS) return false;
-        if (astcenc_context_alloc(&config, 1, &parent_, nullptr) != ASTCENC_SUCCESS) return false;
         workers_.resize(worker_count, nullptr);
         source_scratch_.resize(worker_count);
         for (astcenc_context * & worker : workers_) {
-            if (astcenc_context_alloc(nullptr, 1, &worker, parent_) != ASTCENC_SUCCESS) return false;
+            if (astcenc_context_alloc(&config, 1, &worker) != ASTCENC_SUCCESS) return false;
         }
         return true;
     }
@@ -1348,7 +1346,6 @@ public:
     }
 
 private:
-    astcenc_context * parent_ = nullptr;
     std::vector<astcenc_context *> workers_;
     std::vector<std::vector<float>> source_scratch_;
 };
@@ -1433,6 +1430,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               const std::string & commit_log_path = {},
                               const std::string & selected_payload_path = {},
                               const std::string & decoded_reference_path = {},
+                              const std::string & validation_payload_path = {},
+                              const std::string & validation_reference_path = {},
                               const std::string & row_strip_log_path = {},
                               uint32_t candidate_threads = 1,
                               bool row_strip_select = false,
@@ -1901,6 +1900,29 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         }
         if (!selected_payload_path.empty() && !write_binary(selected_payload_path, final_payloads)) return false;
         if (!write_decoded_reference(final_payloads)) return false;
+        std::vector<std::array<uint8_t, 16>> validation_payloads = neutral_payloads;
+        for (size_t index = 0; index < committed_steps.size() && index < best_validation_commit; ++index) {
+            const strip_step * step = committed_steps[index];
+            validation_payloads[(step->row0 / format.block_height) * blocks_x +
+                                step->column0 / format.block_width] = step->payload;
+        }
+        if (!validation_payload_path.empty() && !write_binary(validation_payload_path, validation_payloads)) return false;
+        if (!validation_reference_path.empty()) {
+            std::vector<uint8_t> compressed(validation_payloads.size() * 16);
+            for (size_t index = 0; index < validation_payloads.size(); ++index) {
+                std::copy(validation_payloads[index].begin(), validation_payloads[index].end(),
+                          compressed.begin() + index * 16);
+            }
+            std::vector<float> decoded;
+            if (!astc_decode(compressed, rows, columns, format, decoded) ||
+                !write_binary(validation_reference_path, decoded)) return false;
+        }
+        if (!validation_payload_path.empty() || !validation_reference_path.empty()) {
+            std::printf("latent-validation-export format=%s commit=%u payload=%s reference=%s\n",
+                        format.name, best_validation_commit,
+                        validation_payload_path.empty() ? "" : validation_payload_path.c_str(),
+                        validation_reference_path.empty() ? "" : validation_reference_path.c_str());
+        }
         std::vector<std::array<uint8_t, 16>> selected_payloads;
         std::vector<std::array<uint8_t, 16>> baseline_payloads;
         selected_payloads.reserve(committed_steps.size());
@@ -2878,6 +2900,8 @@ int main(int argc, char ** argv) {
     std::string decode_loop_log_path;
     std::string decode_loop_payloads_path;
     std::string decode_loop_reference_path;
+    std::string validation_payload_path;
+    std::string validation_reference_path;
     std::string row_strip_log_path;
     uint32_t candidate_threads = 1;
     bool row_strip_select = false;
@@ -2987,6 +3011,10 @@ int main(int argc, char ** argv) {
             decode_loop_payloads_path = argv[++index];
         } else if (option == "--decode-loop-reference" && index + 1 < argc) {
             decode_loop_reference_path = argv[++index];
+        } else if (option == "--validation-payload" && index + 1 < argc) {
+            validation_payload_path = argv[++index];
+        } else if (option == "--validation-reference" && index + 1 < argc) {
+            validation_reference_path = argv[++index];
         } else if (option == "--row-strip-log" && index + 1 < argc) {
             row_strip_log_path = argv[++index];
         } else if (option == "--candidate-threads" && index + 1 < argc) {
@@ -3290,6 +3318,7 @@ int main(int argc, char ** argv) {
             !decode_loop_alpha_search(weights, block_latents, rows, columns, format,
                                       calibration_inputs, validation_inputs, inputs, false,
                                       decode_loop_log_path, decode_loop_payloads_path, decode_loop_reference_path,
+                                      validation_payload_path, validation_reference_path,
                                       row_strip_log_path,
                                       candidate_threads, row_strip_select, row_strip_chunked,
                                       row_strip_diagnostics, persistent_worker_contexts)) {
@@ -3302,6 +3331,7 @@ int main(int argc, char ** argv) {
             if (!decode_loop_alpha_search(weights, gauge_latents, rows, columns, format,
                                           calibration_inputs, validation_inputs, inputs, true,
                                           decode_loop_log_path, decode_loop_payloads_path, decode_loop_reference_path,
+                                          validation_payload_path, validation_reference_path,
                                           row_strip_log_path,
                                           candidate_threads, row_strip_select, row_strip_chunked,
                                           row_strip_diagnostics, persistent_worker_contexts)) {
@@ -3315,6 +3345,7 @@ int main(int argc, char ** argv) {
             if (!decode_loop_alpha_search(weights, c_delta_latents, rows, columns, format,
                                           calibration_inputs, validation_inputs, inputs, true,
                                           decode_loop_log_path, decode_loop_payloads_path, decode_loop_reference_path,
+                                          validation_payload_path, validation_reference_path,
                                           row_strip_log_path,
                                           candidate_threads, row_strip_select, row_strip_chunked,
                                           row_strip_diagnostics, persistent_worker_contexts, true)) {

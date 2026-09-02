@@ -5158,3 +5158,24 @@ candidate quality, artifact replay checks serialization, and Vulkan e2e checks
 hardware execution equivalence. The remaining model-facing work is the fixed
 prompt/output matrix, followed by dispatch timing only after that matrix is
 reproducible.
+
+## Two-hundred-twenty-fifth sweep: validation-prefix materialization
+
+The latent selector now exports the validation-selected payload prefix
+separately from the full conflict diagnostic stream. The prefix is constructed
+from the neutral payload array plus exactly the first `best_validation_commit`
+global commits; later commits are excluded. An optional decoded-reference file
+is produced from those exact prefix bytes using the same ASTC CPU oracle.
+
+On the deterministic Pythia `8x256` check, validation selected commit `16`.
+The full and validation payloads had different SHA-256 values and their decoded
+float streams differed with RMSE `0.04088084`, proving that the new export is a
+real snapshot rather than an alias of the full conflict path. The selector's
+quality numbers remained unchanged, so this is a serialization/contract
+addition rather than an optimization change.
+
+The persistent worker pool was also made compatible with the installed
+three-argument `astcenc_context_alloc()` API: one context is created per worker
+and reused, while the unavailable parent-context sharing extension is not
+assumed. The isolated latent-smoke target builds successfully with the system
+headers.
