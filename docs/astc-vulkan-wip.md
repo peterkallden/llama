@@ -5585,3 +5585,27 @@ The focused ASTC/Vulkan regression set (`provenance`, `driver`, `dispatch`, and
 therefore a native Q3/Q4/TQ buffer-kernel comparison and, separately, a target
 mobile-GPU replay; ASTC GPU encoding remains deferred until the candidate search
 space is measured on representative tensors.
+
+## Two-hundred-forty-eighth sweep: native buffer and quantized shader controls
+
+The same `32x1536` fixture was dispatched 100 times per path on the Intel UHD
+620 Vulkan device. The shader timestamp covers the repeated compute dispatches
+only; upload, initialization, readback, and CPU validation are outside this
+number.
+
+| Path | Per-dispatch GPU timestamp | Correctness |
+| --- | ---: | --- |
+| ASTC 6x6 sampled matvec | `8461.667 ns` | passed against ASTC RGBA oracle |
+| FP32 storage-buffer matvec | `6246.667 ns` | passed |
+| Q4_0 packed matvec | `15515.000 ns` | passed |
+| TQ2_0 packed matvec | `13643.334 ns` | passed |
+
+This is a shader-mechanism comparison, not an inference benchmark: the
+workload is small, the Q4/TQ2 kernels are isolated controls rather than the
+full ggml quantized graph, and the Intel implementation is not a mobile
+reference. ASTC is slower than the minimal FP32 buffer control here, but faster
+than these particular Q4/TQ2 unpack shaders; no bandwidth conclusion follows
+without larger tiled fixtures and a native target adapter. The initial ASTC
+attempt used the wrong reference file and failed as expected; rerunning with
+the artifact's own decoded RGBA oracle passed, confirming the failure was test
+input selection rather than a shader defect.

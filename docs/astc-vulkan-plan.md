@@ -2044,3 +2044,20 @@ The next gates are (1) native Q3_K_M/Q4_K_M/TQ1_0/TQ2_0 buffer-kernel timing and
 quality comparison, (2) replay on a representative mobile Vulkan device, and
 (3) only after those measurements, deciding whether a neural-gauge-specific
 ASTC encoder or GPU encoder is justified.
+
+### Native shader-control checkpoint
+
+On the Intel UHD 620, a 100-dispatch shader timestamp using the same `32x1536`
+fixture measured `8.462 us` for ASTC 6x6 sampled matvec, `6.247 us` for the
+FP32 storage-buffer control, `15.515 us` for Q4_0, and `13.643 us` for TQ2_0.
+All four paths passed their respective CPU/oracle checks. These values are
+useful for validating the separated shader contracts and for selecting the
+next fixture size, but they are not portable performance claims and do not
+replace native ggml Q3_K_M/Q4_K_M/TQ1_0/TQ2_0 graph measurements.
+
+The next implementation/evaluation order is now fixed: enlarge the tiled
+fixture and add the remaining Q3/TQ1 controls where the shader contract exists;
+run quality and hot-dispatch measurements from the same artifact provenance;
+then replay on a representative mobile Vulkan adapter. Keep GPU ASTC encoding
+deferred until those measurements show that host candidate generation, rather
+than shader dispatch, is the limiting cost.
