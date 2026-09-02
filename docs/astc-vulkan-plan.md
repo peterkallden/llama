@@ -1747,3 +1747,59 @@ The next implementation/evaluation order is:
 4. Only after the quality artifacts are reproducible, run Intel Vulkan upload,
    hot-cache and batched dispatch measurements. Keep 8x6/8x8 opt-in and do not
    change production `ggml-vulkan` or reinterpret GGUF quant bytes as ASTC.
+
+### Low-bitrate artifact and rate--distortion contract
+
+Gauge steering is now treated as a codec-navigation mechanism layered above a
+source weight field `q`, not as an FP16-specific residual codec:
+
+```
+q -> (L = q + delta, A = q - delta) -> legal ASTC payload -> runtime decode
+```
+
+`q` may be FP16-derived scalar, Q4, Q3, or a few-level/TQ source. A source
+format screen alone is not a model-quality claim, however: comparisons against
+Q3/Q4/TQ must also be made against a shared FP16 reference and fixed prompt
+corpus before a final rate/quality conclusion is drawn.
+
+The exported **validation-selected payload is the oracle**. Full conflict
+commit remains a diagnostic path only and must never silently become the
+payload used by artifact, Vulkan, or model-facing replay. The selector export
+therefore needs a materialized snapshot at the validation-selected commit
+prefix, with all later commits excluded.
+
+Every manifest-backed artifact must contain, or be bound to by deterministic
+sidecar metadata:
+
+* tensor dimensions and tensor name;
+* ASTC footprint and physical bits per weight;
+* source quantization family and source-model fingerprint;
+* affine/runtime decoder constants and representation kind;
+* calibration, validation, and selection-contract hashes;
+* validation-selected commit count and deterministic commit-order hash;
+* edge-padding/masking contract version; and
+* payload byte size and SHA-256.
+
+CPU replay must decode the exported bytes directly and reproduce the selector
+result. Vulkan replay must consume that same payload, never a regenerated
+encode. This makes padding geometry, selection prefix, serialization, and
+runtime reconstruction independently auditable.
+
+The low-bitrate decision gate is a common rate--distortion matrix, using a
+shared FP16 tensor/reference and fixed calibration, validation, and untouched
+holdout traces:
+
+| Footprint | Physical rate | Required controls |
+| --- | ---: | --- |
+| 4x4 | 8.00 b/w | scalar and gauge + validation |
+| 5x5 | 5.12 b/w | scalar and gauge + validation |
+| 6x6 | 3.56 b/w | scalar and gauge + validation |
+| 8x6 | 2.67 b/w | scalar and gauge + validation, experimental opt-in |
+| 8x8 | 2.00 b/w | scalar and gauge + validation, experimental opt-in |
+
+Report scalar and validation-selected gauge holdout MSE side by side for every
+row, then add model-output metrics separately. The concrete low-rate success
+criterion is not merely an improvement within one footprint: for example, an
+8x6 gauge artifact approaching scalar 6x6 quality at lower resident rate would
+move the practical rate--distortion frontier. Only artifacts that pass this
+gate proceed to target-device upload and dispatch measurements.
