@@ -2011,3 +2011,17 @@ was rerun with **30/30 passing** in about 131 seconds. The isolated branch is
 clean and no production `ggml-vulkan` routing was modified. The next work is
 therefore a multi-prompt/full-model quality matrix and target-device timing,
 not another correctness fix.
+
+### Multi-prompt and first timing checkpoint
+
+Three fixed technical prompts were replayed through the full Pythia model using
+the complete scalar and validation-prefix gauge artifacts. Mean logits-relative
+MSE was `0.89747548` for scalar and `0.89152133` for gauge; mean loss deltas were
+`+6.81348787` and `+6.82224413`, respectively. Gauge's activation advantage
+therefore remains a small, metric-dependent model-level effect.
+
+A cold end-to-end Intel UHD 620 Vulkan replay of both full artifacts over 30
+samples took `7.14 s` wall time with peak RSS `933864 KiB`, while GPU-vs-CPU MSE
+remained below `1e-12`. Treat this as POC correctness/timing only. Before any
+driver promotion, add hot-cache/batched dispatch timing and a native Q/TQ
+buffer-kernel comparison on the target mobile GPU.

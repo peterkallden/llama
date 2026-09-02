@@ -5531,3 +5531,29 @@ same-prompt model controls, the complete ASTC-labelled CTest suite was rerun:
 contract, artifact/resource checks, error-shaping/LDLQ contracts, 8x6/8x8
 experimental shader smokes, and the larger weight smoke. The working tree is
 clean at this checkpoint; no production Vulkan routing was changed.
+
+## Two-hundred-forty-fifth sweep: multi-prompt model matrix
+
+The full scalar and validation-prefix gauge artifacts were replayed with the
+same Pythia FP16 model, layer 0, and holdout trace on three fixed technical
+prompts. Mean results were:
+
+| Stream | Mean logits-relative MSE | Mean top-1 agreement | Mean loss delta |
+| --- | ---: | ---: | ---: |
+| scalar ASTC 6x6 | `0.89747548` | `0.05555556` | `+6.81348787` |
+| validation-prefix gauge 6x6 | `0.89152133` | `0.02777778` | `+6.82224413` |
+
+Gauge reduced mean logits MSE on all three prompts, but did not improve mean
+loss and had lower top-1 agreement. This reinforces that the current model
+effect is small and metric-dependent; additional layers/full-model replacement
+are needed before quality conclusions.
+
+## Two-hundred-forty-sixth sweep: first target-device timing
+
+The full scalar/gauge artifact pair was replayed through the available Intel
+UHD 620 Vulkan device over 30 samples with the same `2048x8192` shape. The
+end-to-end process (Vulkan initialization, upload, dispatch, readback, and
+CPU-side verification) took `7.14 s` with peak RSS `933864 KiB`. GPU-vs-CPU
+MSE stayed below `1e-12` for both streams. This is a cold end-to-end POC timing,
+not a sampler timestamp or a portable performance claim; hot-cache batching and
+comparison with native Q/TQ kernels remain future work.
