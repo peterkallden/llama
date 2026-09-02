@@ -6216,3 +6216,25 @@ the ASTC preset. These hashes are provenance identities, not cryptographic
 integrity claims; artifact payload SHA-256 remains the packer's integrity
 field. The metadata now contains enough information to reject a replay with a
 different source/trace family before model-facing evaluation.
+
+## Two-hundred-sixty-seventh sweep: c+delta low-rate control
+
+The existing scalar-anchored `c+delta` family was run on the same F16 layer-0
+screen as a bounded approximation to a richer PV P-step. It retains the exact
+scalar fallback but adds a small semantic correction alongside the gauge.
+
+| Footprint | PV-lite validation-stopped holdout | c+delta validation-stopped holdout |
+| --- | ---: | ---: |
+| 10x6 | `0.07738508` | `0.11721536` |
+| 8x8 | `0.11633482` | `0.14530883` |
+
+The extra correction degree of freedom did not help and is therefore not a
+justification for a larger continuous optimizer yet. The current evidence
+favors a scalar-anchored, zero-sum gauge representation with the standard ASTC
+candidate search, followed by a model-facing objective only when a full-shape
+artifact is available.
+
+This also clarifies the next gate: crop-level activation metrics can screen
+candidate families, but they cannot substitute for full-model replay. The
+model-replay utility enforces the complete FFN-down shape, so the existing
+`12x240` PV artifacts are replay/oracle artifacts, not model-quality claims.

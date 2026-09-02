@@ -2253,9 +2253,11 @@ only standard ASTC sampling plus the existing cheap semantic reconstruction.
   pool and scalar/gauge-neutral fallback. It uses exact ASTC decode and
   validation-prefix stopping; it is intentionally not described as a complete
   continuous PV-Tuning P-step.
-- [ ] Repeat the PV-lite gate on a second tensor using F16/Q3 sources (the
-  current TQ1/TQ2 crops are byte-identical), materialize the selected artifact,
-  then perform the model-facing replay gate.
+- [x] Repeat the PV-lite gate on a second tensor using F16/Q3 sources (the
+  current TQ1/TQ2 crops are byte-identical) and materialize/replay the selected
+  artifacts. Full PV-lite did not beat the standard weight-grid control there.
+- [ ] Perform the model-facing replay gate with a full-shape PV artifact; crop
+  artifacts are intentionally rejected by the model-replay shape contract.
 
 PV-lite-grid is now implemented as an opt-in coefficient-grid experiment. It
 must remain separate from the standard/thorough reference path until artifact
@@ -2347,3 +2349,10 @@ was `0.11633482` in both cases. Candidate counts increased (741 to 761 at
 10x6, 982 to 1014 at 8x8) without a quality gain. Therefore the broader neural
 candidate-recall path remains an optional diagnostic and is not automatically
 stacked on the low-rate PV profile.
+
+The existing scalar-anchored `c+delta` family was also checked as a bounded
+PV-adjacent control. It did not close the gap: validation-stopped holdout was
+`0.11721536` at 10x6 and `0.14530883` at 8x8 on the F16 layer-0 crop, both
+worse than the corresponding PV-lite results. This is evidence against adding
+more unconstrained correction dimensions before a model-facing objective is in
+place.
