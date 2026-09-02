@@ -5905,3 +5905,25 @@ combination of selector output and reconstruction constants. The next quality
 step is the shared source/rate table (Q3/Q4/TQ controls) using provenance-bound
 10x6 artifacts; only then should 10x8 or 10x10 consume new implementation
 surface.
+
+## PV-Tuning and YAQA assessment
+
+The current encoder already has a useful discrete optimization component, but
+it is not PV-Tuning: exact ASTC candidate generation, conflict-aware selection,
+and validation-prefix stopping do not yet update any continuous representation
+parameters against model loss. PV-Tuning is therefore a good next method for
+the 10x6/8x8 regime, not a replacement for the standard ASTC decoder. Its P
+step can tune a small set of codec-safe affine and zero-sum-gauge coefficients;
+its V step can reproject those values into the existing bank of legal ASTC
+payloads. Every iteration must use exact encode/decode and retain the
+gauge-neutral fallback.
+
+The lower-rate follow-on is YAQA/model-preserving adaptive rounding. Its
+two-sided sensitivity objective can score the same candidate error matrices
+with input-side activation geometry and downstream/model-output sensitivity.
+That is a better future direction than adding unconstrained residual capacity
+at 1.6 b/w and below. It remains gated behind a fixed-candidate-pool ablation:
+first establish that the richer objective improves validation-selected,
+model-facing quality, then combine it with PV-style updates. Both methods are
+offline encoder work; the emitted bytes and Vulkan sampler remain ordinary
+standard ASTC.

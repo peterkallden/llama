@@ -2174,3 +2174,63 @@ Next steps are deliberately narrow:
    collect a lower nominal rate.
 4. Keep neural recall validation-selected per tensor. Do not make it the
    default until a cross-tensor selection rule is demonstrated.
+
+### PV-Tuning and model-preserving rounding track
+
+The present gauge encoder is **not** PV-Tuning. It has an exact discrete
+candidate step (legal ASTC encode/decode, conflict-aware commit, and
+validation-prefix stopping), but it does not yet alternate that step with a
+continuous model-loss optimization. This distinction becomes important for
+10x6 and 8x8, and likely essential below roughly 2 b/w.
+
+PV-Tuning is a suitable next offline-only layer because it is representation
+agnostic: it alternates a continuous parameter update with a discrete update
+over the deployed representation, rather than relying on a straight-through
+estimator. In this project the deployed representation remains a set of legal
+standard 128-bit ASTC blocks; no custom runtime decoder or shader-side training
+state is introduced. Reference: Malinovskii et al., *PV-Tuning: Beyond
+Straight-Through Estimation for Extreme LLM Compression*, arXiv:2405.14852.
+
+The first ASTC adaptation must be deliberately small:
+
+1. Freeze a provenance-bound 10x6/8x8 candidate pool and scalar-anchored
+   fallback.
+2. **P step:** optimize only continuous codec-safe variables on a calibration
+   subset: layer/group affine reconstruction constants and a small coefficient
+   vector for the existing zero-sum gauge bases. Do not optimize arbitrary
+   per-weight residuals.
+3. Re-encode, exact-decode, and deduplicate every updated source block.
+4. **V step:** choose only among legal payload candidates using the current
+   conflict-aware selector, then select the exported prefix on validation.
+5. Accept an iteration only if a disjoint holdout, and then model-facing
+   metric, improve. The scalar/gauge-neutral payload must remain a mandatory
+   candidate at every iteration.
+
+This is naturally block-/strip-granular rather than scalar-granular: a
+10x6/8x8 ASTC block's payload, mode family, and gauge coefficient are the
+discrete variables. It reuses the exact artifact oracle already built, and
+keeps all optimization offline.
+
+For the 1.6--0.9 b/w ladder, add a later **YAQA-style** objective rather than
+blindly increasing PV capacity. YAQA/model-preserving adaptive rounding argues
+that immediate layer activation error can be a poor proxy for model output and
+uses a two-sided Kronecker-factored sensitivity approximation. Reference:
+Tseng, Sun, and De Sa, *Model-Preserving Adaptive Rounding*,
+arXiv:2505.22988. The ASTC form is a candidate score
+
+\[
+  \mathcal L_{\mathrm{two\text{-}sided}}(E)
+  = \operatorname{tr}(H_O E H_I E^T),
+\]
+
+where `H_I` comes from input traces and `H_O` from downstream/model-output
+sensitivity. It should rank the *same* legal ASTC candidate bank, not define a
+new ASTC syntax. Implement it only after a fixed-pool ablation establishes that
+the richer objective improves validation-selected, model-facing results over
+activation-MSE; otherwise candidate-space and objective changes would be
+confounded.
+
+Priority is therefore: shared 10x6 source/rate matrix -> PV-lite fixed-pool
+ablation on 10x6 and 8x8 -> model-facing gate -> YAQA-style two-sided scoring
+for 10x8/10x10 and lower. This protects the central contract: GPU runtime sees
+only standard ASTC sampling plus the existing cheap semantic reconstruction.
