@@ -5931,7 +5931,8 @@ standard ASTC.
 ## Two-hundred-fifty-eighth sweep: matched 10x6/8x8 source matrix
 
 The first matched low-rate matrix uses the same Pythia `blk.0.ffn_down.weight`
-crop (`12x2040`), the same calibration/validation/holdout traces, and the same
+source columns and calibration/validation/holdout traces, with
+footprint-aligned crops (`12x2040` for 10x6 and `16x2040` for 8x8) and the same
 scalar-anchored weight-grid gauge selector. The reported value is always the
 validation-selected prefix evaluated on untouched holdout data; it is not a
 model-level perplexity or logits result.
@@ -5981,8 +5982,8 @@ an untouched-holdout improvement over the current validation-selected stream.
 
 The existing `encoder-search neural` mode was compared with the standard
 candidate path on the same Pythia layer-0 traces, scalar-anchored gauge family,
-and a small `12x240` crop. The selector, validation-prefix rule, and runtime
-decoder were unchanged.
+and small footprint-aligned crops (`12x240` for 10x6 and `16x240` for 8x8).
+The selector, validation-prefix rule, and runtime decoder were unchanged.
 
 | Source | Footprint | Standard validation-stopped holdout | Neural recall validation-stopped holdout |
 | --- | --- | ---: | ---: |
