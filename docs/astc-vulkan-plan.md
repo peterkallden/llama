@@ -2249,11 +2249,13 @@ only standard ASTC sampling plus the existing cheap semantic reconstruction.
 - [x] Compare neural candidate recall against standard search on identical
   crops. No holdout gain was found; keep it experimental and do not replace
   the standard candidate path.
-- [ ] Run PV-lite with a frozen legal payload pool and scalar/gauge-neutral
-  fallback. The P-step must tune only small affine/zero-sum-gauge parameters;
-  the V-step must use exact ASTC decode and validation-prefix stopping.
-- [ ] Repeat the PV-lite gate on a second tensor with a genuinely different
-  TQ source, then perform the model-facing replay gate.
+- [x] Run the bounded PV-lite coefficient-grid gate with a frozen legal payload
+  pool and scalar/gauge-neutral fallback. It uses exact ASTC decode and
+  validation-prefix stopping; it is intentionally not described as a complete
+  continuous PV-Tuning P-step.
+- [ ] Repeat the PV-lite gate on a second tensor using F16/Q3 sources (the
+  current TQ1/TQ2 crops are byte-identical), materialize the selected artifact,
+  then perform the model-facing replay gate.
 
 PV-lite-grid is now implemented as an opt-in coefficient-grid experiment. It
 must remain separate from the standard/thorough reference path until artifact
@@ -2291,3 +2293,39 @@ from the exported artifact bytes. The remaining PV-lite gate is a second
 tensor with genuinely different source values plus a model-facing metric;
 driver integration and broader footprint promotion remain blocked on that
 evidence.
+
+### PV-lite implementation review and next sweep
+
+The implementation is now correctly scoped as a **PV-inspired coefficient-grid
+search**, not as full PV-Tuning. Its P-side is a fixed, zero-sum source family:
+the mandatory neutral member plus X-ramp, Y-ramp, and saddle gauges at
+`+/-0.25`, `+/-0.50`, and `+/-0.75`. Its V-side is stronger and exact: every
+source member is encoded as a legal ASTC block, decoded by the reference
+decoder, deduplicated by payload, coordinated by the conflict-aware selector,
+and exported only at the validation-selected prefix. This is the right
+conservative profile for the first low-rate experiments.
+
+Before another quality claim, the following implementation gates apply:
+
+1. [x] Make validation artifacts self-describing: record `encoder_profile`,
+   candidate-family/grid version, and `validation_prefix`; the runtime artifact
+   must be the validation payload, never the all-commit diagnostic stream.
+2. [x] Add an unaligned 10x6 edge regression. Clamp padding remains
+   deterministic but is excluded from gauge-headroom and semantic loss, so it
+   cannot shrink the valid tensor's gauge range.
+3. [x] Preserve the selected PV factor through streamed row-strip selection
+   and record factor index, basis, gauge, and correction in the commit log.
+   This is the evidence needed for a later adaptive/coarse-to-fine grid.
+4. [ ] Profile PV-lite with persistent worker contexts and split generation
+   time into source construction, ASTC search, decode, deduplication, and
+   delta construction. This is a performance-only sweep; it must reproduce
+   payloads and commits byte-for-byte.
+5. [ ] Use the factor histogram from two independent tensors to define a
+   validation-frozen coarse-to-fine grid. Do not prune a basis or amplitude
+   from the same holdout used to claim quality.
+6. [ ] Only after those gates, implement a true alternating PV step over a
+   small set of group affine/gauge coefficients. Each update must reproject
+   through exact ASTC encode/decode and retain the scalar-neutral fallback.
+7. [ ] Reserve YAQA-style two-sided/model-preserving scoring for `10x8`,
+   `10x10`, and lower rates after a fixed-pool ablation; it must change the
+   objective without simultaneously changing the candidate family.

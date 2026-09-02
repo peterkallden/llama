@@ -643,6 +643,17 @@ if (BUILD_TESTING)
                 --footprint 8x8 --max-rows 16 --max-columns 16
                 --max-samples 4 --max-calibration-samples 2)
         set_property(TEST astc-vulkan-latent-pv-lite-grid-smoke PROPERTY LABELS astc)
+        # A partial 10x6 block must retain deterministic clamp padding while
+        # excluding those padded texels from the gauge headroom and neural loss.
+        add_test(NAME astc-vulkan-latent-pv-lite-edge-smoke
+            COMMAND astc-vulkan-latent-smoke --pv-lite-grid-sweep
+                --row-strip-chunked --footprint 10x6 --max-rows 11 --max-columns 17
+                --max-samples 4 --max-calibration-samples 2
+                --decode-loop-log ${CMAKE_CURRENT_BINARY_DIR}/pv-lite-edge-commits.csv
+                --validation-payload ${CMAKE_CURRENT_BINARY_DIR}/pv-lite-edge-selected.astc
+                --validation-reference ${CMAKE_CURRENT_BINARY_DIR}/pv-lite-edge-selected.rgba.f32
+                --validation-metadata ${CMAKE_CURRENT_BINARY_DIR}/pv-lite-edge-selected.metadata)
+        set_property(TEST astc-vulkan-latent-pv-lite-edge-smoke PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-input-smoke)

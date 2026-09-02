@@ -6099,3 +6099,45 @@ reproducibility baseline, `low-rate-neural` requires PV-lite/adaptive
 selection, and 8x6 stays standard-gauge by default because its bounded PV
 gain was not repeatable. Promotion of `low-rate-neural` beyond research use
 still requires a second-tensor and model-facing holdout gate.
+
+## Two-hundred-sixty-third sweep: PV-lite provenance and edge review
+
+The PV-lite implementation was reviewed against the intended P/V contract.
+It is a fixed zero-sum coefficient grid, **not** a claim of continuous
+PV-Tuning: source candidates are generated from the neutral scalar anchor and
+the X-ramp, Y-ramp, and saddle bases at `+/-0.25`, `+/-0.50`, and `+/-0.75`.
+The existing exact encode/decode selector remains the V step. This is the
+right boundary for the current research stage because every selected result is
+still an ordinary legal ASTC payload with no runtime optimizer or sidecar.
+
+Two reproducibility gaps were closed before scaling another low-rate run.
+First, validation metadata now records the encoder profile, the precise
+candidate-family/grid version, and the validation-selected commit prefix. A
+consumer can therefore distinguish a `pv-lite-grid-v1` artifact from a
+standard or ordinary weight-grid-gauge artifact. The all-commit payload remains
+diagnostic only; a deployable artifact is always the separately materialized
+validation-prefix stream.
+
+Second, partial ASTC blocks now exclude deterministic clamp padding from gauge
+headroom. Padding remains unchanged source data and never contributes to the
+neural loss, but it can no longer accidentally reduce the zero-sum gauge
+amplitude permitted for real tensor entries. The new
+`astc-vulkan-latent-pv-lite-edge-smoke` exercises an unaligned `11x17` 10x6
+case. It passed together with the existing PV and validation-artifact smokes.
+Its exported metadata reports `encoder_profile=pv-lite-grid-v1`, the full
+candidate family, and `validation_prefix=2`; CPU artifact replay remains byte
+identical.
+
+PV factor provenance is now retained through the streamed row-strip selector.
+When PV-lite is enabled, the commit CSV records factor index, basis, gauge, and
+correction, and the harness reports a selected-factor histogram. In the edge
+smoke the two selected commits were `y-ramp +0.75` and `x-ramp -0.75`. This is
+not a quality conclusion; it is the necessary observation path for an
+adaptive/coarse-to-fine grid that is frozen from independent data.
+
+The next sweeps are deliberately ordered: (1) profile PV-lite with persistent
+contexts while requiring byte-identical payloads and commit order, (2) repeat
+the artifact-backed PV gate on a second F16/Q3 tensor rather than the presently
+identical TQ crop, and (3) only then consider a true alternating affine/gauge
+P-step. A two-sided YAQA-style objective remains a later, fixed-pool experiment
+for rates below the present 10x6/8x8 range.

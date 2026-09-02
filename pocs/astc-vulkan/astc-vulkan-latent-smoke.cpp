@@ -27,6 +27,16 @@ double g_block_ldlq_damping = 1e-4;
 enum class ldlq_order_mode { forward, reverse, pivot };
 enum class residual_basis { free, block_constant, block_row, block_column, block_plane };
 enum class gauge_basis { constant, x_ramp, y_ramp, saddle };
+
+const char * gauge_basis_name(gauge_basis basis) {
+    switch (basis) {
+        case gauge_basis::constant: return "constant";
+        case gauge_basis::x_ramp: return "x-ramp";
+        case gauge_basis::y_ramp: return "y-ramp";
+        case gauge_basis::saddle: return "saddle";
+    }
+    return "unknown";
+}
 // Keep the reference encoder path separate from the experimental recall path.
 // The latter changes only which legal astcenc candidates reach the existing
 // exact-decode selector; it does not change the ASTC payload format or runtime
@@ -311,7 +321,10 @@ bool write_binary(const std::string & path, const std::vector<T> & values) {
 bool write_export_metadata(const std::string & path, const ggml_vk_astc_format_contract & format,
                            const char * mode, uint32_t rows, uint32_t columns,
                            const affine_decoder & decoder,
-                           size_t compressed_bytes, size_t decoded_texels) {
+                           size_t compressed_bytes, size_t decoded_texels,
+                           const char * encoder_profile = "standard",
+                           uint32_t validation_prefix = 0,
+                           const char * candidate_family = "none") {
     std::ofstream file(path);
     if (!file) return false;
     file << "version=1\n"
@@ -321,6 +334,9 @@ bool write_export_metadata(const std::string & path, const ggml_vk_astc_format_c
          << "columns=" << columns << "\n"
          << "block_width=" << format.block_width << "\n"
          << "block_height=" << format.block_height << "\n"
+         << "encoder_profile=" << encoder_profile << "\n"
+         << "candidate_family=" << candidate_family << "\n"
+         << "validation_prefix=" << validation_prefix << "\n"
          << "scale_l=" << decoder.scale_l << "\n"
          << "scale_a=" << decoder.scale_a << "\n"
          << "offset=" << decoder.offset << "\n"
@@ -1487,6 +1503,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         uint32_t column0;
         std::vector<float> decoded;
         std::array<uint8_t, 16> payload;
+        uint32_t factor_index = 0;
     };
     struct alpha_block_result {
         bool valid = false;
@@ -1527,6 +1544,10 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         float gauge;
         gauge_basis basis = gauge_basis::constant;
     };
+    const char * candidate_family = pv_lite_grid ?
+        "zero-sum-pv-lite-grid-v1(constant,x-ramp,y-ramp,saddle;gauge=0,+/-0.25,+/-0.50,+/-0.75)" :
+        (weight_grid_gauge ? "zero-sum-weight-grid-gauge-v1" :
+                             "scalar-anchored-gauge-v1");
     // PV-lite v1 is deliberately a fixed coefficient grid, not a claim of a
     // complete alternating optimizer. It supplies a small P-step candidate
     // family while the existing exact ASTC encode/decode and V-step selector
@@ -1579,6 +1600,10 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         if (scalar_anchored_gauge) {
             for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
                 for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                    // Padding is a deterministic encoder aid only. It must
+                    // neither add semantic loss terms nor reduce the gauge
+                    // amplitude available to the real tensor positions.
+                    if (row0 + local_row >= rows || column0 + local_column >= columns) continue;
                     const uint32_t source_row = std::min(row0 + local_row, rows - 1);
                     const uint32_t source_column = std::min(column0 + local_column, columns - 1);
                     const float q = block_latents.texels[
@@ -1673,7 +1698,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 result.neutral_payload = payload;
                 result.neutral_loss = loss;
             } else {
-                result.alternatives.push_back({ row0, column0, decoded, payload });
+                result.alternatives.push_back({ row0, column0, decoded, payload, factor_index });
             }
             if (loss < result.best_loss) {
                 result.best_loss = loss;
@@ -1697,7 +1722,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     return;
                 }
                 neural_seen_payloads.push_back(candidate_payload);
-                neural_candidates.push_back({ { row0, column0, candidate_decoded, candidate_payload },
+                neural_candidates.push_back({ { row0, column0, candidate_decoded, candidate_payload, factor_index },
                                               decoded_block_activation_error(weights, candidate_decoded,
                                                                              row0, column0, rows, columns,
                                                                              format, calibration), stock });
@@ -1825,6 +1850,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             uint32_t column0 = 0;
             std::vector<float> decoded;
             std::array<uint8_t, 16> payload{};
+            uint32_t factor_index = 0;
             double gain = 0.0;
         };
         struct strip_metrics {
@@ -2006,6 +2032,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 step.column0 = option.column0;
                 step.decoded = option.decoded;
                 step.payload = option.payload;
+                step.factor_index = option.factor_index;
                 step.gain = best_gain;
                 strip_steps[strip].push_back(step);
                 strip_gain += best_gain;
@@ -2053,7 +2080,9 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             commit_log.open(commit_log_path);
             if (!commit_log) return false;
             commit_log << "commit,calibration_relative_mse,validation_relative_mse,"
-                       << "marginal_residual_gain,cumulative_residual_gain\n";
+                       << "marginal_residual_gain,cumulative_residual_gain";
+            if (pv_lite_grid) commit_log << ",factor_index,basis,gauge,correction";
+            commit_log << "\n";
         }
         std::vector<size_t> strip_cursors(blocks_y, 0);
         std::vector<const strip_step *> committed_steps;
@@ -2101,7 +2130,13 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             }
             if (commit_log) {
                 commit_log << commits << ',' << residual_energy / expected_energy << ',' << validation_loss << ','
-                           << best_gain << ',' << neutral_calibration - residual_energy / expected_energy << '\n';
+                           << best_gain << ',' << neutral_calibration - residual_energy / expected_energy;
+                if (pv_lite_grid) {
+                    const gauge_factor & factor = factors[step.factor_index];
+                    commit_log << ',' << step.factor_index << ',' << gauge_basis_name(factor.basis) << ','
+                               << factor.gauge << ',' << factor.correction;
+                }
+                commit_log << '\n';
             }
         }
         std::vector<float> conflict_aware = neutral;
@@ -2122,6 +2157,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         const double conflict_calibration = activation_relative_mse(weights, conflict_aware, rows, columns, calibration);
         const double conflict_holdout = activation_relative_mse(weights, conflict_aware, rows, columns, holdout);
         const double stopped_holdout = activation_relative_mse(weights, validation_stopped, rows, columns, holdout);
+        const char * encoder_profile = pv_lite_grid ? "pv-lite-grid-v1" :
+                                      weight_grid_gauge ? "weight-grid-gauge-v1" : "standard";
         std::vector<std::array<uint8_t, 16>> final_payloads = neutral_payloads;
         for (const strip_step * step : committed_steps) {
             final_payloads[(step->row0 / format.block_height) * blocks_x +
@@ -2133,7 +2170,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         if (!neutral_metadata_path.empty() && !write_export_metadata(
                 neutral_metadata_path, format, "gauge-la-neutral", rows, columns,
                 block_latents.decoder, neutral_payloads.size() * 16,
-                static_cast<size_t>(rows) * columns * 4)) return false;
+                static_cast<size_t>(rows) * columns * 4, encoder_profile, 0, candidate_family)) return false;
         if (!neutral_reference_path.empty()) {
             std::vector<uint8_t> compressed(neutral_payloads.size() * 16);
             for (size_t index = 0; index < neutral_payloads.size(); ++index) {
@@ -2154,7 +2191,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         if (!validation_metadata_path.empty() && !write_export_metadata(
                 validation_metadata_path, format, "gauge-la-validation", rows, columns,
                 block_latents.decoder, validation_payloads.size() * 16,
-                static_cast<size_t>(rows) * columns * 4)) return false;
+                static_cast<size_t>(rows) * columns * 4, encoder_profile,
+                best_validation_commit, candidate_family)) return false;
         if (!validation_reference_path.empty()) {
             std::vector<uint8_t> compressed(validation_payloads.size() * 16);
             for (size_t index = 0; index < validation_payloads.size(); ++index) {
@@ -2215,6 +2253,17 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     "partition-changed=%u endpoint-mode-changed=%u weight-grid-changed=%u weight-levels-changed=%u\n",
                     committed_steps.size(), changed_payloads, changed_dual_plane, changed_partition_count,
                     changed_endpoint_mode, changed_weight_grid, changed_weight_levels);
+        if (pv_lite_grid) {
+            std::vector<uint32_t> factor_counts(factors.size(), 0);
+            for (const strip_step * step : committed_steps) ++factor_counts[step->factor_index];
+            for (uint32_t index = 0; index < factor_counts.size(); ++index) {
+                if (factor_counts[index] == 0) continue;
+                const gauge_factor & factor = factors[index];
+                std::printf("latent-pv-lite-factor index=%u basis=%s gauge=%g correction=%g commits=%u\n",
+                            index, gauge_basis_name(factor.basis), factor.gauge, factor.correction,
+                            factor_counts[index]);
+            }
+        }
         std::printf("latent-decode-loop-alpha format=%s mode=%s encoder-search=%s source-levels=%u blocks=%u neutral-wins=%u alpha-wins=%u "
                     "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
                     "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g "
