@@ -5655,3 +5655,99 @@ format/shader controls, not `Q3_K_M` or full `TQ1_0` graph benchmarks. The new
 shaders remain outside production `ggml-vulkan` routing and are intended to
 make the next artifact quality/rate matrix independently auditable. Focused
 contract and shader-compilation tests passed `5/5`.
+
+## Two-hundred-fifty-first sweep: neural standard-ASTC candidate recall v1
+
+The next low-rate quality gate is an offline encoder change, not a runtime
+format change. The Vulkan path will continue to sample ordinary legal ASTC
+images and rely on the GPU fixed-function decoder; only the sidecar encoder's
+candidate recall changes.
+
+`astc-vulkan-latent-smoke` now accepts:
+
+```text
+--encoder-search standard|neural
+--neural-candidate-limit N
+```
+
+`standard` leaves the established astcenc path untouched. `neural` performs
+two encodes for each scalar-anchored gauge source: the unchanged stock encode,
+which remains mandatory (and supplies the exact scalar fallback), plus a
+wider astcenc candidate-budget encode. Every retained 16-byte candidate is
+decoded with the ASTC reference decoder and scored in activation space. The
+per-block bank keeps the stock alternatives, the best local neural candidate,
+and additional candidates selected for calibration-direction diversity before
+the existing conflict-aware selector and validation-prefix stopping rule run.
+
+This separation is intentional. Raising astcenc's candidate budget can change
+its nominal best image payload, so it must never silently move the scalar
+anchor. The wider result is therefore an alternative only. The active build
+currently links stock astcenc, so v1 is a two-budget recall implementation;
+the optional callback supplies additional candidates only when the isolated
+neural-ranking astcenc fork is linked. The reference-oriented neural path
+temporarily disables the persistent worker-context fast path because callback
+state must first become worker-local. A later optimization may restore it
+without changing the candidate contract.
+
+On a deterministic `12x12`, `6x6` smoke, the standard stream had 16 unique
+source/gauge payloads and validation-stopped holdout `1.1409865e-4`. Neural
+recall retained 23 unique legal payloads and reached `1.0629025e-4`. The
+scalar-neutral calibration and holdout values were byte-equivalent between
+the two paths (`1.4132901e-4` and `1.3990591e-4`), demonstrating that wider
+search did not alter the fallback. This is a harness smoke, not a model-quality
+claim; the next gate is the matched Pythia `8x6`/`8x8` matrix on two tensors.
+
+The accompanying CTest `astc-vulkan-latent-neural-search-smoke` covers the
+neural recall path. Before calling this a new encoder profile, the evaluation
+must use identical source/traces/selector settings and show an untouched
+holdout improvement over `standard`.
+
+## Two-hundred-fifty-second sweep: matched Pythia neural-search-v1 matrix
+
+The first model-derived gate held the source (Pythia 1.4B F16), `8x2048` crop,
+calibration/validation/holdout traces, gauge family, conflict-aware selector,
+and validation-prefix rule constant. `standard` used the established thorough
+path; `neural` added only the wider legal-payload bank with a limit of 16.
+
+| Tensor | Footprint | Standard validation-stopped holdout | Neural v1 validation-stopped holdout | Result |
+| --- | --- | ---: | ---: | --- |
+| `blk.0.ffn_down.weight` | 8x6 | 0.031169517 | **0.029879643** | 4.14% lower |
+| `blk.0.ffn_down.weight` | 8x8 | 0.087210716 | **0.072692010** | 16.65% lower |
+| `blk.1.ffn_down.weight` | 8x6 | **0.089441624** | 0.093050565 | 4.04% higher |
+| `blk.1.ffn_down.weight` | 8x8 | 0.219736960 | 0.219736960 | tie |
+
+The scalar-neutral holdout was identical within each matched pair. The larger
+candidate bank was real but modest: layer 0 exposed 3,535 -> 3,726 unique
+payloads at 8x6 and 1,773 -> 1,805 at 8x8; layer 1 exposed 3,535 -> 3,743 and
+1,767 -> 1,784 respectively. The validation-stopped prefix remains essential:
+full conflict selection overfit in the winning layer-0 cases.
+
+This passes the existence gate but not an always-on-profile gate. Neural recall
+can improve low-rate quality substantially for one tensor while being neutral
+or worse for another. The next sweep therefore adds standard ASTC mode
+histograms (endpoint, partition, weight-grid, level and dual-plane decisions)
+to identify which legal mode families the wider search contributes. Selection
+must remain tensor-/validation-aware until a robust cross-tensor rule exists.
+
+## Two-hundred-fifty-third sweep: ASTC mode audit
+
+The selector now emits a histogram of the standard ASTC block decisions for
+both scalar anchors and selected payloads: endpoint mode/level, partition
+count, weight-grid geometry/precision and dual-plane component. This is a
+diagnostic only; it changes neither the payload nor the selection objective.
+
+On the layer-0 `8x8` comparison, the winning standard and neural selections
+use the same broad family: endpoint mode 4, no dual-plane blocks, mostly one
+partition, and `7x8`/`8x7` weight grids with three weight levels. Neural v1
+does not reveal a previously absent magic ASTC mode. Its most visible shift is
+a small increase in selected two-partition `8x8` blocks (26 -> 33), together
+with modest redistributions among the existing grids. This supports a more
+careful interpretation of v1: the wider budget finds alternative legal
+realisations within an already relevant mode family; it has not yet justified
+hard-pruning the stock search space.
+
+Accordingly, the next quality experiment should not force a mode profile yet.
+It should first test a weight-grid-compatible zero-sum gauge basis on the fixed
+candidate/selector contract. The histogram gives a concrete reference for that
+test and will later support mode-family quotas in the astcenc side fork if a
+cross-tensor pattern emerges.

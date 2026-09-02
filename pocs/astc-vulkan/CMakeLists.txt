@@ -611,6 +611,12 @@ if (BUILD_TESTING)
                     --stability-shards 4 --footprint 6x6 --max-rows 8 --max-columns 32)
             set_property(TEST astc-vulkan-latent-angular-stability-smoke PROPERTY LABELS astc)
         endif()
+        add_test(NAME astc-vulkan-latent-neural-search-smoke
+            COMMAND astc-vulkan-latent-smoke --scalar-anchored-gauge-sweep
+                --encoder-search neural --neural-candidate-limit 8
+                --footprint 6x6 --max-rows 12 --max-columns 12
+                --max-samples 4 --max-calibration-samples 2)
+        set_property(TEST astc-vulkan-latent-neural-search-smoke PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-input-smoke)

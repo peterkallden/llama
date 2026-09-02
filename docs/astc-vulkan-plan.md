@@ -8,6 +8,46 @@ The proof of concept starts in `pocs/astc-vulkan/`, parallel to the production
 `ggml-vulkan` backend. It does not copy the production backend. Integration
 into `ggml-vulkan` is a later decision gate after device-backed evidence.
 
+## Current low-rate quality track: neural standard-ASTC search
+
+The runtime contract remains deliberately conventional: an ordinary legal ASTC
+image is sampled through Vulkan and decoded by fixed-function texture hardware.
+This track does **not** introduce a custom ASTC runtime decoder. It investigates
+whether the offline encoder can retain and select better legal standard-ASTC
+payloads for neural weights, particularly at `8x6` and `8x8` footprints.
+
+1. [x] Add `--encoder-search standard|neural` to the isolated latent harness.
+   `standard` is the unmodified astcenc reference path. `neural` always keeps
+   every stock result as a mandatory candidate, including the exact scalar
+   fallback, and performs a second wider astcenc search only to supply extra
+   legal payloads.
+2. [x] Exact-decode the retained payloads and cap the neural bank per ASTC
+   block using mandatory stock candidates, the local activation-loss winner,
+   and calibration-direction diversity. The active build's v1 input is a
+   two-budget stock-astcenc search; callback candidates will be added only
+   when the isolated astcenc side fork is linked. The existing conflict-aware
+   selector and validation-prefix rule are intentionally unchanged.
+3. [x] Add a focused CTest smoke for the neural candidate-recall path.
+4. [x] Compare `standard` and `neural` on Pythia `blk.0.ffn_down` and
+   `blk.1.ffn_down` at `8x6` and `8x8`, with the same source, traces,
+   validation-selected prefix, and candidate cap. Layer-0 holdout improves by
+   4.14% (8x6) and 16.65% (8x8); layer-1 is worse at 8x6 and ties at 8x8.
+   Neural recall is therefore a tensor-aware experimental profile, not an
+   unconditional replacement for standard search.
+5. [x] Record ASTC block-mode histograms for scalar-anchor and selected payloads
+   (endpoint class and level, partition count, weight-grid geometry and
+   precision, dual-plane state). The harness emits this audit for scalar
+   anchors and selected payloads. Use the evidence to add mode-family quotas
+   ahead of image-oriented early pruning in the astcenc side fork.
+6. [ ] If the recall gate passes, test zero-sum weight-grid gauge bases
+   `L = q + G`, `A = q - G` before adding a semantic correction. These remain
+   in the semantic decoder null space before ASTC encoding.
+7. [ ] Evaluate activation-aware 3- and 5-level source fields plus gauge, then
+   `10x6` (about 2.13 b/w) before broader `10x8`/`10x10` low-rate sweeps.
+8. [ ] Only after a fixed candidate space is understood, evaluate richer
+   objectives (two-sided sensitivity/Block-LDLQ) and later mixed-footprint
+   macrotiles. These are not part of the neural-search-v1 gate.
+
 ## Engineering principles
 
 - Do not change `ggml` core semantics or existing quantization types in the

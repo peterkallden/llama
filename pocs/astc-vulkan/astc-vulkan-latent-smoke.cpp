@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -25,6 +26,11 @@ float g_astc_preset = ASTCENC_PRE_THOROUGH;
 double g_block_ldlq_damping = 1e-4;
 enum class ldlq_order_mode { forward, reverse, pivot };
 enum class residual_basis { free, block_constant, block_row, block_column, block_plane };
+// Keep the reference encoder path separate from the experimental recall path.
+// The latter changes only which legal astcenc candidates reach the existing
+// exact-decode selector; it does not change the ASTC payload format or runtime
+// reconstruction contract.
+enum class encoder_search_mode { standard, neural };
 ldlq_order_mode g_block_ldlq_order = ldlq_order_mode::forward;
 bool g_directional_shortlists = false;
 uint32_t g_stability_shards = 2;
@@ -1393,6 +1399,31 @@ bool inspect_astc_blocks(const std::vector<std::array<uint8_t, 16>> & payloads,
     return status == ASTCENC_SUCCESS;
 }
 
+void print_astc_mode_histogram(const char * role, const std::vector<astcenc_block_info> & infos) {
+    // The tuple contains only standard ASTC block-header decisions. It is
+    // intentionally independent of source/gauge metadata so standard and
+    // neural candidate banks can be compared without changing the bitstream.
+    using mode_key = std::array<uint32_t, 7>;
+    std::map<mode_key, uint32_t> histogram;
+    for (const astcenc_block_info & info : infos) {
+        const mode_key key{
+            static_cast<uint32_t>(info.color_endpoint_modes[0]),
+            info.partition_count,
+            info.weight_x,
+            info.weight_y,
+            info.weight_level_count,
+            info.color_level_count,
+            info.is_dual_plane_block ? info.dual_plane_component + 1u : 0u,
+        };
+        ++histogram[key];
+    }
+    for (const auto & [key, count] : histogram) {
+        std::printf("latent-astc-mode role=%s endpoint-mode=%u partitions=%u weight-grid=%ux%u "
+                    "weight-levels=%u endpoint-levels=%u dual-plane-component=%u count=%u\n",
+                    role, key[0], key[1], key[2], key[3], key[4], key[5], key[6], count);
+    }
+}
+
 double decoded_block_activation_error(const std::vector<float> & reference,
                                       const std::vector<float> & decoded_block,
                                       uint32_t row0, uint32_t column0,
@@ -1438,7 +1469,9 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               bool row_strip_chunked = false,
                               bool row_strip_diagnostics = true,
                               bool persistent_worker_contexts = false,
-                              bool scalar_anchored_c_delta = false) {
+                              bool scalar_anchored_c_delta = false,
+                              encoder_search_mode encoder_search = encoder_search_mode::standard,
+                              uint32_t neural_candidate_limit = 16) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
@@ -1459,6 +1492,11 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         double best_loss = INFINITY;
         uint32_t best_factor = 0;
         uint32_t unique_payloads = 0;
+    };
+    struct neural_candidate {
+        alpha_option option;
+        double loss = INFINITY;
+        bool stock = false;
     };
     std::vector<alpha_option> options;
     std::vector<float> neutral(weights.size());
@@ -1524,6 +1562,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         if (factors.size() > kMaxGaugeFactors) return result;
         std::array<std::array<uint8_t, 16>, kMaxGaugeFactors> seen{};
         uint32_t seen_count = 0;
+        std::vector<neural_candidate> neural_candidates;
+        std::vector<std::array<uint8_t, 16>> neural_seen_payloads;
         std::vector<float> local_source;
         for (uint32_t factor_index = 0; factor_index < factors.size(); ++factor_index) {
             std::vector<float> & source = persistent_contexts != nullptr ?
@@ -1551,6 +1591,9 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 }
             }
             astc_roundtrip_result roundtrip;
+            // First make the ordinary encode. It defines the immutable scalar
+            // anchor and preserves the exact standard path for every source
+            // member of the gauge family.
             const bool encoded = persistent_contexts != nullptr ?
                 persistent_contexts->roundtrip(worker_index, source, format.block_height, format.block_width,
                                                format, roundtrip) :
@@ -1558,6 +1601,19 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             if (!encoded ||
                 roundtrip.compressed.size() != 16) {
                 return result;
+            }
+            // Neural v1 deliberately performs a second, wider search. Its
+            // output is *only* an alternative candidate; it can never replace
+            // the mandatory stock payload merely by changing astcenc tuning.
+            astc_roundtrip_result expanded_roundtrip;
+            astc_candidate_capture capture;
+            if (encoder_search == encoder_search_mode::neural) {
+                capture.max_per_block = std::max(1u, neural_candidate_limit);
+                if (!astc_roundtrip(source, format.block_height, format.block_width, format, nullptr,
+                                    expanded_roundtrip, neural_candidate_limit, &capture) ||
+                    expanded_roundtrip.compressed.size() != 16) {
+                    return result;
+                }
             }
             bool duplicate = false;
             for (uint32_t seen_index = 0; seen_index < seen_count; ++seen_index) {
@@ -1587,8 +1643,137 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 result.best_decoded = decoded;
                 result.best_factor = factor_index;
             }
+            if (encoder_search != encoder_search_mode::neural) continue;
+
+            // The ordinary astcenc result is mandatory. The callback exposes
+            // additional legal candidates before the harness would otherwise
+            // discard them based only on image error.
+            auto add_neural_candidate = [&](const std::array<uint8_t, 16> & candidate_payload,
+                                            const std::vector<float> & candidate_decoded,
+                                            bool stock) {
+                const auto duplicate_payload = std::find(neural_seen_payloads.begin(), neural_seen_payloads.end(),
+                                                         candidate_payload);
+                if (duplicate_payload != neural_seen_payloads.end()) {
+                    const size_t duplicate_index = static_cast<size_t>(
+                        std::distance(neural_seen_payloads.begin(), duplicate_payload));
+                    neural_candidates[duplicate_index].stock |= stock;
+                    return;
+                }
+                neural_seen_payloads.push_back(candidate_payload);
+                neural_candidates.push_back({ { row0, column0, candidate_decoded, candidate_payload },
+                                              decoded_block_activation_error(weights, candidate_decoded,
+                                                                             row0, column0, rows, columns,
+                                                                             format, calibration), stock });
+            };
+            add_neural_candidate(payload, decoded, true);
+            if (expanded_roundtrip.compressed.size() == 16) {
+                std::array<uint8_t, 16> expanded_payload{};
+                std::copy_n(expanded_roundtrip.compressed.begin(), expanded_payload.size(), expanded_payload.begin());
+                add_neural_candidate(expanded_payload,
+                                     reconstruct(expanded_roundtrip.texels, block_latents.decoder), false);
+            }
+            if (capture.blocks.empty()) continue;
+            for (const captured_astc_candidate & captured : capture.blocks.front()) {
+                if (captured.block == payload) continue;
+                std::vector<uint8_t> compressed(captured.block.begin(), captured.block.end());
+                std::vector<float> candidate_texels;
+                if (!astc_decode(compressed, format.block_height, format.block_width,
+                                 format, candidate_texels)) {
+                    return alpha_block_result{};
+                }
+                add_neural_candidate(captured.block,
+                                     reconstruct(candidate_texels, block_latents.decoder), false);
+            }
         }
-        result.unique_payloads = seen_count;
+        if (encoder_search == encoder_search_mode::neural) {
+            // Retain the stock payload from every gauge source as a regression
+            // anchor, then fill a capped bank with exact local neural winners
+            // that cover different calibration-space directions. This is
+            // deliberately upstream of the unchanged conflict-aware selector.
+            std::vector<size_t> retained;
+            const auto retain = [&](size_t index) {
+                if (std::find(retained.begin(), retained.end(), index) == retained.end()) retained.push_back(index);
+            };
+            for (size_t index = 0; index < neural_candidates.size(); ++index) {
+                if (neural_candidates[index].stock) retain(index);
+            }
+            std::vector<size_t> by_loss(neural_candidates.size());
+            for (size_t index = 0; index < by_loss.size(); ++index) by_loss[index] = index;
+            std::sort(by_loss.begin(), by_loss.end(), [&](size_t left, size_t right) {
+                return neural_candidates[left].loss < neural_candidates[right].loss;
+            });
+            if (!by_loss.empty()) retain(by_loss.front());
+            const size_t cap = std::max<size_t>(neural_candidate_limit, retained.size());
+            auto calibration_delta = [&](size_t candidate_index) {
+                const alpha_option & option = neural_candidates[candidate_index].option;
+                std::vector<double> delta(static_cast<size_t>(calibration.samples) * format.block_height, 0.0);
+                for (uint32_t sample = 0; sample < calibration.samples; ++sample) {
+                    const float * input = calibration.values.data() + static_cast<size_t>(sample) * columns;
+                    for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                        if (row0 + local_row >= rows) continue;
+                        for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                            if (column0 + local_column >= columns) continue;
+                            const size_t local = static_cast<size_t>(local_row) * format.block_width + local_column;
+                            delta[static_cast<size_t>(sample) * format.block_height + local_row] +=
+                                (option.decoded[local] - result.neutral_decoded[local]) *
+                                input[column0 + local_column];
+                        }
+                    }
+                }
+                return delta;
+            };
+            std::vector<std::vector<double>> retained_deltas;
+            retained_deltas.reserve(cap);
+            for (size_t index : retained) retained_deltas.push_back(calibration_delta(index));
+            while (retained.size() < cap && retained.size() < neural_candidates.size()) {
+                size_t best = neural_candidates.size();
+                double best_diversity = -1.0;
+                for (size_t candidate = 0; candidate < neural_candidates.size(); ++candidate) {
+                    if (std::find(retained.begin(), retained.end(), candidate) != retained.end()) continue;
+                    const std::vector<double> delta = calibration_delta(candidate);
+                    double maximum_abs_cosine = 0.0;
+                    for (const std::vector<double> & other : retained_deltas) {
+                        double dot = 0.0, left_norm = 0.0, right_norm = 0.0;
+                        for (size_t value = 0; value < delta.size(); ++value) {
+                            dot += delta[value] * other[value];
+                            left_norm += delta[value] * delta[value];
+                            right_norm += other[value] * other[value];
+                        }
+                        if (left_norm > 1e-18 && right_norm > 1e-18) {
+                            maximum_abs_cosine = std::max(maximum_abs_cosine,
+                                std::abs(dot / std::sqrt(left_norm * right_norm)));
+                        }
+                    }
+                    const double diversity = 1.0 - maximum_abs_cosine;
+                    if (diversity > best_diversity ||
+                        (diversity == best_diversity && best != neural_candidates.size() &&
+                         neural_candidates[candidate].loss < neural_candidates[best].loss)) {
+                        best = candidate;
+                        best_diversity = diversity;
+                    }
+                }
+                if (best == neural_candidates.size()) break;
+                retained.push_back(best);
+                retained_deltas.push_back(calibration_delta(best));
+            }
+            result.alternatives.clear();
+            result.best_loss = INFINITY;
+            result.best_decoded = result.neutral_decoded;
+            result.best_factor = 0;
+            for (size_t index : retained) {
+                const neural_candidate & candidate = neural_candidates[index];
+                if (candidate.option.payload != result.neutral_payload) {
+                    result.alternatives.push_back(candidate.option);
+                }
+                if (candidate.loss < result.best_loss) {
+                    result.best_loss = candidate.loss;
+                    result.best_decoded = candidate.option.decoded;
+                    result.best_factor = candidate.option.payload == result.neutral_payload ? 0 : 1;
+                }
+            }
+            result.unique_payloads = static_cast<uint32_t>(neural_candidates.size());
+        }
+        if (encoder_search != encoder_search_mode::neural) result.unique_payloads = seen_count;
         result.valid = !result.neutral_decoded.empty() && !result.best_decoded.empty();
         return result;
     };
@@ -1625,7 +1810,12 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         size_t peak_candidate_count = 0, peak_candidate_workset_bytes = 0;
         astc_persistent_context_pool persistent_context_pool;
         astc_persistent_context_pool * persistent_contexts = nullptr;
-        if (persistent_worker_contexts && scalar_anchored_gauge) {
+        // Neural recall carries callback-local candidate state. Keep its first
+        // implementation deliberately reference-oriented; the optimized
+        // persistent context path remains an exact standard-mode regression
+        // baseline until callback state is made worker-local in astcenc.
+        if (persistent_worker_contexts && scalar_anchored_gauge &&
+            encoder_search == encoder_search_mode::standard) {
             if (!persistent_context_pool.initialize(format, candidate_threads)) return false;
             persistent_contexts = &persistent_context_pool;
         }
@@ -1935,6 +2125,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         std::vector<astcenc_block_info> selected_infos, baseline_infos;
         if (!inspect_astc_blocks(selected_payloads, format, selected_infos) ||
             !inspect_astc_blocks(baseline_payloads, format, baseline_infos)) return false;
+        print_astc_mode_histogram("selected", selected_infos);
+        print_astc_mode_histogram("scalar-anchor", baseline_infos);
         uint32_t changed_payloads = 0, changed_dual_plane = 0, changed_partition_count = 0;
         uint32_t changed_endpoint_mode = 0, changed_weight_grid = 0, changed_weight_levels = 0;
         for (size_t index = 0; index < selected_infos.size(); ++index) {
@@ -1959,13 +2151,14 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     "partition-changed=%u endpoint-mode-changed=%u weight-grid-changed=%u weight-levels-changed=%u\n",
                     committed_steps.size(), changed_payloads, changed_dual_plane, changed_partition_count,
                     changed_endpoint_mode, changed_weight_grid, changed_weight_levels);
-        std::printf("latent-decode-loop-alpha format=%s mode=%s blocks=%u neutral-wins=%u alpha-wins=%u "
+        std::printf("latent-decode-loop-alpha format=%s mode=%s encoder-search=%s blocks=%u neutral-wins=%u alpha-wins=%u "
                     "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
                     "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g "
                     "candidate-effective-rank=%.4g mean-positive-cosine=%.4g conflict-commits=%u "
                     "conflict-calibration=%.8g conflict-holdout=%.8g validation-best-commit=%u "
                     "validation-best=%.8g validation-stopped-holdout=%.8g\n",
                     format.name, scalar_anchored_c_delta ? "scalar-anchored-c-delta" : "scalar-anchored-gauge",
+                    encoder_search == encoder_search_mode::neural ? "neural" : "standard",
                     block_count, neutral_wins, non_neutral_wins, unique_blocks,
                     neutral_calibration, calibration_loss, neutral_holdout, holdout_loss,
                     neutral_local_loss - selected_local_loss, effective_rank,
@@ -2270,6 +2463,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         std::vector<astcenc_block_info> baseline_infos;
         if (!inspect_astc_blocks(selected_payloads, format, selected_infos) ||
             !inspect_astc_blocks(baseline_payloads, format, baseline_infos)) return false;
+        print_astc_mode_histogram("selected", selected_infos);
+        print_astc_mode_histogram("scalar-anchor", baseline_infos);
         uint32_t changed_payloads = 0, changed_dual_plane = 0, changed_partition_count = 0;
         uint32_t changed_endpoint_mode = 0, changed_weight_grid = 0, changed_weight_levels = 0;
         for (size_t index = 0; index < selected_infos.size(); ++index) {
@@ -2291,13 +2486,14 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     committed_options.size(), changed_payloads, changed_dual_plane, changed_partition_count,
                     changed_endpoint_mode, changed_weight_grid, changed_weight_levels);
     }
-    std::printf("latent-decode-loop-alpha format=%s mode=%s blocks=%u neutral-wins=%u alpha-wins=%u "
+    std::printf("latent-decode-loop-alpha format=%s mode=%s encoder-search=%s blocks=%u neutral-wins=%u alpha-wins=%u "
                 "unique-candidates=%u neutral-calibration=%.8g selected-calibration=%.8g "
                 "neutral-holdout=%.8g selected-holdout=%.8g local-gain=%.8g "
                 "candidate-effective-rank=%.4g mean-positive-cosine=%.4g conflict-commits=%u "
                 "conflict-calibration=%.8g conflict-holdout=%.8g validation-best-commit=%u "
                 "validation-best=%.8g validation-stopped-holdout=%.8g\n",
                 format.name, scalar_anchored_gauge ? "scalar-anchored-gauge" : "block-alpha",
+                encoder_search == encoder_search_mode::neural ? "neural" : "standard",
                 neutral_wins + non_neutral_wins, neutral_wins, non_neutral_wins,
                 unique_blocks, neutral_calibration, calibration_loss, neutral_holdout, holdout_loss,
                 neutral_local_loss - selected_local_loss, effective_rank,
@@ -2935,6 +3131,8 @@ int main(int argc, char ** argv) {
     bool decode_loop_alpha_sweep = false;
     bool scalar_anchored_gauge_sweep = false;
     bool scalar_anchored_c_delta_sweep = false;
+    encoder_search_mode encoder_search = encoder_search_mode::standard;
+    uint32_t neural_candidate_limit = 16;
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
         if (option == "--search-levels") {
@@ -3028,6 +3226,16 @@ int main(int argc, char ** argv) {
             row_strip_diagnostics = false;
         } else if (option == "--persistent-worker-contexts") {
             persistent_worker_contexts = true;
+        } else if (option == "--encoder-search" && index + 1 < argc) {
+            const std::string search = argv[++index];
+            if (search == "standard") encoder_search = encoder_search_mode::standard;
+            else if (search == "neural") encoder_search = encoder_search_mode::neural;
+            else {
+                std::fprintf(stderr, "unsupported --encoder-search value: %s\n", search.c_str());
+                return 2;
+            }
+        } else if (option == "--neural-candidate-limit" && index + 1 < argc) {
+            neural_candidate_limit = std::max(1u, static_cast<uint32_t>(std::stoul(argv[++index])));
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
                     option == "--calibration-trace" || option == "--validation-trace") &&
                    index + 1 < argc) {
@@ -3041,7 +3249,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6|8x6|8x8] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
             return 2;
@@ -3321,7 +3529,8 @@ int main(int argc, char ** argv) {
                                       validation_payload_path, validation_reference_path,
                                       row_strip_log_path,
                                       candidate_threads, row_strip_select, row_strip_chunked,
-                                      row_strip_diagnostics, persistent_worker_contexts)) {
+                                      row_strip_diagnostics, persistent_worker_contexts, false,
+                                      encoder_search, neural_candidate_limit)) {
             std::fprintf(stderr, "ASTC decode-in-the-loop Alpha sweep failed; use whole ASTC blocks\n");
             return 1;
         }
@@ -3334,7 +3543,8 @@ int main(int argc, char ** argv) {
                                           validation_payload_path, validation_reference_path,
                                           row_strip_log_path,
                                           candidate_threads, row_strip_select, row_strip_chunked,
-                                          row_strip_diagnostics, persistent_worker_contexts)) {
+                                          row_strip_diagnostics, persistent_worker_contexts, false,
+                                          encoder_search, neural_candidate_limit)) {
                 std::fprintf(stderr, "ASTC scalar-anchored gauge sweep failed\n");
                 return 1;
             }
@@ -3348,7 +3558,8 @@ int main(int argc, char ** argv) {
                                           validation_payload_path, validation_reference_path,
                                           row_strip_log_path,
                                           candidate_threads, row_strip_select, row_strip_chunked,
-                                          row_strip_diagnostics, persistent_worker_contexts, true)) {
+                                          row_strip_diagnostics, persistent_worker_contexts, true,
+                                          encoder_search, neural_candidate_limit)) {
                 std::fprintf(stderr, "ASTC scalar-anchored c+delta sweep failed\n");
                 return 1;
             }
