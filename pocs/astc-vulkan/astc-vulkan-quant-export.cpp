@@ -40,17 +40,18 @@ int main(int argc, char ** argv) {
         else if (option == "--max-rows") max_rows = static_cast<uint32_t>(std::stoul(argv[++index]));
         else if (option == "--max-columns") max_columns = static_cast<uint32_t>(std::stoul(argv[++index]));
         else {
-            std::fprintf(stderr, "usage: %s --model path --tensor name --type f32|q4_0|tq1_0|tq2_0 --output path [--max-rows N --max-columns N --trace path]\n", argv[0]);
+            std::fprintf(stderr, "usage: %s --model path --tensor name --type f32|q3_k|q4_0|tq1_0|tq2_0 --output path [--max-rows N --max-columns N --trace path]\n", argv[0]);
             return 2;
         }
     }
     const bool export_f32 = type_name == "f32";
-    const ggml_type type = type_name == "q4_0" ? GGML_TYPE_Q4_0 :
+    const ggml_type type = type_name == "q3_k" ? GGML_TYPE_Q3_K :
+                           type_name == "q4_0" ? GGML_TYPE_Q4_0 :
                            type_name == "tq1_0" ? GGML_TYPE_TQ1_0 :
                            type_name == "tq2_0" ? GGML_TYPE_TQ2_0 :
                            export_f32 ? GGML_TYPE_F32 : GGML_TYPE_COUNT;
     if (model.empty() || tensor.empty() || output.empty() || type == GGML_TYPE_COUNT) {
-        std::fprintf(stderr, "usage: %s --model path --tensor name --type f32|q4_0|tq1_0|tq2_0 --output path [--max-rows N --max-columns N --trace path]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s --model path --tensor name --type f32|q3_k|q4_0|tq1_0|tq2_0 --output path [--max-rows N --max-columns N --trace path]\n", argv[0]);
         return 2;
     }
     ggml_vk_astc_loaded_matrix matrix;

@@ -5631,3 +5631,25 @@ fixture, demonstrating that dispatch geometry and cache behavior matter as
 much as format. ASTC 6x6 is closest to the FP32 control on this adapter, while
 Q4/TQ2 remain slower in these isolated shaders. This is still not a graph-level
 or mobile-device performance claim.
+
+## Two-hundred-fiftieth sweep: Q3_K and TQ1_0 shader controls
+
+The isolated shader harness now includes experimental Q3_K and TQ1_0 matvec
+paths. Their packed layouts are decoded directly from SSBOs using the ggml
+block contracts, with the same 64-thread row reduction and CPU-side packed-byte
+oracle as Q4_0/TQ2_0. Q3_K scale bytes are reconstructed using ggml's four
+scale groups; TQ1_0 uses the bytewise modulo-256 base-3 extraction required by
+its reference dequantizer.
+
+On a Pythia FP16-derived `512`-column × `576`-row fixture, both paths passed
+the GPU/oracle check over 100 dispatches:
+
+| Path | Packed bytes | Activation-relative MSE | Per-dispatch GPU timestamp |
+| --- | ---: | ---: | ---: |
+| Q3_K | `126,720` | `0.022221782` | `289.658 us` |
+| TQ1_0 | `62,208` | `0.60165063` | `189.408 us` |
+
+These are format/shader controls, not `Q3_K_M` or full `TQ1_0` graph
+benchmarks. The new shaders remain outside production `ggml-vulkan` routing and
+are intended to make the next artifact quality/rate matrix independently
+auditable. Focused contract and shader-compilation tests passed `5/5`.

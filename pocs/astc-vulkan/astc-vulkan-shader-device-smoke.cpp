@@ -60,18 +60,73 @@ float half_to_float(uint16_t bits) {
 }
 
 float packed_weight(const std::vector<uint8_t> & payload, uint32_t width,
-                    uint32_t row, uint32_t column, bool tq2) {
-    const uint32_t elements = tq2 ? 256u : 32u;
-    const uint32_t bytes = tq2 ? 66u : 18u;
+                    uint32_t row, uint32_t column, const std::string & kind) {
+    const bool q4 = kind == "q4";
+    const bool q3 = kind == "q3";
+    const bool tq1 = kind == "tq1";
+    const bool tq2 = kind == "tq2";
+    const uint32_t elements = q4 ? 32u : 256u;
+    const uint32_t bytes = q4 ? 18u : q3 ? 110u : tq1 ? 54u : 66u;
     const size_t block = (static_cast<size_t>(row) * (width / elements) + column / elements) * bytes;
-    const uint8_t byte = payload[block + (tq2 ? column % elements / 4u : 2u + column % 16u)];
-    const uint32_t code = tq2 ? (byte >> ((column % 4u) * 2u)) & 3u :
-                          ((column % 32u) < 16u ? byte & 0xfu : byte >> 4u);
-    const uint16_t scale_bits = tq2 ? static_cast<uint16_t>(payload[block + 64u]) |
-                                     static_cast<uint16_t>(payload[block + 65u]) << 8u :
-                                 static_cast<uint16_t>(payload[block]) |
+    if (q4) {
+        const uint8_t byte = payload[block + 2u + (column % 16u)];
+        const uint32_t code = (column % 32u) < 16u ? byte & 0xfu : byte >> 4u;
+        const uint16_t scale_bits = static_cast<uint16_t>(payload[block]) |
                                      static_cast<uint16_t>(payload[block + 1u]) << 8u;
-    return static_cast<float>(static_cast<int>(code) - (tq2 ? 1 : 8)) * half_to_float(scale_bits);
+        return static_cast<float>(static_cast<int>(code) - 8) * half_to_float(scale_bits);
+    }
+    if (tq2) {
+        const uint8_t byte = payload[block + column % elements / 4u];
+        const uint32_t code = (byte >> ((column % 4u) * 2u)) & 3u;
+        const uint16_t scale_bits = static_cast<uint16_t>(payload[block + 64u]) |
+                                     static_cast<uint16_t>(payload[block + 65u]) << 8u;
+        return static_cast<float>(static_cast<int>(code) - 1) * half_to_float(scale_bits);
+    }
+    if (tq1) {
+        const uint32_t within = column % 256u;
+        uint32_t byte_offset = 0, digit = 0;
+        if (within < 160u) {
+            digit = within / 32u;
+            byte_offset = within % 32u;
+        } else if (within < 240u) {
+            const uint32_t residual = within - 160u;
+            digit = residual / 16u;
+            byte_offset = 32u + residual % 16u;
+        } else {
+            const uint32_t residual = within - 240u;
+            digit = residual / 4u;
+            byte_offset = 48u + residual % 4u;
+        }
+        const uint32_t trit = (static_cast<uint32_t>(payload[block + byte_offset]) *
+                               (digit == 0u ? 1u : digit == 1u ? 3u : digit == 2u ? 9u : digit == 3u ? 27u : 81u)) & 0xffu;
+        const uint32_t code = (trit * 3u) >> 8u;
+        const uint16_t scale_bits = static_cast<uint16_t>(payload[block + 52u]) |
+                                     static_cast<uint16_t>(payload[block + 53u]) << 8u;
+        return static_cast<float>(static_cast<int>(code) - 1) * half_to_float(scale_bits);
+    }
+    const uint32_t within = column % 256u;
+    const uint32_t group = within / 128u;
+    const uint32_t group_offset = within % 128u;
+    const uint32_t pair = group_offset / 32u;
+    const uint32_t half = (group_offset % 32u) / 16u;
+    const uint32_t lane = group_offset % 16u;
+    const uint32_t q_index = group * 32u + half * 16u + lane;
+    const uint32_t shift = pair * 2u;
+    const uint32_t code = (payload[block + 32u + q_index] >> shift) & 3u;
+    const uint32_t high = (payload[block + half * 16u + lane] >> pair) & 1u;
+    const uint32_t scale_index = group * 8u + pair * 2u + half;
+    const uint32_t scale_group = scale_index / 4u;
+    const uint32_t scale_lane = scale_index % 4u;
+    const uint32_t source_index = scale_group < 2u ? scale_group * 4u + scale_lane :
+                                   scale_group == 2u ? scale_lane : 4u + scale_lane;
+    const uint8_t source = payload[block + 96u + source_index];
+    const uint32_t nibble = scale_group < 2u ? source & 0xfu : source >> 4u;
+    const uint32_t extra = (payload[block + 104u + scale_lane] >> (scale_group * 2u)) & 3u;
+    const int scale = static_cast<int>(nibble | (extra << 4u));
+    const uint16_t scale_bits = static_cast<uint16_t>(payload[block + 108u]) |
+                                 static_cast<uint16_t>(payload[block + 109u]) << 8u;
+    return half_to_float(scale_bits) * static_cast<float>(scale - 32) *
+           static_cast<float>(static_cast<int>(code) - (high != 0u ? 0 : 4));
 }
 
 std::vector<uint32_t> read_spirv(const char * path) {
@@ -110,6 +165,8 @@ int main(int argc, char ** argv) {
     bool matvec = false;
     bool buffer_matvec = false;
     bool q4_matvec = false;
+    bool q3_matvec = false;
+    bool tq1_matvec = false;
     bool tq2_matvec = false;
     bool sampled_f32 = false;
     std::string payload_path;
@@ -129,6 +186,8 @@ int main(int argc, char ** argv) {
         else if (option == "--matvec") matvec = true;
         else if (option == "--buffer-matvec") { matvec = true; buffer_matvec = true; }
         else if (option == "--q4-matvec") { matvec = true; q4_matvec = true; }
+        else if (option == "--q3-matvec") { matvec = true; q3_matvec = true; }
+        else if (option == "--tq1-matvec") { matvec = true; tq1_matvec = true; }
         else if (option == "--tq2-matvec") { matvec = true; tq2_matvec = true; }
         else if (option == "--sampled-f32") { matvec = true; sampled_f32 = true; }
         else if ((option == "--payload" || option == "--reference" || option == "--weights" ||
@@ -155,15 +214,16 @@ int main(int argc, char ** argv) {
         (pattern_name != "sequential" && pattern_name != "nonlocal") ||
         ((payload_path.empty() != reference_path.empty()) && !buffer_matvec && !sampled_f32) ||
         (buffer_matvec && reference_path.empty()) ||
-        (q4_matvec && tq2_matvec) ||
-        (sampled_f32 && (buffer_matvec || q4_matvec || tq2_matvec)) ||
+        (static_cast<int>(q4_matvec) + static_cast<int>(q3_matvec) +
+         static_cast<int>(tq1_matvec) + static_cast<int>(tq2_matvec) > 1) ||
+        (sampled_f32 && (buffer_matvec || q4_matvec || q3_matvec || tq1_matvec || tq2_matvec)) ||
         ((!payload_path.empty() || buffer_matvec || sampled_f32) && (supplied_width == 0 || supplied_height == 0)) ||
         (matvec && ((!buffer_matvec && !sampled_f32 && payload_path.empty()) || pattern_name != "sequential"))) {
         std::fprintf(stderr,
                      "usage: %s <validation.spv> <4x4|5x5|6x6|8x6|8x8> "
                      "[sequential|nonlocal] [--benchmark] "
                      "[--payload astc.bin --reference decoded-rgba-f32.bin --width N --height N] "
-                     "[--matvec|--buffer-matvec|--q4-matvec|--tq2-matvec|--sampled-f32 --weights weights-f32.bin "
+                     "[--matvec|--buffer-matvec|--q4-matvec|--q3-matvec|--tq1-matvec|--tq2-matvec|--sampled-f32 --weights weights-f32.bin "
                      "--scale-l S --scale-a S --offset B --repeats N]\n",
                      argv[0]);
         return 2;
@@ -259,11 +319,12 @@ int main(int argc, char ** argv) {
         format_name == "6x6" ? ggml_vk_astc_6x6_unorm_rgba :
         format_name == "8x6" ? ggml_vk_astc_8x6_unorm_rgba : ggml_vk_astc_8x8_unorm_rgba,
         width, height);
-    const bool packed_matvec = q4_matvec || tq2_matvec;
+    const bool packed_matvec = q4_matvec || q3_matvec || tq1_matvec || tq2_matvec;
     const char * path_name = buffer_matvec ? "buffer" : q4_matvec ? "Q4_0" :
+                              q3_matvec ? "Q3_K" : tq1_matvec ? "TQ1_0" :
                               tq2_matvec ? "TQ2_0" : sampled_f32 ? "sampled-F32" : "ASTC";
     const uint32_t packed_block_elements = q4_matvec ? 32u : 256u;
-    const uint32_t packed_block_bytes = q4_matvec ? 18u : 66u;
+    const uint32_t packed_block_bytes = q4_matvec ? 18u : q3_matvec ? 110u : tq1_matvec ? 54u : 66u;
     VkDeviceSize staging_bytes = block_count * kAstcBlockBytes;
     const uint32_t dispatch_repeats = requested_repeats != 0 ? requested_repeats :
                                       (benchmark ? kBenchmarkDispatchRepeats : 1);
@@ -553,7 +614,8 @@ int main(int argc, char ** argv) {
                         const size_t texel = (value_index * width + column) * 4;
                         float weight = 0.0f;
                         if (packed_matvec) {
-                            weight = packed_weight(payload, width, static_cast<uint32_t>(value_index), column, tq2_matvec);
+                            weight = packed_weight(payload, width, static_cast<uint32_t>(value_index), column,
+                                                   q4_matvec ? "q4" : q3_matvec ? "q3" : tq1_matvec ? "tq1" : "tq2");
                         } else if ((buffer_matvec || sampled_f32) && !source_weights.empty()) {
                             weight = source_weights[value_index * width + column];
                         } else {

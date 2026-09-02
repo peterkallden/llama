@@ -356,6 +356,10 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/q4-matvec.comp.spv)
     set(ASTC_VULKAN_TQ2_MATVEC_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/tq2-matvec.comp.spv)
+    set(ASTC_VULKAN_Q3_MATVEC_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/q3-k-matvec.comp.spv)
+    set(ASTC_VULKAN_TQ1_MATVEC_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/tq1-matvec.comp.spv)
     set(ASTC_VULKAN_SAMPLED_F32_MATVEC_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/sampled-f32-matvec.comp.spv)
     set(ASTC_VULKAN_FFN_E2E_SHADER_OUTPUT
@@ -414,6 +418,26 @@ if (ASTC_VULKAN_GLSLC)
     add_custom_target(astc-vulkan-tq2-matvec-shader
         DEPENDS ${ASTC_VULKAN_TQ2_MATVEC_SHADER_OUTPUT})
     add_custom_command(
+        OUTPUT ${ASTC_VULKAN_Q3_MATVEC_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1 -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/q3-k-matvec.comp
+            -o ${ASTC_VULKAN_Q3_MATVEC_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/q3-k-matvec.comp
+        COMMENT "Compiling Q3_K Vulkan matvec shader")
+    add_custom_target(astc-vulkan-q3-matvec-shader
+        DEPENDS ${ASTC_VULKAN_Q3_MATVEC_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_TQ1_MATVEC_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1 -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tq1-matvec.comp
+            -o ${ASTC_VULKAN_TQ1_MATVEC_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tq1-matvec.comp
+        COMMENT "Compiling TQ1 Vulkan matvec shader")
+    add_custom_target(astc-vulkan-tq1-matvec-shader
+        DEPENDS ${ASTC_VULKAN_TQ1_MATVEC_SHADER_OUTPUT})
+    add_custom_command(
         OUTPUT ${ASTC_VULKAN_SAMPLED_F32_MATVEC_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
             --target-env=vulkan1.1 -fshader-stage=compute
@@ -447,6 +471,8 @@ if (ASTC_VULKAN_GLSLC)
             astc-vulkan-buffer-matvec-shader
             astc-vulkan-q4-matvec-shader
             astc-vulkan-tq2-matvec-shader
+            astc-vulkan-q3-matvec-shader
+            astc-vulkan-tq1-matvec-shader
             astc-vulkan-sampled-f32-matvec-shader)
     endif()
     if (TARGET ggml-base AND TARGET astc-vulkan-ffn-adapter)

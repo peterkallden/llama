@@ -2074,3 +2074,21 @@ blocks expose the mistake immediately. The result reinforces that footprint
 and format rankings are workload-dependent; the next quality/performance gate
 must use the same artifact dimensions and separate cold upload from hot
 dispatch timing.
+
+### Q3/TQ1 shader-control checkpoint
+
+The isolated shader harness now has experimental Q3_K and TQ1_0 packed-matvec
+controls. Both use ggml-compatible byte layouts, a shared 64-thread reduction,
+and CPU-oracle validation; they are not production `ggml-vulkan` graph paths.
+On a Pythia `512x576` fixture, Q3_K measured `289.658 us` and TQ1_0
+`189.408 us` per 100-dispatch timestamped run, with packed sizes `126,720` and
+`62,208` bytes and activation-relative MSE `0.022221782` and `0.60165063`.
+The implementation exposed and fixed TQ1's bytewise modulo-256 trit extraction,
+which is now documented as part of the contract. Five focused contract/shader
+tests pass.
+
+These controls complete the mechanism-side format ladder needed before driver
+promotion. The next gate remains a same-artifact quality/rate matrix (including
+Q3_K_M and TQ1/TQ2 model controls), followed by target-mobile replay. No
+scheduler integration, GGUF reinterpretation, or GPU ASTC encoder work should
+start from these isolated shader timings alone.

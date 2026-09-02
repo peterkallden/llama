@@ -1,0 +1,65 @@
+#version 450
+
+// Isolated Q3_K control. Layout matches ggml block_q3_K (110 bytes per 256 values).
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) readonly buffer PackedWeights { uint data[]; } weights;
+layout(std430, set = 0, binding = 1) buffer MatvecOutput { vec4 values[]; } output_data;
+layout(push_constant) uniform PushConstants {
+    uint width; uint height; uint access_pattern;
+    float scale_l; float scale_a; float offset;
+} params;
+
+uint load_byte(uint byte_offset) {
+    const uint word = weights.data[byte_offset >> 2];
+    return (word >> ((byte_offset & 3u) * 8u)) & 0xffu;
+}
+float load_half(uint byte_offset) {
+    const uint lo = load_byte(byte_offset);
+    const uint hi = load_byte(byte_offset + 1u);
+    return unpackHalf2x16(lo | (hi << 8u)).x;
+}
+int unpack_scale(uint base, uint index) {
+    const uint group = index / 4u;
+    const uint lane = index % 4u;
+    const uint source = (group < 2u ? group * 4u + lane :
+                         group == 2u ? lane : 4u + lane);
+    const uint byte = load_byte(base + 96u + source);
+    const uint nibble = group < 2u ? byte & 0x0fu : byte >> 4u;
+    const uint high = (load_byte(base + 96u + 8u + lane) >> (group * 2u)) & 3u;
+    return int(nibble | (high << 4u));
+}
+float activation(uint column) {
+    return 0.5 * sin(0.017 * float(column + 1)) +
+           0.2 * cos(0.031 * float(column + 3));
+}
+shared float partial[64];
+void main() {
+    const uint row = gl_WorkGroupID.x;
+    if (row >= params.height) return;
+    float sum = 0.0;
+    for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64u) {
+        const uint block = row * (params.width / 256u) + column / 256u;
+        const uint base = block * 110u;
+        const uint within = column % 256u;
+        const uint group = within / 128u;
+        const uint group_offset = within % 128u;
+        const uint pair = group_offset / 32u;
+        const uint plane_half = (group_offset % 32u) / 16u;
+        const uint lane = group_offset % 16u;
+        const uint q_index = group * 32u + plane_half * 16u + lane;
+        const uint shift = pair * 2u;
+        const uint q = (load_byte(base + 32u + q_index) >> shift) & 3u;
+        const uint high = (load_byte(base + plane_half * 16u + lane) >> pair) & 1u;
+        const int scale = unpack_scale(base, group * 8u + pair * 2u + plane_half);
+        const float d = load_half(base + 108u);
+        const float weight = d * float(scale - 32) * float(int(q) - (high != 0u ? 0 : 4));
+        sum += weight * activation(column);
+    }
+    partial[gl_LocalInvocationID.x] = sum;
+    barrier();
+    for (uint stride = 32u; stride > 0u; stride >>= 1u) {
+        if (gl_LocalInvocationID.x < stride) partial[gl_LocalInvocationID.x] += partial[gl_LocalInvocationID.x + stride];
+        barrier();
+    }
+    if (gl_LocalInvocationID.x == 0u) output_data.values[row] = vec4(partial[0], 0.0, 0.0, 0.0);
+}
