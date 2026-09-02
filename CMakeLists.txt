@@ -345,7 +345,8 @@ endif()
 # The agent runtime implementation and its model-free tests live in pocs/agent.
 # Keep them independently selectable so mobile/library profiles can consume the
 # common agent runtime without importing host POCs, daemons or smoke programs.
-if (LLAMA_BUILD_COMMON AND (LLAMA_BUILD_EXAMPLES OR LLAMA_AGENT_BUILD_POCS))
+if (LLAMA_BUILD_COMMON AND
+    (LLAMA_BUILD_EXAMPLES OR LLAMA_AGENT_BUILD_POCS OR LLAMA_ASTC_VULKAN_POC))
     add_subdirectory(pocs)
 endif()
 

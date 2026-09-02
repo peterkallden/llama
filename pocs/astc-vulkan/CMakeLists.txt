@@ -47,7 +47,23 @@ target_compile_features(astc-vulkan-artifact-pack PRIVATE cxx_std_17)
 find_package(Vulkan QUIET)
 option(GGML_VK_ASTC_EXPERIMENTAL_SCHEDULER_ADAPTER
     "Build the isolated ASTC scheduler-adapter experiment" OFF)
-if (Vulkan_FOUND)
+# Some distributions expose the Vulkan loader and headers but make the
+# standalone FindVulkan module report Vulkan_FOUND=FALSE (for example when
+# optional shader components are absent).  The ggml Vulkan backend already
+# relies on the same loader, so provide a local target for this sidecar POC.
+if (NOT TARGET Vulkan::Vulkan)
+    find_path(ASTC_VULKAN_INCLUDE_DIR NAMES vulkan/vulkan.h)
+    find_library(ASTC_VULKAN_LIBRARY NAMES vulkan)
+    if (ASTC_VULKAN_INCLUDE_DIR AND ASTC_VULKAN_LIBRARY)
+        add_library(astc-vulkan-loader INTERFACE)
+        target_include_directories(astc-vulkan-loader INTERFACE
+            ${ASTC_VULKAN_INCLUDE_DIR})
+        target_link_libraries(astc-vulkan-loader INTERFACE
+            ${ASTC_VULKAN_LIBRARY})
+        add_library(Vulkan::Vulkan ALIAS astc-vulkan-loader)
+    endif()
+endif()
+if (TARGET Vulkan::Vulkan)
     add_library(astc-vulkan-resource STATIC
         astc-vulkan-resource.cpp)
     target_include_directories(astc-vulkan-resource PUBLIC
