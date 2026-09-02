@@ -4803,3 +4803,24 @@ runtime dispatch as separate dimensions. The next ASTC comparison should use
 the already exported scalar/gauge payloads for this same tensor shape, then
 feed the selected payload through the sidecar while retaining Q4/TQ/FP16 as
 controls.
+
+## Two-hundred-eleventh sweep: same-tensor gauge payload replay
+
+A scalar-anchored gauge payload was generated for the same Pythia
+`blk.0.ffn_down.weight` 32x8192 crop used by the first sidecar comparison.
+The decode-in-the-loop selector reported neutral holdout `0.022008983`,
+conflict-aware holdout `0.012050252`, and validation-stopped holdout
+`0.013314081`; scalar ASTC was `0.0219951`. The selected stream contains
+8,196 blocks and 57,302 unique legal candidates.
+
+That exact selected payload was replayed through the Intel ASTC sidecar with
+the gauge affine metadata. GPU-vs-CPU MSE was `2.4764415e-15` and the
+sidecar ASTC-vs-source activation-relative-MSE was `0.012050253`, matching
+the offline conflict-aware result. This is the first same-tensor evidence
+that the gauge holdout gain survives standard ASTC upload, sampled decode and
+the runtime shader contract.
+
+The scheduler comparison gate now has all offline ingredients: FP16 source,
+Q4/TQ controls, scalar ASTC and gauge ASTC. The next work is to package this
+as an explicit opt-in comparison executable rather than wiring it into the
+production scheduler.

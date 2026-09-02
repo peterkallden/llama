@@ -1535,3 +1535,10 @@ The first full-tensor Q4/TQ controls are now available on Pythia
 `0.24722138` activation-relative-MSE, with FP16 as the zero-error reference.
 Proceed with ASTC payload export/replay for this same shape before introducing
 any scheduler-facing build option.
+
+The same-tensor ASTC gate is now also complete for the bounded 32x8192 crop:
+scalar ASTC holdout `0.0219951`, conflict-aware gauge holdout `0.012050252`,
+and validation-stopped gauge holdout `0.013314081`. The selected gauge stream
+replays through the Intel sidecar with GPU-vs-CPU MSE `2.4764415e-15` and the
+same activation error. Implement item 60 as an explicit opt-in comparison
+executable; keep scheduler integration and upstream changes deferred.
