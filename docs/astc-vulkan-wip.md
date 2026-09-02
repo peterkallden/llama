@@ -5314,3 +5314,21 @@ ranking.
 The full ASTC CTest label remains green (29/29). The next implementation sweep
 is full-layer artifact provenance/replay; the corrected harness is now suitable
 for that matrix and no production Vulkan routing was changed.
+
+## Two-hundred-thirty-first sweep: packed artifact replay checkpoint
+
+The existing manifest-backed Pythia `32x8192` scalar/gauge pair was replayed
+from the packed payload blobs against the 30-sample layer-0 holdout trace.
+The sidecar consumed the manifest dimensions and affine reconstruction metadata
+and did not regenerate candidates.
+
+| Artifact | GPU-vs-CPU MSE | ASTC/model-output relative MSE |
+| --- | ---: | ---: |
+| scalar | `1.7884e-15` | `0.026655061` |
+| validation-selected gauge | `2.8224e-15` | `0.016833603` |
+
+The replay reproduces the earlier direct comparison and confirms that the
+packed bytes, manifest range, decoded RGBA fixture, and shader path agree. The
+result remains a bounded layer-output/activation gate. Full-layer provenance,
+source-family controls, and logits/perplexity replay are still required before
+quality or performance promotion.

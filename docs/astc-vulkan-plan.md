@@ -1902,3 +1902,14 @@ The next sweeps are deliberately incremental:
    experimental and retain deterministic fallback.
 5. Defer `c+delta`, Block-LDLQ, search-preset pruning, and GPU encoding until
    the full-layer matrix establishes a trustworthy baseline.
+
+### Artifact replay checkpoint
+
+The existing manifest-backed `32x8192` Pythia artifact was replayed from its
+packed blobs (not regenerated ASTC bytes) against the 30-sample holdout trace.
+Scalar and gauge both matched the CPU oracle on Intel Vulkan (`GPU-vs-CPU MSE`
+`1.79e-15` and `2.82e-15`); activation/model-output relative MSE was `0.026655061`
+for scalar and `0.016833603` for gauge. This is a successful serialization and
+device-correctness gate for the bounded tensor, not a full-model quality claim.
+The next artifact must add the provenance sidecar and full-layer shape before
+the same comparison is promoted to logits/perplexity evidence.
