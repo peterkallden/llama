@@ -5362,3 +5362,18 @@ After rebuilding the model harness, the full ASTC-labelled CTest suite remains
 green: 29/29 tests passed, including 8x6/8x8 capability-gated shader tests,
 artifact/resource contracts, error-shaping checks, and the larger weight smoke.
 The working tree is clean after the replay documentation commit.
+
+## Two-hundred-thirty-fourth sweep: native TQ export rates
+
+The quant-export helper was extended with a raw `f32` dump and explicit
+`tq1_0` support. A small aligned Pythia `8x2048` control exported successfully:
+
+| Native format | Packed bytes | Measured rate |
+| --- | ---: | ---: |
+| TQ1_0 | 3,456 | 1.6875 bits/weight |
+| TQ2_0 | 4,224 | 2.0625 bits/weight |
+
+The rates include format block overhead and therefore differ from the ideal
+1.58-bit ternary entropy. Model-facing rate/quality tables must report these
+physical packed bytes for each source family, while ASTC rates independently
+report real-tensor payload bytes and edge padding.

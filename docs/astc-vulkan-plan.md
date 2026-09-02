@@ -1925,3 +1925,12 @@ and holdout trace produced relative logits MSE `0.80219534` and loss delta
 prompt/trace pair and must remain a separate historical diagnostic. This
 non-equivalence is precisely why the next full artifact must bind corpus,
 trace hashes, decoder metadata, and payload identity in its provenance record.
+
+### Native low-bit export rate note
+
+The isolated quant-export tool now supports `f32`, `q4_0`, `tq1_0`, and
+`tq2_0`. On the aligned `8x2048` Pythia control, the packed sizes were
+`3,456` bytes for TQ1 (`1.6875` bits/weight) and `4,224` bytes for TQ2
+(`2.0625` bits/weight). These are physical packed rates including block
+overhead, not ideal ternary entropy. Future rate tables must use measured
+native rates rather than theoretical format labels.
