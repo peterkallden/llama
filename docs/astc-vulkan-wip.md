@@ -5091,3 +5091,42 @@ families. It does not yet rank Q3/Q4/TQ against ASTC at model level: the next
 gate is an artifact-backed replay with a fixed FP16 reference, followed by the
 same prompt/output matrix and only then GPU dispatch timing. No GPU encoder was
 introduced; ASTC encoding and selection remain offline CPU work.
+
+## Two-hundred-twenty-third sweep: cross-tensor Pythia control
+
+The same bounded matrix was repeated on `blk.1.ffn_down.weight` using its
+dedicated calibration, validation and holdout traces. The crop and runtime
+contract were unchanged (`8x2048`, 16 samples, chunked selection and four
+workers), so this is a cross-tensor check rather than a new tuning pass.
+
+### ASTC 8x6
+
+| Source | Scalar holdout | Conflict holdout | Validation-stopped holdout | Relative conflict change |
+| --- | ---: | ---: | ---: | ---: |
+| FP16 | 0.10345505 | 0.089445461 | 0.089441624 | -13.54% |
+| Q3_K_M | 0.12249417 | 0.096606846 | 0.101026990 | -21.13% |
+| Q4_K_M | 0.13338743 | 0.099947075 | 0.114870190 | -25.07% |
+| TQ2_0 | 0.009772276 | 0.006318323 | 0.006298074 | -35.35% |
+| TQ1_0 | 0.009772276 | 0.006318323 | 0.006298074 | -35.35% |
+
+### ASTC 8x8
+
+| Source | Scalar holdout | Conflict holdout | Validation-stopped holdout | Relative conflict change |
+| --- | ---: | ---: | ---: | ---: |
+| FP16 | 0.23498381 | 0.210474920 | 0.219736960 | -10.43% |
+| Q3_K_M | 0.29495999 | 0.253579220 | 0.261404910 | -14.03% |
+| Q4_K_M | 0.26061252 | 0.204230810 | 0.205364050 | -21.64% |
+| TQ2_0 | 0.36741964 | 0.105762510 | 0.105387580 | -71.21% |
+| TQ1_0 | 0.36741964 | 0.105762510 | 0.105387580 | -71.21% |
+
+The cross-tensor result keeps the mechanism alive but rejects a universal
+quality claim. On 8x8, FP16 and Q3 show calibration paths that are worse than
+their neutral calibration/selection in parts of the run; validation stopping
+recovers a holdout improvement but does not remove tensor dependence. Q4 and
+the TQ controls are more favorable in this crop. The correct interpretation is
+therefore “a tensor-aware optional steering candidate family”, not a replacement
+for scalar ASTC or a claim that TQ1/TQ2 are interchangeable.
+
+The next gate is now artifact-backed and model-facing: package the selected
+prefixes, replay them through the CPU oracle against the FP16 reference, and
+run the fixed prompt/output matrix before any larger crop or GPU timing.

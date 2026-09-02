@@ -1679,6 +1679,30 @@ traces against Q3_K_M, Q4_K_M, TQ2_0, and TQ1_0. Device smoke proves only the
 standard Vulkan resource contract; it is not a portable performance claim for
 Mali, Adreno, or Apple GPUs.
 
+### Cross-tensor result and revised gate
+
+Repeating the 8x6/8x8 matrix on `blk.1.ffn_down.weight` confirms that the
+steering family is tensor-dependent. Conflict-aware selection improves every
+source in the bounded screen, but the magnitude ranges from small FP16 gains
+to large TQ gains, and full conflict selection can overfit calibration. The
+quality gate therefore requires the validation-stopped prefix and an untouched
+holdout for every tensor; full conflict selection is retained only as a
+diagnostic oracle.
+
+Before scaling to a full tensor or adding Block-LDLQ, do the following:
+
+1. Export scalar and validation-stopped streams with manifests for both
+   footprints and both Pythia tensors.
+2. Replay/decode those artifacts and compare decoded values and activation
+   metrics against the direct latent-smoke path.
+3. Run the fixed-prompt output matrix against FP16, Q3_K_M, Q4_K_M, TQ2_0,
+   TQ1_0, scalar ASTC and gauge ASTC. Record model-level metrics separately
+   from tensor activation MSE.
+4. Only if the artifact and model-level results reproduce, measure Intel Vulkan
+   cold upload, hot-cache dispatch and batched execution. Keep 8x6/8x8
+   experimental and opt-in; no production backend or GPU encoder changes are
+   implied.
+
 ### Latest quality gate: density-ladder controls on Pythia
 
 The first comparable screen now covers FP16, Q3_K_M, Q4_K_M, TQ2_0 and TQ1_0
