@@ -2258,3 +2258,8 @@ Preset policy after the current ablation: keep `thorough` as the reference
 configuration, allow `medium` for exploratory sweeps after cross-tensor
 confirmation, and use `fast` only for candidate-space screening. Do not mix a
 preset change with the first PV-lite quality claim.
+
+The bounded layer-1 confirmation is complete: medium was faster than thorough
+(`0.36 s` vs `0.45 s`) and selected a better holdout prefix in that run, but
+the result remains exploratory because the preset also changes the neutral
+candidate. Thorough remains mandatory for reference artifacts.

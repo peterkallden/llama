@@ -6018,3 +6018,11 @@ change the reference configuration: thorough remains the reproducibility and
 quality baseline, medium is now the recommended opt-in exploratory preset, and
 fast is screening-only. A larger cross-tensor timing/quality check is still
 required before making medium the default for artifact generation.
+
+The cross-tensor check on Pythia layer 1 (`blk.1.ffn_down.weight`, `12x240`)
+supports the same operational split: thorough took `0.45 s` and stopped at
+`0.22392356`, while medium took `0.36 s` and stopped at `0.19558178`. Because
+the preset also changes the neutral block candidate, this is evidence for an
+exploratory budget profile, not a claim that medium improves model quality.
+The reference artifact path therefore remains thorough and all preset
+comparisons must report the neutral baseline alongside the selected stream.
