@@ -1599,3 +1599,45 @@ tensor Intel dispatch smoke are green. The adapter is deliberately parallel
 to the production backend. The remaining gate before any upstream proposal
 is a same-prompt/full-model comparison matrix including FP16, Q4, TQ1/TQ2,
 scalar ASTC, and gauge ASTC, followed by performance measurements.
+
+### Format expansion gate: Q3/Q4/TQ controls and ASTC 8x6/8x8
+
+The next evaluation round keeps the current scalar-anchored ASTC 6x6 path
+and adds a controlled density ladder. `Q4_K_M` remains the practical main
+baseline; `Q3_K_M` is the closest conventional low-bit comparison for ASTC
+6x6/8x6; `TQ2_0` and `TQ1_0` are few-level/ternary controls. `FP16` remains
+the source and quality oracle rather than a target quantizer.
+
+Add ASTC `8x6` (2.6667 bits/value) and `8x8` (2.0 bits/value) as separate
+footprint experiments. Do not mix them into the 6x6 quality baseline until
+each has its own scalar and gauge-only artifact. The intended comparisons are:
+
+* ASTC 6x6 (~3.56 b/v) against Q3_K_M and Q4_K_M.
+* ASTC 8x6 (~2.67 b/v) against Q3_K_M and TQ2_0.
+* ASTC 8x8 (2.0 b/v) against TQ2_0 and TQ1_0 as an aggressive research rung.
+
+For every representation, keep the same FP16 source tensor, calibration /
+validation / holdout traces, prompt corpus, tensor shape and random seed. Report
+storage rate, tensor activation error, model-output/logit error and GPU dispatch
+time as separate metrics. ASTC must be reported both without gauge selection
+(scalar codec control) and with gauge selection; the latter is an optimizer
+comparison as well as a format comparison.
+
+Implementation order:
+
+1. Add format-aware footprint arithmetic and edge-mask tests for 8x6 and 8x8.
+2. Export/replay scalar ASTC 8x6 and 8x8 on the existing Pythia tensor.
+3. Add gauge candidate generation and conflict-aware selection for both
+   footprints, preserving scalar fallback and deterministic padding.
+4. Extend the isolated Vulkan shader/session to accept the two new ASTC block
+   sizes, with capability-gated tests (`VK_FORMAT_ASTC_8x6_UNORM_BLOCK` and
+   `VK_FORMAT_ASTC_8x8_UNORM_BLOCK`).
+5. Add same-tensor Q3_K_M, Q4_K_M, TQ2_0 and TQ1_0 replay controls, then run
+   the fixed prompt/model-output matrix.
+6. Only after the quality gate is reproducible, benchmark cold upload,
+   hot-cache dispatch and batched inference on the target device.
+
+The driver must remain format-generic at the manifest/resource boundary. No
+production `ggml-vulkan` changes, direct Q-format reinterpretation as ASTC,
+or scheduler integration belongs to this phase. If a device lacks an ASTC
+footprint, the adapter must fall back deterministically to the existing path.

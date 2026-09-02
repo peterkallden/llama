@@ -4940,3 +4940,45 @@ Vulkan: 30 activation samples, 2,048 output rows and 61,440 output values.
 The full additive control ran through the same adapter boundary. This proves
 the integration and device-dispatch boundary; quality remains a separate
 full-model gate.
+
+## Two-hundred-nineteenth sweep: planned density-ladder expansion
+
+The next test round is now explicitly scoped to four conventional/runtime
+controls and two additional ASTC footprints. Keep `Q4_K_M` as the practical
+main baseline, add `Q3_K_M` as the nearest conventional comparison, and retain
+`TQ2_0` and `TQ1_0` as few-level/ternary controls. `FP16` remains the source
+and quality oracle. These are comparison formats; none of their packed bytes
+are reinterpreted as ASTC payloads.
+
+Add ASTC `8x6` and `8x8` beside the already validated `4x4`/`6x6` paths:
+
+| Format | Approx. rate | Primary comparison |
+| --- | ---: | --- |
+| ASTC 6x6 | 3.5556 b/value | Q3_K_M, Q4_K_M |
+| ASTC 8x6 | 2.6667 b/value | Q3_K_M, TQ2_0 |
+| ASTC 8x8 | 2.0000 b/value | TQ2_0, TQ1_0 |
+
+The quality protocol is fixed: same FP16 source tensor, calibration /
+validation / holdout traces, tensor shape, prompt corpus and seed. Every ASTC
+footprint gets two controls (scalar roundtrip and scalar-anchored gauge-only)
+before any cross-footprint conclusion. Report storage bytes, activation/model
+error and GPU timings independently; GPU timings are target-device evidence,
+not portable Mali/Adreno claims.
+
+Planned implementation order:
+
+1. Extend footprint arithmetic, deterministic edge padding/masks and contract
+   tests to 8x6/8x8.
+2. Export and replay scalar 8x6/8x8 payloads on the existing Pythia tensor.
+3. Add gauge candidate generation, exact decode and conflict-aware selection
+   for both footprints, retaining scalar as an exact fallback candidate.
+4. Extend the isolated Vulkan format gate and shader/session to accept
+   `VK_FORMAT_ASTC_8x6_UNORM_BLOCK` and `VK_FORMAT_ASTC_8x8_UNORM_BLOCK`, with
+   capability-gated device tests.
+5. Run the same-tensor Q3_K_M/Q4_K_M/TQ2_0/TQ1_0 replay matrix.
+6. Benchmark cold upload, hot-cache dispatch and batched inference only after
+   the quality artifacts are reproducible.
+
+This phase does not alter production `ggml-vulkan`, does not reinterpret Q4/Q3
+or TQ bytes as ASTC, and does not require scheduler integration. Unsupported
+ASTC footprints must continue to take the existing deterministic fallback.
