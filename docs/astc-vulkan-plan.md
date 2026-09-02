@@ -2025,3 +2025,22 @@ samples took `7.14 s` wall time with peak RSS `933864 KiB`, while GPU-vs-CPU MSE
 remained below `1e-12`. Treat this as POC correctness/timing only. Before any
 driver promotion, add hot-cache/batched dispatch timing and a native Q/TQ
 buffer-kernel comparison on the target mobile GPU.
+
+### Hot-cache dispatch checkpoint
+
+The sidecar smoke now supports an opt-in `--repeat N` timing mode. It warms the
+uploaded resources once, then measures repeated Vulkan dispatches without
+recreating the sidecar or re-uploading the artifact. On the full `2048x8192`
+Pythia layer-0 pair, three repetitions on Intel UHD 620 measured `212.31454 ms`
+per scalar dispatch and `211.84634 ms` per validation-prefix gauge dispatch.
+Correctness and activation errors were unchanged (GPU-vs-CPU MSE below
+`1e-12`). This is a device-specific warm-session reference only; it must not be
+extrapolated to Mali/Adreno/Apple GPUs.
+
+The timing option is deliberately isolated from selection and artifact format:
+the same provenance-bound payload bytes are uploaded and decoded, and the
+default remains one measured repetition. Focused regression tests passed 4/4.
+The next gates are (1) native Q3_K_M/Q4_K_M/TQ1_0/TQ2_0 buffer-kernel timing and
+quality comparison, (2) replay on a representative mobile Vulkan device, and
+(3) only after those measurements, deciding whether a neural-gauge-specific
+ASTC encoder or GPU encoder is justified.

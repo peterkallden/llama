@@ -2,6 +2,7 @@
 #include "astc-vulkan-sidecar.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -53,7 +54,7 @@ bool run_case(case_data & data, astc_vulkan_footprint footprint,
               const std::vector<uint32_t> & spirv, const ggml_vk_astc_activation_trace & trace,
               const std::vector<float> & weights, uint32_t width, uint32_t height,
               const std::vector<float> * reference_output,
-              std::string & error) {
+              uint32_t repeat, std::string & error) {
     astc_vulkan_tensor_record manifest_record;
     if (!data.manifest_path.empty() || !data.payload_blob_path.empty()) {
         astc_vulkan_manifest manifest;
@@ -118,6 +119,13 @@ bool run_case(case_data & data, astc_vulkan_footprint footprint,
     }
     std::vector<float> output;
     if (!sidecar.run(spirv, activations, output, error)) return false;
+    const auto dispatch_start = std::chrono::steady_clock::now();
+    for (uint32_t iteration = 0; iteration < repeat; ++iteration) {
+        if (!sidecar.run(spirv, activations, output, error)) return false;
+    }
+    const auto dispatch_end = std::chrono::steady_clock::now();
+    const double dispatch_ms = std::chrono::duration<double, std::milli>(
+        dispatch_end - dispatch_start).count();
     double dispatch_error = 0.0, source_error = 0.0, source_energy = 0.0;
     double model_error = 0.0, model_energy = 0.0;
     for (uint32_t sample = 0; sample < trace.samples; ++sample) {
@@ -148,9 +156,11 @@ bool run_case(case_data & data, astc_vulkan_footprint footprint,
             }
         }
     }
-    std::printf("sidecar-compare name=%s samples=%u rows=%u columns=%u "
-                "gpu-vs-cpu-mse=%.8g astc-vs-source-relative-mse=%.8g",
+    std::printf("sidecar-compare name=%s samples=%u rows=%u columns=%u repeats=%u "
+                "dispatch-total-ms=%.8g dispatch-per-ms=%.8g gpu-vs-cpu-mse=%.8g "
+                "astc-vs-source-relative-mse=%.8g",
                 data.name.c_str(), trace.samples, height, width,
+                repeat, dispatch_ms, dispatch_ms / repeat,
                 dispatch_error / (trace.samples * height),
                 source_error / std::max(source_energy, 1e-12));
     if (reference_output != nullptr) {
@@ -166,7 +176,7 @@ bool run_case(case_data & data, astc_vulkan_footprint footprint,
 
 int main(int argc, char ** argv) {
     std::string shader, activation_path, weights_path;
-    uint32_t width = 0, height = 0;
+    uint32_t width = 0, height = 0, repeat = 1;
     case_data scalar{"scalar"}, gauge{"gauge"};
     std::string reference_output_path;
     for (int index = 1; index + 1 < argc; index += 2) {
@@ -177,6 +187,7 @@ int main(int argc, char ** argv) {
         else if (option == "--weights") weights_path = value;
         else if (option == "--width") width = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(value));
+        else if (option == "--repeat") repeat = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--scalar-payload") scalar.payload_path = value;
         else if (option == "--scalar-decoded") scalar.decoded_path = value;
         else if (option == "--scalar-metadata") scalar.metadata_path = value;
@@ -208,15 +219,15 @@ int main(int argc, char ** argv) {
     std::string error;
     if (spirv.empty() || weights.size() != static_cast<size_t>(width) * height ||
         !ggml_vk_astc_load_activation_trace(activation_path, trace, error) || trace.columns < width ||
-        trace.samples == 0 ||
+        trace.samples == 0 || repeat == 0 ||
         (!reference_output_path.empty() && reference_output.size() !=
             static_cast<size_t>(trace.samples) * height)) {
         std::fprintf(stderr, "invalid ASTC sidecar comparison inputs: %s\n", error.c_str());
         return 2;
     }
     const std::vector<float> * reference = reference_output_path.empty() ? nullptr : &reference_output;
-    if (!run_case(scalar, astc_vulkan_footprint::k6x6, spirv, trace, weights, width, height, reference, error) ||
-        !run_case(gauge, astc_vulkan_footprint::k6x6, spirv, trace, weights, width, height, reference, error)) {
+    if (!run_case(scalar, astc_vulkan_footprint::k6x6, spirv, trace, weights, width, height, reference, repeat, error) ||
+        !run_case(gauge, astc_vulkan_footprint::k6x6, spirv, trace, weights, width, height, reference, repeat, error)) {
         std::fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }

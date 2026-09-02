@@ -5557,3 +5557,31 @@ CPU-side verification) took `7.14 s` with peak RSS `933864 KiB`. GPU-vs-CPU
 MSE stayed below `1e-12` for both streams. This is a cold end-to-end POC timing,
 not a sampler timestamp or a portable performance claim; hot-cache batching and
 comparison with native Q/TQ kernels remain future work.
+
+## Two-hundred-forty-seventh sweep: hot-cache dispatch timing
+
+The sidecar comparison smoke now accepts an opt-in `--repeat N` argument. It
+performs one untimed warm-up dispatch, then repeats the same uploaded artifact
+and shader dispatch `N` times while retaining the existing CPU/GPU correctness
+checks. This keeps the timing path separate from artifact generation and does
+not change the runtime decoder contract.
+
+On the full Pythia layer-0 pair (`2048x8192`, 30 holdout samples, Intel UHD
+620 Vulkan), three timed repetitions produced:
+
+| Artifact | Dispatch total (3 runs) | Dispatch average |
+| --- | ---: | ---: |
+| scalar 6x6 | `636.94362 ms` | `212.31454 ms` |
+| validation-prefix gauge 6x6 | `635.53901 ms` | `211.84634 ms` |
+
+GPU-vs-CPU MSE remained `9.8982317e-13` (scalar) and `8.0637415e-15`
+(gauge); activation-relative MSE remained `0.41405234` and `0.012900798`.
+The result is a warm-session dispatch reference for this Intel implementation,
+not a portable throughput claim for Mali/Adreno/Apple hardware. It confirms that
+the two streams have essentially identical dispatch cost once resident.
+
+The focused ASTC/Vulkan regression set (`provenance`, `driver`, `dispatch`, and
+`sidecar`) passed **4/4** after the timing change. The next performance gate is
+therefore a native Q3/Q4/TQ buffer-kernel comparison and, separately, a target
+mobile-GPU replay; ASTC GPU encoding remains deferred until the candidate search
+space is measured on representative tensors.
