@@ -1510,9 +1510,9 @@ scheduler integration out of that change.
     missing shader words, and a tensor whose image does not match the declared
     shape. Add a render-device repeat-run test once the test harness can obtain
     a sampled ASTC device without privileged setup.
-59. Add a thin sidecar driver facade that owns instance/device/queue selection
-    and composes manifest loading, tensor upload and matvec sessions. Keep it
-    opt-in and parallel to llama's existing Vulkan backend.
+59. [x] Add a thin sidecar driver facade that owns instance/device/queue
+    selection and composes manifest loading, tensor upload and matvec sessions.
+    Keep it opt-in and parallel to llama's existing Vulkan backend.
 60. Add a scheduler-facing adapter experiment behind an explicit build option;
     compare scalar ASTC, gauge-only ASTC, Q4/TQ controls and FP16 using the
     same activation traces and model outputs before any upstream proposal.

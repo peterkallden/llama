@@ -4731,3 +4731,30 @@ reconstruction metadata. The shader still writes one scalar F32 per output,
 and no production Vulkan source was modified. The next review gate is to add
 explicit session error-path tests and then introduce a minimal sidecar driver
 facade; only after that should llama scheduler plumbing be considered.
+
+## Two-hundred-seventh sweep: sidecar driver facade
+
+`astc_vulkan_sidecar` now composes instance/device/queue selection, manifest
+loading, FFN adapter binding, tensor upload, and the reusable matvec session.
+It selects only devices that expose the requested sampled ASTC footprint and a
+compute queue. Unsupported environments return a descriptive error and leave
+the normal llama fallback untouched. Loading a new manifest or rebinding a
+tensor first invalidates the old dispatch and upload state, preventing stale
+ready bindings from surviving a fallback decision.
+
+The lifecycle contract passes on the host-only path and with the render-enabled
+Intel device. The sidecar remains an opt-in static library; it is not linked
+into production `ggml-vulkan`.
+
+## Refactor reflection after sidecar extraction
+
+The isolated runtime now has a clear ownership chain:
+
+`sidecar -> adapter -> tensor session` and `sidecar -> matvec session`.
+
+The manifest remains the source of truth for shape, footprint, affine
+reconstruction and payload integrity. The next implementation gate is a
+scheduler-facing experiment behind an explicit build option, with scalar
+ASTC, gauge-only ASTC, Q4/TQ and FP16 controls measured from identical traces.
+No atlas, bindless descriptor scheme or upstream API change should be added
+before that comparison is reproducible.
