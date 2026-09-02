@@ -1832,3 +1832,56 @@ results are retained as activation-level controls only. The next required
 comparison is model-output/logit quality against one shared FP16 reference,
 using the materialized validation-prefix artifacts; no footprint is promoted
 from experimental status based on activation MSE alone.
+
+### Gap review: gates before model-level claims
+
+Before starting full-model comparisons, the following contracts are explicit
+requirements for every exported ASTC artifact:
+
+1. **Provenance is separate from the runtime manifest.** Keep the Vulkan
+   manifest lean, but ship a hash-bound provenance sidecar containing the
+   source model/tensor fingerprint, source family (`FP16`, `Q3_K_M`,
+   `Q4_K_M`, `TQ1_0`, or `TQ2_0`), footprint, representation, decoder
+   constants, calibration/validation/holdout trace hashes, selector
+   configuration, validation-selected commit count, commit-order hash,
+   padding/mask version, payload byte count, and SHA-256. Existing FNV-1a is a
+   fast stale-payload check, not a cryptographic identity.
+
+2. **Baselines are separated by purpose.** Every model-facing table must show
+   (a) the shared FP16 reference, (b) an FP16 model with the tested layer
+   replaced by a dequantized Q/TQ source, (c) scalar ASTC from that same source,
+   and (d) validation-selected gauge ASTC from that same source. This separates
+   FP16-to-source-quantization error from source-to-ASTC error.
+
+3. **Crops are activation screens, not model claims.** A cropped tensor may be
+   used for fast selector/rate screening. Logit or perplexity claims require
+   the complete layer shape and a complete artifact; the runtime must reject
+   shape-incompatible weights rather than truncate or reshape them.
+
+4. **Validation is a fixed, disjoint protocol.** Calibration, validation, and
+   untouched holdout traces must be disjoint prompt/token shards with fixed
+   seeds. Validation stopping may select the exported prefix, but holdout is
+   read-only for tuning. Where feasible, aggregate several validation shards
+   and report shard variance.
+
+5. **Rate is measured on the real tensor.** Report payload bits divided by the
+   number of real (non-padding) weights, plus separately reported metadata and
+   edge-padding overhead. Footprint-aligned crops define the screening axis;
+   only full-tensor byte counts define the resident-rate claim.
+
+6. **Hardware results are scoped.** Intel UHD 620 Vulkan replay currently
+   establishes correctness only. Device feature gates and scalar fallback are
+   mandatory. Performance claims require a target mobile GPU, matched
+   shader/workgroup settings, cold/hot and batched measurements, and comparison
+   with native Q/TQ buffer kernels. Successful texture decode does not imply a
+   GPU ASTC encoder.
+
+7. **TQ1/TQ2 equality is a diagnostic.** If a bounded crop produces identical
+   TQ1/TQ2 decoded values, retain both format labels but verify their full-tensor
+   dequantized bytes and GGUF fingerprints before attributing a quality or rate
+   advantage to either format.
+
+The immediate next gate is a reproducible full-layer artifact matrix with these
+controls, followed by model-output replay. Vulkan replay must consume the exact
+selected payload bytes and sidecar identity; it must not regenerate or reselect
+candidates at runtime.

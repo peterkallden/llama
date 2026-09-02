@@ -5246,3 +5246,37 @@ format controls even where this crop reconstructs identically.
 The next gate is model-facing: materialize validation-prefix artifacts for
 these cases, then compare model outputs/logits against the same FP16 reference
 and prompt corpus. Only after that should dispatch timing be interpreted.
+
+## Two-hundred-twenty-ninth sweep: pre-model gap review
+
+Before the next full-layer run, the plan was tightened around the gaps that
+could otherwise make a promising crop result misleading.
+
+* Runtime manifests remain compact; a hash-bound provenance sidecar must carry
+  source model/tensor identity, source quantization family, ASTC footprint and
+  representation, decoder constants, trace/config hashes, validation prefix,
+  commit-order hash, padding contract, byte count, and SHA-256. FNV-1a is only
+  a fast stale-payload check.
+* Model-facing comparisons now use one shared FP16 reference and explicitly
+  separate native Q/TQ dequantization from scalar ASTC and validation-selected
+  gauge ASTC. This prevents FP16-to-Q/TQ error from being confused with
+  source-to-ASTC error.
+* Cropped tensors remain activation-level screening fixtures. Full-layer shape
+  and full artifacts are required for logits/perplexity claims; shape mismatch
+  must fail before device execution.
+* Calibration, validation, and holdout are disjoint fixed prompt/token shards;
+  validation stopping is allowed to select the exported prefix, while holdout
+  remains untouched. Multiple validation shards and variance are preferred.
+* Rate claims use real full-tensor payload bytes and separately report metadata
+  and edge-padding overhead. Aligned crops are only the screening ladder.
+* Intel UHD 620 replay is recorded as correctness evidence, not portable
+  performance. Target mobile-GPU measurements, native Q/TQ baselines, and
+  feature-gated fallback are required before performance conclusions. Decode
+  success does not imply a GPU ASTC encoder.
+* TQ1/TQ2 remain separate controls even when a crop is identical; full-tensor
+  dequantized comparison is required before interpreting that equality.
+
+Decision: proceed next with the full-layer artifact matrix and model-output
+replay using the existing scalar-anchored gauge selector. Do not add `c+delta`,
+LDLQ, new search presets, or GPU encoding until the provenance, baseline,
+shape, validation, and full-rate contracts pass.
