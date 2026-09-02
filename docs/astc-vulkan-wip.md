@@ -3915,3 +3915,45 @@ summary line from the interactive process was not redirected to a file, so the
 next sweep must independently reproduce the final holdout summary before
 making a quality claim. The payload, commit path, validation trajectory, and
 timing data are already available for that follow-up.
+
+## One-hundred-sixty-fourth sweep: full-tensor cross-tensor gauge gate
+
+The same frozen scalar-anchored gauge-only protocol was run on the complete
+layer-1 `blk.1.ffn_down.weight` tensor (`2048x8192`) with separate layer-1
+calibration, validation, and holdout traces. Output was redirected to a
+durable summary log so the final holdout values are reproducible.
+
+| Metric | Result |
+| --- | ---: |
+| Row strips | 342 |
+| Generated candidates | 2,803,020 |
+| Accepted conflict-aware steps | 202,157 |
+| Candidate generation time (sum of strips) | 1,598.538 s |
+| Selection time (sum of strips) | 281.909 s |
+| Scalar/gauge-neutral holdout | 1.4080364 |
+| Local selected holdout | 0.74669268 |
+| Conflict-aware holdout | **0.083731464** |
+| Validation-stopped holdout | **0.083731196** |
+| Best validation relative MSE | 0.077260694 (commit 202,153) |
+
+The cross-tensor result preserves the mechanism seen on layer 0 and is not a
+layer-0-only artifact. Conflict-aware gauge selection reduces the layer-1
+functional holdout error by approximately 94% relative to scalar ASTC. The
+candidate space is still extensive rather than globally low-rank: 3,270,192
+unique candidates were observed, with 202,157 compact commit steps. Peak
+strip-local candidate residency was 8,851,680 bytes.
+
+Every accepted payload changed relative to the neutral stream in this run;
+mode diagnostics reported 0 dual-plane transitions, 558 partition changes,
+61,860 endpoint-mode changes, 9,218 weight-grid changes, and 63,968 weight
+level changes. This supports the current interpretation that gauge steering
+crosses ASTC's discrete decisions rather than relying on a dedicated
+dual-plane path.
+
+The final payload is 7,474,752 bytes with SHA-256
+`0650c71b21c00eb4c3f01d0622f273b1c860cc13867f43dafb2d31f2c12924a3`.
+The commit log has SHA-256
+`6b67658e18a7101882b3f3d8292416c2a444e111969344ad38918d2ac35bfeeb`.
+The next gate is ASTC+Vulkan runtime validation, followed by TQ1_0/TQ2_0
+baselines; do not add `c+delta` or LDLQ until the runtime path reproduces the
+CPU-oracle payload semantics.
