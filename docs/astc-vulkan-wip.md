@@ -4102,3 +4102,24 @@ The model gate is complete enough to proceed with format-size and throughput
 comparisons. Semantic perplexity/quality evaluation should use a known-good
 prompt template or a dedicated perplexity tool. ASTC work continues
 independently; no production Vulkan backend was changed.
+
+## One-hundred-seventy-first sweep: Q3 and Q4 control artifacts
+
+To complete the next format family gate, pure `Q3_K_M` and `Q4_0` artifacts
+were generated from the same Pythia FP16 source. The local model sizes are
+584 MB (3.45 BPW) and 763 MB (4.51 BPW), respectively. Their short CPU-only
+smokes used the same prompt, seed, four-token budget, four threads, and
+non-interactive CLI flags as the FP16/Q4_K_M/TQ runs:
+
+| Model | Elapsed | Generation rate | Peak RSS | Exit |
+| --- | ---: | ---: | ---: | ---: |
+| Q3_K_M | 6.01 s | 9.9 tok/s | 1.08 GiB | 0 |
+| Q4_0 | 8.02 s | 8.3 tok/s | 1.88 GiB | 0 |
+
+The snippets are again execution checks only; the Pythia fixture and this
+minimal prompt do not form a valid semantic quality benchmark. The artifacts
+are retained as controls for later size, memory-bandwidth, and throughput
+comparisons against ASTC 6x6, Q4_K_M, TQ1_0, and TQ2_0. The next ASTC-specific
+experiment remains preset ablation (thorough/medium/fast) on a representative
+gauge fixture, followed by an explicit GPU candidate-generation feasibility
+probe.
