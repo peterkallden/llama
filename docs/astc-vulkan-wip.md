@@ -4160,3 +4160,19 @@ gauge source construction and candidate scoring. It will not be presented as
 ASTC encoding: standard Vulkan has no portable ASTC-encode command, so the
 offline CPU `astcenc` fork remains the reference until a restricted custom
 compute encoder is justified by measurements.
+
+## One-hundred-seventy-fourth sweep: local Vulkan capability target
+
+The capability probe enumerated the actual devices visible on this host:
+
+| Device | ASTC 4x4 | ASTC 5x5 | ASTC 6x6 |
+| --- | --- | --- | --- |
+| Intel UHD Graphics 620 (KBL GT2) | sampled | sampled | sampled |
+| NVIDIA GeForce 920MX | unsupported | unsupported | unsupported |
+| llvmpipe | unsupported | unsupported | unsupported |
+
+The Vulkan image-resource smoke passed for all three footprints on the Intel
+device. The current ASTC runtime target is therefore the integrated Intel
+path; the NVIDIA device cannot serve as an ASTC sampler reference in this
+environment. The driver must feature-detect ASTC formats and fall back
+cleanly, while the offline ASTC encoder remains device-independent.
