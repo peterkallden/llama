@@ -39,9 +39,11 @@ payloads for neural weights, particularly at `8x6` and `8x8` footprints.
    precision, dual-plane state). The harness emits this audit for scalar
    anchors and selected payloads. Use the evidence to add mode-family quotas
    ahead of image-oriented early pruning in the astcenc side fork.
-6. [ ] If the recall gate passes, test zero-sum weight-grid gauge bases
-   `L = q + G`, `A = q - G` before adding a semantic correction. These remain
-   in the semantic decoder null space before ASTC encoding.
+6. [x] Test zero-sum weight-grid gauge bases `L = q + G`, `A = q - G` before
+   adding a semantic correction. X-ramp, Y-ramp, and bilinear-saddle bases
+   improve validation-stopped holdout over constant gauge on both Pythia
+   tensors and both `8x6`/`8x8` crops. These remain in the semantic decoder
+   null space before ASTC encoding.
 7. [ ] Evaluate activation-aware 3- and 5-level source fields plus gauge, then
    `10x6` (about 2.13 b/w) before broader `10x8`/`10x10` low-rate sweeps.
 8. [ ] Only after a fixed candidate space is understood, evaluate richer

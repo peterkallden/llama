@@ -5751,3 +5751,47 @@ It should first test a weight-grid-compatible zero-sum gauge basis on the fixed
 candidate/selector contract. The histogram gives a concrete reference for that
 test and will later support mode-family quotas in the astcenc side fork if a
 cross-tensor pattern emerges.
+
+## Two-hundred-fifty-fourth sweep: zero-sum weight-grid gauge
+
+The scalar-anchored gauge family now has a separate, deliberately small
+weight-grid-compatible variant:
+
+\[
+L_{ij}=q_{ij}+G_{ij},\qquad A_{ij}=q_{ij}-G_{ij}.
+\]
+
+The semantic decoder still reconstructs \((L+A)/2=q\) before ASTC, so the new
+degrees of freedom are true codec steering rather than a spatial residual. The
+first basis bank contains only the neutral member plus signed smooth X-ramp,
+Y-ramp, and bilinear-saddle fields. Each field is bounded by the existing
+per-block headroom; partial-block padding remains deterministic and is never
+perturbed.
+
+The matched Pythia F16 screen used the same `8x2048` crops, traces, selector,
+and validation stopping rule as the constant-gauge matrix. Nominal rates are
+`8x6 = 2.67 b/w` and `8x8 = 2.00 b/w`; the eight-row crop has tail padding for
+8x6, so its physical fixture bytes are reported separately by the harness.
+
+| Tensor | Footprint | Constant gauge | Weight-grid, standard | Weight-grid, neural v1 |
+| --- | --- | ---: | ---: | ---: |
+| `blk.0.ffn_down.weight` | 8x6 | 0.031169517 | **0.025043905** | 0.026103810 |
+| `blk.0.ffn_down.weight` | 8x8 | 0.087210716 | 0.067649434 | **0.063658003** |
+| `blk.1.ffn_down.weight` | 8x6 | 0.089441624 | 0.076850137 | **0.073258532** |
+| `blk.1.ffn_down.weight` | 8x8 | 0.219736960 | **0.206920170** | 0.208523110 |
+
+The standard weight-grid family improves all four matched cases over constant
+gauge (5.8% to 22.4% lower validation-stopped holdout). Neural recall is
+complementary but not universal: it wins at layer-0 8x8 and layer-1 8x6, while
+the standard budget remains better at the other two points. The supported
+interpretation is therefore a per-tensor, validation-selected choice between
+standard and neural search, not an unconditional wider-budget setting.
+
+This is the strongest low-rate result so far because it improves both tensors
+while preserving the same ordinary ASTC payload format and the same fixed
+function Vulkan decode. The new CTest
+`astc-vulkan-latent-weight-grid-gauge-smoke` covers the basis construction and
+exact-decode selector path. The next representation gate is an
+activation-aware 3/5-level source field plus this gauge, followed by `10x6`;
+no semantic correction, custom ASTC decoder, or production Vulkan route is
+introduced here.

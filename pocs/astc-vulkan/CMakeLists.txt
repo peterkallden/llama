@@ -617,6 +617,11 @@ if (BUILD_TESTING)
                 --footprint 6x6 --max-rows 12 --max-columns 12
                 --max-samples 4 --max-calibration-samples 2)
         set_property(TEST astc-vulkan-latent-neural-search-smoke PROPERTY LABELS astc)
+        add_test(NAME astc-vulkan-latent-weight-grid-gauge-smoke
+            COMMAND astc-vulkan-latent-smoke --weight-grid-gauge-sweep
+                --footprint 8x8 --max-rows 16 --max-columns 16
+                --max-samples 4 --max-calibration-samples 2)
+        set_property(TEST astc-vulkan-latent-weight-grid-gauge-smoke PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-input-smoke)
