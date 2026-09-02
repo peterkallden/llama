@@ -71,14 +71,17 @@ int main() {
             device, VK_FORMAT_ASTC_6x6_UNORM_BLOCK);
         const bool supports_8x6 = sampled_astc_supported(
             device, VK_FORMAT_ASTC_8x6_UNORM_BLOCK);
+        const bool supports_10x6 = sampled_astc_supported(
+            device, VK_FORMAT_ASTC_10x6_UNORM_BLOCK);
         const bool supports_8x8 = sampled_astc_supported(
             device, VK_FORMAT_ASTC_8x8_UNORM_BLOCK);
-        std::printf("%s: ASTC 4x4 sampled=%s, ASTC 5x5 sampled=%s, ASTC 6x6 sampled=%s, ASTC 8x6 sampled=%s, ASTC 8x8 sampled=%s\n",
+        std::printf("%s: ASTC 4x4 sampled=%s, ASTC 5x5 sampled=%s, ASTC 6x6 sampled=%s, ASTC 8x6 sampled=%s, ASTC 10x6 sampled=%s, ASTC 8x8 sampled=%s\n",
                     properties.deviceName,
                     supports_4x4 ? "yes" : "no",
                     supports_5x5 ? "yes" : "no",
                     supports_6x6 ? "yes" : "no",
                     supports_8x6 ? "yes" : "no",
+                    supports_10x6 ? "yes" : "no",
                     supports_8x8 ? "yes" : "no");
         supports_astc = supports_astc || (supports_4x4 && supports_6x6);
     }

@@ -239,7 +239,8 @@ bool create_and_upload_image(VkPhysicalDevice physical_device, VkDevice device,
     const uint8_t footprint = format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK ? 0 :
                               format == VK_FORMAT_ASTC_5x5_UNORM_BLOCK ? 1 :
                               format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK ? 2 :
-                              format == VK_FORMAT_ASTC_8x6_UNORM_BLOCK ? 3 : 4;
+                              format == VK_FORMAT_ASTC_8x6_UNORM_BLOCK ? 3 :
+                              format == VK_FORMAT_ASTC_8x8_UNORM_BLOCK ? 4 : 5;
     const auto fp = static_cast<astc_vulkan_footprint>(footprint);
     const size_t bytes = static_cast<size_t>(astc_vulkan_image_bytes(
         fp, extent.width, extent.height));
@@ -286,6 +287,7 @@ int main() {
     VkPhysicalDevice selected_device = VK_NULL_HANDLE;
     uint32_t selected_queue_family = UINT32_MAX;
     bool supports_8x6 = false;
+    bool supports_10x6 = false;
     bool supports_8x8 = false;
     for (VkPhysicalDevice device : devices) {
         const VkFormatFeatureFlags required =
@@ -296,6 +298,7 @@ int main() {
             continue;
         }
         supports_8x6 = format_supports(device, VK_FORMAT_ASTC_8x6_UNORM_BLOCK, required);
+        supports_10x6 = format_supports(device, VK_FORMAT_ASTC_10x6_UNORM_BLOCK, required);
         supports_8x8 = format_supports(device, VK_FORMAT_ASTC_8x8_UNORM_BLOCK, required);
         uint32_t queue_count = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_count, nullptr);
@@ -347,18 +350,22 @@ int main() {
     const bool success_8x6 = !supports_8x6 || create_and_upload_image(
         selected_device, device, queue, selected_queue_family,
         VK_FORMAT_ASTC_8x6_UNORM_BLOCK, { 8, 6, 1 });
+    const bool success_10x6 = !supports_10x6 || create_and_upload_image(
+        selected_device, device, queue, selected_queue_family,
+        VK_FORMAT_ASTC_10x6_UNORM_BLOCK, { 10, 6, 1 });
     const bool success_8x8 = !supports_8x8 || create_and_upload_image(
         selected_device, device, queue, selected_queue_family,
         VK_FORMAT_ASTC_8x8_UNORM_BLOCK, { 8, 8, 1 });
     vkDeviceWaitIdle(device);
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
-    if (!success_4x4 || !success_5x5 || !success_6x6 || !success_8x6 || !success_8x8) {
+    if (!success_4x4 || !success_5x5 || !success_6x6 || !success_8x6 || !success_10x6 || !success_8x8) {
         std::fprintf(stderr, "ASTC device smoke failed: image upload or layout transition failed\n");
         return 1;
     }
-    std::printf("ASTC 4x4, 5x5, and 6x6 image resource smoke passed; experimental 8x6=%s, 8x8=%s\n",
+    std::printf("ASTC 4x4, 5x5, and 6x6 image resource smoke passed; experimental 8x6=%s, 10x6=%s, 8x8=%s\n",
                 supports_8x6 ? "passed" : "unsupported",
+                supports_10x6 ? "passed" : "unsupported",
                 supports_8x8 ? "passed" : "unsupported");
     return 0;
 }

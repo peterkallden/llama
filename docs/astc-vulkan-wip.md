@@ -5820,3 +5820,54 @@ a general low-rate profile. A later learned or activation-aware projection may
 still be worthwhile, but only once it can beat this deliberately simple
 control. The immediate next rate point is `10x6`, which reduces storage without
 introducing a new source quantizer.
+
+## Two-hundred-fifty-sixth sweep: experimental 10x6 bridge footprint
+
+The low-rate ladder now includes standard ASTC `10x6`. A 128-bit block covers
+60 logical values, yielding a nominal rate of
+
+\[
+128 / (10 \cdot 6) = 2.1333\ldots\ \text{bits/weight}.
+\]
+
+This is deliberately an experimental sidecar format. It preserves the
+six-output-row strip factorization used by streamed conflict-aware selection,
+while adding compression along the reduction/input axis. The implementation
+adds the footprint to the format contract, deterministic edge handling,
+artifact pack/decode parsers, tensor contract, Vulkan resource map, capability
+probe, device upload smoke, shader-device smoke, and latent harness. Production
+`ggml-vulkan` remains untouched.
+
+Private manifest and metadata IDs preserve the historical `8x8 = 4` value.
+The new `10x6` ID is appended as `5`; no existing private 8x8 artifact can be
+misread as 10x6 merely because the in-memory footprint enum acquired a new
+member.
+
+On Intel UHD Graphics 620, `VK_FORMAT_ASTC_10x6_UNORM_BLOCK` advertises the
+same sampled/upload capability required by the sidecar and passes the isolated
+10x6 shader smoke. NVIDIA GeForce 920MX and llvmpipe still report ASTC
+unsupported, so normal capability-gated fallback remains mandatory.
+
+The first aligned Pythia F16 weight-grid-gauge screen used `12x2040` values
+(408 blocks). It gives the expected bridge point between 8x6 and 8x8:
+
+| Tensor | Footprint | Nominal rate | Validation-stopped holdout |
+| --- | --- | ---: | ---: |
+| `blk.0.ffn_down.weight` | 8x6 | 2.67 b/w | 0.052656622 |
+| `blk.0.ffn_down.weight` | 10x6, standard search | 2.13 b/w | 0.069978585 |
+| `blk.0.ffn_down.weight` | 10x6, neural recall v1 | 2.13 b/w | **0.068986023** |
+| `blk.0.ffn_down.weight` | 8x8 | 2.00 b/w | 0.082529435 |
+
+The 8x8 fixture has a padded tail in this six-row-aligned comparison; the rate
+column is therefore nominal format rate, not the padded fixture's physical
+rate. On the cross-tensor layer-1 screen, 10x6 improves neutral weight-grid
+gauge from `0.22739616` to `0.21359412` after validation stopping. Neural
+recall selected the same validation prefix there, confirming that wider search
+is optional rather than a required 10x6 policy.
+
+This passes the structural and bounded-quality gate: 10x6 is a credible
+2.13-b/w bridge, not a promotion of low-rate ASTC to a model-quality baseline.
+The next gate is artifact-backed replay of exactly these validation-selected
+payloads, followed by a matched low-rate matrix before considering 10x8 or
+10x10. Focused contract, latent, capability, resource, and 10x6 shader tests
+passed `6/6`.

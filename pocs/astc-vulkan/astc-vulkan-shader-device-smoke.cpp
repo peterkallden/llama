@@ -210,6 +210,7 @@ int main(int argc, char ** argv) {
     }
     if (argc < 3 || (format_name != "4x4" && format_name != "5x5" &&
                      format_name != "6x6" && format_name != "8x6" &&
+                     format_name != "10x6" &&
                      format_name != "8x8") ||
         (pattern_name != "sequential" && pattern_name != "nonlocal") ||
         ((payload_path.empty() != reference_path.empty()) && !buffer_matvec && !sampled_f32) ||
@@ -220,7 +221,7 @@ int main(int argc, char ** argv) {
         ((!payload_path.empty() || buffer_matvec || sampled_f32) && (supplied_width == 0 || supplied_height == 0)) ||
         (matvec && ((!buffer_matvec && !sampled_f32 && payload_path.empty()) || pattern_name != "sequential"))) {
         std::fprintf(stderr,
-                     "usage: %s <validation.spv> <4x4|5x5|6x6|8x6|8x8> "
+                     "usage: %s <validation.spv> <4x4|5x5|6x6|8x6|10x6|8x8> "
                      "[sequential|nonlocal] [--benchmark] "
                      "[--payload astc.bin --reference decoded-rgba-f32.bin --width N --height N] "
                      "[--matvec|--buffer-matvec|--q4-matvec|--q3-matvec|--tq1-matvec|--tq2-matvec|--sampled-f32 --weights weights-f32.bin "
@@ -258,6 +259,7 @@ int main(int argc, char ** argv) {
                             format_name == "5x5" ? VK_FORMAT_ASTC_5x5_UNORM_BLOCK :
                             format_name == "6x6" ? VK_FORMAT_ASTC_6x6_UNORM_BLOCK :
                             format_name == "8x6" ? VK_FORMAT_ASTC_8x6_UNORM_BLOCK :
+                            format_name == "10x6" ? VK_FORMAT_ASTC_10x6_UNORM_BLOCK :
                                                    VK_FORMAT_ASTC_8x8_UNORM_BLOCK;
     const VkFormat image_format = sampled_f32 ? VK_FORMAT_R32_SFLOAT : format;
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
@@ -307,8 +309,9 @@ int main(int argc, char ** argv) {
 
     const uint32_t block_extent = format_name == "4x4" ? 4 :
                                   format_name == "5x5" ? 5 :
-                                  format_name == "6x6" ? 6 : 8;
-    const uint32_t block_height = format_name == "8x6" ? 6 : block_extent;
+                                  format_name == "6x6" ? 6 :
+                                  format_name == "10x6" ? 10 : 8;
+    const uint32_t block_height = (format_name == "8x6" || format_name == "10x6") ? 6 : block_extent;
     const uint32_t width = supplied_width != 0 ? supplied_width :
                            benchmark ? kBenchmarkTexelExtent : block_extent;
     const uint32_t height = supplied_height != 0 ? supplied_height :
@@ -317,7 +320,8 @@ int main(int argc, char ** argv) {
         format_name == "4x4" ? ggml_vk_astc_4x4_unorm_rgba :
         format_name == "5x5" ? ggml_vk_astc_5x5_unorm_rgba :
         format_name == "6x6" ? ggml_vk_astc_6x6_unorm_rgba :
-        format_name == "8x6" ? ggml_vk_astc_8x6_unorm_rgba : ggml_vk_astc_8x8_unorm_rgba,
+        format_name == "8x6" ? ggml_vk_astc_8x6_unorm_rgba :
+        format_name == "10x6" ? ggml_vk_astc_10x6_unorm_rgba : ggml_vk_astc_8x8_unorm_rgba,
         width, height);
     const bool packed_matvec = q4_matvec || q3_matvec || tq1_matvec || tq2_matvec;
     const char * path_name = buffer_matvec ? "buffer" : q4_matvec ? "Q4_0" :

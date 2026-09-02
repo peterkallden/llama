@@ -7,10 +7,16 @@
 #include <string>
 
 int main() {
+    static_assert(static_cast<uint8_t>(astc_vulkan_footprint::k8x8) == 4,
+                  "serialized 8x8 footprint ID changed");
+    static_assert(static_cast<uint8_t>(astc_vulkan_footprint::k10x6) == 5,
+                  "new serialized footprint must be appended");
     assert(!astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k6x6));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k8x6));
+    assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k10x6));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k8x8));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k8x6));
+    assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k10x6));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k8x8));
     assert(astc_vulkan_block_count(astc_vulkan_footprint::k4x4, 1536, 32) == 384 * 8);
     assert(astc_vulkan_image_bytes(astc_vulkan_footprint::k6x6, 1536, 128) == 90112);
@@ -85,13 +91,16 @@ int main() {
     const std::vector<astc_vulkan_tensor_record> experimental = {
         {"experimental-8x6", 64, 48, astc_vulkan_footprint::k8x6, 0,
          astc_vulkan_image_bytes(astc_vulkan_footprint::k8x6, 64, 48)},
+        {"experimental-10x6", 80, 48, astc_vulkan_footprint::k10x6, 0,
+         astc_vulkan_image_bytes(astc_vulkan_footprint::k10x6, 80, 48)},
         {"experimental-8x8", 64, 64, astc_vulkan_footprint::k8x8, 0,
          astc_vulkan_image_bytes(astc_vulkan_footprint::k8x8, 64, 64)},
     };
     assert(astc_vulkan_pack_atlas({4096, 4096}, experimental, placements, error));
     assert(placements.size() == experimental.size());
     assert(placements[0].footprint == astc_vulkan_footprint::k8x6);
-    assert(placements[1].footprint == astc_vulkan_footprint::k8x8);
+    assert(placements[1].footprint == astc_vulkan_footprint::k10x6);
+    assert(placements[2].footprint == astc_vulkan_footprint::k8x8);
     std::vector<astc_vulkan_tensor_record> edge = {
         {"edge", 4093, 1, astc_vulkan_footprint::k6x6, 0,
          astc_vulkan_image_bytes(astc_vulkan_footprint::k6x6, 4093, 1)},

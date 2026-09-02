@@ -1840,6 +1840,7 @@ holdout traces:
 | 5x5 | 5.12 b/w | scalar and gauge + validation |
 | 6x6 | 3.56 b/w | scalar and gauge + validation |
 | 8x6 | 2.67 b/w | scalar and gauge + validation, experimental opt-in |
+| 10x6 | 2.13 b/w | scalar and weight-grid gauge + validation, experimental opt-in |
 | 8x8 | 2.00 b/w | scalar and gauge + validation, experimental opt-in |
 
 Report scalar and validation-selected gauge holdout MSE side by side for every
@@ -2140,3 +2141,33 @@ promotion. The next gate remains a same-artifact quality/rate matrix (including
 Q3_K_M and TQ1/TQ2 model controls), followed by target-mobile replay. No
 scheduler integration, GGUF reinterpretation, or GPU ASTC encoder work should
 start from these isolated shader timings alone.
+
+### 10x6 low-rate bridge checkpoint
+
+`10x6` is now implemented as a standard-ASTC, experimental sidecar footprint.
+It covers 60 logical values per 16-byte block (`2.1333... b/w`) while retaining
+the existing six-output-row selector strips. The format is included in the
+artifact, resource, capability, device, and shader contracts; all standard
+runtime paths remain capability-gated and production `ggml-vulkan` is not
+modified. Private manifest and artifact format IDs remain backward compatible:
+existing `8x8 = 4` is unchanged and `10x6 = 5` is appended.
+
+The first matched Pythia layer-0 weight-grid-gauge screen places validation
+stopped 10x6 at `0.069978585` with standard search and `0.068986023` with
+neural recall, between aligned 8x6 (`0.052656622`, 2.67 b/w) and 8x8
+(`0.082529435`, 2.00 b/w). A second-tensor screen improves 10x6 neutral from
+`0.22739616` to `0.21359412`. This makes 10x6 a normal *evaluation* rung, but
+not a normal runtime profile: it remains explicit experimental opt-in until
+artifact replay and model-facing evaluation establish a practical use case.
+
+Next steps are deliberately narrow:
+
+1. Materialize scalar and validation-prefix 10x6 artifacts with full
+   provenance, then verify CPU and Vulkan replay from the payload bytes alone.
+2. Add 10x6 to the shared source/rate/quality table next to Q3, Q4, TQ2, and
+   TQ1 controls; keep model-facing results separate from activation MSE.
+3. Only if the artifact gate holds, evaluate `10x8` and `10x10` on small,
+   aligned crops. Do not expand footprint support on model tensors merely to
+   collect a lower nominal rate.
+4. Keep neural recall validation-selected per tensor. Do not make it the
+   default until a cross-tensor selection rule is demonstrated.
