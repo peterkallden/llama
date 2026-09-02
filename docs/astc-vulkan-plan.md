@@ -1973,3 +1973,16 @@ model-output relative MSE `0.026625414` and gauge `0.016833603`; GPU-vs-CPU
 MSE remained at `4.49e-14` and `2.82e-15`. This closes the bounded provenance
 quality gate without changing runtime code. It does not promote a full-model
 claim: full-shape validation-prefix payloads are still required.
+
+### Full-layer activation replay checkpoint
+
+The complete Pythia `blk.0.ffn_down.weight` scalar 6x6 stream is now exported
+and provenance-packed (`2048x8192`, `7,474,752` bytes). Replay of the separate
+scalar artifact and the existing full gauge conflict-diagnostic artifact over
+30 holdout samples matched the CPU path (`9.90e-13` and `8.28e-15` GPU-vs-CPU
+MSE). Activation-relative MSE was `0.41405234` for scalar and `0.012899721`
+for gauge. The gauge result is not yet a validation-prefix/model claim: its
+payload contains the full conflict stream while the commit log identifies
+validation-best prefix `323020`. The next gate is to rerun the full gauge
+selector with `--validation-payload`, package that exact prefix, and replay it
+against the full scalar control.

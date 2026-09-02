@@ -5434,3 +5434,29 @@ The values reproduce the earlier bounded comparison while proving that the
 new provenance sidecars do not alter payload binding or reconstruction. This
 is still a layer-output fixture, not a full-model logits claim; the next
 quality gate remains full-shape validation-prefix export.
+
+## Two-hundred-thirty-eighth sweep: full-layer scalar artifact
+
+An export-only scalar 6x6 stream was materialized for the complete Pythia
+`blk.0.ffn_down.weight` tensor (`2048x8192`, `7,474,752` payload bytes), then
+packaged with the real corpus provenance fields. This supplies the full-shape
+scalar control without running candidate selection.
+
+## Two-hundred-thirty-ninth sweep: full-layer activation replay
+
+The full scalar artifact and the existing full gauge stream were replayed from
+their separate provenance-packed blobs on the Intel Vulkan sidecar over the
+30-sample layer-0 holdout trace. Both passed shape/checksum validation and
+matched the CPU path:
+
+| Artifact | GPU-vs-CPU MSE | ASTC-vs-source activation relative MSE |
+| --- | ---: | ---: |
+| scalar 6x6 | `9.8982317e-13` | `0.41405234` |
+| gauge 6x6 (full conflict diagnostic) | `8.2842291e-15` | `0.012899721` |
+
+The gauge stream is explicitly the full conflict-commit diagnostic, not the
+validation-selected prefix (the commit log's best validation prefix is
+`323020`). Its large activation improvement is therefore useful evidence that
+the full tensor contains a real gauge correction space, but it must not be
+promoted to a model-quality result until the prefix payload is exported and
+replayed with the same provenance contract.
