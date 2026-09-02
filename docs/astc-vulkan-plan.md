@@ -1278,3 +1278,21 @@ selected-δ distribution retroactively. Add factor metadata to candidate,
 local-positive, and committed counters for the next fulltensor/cross-tensor
 run; use those measurements, rather than a guessed grid, before introducing a
 coarse-to-fine adaptive gauge search.
+
+### Current checkpoint after the first five gates
+
+The runtime and research gates through the side-by-side driver PoC are now
+complete. The Intel UHD 620 is the local ASTC device target; the NVIDIA
+GeForce 920MX is a valid Vulkan device but does not expose sampled ASTC
+formats on this host and must take the capability-gated fallback path.
+
+The next work is intentionally model-level rather than more sampler plumbing:
+
+1. Build a logits/loss replay harness from the existing FP16 reference model.
+2. Compare FP16, Q3, Q4, TQ1/TQ2, scalar ASTC, and gauge ASTC on the same
+   calibration and evaluation inputs.
+3. Run `c + delta` only with scalar anchoring and an exact scalar fallback.
+4. Revisit Block-LDLQ/GPTVQ as an offline selector per tensor, not a global
+   default.
+5. Keep full transformer scheduler integration and upstreaming deferred until
+   the model-level quality gate demonstrates a repeatable benefit.

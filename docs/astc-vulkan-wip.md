@@ -4176,3 +4176,103 @@ device. The current ASTC runtime target is therefore the integrated Intel
 path; the NVIDIA device cannot serve as an ASTC sampler reference in this
 environment. The driver must feature-detect ASTC formats and fall back
 cleanly, while the offline ASTC encoder remains device-independent.
+
+## One-hundred-seventy-fifth sweep: full FFN GPU decode confirmation
+
+The adapter-bound Vulkan FFN smoke was rerun over the complete
+`blk.0.ffn_down.weight` tile (`576 x 1536`) on the Intel UHD 620 ASTC-capable
+device. Four activation samples were used for this bounded runtime check.
+The GPU output matched the CPU ASTC reference at numerical-noise level for
+all footprints:
+
+| Footprint | GPU-vs-CPU ASTC MSE | ASTC-vs-source activation-relative MSE |
+| --- | ---: | ---: |
+| 4x4 | `3.81e-14` | `0.00058044` |
+| 5x5 | `2.97e-14` | `0.00544803` |
+| 6x6 | `2.73e-14` | `0.0292653` |
+
+The result confirms that the complete layer tile is decoded by the Vulkan
+texture path and reduced by the compute shader without a CPU decode in the
+runtime path. CPU work remains limited to staging, oracle generation, and
+metric calculation. The 4x4/5x5/6x6 quality ordering agrees with the offline
+reference and is now a stable runtime acceptance gate.
+
+## One-hundred-seventy-sixth sweep: bounded representation and feedback gate
+
+The scalar-anchored gauge selector was rerun on an 8x32 6x6 fixture using
+streamed row strips, persistent worker contexts, and exact decode-in-the-loop
+candidate scoring. Five of twelve blocks committed a gauge payload; the
+candidate effective rank was `2.747` with mean positive cosine `0.6178`.
+Conflict-aware commit reduced the holdout activation-relative MSE from the
+scalar baseline `2.5711e-5` to `2.0744e-5`. The same candidate pool evaluated
+with the current bounded Block-LDLQ implementation produced `4.9213e-4`, so
+LDLQ remains an optional, tensor-sensitive offline selector rather than the
+default.
+
+This is deliberately a small mechanism gate, not a model-quality claim. It
+keeps scalar as an exact fallback and confirms that later feedback work must
+operate over legal decoded ASTC candidates rather than replace the runtime
+contract.
+
+## One-hundred-seventy-seventh sweep: current model-format execution baseline
+
+The local SmolLM2 F16, Q4_0, Q3_K_M, TQ1_0, and TQ2_0 artifacts were run
+CPU-only with the same four-token prompt, seed, four threads, and
+non-interactive flags. The observed elapsed time and peak RSS were:
+
+| Format | Elapsed | Peak RSS |
+| --- | ---: | ---: |
+| FP16 | 2.31 s | 581 MiB |
+| Q4_0 | 1.91 s | 468 MiB |
+| Q3_K_M | 12.73 s | 450 MiB |
+| TQ1_0 | 2.21 s | 445 MiB |
+| TQ2_0 | 1.91 s | 446 MiB |
+
+These are execution/memory controls only. The short prompt and model chat
+template do not constitute a semantic quality benchmark, so generated text
+is not used to rank ASTC against the native formats. A dedicated perplexity
+or logits-replay harness remains the next quality task after the runtime
+contract.
+
+## One-hundred-seventy-eighth sweep: side-by-side driver PoC gate
+
+The isolated `astc-vulkan-driver` library, manifest/atlas contract,
+`astc_vulkan_ffn_adapter`, sampled-image resource layer, and FFN dispatch
+smoke were reviewed and exercised together. The path is now complete as a
+side-by-side PoC driver contract:
+
+```text
+offline ASTC payload + manifest
+            -> adapter shape/capability gate
+            -> sampled ASTC image upload
+            -> Vulkan texture sampler
+            -> FFN compute reduction
+            -> CPU oracle comparison
+```
+
+The normal `ggml-vulkan` backend remains untouched. Standard ASTC payloads
+are the only runtime dependency; the neural `astcenc` fork is not linked into
+the driver. Devices without the required sampled ASTC format return the
+documented fallback status. This makes the Intel UHD 620 path a working local
+reference while the NVIDIA GeForce 920MX remains a negative capability test.
+
+## One-hundred-seventy-ninth sweep: plan checkpoint
+
+The first five plan points are now covered at PoC scope:
+
+1. CPU/runtime contracts, CTests, edge handling, and deterministic payloads —
+   complete.
+2. GPU ASTC decode and full FFN tile comparison — complete on Intel UHD 620;
+   portability/performance on Mali/Adreno/Apple remains unmeasured.
+3. Native FP16/Q3/Q4/TQ execution controls — complete; semantic quality
+   scoring still requires a dedicated logits/perplexity harness.
+4. Gauge/conflict-aware representation and bounded Block-LDLQ experiments —
+   complete as offline research gates; no runtime default changed.
+5. Side-by-side ASTC Vulkan driver skeleton and end-to-end FFN dispatch —
+   complete as an opt-in PoC. Full transformer graph replacement, scheduler
+   integration, and production upstreaming remain explicitly deferred.
+
+The next implementation gate is therefore model-level logits/loss replay
+using the existing FP16 reference model, followed by a carefully bounded
+`c + delta` experiment. A GPU ASTC encoder is not part of this gate because
+standard Vulkan exposes decode/sampling, not portable ASTC encoding.
