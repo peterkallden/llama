@@ -4787,3 +4787,19 @@ tensor and traces for every representation.
 
 The sidecar session error-path tests now cover invalid configuration and
 safe reset, so the pre-scheduler Vulkan contract gate is complete.
+
+## Two-hundred-tenth sweep: same-tensor Q4/TQ controls
+
+The format comparison was run on the full Pythia-1.4B F16 source tensor
+`blk.0.ffn_down.weight` (2048x8192) with the same held-out activation trace
+used by the ASTC quality tooling. Q4_0 measured activation-relative-MSE
+`0.0015319726`. TQ1_0 and TQ2_0 both measured `0.24722138`; their stored
+rates remain distinct (`1.6875` and `2.0625` bits/weight), but this current
+dequantized tensor result is equal. FP16 is the zero-error source reference.
+
+This is a CPU/offline control, not a Vulkan scheduler benchmark. It confirms
+the comparison harness must report storage rate, tensor reconstruction and
+runtime dispatch as separate dimensions. The next ASTC comparison should use
+the already exported scalar/gauge payloads for this same tensor shape, then
+feed the selected payload through the sidecar while retaining Q4/TQ/FP16 as
+controls.

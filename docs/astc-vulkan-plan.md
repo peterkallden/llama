@@ -1529,3 +1529,9 @@ The first real-tensor comparison baseline is recorded in the WIP log: on a
 MSE, while the generic block-affine/Hadamard ASTC controls are `0.19758811`
 (4x4) and `0.4618935` (6x6). Keep this control distinct from gauge-only ASTC;
 item 60 must compare each representation from the same tensor and traces.
+
+The first full-tensor Q4/TQ controls are now available on Pythia
+`blk.0.ffn_down.weight` (2048x8192): Q4_0 `0.0015319726`, TQ1_0 and TQ2_0
+`0.24722138` activation-relative-MSE, with FP16 as the zero-error reference.
+Proceed with ASTC payload export/replay for this same shape before introducing
+any scheduler-facing build option.
