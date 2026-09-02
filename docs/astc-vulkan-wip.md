@@ -4840,3 +4840,19 @@ This closes the opt-in ASTC scalar/gauge runtime comparison. Q4/TQ/FP16
 remain the offline controls from the same tensor. Scheduler integration is
 still deferred until this executable is extended to a repeatable artifact
 manifest and a model-output comparison.
+
+## Two-hundred-thirteenth sweep: reusable sidecar dispatch session
+
+The sidecar now keeps the compiled dispatch session alive when consecutive
+runs use the same shader and activation sample count. Descriptor resources,
+pipeline state, and device buffers are therefore initialized once per
+sidecar/tensor binding instead of being rebuilt for every comparison case or
+repeat run. Loading a new manifest, binding a new tensor, changing the shader,
+changing the sample count, or resetting the sidecar invalidates that cache.
+
+This is a runtime-only optimization: the shader, ASTC payload, affine
+reconstruction contract, and selected 16-byte payloads are unchanged. The
+focused driver, adapter, dispatch, and sidecar tests pass after the change.
+The next comparison step remains manifest-driven artifact loading and an
+explicit model-output reference; no production scheduler or `ggml-vulkan`
+code is changed.

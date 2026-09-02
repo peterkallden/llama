@@ -19,6 +19,8 @@ void astc_vulkan_sidecar::reset() {
     queue_ = VK_NULL_HANDLE;
     queue_family_ = UINT32_MAX;
     binding_ = {};
+    dispatch_spirv_.clear();
+    dispatch_samples_ = 0;
 }
 
 bool astc_vulkan_sidecar::init(astc_vulkan_footprint footprint, std::string & error) {
@@ -97,6 +99,8 @@ bool astc_vulkan_sidecar::set_manifest(const astc_vulkan_manifest & manifest,
     dispatch_.reset();
     adapter_.reset();
     binding_ = {};
+    dispatch_spirv_.clear();
+    dispatch_samples_ = 0;
     manifest_ = manifest;
     error.clear();
     return true;
@@ -136,10 +140,14 @@ bool astc_vulkan_sidecar::run(const std::vector<uint32_t> & spirv,
         error = "ASTC Vulkan sidecar has no ready tensor";
         return false;
     }
-    if (!dispatch_.init(physical_device_, device_, queue_, queue_family_,
-                        adapter_.session(), spirv, binding_.record.width,
-                        binding_.record.height,
-                        static_cast<uint32_t>(activations.size() / binding_.record.width),
-                        error)) return false;
+    const uint32_t samples = static_cast<uint32_t>(
+        activations.size() / binding_.record.width);
+    if (!dispatch_.ready() || dispatch_samples_ != samples || dispatch_spirv_ != spirv) {
+        if (!dispatch_.init(physical_device_, device_, queue_, queue_family_,
+                            adapter_.session(), spirv, binding_.record.width,
+                            binding_.record.height, samples, error)) return false;
+        dispatch_spirv_ = spirv;
+        dispatch_samples_ = samples;
+    }
     return dispatch_.run(activations, binding_.reconstruction, output, error);
 }

@@ -56,6 +56,7 @@ public:
              const astc_vulkan_reconstruction & reconstruction,
              std::vector<float> & output, std::string & error);
     void reset();
+    bool ready() const { return device_ != VK_NULL_HANDLE && pipeline_ != VK_NULL_HANDLE; }
 
 private:
     VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;

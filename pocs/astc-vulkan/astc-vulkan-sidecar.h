@@ -42,4 +42,6 @@ private:
     astc_vulkan_ffn_adapter adapter_;
     astc_vulkan_ffn_binding binding_;
     astc_vulkan_matvec_session dispatch_;
+    std::vector<uint32_t> dispatch_spirv_;
+    uint32_t dispatch_samples_ = 0;
 };

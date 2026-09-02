@@ -21,6 +21,11 @@ int main() {
     assert(!sidecar.bind_tensor("missing", 1, 1, {}, binding, error));
     assert(error == "ASTC Vulkan sidecar is not initialized");
 
+    astc_vulkan_manifest invalid = manifest;
+    invalid.tensors[0].width = 0;
+    assert(!sidecar.set_manifest(invalid, error));
+    assert(!sidecar.ready());
+
     const bool initialized = sidecar.init(astc_vulkan_footprint::k6x6, error);
     if (initialized) {
         assert(sidecar.ready());

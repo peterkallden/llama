@@ -1549,3 +1549,9 @@ samples it reports scalar `0.026625491` versus gauge `0.016833613` activation
 relative MSE, while both GPU results match the CPU oracle below `5e-14` MSE.
 Extend this tool next with a manifest-driven artifact set and model-output
 comparison; do not wire it into the production scheduler yet.
+
+The sidecar comparison path now reuses its initialized dispatch session for
+identical shader/sample-count runs. This removes repeated descriptor/pipeline
+setup without changing payloads or numerical contracts. The next item is to
+make the comparison artifact set manifest-driven and add a model-output
+reference metric before any scheduler-facing adapter is attempted.
