@@ -6186,6 +6186,30 @@ or a calibration protocol that controls overfit. The coarse control is useful
 for future factor-histogram experiments, but neither PV profile is promoted to
 the runtime/default encoder.
 
+## Two-hundred-sixty-sixth sweep: PV grid plus neural candidate recall
+
+There are two distinct meanings of “neural grid” in this experiment. The
+PV-lite coefficient grid is the zero-sum latent representation itself. The
+separate `encoder-search neural` flag only widens astcenc's retained legal
+candidate bank. The latter had not previously been combined with PV-lite, so
+the combination was tested explicitly at low rate.
+
+On the matched Pythia F16 layer-0 crop, the combined profile did not improve
+validation-stopped holdout:
+
+| Footprint | PV-lite | PV-lite + neural recall |
+| --- | ---: | ---: |
+| 10x6 | `0.07738508` | `0.07738508` |
+| 8x8 | `0.11633482` | `0.11633482` |
+
+The candidate bank grew from 741 to 761 unique payloads at 10x6 and from 982
+to 1014 at 8x8, with no selected quality gain. The combined path is therefore
+more expensive without current evidence of better generalization. It remains
+available as a diagnostic ablation, while the low-rate profile keeps PV-lite
+and the standard candidate search separate. A future combination is justified
+only if a fixed-pool/model-facing objective identifies candidates that the
+current selector demonstrably needs.
+
 The same sweep added deterministic FNV-1a-64 identities for source weights and
 calibration/validation/holdout traces to latent export metadata, together with
 the ASTC preset. These hashes are provenance identities, not cryptographic

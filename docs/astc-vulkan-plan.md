@@ -2339,3 +2339,11 @@ Q3 `0.12655` vs `0.10871`). The fixed coarse grid matched the standard control.
 PV-lite therefore remains a useful diagnostic/candidate-space experiment, but
 is not promoted to the low-rate default until a model-facing and cross-tensor
 holdout gate succeeds.
+
+The combined `PV-lite grid + encoder-search neural` control was also checked
+on matched F16 layer-0 low-rate crops. At 10x6, validation-stopped holdout was
+`0.07738508` for PV-lite alone and `0.07738508` for the combination; at 8x8 it
+was `0.11633482` in both cases. Candidate counts increased (741 to 761 at
+10x6, 982 to 1014 at 8x8) without a quality gain. Therefore the broader neural
+candidate-recall path remains an optional diagnostic and is not automatically
+stacked on the low-rate PV profile.
