@@ -119,6 +119,8 @@ VkFormat astc_vulkan_vk_format(uint8_t footprint) {
         case 0: return VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
         case 1: return VK_FORMAT_ASTC_5x5_UNORM_BLOCK;
         case 2: return VK_FORMAT_ASTC_6x6_UNORM_BLOCK;
+        case 3: return VK_FORMAT_ASTC_8x6_UNORM_BLOCK;
+        case 4: return VK_FORMAT_ASTC_8x8_UNORM_BLOCK;
         default: return VK_FORMAT_UNDEFINED;
     }
 }

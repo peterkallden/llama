@@ -51,6 +51,8 @@ struct ggml_vk_astc_weight_metadata {
 inline constexpr uint32_t ggml_vk_astc_pack_metadata_version = 1;
 inline constexpr uint32_t ggml_vk_astc_pack_format_4x4 = 1;
 inline constexpr uint32_t ggml_vk_astc_pack_format_6x6 = 2;
+inline constexpr uint32_t ggml_vk_astc_pack_format_8x6 = 3;
+inline constexpr uint32_t ggml_vk_astc_pack_format_8x8 = 4;
 inline constexpr uint32_t ggml_vk_astc_pack_mapping_global = 0;
 inline constexpr uint32_t ggml_vk_astc_pack_mapping_block_affine = 1;
 inline constexpr uint32_t ggml_vk_astc_pack_layout_identity = 0;
@@ -83,7 +85,9 @@ struct ggml_vk_astc_pack_metadata {
     constexpr bool is_valid() const {
         return version == ggml_vk_astc_pack_metadata_version &&
             (format_id == ggml_vk_astc_pack_format_4x4 ||
-             format_id == ggml_vk_astc_pack_format_6x6) &&
+             format_id == ggml_vk_astc_pack_format_6x6 ||
+             format_id == ggml_vk_astc_pack_format_8x6 ||
+             format_id == ggml_vk_astc_pack_format_8x8) &&
             logical_rows != 0 && logical_columns != 0 &&
             texel_columns == (logical_columns + 3) / 4 &&
             has_valid_channel_order() &&

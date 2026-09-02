@@ -1600,7 +1600,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         struct strip_step {
             uint32_t row0 = 0;
             uint32_t column0 = 0;
-            std::array<float, 36> decoded{};
+            std::vector<float> decoded;
             std::array<uint8_t, 16> payload{};
             double gain = 0.0;
         };
@@ -1612,7 +1612,6 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             double generate_seconds = 0.0;
             double select_seconds = 0.0;
         };
-        if (format.block_width * format.block_height > 36) return false;
         std::vector<alpha_option> strip_options;
         std::vector<std::vector<strip_step>> strip_steps(blocks_y);
         std::vector<strip_metrics> strip_metrics_log;
@@ -1777,7 +1776,7 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 strip_step step;
                 step.row0 = option.row0;
                 step.column0 = option.column0;
-                std::copy_n(option.decoded.begin(), option.decoded.size(), step.decoded.begin());
+                step.decoded = option.decoded;
                 step.payload = option.payload;
                 step.gain = best_gain;
                 strip_steps[strip].push_back(step);
@@ -3013,7 +3012,7 @@ int main(int argc, char ** argv) {
         } else {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
-                         "[--footprint 4x4|5x5|6x6] [--preset thorough|medium|fast] [--model path --tensor name] "
+                         "[--footprint 4x4|5x5|6x6|8x6|8x8] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
@@ -3216,7 +3215,9 @@ int main(int argc, char ** argv) {
     crop_activation_columns(validation_inputs, columns);
     for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,
                                  ggml_vk_astc_5x5_unorm_rgba,
-                                 ggml_vk_astc_6x6_unorm_rgba }) {
+                                 ggml_vk_astc_6x6_unorm_rgba,
+                                 ggml_vk_astc_8x6_unorm_rgba,
+                                 ggml_vk_astc_8x8_unorm_rgba }) {
         const std::string format_footprint = std::to_string(format.block_width) + "x" +
                                              std::to_string(format.block_height);
         if (!footprint.empty() && footprint != format_footprint) continue;
@@ -3378,7 +3379,8 @@ int main(int argc, char ** argv) {
                         format.name, best_levels, best_score);
         }
     }
-    if (!footprint.empty() && footprint != "4x4" && footprint != "5x5" && footprint != "6x6") {
+    if (!footprint.empty() && footprint != "4x4" && footprint != "5x5" &&
+        footprint != "6x6" && footprint != "8x6" && footprint != "8x8") {
         std::fprintf(stderr, "unsupported --footprint value: %s\n", footprint.c_str());
         return 2;
     }

@@ -41,6 +41,14 @@ inline constexpr ggml_vk_astc_format_contract ggml_vk_astc_6x6_unorm_rgba = {
     "ASTC 6x6 UNORM RGBA", 6, 6, 16, 4,
 };
 
+inline constexpr ggml_vk_astc_format_contract ggml_vk_astc_8x6_unorm_rgba = {
+    "ASTC 8x6 UNORM RGBA", 8, 6, 16, 4,
+};
+
+inline constexpr ggml_vk_astc_format_contract ggml_vk_astc_8x8_unorm_rgba = {
+    "ASTC 8x8 UNORM RGBA", 8, 8, 16, 4,
+};
+
 constexpr uint32_t ggml_vk_astc_block_count(uint32_t extent, uint32_t block_extent) {
     return (extent + block_extent - 1) / block_extent;
 }

@@ -1641,3 +1641,40 @@ The driver must remain format-generic at the manifest/resource boundary. No
 production `ggml-vulkan` changes, direct Q-format reinterpretation as ASTC,
 or scheduler integration belongs to this phase. If a device lacks an ASTC
 footprint, the adapter must fall back deterministically to the existing path.
+
+### Experimental-footprint implementation update
+
+The first implementation slice for the density-ladder expansion is complete
+in the sidecar. `astc_vulkan_footprint` now covers `8x6` and `8x8`, including
+block arithmetic, artifact-pack/decode parsing, tensor contracts, Vulkan
+format mapping, and atlas placement. The new footprints are explicitly
+classified as experimental by `astc_vulkan_footprint_is_experimental()`.
+
+The device policy is deliberately asymmetric:
+
+* 4x4, 5x5, and 6x6 remain the standard compatibility gate.
+* 8x6 and 8x8 are probed independently and exercised only when the selected
+  device advertises the required sampled-image and transfer features.
+* The sidecar requires an explicit `allow_experimental` opt-in for these
+  footprints; a caller that does not opt in receives a deterministic error and
+  can use the normal buffer-backed fallback.
+
+This keeps experimental support in the parallel `pocs/astc-vulkan` boundary;
+no production `ggml-vulkan` code or GGUF semantics are changed. The chunked
+row-strip selector also no longer assumes a 36-texel block, so 8x6 (48 texels)
+and 8x8 (64 texels) can use the same streamed candidate path without a buffer
+overrun. Edge padding remains deterministic and excluded from neural scoring.
+
+The capability/resource/shader smoke results on this host are:
+
+| Device | 8x6 | 8x8 |
+| --- | --- | --- |
+| Intel UHD Graphics 620 | sampled/upload/shader pass | sampled/upload/shader pass |
+| NVIDIA GeForce 920MX | unsupported; fallback | unsupported; fallback |
+| llvmpipe | unsupported; fallback | unsupported; fallback |
+
+The next quality gate is unchanged: export scalar and scalar-anchored gauge
+artifacts for 8x6 and 8x8, then compare them with the same FP16 source and
+traces against Q3_K_M, Q4_K_M, TQ2_0, and TQ1_0. Device smoke proves only the
+standard Vulkan resource contract; it is not a portable performance claim for
+Mali, Adreno, or Apple GPUs.

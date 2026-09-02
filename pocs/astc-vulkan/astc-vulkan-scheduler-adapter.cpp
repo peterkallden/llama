@@ -18,7 +18,7 @@ std::vector<uint8_t> read_bytes(const std::string & path) {
 bool astc_vulkan_scheduler_adapter::prepare(
         const std::string & manifest_path, const std::string & payload_blob_path,
         const std::string & tensor_name, astc_vulkan_footprint footprint,
-        std::string & error) {
+        std::string & error, bool allow_experimental) {
     // Preparation is transactional: a failed reload must not leave a previous
     // tensor executable through ready() or run().
     reset();
@@ -35,7 +35,8 @@ bool astc_vulkan_scheduler_adapter::prepare(
     payload_.assign(blob.begin() + static_cast<size_t>(record->byte_offset),
                     blob.begin() + static_cast<size_t>(record->byte_offset + record->byte_size));
     tensor_name_ = tensor_name;
-    if (!sidecar_.set_manifest(manifest, error) || !sidecar_.init(footprint, error)) return false;
+    if (!sidecar_.set_manifest(manifest, error) ||
+        !sidecar_.init(footprint, error, allow_experimental)) return false;
     if (!sidecar_.bind_tensor(tensor_name, record->width, record->height, payload_, binding_, error)) {
         reset();
         return false;

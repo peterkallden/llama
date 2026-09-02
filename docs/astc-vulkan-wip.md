@@ -4982,3 +4982,47 @@ Planned implementation order:
 This phase does not alter production `ggml-vulkan`, does not reinterpret Q4/Q3
 or TQ bytes as ASTC, and does not require scheduler integration. Unsupported
 ASTC footprints must continue to take the existing deterministic fallback.
+
+## Two-hundred-twentieth sweep: experimental 8x6/8x8 driver contracts
+
+The sidecar now carries ASTC 8x6 and 8x8 as first-class footprint values, while
+keeping them visibly experimental rather than silently treating them as the
+standard 4x4/5x5/6x6 path. Format arithmetic reports 48 and 64 texels per
+128-bit block (2.6667 and 2.0000 bits/value), Vulkan mapping uses
+`VK_FORMAT_ASTC_8x6_UNORM_BLOCK` and `VK_FORMAT_ASTC_8x8_UNORM_BLOCK`, and
+artifact pack/decode tools accept both names.
+
+The implementation adds a small policy helper,
+`astc_vulkan_footprint_is_experimental()`, and an explicit
+`allow_experimental` argument to sidecar/scheduler initialization. Without the
+argument, an 8x6/8x8 initialization fails before device creation with a
+deterministic opt-in error. This is the intended driver behavior for now:
+experimental formats are available for research runs, but an unsupported or
+non-opted-in format cannot displace the normal fallback.
+
+The atlas cursor storage was expanded from three to all five footprint values.
+The streamed row-strip selector's former `std::array<float, 36>` was replaced
+with a block-sized vector and its 36-texel guard was removed. This matters for
+the 48-texel 8x6 and 64-texel 8x8 blocks: they now follow the same deterministic
+edge-mask and chunked selection contract instead of being rejected or risking
+an overwrite.
+
+Focused host tests pass for format/manifest/atlas contracts and sidecar
+metadata. With elevated render-device access, the current host produced:
+
+* Intel UHD Graphics 620: capability probe says 8x6 and 8x8 are sampled;
+  resource upload smoke passed for both; sequential shader fetch smoke passed
+  for both (`8x6` 4583.333 ns, `8x8` 3500.000 ns for one dispatch).
+* NVIDIA GeForce 920MX: 8x6/8x8 are unsupported, while the standard device
+  smoke remains eligible through the 4x4/5x5/6x6 gate.
+* llvmpipe: no ASTC sampled support; capability tests skip/fallback.
+
+These timings are only a Vulkan contract/reference-device observation. They do
+not predict mobile GPU throughput, and no GPU encoder is implied: encoding and
+candidate selection remain offline CPU work; the GPU path consumes ordinary
+standard ASTC blocks.
+
+The remaining quality work is deliberately separate from this plumbing slice:
+run scalar and gauge-only 8x6/8x8 latent artifacts, re-run the Q3_K_M/TQ2_0/
+TQ1_0 comparison matrix, and only then decide whether a footprint-specific
+candidate preset or a production-facing adapter is justified.

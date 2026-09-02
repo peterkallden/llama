@@ -23,8 +23,17 @@ void astc_vulkan_sidecar::reset() {
     dispatch_samples_ = 0;
 }
 
-bool astc_vulkan_sidecar::init(astc_vulkan_footprint footprint, std::string & error) {
+bool astc_vulkan_sidecar::init(astc_vulkan_footprint footprint, std::string & error,
+                               bool allow_experimental) {
     reset();
+    if (!astc_vulkan_footprint_is_valid(footprint)) {
+        error = "invalid ASTC Vulkan footprint";
+        return false;
+    }
+    if (astc_vulkan_footprint_is_experimental(footprint) && !allow_experimental) {
+        error = "experimental ASTC Vulkan footprint requires explicit opt-in";
+        return false;
+    }
     const VkApplicationInfo app_info{
         VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "astc-vulkan-sidecar", 1,
         "llama.cpp ASTC Vulkan sidecar", 1, VK_API_VERSION_1_0};

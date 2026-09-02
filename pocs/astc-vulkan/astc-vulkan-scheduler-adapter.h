@@ -13,7 +13,7 @@ class astc_vulkan_scheduler_adapter {
 public:
     bool prepare(const std::string & manifest_path, const std::string & payload_blob_path,
                  const std::string & tensor_name, astc_vulkan_footprint footprint,
-                 std::string & error);
+                 std::string & error, bool allow_experimental = false);
     bool run(const std::vector<uint32_t> & spirv, const std::vector<float> & activations,
              std::vector<float> & output, std::string & error);
     void reset() {

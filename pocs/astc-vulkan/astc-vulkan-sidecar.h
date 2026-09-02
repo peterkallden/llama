@@ -18,7 +18,8 @@ public:
     astc_vulkan_sidecar(const astc_vulkan_sidecar &) = delete;
     astc_vulkan_sidecar & operator=(const astc_vulkan_sidecar &) = delete;
 
-    bool init(astc_vulkan_footprint footprint, std::string & error);
+    bool init(astc_vulkan_footprint footprint, std::string & error,
+              bool allow_experimental = false);
     bool load_manifest(const std::string & path, std::string & error);
     bool set_manifest(const astc_vulkan_manifest & manifest, std::string & error);
     bool bind_tensor(const std::string & tensor_name, uint32_t expected_columns,

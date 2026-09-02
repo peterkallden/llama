@@ -42,6 +42,8 @@ bool parse_footprint(const std::string & value, astc_vulkan_footprint & footprin
     if (value == "4x4") footprint = astc_vulkan_footprint::k4x4;
     else if (value == "5x5") footprint = astc_vulkan_footprint::k5x5;
     else if (value == "6x6") footprint = astc_vulkan_footprint::k6x6;
+    else if (value == "8x6") footprint = astc_vulkan_footprint::k8x6;
+    else if (value == "8x8") footprint = astc_vulkan_footprint::k8x8;
     else return false;
     return true;
 }

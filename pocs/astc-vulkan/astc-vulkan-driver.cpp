@@ -11,10 +11,10 @@ bool astc_vulkan_pack_atlas(const astc_vulkan_atlas_config & config,
     }
     placements.clear();
     struct cursor { uint32_t page = 0; uint32_t x = 0; uint32_t y = 0; uint32_t row_height = 0; };
-    cursor cursors[3]{};
+    cursor cursors[astc_vulkan_footprint_count]{};
     for (const astc_vulkan_tensor_record & tensor : tensors) {
         if (tensor.name.empty() || tensor.width == 0 || tensor.height == 0 ||
-            astc_vulkan_format(tensor.footprint).block_width == 0) {
+            !astc_vulkan_footprint_is_valid(tensor.footprint)) {
             error = "invalid ASTC Vulkan atlas tensor";
             return false;
         }

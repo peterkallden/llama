@@ -7,8 +7,19 @@ astc_vulkan_format_info astc_vulkan_format(astc_vulkan_footprint footprint) {
         case astc_vulkan_footprint::k4x4: return {4, 4, 16};
         case astc_vulkan_footprint::k5x5: return {5, 5, 16};
         case astc_vulkan_footprint::k6x6: return {6, 6, 16};
+        case astc_vulkan_footprint::k8x6: return {8, 6, 16};
+        case astc_vulkan_footprint::k8x8: return {8, 8, 16};
     }
     return {0, 0, 0};
+}
+
+bool astc_vulkan_footprint_is_valid(astc_vulkan_footprint footprint) {
+    return astc_vulkan_format(footprint).block_width != 0;
+}
+
+bool astc_vulkan_footprint_is_experimental(astc_vulkan_footprint footprint) {
+    return footprint == astc_vulkan_footprint::k8x6 ||
+           footprint == astc_vulkan_footprint::k8x8;
 }
 
 uint64_t astc_vulkan_block_count(astc_vulkan_footprint footprint,
