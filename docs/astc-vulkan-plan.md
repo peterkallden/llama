@@ -1570,6 +1570,13 @@ Pythia crop replays successfully through the sidecar with model-output
 relative MSE `0.026625414` and `0.016833603`, respectively. Proceed next with
 larger/full-tensor artifacts and keep full-model logits as a separate gate.
 
+The complete ASTC-labelled regression suite is green after this work (33/33;
+device tests are capability-gated skips outside the privileged render-device
+run). The next remaining driver-plan item is the explicit scheduler-facing
+adapter experiment, but it must first consume larger/full-tensor manifest
+artifacts and compare full-model outputs; the production `ggml-vulkan` path
+remains untouched.
+
 The comparison executable now supports v2 manifest + payload-blob inputs for
 scalar and gauge artifacts, with normal range/checksum validation, and an
 optional F32 reference-output metric. It retains the old explicit-file mode

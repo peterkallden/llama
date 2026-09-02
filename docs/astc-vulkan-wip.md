@@ -4898,3 +4898,12 @@ model-output relative MSE was `0.026625414`, gauge was `0.016833603`; GPU-vs-
 CPU MSE was `4.49e-14` and `2.82e-15`. The payload blob compares byte-for-byte
 with the exported `.astc` stream. This makes the next full-tensor experiment
 repeatable without hand-built metadata or one-off packaging scripts.
+
+## Two-hundred-sixteenth sweep: complete ASTC regression
+
+After the sidecar cache, manifest comparison, activation-shape guard, and
+artifact packer changes, the complete ASTC-labelled CTest suite is green:
+33/33 tests passed. Eight device-backed tests are capability-gated skips in
+the isolated CTest environment; the Intel render-device ASTC resource and
+sidecar replay gates were run separately and passed. No production
+`ggml-vulkan` source was modified. The branch is clean at this checkpoint.
