@@ -1305,3 +1305,10 @@ decode remains the GPU correctness oracle. A first bounded `c + delta` sweep
 also exists, but gauge-only remains better on its initial fixture; do not make
 semantic correction the default until it wins on disjoint validation and
 holdout traces.
+
+The first footprint-level logits replay is now available as a diagnostic
+control. It confirms the expected 4x4 quality lead and provides a reproducible
+6x6 model-level loss signal, but the two-token prompt is insufficient for a
+format-quality claim. The next quality run must use a larger held-out corpus
+and compare against native Q3/Q4/TQ baselines under the same CPU-only replay
+contract.

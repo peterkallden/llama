@@ -418,6 +418,13 @@ if (BUILD_TESTING)
         add_test(NAME astc-vulkan-latent-smoke
             COMMAND astc-vulkan-latent-smoke)
         set_property(TEST astc-vulkan-latent-smoke PROPERTY LABELS astc)
+        add_test(NAME astc-vulkan-latent-c-delta-smoke
+            COMMAND astc-vulkan-latent-smoke --scalar-anchored-c-delta-sweep
+                --footprint 6x6 --max-rows 8 --max-columns 32
+                --max-samples 8 --max-calibration-samples 8
+                --row-strip-chunked --persistent-worker-contexts
+                --row-strip-light-diagnostics)
+        set_property(TEST astc-vulkan-latent-c-delta-smoke PROPERTY LABELS astc)
         if (GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
             add_test(NAME astc-vulkan-latent-neural-rank-smoke
                 COMMAND astc-vulkan-latent-smoke --neural-rank)

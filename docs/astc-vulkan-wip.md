@@ -4334,3 +4334,21 @@ beat the smaller gauge-only family in this first bounded test. It remains
 offline and opt-in; no runtime metadata or driver contract changes are
 required. Larger cross-tensor tests should only be scheduled after the
 logits/perplexity harness has a stable evaluation set.
+
+## One-hundred-eighty-third sweep: ASTC footprint logits comparison
+
+The CPU-only model replay was run with the same SmolLM2 FP16 reference,
+two-token prompt, activation trace, and layer-0 FFN-down override for all
+three ASTC footprints:
+
+| Footprint | Logits MSE | Relative logits MSE | Loss delta | Top-1 agreement |
+| --- | ---: | ---: | ---: | ---: |
+| 4x4 | `7.5899452` | `0.0562595` | `+0.00396203` | `0` |
+| 5x5 | `7.8249585` | `0.0580015` | `+0.0320572` | `0` |
+| 6x6 | `9.2232363` | `0.0683661` | `+0.0198042` | `0` |
+
+The short prompt is intentionally a diagnostic rather than a quality
+benchmark, so the non-monotonic loss delta between 5x5 and 6x6 is not used
+to rank formats. The robust conclusion is that 4x4 remains the safest model
+fidelity control, while 6x6 provides the bandwidth-oriented candidate that
+must be evaluated with a larger perplexity/logits corpus.
