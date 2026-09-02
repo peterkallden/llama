@@ -1974,6 +1974,22 @@ MSE remained at `4.49e-14` and `2.82e-15`. This closes the bounded provenance
 quality gate without changing runtime code. It does not promote a full-model
 claim: full-shape validation-prefix payloads are still required.
 
+### Full-layer validation-prefix and model gate checkpoint
+
+The full Pythia layer-0 gauge selector now materializes validation prefix
+`323071` for the complete `2048x8192` tensor. Provenance-packed scalar and
+gauge artifacts replayed on Intel Vulkan with CPU agreement below `1e-12` MSE;
+activation-relative MSE was `0.41405234` for scalar and `0.012900798` for
+validation-prefix gauge.
+
+The same fixed 13-token prompt and FP16 model were then used for model replay.
+Scalar ASTC had logits-relative MSE `0.76162122` and loss delta `+6.5926616`;
+gauge had `0.76110259` and `+6.576394`. Native controls on the same prompt were
+Q3 `0.13334801`, Q4 `0.036831488`, TQ1 `1.3231683`, and TQ2 `1.4566528`.
+Thus gauge is a real activation-level improvement over scalar, but not yet a
+model-quality replacement for Q3/Q4. The next plan gate is multi-prompt/full-
+model validation and only then device timing or experimental 8x6/8x8 ranking.
+
 ### Full-layer activation replay checkpoint
 
 The complete Pythia `blk.0.ffn_down.weight` scalar 6x6 stream is now exported

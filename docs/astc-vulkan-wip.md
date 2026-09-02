@@ -5435,6 +5435,68 @@ new provenance sidecars do not alter payload binding or reconstruction. This
 is still a layer-output fixture, not a full-model logits claim; the next
 quality gate remains full-shape validation-prefix export.
 
+## Two-hundred-fortieth sweep: full-layer validation-prefix completion
+
+The full Pythia layer-0 scalar-anchored gauge selector was rerun with exact
+validation-prefix materialization. It processed `467172` 6x6 blocks in 342
+chunked row strips with persistent worker contexts. The validation-selected
+prefix is commit `323071`; the resulting ASTC payload is `7,474,752` bytes and
+the decoded reference is `2048x8192x4` F32.
+
+Final activation metrics on the untouched holdout were:
+
+| Stream | Calibration relative MSE | Holdout relative MSE |
+| --- | ---: | ---: |
+| scalar 6x6 | `0.51027270` | `0.41411019` |
+| full conflict diagnostic | `0.00118401` | `0.012902903` |
+| validation-selected gauge | `0.015939972` (validation) | `0.012900781` |
+
+The validation payload is now a first-class artifact; the full conflict stream
+remains diagnostic only.
+
+## Two-hundred-forty-first sweep: full-layer provenance and replay
+
+The validation-prefix payload was packed with real trace hashes, commit-log
+hash, decoder metadata, source identity, and prefix `323071`. Separate scalar
+and gauge manifests/blobs were replayed on Intel Vulkan over 30 holdout samples:
+
+| Artifact | GPU-vs-CPU MSE | Activation-relative MSE |
+| --- | ---: | ---: |
+| scalar 6x6 | `9.8982317e-13` | `0.41405234` |
+| validation-prefix gauge 6x6 | `8.0637415e-15` | `0.012900798` |
+
+The bytes, dimensions, checksum, and CPU/Vulkan reconstruction all agree.
+
+## Two-hundred-forty-second sweep: model-level replay
+
+Using the same Pythia FP16 model, layer, holdout trace, and fixed 13-token
+prompt, the full-model replay produced:
+
+| Stream | Logits-relative MSE | Top-1 agreement | Loss delta |
+| --- | ---: | ---: | ---: |
+| scalar ASTC 6x6 | `0.76162122` | `0.15384615` | `+6.5926616` |
+| validation-prefix gauge ASTC 6x6 | `0.76110259` | `0.15384615` | `+6.576394` |
+
+Gauge is reproducibly better than scalar, but the model-level effect is small
+and remains far behind the native controls. This demonstrates why activation
+quality and model quality must remain separate gates.
+
+## Two-hundred-forty-third sweep: same-prompt native controls
+
+The same 13-token prompt was run against native Pythia controls:
+
+| Source | Logits-relative MSE | Top-1 agreement | Loss delta |
+| --- | ---: | ---: | ---: |
+| Q3_K_M | `0.13334801` | `0.61538462` | `+0.6118454` |
+| Q4_K_M | `0.036831488` | `0.76923077` | `+0.23582514` |
+| TQ1_0 | `1.3231683` | `0` | `+8.5292258` |
+| TQ2_0 | `1.4566528` | `0` | `+9.736609` |
+
+These controls put the ASTC result in context: gauge improves the ASTC layer
+reconstruction, but this single-layer override is not yet competitive with
+Q3/Q4 at model level. More prompts and full-model artifact replacement are
+required before a final format ranking.
+
 ## Two-hundred-thirty-eighth sweep: full-layer scalar artifact
 
 An export-only scalar 6x6 stream was materialized for the complete Pythia
