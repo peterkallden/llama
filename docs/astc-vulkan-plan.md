@@ -1506,7 +1506,7 @@ scheduler integration out of that change.
     compare GPU output against the CPU oracle. Treat no-ASTC devices as a
     capability-gated skip and keep fixture quality metrics separate from the
     dispatch correctness gate.
-58. Add host-only session error-path tests for invalid handles, dimensions,
+58. [x] Add host-only session error-path tests for invalid handles, dimensions,
     missing shader words, and a tensor whose image does not match the declared
     shape. Add a render-device repeat-run test once the test harness can obtain
     a sampled ASTC device without privileged setup.
@@ -1523,3 +1523,9 @@ render-enabled Intel device. Begin item 60 with an offline/single-tensor
 comparison harness. It must not require scheduler changes and must report
 dispatch correctness, storage bytes and activation/model quality as separate
 metrics.
+
+The first real-tensor comparison baseline is recorded in the WIP log: on a
+32-row Pythia F16 FFN-down crop, Q4_0 is `0.0034055566` activation-relative
+MSE, while the generic block-affine/Hadamard ASTC controls are `0.19758811`
+(4x4) and `0.4618935` (6x6). Keep this control distinct from gauge-only ASTC;
+item 60 must compare each representation from the same tensor and traces.

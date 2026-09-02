@@ -4772,3 +4772,18 @@ The remaining driver-expansion work is therefore the comparison harness, not
 more Vulkan plumbing: run scalar ASTC and gauge-only ASTC beside Q4/TQ and
 FP16 controls using the same model tensors and activation traces. Scheduler
 integration stays behind that evidence gate.
+
+## Two-hundred-ninth sweep: first real-tensor comparison baseline
+
+The existing quality harness was run on the Pythia-1.4B F16 source,
+`blk.0.ffn_down.weight`, with a 32-row crop and 30 held-out activation
+samples. The Q4_0 control measured activation-relative-MSE `0.0034055566`.
+The current block-affine/Hadamard ASTC control measured `0.19758811` at 4x4
+and `0.4618935` at 6x6; the 1% residual option reduced those values only to
+`0.17264895` and `0.39571268`. These are useful quality baselines for the
+generic ASTC quantizer, not gauge-only measurements and not model-wide
+claims. They confirm that the scheduler comparison must use the same source
+tensor and traces for every representation.
+
+The sidecar session error-path tests now cover invalid configuration and
+safe reset, so the pre-scheduler Vulkan contract gate is complete.
