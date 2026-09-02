@@ -5377,3 +5377,28 @@ The rates include format block overhead and therefore differ from the ideal
 1.58-bit ternary entropy. Model-facing rate/quality tables must report these
 physical packed bytes for each source family, while ASTC rates independently
 report real-tensor payload bytes and edge padding.
+
+## Two-hundred-thirty-fifth sweep: provenance sidecar implementation
+
+The artifact packer now has an optional `--provenance` output. When enabled,
+it requires the source family and fixed calibration/validation/holdout,
+selector, validation-prefix, commit-order, and padding identifiers, then
+writes a deterministic text sidecar alongside the compact runtime manifest and
+payload blob. The sidecar records model/tensor identity, footprint,
+representation, the affine decoder contract, physical payload byte count, and
+SHA-256 hashes for both payload and manifest. The runtime manifest remains
+unchanged and still carries only the fields needed for Vulkan binding.
+
+This is intentionally an offline packaging change: no `ggml-vulkan` routing,
+shader interface, or device capability behavior changed. A dedicated
+`test-astc-vulkan-provenance` contract covers required fields, deterministic
+serialization, SHA-256 payload identity, and rejection of unsafe key/value
+contents. A real `32x8192` Pythia fixture was packed successfully; its sidecar
+payload hash matched the independent `sha256sum` of the blob.
+
+The full ASTC-labelled CTest suite is green after the change: **30/30 passed**
+in about 94 seconds. The remaining quality gate is unchanged: materialize
+full-layer scalar and validation-selected artifacts with real corpus hashes,
+replay the exact bytes through the CPU oracle, and only then promote the model
+matrix or Vulkan timing results. Placeholder hashes are suitable only for
+contract tests, never for a research artifact.

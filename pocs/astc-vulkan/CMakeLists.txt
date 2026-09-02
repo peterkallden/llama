@@ -30,6 +30,13 @@ target_include_directories(astc-vulkan-driver PUBLIC
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(astc-vulkan-driver PUBLIC cxx_std_17)
 
+add_library(astc-vulkan-provenance STATIC
+    astc-vulkan-provenance.cpp)
+target_include_directories(astc-vulkan-provenance PUBLIC
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_link_libraries(astc-vulkan-provenance PUBLIC vendor::hash)
+target_compile_features(astc-vulkan-provenance PUBLIC cxx_std_17)
+
 add_executable(test-astc-vulkan-driver
     tests/test-astc-vulkan-driver.cpp)
 target_link_libraries(test-astc-vulkan-driver PRIVATE astc-vulkan-driver)
@@ -39,7 +46,8 @@ target_compile_features(test-astc-vulkan-driver PRIVATE cxx_std_17)
 
 add_executable(astc-vulkan-artifact-pack
     astc-vulkan-artifact-pack.cpp)
-target_link_libraries(astc-vulkan-artifact-pack PRIVATE astc-vulkan-driver)
+target_link_libraries(astc-vulkan-artifact-pack PRIVATE
+    astc-vulkan-driver astc-vulkan-provenance)
 target_include_directories(astc-vulkan-artifact-pack PRIVATE
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(astc-vulkan-artifact-pack PRIVATE cxx_std_17)
@@ -467,6 +475,14 @@ if (ASTC_VULKAN_GLSLC)
 endif()
 
 if (BUILD_TESTING)
+    add_executable(test-astc-vulkan-provenance
+        tests/test-astc-vulkan-provenance.cpp)
+    target_link_libraries(test-astc-vulkan-provenance PRIVATE astc-vulkan-provenance)
+    target_compile_features(test-astc-vulkan-provenance PRIVATE cxx_std_17)
+    add_test(NAME test-astc-vulkan-provenance
+        COMMAND test-astc-vulkan-provenance)
+    set_property(TEST test-astc-vulkan-provenance PROPERTY LABELS astc)
+
     add_executable(test-astc-vulkan-error-shaping
         tests/test-astc-vulkan-error-shaping.cpp)
     target_compile_features(test-astc-vulkan-error-shaping PRIVATE cxx_std_17)

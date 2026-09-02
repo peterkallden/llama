@@ -1934,3 +1934,21 @@ The isolated quant-export tool now supports `f32`, `q4_0`, `tq1_0`, and
 (`2.0625` bits/weight). These are physical packed rates including block
 overhead, not ideal ternary entropy. Future rate tables must use measured
 native rates rather than theoretical format labels.
+
+### Provenance sidecar implementation checkpoint
+
+`astc-vulkan-artifact-pack` now accepts `--provenance` and emits a deterministic
+offline sidecar containing source model/tensor identity, source quantization
+family, ASTC footprint and representation, affine decoder constants,
+calibration/validation/holdout identifiers, selector configuration,
+validation-selected prefix, commit-order and padding contracts, payload size,
+and SHA-256 hashes for the payload and manifest. The compact runtime manifest
+and Vulkan shader contract are unchanged. The sidecar writer is isolated in
+`astc-vulkan-provenance` and has its own ASTC-labelled contract test; the full
+suite is green at 30/30 after the change.
+
+The sidecar is now a prerequisite for full-layer quality artifacts. Real trace
+and commit-order hashes must be supplied for production measurements; synthetic
+values are allowed only in the serialization test. This keeps future 8x6/8x8,
+Q3/Q4, and TQ comparisons replayable without allowing provenance machinery to
+alter candidate selection or runtime execution.

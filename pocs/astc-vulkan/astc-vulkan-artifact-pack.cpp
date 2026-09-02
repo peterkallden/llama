@@ -1,4 +1,5 @@
 #include "astc-vulkan-manifest.h"
+#include "astc-vulkan-provenance.h"
 
 #include <cstdint>
 #include <fstream>
@@ -16,6 +17,17 @@ std::vector<uint8_t> read_bytes(const std::string & path) {
     file.seekg(0);
     file.read(reinterpret_cast<char *>(result.data()), size);
     return file ? result : std::vector<uint8_t>();
+}
+
+std::string read_text(const std::string & path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file) return {};
+    const std::streamsize size = file.tellg();
+    if (size < 0) return {};
+    std::string result(static_cast<size_t>(size), '\0');
+    file.seekg(0);
+    file.read(result.data(), size);
+    return file ? result : std::string();
 }
 
 bool read_metadata(const std::string & path, float & scale_l, float & scale_a,
@@ -60,7 +72,10 @@ bool parse_representation(const std::string & value, astc_vulkan_representation 
 
 int main(int argc, char ** argv) {
     std::string input, metadata, manifest_path, payload_path, tensor_name,
-                fingerprint, footprint_name = "6x6", representation_name = "scalar";
+                fingerprint, provenance_path, source_family, calibration_hash,
+                validation_hash, holdout_hash, selector_config, validation_prefix,
+                commit_order_hash, padding_contract, footprint_name = "6x6",
+                representation_name = "scalar";
     uint32_t width = 0, height = 0;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string option = argv[i];
@@ -71,6 +86,15 @@ int main(int argc, char ** argv) {
         else if (option == "--payload") payload_path = value;
         else if (option == "--tensor") tensor_name = value;
         else if (option == "--model-fingerprint") fingerprint = value;
+        else if (option == "--provenance") provenance_path = value;
+        else if (option == "--source-family") source_family = value;
+        else if (option == "--calibration-hash") calibration_hash = value;
+        else if (option == "--validation-hash") validation_hash = value;
+        else if (option == "--holdout-hash") holdout_hash = value;
+        else if (option == "--selector-config") selector_config = value;
+        else if (option == "--validation-prefix") validation_prefix = value;
+        else if (option == "--commit-order-hash") commit_order_hash = value;
+        else if (option == "--padding-contract") padding_contract = value;
         else if (option == "--width") width = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--footprint") footprint_name = value;
@@ -104,5 +128,33 @@ int main(int argc, char ** argv) {
     if (!astc_vulkan_write_manifest(manifest_path, manifest, error)) return 1;
     std::ofstream payload(payload_path, std::ios::binary);
     payload.write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
-    return payload.good() ? 0 : 1;
+    if (!payload.good()) return 1;
+    if (!provenance_path.empty()) {
+        const std::string manifest_bytes = read_text(manifest_path);
+        astc_vulkan_provenance provenance;
+        provenance.source_model = fingerprint;
+        provenance.source_tensor = tensor_name;
+        provenance.source_family = source_family;
+        provenance.footprint = footprint_name;
+        provenance.representation = representation_name;
+        provenance.decoder_contract = "scale_l:" + std::to_string(scale_l) +
+                                     ",scale_a:" + std::to_string(scale_a) +
+                                     ",offset:" + std::to_string(offset);
+        provenance.calibration_hash = calibration_hash;
+        provenance.validation_hash = validation_hash;
+        provenance.holdout_hash = holdout_hash;
+        provenance.selector_config = selector_config;
+        provenance.validation_prefix = validation_prefix;
+        provenance.commit_order_hash = commit_order_hash;
+        provenance.padding_contract = padding_contract;
+        provenance.payload_bytes = bytes.size();
+        provenance.payload_sha256 = astc_vulkan_sha256_hex(bytes.data(), bytes.size());
+        provenance.manifest_sha256 = astc_vulkan_sha256_hex(
+            manifest_bytes.data(), manifest_bytes.size());
+        if (!astc_vulkan_write_provenance(provenance_path, provenance, error)) {
+            std::fprintf(stderr, "cannot write ASTC Vulkan provenance: %s\n", error.c_str());
+            return 1;
+        }
+    }
+    return 0;
 }
