@@ -5133,7 +5133,7 @@ run the fixed prompt/output matrix before any larger crop or GPU timing.
 
 ## Two-hundred-twenty-fourth sweep: artifact and Vulkan replay gate
 
-A scalar 8x6/8x8 export and a validation-compatible scalar-anchored gauge
+A scalar 8x6/8x8 export and a deterministic scalar-anchored gauge
 payload were packaged with the ASTC manifest tools. The packed payloads were
 byte-identical to the selector output. Decoding the packed streams produced
 the exact same float texels as the direct selector reference (RMSE `0`, max
