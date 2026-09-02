@@ -51,8 +51,13 @@ int main(int argc, char ** argv) {
     std::string shader, payload_path, activation_path, decoded_path, weights_path, metadata_path, reference_output_path;
     uint32_t width = 0, height = 0, max_samples = 0;
     uint8_t footprint = 2;
+    bool allow_experimental = false;
     for (int i = 1; i < argc; ++i) {
         const std::string option = argv[i];
+        if (option == "--allow-experimental") {
+            allow_experimental = true;
+            continue;
+        }
         if (i + 1 >= argc) break;
         if (option == "--shader") shader = argv[++i];
         else if (option == "--payload") payload_path = argv[++i];
@@ -68,7 +73,8 @@ int main(int argc, char ** argv) {
         else { std::fprintf(stderr, "unknown option: %s\n", option.c_str()); return 2; }
     }
     if (shader.empty() || payload_path.empty() || activation_path.empty() || decoded_path.empty() ||
-        weights_path.empty() || width == 0 || height == 0 || footprint > 2) return 2;
+        weights_path.empty() || width == 0 || height == 0 || footprint > 4 ||
+        (footprint > 2 && !allow_experimental)) return 2;
     const std::vector<uint32_t> spirv = read_spirv(shader);
     const std::vector<uint8_t> payload = read_binary<uint8_t>(payload_path);
     const std::vector<float> decoded = read_binary<float>(decoded_path);
@@ -111,7 +117,8 @@ int main(int argc, char ** argv) {
     astc_vulkan_sidecar sidecar;
     astc_vulkan_ffn_binding binding;
     if (!sidecar.set_manifest(manifest, error) ||
-        !sidecar.init(static_cast<astc_vulkan_footprint>(footprint), error)) return 77;
+        !sidecar.init(static_cast<astc_vulkan_footprint>(footprint), error,
+                      allow_experimental)) return 77;
     if (!sidecar.bind_tensor(record.name, width, height, payload, binding, error)) {
         std::fprintf(stderr, "%s\n", error.c_str()); return 1;
     }
