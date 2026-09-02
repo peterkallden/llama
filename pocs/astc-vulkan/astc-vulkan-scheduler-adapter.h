@@ -16,7 +16,12 @@ public:
                  std::string & error);
     bool run(const std::vector<uint32_t> & spirv, const std::vector<float> & activations,
              std::vector<float> & output, std::string & error);
-    void reset() { sidecar_.reset(); payload_.clear(); tensor_name_.clear(); }
+    void reset() {
+        sidecar_.reset();
+        binding_ = {};
+        payload_.clear();
+        tensor_name_.clear();
+    }
     bool ready() const { return sidecar_.ready() && binding_.status == astc_vulkan_binding_status::kReady; }
     const astc_vulkan_ffn_binding & binding() const { return binding_; }
 

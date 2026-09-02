@@ -595,10 +595,10 @@ int main(int argc, char ** argv) {
     if (shader_module != VK_NULL_HANDLE) vkDestroyShaderModule(device, shader_module, nullptr);
     if (descriptor_pool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
     if (descriptor_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, descriptor_layout, nullptr);
-    if (output_memory != VK_NULL_HANDLE) vkFreeMemory(device, output_memory, nullptr);
     if (output_buffer != VK_NULL_HANDLE) vkDestroyBuffer(device, output_buffer, nullptr);
-    if (staging_memory != VK_NULL_HANDLE) vkFreeMemory(device, staging_memory, nullptr);
+    if (output_memory != VK_NULL_HANDLE) vkFreeMemory(device, output_memory, nullptr);
     if (staging_buffer != VK_NULL_HANDLE) vkDestroyBuffer(device, staging_buffer, nullptr);
+    if (staging_memory != VK_NULL_HANDLE) vkFreeMemory(device, staging_memory, nullptr);
     astc_vulkan_destroy_sampled_image(device, image);
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);

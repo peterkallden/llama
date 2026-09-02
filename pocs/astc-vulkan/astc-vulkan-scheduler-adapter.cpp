@@ -19,6 +19,9 @@ bool astc_vulkan_scheduler_adapter::prepare(
         const std::string & manifest_path, const std::string & payload_blob_path,
         const std::string & tensor_name, astc_vulkan_footprint footprint,
         std::string & error) {
+    // Preparation is transactional: a failed reload must not leave a previous
+    // tensor executable through ready() or run().
+    reset();
     astc_vulkan_manifest manifest;
     const std::vector<uint8_t> blob = read_bytes(payload_blob_path);
     if (blob.empty() || !astc_vulkan_read_manifest(manifest_path, manifest, error) ||

@@ -31,8 +31,8 @@ bool create_host_buffer(VkPhysicalDevice physical_device, VkDevice device,
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, requirements.size, memory_type};
     if (vkAllocateMemory(device, &allocation, nullptr, &memory) != VK_SUCCESS ||
         vkBindBufferMemory(device, buffer, memory, 0) != VK_SUCCESS) {
-        if (memory != VK_NULL_HANDLE) vkFreeMemory(device, memory, nullptr);
         vkDestroyBuffer(device, buffer, nullptr);
+        if (memory != VK_NULL_HANDLE) vkFreeMemory(device, memory, nullptr);
         buffer = VK_NULL_HANDLE;
         memory = VK_NULL_HANDLE;
         return false;
@@ -41,8 +41,8 @@ bool create_host_buffer(VkPhysicalDevice physical_device, VkDevice device,
 }
 
 void destroy_buffer(VkDevice device, VkBuffer & buffer, VkDeviceMemory & memory) {
-    if (memory != VK_NULL_HANDLE) vkFreeMemory(device, memory, nullptr);
     if (buffer != VK_NULL_HANDLE) vkDestroyBuffer(device, buffer, nullptr);
+    if (memory != VK_NULL_HANDLE) vkFreeMemory(device, memory, nullptr);
     buffer = VK_NULL_HANDLE;
     memory = VK_NULL_HANDLE;
 }
@@ -203,7 +203,8 @@ bool astc_vulkan_matvec_session::init(
     }
     const VkCommandPoolCreateInfo command_pool_info{
         VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr,
-        VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queue_family_};
+        VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        queue_family_};
     if (vkCreateCommandPool(device_, &command_pool_info, nullptr, &command_pool_) != VK_SUCCESS) {
         error = "failed to create ASTC matvec command pool";
         reset();

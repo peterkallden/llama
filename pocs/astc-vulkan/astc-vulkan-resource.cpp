@@ -69,8 +69,8 @@ bool astc_vulkan_create_sampled_image(VkPhysicalDevice physical_device,
     };
     if (vkAllocateMemory(device, &allocate_info, nullptr, &resources.memory) != VK_SUCCESS ||
         vkBindImageMemory(device, resources.image, resources.memory, 0) != VK_SUCCESS) {
-        if (resources.memory != VK_NULL_HANDLE) vkFreeMemory(device, resources.memory, nullptr);
         vkDestroyImage(device, resources.image, nullptr);
+        if (resources.memory != VK_NULL_HANDLE) vkFreeMemory(device, resources.memory, nullptr);
         resources = {};
         return false;
     }
@@ -82,8 +82,8 @@ bool astc_vulkan_create_sampled_image(VkPhysicalDevice physical_device,
         { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
     if (vkCreateImageView(device, &view_info, nullptr, &resources.view) != VK_SUCCESS) {
-        vkFreeMemory(device, resources.memory, nullptr);
         vkDestroyImage(device, resources.image, nullptr);
+        vkFreeMemory(device, resources.memory, nullptr);
         resources = {};
         return false;
     }
@@ -97,8 +97,8 @@ bool astc_vulkan_create_sampled_image(VkPhysicalDevice physical_device,
     };
     if (vkCreateSampler(device, &sampler_info, nullptr, &resources.sampler) != VK_SUCCESS) {
         vkDestroyImageView(device, resources.view, nullptr);
-        vkFreeMemory(device, resources.memory, nullptr);
         vkDestroyImage(device, resources.image, nullptr);
+        vkFreeMemory(device, resources.memory, nullptr);
         resources = {};
         return false;
     }
@@ -109,8 +109,8 @@ void astc_vulkan_destroy_sampled_image(VkDevice device,
                                        astc_vulkan_image_resources & resources) {
     if (resources.sampler != VK_NULL_HANDLE) vkDestroySampler(device, resources.sampler, nullptr);
     if (resources.view != VK_NULL_HANDLE) vkDestroyImageView(device, resources.view, nullptr);
-    if (resources.memory != VK_NULL_HANDLE) vkFreeMemory(device, resources.memory, nullptr);
     if (resources.image != VK_NULL_HANDLE) vkDestroyImage(device, resources.image, nullptr);
+    if (resources.memory != VK_NULL_HANDLE) vkFreeMemory(device, resources.memory, nullptr);
     resources = {};
 }
 
@@ -235,8 +235,8 @@ bool astc_vulkan_texture::upload(VkPhysicalDevice physical_device, VkDevice devi
     if (submitted && !success) vkDeviceWaitIdle(device);
     if (fence != VK_NULL_HANDLE) vkDestroyFence(device, fence, nullptr);
     if (command_pool != VK_NULL_HANDLE) vkDestroyCommandPool(device, command_pool, nullptr);
-    if (staging_memory != VK_NULL_HANDLE) vkFreeMemory(device, staging_memory, nullptr);
     if (staging_buffer != VK_NULL_HANDLE) vkDestroyBuffer(device, staging_buffer, nullptr);
+    if (staging_memory != VK_NULL_HANDLE) vkFreeMemory(device, staging_memory, nullptr);
     if (!success) {
         error = "ASTC Vulkan texture upload failed";
         astc_vulkan_destroy_sampled_image(device, resources_);

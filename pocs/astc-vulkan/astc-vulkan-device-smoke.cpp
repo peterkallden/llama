@@ -72,10 +72,10 @@ bool create_and_upload_image_legacy(VkPhysicalDevice physical_device, VkDevice d
     };
     if (vkAllocateMemory(device, &image_allocate_info, nullptr, &resources.memory) != VK_SUCCESS ||
         vkBindImageMemory(device, resources.image, resources.memory, 0) != VK_SUCCESS) {
+        vkDestroyImage(device, resources.image, nullptr);
         if (resources.memory != VK_NULL_HANDLE) {
             vkFreeMemory(device, resources.memory, nullptr);
         }
-        vkDestroyImage(device, resources.image, nullptr);
         return false;
     }
 
@@ -87,8 +87,8 @@ bool create_and_upload_image_legacy(VkPhysicalDevice physical_device, VkDevice d
         { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
     if (vkCreateImageView(device, &view_info, nullptr, &resources.view) != VK_SUCCESS) {
-        vkFreeMemory(device, resources.memory, nullptr);
         vkDestroyImage(device, resources.image, nullptr);
+        vkFreeMemory(device, resources.memory, nullptr);
         return false;
     }
 
@@ -102,8 +102,8 @@ bool create_and_upload_image_legacy(VkPhysicalDevice physical_device, VkDevice d
     };
     if (vkCreateSampler(device, &sampler_info, nullptr, &resources.sampler) != VK_SUCCESS) {
         vkDestroyImageView(device, resources.view, nullptr);
-        vkFreeMemory(device, resources.memory, nullptr);
         vkDestroyImage(device, resources.image, nullptr);
+        vkFreeMemory(device, resources.memory, nullptr);
         return false;
     }
 
@@ -220,16 +220,16 @@ bool create_and_upload_image_legacy(VkPhysicalDevice physical_device, VkDevice d
         success = true;
     } while (false);
 
-    if (staging_memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, staging_memory, nullptr);
-    }
     if (staging_buffer != VK_NULL_HANDLE) {
         vkDestroyBuffer(device, staging_buffer, nullptr);
     }
+    if (staging_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, staging_memory, nullptr);
+    }
     vkDestroySampler(device, resources.sampler, nullptr);
     vkDestroyImageView(device, resources.view, nullptr);
-    vkFreeMemory(device, resources.memory, nullptr);
     vkDestroyImage(device, resources.image, nullptr);
+    vkFreeMemory(device, resources.memory, nullptr);
     return success;
 }
 
