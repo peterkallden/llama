@@ -5,6 +5,7 @@
 #include "astc-vulkan-hash.h"
 #include "astc-vulkan-block-ldlq.h"
 #include "astc-vulkan-pv.h"
+#include "astc-vulkan-d1-prescreen.h"
 #include "astc-vulkan-input.h"
 
 #include <algorithm>
@@ -19,11 +20,25 @@
 #include <map>
 #include <string>
 #include <thread>
+#include <utility>
 #include <cerrno>
 #include <cstring>
 #include <vector>
 
 namespace {
+
+std::pair<uint32_t, uint32_t> d1_prescreen_dimensions(astc_vulkan_footprint footprint) {
+    switch (footprint) {
+    case astc_vulkan_footprint::k4x4: return {4, 4};
+    case astc_vulkan_footprint::k5x5: return {5, 5};
+    case astc_vulkan_footprint::k6x6: return {6, 6};
+    case astc_vulkan_footprint::k8x6: return {8, 6};
+    case astc_vulkan_footprint::k10x6: return {10, 6};
+    case astc_vulkan_footprint::k8x8: return {8, 8};
+    case astc_vulkan_footprint::k10x8: return {10, 8};
+    default: return {1, 1};
+    }
+}
 
 constexpr uint32_t kRows = 32;
 constexpr uint32_t kColumns = 256;
@@ -1301,7 +1316,7 @@ public:
         workers_.resize(worker_count, nullptr);
         source_scratch_.resize(worker_count);
         for (astcenc_context * & worker : workers_) {
-            if (astcenc_context_alloc(&config, 1, &worker) != ASTCENC_SUCCESS) return false;
+            if (astcenc_context_alloc(&config, 1, &worker, nullptr) != ASTCENC_SUCCESS) return false;
         }
         return true;
     }
@@ -3304,6 +3319,7 @@ int main(int argc, char ** argv) {
     bool pv_lite_grid_sweep = false;
     bool pv_lite_coarse_grid_sweep = false;
     bool pv_alternate = false;
+    bool d1_prescreen = false;
     encoder_search_mode encoder_search = encoder_search_mode::standard;
     uint32_t neural_candidate_limit = 16;
     for (int index = 1; index < argc; ++index) {
@@ -3388,6 +3404,8 @@ int main(int argc, char ** argv) {
             weight_grid_gauge_sweep = true;
         } else if (option == "--pv-alternate") {
             pv_alternate = true;
+        } else if (option == "--d1-prescreen") {
+            d1_prescreen = true;
             scalar_anchored_gauge_sweep = true;
         } else if (option == "--decode-loop-log" && index + 1 < argc) {
             decode_loop_log_path = argv[++index];
@@ -3651,6 +3669,36 @@ int main(int argc, char ** argv) {
     crop_activation_columns(inputs, columns);
     crop_activation_columns(calibration_inputs, columns);
     crop_activation_columns(validation_inputs, columns);
+    std::vector<astc_vulkan_footprint> prescreen_footprints;
+    if (d1_prescreen && footprint.empty()) {
+        std::vector<float> column_energy(columns, 0.0f);
+        for (uint32_t sample = 0; sample < calibration_inputs.samples; ++sample) {
+            const float * input = calibration_inputs.values.data() + static_cast<size_t>(sample) * columns;
+            for (uint32_t column = 0; column < columns; ++column) column_energy[column] += input[column] * input[column];
+        }
+        const std::vector<astc_vulkan_d1_prescreen_candidate> screen_candidates{
+            {astc_vulkan_footprint::k4x4, 16}, {astc_vulkan_footprint::k5x5, 16},
+            {astc_vulkan_footprint::k6x6, 16}, {astc_vulkan_footprint::k8x6, 16},
+            {astc_vulkan_footprint::k10x6, 8}, {astc_vulkan_footprint::k8x8, 8},
+            {astc_vulkan_footprint::k10x8, 8}};
+        std::vector<astc_vulkan_d1_prescreen_score> scores;
+        std::vector<astc_vulkan_d1_prescreen_score> shortlist;
+        if (!astc_vulkan_score_d1_prescreen_cpu(weights, rows, columns, column_energy,
+                                                screen_candidates, scores) ||
+            !astc_vulkan_select_d1_prescreen_shortlist(scores, 4, 0.0, shortlist)) {
+            std::fprintf(stderr, "D1 pre-screen failed\n");
+            return 1;
+        }
+        std::printf("d1-prescreen shortlist:");
+        for (const auto & score : shortlist) {
+            prescreen_footprints.push_back(score.candidate.footprint);
+            const auto dimensions = d1_prescreen_dimensions(score.candidate.footprint);
+            std::printf(" %ux%u(levels=%u,relative=%.6g,bpw=%.4g)", dimensions.first,
+                        dimensions.second, score.candidate.levels, score.normalized_error,
+                        score.bits_per_weight);
+        }
+        std::printf("\n");
+    }
     for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,
                                  ggml_vk_astc_5x5_unorm_rgba,
                                  ggml_vk_astc_6x6_unorm_rgba,
@@ -3662,6 +3710,14 @@ int main(int argc, char ** argv) {
         const std::string format_footprint = std::to_string(format.block_width) + "x" +
                                              std::to_string(format.block_height);
         if (!footprint.empty() && footprint != format_footprint) continue;
+        if (footprint.empty() && d1_prescreen) {
+            const auto selected = std::find_if(prescreen_footprints.begin(), prescreen_footprints.end(),
+                [&](astc_vulkan_footprint candidate) {
+                    const auto dimensions = d1_prescreen_dimensions(candidate);
+                    return format.block_width == dimensions.first && format.block_height == dimensions.second;
+                });
+            if (selected == prescreen_footprints.end()) continue;
+        }
         latent_representation additive_latents;
         if (!export_only || export_mode == "additive") {
             additive_latents = make_additive_latents(

@@ -6,8 +6,26 @@
 
 namespace {
 
+bool valid_footprint(astc_vulkan_footprint footprint) {
+    return static_cast<uint8_t>(footprint) < astc_vulkan_footprint_count &&
+           footprint != astc_vulkan_footprint::k8x5 && footprint != astc_vulkan_footprint::k10x5;
+}
+
+astc_vulkan_format_info local_format(astc_vulkan_footprint footprint) {
+    switch (footprint) {
+    case astc_vulkan_footprint::k4x4: return {4, 4, 16};
+    case astc_vulkan_footprint::k5x5: return {5, 5, 16};
+    case astc_vulkan_footprint::k6x6: return {6, 6, 16};
+    case astc_vulkan_footprint::k8x6: return {8, 6, 16};
+    case astc_vulkan_footprint::k8x8: return {8, 8, 16};
+    case astc_vulkan_footprint::k10x6: return {10, 6, 16};
+    case astc_vulkan_footprint::k10x8: return {10, 8, 16};
+    default: return {0, 0, 0};
+    }
+}
+
 double bits_per_weight(astc_vulkan_footprint footprint) {
-    const auto format = astc_vulkan_format(footprint);
+    const auto format = local_format(footprint);
     return 128.0 / static_cast<double>(format.block_width * format.block_height);
 }
 
@@ -30,11 +48,11 @@ bool astc_vulkan_score_d1_prescreen_cpu(
     }
     scores.reserve(candidates.size());
     for (const auto candidate : candidates) {
-        if (!astc_vulkan_footprint_is_valid(candidate.footprint) || candidate.levels < 2) {
+        if (!valid_footprint(candidate.footprint) || candidate.levels < 2) {
             scores.clear();
             return false;
         }
-        const auto format = astc_vulkan_format(candidate.footprint);
+        const auto format = local_format(candidate.footprint);
         double error = 0.0;
         for (uint32_t y0 = 0; y0 < rows; y0 += format.block_height) {
             for (uint32_t x0 = 0; x0 < columns; x0 += format.block_width) {
