@@ -340,7 +340,9 @@ bool write_export_metadata(const std::string & path, const ggml_vk_astc_format_c
                            const char * source_hash = "unspecified",
                            const char * calibration_hash = "unspecified",
                            const char * validation_hash = "unspecified",
-                           const char * holdout_hash = "unspecified") {
+                           const char * holdout_hash = "unspecified",
+                           const char * objective = "activation-relative-mse",
+                           const char * optimizer = "none") {
     std::ofstream file(path);
     if (!file) return false;
     file << "version=1\n"
@@ -352,6 +354,8 @@ bool write_export_metadata(const std::string & path, const ggml_vk_astc_format_c
          << "block_height=" << format.block_height << "\n"
          << "encoder_profile=" << encoder_profile << "\n"
          << "candidate_family=" << candidate_family << "\n"
+         << "objective=" << objective << "\n"
+         << "optimizer=" << optimizer << "\n"
          << "validation_prefix=" << validation_prefix << "\n"
          << "astc_preset=" << astc_preset_name() << "\n"
          << "source_hash=" << source_hash << "\n"

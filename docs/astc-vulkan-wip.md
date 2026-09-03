@@ -6568,6 +6568,12 @@ is integration on fixed legal payload pools: PV first on `10x6`/`8x8`, then
 YAQA on `10x8`/`10x10`; each must use a new objective/profile version and
 retain the scalar-neutral fallback.
 
+As a replay-safety follow-up, latent-smoke export metadata now records
+`objective` and `optimizer` in addition to the existing encoder profile and
+candidate family. Existing exports use the explicit defaults
+`activation-relative-mse` and `none`; this is additive metadata only and does
+not alter payload bytes, validation-prefix semantics, or Vulkan decoding.
+
 ## Two-hundred-seventy-sixth sweep: resume audit and standard selector contracts
 
 The interrupted `10x8` run could not be resumed because the prior session's

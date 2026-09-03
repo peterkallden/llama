@@ -2248,6 +2248,12 @@ profile. Its next integration gate is to connect the projector to the exact
 ASTC artifact oracle and compare it against the frozen PV-lite pool on the
 same calibration/validation/holdout corpus.
 
+Artifact metadata now carries additive `objective` and `optimizer` fields.
+Existing streams default to `activation-relative-mse`/`none`; future PV and
+YAQA exports must identify their objective and optimizer explicitly. This
+keeps replay comparisons attributable without changing version-1 payload
+layout or requiring any runtime PV/YAQA state.
+
 The first ASTC adaptation must be deliberately small:
 
 1. Freeze a provenance-bound 10x6/8x8 candidate pool and scalar-anchored
