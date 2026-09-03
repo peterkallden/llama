@@ -2876,5 +2876,7 @@ search while preserving the existing artifact oracle.
 The first Vulkan kernel (`d1-prescreen.comp`) mirrors this CPU oracle and
 builds successfully for Vulkan 1.1. It evaluates one footprint/source-level
 candidate per invocation and writes one score per candidate. A device session
-and buffer-lifecycle smoke are the next binding step; until that exists, the
-CPU implementation remains the reference and no GPU result is selectable.
+and buffer-lifecycle smoke now bind the same buffers and compare every GPU
+score against the CPU oracle. The smoke passed on the available Vulkan
+compute device. This remains a pre-screen gate: its result may reduce the CPU
+astcenc search, but cannot replace exact ASTC artifact replay.

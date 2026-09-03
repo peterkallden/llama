@@ -283,6 +283,14 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-yaqa-batch-device-smoke PRIVATE
         astc-vulkan-algorithms Vulkan::Vulkan)
     target_compile_features(astc-vulkan-yaqa-batch-device-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-d1-prescreen-device-smoke
+        astc-vulkan-d1-prescreen-device-smoke.cpp)
+    target_include_directories(astc-vulkan-d1-prescreen-device-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-d1-prescreen-device-smoke PRIVATE
+        astc-vulkan-algorithms astc-vulkan-resource Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-d1-prescreen-device-smoke PRIVATE cxx_std_17)
 endif()
 
 find_package(astcenc CONFIG QUIET)
@@ -814,6 +822,14 @@ if (ASTC_VULKAN_GLSLC)
                 ${ASTC_VULKAN_YAQA_TRACE_REDUCE_SHADER_OUTPUT})
         set_property(TEST astc-vulkan-yaqa-batch-device-smoke PROPERTY LABELS astc)
         set_property(TEST astc-vulkan-yaqa-batch-device-smoke PROPERTY SKIP_RETURN_CODE 77)
+    endif()
+    if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-d1-prescreen-device-smoke)
+        add_dependencies(astc-vulkan-d1-prescreen-device-smoke astc-vulkan-d1-prescreen-shader)
+        add_test(NAME astc-vulkan-d1-prescreen-device-smoke
+            COMMAND astc-vulkan-d1-prescreen-device-smoke
+                ${ASTC_VULKAN_D1_PRESCREEN_SHADER_OUTPUT})
+        set_property(TEST astc-vulkan-d1-prescreen-device-smoke PROPERTY LABELS astc)
+        set_property(TEST astc-vulkan-d1-prescreen-device-smoke PROPERTY SKIP_RETURN_CODE 77)
     endif()
     if (TARGET ggml-base AND TARGET astc-vulkan-ffn-adapter)
         add_executable(astc-vulkan-ffn-e2e-smoke
