@@ -2708,6 +2708,27 @@ but regressed untouched holdout, so the full neural search remains the quality
 reference. Any future bank widening must prove candidate recall and holdout
 equivalence or improvement before it can be selected by the producer.
 
+### D2_10x5 implementation gate
+
+`D2_10x5` is now implemented through the bounded PoC chain. It has an explicit
+compile-time profile for the 10-column/5-row physical block, dedicated
+standard CPU model and selector smokes, and a neural side-fork selector
+variant. The nominal density is `128 / (10 * 5 * 2) = 1.28` bits/weight; the
+five-row block still reconstructs ten local logical rows, so the shader and
+selector retain the same row-strip factorization as D2_8x5.
+
+The device smoke checks the standard `VK_FORMAT_ASTC_10x5_UNORM_BLOCK` path
+when the selected device advertises it, including both `RG/B` and `R/GB`, the
+16-lane reduction, and proposal-gain arithmetic. Devices that expose only
+8x5 keep the 8x5 gate and report 10x5 as unsupported. This is a capability
+condition, not a substitute format.
+
+The profile remains experimental: no full-size D2_10x5 artifact, metadata-
+aware production upload, or model-level quality claim has been promoted. The
+next gate is the production execution order below, starting with the standard
+6x6 scalar/gauge adapter and its Q4_K_M/Q3_K_M fallback before any D2 profile
+can enter the scheduler.
+
 ### Offline ranking backend selection
 
 The packer has an explicit stage plan rather than a hard-coded CPU/GPU choice.
