@@ -2920,3 +2920,35 @@ The current gate sequence is:
 The first crop showed a small standard-backend 8x5 holdout improvement, while
 the neural backend and a smaller crop did not. Therefore PV remains an
 opt-in research profile and is not yet suitable for scheduler promotion.
+
+### Model-adjacent cache contract
+
+Approved artifacts are stored as a sidecar directory next to the base GGUF:
+
+```text
+model.gguf.astc-vulkan/
+  manifest.astcv
+  payload.astcpack
+  layout-map.bin              # only if any record is paired-D2
+  provenance.txt              # optional research provenance
+  source.gguf.sha256
+  manifest.sha256
+  payload.sha256
+  layout-map.sha256           # only for paired-D2
+```
+
+The cache is an overlay, not a replacement model: the base GGUF still owns
+architecture, tokenizer and all non-ASTC tensors. Loader integration accepts
+`auto` (the adjacent directory), an explicit cache directory, or the manifest
+path. It must verify the source GGUF and every cache file before binding any
+tensor, then fail closed to normal Q4/Q3 routing on a cache miss or mismatch.
+
+JIT cache creation is deliberately split by representation. Scalar artifacts
+may eventually be created under an explicit user opt-in. Gauge/YAQA artifacts
+must be prebuilt with versioned calibration/validation data; the first user
+prompt is not valid calibration input. The cache creator uses a staging
+directory plus atomic rename and refuses to overwrite a pre-existing cache.
+
+Paired-D2 layout metadata is supported by the cache now, but D2 remains an
+experimental transport profile and is rejected by the automatic D1 scheduler
+until it completes artifact-backed and full-model quality gates.

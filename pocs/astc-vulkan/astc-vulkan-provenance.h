@@ -30,6 +30,12 @@ struct astc_vulkan_provenance {
 // remains useful for fast payload validation, but is not a provenance hash.
 std::string astc_vulkan_sha256_hex(const void * data, size_t size);
 
+// Streams a file through the same SHA-256 implementation used for artifact
+// provenance. This keeps multi-gigabyte GGUF identity checks bounded in
+// memory when a cache is opened beside a model.
+bool astc_vulkan_sha256_file_hex(const std::string & path, std::string & hash,
+                                 std::string & error);
+
 bool astc_vulkan_validate_provenance(const astc_vulkan_provenance & provenance,
                                      std::string & error);
 bool astc_vulkan_write_provenance(const std::string & path,

@@ -1,7 +1,11 @@
 #include "astc-vulkan-provenance.h"
 
 #include "hash/hash.h"
+extern "C" {
+#include "hash/sha256/sha256.h"
+}
 
+#include <array>
 #include <cctype>
 #include <fstream>
 
@@ -19,10 +23,46 @@ bool write_field(std::ofstream & file, const char * key, const std::string & val
     return file.good();
 }
 
+std::string hex_digest(const unsigned char * digest, size_t size) {
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string result(size * 2, '0');
+    for (size_t index = 0; index < size; ++index) {
+        result[index * 2] = hex[digest[index] >> 4];
+        result[index * 2 + 1] = hex[digest[index] & 0x0f];
+    }
+    return result;
+}
+
 } // namespace
 
 std::string astc_vulkan_sha256_hex(const void * data, size_t size) {
     return hash_sha256_hex(data, size);
+}
+
+bool astc_vulkan_sha256_file_hex(const std::string & path, std::string & hash,
+                                 std::string & error) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        error = "cannot open file for SHA-256: " + path;
+        return false;
+    }
+    sha256_t context;
+    sha256_init(&context);
+    std::array<unsigned char, 1u << 20> buffer{};
+    while (file.good()) {
+        file.read(reinterpret_cast<char *>(buffer.data()), buffer.size());
+        const std::streamsize count = file.gcount();
+        if (count > 0) sha256_update(&context, buffer.data(), static_cast<size_t>(count));
+    }
+    if (!file.eof()) {
+        error = "failed while hashing file: " + path;
+        return false;
+    }
+    std::array<unsigned char, SHA256_DIGEST_SIZE> digest{};
+    sha256_final(&context, digest.data());
+    hash = hex_digest(digest.data(), digest.size());
+    error.clear();
+    return true;
 }
 
 bool astc_vulkan_validate_provenance(const astc_vulkan_provenance & provenance,

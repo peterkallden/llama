@@ -7355,3 +7355,31 @@ and experimental. The next gate is a matched multi-tensor/full-shape replay;
 only a stable validation-stopped holdout gain should promote PV to a D2
 profile. GPU PV is still limited to batched scoring of exact CPU-projected
 payloads; ASTC candidate generation remains CPU-side.
+
+## Three-hundred-fifteenth sweep: model-adjacent ASTC cache foundation
+
+Added a versioned model-adjacent ASTC cache contract. For `model.gguf`, the
+default lookup is `model.gguf.astc-vulkan/`, containing a binary runtime
+manifest, payload blob, optional paired-D2 layout map, optional provenance,
+and separate SHA-256 records for the source GGUF, manifest, payload and layout
+map. The source-file digest is streamed in 1 MiB chunks, so opening a large
+GGUF does not require an equally large temporary allocation.
+
+The cache creator copies an already exported artifact into a uniquely named
+sibling staging directory, validates it, then atomically renames it into its
+final location. It refuses to overwrite an existing cache. The accompanying
+`astc-vulkan-cache` tool supports `create` and `inspect`; `inspect` accepts
+either `--cache auto`, an explicit cache directory, or `manifest.astcv`.
+
+Paired-D2 is included in the cache contract from the start: a manifest with a
+paired record requires `layout-map.bin`, verifies its SHA-256 and each
+per-record layout checksum, and reports `paired-d2=true`. This is transport
+support only. The production-facing scheduler adapter continues to reject D2
+after cache validation and selects normal Q4/Q3 fallback, because D2 has not
+passed artifact-backed full-model quality gates.
+
+`astc_vulkan_scheduler_adapter::prepare_from_cache()` now provides the future
+loader boundary: it resolves an adjacent or explicit cache, verifies it, then
+delegates to the existing adapter prepare path. A miss, stale GGUF, malformed
+payload or unsupported representation leaves no partial Vulkan binding. Focused
+cache, provenance, driver and scheduler-adapter tests pass.

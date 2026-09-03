@@ -128,6 +128,14 @@ target_include_directories(astc-vulkan-provenance PUBLIC
 target_link_libraries(astc-vulkan-provenance PUBLIC vendor::hash)
 target_compile_features(astc-vulkan-provenance PUBLIC cxx_std_17)
 
+add_library(astc-vulkan-cache STATIC
+    astc-vulkan-cache.cpp)
+target_include_directories(astc-vulkan-cache PUBLIC
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_link_libraries(astc-vulkan-cache PUBLIC
+    astc-vulkan-driver astc-vulkan-provenance)
+target_compile_features(astc-vulkan-cache PUBLIC cxx_std_17)
+
 add_executable(test-astc-vulkan-driver
     tests/test-astc-vulkan-driver.cpp)
 target_link_libraries(test-astc-vulkan-driver PRIVATE astc-vulkan-driver)
@@ -142,6 +150,14 @@ target_link_libraries(astc-vulkan-artifact-pack PRIVATE
 target_include_directories(astc-vulkan-artifact-pack PRIVATE
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(astc-vulkan-artifact-pack PRIVATE cxx_std_17)
+
+add_executable(astc-vulkan-cache-tool
+    astc-vulkan-cache-tool.cpp)
+set_target_properties(astc-vulkan-cache-tool PROPERTIES OUTPUT_NAME astc-vulkan-cache)
+target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-cache)
+target_include_directories(astc-vulkan-cache-tool PRIVATE
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_compile_features(astc-vulkan-cache-tool PRIVATE cxx_std_17)
 
 find_package(Vulkan QUIET)
 option(GGML_VK_ASTC_EXPERIMENTAL_SCHEDULER_ADAPTER
@@ -241,7 +257,7 @@ if (TARGET Vulkan::Vulkan)
         target_include_directories(astc-vulkan-scheduler-adapter PUBLIC
             ${ASTC_VULKAN_POC_INCLUDE_DIR})
         target_link_libraries(astc-vulkan-scheduler-adapter PUBLIC
-            astc-vulkan-sidecar)
+            astc-vulkan-sidecar astc-vulkan-cache)
         target_compile_features(astc-vulkan-scheduler-adapter PUBLIC cxx_std_17)
 
         add_executable(test-astc-vulkan-scheduler-adapter
@@ -934,6 +950,16 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-provenance
         COMMAND test-astc-vulkan-provenance)
     set_property(TEST test-astc-vulkan-provenance PROPERTY LABELS astc)
+
+    add_executable(test-astc-vulkan-cache
+        tests/test-astc-vulkan-cache.cpp)
+    target_link_libraries(test-astc-vulkan-cache PRIVATE astc-vulkan-cache)
+    target_include_directories(test-astc-vulkan-cache PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_compile_features(test-astc-vulkan-cache PRIVATE cxx_std_17)
+    add_test(NAME test-astc-vulkan-cache
+        COMMAND test-astc-vulkan-cache)
+    set_property(TEST test-astc-vulkan-cache PROPERTY LABELS astc)
 
     add_executable(test-astc-vulkan-error-shaping
         tests/test-astc-vulkan-error-shaping.cpp)

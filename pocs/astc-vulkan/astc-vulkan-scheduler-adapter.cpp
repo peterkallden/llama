@@ -1,5 +1,7 @@
 #include "astc-vulkan-scheduler-adapter.h"
 
+#include "astc-vulkan-cache.h"
+
 #include <fstream>
 
 namespace {
@@ -69,6 +71,22 @@ bool astc_vulkan_scheduler_adapter::prepare(
     }
     error.clear();
     return true;
+}
+
+bool astc_vulkan_scheduler_adapter::prepare_from_cache(
+        const std::string & model_path, const std::string & cache_path,
+        const std::string & tensor_name, astc_vulkan_footprint footprint,
+        std::string & error, bool allow_experimental) {
+    reset();
+    astc_vulkan_cache_validation cache;
+    if (!astc_vulkan_cache_validate(model_path, cache_path, cache, error)) {
+        binding_.status = astc_vulkan_binding_status::kFallback;
+        binding_.fallback_reason = error.empty() ? "ASTC cache is unavailable" : error;
+        error = binding_.fallback_reason;
+        return false;
+    }
+    return prepare(cache.paths.manifest, cache.paths.payload, tensor_name, footprint,
+                   error, allow_experimental);
 }
 
 bool astc_vulkan_scheduler_adapter::run(const std::vector<uint32_t> & spirv,
