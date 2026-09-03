@@ -265,6 +265,14 @@ if (TARGET astcenc::astcenc-static)
         astcenc::astcenc-static ggml-base)
     target_compile_features(astc-vulkan-channel-semantic-smoke PRIVATE cxx_std_17)
 
+    add_executable(astc-vulkan-paired-smoke
+        astc-vulkan-paired-smoke.cpp)
+    target_include_directories(astc-vulkan-paired-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-paired-smoke PRIVATE
+        astcenc::astcenc-static astc-vulkan-algorithms)
+    target_compile_features(astc-vulkan-paired-smoke PRIVATE cxx_std_17)
+
     # One logical weight per texel, stored either as a scalar replicated across
     # RGBA or as a luminance-plus-alpha additive latent. The tool reports the
     # encoder's actual dual-plane decisions; it never assumes one was used.
@@ -649,6 +657,9 @@ if (BUILD_TESTING)
     endif()
 
     if (TARGET astc-vulkan-astcenc-smoke)
+        add_test(NAME astc-vulkan-paired-smoke
+            COMMAND astc-vulkan-paired-smoke)
+        set_property(TEST astc-vulkan-paired-smoke PROPERTY LABELS astc)
         add_test(NAME astc-vulkan-astcenc-smoke
             COMMAND astc-vulkan-astcenc-smoke)
         set_property(TEST astc-vulkan-astcenc-smoke PROPERTY LABELS astc)

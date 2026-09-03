@@ -6702,3 +6702,24 @@ PV path because it preserves the exact ASTC oracle and selector semantics at a
 manageable CPU cost. Any future full-PV run must be opt-in, separately
 artifact-versioned, and compared against the bounded profile on the same
 corpus; it must not block the production-sidecar or D2 gates.
+
+## Two-hundred-eighty-seventh sweep: D2 exact CPU oracle
+
+The new `astc-vulkan-paired-smoke` was compiled and run with the stock
+standard ASTC encoder/decoder. It covers the D2 ladder `6x6`, `8x5`, `8x6`,
+`10x6`, `8x8`, `10x8`, and `10x10`, with both `RG/B` and `R/GB` layouts,
+fixed Alpha, and a deterministic Alpha-steering source.
+
+All format/layout cases completed a legal 128-bit encode/decode roundtrip.
+The synthetic diagnostic showed that fixed Alpha is consistently a stronger
+raw-channel baseline than the unselected steering source, while steering
+increased ordinary paired-channel MSE on this signal. This is not a rejection
+of steering: it confirms that Alpha must be judged only by the exact neural
+objective and validation/holdout selector, never by source-channel MSE. The
+two layouts also trade wins by footprint (`R/GB` was better on several larger
+cases), so neither orientation is promoted without model-facing evidence.
+
+The result is a contract/oracle gate, not a quality claim. D1 `10x8` versus
+D2 `8x5` iso-rate model replay, candidate selection, deterministic edge
+padding, and paired Vulkan replay remain open. No production scheduler change
+was made.
