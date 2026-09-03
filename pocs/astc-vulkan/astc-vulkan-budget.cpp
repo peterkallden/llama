@@ -94,9 +94,22 @@ bool astc_vulkan_query_memory_budget(VkPhysicalDevice physical_device,
         const uint64_t available = result.uses_vk_ext_memory_budget ? memory_budget.heapBudget[index] : heap.size;
         best = std::max(best, available);
     }
+    // Some UMA Vulkan drivers expose all allocatable system memory through
+    // host-visible heaps without setting DEVICE_LOCAL.  For an integrated GPU
+    // that is still a valid allocation domain; rejecting it would incorrectly
+    // disable the ASTC sidecar on the Intel target we use for validation.
+    // Keep the conservative host-memory fraction as the sole device limit in
+    // that case. Discrete devices still require a real device-local heap.
     if (best == 0) {
-        error = "ASTC memory budget found no device-local Vulkan heap";
-        return false;
+        if (!result.integrated_gpu || !have_host || result.host_limit_bytes == 0) {
+            error = "ASTC memory budget found no usable Vulkan allocation heap";
+            return false;
+        }
+        result.device_available_bytes = result.host_available_bytes;
+        result.device_limit_bytes = result.host_limit_bytes;
+        result.effective_device_limit_bytes = result.host_limit_bytes;
+        error.clear();
+        return true;
     }
     result.device_available_bytes = best;
     result.device_limit_bytes = fraction_of(best, fraction);

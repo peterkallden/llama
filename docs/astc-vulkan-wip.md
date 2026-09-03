@@ -7449,11 +7449,29 @@ The cache directories are reproducible model-adjacent equivalents under
 reported a cache hit; the D2 inspection also reported `paired-d2=true`.
 CPU ASTC decode and payload replay completed for both payloads.
 
-The local Vulkan devices (Intel/llvmpipe) do not advertise sampled ASTC, so
-the exact ASTC texture sidecar correctly fails closed with `no Vulkan device
-supports sampled ASTC and compute`; this is a hardware capability limitation,
-not a cache failure. GPU execution was nevertheless verified for the shared
-YAQA stages: trace-score and batched partial/reduce shaders passed on Vulkan.
-The paired-D2 GPU ranking smoke is likewise capability-gated (exit 77) because
-the same device lacks ASTC sampling. A mobile/embedded ASTC-capable target is
-required before claiming GPU ASTC decode timings.
+
+The initial cache replay ran inside the restricted Codex process namespace,
+which did not expose `/dev/dri` and consequently enumerated llvmpipe only.
+That was an execution-environment artifact, not a target-hardware result. An
+escalated host probe sees Intel UHD Graphics 620 with sampled ASTC support for
+all current footprints from `4x4` through `10x8`; NVIDIA 920MX and llvmpipe
+remain negative controls. The D1 cache was then replayed on Intel through the
+real sampled-ASTC sidecar: over nine captured samples GPU-vs-CPU MSE was
+`9.5932534e-15`, with a 68.99 ms total scalar pass and 71.19 ms gauge pass
+for the full `2048x8192` layer. The paired-D2 `8x5/10x5` GPU
+candidate-delta/proposal-gain smoke also passed on that device.
+
+## Three-hundred-nineteenth sweep: UMA budget regression repaired
+
+The first host-side D1 replay exposed a budget regression rather than an ASTC
+capability failure. The new 80% memory gate insisted on a Vulkan heap marked
+`DEVICE_LOCAL`; Intel UMA exposes its allocatable shared memory through a
+host-visible heap in this configuration. This contradicted the documented
+integrated-GPU policy and incorrectly rejected the otherwise supported ASTC
+image.
+
+`astc_vulkan_query_memory_budget()` now treats host available memory as the
+device allocation budget only when the selected device is integrated, no
+device-local heap is advertised, and host-memory detection succeeds. Discrete
+devices still require a real device-local heap. Focused budget, sidecar, and
+cache CTests pass, followed by the full Intel D1 and D2 GPU replays above.

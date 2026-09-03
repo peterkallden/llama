@@ -33,8 +33,8 @@ bool astc_vulkan_query_host_memory_budget(float fraction,
 
 // Detects the largest device-local Vulkan heap. VK_EXT_memory_budget is used
 // when exposed by the driver; otherwise the physical heap size is a safe,
-// conservative upper bound. For an integrated GPU, the host limit also caps
-// the effective device limit.
+// conservative upper bound. For an integrated GPU that exposes no separate
+// device-local heap, the conservative host limit is its allocation limit.
 bool astc_vulkan_query_memory_budget(VkPhysicalDevice physical_device,
                                      float fraction,
                                      astc_vulkan_memory_budget & result,
