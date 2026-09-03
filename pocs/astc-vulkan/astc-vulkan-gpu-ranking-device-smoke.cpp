@@ -190,7 +190,7 @@ int main(int argc, char ** argv) {
     std::vector<float> deltas_10, gains_10;
     if (!session.run(activations_10, 1.0f, deltas_10, error) ||
         !session.run_proposal_gains(activations_10, residuals, 1.0f, gains_10, error) ||
-        deltas_10.size() != 160 || gains_10.size() != 4) {
+        deltas_10.size() != 80 || gains_10.size() != 4) {
         std::fprintf(stderr, "GPU D2 10x5 run failed: %s\n", error.c_str());
         return 1;
     }
@@ -199,10 +199,10 @@ int main(int argc, char ** argv) {
     for (uint32_t candidate = 0; candidate < 4; ++candidate) {
         const bool alternate = candidate == 1 || candidate == 3;
         const float * deltas_for_layout = candidate < 2 ? rg_b_delta : r_gb_delta;
-        for (uint32_t sample = 0; sample < 2; ++sample) for (uint32_t row = 0; row < 20; ++row) {
+        for (uint32_t sample = 0; sample < 2; ++sample) for (uint32_t row = 0; row < 10; ++row) {
             const float expected = alternate ? deltas_for_layout[row & 1u] *
                 (sample == 0 ? sum_10 : sample_scale_10) : 0.0f;
-            const float actual = deltas_10[(candidate * 2 + sample) * 20 + row];
+            const float actual = deltas_10[(candidate * 2 + sample) * 10 + row];
             if (std::fabs(actual - expected) > 2e-3f) {
                 std::fprintf(stderr, "GPU D2 10x5 mismatch c=%u s=%u row=%u: %.6f != %.6f\n",
                     candidate, sample, row, actual, expected);
@@ -211,9 +211,9 @@ int main(int argc, char ** argv) {
         }
         const uint32_t source_block_y = candidate < 2 ? 0 : 1;
         float expected_gain = 0.0f;
-        for (uint32_t sample = 0; sample < 2; ++sample) for (uint32_t row = 0; row < 20; ++row) {
-            const float delta = deltas_10[(candidate * 2 + sample) * 20 + row];
-            const float residual = residuals[sample * 20 + source_block_y * 10 + (row % 10)];
+        for (uint32_t sample = 0; sample < 2; ++sample) for (uint32_t row = 0; row < 10; ++row) {
+            const float delta = deltas_10[(candidate * 2 + sample) * 10 + row];
+            const float residual = residuals[sample * 20 + source_block_y * 10 + row];
             expected_gain += delta * (2.0f * residual - delta);
         }
         if (std::fabs(gains_10[candidate] - expected_gain) > 2e-3f) {
