@@ -17,6 +17,8 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <cerrno>
+#include <cstring>
 #include <vector>
 
 namespace {
@@ -339,9 +341,18 @@ hessian_stats estimate_hessian_stats(const activations & inputs) {
 template<typename T>
 bool write_binary(const std::string & path, const std::vector<T> & values) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        std::fprintf(stderr, "cannot open binary output '%s': %s\n", path.c_str(), std::strerror(errno));
+        return false;
+    }
     output.write(reinterpret_cast<const char *>(values.data()),
                  static_cast<std::streamsize>(values.size() * sizeof(T)));
-    return static_cast<bool>(output);
+    if (!output) {
+        std::fprintf(stderr, "cannot write binary output '%s' (%zu bytes): %s\n",
+                     path.c_str(), values.size() * sizeof(T), std::strerror(errno));
+        return false;
+    }
+    return true;
 }
 
 bool write_export_metadata(const std::string & path, const ggml_vk_astc_format_contract & format,

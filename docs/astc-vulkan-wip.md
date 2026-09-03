@@ -6388,3 +6388,28 @@ The nominal low-rate storage points are 8x6 = 2.67, 10x6 = 2.13, 8x8 =
 not independent exact weight bits. This ordering preserves the distinction
 between a standard hardware-compatible payload and an experimental offline
 encoder objective while keeping all prior crop tests reproducible.
+
+## Two-hundred-seventy-third sweep: full-shape 8x6 artifact and replay
+
+The first disk-backed full-shape low-rate artifact is complete for
+`blk.0.ffn_down.weight` (`2048x8192`, 350,208 blocks). The validation prefix
+contains 205,140 commits; the neutral and validation payloads, decoded CPU
+references, metadata, manifests, and provenance records are all generated from
+the exact exported bytes. Holdout activation-relative MSE is `0.032989037`
+for the validation prefix versus `0.081579108` for the neutral scalar anchor.
+
+The artifact was replayed by the CPU-only model gate with the fixed C++ prompt:
+logits-relative MSE `0.87898124`, loss delta `+7.9607724`, and top-1 agreement
+`0%`. This is a real full-model artifact result, but it remains behind the
+native Q3/Q4 controls and is not a promotion claim.
+
+The same payloads were sampled through the isolated Intel UHD 620 Vulkan path.
+GPU-vs-CPU MSE was `2.52e-13` for neutral scalar and `6.41e-13` for validation
+gauge. With one upload/warm-up followed by three hot-cache repeats, dispatch
+time was approximately `188.82 ms` (scalar) and `183.84 ms` (gauge) per
+30-sample dispatch. The comparison smoke now takes an explicit footprint and
+allows experimental replay only inside this test harness; the production
+scheduler boundary remains standard 4x4/5x5/6x6.
+
+This closes the 8x6 artifact/CPU/Vulkan gate. The remaining low-rate artifact
+gates are 10x6, 8x8, and 10x8, followed by the full model/performance matrix.

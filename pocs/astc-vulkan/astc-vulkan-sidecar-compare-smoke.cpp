@@ -105,7 +105,9 @@ bool run_case(case_data & data, astc_vulkan_footprint footprint,
         astc_vulkan_payload_hash64(data.payload.data(), data.payload.size())};
     manifest.tensors.push_back(record);
     astc_vulkan_sidecar sidecar;
-    if (!sidecar.set_manifest(manifest, error) || !sidecar.init(footprint, error)) return false;
+    // This executable is itself an explicit comparison harness; unlike the
+    // production scheduler boundary it may replay experimental footprints.
+    if (!sidecar.set_manifest(manifest, error) || !sidecar.init(footprint, error, true)) return false;
     astc_vulkan_ffn_binding binding;
     if (!sidecar.bind_tensor(record.name, width, height, data.payload, binding, error) ||
         binding.status != astc_vulkan_binding_status::kReady) {
@@ -177,6 +179,7 @@ bool run_case(case_data & data, astc_vulkan_footprint footprint,
 int main(int argc, char ** argv) {
     std::string shader, activation_path, weights_path;
     uint32_t width = 0, height = 0, repeat = 1;
+    astc_vulkan_footprint footprint = astc_vulkan_footprint::k6x6;
     case_data scalar{"scalar"}, gauge{"gauge"};
     std::string reference_output_path;
     for (int index = 1; index + 1 < argc; index += 2) {
@@ -188,6 +191,16 @@ int main(int argc, char ** argv) {
         else if (option == "--width") width = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--repeat") repeat = static_cast<uint32_t>(std::stoul(value));
+        else if (option == "--footprint") {
+            if (value == "4x4") footprint = astc_vulkan_footprint::k4x4;
+            else if (value == "5x5") footprint = astc_vulkan_footprint::k5x5;
+            else if (value == "6x6") footprint = astc_vulkan_footprint::k6x6;
+            else if (value == "8x6") footprint = astc_vulkan_footprint::k8x6;
+            else if (value == "10x6") footprint = astc_vulkan_footprint::k10x6;
+            else if (value == "8x8") footprint = astc_vulkan_footprint::k8x8;
+            else if (value == "10x8") footprint = astc_vulkan_footprint::k10x8;
+            else { std::fprintf(stderr, "unknown ASTC footprint: %s\n", value.c_str()); return 2; }
+        }
         else if (option == "--scalar-payload") scalar.payload_path = value;
         else if (option == "--scalar-decoded") scalar.decoded_path = value;
         else if (option == "--scalar-metadata") scalar.metadata_path = value;
@@ -226,8 +239,8 @@ int main(int argc, char ** argv) {
         return 2;
     }
     const std::vector<float> * reference = reference_output_path.empty() ? nullptr : &reference_output;
-    if (!run_case(scalar, astc_vulkan_footprint::k6x6, spirv, trace, weights, width, height, reference, repeat, error) ||
-        !run_case(gauge, astc_vulkan_footprint::k6x6, spirv, trace, weights, width, height, reference, repeat, error)) {
+    if (!run_case(scalar, footprint, spirv, trace, weights, width, height, reference, repeat, error) ||
+        !run_case(gauge, footprint, spirv, trace, weights, width, height, reference, repeat, error)) {
         std::fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
