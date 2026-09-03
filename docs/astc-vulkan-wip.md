@@ -7328,3 +7328,30 @@ comparison uses the layer activation trace and does not replace the full
 logit/model replay gate. Neutral and gauge are intentionally kept as separate
 artifact profiles, and timings must not be compared across devices without
 retaining the driver identity.
+
+## Three-hundred-fourteenth sweep: bounded D2 PV candidate generator
+
+The D2 selection smoke now has an opt-in `--pv-alternate 1` mode. It adds a
+small two-coordinate (x/y steering) PV-style search to the existing D2
+codebook, but every trial is projected through the exact CPU ASTC
+encode/decode path. The shared conflict-aware selector, validation prefix and
+scalar/D2 fallback are unchanged. This is deliberately a candidate-generator
+experiment, not a replacement for the bounded D2 codebook or a claim to
+reproduce the full PV-Tuning optimizer.
+
+On a Pythia-1.4B FP16 `blk.0.ffn_down.weight` crop (20 rows x 256 columns,
+5 calibration, 2 validation and 4 holdout samples), standard astcenc produced:
+
+| D2 footprint | candidate family | holdout MSE | encode seconds | roundtrips |
+|---|---|---:|---:|---:|
+| 8x5 | codebook | 0.00051585819 | 1.060 | 1408 |
+| 8x5 | codebook + bounded PV | 0.00048403148 | 1.740 | 2336 |
+
+This is a promising local signal (about 6.2% lower holdout MSE), but it is not
+yet backend- or crop-stable. On a smaller 10x80 crop, and with the isolated
+neural astcenc backend, PV added unique payloads and increased work but did not
+improve holdout over the codebook. The implementation therefore remains opt-in
+and experimental. The next gate is a matched multi-tensor/full-shape replay;
+only a stable validation-stopped holdout gain should promote PV to a D2
+profile. GPU PV is still limited to batched scoring of exact CPU-projected
+payloads; ASTC candidate generation remains CPU-side.

@@ -2894,3 +2894,29 @@ score vector for the normal rate-aware shortlist. Any initialization or score
 contract failure prints its reason and falls back to CPU. A small `4x8` latent
 run on the available compute device passed this path and encoded only the four
 screened footprints in the subsequent exact ASTC pass.
+
+### D2 PV comparison gate
+
+The D2 implementation now exposes `--pv-alternate 1` in the paired selection
+smoke. This is a bounded, two-coordinate PV-style candidate generator (x/y
+steering) layered on the deterministic D2 codebook. Each trial is projected by
+the exact ASTC encoder and CPU reference decoder; the existing selector and
+validation-prefix rules remain authoritative. The flag is experimental and
+must not become the D2 default until it wins on disjoint holdout data across
+both the standard and isolated neural astcenc backends.
+
+The current gate sequence is:
+
+1. Keep the D2 codebook as the production-safe candidate family and scalar
+   fallback.
+2. Compare codebook versus bounded PV on matched 8x5 and 10x5 crops, then on
+   at least two tensors and a larger artifact.
+3. Record candidate count, unique payloads, roundtrips, encode/decode time,
+   calibration, validation and untouched holdout loss.
+4. Only after a stable quality gain, evaluate GPU batched scoring for the exact
+   projected payloads. GPU scoring must not be confused with GPU ASTC encoding;
+   candidate generation remains CPU-side in this phase.
+
+The first crop showed a small standard-backend 8x5 holdout improvement, while
+the neural backend and a smaller crop did not. Therefore PV remains an
+opt-in research profile and is not yet suitable for scheduler promotion.

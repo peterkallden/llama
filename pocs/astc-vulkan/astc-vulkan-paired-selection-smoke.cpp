@@ -3,6 +3,7 @@
 #include "astc-vulkan-input.h"
 #include "astc-vulkan-paired.h"
 #include "astc-vulkan-paired-selector.h"
+#include "astc-vulkan-pv.h"
 
 #include <algorithm>
 #include <array>
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <string>
 #include <utility>
@@ -39,6 +41,7 @@ struct params {
     uint32_t progress_every_blocks = 0;
     std::string report;
     bool structure_bank = false;
+    bool pv_alternate = false;
 };
 
 struct decoded_block {
@@ -51,6 +54,7 @@ struct generated_candidate {
     astc_vulkan_paired_layout layout = astc_vulkan_paired_layout::rg_b;
     astc_vulkan_paired_steering_factor steering{};
     astc_vulkan_paired_candidate_delta delta;
+    bool pv_generated = false;
 };
 
 struct run_profile {
@@ -58,6 +62,9 @@ struct run_profile {
     double delta_seconds = 0.0;
     double selection_seconds = 0.0;
     double objective_seconds = 0.0;
+    double pv_seconds = 0.0;
+    uint64_t pv_trials = 0;
+    uint64_t pv_accepts = 0;
 };
 
 #if defined(ASTC_VULKAN_PAIRED_NEURAL_ENCODER)
@@ -103,6 +110,7 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--progress-every-blocks") result.progress_every_blocks = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--report") result.report = value;
         else if (option == "--structure-bank") result.structure_bank = value == "1" || value == "true";
+        else if (option == "--pv-alternate") result.pv_alternate = value == "1" || value == "true";
         else return false;
     }
     return !result.model.empty() && !result.tensor.empty() && !result.trace.empty() &&
@@ -221,10 +229,11 @@ float normalized_weight(const ggml_vk_astc_loaded_matrix & matrix, uint32_t row,
     return std::clamp((value - minimum) / (range > 0.0f ? range : 1.0f), 0.0f, 1.0f);
 }
 
-void fill_source_block(std::vector<float> & source, const ggml_vk_astc_loaded_matrix & matrix,
-                       uint32_t row0, uint32_t column0, uint32_t rows, uint32_t columns,
-                       float minimum, float range, astc_vulkan_paired_layout layout,
-                       const astc_vulkan_paired_steering_factor & steering) {
+void fill_source_block_with_steering(std::vector<float> & source,
+                       const ggml_vk_astc_loaded_matrix & matrix, uint32_t row0, uint32_t column0,
+                       uint32_t rows, uint32_t columns, float minimum, float range,
+                       astc_vulkan_paired_layout layout,
+                       const std::function<float(float, float)> & steering_value) {
     if (source.size() != kBlockWidth * kPhysicalBlockHeight * 4) {
         source.resize(kBlockWidth * kPhysicalBlockHeight * 4);
     }
@@ -235,8 +244,7 @@ void fill_source_block(std::vector<float> & source, const ggml_vk_astc_loaded_ma
             const uint32_t column = column0 + x_index;
             const float x = 2.0f * static_cast<float>(x_index) / (kBlockWidth - 1) - 1.0f;
             const float y_value = 2.0f * static_cast<float>(y) / (kPhysicalBlockHeight - 1) - 1.0f;
-            const float alpha = std::clamp(0.5f + steering.amplitude *
-                astc_vulkan_paired_steering_basis_value(steering.basis, x, y_value), 0.0f, 1.0f);
+            const float alpha = std::clamp(0.5f + steering_value(x, y_value), 0.0f, 1.0f);
             const float q0 = logical_row0 < rows && column < columns ?
                 normalized_weight(matrix, logical_row0, column, minimum, range) : 0.5f;
             const float q1 = logical_row1 < rows && column < columns ?
@@ -249,6 +257,16 @@ void fill_source_block(std::vector<float> & source, const ggml_vk_astc_loaded_ma
             source[offset + 3] = texel.a;
         }
     }
+}
+
+void fill_source_block(std::vector<float> & source, const ggml_vk_astc_loaded_matrix & matrix,
+                       uint32_t row0, uint32_t column0, uint32_t rows, uint32_t columns,
+                       float minimum, float range, astc_vulkan_paired_layout layout,
+                       const astc_vulkan_paired_steering_factor & steering) {
+    fill_source_block_with_steering(source, matrix, row0, column0, rows, columns, minimum, range,
+        layout, [&steering](float x, float y) {
+            return steering.amplitude * astc_vulkan_paired_steering_basis_value(steering.basis, x, y);
+        });
 }
 
 void write_block(std::vector<float> & target, const decoded_block & block, uint32_t block_row,
@@ -313,6 +331,40 @@ void assign_delta(std::vector<double> & delta, const decoded_block & candidate,
     }
 }
 
+// Local activation objective used only to seed the bounded D2 PV search. The
+// final decision is still made by the shared paired selector, so this does
+// not change the deployed objective or commit order.
+double block_activation_objective(const ggml_vk_astc_loaded_matrix & matrix,
+                                  const ggml_vk_astc_activation_trace & trace,
+                                  const decoded_block & candidate, uint32_t block_row,
+                                  uint32_t block_column, uint32_t rows, uint32_t columns,
+                                  uint32_t sample_offset, uint32_t samples, float minimum,
+                                  float range) {
+    double loss = 0.0;
+    uint64_t terms = 0;
+    for (uint32_t sample = 0; sample < samples; ++sample) {
+        for (uint32_t local_row = 0; local_row < kLogicalBlockHeight; ++local_row) {
+            const uint32_t row = block_row * kLogicalBlockHeight + local_row;
+            if (row >= rows) continue;
+            double output = 0.0;
+            double reference = 0.0;
+            for (uint32_t x = 0; x < kBlockWidth; ++x) {
+                const uint32_t column = block_column * kBlockWidth + x;
+                if (column >= columns) continue;
+                const float activation = trace.values[static_cast<size_t>(sample + sample_offset) * trace.columns + column];
+                const float source = normalized_weight(matrix, row, column, minimum, range) * range;
+                const float decoded = candidate.logical_weights[local_row * kBlockWidth + x] * range;
+                reference += source * activation;
+                output += decoded * activation;
+            }
+            const double error = reference - output;
+            loss += error * error;
+            ++terms;
+        }
+    }
+    return terms == 0 ? std::numeric_limits<double>::infinity() : loss / static_cast<double>(terms);
+}
+
 bool same_candidate(const generated_candidate & lhs, const generated_candidate & rhs) {
     return lhs.layout == rhs.layout && lhs.block.payload == rhs.block.payload;
 }
@@ -324,7 +376,8 @@ int main(int argc, char ** argv) {
     if (!parse_params(argc, argv, options)) {
         std::fprintf(stderr, "usage: %s --model model.gguf --tensor name --trace input.trace "
                              "[--rows N --columns N --calibration-samples N --validation-samples N "
-                             "--progress-every-blocks N --report path [--structure-bank 1]\n", argv[0]);
+                             "--progress-every-blocks N --report path [--structure-bank 1] "
+                             "[--pv-alternate 1]\n", argv[0]);
         return 2;
     }
     ggml_vk_astc_loaded_matrix matrix;
@@ -393,6 +446,73 @@ int main(int argc, char ** argv) {
                     bool duplicate = false;
                     for (const auto & existing : candidates) duplicate = duplicate || same_candidate(existing, candidate);
                     if (!duplicate) candidates.push_back(std::move(candidate));
+                }
+                if (options.pv_alternate) {
+                    // A deliberately small PV family: two continuous steering
+                    // coordinates (x/y ramps), projected through the exact
+                    // paired ASTC codec on every trial. This is a candidate
+                    // generator only; global selection remains unchanged.
+                    decoded_block pv_block;
+                    std::vector<float> pv_source;
+                    const auto pv_start = std::chrono::steady_clock::now();
+                    astc_vulkan_pv_result pv_result;
+                    const bool pv_ok = astc_vulkan_pv_alternate_batched(
+                        {0.0f, 0.0f}, {0.25f, 0.25f}, 2,
+                        [&](const std::vector<float> & coefficients, std::vector<float> & deployed) {
+                            if (coefficients.size() != 2) return false;
+                            fill_source_block_with_steering(
+                                pv_source, matrix, block_y * kLogicalBlockHeight,
+                                block_x * kBlockWidth, options.rows, options.columns,
+                                minimum, range, layout,
+                                [&coefficients](float x, float y) {
+                                    return coefficients[0] * x + coefficients[1] * y;
+                                });
+                            if (!codec.roundtrip(pv_source, pv_block)) return false;
+                            deployed.assign(pv_block.logical_weights.begin(), pv_block.logical_weights.end());
+                            return true;
+                        },
+                        [&](const std::vector<std::vector<float>> & deployed,
+                            std::vector<double> & scores) {
+                            scores.clear();
+                            for (const auto & values : deployed) {
+                                if (values.size() != pv_block.logical_weights.size()) return false;
+                                decoded_block trial = pv_block;
+                                std::copy(values.begin(), values.end(), trial.logical_weights.begin());
+                                scores.push_back(block_activation_objective(
+                                    matrix, trace, trial, block_y, block_x, options.rows,
+                                    options.columns, 0, options.calibration_samples, minimum, range));
+                            }
+                            return true;
+                        }, pv_result);
+                    profile.pv_seconds += std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - pv_start).count();
+                    profile.pv_trials += static_cast<uint64_t>(pv_result.iterations) * 4u + 1u;
+                    profile.pv_accepts += pv_result.accepted_steps;
+                    if (pv_ok && pv_result.deployed.size() == pv_block.logical_weights.size()) {
+                        // Re-project the accepted point so the payload and
+                        // decoded weights are exactly those being evaluated.
+                        if (pv_result.continuous.size() == 2 &&
+                            [&]() {
+                                fill_source_block_with_steering(
+                                    pv_source, matrix, block_y * kLogicalBlockHeight,
+                                    block_x * kBlockWidth, options.rows, options.columns,
+                                    minimum, range, layout,
+                                    [&pv_result](float x, float y) {
+                                        return pv_result.continuous[0] * x + pv_result.continuous[1] * y;
+                                    });
+                                return codec.roundtrip(pv_source, pv_block);
+                            }()) {
+                            generated_candidate candidate;
+                            candidate.layout = layout;
+                            candidate.steering = {pv_result.continuous[0],
+                                astc_vulkan_paired_steering_basis::x_ramp};
+                            candidate.block = pv_block;
+                            candidate.pv_generated = true;
+                            bool duplicate = false;
+                            for (const auto & existing : candidates) duplicate = duplicate || same_candidate(existing, candidate);
+                            if (!duplicate) candidates.push_back(std::move(candidate));
+                        }
+                    }
                 }
             }
             // A deterministic neutral RG/B candidate is mandatory at index zero.
@@ -480,6 +600,10 @@ int main(int argc, char ** argv) {
                 rg_b_timing.decode_seconds + r_gb_timing.decode_seconds, profile.delta_seconds,
                 profile.selection_seconds, profile.objective_seconds,
                 static_cast<unsigned long long>(rg_b_timing.roundtrips + r_gb_timing.roundtrips));
+    std::printf("paired-select pv enabled=%s trials=%llu accepts=%llu seconds=%.3fs\n",
+                options.pv_alternate ? "true" : "false",
+                static_cast<unsigned long long>(profile.pv_trials),
+                static_cast<unsigned long long>(profile.pv_accepts), profile.pv_seconds);
     if (!options.report.empty()) {
         std::ofstream report(options.report);
         if (!report) return 1;
@@ -504,6 +628,10 @@ int main(int argc, char ** argv) {
                << "profile_delta_seconds=" << profile.delta_seconds << '\n'
                << "profile_selection_seconds=" << profile.selection_seconds << '\n'
                << "profile_objective_seconds=" << profile.objective_seconds << '\n'
+               << "pv_alternate=" << (options.pv_alternate ? 1 : 0) << '\n'
+               << "pv_trials=" << profile.pv_trials << '\n'
+               << "pv_accepts=" << profile.pv_accepts << '\n'
+               << "profile_pv_seconds=" << profile.pv_seconds << '\n'
                << "roundtrips=" << rg_b_timing.roundtrips + r_gb_timing.roundtrips << '\n';
         if (!report) return 1;
     }
