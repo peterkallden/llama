@@ -6497,6 +6497,20 @@ offers only independently selected standard 4x4/5x5/6x6 profiles, with hard
 Q4_K_M/Q3_K_M fallback. The full quality matrix must label corpus identity so
 the earlier v1 8x6/10x6/8x8 results are never mixed numerically with v2.
 
+## Two-hundred-seventy-eighth sweep: post-resume regression cohort
+
+After the CPU-only trace-capture guard and the selector-profile documentation,
+the complete isolated ASTC CTest cohort passed `40/40`. This includes the
+standard 4x4/5x5/6x6 scheduler and shader-device contracts, all experimental
+8x6/10x6/8x8/10x8 shader paths, artifact/provenance/dispatch tests, and the
+PV/few-level/weight-grid research smokes. No `ggml-vulkan` production source
+was changed by this resume work.
+
+The next matrix pass must use one retained trace corpus for all footprints (or
+report v1/v2 corpus identities separately). Only after that normalized matrix
+should low-rate PV alternation and YAQA-style objectives be compared, followed
+by the deferred per-tensor/page mixed-footprint study.
+
 ## Two-hundred-seventy-sixth sweep: resume audit and standard selector contracts
 
 The interrupted `10x8` run could not be resumed because the prior session's
