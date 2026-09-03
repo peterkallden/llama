@@ -2640,3 +2640,11 @@ activation, then use trace-backed YAQA as the stronger two-sided control.
 Validation chooses the commit prefix; holdout remains read-only. The bounded
 D2 steering codebook replaces full PV iteration as the default candidate
 family: neutral, signed X/Y/saddle, and signed diagonal steering bases.
+
+The bounded paired model smoke now exposes this hierarchy directly: its default
+is `--objective activation`, while `--objective yaqa --output-trace path`
+reranks the same exact-decoded D1/D2 payload candidates with a matching
+FFN-down output trace. This is an offline whole-crop gate only. The subsequent
+blockwise producer should use YAQA as a bounded rerank of the already legal
+activation shortlist, then pass the selected payload alternatives to the
+conflict-aware selector and validation-prefix artifact stage.

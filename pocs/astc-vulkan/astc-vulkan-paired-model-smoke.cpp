@@ -3,6 +3,7 @@
 #include "astc-vulkan-input.h"
 #include "astc-vulkan-objective.h"
 #include "astc-vulkan-paired.h"
+#include "astc-vulkan-yaqa.h"
 
 #include <algorithm>
 #include <cmath>
@@ -15,6 +16,33 @@
 namespace {
 
 struct decoded_image { uint32_t width = 0, height = 0; std::vector<float> values; };
+
+struct paired_model_params {
+    std::string model;
+    std::string tensor;
+    std::string input_trace;
+    std::string output_trace;
+    astc_vulkan_objective objective = astc_vulkan_objective::activation;
+};
+
+bool parse_params(int argc, char ** argv, paired_model_params & params) {
+    for (int index = 1; index < argc; ++index) {
+        const std::string option = argv[index];
+        if (index + 1 == argc) return false;
+        const std::string value = argv[++index];
+        if (option == "--model") params.model = value;
+        else if (option == "--tensor") params.tensor = value;
+        else if (option == "--trace") params.input_trace = value;
+        else if (option == "--output-trace") params.output_trace = value;
+        else if (option == "--objective") {
+            if (value == "activation") params.objective = astc_vulkan_objective::activation;
+            else if (value == "yaqa") params.objective = astc_vulkan_objective::two_sided_trace;
+            else return false;
+        } else return false;
+    }
+    return !params.model.empty() && !params.tensor.empty() && !params.input_trace.empty() &&
+           (params.objective != astc_vulkan_objective::two_sided_trace || !params.output_trace.empty());
+}
 
 bool roundtrip(const std::vector<float> & source, uint32_t width, uint32_t height,
                uint32_t block_width, uint32_t block_height, decoded_image & decoded) {
@@ -47,9 +75,10 @@ float source_q(const ggml_vk_astc_loaded_matrix & matrix, uint32_t row, uint32_t
                       (range > 0.0f ? range : 1.0f), 0.0f, 1.0f);
 }
 
-double loss(const ggml_vk_astc_loaded_matrix & matrix, const ggml_vk_astc_activation_trace & trace,
-            const decoded_image & decoded, uint32_t rows, uint32_t columns,
-            float minimum, float range, bool d2, astc_vulkan_paired_layout layout) {
+std::vector<float> decoded_error(const ggml_vk_astc_loaded_matrix & matrix,
+                                 const decoded_image & decoded, uint32_t rows, uint32_t columns,
+                                 float minimum, float range, bool d2,
+                                 astc_vulkan_paired_layout layout) {
     const float safe_range = range > 0.0f ? range : 1.0f;
     std::vector<float> error(static_cast<size_t>(rows) * columns);
     for (uint32_t row = 0; row < rows; ++row) {
@@ -64,12 +93,32 @@ double loss(const ggml_vk_astc_loaded_matrix & matrix, const ggml_vk_astc_activa
                 (source_q(matrix, row, column, minimum, range) - decoded_q) * safe_range;
         }
     }
-    return astc_vulkan_activation_score(error, rows, columns, trace.values, trace.samples) /
-           static_cast<double>(trace.samples * rows);
+    return error;
+}
+
+double objective_score(const std::vector<float> & error,
+                       const ggml_vk_astc_activation_trace & input_trace,
+                       const ggml_vk_astc_activation_trace * output_trace,
+                       astc_vulkan_objective objective, uint32_t rows, uint32_t columns) {
+    if (objective == astc_vulkan_objective::activation) {
+        return astc_vulkan_activation_score(error, rows, columns,
+                                            input_trace.values, input_trace.samples) /
+               static_cast<double>(input_trace.samples * rows);
+    }
+    if (objective != astc_vulkan_objective::two_sided_trace || output_trace == nullptr) return NAN;
+    std::vector<float> output_crop(static_cast<size_t>(output_trace->samples) * rows);
+    for (uint32_t sample = 0; sample < output_trace->samples; ++sample) {
+        std::copy_n(output_trace->values.data() + static_cast<size_t>(sample) * output_trace->columns,
+                    rows, output_crop.data() + static_cast<size_t>(sample) * rows);
+    }
+    return astc_vulkan_yaqa_trace_score(error, rows, columns, input_trace.values, output_crop,
+                                        input_trace.samples);
 }
 
 bool run_d1(const ggml_vk_astc_loaded_matrix & matrix, const ggml_vk_astc_activation_trace & trace,
-            uint32_t rows, uint32_t columns, float minimum, float range, double & result) {
+            uint32_t rows, uint32_t columns, float minimum, float range,
+            const ggml_vk_astc_activation_trace * output_trace,
+            astc_vulkan_objective objective, double & result) {
     std::vector<float> source(static_cast<size_t>(rows) * columns * 4);
     for (uint32_t row = 0; row < rows; ++row) for (uint32_t column = 0; column < columns; ++column) {
         const float q = source_q(matrix, row, column, minimum, range);
@@ -78,15 +127,18 @@ bool run_d1(const ggml_vk_astc_loaded_matrix & matrix, const ggml_vk_astc_activa
     }
     decoded_image decoded;
     if (!roundtrip(source, columns, rows, 10, 8, decoded)) return false;
-    result = loss(matrix, trace, decoded, rows, columns, minimum, range, false,
-                  astc_vulkan_paired_layout::rg_b);
+    result = objective_score(decoded_error(matrix, decoded, rows, columns, minimum, range, false,
+                                           astc_vulkan_paired_layout::rg_b),
+                             trace, output_trace, objective, rows, columns);
     return true;
 }
 
 bool run_d2(const ggml_vk_astc_loaded_matrix & matrix, const ggml_vk_astc_activation_trace & trace,
             uint32_t rows, uint32_t columns, float minimum, float range,
             astc_vulkan_paired_layout layout,
-            const astc_vulkan_paired_steering_factor & factor, double & result) {
+            const astc_vulkan_paired_steering_factor & factor,
+            const ggml_vk_astc_activation_trace * output_trace,
+            astc_vulkan_objective objective, double & result) {
     const uint32_t texture_rows = (rows + 1) / 2;
     std::vector<float> source(static_cast<size_t>(texture_rows) * columns * 4);
     for (uint32_t row = 0; row < texture_rows; ++row) for (uint32_t column = 0; column < columns; ++column) {
@@ -105,26 +157,37 @@ bool run_d2(const ggml_vk_astc_loaded_matrix & matrix, const ggml_vk_astc_activa
     }
     decoded_image decoded;
     if (!roundtrip(source, columns, texture_rows, 8, 5, decoded)) return false;
-    result = loss(matrix, trace, decoded, rows, columns, minimum, range, true, layout);
+    result = objective_score(decoded_error(matrix, decoded, rows, columns, minimum, range, true, layout),
+                             trace, output_trace, objective, rows, columns);
     return true;
 }
 
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc != 7 || std::string(argv[1]) != "--model" ||
-        std::string(argv[3]) != "--tensor" || std::string(argv[5]) != "--trace") {
-        std::fprintf(stderr, "usage: %s --model model.gguf --tensor name --trace trace\n", argv[0]);
+    paired_model_params params;
+    if (!parse_params(argc, argv, params)) {
+        std::fprintf(stderr, "usage: %s --model model.gguf --tensor name --trace input.trace "
+                             "[--objective activation|yaqa --output-trace output.trace]\n", argv[0]);
         return 2;
     }
     ggml_vk_astc_loaded_matrix matrix;
-    ggml_vk_astc_activation_trace trace;
+    ggml_vk_astc_activation_trace trace, output_trace;
     std::string error;
-    if (!ggml_vk_astc_load_gguf_matrix(argv[2], argv[4], matrix, error) ||
-        !ggml_vk_astc_load_activation_trace(argv[6], trace, error) ||
+    if (!ggml_vk_astc_load_gguf_matrix(params.model, params.tensor, matrix, error) ||
+        !ggml_vk_astc_load_activation_trace(params.input_trace, trace, error) ||
         trace.columns == 0 || trace.columns > matrix.columns || matrix.rows < 2) {
         std::fprintf(stderr, "paired model smoke input error: %s\n", error.c_str());
         return 1;
+    }
+    const ggml_vk_astc_activation_trace * output_trace_ptr = nullptr;
+    if (params.objective == astc_vulkan_objective::two_sided_trace) {
+        if (!ggml_vk_astc_load_activation_trace(params.output_trace, output_trace, error) ||
+            output_trace.samples != trace.samples || output_trace.columns < std::min<uint32_t>(matrix.rows, 32)) {
+            std::fprintf(stderr, "paired model smoke output trace error: %s\n", error.c_str());
+            return 1;
+        }
+        output_trace_ptr = &output_trace;
     }
     const uint32_t rows = std::min<uint32_t>(matrix.rows, 32);
     const uint32_t columns = trace.columns;
@@ -136,21 +199,25 @@ int main(int argc, char ** argv) {
     }
     const float range = maximum - minimum;
     double d1 = 0.0;
-    if (!run_d1(matrix, trace, rows, columns, minimum, range, d1)) return 1;
-    std::printf("paired-model D1 10x8 rate=1.60000 activation-mse=%.8g\n", d1);
+    if (!run_d1(matrix, trace, rows, columns, minimum, range, output_trace_ptr,
+                params.objective, d1)) return 1;
+    std::printf("paired-model D1 10x8 rate=1.60000 objective=%s score=%.8g\n",
+                astc_vulkan_objective_name(params.objective), d1);
     const auto codebook = astc_vulkan_make_paired_steering_codebook();
     for (const auto layout : {astc_vulkan_paired_layout::rg_b, astc_vulkan_paired_layout::r_gb}) {
         double best = std::numeric_limits<double>::infinity();
         size_t best_index = 0;
         for (size_t index = 0; index < codebook.size(); ++index) {
             double value = 0.0;
-            if (!run_d2(matrix, trace, rows, columns, minimum, range, layout, codebook[index], value)) return 1;
+            if (!run_d2(matrix, trace, rows, columns, minimum, range, layout, codebook[index],
+                        output_trace_ptr, params.objective, value)) return 1;
             if (value < best) { best = value; best_index = index; }
         }
         const auto & factor = codebook[best_index];
-        std::printf("paired-model D2 8x5 layout=%s objective=activation rate=1.60000 "
-                    "best=%s amplitude=%g activation-mse=%.8g candidates=%zu\n",
+        std::printf("paired-model D2 8x5 layout=%s objective=%s rate=1.60000 "
+                    "best=%s amplitude=%g score=%.8g candidates=%zu\n",
                     astc_vulkan_paired_layout_name(layout),
+                    astc_vulkan_objective_name(params.objective),
                     astc_vulkan_paired_steering_basis_name(factor.basis), factor.amplitude,
                     best, codebook.size());
     }

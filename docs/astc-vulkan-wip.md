@@ -6834,6 +6834,30 @@ chosen for a block, but it cannot by itself remap a logical weight to a
 different texel or output row. Such remapping requires a separate layout/
 permutation candidate family and must remain explicit in the artifact contract.
 
+## Two-hundred-ninety-fourth sweep: paired D2 YAQA rerank
+
+The paired model smoke now accepts `--objective yaqa --output-trace path`. It
+captures the first bounded output rows from a matching FFN-down output trace and
+scores each exact-decoded candidate with the existing trace form
+`tr(H_out E H_in E^T)`. The activation objective remains the default fast
+ranker; YAQA is an opt-in offline reranker with no payload or runtime change.
+
+On the retained nine-token Pythia F16 trace pair, the first two-sided result was:
+
+```text
+comparison                 objective score
+D1 scalar 10x8             10.799259
+D2 paired 8x5 RG/B         22.166729  (X-ramp, amplitude -0.5)
+D2 paired 8x5 R/GB         20.348873  (X-minus-Y, amplitude +0.5)
+```
+
+YAQA changed the RG/B winner from the activation-ranked positive X ramp to the
+negative X ramp, demonstrating that output sensitivity affects the selected
+legal payload. D1 remains lower on this bounded crop, so D2 is still not a
+production profile. The next integration is per-block activation shortlist
+generation followed by YAQA reranking and conflict-aware selection; YAQA alone
+does not change D2's fixed adjacent-row layout.
+
 ## Two-hundred-ninety-second sweep: paired selection-core groundwork
 
 Added `astc-vulkan-paired-selector.{h,cpp}` as the reusable offline boundary
