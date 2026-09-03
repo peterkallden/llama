@@ -18,7 +18,13 @@
 
 namespace {
 
+#if defined(ASTC_VULKAN_PAIRED_D2_10X5)
+constexpr uint32_t kBlockWidth = 10;
+constexpr const char * kFootprintName = "10x5";
+#else
 constexpr uint32_t kBlockWidth = 8;
+constexpr const char * kFootprintName = "8x5";
+#endif
 constexpr uint32_t kPhysicalBlockHeight = 5;
 constexpr uint32_t kLogicalBlockHeight = kPhysicalBlockHeight * 2;
 
@@ -458,7 +464,8 @@ int main(int argc, char ** argv) {
     const double selected_calibration_mse = selection.calibration_residual_loss / (options.calibration_samples * options.rows);
     const double selected_validation_mse = selection.validation_residual_loss / (options.validation_samples * options.rows);
     const double selected_holdout_mse = mse(selected_holdout);
-    std::printf("paired-select D2_8x5 rows=%u columns=%u blocks=%u raw=%llu unique=%llu\n",
+    std::printf("paired-select D2_%s rows=%u columns=%u blocks=%u raw=%llu unique=%llu\n",
+                kFootprintName,
                 options.rows, options.columns, blocks_x * blocks_y,
                 static_cast<unsigned long long>(raw_candidates), static_cast<unsigned long long>(unique_candidates));
     std::printf("paired-select neutral calibration-mse=%.8g validation-mse=%.8g holdout-mse=%.8g\n",
@@ -477,7 +484,7 @@ int main(int argc, char ** argv) {
         std::ofstream report(options.report);
         if (!report) return 1;
         report << "backend=" << (neural_backend ? "neural-d2" : "standard") << '\n'
-               << "footprint=8x5\n"
+               << "footprint=" << kFootprintName << '\n'
                << "rows=" << options.rows << '\n'
                << "columns=" << options.columns << '\n'
                << "blocks=" << blocks_x * blocks_y << '\n'

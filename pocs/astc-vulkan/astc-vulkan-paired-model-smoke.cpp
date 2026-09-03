@@ -15,6 +15,18 @@
 
 namespace {
 
+#if defined(ASTC_VULKAN_PAIRED_D2_10X5)
+constexpr uint32_t kD2BlockWidth = 10;
+constexpr uint32_t kD2BlockHeight = 5;
+constexpr const char * kD2FootprintName = "10x5";
+constexpr double kD2Rate = 1.28;
+#else
+constexpr uint32_t kD2BlockWidth = 8;
+constexpr uint32_t kD2BlockHeight = 5;
+constexpr const char * kD2FootprintName = "8x5";
+constexpr double kD2Rate = 1.60;
+#endif
+
 struct decoded_image { uint32_t width = 0, height = 0; std::vector<float> values; };
 
 struct paired_model_params {
@@ -156,7 +168,7 @@ bool run_d2(const ggml_vk_astc_loaded_matrix & matrix, const ggml_vk_astc_activa
         source[offset + 2] = texel.b; source[offset + 3] = texel.a;
     }
     decoded_image decoded;
-    if (!roundtrip(source, columns, texture_rows, 8, 5, decoded)) return false;
+    if (!roundtrip(source, columns, texture_rows, kD2BlockWidth, kD2BlockHeight, decoded)) return false;
     result = objective_score(decoded_error(matrix, decoded, rows, columns, minimum, range, true, layout),
                              trace, output_trace, objective, rows, columns);
     return true;
@@ -214,11 +226,12 @@ int main(int argc, char ** argv) {
             if (value < best) { best = value; best_index = index; }
         }
         const auto & factor = codebook[best_index];
-        std::printf("paired-model D2 8x5 layout=%s objective=%s rate=1.60000 "
+        std::printf("paired-model D2 %s layout=%s objective=%s rate=%.5f "
                     "best=%s amplitude=%g score=%.8g candidates=%zu\n",
+                    kD2FootprintName,
                     astc_vulkan_paired_layout_name(layout),
                     astc_vulkan_objective_name(params.objective),
-                    astc_vulkan_paired_steering_basis_name(factor.basis), factor.amplitude,
+                    kD2Rate, astc_vulkan_paired_steering_basis_name(factor.basis), factor.amplitude,
                     best, codebook.size());
     }
     return 0;

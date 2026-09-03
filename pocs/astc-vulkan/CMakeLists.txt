@@ -344,6 +344,18 @@ if (TARGET astcenc::astcenc-static)
             astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
         target_compile_features(astc-vulkan-paired-model-smoke PRIVATE cxx_std_17)
 
+        add_executable(astc-vulkan-paired-model-smoke-10x5
+            astc-vulkan-paired-model-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-paired-model-smoke-10x5 PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-paired-model-smoke-10x5 PRIVATE
+            astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
+        target_compile_features(astc-vulkan-paired-model-smoke-10x5 PRIVATE cxx_std_17)
+        target_compile_definitions(astc-vulkan-paired-model-smoke-10x5 PRIVATE
+            ASTC_VULKAN_PAIRED_D2_10X5=1)
+
         add_executable(astc-vulkan-paired-selection-smoke
             astc-vulkan-paired-selection-smoke.cpp
             astc-vulkan-input.cpp)
@@ -353,6 +365,18 @@ if (TARGET astcenc::astcenc-static)
         target_link_libraries(astc-vulkan-paired-selection-smoke PRIVATE
             astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
         target_compile_features(astc-vulkan-paired-selection-smoke PRIVATE cxx_std_17)
+
+        add_executable(astc-vulkan-paired-selection-smoke-10x5
+            astc-vulkan-paired-selection-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-paired-selection-smoke-10x5 PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-paired-selection-smoke-10x5 PRIVATE
+            astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
+        target_compile_features(astc-vulkan-paired-selection-smoke-10x5 PRIVATE cxx_std_17)
+        target_compile_definitions(astc-vulkan-paired-selection-smoke-10x5 PRIVATE
+            ASTC_VULKAN_PAIRED_D2_10X5=1)
 
         if (GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
             if (NOT EXISTS "${GGML_VK_ASTC_NEURAL_RANK_LIBRARY}" OR
@@ -373,6 +397,20 @@ if (TARGET astcenc::astcenc-static)
             target_compile_features(astc-vulkan-paired-selection-smoke-neural PRIVATE cxx_std_17)
             target_compile_definitions(astc-vulkan-paired-selection-smoke-neural PRIVATE
                 ASTC_VULKAN_PAIRED_NEURAL_ENCODER=1)
+
+            add_executable(astc-vulkan-paired-selection-smoke-neural-10x5
+                astc-vulkan-paired-selection-smoke.cpp
+                astc-vulkan-input.cpp)
+            target_include_directories(astc-vulkan-paired-selection-smoke-neural-10x5 BEFORE PRIVATE
+                ${GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR}
+                ${ASTC_VULKAN_POC_INCLUDE_DIR}
+                ${CMAKE_SOURCE_DIR}/ggml/include)
+            target_link_libraries(astc-vulkan-paired-selection-smoke-neural-10x5 PRIVATE
+                ${GGML_VK_ASTC_NEURAL_RANK_LIBRARY} astc-vulkan-algorithms ggml-base)
+            target_compile_features(astc-vulkan-paired-selection-smoke-neural-10x5 PRIVATE cxx_std_17)
+            target_compile_definitions(astc-vulkan-paired-selection-smoke-neural-10x5 PRIVATE
+                ASTC_VULKAN_PAIRED_NEURAL_ENCODER=1
+                ASTC_VULKAN_PAIRED_D2_10X5=1)
         endif()
     endif()
 
@@ -715,7 +753,7 @@ if (ASTC_VULKAN_GLSLC)
             astc-vulkan-sampled-f32-matvec-shader)
     endif()
 
-    # The executable is always built on a Vulkan system, but its D2 8x5
+    # The executable is always built on a Vulkan system, but its D2 8x5/10x5
     # pipeline test stays opt-in. It passes on the current Intel/Mesa smoke
     # target, but CPU scoring remains the default until the device path also
     # reproduces selector commit order and validation-prefix replay.

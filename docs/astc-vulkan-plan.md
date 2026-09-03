@@ -2798,12 +2798,14 @@ semantic choice is not encoded by standard ASTC itself, so manifest v3 adds a
 separate packed layout blob for `paired-d2` artifacts. It contains little-endian
 `uint32` words in physical ASTC raster-block order: bit zero is block zero,
 zero means `RG/B`, and one means `R/GB`. The first concrete profile is
-`D2_8x5` at 1.60 b/w. Manifest validation is also ready for `D2_10x5` at
-1.28 b/w; both have a five-row physical texture stripe and therefore a
-ten-row logical D2 stripe. They remain distinct Vulkan image formats, not an
-interchangeable generic “H10” format. For D2 8x5 the layout bit costs one bit
-per 80 logical weights (`0.0125 b/w`, with only final-word rounding overhead);
-for D2 10x5 it costs one bit per 100 logical weights (`0.01 b/w`).
+`D2_8x5` at 1.60 b/w. The same CPU selector/model smoke and GPU transport
+contract now cover `D2_10x5` at 1.28 b/w; both have a five-row physical
+texture stripe and therefore a ten-row logical D2 stripe. They remain
+distinct Vulkan image formats, not an interchangeable generic “H10” format.
+For D2 8x5 the layout bit costs one bit per 80 logical weights (`0.0125 b/w`,
+with only final-word rounding overhead); for D2 10x5 it costs one bit per 100
+logical weights (`0.01 b/w`). Production still keeps paired-D2 behind the
+metadata-aware adapter gate until full artifact/model replay is complete.
 
 The paired shader accepts a storage-buffer layout map and retains a uniform
 layout fallback when no words are supplied. Existing v1/v2 scalar/gauge

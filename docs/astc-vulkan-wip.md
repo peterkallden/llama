@@ -7203,3 +7203,33 @@ update, second batch, readback, and teardown. The batch planner and YAQA batch
 regressions also pass. Staging buffer/command allocation for the image update
 is still short-lived; persistent staging slots and CPU/GPU overlap are the
 next performance step.
+
+## Three-hundred-ninth sweep: D2_10x5 end-to-end PoC coverage
+
+The second five-row paired-D2 footprint is now carried through the bounded
+offline smoke chain instead of stopping at manifest/transport validation.
+`D2_10x5` has dedicated standard CPU model/selection smoke targets and neural
+encoder selection targets, sharing the same source and selector contract as
+`D2_8x5` while changing only the compile-time physical width. Its nominal
+rate is 1.28 bits/weight (100 logical weights per 128-bit ASTC block); the
+semantic layout map remains one bit per physical block and is still separate
+metadata rather than an ASTC extension.
+
+The Vulkan ranking device smoke now checks both
+`VK_FORMAT_ASTC_8x5_UNORM_BLOCK` and `VK_FORMAT_ASTC_10x5_UNORM_BLOCK` on the
+same device. It always runs the existing delta/proposal-gain checks for 8x5;
+when 10x5 is advertised it reuses the device session contract for a 10x5 atlas
+with ten reduction lanes and ten logical rows per source block. This proves
+the shader push constants, source-block addressing, paired layouts, and
+device-side gain arithmetic for both widths on capable hardware. A device
+without 10x5 reports that capability explicitly while retaining the 8x5 gate;
+it does not claim that CPU candidate encoding or the production scheduler has
+moved to GPU.
+
+The production gate is intentionally unchanged: D2_10x5 remains experimental
+until artifact-backed replay, full model/holdout evaluation, metadata-aware
+upload, and a hard fallback to the regular scalar/Q3/Q4 path are complete.
+The next planned work is the four-step production preparation: finish the
+sidecar/adapter contract, run the full target-GPU model matrix, produce and
+replay the low-rate artifacts, and only then compare the optional PV/YAQA
+selectors on the surviving footprints.
