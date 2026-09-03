@@ -2409,3 +2409,11 @@ Vulkan image has one fixed ASTC `VkFormat`, so a mixed 8x8/10x8 design needs
 separate images or atlases plus macro-tile metadata and shader address/dispatch
 logic. An offline rate/quality composition tool is safe to add later, but it
 is not part of the first driver adapter.
+
+The exact same-prompt native control matrix is now recorded for the current
+Pythia reference and CPU-only backend. It establishes Q4_K_M and Q3_K_M as
+the model-facing quality references, with TQ1_0/TQ2_0 retained as aggressive
+few-level controls; the existing full-shape 6x6 scalar/gauge replay is the
+ASTC driver reference. The final matrix gate remains open until equivalent
+full-shape ASTC artifacts exist for the low-rate footprints and timings are
+measured on the target device.

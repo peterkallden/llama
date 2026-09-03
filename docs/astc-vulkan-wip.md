@@ -6322,3 +6322,27 @@ CPU/Vulkan replay complete for the promoted 6x6 profiles; model replay complete
 on the CPU-only backend; and the comparison evidence is assembled but still
 needs one exact same-prompt rerun for a publishable Q4/Q3/TQ/ASTC matrix. The
 opt-in production adapter and target-mobile validation remain later gates.
+
+## Two-hundred-seventieth sweep: exact same-prompt native control matrix
+
+The comparison sweep was rerun with the current build, the same Pythia FP16
+reference, the same fixed C++ prompt, and the CPU-only backend for every native
+control. This removes the earlier tokenization/backend ambiguity from the
+stored historical logs:
+
+| Control | Relative logits MSE | Loss delta | Top-1 agreement |
+| --- | ---: | ---: | ---: |
+| Q4_K_M | `0.034473888` | `+0.17954922` | `71.43%` |
+| Q3_K_M | `0.11940222` | `+0.27576604` | `71.43%` |
+| TQ2_0 | `1.5367321` | `+8.2043438` | `0%` |
+| TQ1_0 | `1.5448716` | `+7.3639647` | `0%` |
+| ASTC 6x6 scalar | `0.95789459` | `+7.9845417` | `0%` |
+| ASTC 6x6 gauge | `0.93365051` | `+7.9629119` | `0%` |
+
+The gauge artifact remains a real improvement over the scalar ASTC control,
+but neither is yet competitive with Q3_K_M/Q4_K_M on this model-facing
+measurement. TQ results are included as genuine local GGUF controls and are
+not interpreted as ASTC payloads. The matrix is a driver-quality baseline,
+not a final throughput table: ASTC 8x6/10x6/8x8/10x8 still need full-shape
+artifacts before model-level comparison, and cold-upload/hot-cache/batched
+timings must be reported separately per target device.
