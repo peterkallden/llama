@@ -7015,6 +7015,34 @@ until it is widened (for example with a bounded near-winner union or a
 structure-family quota) and passes candidate-recall and untouched-holdout
 gates. No production D2 default or artifact contract was changed.
 
+## Three-hundred-first sweep: CPU/GPU offline ranking foundation
+
+Added a host-neutral GPU-ranking transport contract and an explicit backend
+plan. Candidate payload generation remains permanently CPU-only because Vulkan
+exposes standard ASTC sampling/decode, not standard ASTC encoding. The later
+offline stages—decoded D2 delta, activation/YAQA objective, proposal gain, and
+conflict-aware commit—can independently name CPU or GPU ownership. The default
+plan remains all CPU; the GPU plan is opt-in and requires GPU delta scoring
+before GPU proposal/commit, preventing accidental hidden readbacks.
+
+CPU-generated legal D2 payloads can now be packed into one rectangular ASTC
+candidate atlas. Each atlas block is exactly one 16-byte candidate payload;
+compact records retain its source physical block, neutral-baseline record,
+candidate index, and `RG/B` versus `R/GB` layout. This is temporary offline
+transport only, not an inference texture or a new artifact layout. A pure CPU
+contract test validates raster payload order, baseline references, dimensions,
+and rejection of non-D2 footprints.
+
+The new `astc-paired-candidate-delta.comp` shader is the GPU-side first step.
+It samples that standard ASTC atlas with `texelFetch`, applies the exact D2
+semantic mapping to both candidate and candidate-zero baseline, and writes
+FP32 activation deltas in `[candidate][sample][local-logical-row]` order. It
+does not encode ASTC and does not yet perform GPU conflict commits. The shader
+compiles to SPIR-V and the CPU/GPU-plan, atlas, paired-selector, layout,
+objective, YAQA, and driver contracts all pass. The next gate is a Vulkan
+session that uploads a bounded atlas and proves GPU delta equivalence against
+the current CPU exact-decode oracle before YAQA/proposal/commit are moved.
+
 ## Two-hundred-ninety-second sweep: paired selection-core groundwork
 
 Added `astc-vulkan-paired-selector.{h,cpp}` as the reusable offline boundary

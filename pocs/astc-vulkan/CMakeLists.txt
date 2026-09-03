@@ -9,12 +9,14 @@ set(ASTC_VULKAN_POC_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-block-ldlq.cpp
     astc-vulkan-gauge.cpp
+    astc-vulkan-gpu-ranking.cpp
     astc-vulkan-hash.cpp
     astc-vulkan-objective.cpp
     astc-vulkan-paired.cpp
     astc-vulkan-paired-layout.cpp
     astc-vulkan-paired-selector.cpp
     astc-vulkan-pv.cpp
+    astc-vulkan-ranking-plan.cpp
     astc-vulkan-yaqa.cpp)
 target_include_directories(astc-vulkan-algorithms PUBLIC
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
@@ -29,6 +31,16 @@ add_executable(test-astc-vulkan-gauge
     tests/test-astc-vulkan-gauge.cpp)
 target_link_libraries(test-astc-vulkan-gauge PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-gauge PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-gpu-ranking
+    tests/test-astc-vulkan-gpu-ranking.cpp)
+target_link_libraries(test-astc-vulkan-gpu-ranking PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-gpu-ranking PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-ranking-plan
+    tests/test-astc-vulkan-ranking-plan.cpp)
+target_link_libraries(test-astc-vulkan-ranking-plan PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-ranking-plan PRIVATE cxx_std_17)
 
 add_executable(test-astc-vulkan-paired
     tests/test-astc-vulkan-paired.cpp)
@@ -475,6 +487,8 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-matvec.comp.spv)
     set(ASTC_VULKAN_PAIRED_MATVEC_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-matvec.comp.spv)
+    set(ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-candidate-delta.comp.spv)
     set(ASTC_VULKAN_BUFFER_MATVEC_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/buffer-matvec.comp.spv)
     set(ASTC_VULKAN_Q4_MATVEC_SHADER_OUTPUT
@@ -522,6 +536,17 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling experimental paired-D2 ASTC Vulkan matvec shader")
     add_custom_target(astc-vulkan-paired-matvec-shader
         DEPENDS ${ASTC_VULKAN_PAIRED_MATVEC_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-paired-candidate-delta.comp
+            -o ${ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-paired-candidate-delta.comp
+        COMMENT "Compiling experimental paired-D2 GPU candidate-delta shader")
+    add_custom_target(astc-vulkan-paired-candidate-delta-shader
+        DEPENDS ${ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT})
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_BUFFER_MATVEC_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -644,6 +669,14 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-gauge
         COMMAND test-astc-vulkan-gauge)
     set_property(TEST test-astc-vulkan-gauge PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-gpu-ranking
+        COMMAND test-astc-vulkan-gpu-ranking)
+    set_property(TEST test-astc-vulkan-gpu-ranking PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-ranking-plan
+        COMMAND test-astc-vulkan-ranking-plan)
+    set_property(TEST test-astc-vulkan-ranking-plan PROPERTY LABELS astc)
 
     add_test(NAME test-astc-vulkan-paired
         COMMAND test-astc-vulkan-paired)

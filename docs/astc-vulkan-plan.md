@@ -2708,6 +2708,24 @@ but regressed untouched holdout, so the full neural search remains the quality
 reference. Any future bank widening must prove candidate recall and holdout
 equivalence or improvement before it can be selected by the producer.
 
+### Offline ranking backend selection
+
+The packer has an explicit stage plan rather than a hard-coded CPU/GPU choice.
+`candidate_encode` is always CPU astcenc; `delta_score`, `objective`,
+`proposal_gain`, and `conflict_commit` may be CPU or GPU. The initial default
+is the all-CPU plan. A GPU plan keeps decoded deltas and residuals device-side;
+it is invalid to request GPU proposal/commit while producing deltas on CPU,
+because that would disguise per-iteration host transfers as acceleration.
+
+GPU ranking uses a temporary sampled ASTC candidate atlas: every legal CPU
+payload occupies one physical raster block, while compact buffers describe its
+source block, neutral candidate, and paired-D2 layout. The final artifact still
+contains only the selected original payload and existing D2 layout metadata.
+Before the GPU plan can become selectable, it must prove exact FP32 GPU delta
+equivalence to the CPU oracle on bounded payloads, then reproduce the CPU
+selector's commit sequence and validation prefix. Device policy and a default
+choice come only after those gates and measured transfer/batch costs.
+
 ### D2 per-block layout metadata (v3 groundwork)
 
 YAQA may select either `RG/B` or `R/GB` for each physical D2 ASTC block. The

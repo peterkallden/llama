@@ -1,0 +1,97 @@
+#version 450
+
+// Offline paired-D2 candidate-delta kernel.
+//
+// CPU astcenc has already created legal 16-byte ASTC blocks and packed each
+// candidate as one physical ASTC block in a sampled atlas. texelFetch invokes
+// the normal fixed-function ASTC decoder; this shader only performs the D2
+// semantic mapping and activation-space delta calculation. It is deliberately
+// separate from runtime matvec and from conflict-aware commit selection.
+
+layout(local_size_x = 32) in;
+
+layout(set = 0, binding = 0) uniform sampler2D candidate_atlas;
+
+// Per candidate: atlas block x/y, original source block index, D2 layout.
+layout(std430, set = 0, binding = 1) readonly buffer CandidateRecords {
+    uvec4 records[];
+} candidate_records;
+
+// Index of the neutral candidate record for each candidate record.
+layout(std430, set = 0, binding = 2) readonly buffer BaselineRecords {
+    uint baseline_record[];
+} baseline_records;
+
+layout(std430, set = 0, binding = 3) readonly buffer Activations {
+    float values[];
+} activations;
+
+// Output order: [candidate][sample][logical row inside one physical block].
+layout(std430, set = 0, binding = 4) buffer CandidateDeltas {
+    float values[];
+} candidate_deltas;
+
+layout(push_constant) uniform PushConstants {
+    uint candidate_count;
+    uint calibration_samples;
+    uint tensor_width;
+    uint tensor_logical_height;
+    uint source_blocks_x;
+    uint block_width;
+    uint block_height;
+    float reconstruction_scale;
+} params;
+
+shared float partial[32];
+
+float paired_weight(vec4 texel, uint member, uint layout_id) {
+    if (layout_id == 0u) {
+        return member == 0u ? 0.5 * (texel.r + texel.g) : texel.b;
+    }
+    return member == 0u ? texel.r : 0.5 * (texel.g + texel.b);
+}
+
+vec4 candidate_texel(uvec4 record, uint column, uint texture_row) {
+    return texelFetch(candidate_atlas, ivec2(
+        record.x * params.block_width + column,
+        record.y * params.block_height + texture_row), 0);
+}
+
+void main() {
+    const uint candidate_id = gl_WorkGroupID.x;
+    const uint sample_index = gl_WorkGroupID.y;
+    const uint local_logical_row = gl_WorkGroupID.z;
+    const uint logical_rows_per_block = params.block_height * 2u;
+    if (candidate_id >= params.candidate_count || sample_index >= params.calibration_samples ||
+        local_logical_row >= logical_rows_per_block) return;
+
+    const uvec4 candidate = candidate_records.records[candidate_id];
+    const uvec4 baseline = candidate_records.records[baseline_records.baseline_record[candidate_id]];
+    const uint source_block_x = candidate.z % params.source_blocks_x;
+    const uint source_block_y = candidate.z / params.source_blocks_x;
+    const uint texture_row = local_logical_row >> 1u;
+    const uint member = local_logical_row & 1u;
+    const uint global_row = source_block_y * logical_rows_per_block + local_logical_row;
+    float sum = 0.0;
+    for (uint column = gl_LocalInvocationID.x; column < params.block_width; column += 32u) {
+        const uint global_column = source_block_x * params.block_width + column;
+        if (global_column >= params.tensor_width || global_row >= params.tensor_logical_height) continue;
+        const float candidate_q = paired_weight(candidate_texel(candidate, column, texture_row), member, candidate.w);
+        const float baseline_q = paired_weight(candidate_texel(baseline, column, texture_row), member, baseline.w);
+        sum += params.reconstruction_scale * (candidate_q - baseline_q) *
+            activations.values[sample_index * params.tensor_width + global_column];
+    }
+    partial[gl_LocalInvocationID.x] = sum;
+    barrier();
+    for (uint stride = 16u; stride > 0u; stride >>= 1u) {
+        if (gl_LocalInvocationID.x < stride) {
+            partial[gl_LocalInvocationID.x] += partial[gl_LocalInvocationID.x + stride];
+        }
+        barrier();
+    }
+    if (gl_LocalInvocationID.x == 0u) {
+        const uint output_index = (candidate_id * params.calibration_samples + sample_index) *
+            logical_rows_per_block + local_logical_row;
+        candidate_deltas.values[output_index] = partial[0];
+    }
+}
