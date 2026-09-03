@@ -7409,3 +7409,20 @@ processes and the main llama Vulkan backend may consume memory after the query.
 Future atlas/multi-tensor ownership will pass cumulative resident image bytes
 to the same check. The initial single-tensor sidecar passes zero resident bytes
 because it replaces its previous texture before uploading a new one.
+
+## Three-hundred-seventeenth sweep: cumulative resident-set planner
+
+Added a standalone residency planner for the next scheduler integration. It
+takes approved cache records together with measured Vulkan image/staging
+requirements and applies the same effective 80% limit cumulatively. If every
+record fits, it returns a preload-all plan. Otherwise it returns the largest
+ordered prefix that fits, allowing the caller to stream the remaining tensors
+in a layer/tensor window. A caller may cap the window size independently.
+
+The planner deliberately does not reorder tensors or implement eviction: the
+scheduler owns locality and can supply manifest records in layer order. D2
+records are transport-compatible with the same planner, while the automatic
+production route still applies its separate D1 quality/capability gate.
+The contract test covers both preload and bounded-stream decisions. The next
+integration step is to populate the item sizes from Vulkan requirements for
+all approved records and make the adapter retain the selected resident set.

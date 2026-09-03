@@ -2971,3 +2971,11 @@ every approved ASTC tensor when their summed allocations fit, otherwise retain
 a bounded layer/tensor working set and stream the rest. This applies the same
 budget API with nonzero resident bytes and avoids either a whole-model RAM copy
 or an uncontrolled GPU-memory overcommit.
+
+The cumulative residency planner is now implemented as an isolated scheduler
+primitive. It preserves caller-provided layer/tensor order, preloads all
+approved records when their measured allocations fit, and otherwise returns a
+bounded prefix for streaming. It does not reorder or evict resources; those
+policies remain scheduler responsibilities. The next production step is to
+feed it per-record Vulkan requirements and retain/release the resulting
+resident set around layer execution.

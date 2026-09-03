@@ -189,6 +189,13 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-resource PUBLIC Vulkan::Vulkan astc-vulkan-driver)
     target_compile_features(astc-vulkan-resource PUBLIC cxx_std_17)
 
+    add_library(astc-vulkan-residency STATIC
+        astc-vulkan-residency.cpp)
+    target_include_directories(astc-vulkan-residency PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-residency PUBLIC astc-vulkan-resource)
+    target_compile_features(astc-vulkan-residency PUBLIC cxx_std_17)
+
     add_library(astc-vulkan-ffn-adapter STATIC
         astc-vulkan-ffn-adapter.cpp)
     target_include_directories(astc-vulkan-ffn-adapter PUBLIC
@@ -244,6 +251,13 @@ if (TARGET Vulkan::Vulkan)
     target_include_directories(test-astc-vulkan-budget PRIVATE
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_compile_features(test-astc-vulkan-budget PRIVATE cxx_std_17)
+
+    add_executable(test-astc-vulkan-residency
+        tests/test-astc-vulkan-residency.cpp)
+    target_link_libraries(test-astc-vulkan-residency PRIVATE astc-vulkan-residency)
+    target_include_directories(test-astc-vulkan-residency PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_compile_features(test-astc-vulkan-residency PRIVATE cxx_std_17)
 
     add_executable(test-astc-vulkan-dispatch
         tests/test-astc-vulkan-dispatch.cpp)
@@ -1021,6 +1035,12 @@ if (BUILD_TESTING)
         add_test(NAME test-astc-vulkan-budget
             COMMAND test-astc-vulkan-budget)
         set_property(TEST test-astc-vulkan-budget PROPERTY LABELS astc)
+    endif()
+
+    if (TARGET test-astc-vulkan-residency)
+        add_test(NAME test-astc-vulkan-residency
+            COMMAND test-astc-vulkan-residency)
+        set_property(TEST test-astc-vulkan-residency PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-astcenc-smoke)
