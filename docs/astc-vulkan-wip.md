@@ -7273,3 +7273,18 @@ representation reason. Existing scalar/gauge shape, device-capability,
 manifest-version, and malformed-payload checks remain green. This is the
 production safety gate for step 1; full-shape artifact/model approval is still
 required before any ASTC profile is enabled by a scheduler.
+
+## Three-hundred-twelfth sweep: target capability matrix includes D2_10x5
+
+The standalone Vulkan capability probe now reports
+`VK_FORMAT_ASTC_10x5_UNORM_BLOCK` alongside the existing D1 and D2 formats.
+On the real host devices, Intel UHD Graphics 620 (KBL GT2) advertises sampled
+support for every currently defined ASTC footprint, including 10x5. NVIDIA
+GeForce 920MX and llvmpipe advertise none of the ASTC sampled formats; NVIDIA
+remains useful for buffer-only YAQA arithmetic, not ASTC texture replay.
+
+This makes the target matrix explicit instead of inferring 10x5 capability
+from 8x5. The production adapter still selects one fixed format per bound
+image and falls back before allocation whenever the requested format is not
+sampled-capable. D2_10x5 is therefore ready for the later target-GPU timing
+and artifact replay gate, but remains excluded from automatic scheduling.
