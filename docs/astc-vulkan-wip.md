@@ -6459,3 +6459,21 @@ eligible at the scheduler boundary. 8x6, 10x6, 8x8, and 10x8 remain
 experimental until the complete model/performance matrix is assembled. Mixed
 footprints are deferred to per-tensor/page profiles; per-block mixing is not
 part of the current runtime design.
+
+## Two-hundred-seventy-sixth sweep: resume audit and standard selector contracts
+
+The interrupted `10x8` run could not be resumed because the prior session's
+Pythia calibration, validation, and holdout traces were temporary `/tmp`
+inputs and are no longer present after the environment restart. The run
+therefore failed closed at trace loading; no synthetic replacement was used.
+The existing full-shape 8x6, 10x6, and 8x8 artifacts remain intact and their
+results are unchanged. The PoC trace-capture target was rebuilt successfully
+so the disjoint traces can be regenerated with the original model/prompt
+contract before restarting 10x8.
+
+The standard scheduler boundary was rechecked after the resume: 4x4, 5x5,
+and 6x6 each pass the isolated scheduler and FFN adapter contracts. They are
+separate selector/profile choices, with scalar and scalar-anchored gauge as
+the allowed representations; malformed or unsupported artifacts still fall
+back to the normal Q4_K_M/Q3_K_M path. Experimental 8x6/10x6/8x8/10x8 remain
+available only to explicit research/replay harnesses.
