@@ -2436,6 +2436,11 @@ not influenced by experiments that have not survived a full model replay:
    Vulkan device must leave the binding in `kFallback` and expose the normal
    `Q4_K_M` (quality) and `Q3_K_M` (low-memory) choices. No experimental
    footprint is automatically selected by this boundary.
+   Each standard footprint has its own offline selector and artifact profile:
+   4x4, 5x5, and 6x6 are not one shared tuning stream. This keeps candidate
+   pools, validation prefixes, and tie-breaking decisions traceable to the
+   exact block geometry while allowing a complete per-tensor/page profile.
+   The runtime adapter still exposes one fixed `VkFormat` per bound image.
 2. **Target-device matrix:** use the exact artifact bytes and fixed model /
    prompt contract to measure FP16, Q4_K_M, Q3_K_M, TQ2_0, TQ1_0, ASTC 6x6
    scalar/gauge, and each low-rate ASTC profile. Record model-facing quality,
@@ -2451,10 +2456,14 @@ not influenced by experiments that have not survived a full model replay:
    alternation and YAQA-style two-sided/model-preserving scoring to 10x8,
    10x10, and lower-rate candidates. Keep the candidate pool, objective, and
    source family independently versioned so an improvement is attributable.
-5. **Mixed footprint (last):** investigate macro-tile/atlas composition only
-   if the uniform matrix shows a stable hard-tile population. Vulkan images have
-   one immutable `VkFormat`; mixed rates therefore require separate images and
-   explicit tile metadata, and must not leak into the first production adapter.
+5. **Mixed footprint (last):** investigate composition only if the uniform
+   matrix shows a stable hard-tile population. The first mixed form is
+   per-tensor or per-page selection, not per ASTC block: a page is assigned one
+   selector/profile and retains simple address calculation. A later macro-tile
+   study may use footprint-height classes (H6: 6x6/8x6/10x6; H8: 8x8/10x8)
+   with separate images/atlases and explicit tile metadata. Per-block mixing
+   is out of scope until metadata and shader branching show a net benefit.
+   Mixed rates must not leak into the first production adapter.
 
 The required artifact set for step 3 is four full-shape pairs (`neutral` and
 `validation-prefix`) plus manifest/provenance and decoded CPU references. The

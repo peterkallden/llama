@@ -6413,3 +6413,49 @@ scheduler boundary remains standard 4x4/5x5/6x6.
 
 This closes the 8x6 artifact/CPU/Vulkan gate. The remaining low-rate artifact
 gates are 10x6, 8x8, and 10x8, followed by the full model/performance matrix.
+
+## Two-hundred-seventy-fourth sweep: full-shape 10x6 artifact and replay
+
+The full-shape `10x6` validation-prefix artifact is now materialized for the
+same Pythia `blk.0.ffn_down.weight` tensor (`2048x8192`, 280,440 blocks).
+Validation stopping selected commit `152,964`; holdout activation-relative MSE
+was `0.057492684` versus `0.25181848` for the neutral anchor. Manifest and
+provenance were generated from the exact payload bytes.
+
+CPU-only model replay with the fixed prompt produced logits-relative MSE
+`0.87268115`, loss delta `+7.6794196`, and `0%` top-1 agreement. The low-rate
+artifact therefore improves its ASTC activation objective but does not yet
+survive the model-facing quality gate against Q3/Q4.
+
+The isolated Intel UHD 620 Vulkan replay matched the CPU oracle (`3.06e-13`
+scalar and `7.13e-13` validation-gauge MSE). Three hot-cache repeats measured
+approximately `194.05 ms` scalar and `190.37 ms` gauge per 30-sample dispatch.
+These timings are reference-device data only; they are not mobile GPU claims.
+
+## Two-hundred-seventy-fifth sweep: full-shape 8x8 artifact and replay
+
+The full-shape `8x8` validation-prefix artifact is now materialized for the
+same Pythia `blk.0.ffn_down.weight` tensor (`2048x8192`, 262,144 blocks).
+Validation stopping selected commit `128,737`; exact payload bytes were
+packaged with manifest and provenance records, alongside neutral and decoded
+CPU references. Validation-prefix activation-relative MSE was `0.068098165`
+versus `0.23076938` for the neutral scalar anchor.
+
+CPU-only model replay with the fixed prompt produced logits-relative MSE
+`0.87095724`, loss delta `+7.5583776`, and `0%` top-1 agreement. Thus 8x8
+retains a substantial activation-level gauge gain at `2.00` bits/texel, but it
+does not pass the model-facing quality gate against Q3_K_M/Q4_K_M.
+
+The exact same manifest/payload pair was sampled through the isolated Intel
+UHD 620 Vulkan path. GPU-vs-CPU MSE was `2.48e-13` for neutral scalar and
+`6.24e-13` for validation gauge. Three hot-cache repeats measured about
+`188.94 ms` scalar and `189.87 ms` gauge per 30-sample dispatch; ASTC-vs-source
+activation-relative MSE was `0.23076938` and `0.068098165`. These are
+reference-device correctness/timing results, not portable mobile claims.
+
+The production preparation decision remains explicit: 4x4, 5x5, and 6x6 each
+have an independent selector/profile and are the only standard footprints
+eligible at the scheduler boundary. 8x6, 10x6, 8x8, and 10x8 remain
+experimental until the complete model/performance matrix is assembled. Mixed
+footprints are deferred to per-tensor/page profiles; per-block mixing is not
+part of the current runtime design.
