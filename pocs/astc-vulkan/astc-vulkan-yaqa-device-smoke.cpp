@@ -63,7 +63,7 @@ int main(int argc, char ** argv) {
     const std::vector<float> input{1.0f, .5f, -1.0f, 2.0f, -1.0f, .25f}; // 2x3
     const std::vector<float> output{.25f, 1.0f, -2.0f, .5f}; // 2x2
     const double expected = astc_vulkan_yaqa_trace_score(error, 2, 3, input, output, 2);
-    const VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "astc-yaqa-smoke", 1, "llama.cpp", 1, VK_API_VERSION_1_0};
+    const VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "astc-yaqa-smoke", 1, "llama.cpp", 1, VK_API_VERSION_1_1};
     const VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, 0, &app, 0, nullptr, 0, nullptr};
     VkInstance instance = VK_NULL_HANDLE; if (vkCreateInstance(&instance_info, nullptr, &instance) != VK_SUCCESS) return 77;
     VkPhysicalDevice physical = VK_NULL_HANDLE; uint32_t family = UINT32_MAX;

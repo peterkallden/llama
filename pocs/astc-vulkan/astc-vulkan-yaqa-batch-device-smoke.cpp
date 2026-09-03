@@ -81,7 +81,7 @@ int main(int argc, char ** argv) {
                                errors.begin() + static_cast<size_t>(c + 1) * rows * columns);
         expected[c] = static_cast<float>(astc_vulkan_yaqa_trace_score(one, rows, columns, input, output, samples));
     }
-    const VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "astc-yaqa-batch-smoke", 1, "llama.cpp", 1, VK_API_VERSION_1_0};
+    const VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "astc-yaqa-batch-smoke", 1, "llama.cpp", 1, VK_API_VERSION_1_1};
     const VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, 0, &app, 0, nullptr, 0, nullptr};
     VkInstance instance = VK_NULL_HANDLE; if (vkCreateInstance(&instance_info, nullptr, &instance) != VK_SUCCESS) return 77;
     VkPhysicalDevice physical = VK_NULL_HANDLE; uint32_t family = UINT32_MAX;

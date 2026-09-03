@@ -2727,14 +2727,17 @@ selector's commit sequence and validation prefix. Device policy and a default
 choice come only after those gates and measured transfer/batch costs.
 
 Implementation status: the candidate-atlas transport, a Vulkan delta session,
-and a hardware-smoke executable now exist. The current Intel UHD 620/Mesa
-driver reports ASTC support but faults when creating the paired-D2 ranking
-pipeline, while ordinary ASTC sampling pipelines pass. GPU ranking is
-therefore an opt-in experiment guarded by a per-device preflight; CPU is the
-production default. The next GPU gate is to make that pipeline execute on a
-target device, prove FP32 deltas against the CPU oracle, then reproduce CPU
-commit order and validation prefix before moving YAQA or conflict-aware
-proposals to the device.
+and a hardware-smoke executable now exist. An initial Intel UHD 620/Mesa
+failure was traced by the validation layer to host-side handle-order bugs:
+descriptor sets were allocated before their descriptor pool, the compute
+pipeline was created before its pipeline layout, and the instance advertised
+Vulkan 1.0 while using SPIR-V 1.3. These lifecycle/API-order issues are now
+fixed. The Intel smoke executes both paired D2 layouts and passes five
+repeated init/dispatch/readback/reset runs with validation enabled. GPU
+ranking remains an opt-in experiment guarded by a per-device preflight; CPU
+is still the production default. The next GPU gate is to reproduce CPU commit
+order and validation prefix before moving YAQA or conflict-aware proposals to
+the device.
 
 YAQA is the exception to the ASTC hardware constraint: it is pure buffer math
 and can be preflighted on a discrete NVIDIA device. A CPU-equivalent
@@ -2752,12 +2755,14 @@ can consume the score vector without a host round-trip. ASTC candidate encode
 and ASTC decode remain separate CPU/reference stages on this NVIDIA path.
 
 GPU resource contract: candidate-ranking command buffers must be allocated
-after their command pool, host-visible writes must be flushed and explicitly
-made visible to compute, GPU outputs must be made visible and invalidated
-before host reads, and reset must wait before destroying dependent descriptors,
-buffers, and sampled images. The current implementation satisfies this basic
-contract. Add validation-layer and repeated init/run/reset testing on a
-working ASTC target before making the ASTC GPU path selectable.
+after their command pool, descriptor sets after their descriptor pool, compute
+pipelines after their pipeline layout, host-visible writes must be flushed and
+explicitly made visible to compute, GPU outputs must be made visible and
+invalidated before host reads, and reset must wait before destroying dependent
+descriptors, buffers, and sampled images. The current implementation satisfies
+this basic contract, and the Intel validation/repetition gate is green. Add
+selector-equivalence and validation-prefix replay before making the ASTC GPU
+path selectable.
 
 ### D2 per-block layout metadata (v3 groundwork)
 

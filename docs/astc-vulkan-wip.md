@@ -7123,3 +7123,26 @@ D2_10x5. The Intel device pipeline still cannot execute this ASTC ranking
 shader, so the latter is a CPU transport/semantic gate rather than a new
 hardware claim. A later target with a working D2 ASTC pipeline must run both
 layouts through the exact device-delta smoke.
+
+## Three-hundred-fifth sweep: Intel lifecycle fix verified
+
+The Intel Vulkan D2 ranking smoke was rerun after the resource-lifetime audit.
+The validation layer identified the concrete failure before dispatch: a
+descriptor set allocation used a null descriptor pool, compute-pipeline
+creation used a null pipeline layout, and the smoke advertised Vulkan 1.0
+while loading SPIR-V 1.3. The implementation now creates these handles in the
+required order and requests Vulkan 1.1 in the smoke applications.
+
+The corrected smoke executes the paired ASTC candidate-delta shader on the
+Intel UHD 620/Mesa device and covers both semantic layouts (`RG/B` and
+`R/GB`) with two source blocks. It passed with
+`VK_LAYER_KHRONOS_validation` enabled, including five consecutive
+init/dispatch/readback/reset/teardown runs. The result is a hardware smoke
+and resource-lifecycle gate, not yet a production GPU ranking claim: CPU
+candidate encoding remains the source of legal ASTC payloads, and selector
+commit-order/validation-prefix equivalence is still required.
+
+Focused Vulkan/ASTC regressions (23 tests, including both YAQA device smokes,
+paired transport, resource/dispatch/driver contracts, and ASTC encoder smokes)
+also passed with validation enabled. No NVIDIA ASTC capability is inferred
+from the YAQA batch result; YAQA is buffer-only math on that device.

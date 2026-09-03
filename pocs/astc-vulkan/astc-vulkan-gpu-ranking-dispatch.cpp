@@ -152,10 +152,12 @@ bool astc_vulkan_gpu_ranking_session::init(
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}};
     const VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr,
         0, 1, 2, pool_sizes};
+    if (vkCreateDescriptorPool(device_, &pool_info, nullptr, &descriptor_pool_) != VK_SUCCESS) {
+        error = "failed to allocate GPU ranking descriptor set"; reset(); return false;
+    }
     const VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr,
         descriptor_pool_, 1, &descriptor_layout_};
-    if (vkCreateDescriptorPool(device_, &pool_info, nullptr, &descriptor_pool_) != VK_SUCCESS ||
-        vkAllocateDescriptorSets(device_, &set_info, &descriptor_set_) != VK_SUCCESS) {
+    if (vkAllocateDescriptorSets(device_, &set_info, &descriptor_set_) != VK_SUCCESS) {
         error = "failed to allocate GPU ranking descriptor set"; reset(); return false;
     }
     const VkDescriptorImageInfo image{atlas_texture_.sampler(), atlas_texture_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -177,12 +179,14 @@ bool astc_vulkan_gpu_ranking_session::init(
     const VkPushConstantRange push_range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(astc_vulkan_gpu_ranking_push_constants)};
     const VkPipelineLayoutCreateInfo pipeline_layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         nullptr, 0, 1, &descriptor_layout_, 1, &push_range};
+    if (vkCreatePipelineLayout(device_, &pipeline_layout_info, nullptr, &pipeline_layout_) != VK_SUCCESS) {
+        error = "failed to create GPU ranking compute pipeline"; reset(); return false;
+    }
     const VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
         VK_SHADER_STAGE_COMPUTE_BIT, shader_module_, "main", nullptr};
     const VkComputePipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, nullptr,
         0, stage, pipeline_layout_, VK_NULL_HANDLE, -1};
-    if (vkCreatePipelineLayout(device_, &pipeline_layout_info, nullptr, &pipeline_layout_) != VK_SUCCESS ||
-        vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline_) != VK_SUCCESS) {
+    if (vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline_) != VK_SUCCESS) {
         error = "failed to create GPU ranking compute pipeline"; reset(); return false;
     }
     const VkCommandPoolCreateInfo command_pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr,
