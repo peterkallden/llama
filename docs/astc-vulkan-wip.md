@@ -7507,3 +7507,30 @@ but does not promote it above D1 `10x8` or D1 `6x6` for this tensor. The next
 quality gate is a matched full-shape/model replay using exported artifacts;
 GPU Vulkan replay remains a separate correctness/performance gate, while
 these encode/decode quality numbers remain CPU-oracle measurements.
+
+## Three-hundred-twenty-first sweep: D2 10x5 low-rate comparison
+
+The same model-oracle protocol was repeated with the compiled D2 `10x5`
+variant (`1.28 b/w`). The best layout per source was selected from RG/B and
+R/GB; the D1 values below are the already measured `6x6` and `10x8`
+references on the identical tensor/trace.
+
+| source | D1 6x6 | D1 10x8 | D2 8x5 best | D2 10x5 best |
+| --- | ---: | ---: | ---: | ---: |
+| F16 | 0.00250858 | 0.0216832 | 0.0291849 | 0.0345171 |
+| Q3_K_M | 0.00201349 | 0.0256193 | 0.0328832 | 0.0357284 |
+| Q4_K_M | 0.00310247 | 0.0234940 | 0.0299074 | 0.0351933 |
+| TQ2_0 | 0.000763726 | 0.0332628 | 0.0481672 | 0.211840 |
+| TQ1_0 | 0.000763726 | 0.0332628 | 0.0481672 | 0.211840 |
+
+Relative to D1 `10x8`, D2 `10x5` is approximately `1.59x` worse for F16,
+`1.39x` for Q3, `1.50x` for Q4, and `6.37x` for TQ2/TQ1. Relative to D2
+`8x5`, the 10x5 penalty is about `1.18x`, `1.09x`, `1.18x`, and `4.40x`,
+respectively. TQ1 and TQ2 again decode identically on this tensor/crop.
+
+The low-rate conclusion is therefore source-dependent: `10x5` remains a
+plausible experimental point for F16/Q3/Q4 when the additional bandwidth
+reduction is important, but it is not a generally safe replacement for
+`8x5`; the ternary controls show a clear failure mode that requires a
+different source projection or model-aware objective. Neither D2 footprint
+is promoted to automatic production routing by this crop-level result.
