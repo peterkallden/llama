@@ -6541,6 +6541,33 @@ resident model data; scalar fallback is local to the same source/footprint;
 and macro-tile mixed footprints are deferred to compatible row-height classes
 rather than per-block runtime indirection.
 
+## Two-hundred-eightieth sweep: PV, YAQA, and LDLQ algorithm boundaries
+
+The first three remaining algorithm tracks now have explicit offline module
+boundaries and contract tests. `astc-vulkan-pv.{h,cpp}` provides a bounded
+coordinate P-step plus caller-supplied exact V-projection and objective. This
+is the correct shape for full PV alternation because the V-step can call the
+real ASTC encode/decode oracle; it is not enabled by the standard encoder and
+does not claim to reproduce the complete PV-Tuning optimizer yet.
+
+`astc-vulkan-yaqa.{h,cpp}` provides the two-sided sensitivity score
+`tr(H_out * E * H_in * E^T)`, with dimension checks and deterministic failure
+for malformed factors. It is ready to rank a frozen ASTC candidate pool, but
+the sensitivity factors and model-facing replay gate are still outstanding.
+
+The damped local Gram solve used by the existing Block-LDLQ target
+regeneration is now implemented in `astc-vulkan-block-ldlq.{h,cpp}` and called
+from latent-smoke. Pivoting, tolerance, and output ordering are unchanged;
+the remaining monolithic selector still owns capture/candidate/artifact state
+until a later selection-core extraction.
+
+The focused suite passed four tests: PV alternation, YAQA identity/weighted
+score, LDLQ configuration/solve, and the existing Block-LDLQ smoke. No
+standard ASTC scheduler profile or Vulkan shader was changed. The next sweep
+is integration on fixed legal payload pools: PV first on `10x6`/`8x8`, then
+YAQA on `10x8`/`10x10`; each must use a new objective/profile version and
+retain the scalar-neutral fallback.
+
 ## Two-hundred-seventy-sixth sweep: resume audit and standard selector contracts
 
 The interrupted `10x8` run could not be resumed because the prior session's

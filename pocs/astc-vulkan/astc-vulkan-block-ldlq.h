@@ -20,6 +20,9 @@
 // - van Baalen et al., GPTVQ: The Blessing of Dimensionality for LLM
 //   Quantization, https://arxiv.org/abs/2402.15319
 
+#include <cstdint>
+#include <vector>
+
 enum class astc_vulkan_ldlq_order {
     forward,
     reverse,
@@ -27,3 +30,16 @@ enum class astc_vulkan_ldlq_order {
 };
 
 const char * astc_vulkan_ldlq_order_name(astc_vulkan_ldlq_order order);
+
+// Solves the damped local Gram system used by target regeneration. `gram` is
+// row-major, `first_column` selects a contiguous block, and `rhs`/`output`
+// have `count` elements. Pivoting and tolerance match the original smoke
+// implementation for replay stability.
+bool astc_vulkan_ldlq_solve_damped_block(
+    const std::vector<double> & gram,
+    uint32_t dimension,
+    uint32_t first_column,
+    uint32_t count,
+    double damping,
+    const std::vector<double> & rhs,
+    std::vector<double> & output);

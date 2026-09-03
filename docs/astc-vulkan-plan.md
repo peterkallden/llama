@@ -2240,6 +2240,14 @@ standard 128-bit ASTC blocks; no custom runtime decoder or shader-side training
 state is introduced. Reference: Malinovskii et al., *PV-Tuning: Beyond
 Straight-Through Estimation for Extreme LLM Compression*, arXiv:2405.14852.
 
+The first reusable algorithm boundary is now available in
+`astc-vulkan-pv.{h,cpp}`. It implements a bounded coordinate P-step followed
+by caller-supplied exact V-projection and objective callbacks. It remains an
+offline research primitive and is not enabled by any standard scheduler
+profile. Its next integration gate is to connect the projector to the exact
+ASTC artifact oracle and compare it against the frozen PV-lite pool on the
+same calibration/validation/holdout corpus.
+
 The first ASTC adaptation must be deliberately small:
 
 1. Freeze a provenance-bound 10x6/8x8 candidate pool and scalar-anchored
@@ -2266,6 +2274,13 @@ that immediate layer activation error can be a poor proxy for model output and
 uses a two-sided Kronecker-factored sensitivity approximation. Reference:
 Tseng, Sun, and De Sa, *Model-Preserving Adaptive Rounding*,
 arXiv:2505.22988. The ASTC form is a candidate score
+
+The reusable two-sided score is now implemented in
+`astc-vulkan-yaqa.{h,cpp}` as `tr(H_O E H_I E^T)`, with explicit dimension
+validation. It is ready to rank a frozen legal candidate pool, but sensitivity
+factor construction and model-facing replay remain open gates. The score must
+not replace activation-MSE globally until it improves a disjoint held-out
+model metric.
 
 \[
   \mathcal L_{\mathrm{two\text{-}sided}}(E)

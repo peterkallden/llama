@@ -9,7 +9,9 @@ set(ASTC_VULKAN_POC_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-block-ldlq.cpp
     astc-vulkan-gauge.cpp
-    astc-vulkan-hash.cpp)
+    astc-vulkan-hash.cpp
+    astc-vulkan-pv.cpp
+    astc-vulkan-yaqa.cpp)
 target_include_directories(astc-vulkan-algorithms PUBLIC
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(astc-vulkan-algorithms PUBLIC cxx_std_17)
@@ -28,6 +30,16 @@ add_executable(test-astc-vulkan-block-ldlq-config
     tests/test-astc-vulkan-block-ldlq-config.cpp)
 target_link_libraries(test-astc-vulkan-block-ldlq-config PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-block-ldlq-config PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-pv
+    tests/test-astc-vulkan-pv.cpp)
+target_link_libraries(test-astc-vulkan-pv PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-pv PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-yaqa
+    tests/test-astc-vulkan-yaqa.cpp)
+target_link_libraries(test-astc-vulkan-yaqa PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-yaqa PRIVATE cxx_std_17)
 
 add_executable(test-astc-vulkan-contract
     tests/test-astc-vulkan-contract.cpp)
@@ -538,6 +550,14 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-block-ldlq-config
         COMMAND test-astc-vulkan-block-ldlq-config)
     set_property(TEST test-astc-vulkan-block-ldlq-config PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-pv
+        COMMAND test-astc-vulkan-pv)
+    set_property(TEST test-astc-vulkan-pv PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-yaqa
+        COMMAND test-astc-vulkan-yaqa)
+    set_property(TEST test-astc-vulkan-yaqa PROPERTY LABELS astc)
 
     add_executable(test-astc-vulkan-provenance
         tests/test-astc-vulkan-provenance.cpp)
