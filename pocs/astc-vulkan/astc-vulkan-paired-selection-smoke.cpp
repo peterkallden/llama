@@ -32,6 +32,7 @@ struct params {
     uint32_t validation_samples = 2;
     uint32_t progress_every_blocks = 0;
     std::string report;
+    bool structure_bank = false;
 };
 
 struct decoded_block {
@@ -53,6 +54,34 @@ struct run_profile {
     double objective_seconds = 0.0;
 };
 
+#if defined(ASTC_VULKAN_PAIRED_NEURAL_ENCODER)
+struct structure_bank_state {
+    std::vector<std::array<unsigned int, 4>> modes;
+    bool constrained = false;
+};
+
+void capture_structure_bank(void * user_data, unsigned int, unsigned int, unsigned int,
+                            unsigned int partition_count, unsigned int partition_index,
+                            unsigned int block_mode, int plane2_component) {
+    auto & state = *static_cast<structure_bank_state *>(user_data);
+    const std::array<unsigned int, 4> key{partition_count, partition_index, block_mode,
+                                          static_cast<unsigned int>(plane2_component + 1)};
+    if (std::find(state.modes.begin(), state.modes.end(), key) == state.modes.end()) {
+        state.modes.push_back(key);
+    }
+}
+
+bool filter_structure_bank(void * user_data, unsigned int partition_count,
+                           unsigned int partition_index, unsigned int block_mode,
+                           int plane2_component) {
+    const auto & state = *static_cast<const structure_bank_state *>(user_data);
+    if (!state.constrained) return true;
+    const std::array<unsigned int, 4> key{partition_count, partition_index, block_mode,
+                                          static_cast<unsigned int>(plane2_component + 1)};
+    return std::find(state.modes.begin(), state.modes.end(), key) != state.modes.end();
+}
+#endif
+
 bool parse_params(int argc, char ** argv, params & result) {
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
@@ -67,6 +96,7 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--validation-samples") result.validation_samples = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--progress-every-blocks") result.progress_every_blocks = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--report") result.report = value;
+        else if (option == "--structure-bank") result.structure_bank = value == "1" || value == "true";
         else return false;
     }
     return !result.model.empty() && !result.tensor.empty() && !result.trace.empty() &&
@@ -82,7 +112,7 @@ public:
     };
 
     block_codec(bool neural_backend, astc_vulkan_paired_layout layout,
-                const block_codec * shared_parent = nullptr) : layout_(layout),
+                const block_codec * shared_parent = nullptr, bool structure_bank = false) : layout_(layout),
                                                                decoded_scratch_(kBlockWidth * kPhysicalBlockHeight * 4) {
         astcenc_config config{};
         if (astcenc_config_init(ASTCENC_PRF_LDR, kBlockWidth, kPhysicalBlockHeight, 1,
@@ -91,6 +121,12 @@ public:
             if (neural_backend) {
                 config.flags |= ASTCENC_FLG_MAP_NEURAL_D2;
                 config.neural_d2_layout = layout == astc_vulkan_paired_layout::rg_b ? 0u : 1u;
+                if (structure_bank) {
+                    config.structure_callback = capture_structure_bank;
+                    config.structure_callback_user_data = &structure_bank_;
+                    config.structure_filter = filter_structure_bank;
+                    config.structure_filter_user_data = &structure_bank_;
+                }
             }
 #else
             if (neural_backend) return;
@@ -117,6 +153,19 @@ public:
 
     bool ready() const { return ready_; }
     const timing & timings() const { return timings_; }
+
+    void begin_block() {
+#if defined(ASTC_VULKAN_PAIRED_NEURAL_ENCODER)
+        structure_bank_.modes.clear();
+        structure_bank_.constrained = false;
+#endif
+    }
+
+    void commit_structure_bank() {
+#if defined(ASTC_VULKAN_PAIRED_NEURAL_ENCODER)
+        structure_bank_.constrained = true;
+#endif
+    }
 
     bool roundtrip(const std::vector<float> & source, decoded_block & result) {
         if (!ready_ || source.size() != kBlockWidth * kPhysicalBlockHeight * 4) return false;
@@ -154,6 +203,9 @@ private:
     std::vector<float> decoded_scratch_;
     timing timings_{};
     bool ready_ = false;
+#if defined(ASTC_VULKAN_PAIRED_NEURAL_ENCODER)
+    structure_bank_state structure_bank_;
+#endif
 };
 
 float normalized_weight(const ggml_vk_astc_loaded_matrix & matrix, uint32_t row, uint32_t column,
@@ -266,7 +318,7 @@ int main(int argc, char ** argv) {
     if (!parse_params(argc, argv, options)) {
         std::fprintf(stderr, "usage: %s --model model.gguf --tensor name --trace input.trace "
                              "[--rows N --columns N --calibration-samples N --validation-samples N "
-                             "--progress-every-blocks N --report path]\n", argv[0]);
+                             "--progress-every-blocks N --report path [--structure-bank 1]\n", argv[0]);
         return 2;
     }
     ggml_vk_astc_loaded_matrix matrix;
@@ -304,8 +356,8 @@ int main(int argc, char ** argv) {
     std::vector<float> baseline(static_cast<size_t>(options.rows) * options.columns);
     std::vector<float> source_scratch(kBlockWidth * kPhysicalBlockHeight * 4);
     const auto codebook = astc_vulkan_make_paired_steering_codebook();
-    block_codec rg_b_codec(neural_backend, astc_vulkan_paired_layout::rg_b);
-    block_codec r_gb_codec(neural_backend, astc_vulkan_paired_layout::r_gb, &rg_b_codec);
+    block_codec rg_b_codec(neural_backend, astc_vulkan_paired_layout::rg_b, nullptr, options.structure_bank);
+    block_codec r_gb_codec(neural_backend, astc_vulkan_paired_layout::r_gb, &rg_b_codec, options.structure_bank);
     if (!rg_b_codec.ready() || !r_gb_codec.ready()) return 1;
     run_profile profile;
     uint64_t raw_candidates = 0;
@@ -316,6 +368,7 @@ int main(int argc, char ** argv) {
             auto & candidates = generated[static_cast<size_t>(block_y) * blocks_x + block_x];
             for (const auto layout : {astc_vulkan_paired_layout::rg_b, astc_vulkan_paired_layout::r_gb}) {
                 block_codec & codec = layout == astc_vulkan_paired_layout::rg_b ? rg_b_codec : r_gb_codec;
+                codec.begin_block();
                 for (const auto & steering : codebook) {
                     generated_candidate candidate;
                     candidate.layout = layout;
@@ -325,6 +378,10 @@ int main(int argc, char ** argv) {
                         options.rows, options.columns, minimum, range, layout, steering);
                     profile.source_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - source_start).count();
                     if (!codec.roundtrip(source_scratch, candidate.block)) return 1;
+                    if (steering.basis == astc_vulkan_paired_steering_basis::neutral &&
+                        steering.amplitude == 0.0f) {
+                        codec.commit_structure_bank();
+                    }
                     candidate.delta.payload = candidate.block.payload;
                     ++raw_candidates;
                     bool duplicate = false;

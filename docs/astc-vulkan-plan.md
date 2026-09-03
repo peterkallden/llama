@@ -2700,6 +2700,14 @@ being mistaken for representation improvements. GPU work can score/offline
 rank an already-generated candidate pool later, but it neither replaces the
 standard ASTC CPU encoder nor adds a runtime decoder.
 
+The first optional structure-bank implementation is now available in the
+neural-rank fork. It observes legal block structures from a neutral pass and
+filters later numerical fits to that bank. This is an experiment-only
+optimization: the initial D2 result was about `2.95x` faster on a 20x256 crop
+but regressed untouched holdout, so the full neural search remains the quality
+reference. Any future bank widening must prove candidate recall and holdout
+equivalence or improvement before it can be selected by the producer.
+
 ### D2 per-block layout metadata (v3 groundwork)
 
 YAQA may select either `RG/B` or `R/GB` for each physical D2 ASTC block. The

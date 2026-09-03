@@ -6988,6 +6988,33 @@ specialized internal ASTC block-analysis reuse. GPU scoring remains a later
 offline batching experiment; it does not replace standard CPU ASTC encoding or
 the artifact-backed exact decoder oracle.
 
+## Three-hundredth sweep: opt-in D2 structure-bank replay
+
+The isolated neural astcenc fork now exposes an opt-in structure observer and
+filter. A neutral encode can collect legal `(partition count, partition index,
+block mode, plane component)` tuples; a later encode may use that bank to skip
+numerical endpoint/weight fitting for structures not observed in the neutral
+pass. This is deliberately separate from the existing candidate callback, so
+existing callback users remain source-compatible. The default encoder has both
+pointers null and is unchanged.
+
+The D2 smoke now exercises this path per layout and per physical block. The
+neutral steering candidate populates a temporary bank, subsequent steering
+proposals are refit within it, and the bank is discarded before the next block.
+The scalar/neutral candidate remains mandatory. This is an implementation
+probe, not a production profile.
+
+On the matched Pythia F16 `20x256` D2 crop, full neural search took `13.867 s`
+of ASTC encode time and produced selected holdout `4.3018954e-4`. Structure
+replay took `4.688 s` (about `2.95x` faster) with the same 1,408 roundtrips,
+but selected holdout regressed to `6.2010287e-4`; calibration and validation
+also changed. The result falsifies the first narrow-bank assumption as a
+quality-preserving optimization, while validating the intended engineering
+boundary and its potential speed. The bank must therefore remain experimental
+until it is widened (for example with a bounded near-winner union or a
+structure-family quota) and passes candidate-recall and untouched-holdout
+gates. No production D2 default or artifact contract was changed.
+
 ## Two-hundred-ninety-second sweep: paired selection-core groundwork
 
 Added `astc-vulkan-paired-selector.{h,cpp}` as the reusable offline boundary
