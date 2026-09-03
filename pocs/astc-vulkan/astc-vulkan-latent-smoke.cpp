@@ -4,6 +4,7 @@
 #include "astc-vulkan-gauge.h"
 #include "astc-vulkan-hash.h"
 #include "astc-vulkan-block-ldlq.h"
+#include "astc-vulkan-pv.h"
 #include "astc-vulkan-input.h"
 
 #include <algorithm>
@@ -1476,7 +1477,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                               bool weight_grid_gauge = false,
                               uint32_t source_levels = 0,
                               bool pv_lite_grid = false,
-                              bool pv_lite_coarse_grid = false) {
+                              bool pv_lite_coarse_grid = false,
+                              bool pv_alternate = false) {
     // Partial blocks use deterministic clamp padding. Padding is never perturbed
     // and is excluded from the neural objective.
     struct alpha_option {
@@ -1521,8 +1523,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                write_binary(decoded_reference_path, decoded);
     };
     const bool pv_grid = pv_lite_grid || pv_lite_coarse_grid;
-    const char * candidate_family = astc_vulkan_gauge_candidate_family(
-        weight_grid_gauge, pv_lite_grid, pv_lite_coarse_grid);
+    const char * candidate_family = pv_alternate ? "scalar-anchored-pv-alternating-v1" :
+        astc_vulkan_gauge_candidate_family(weight_grid_gauge, pv_lite_grid, pv_lite_coarse_grid);
     // PV-lite v1 is deliberately a fixed coefficient grid, not a claim of a
     // complete alternating optimizer. It supplies a small P-step candidate
     // family while the existing exact ASTC encode/decode and V-step selector
@@ -1696,6 +1698,78 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 }
                 add_neural_candidate(captured.block,
                                      reconstruct(candidate_texels, block_latents.decoder), false);
+            }
+        }
+        if (pv_alternate && scalar_anchored_gauge) {
+            // Full PV v1: the P-step moves only two bounded coefficients
+            // (gauge and block correction), while every V-step calls the
+            // exact ASTC encode/decode oracle. The resulting payload is just
+            // another legal candidate for the unchanged global selector.
+            const std::vector<float> initial{ 0.0f, 0.0f };
+            const std::vector<float> steps{ 0.25f * gauge_headroom, 0.25f * gauge_headroom };
+            auto make_pv_source = [&](const std::vector<float> & continuous, std::vector<float> & destination) {
+                if (continuous.size() != 2) return false;
+                destination.resize(static_cast<size_t>(format.block_width) * format.block_height * 4);
+                for (uint32_t local_row = 0; local_row < format.block_height; ++local_row) {
+                    for (uint32_t local_column = 0; local_column < format.block_width; ++local_column) {
+                        const uint32_t source_row = std::min(row0 + local_row, rows - 1);
+                        const uint32_t source_column = std::min(column0 + local_column, columns - 1);
+                        const bool valid = row0 + local_row < rows && column0 + local_column < columns;
+                        const size_t global = static_cast<size_t>(source_row) * columns + source_column;
+                        float * dst = destination.data() +
+                            (static_cast<size_t>(local_row) * format.block_width + local_column) * 4;
+                        const float q = block_latents.texels[global * 4];
+                        std::copy_n(block_latents.texels.data() + global * 4, 4, dst);
+                        if (valid) {
+                            const float correction = continuous[1] * gauge_headroom;
+                            const float delta = continuous[0] * gauge_headroom;
+                            dst[0] = dst[1] = dst[2] = q + correction + delta;
+                            dst[3] = q + correction - delta;
+                        }
+                    }
+                }
+                return true;
+            };
+            astc_vulkan_pv_result pv_result;
+            const bool pv_ok = astc_vulkan_pv_alternate(
+                initial, steps, 2,
+                [&](const std::vector<float> & continuous, std::vector<float> & deployed) {
+                    std::vector<float> source;
+                    if (!make_pv_source(continuous, source)) return false;
+                    astc_roundtrip_result roundtrip;
+                    if (!(persistent_contexts != nullptr ?
+                            persistent_contexts->roundtrip(worker_index, source, format.block_height,
+                                                           format.block_width, format, roundtrip) :
+                            astc_roundtrip(source, format.block_height, format.block_width, format, nullptr,
+                                           roundtrip)) || roundtrip.compressed.size() != 16) return false;
+                    deployed = reconstruct(roundtrip.texels, block_latents.decoder);
+                    return true;
+                },
+                [&](const std::vector<float> & deployed) {
+                    return decoded_block_activation_error(weights, deployed, row0, column0,
+                                                          rows, columns, format, calibration);
+                }, pv_result);
+            if (pv_ok && !pv_result.deployed.empty()) {
+                std::vector<float> source;
+                astc_roundtrip_result roundtrip;
+                if (make_pv_source(pv_result.continuous, source) &&
+                    (persistent_contexts != nullptr ?
+                        persistent_contexts->roundtrip(worker_index, source, format.block_height,
+                                                       format.block_width, format, roundtrip) :
+                        astc_roundtrip(source, format.block_height, format.block_width, format, nullptr,
+                                       roundtrip)) && roundtrip.compressed.size() == 16) {
+                    std::array<uint8_t, 16> payload{};
+                    std::copy_n(roundtrip.compressed.begin(), payload.size(), payload.begin());
+                    if (std::find(seen.begin(), seen.end(), payload) == seen.end()) {
+                        seen.push_back(payload);
+                        result.alternatives.push_back({ row0, column0, pv_result.deployed, payload, 0 });
+                        if (pv_result.objective < result.best_loss) {
+                            result.best_loss = pv_result.objective;
+                            result.best_decoded = pv_result.deployed;
+                            result.best_factor = 1;
+                        }
+                    }
+                }
             }
         }
         if (encoder_search == encoder_search_mode::neural) {
@@ -2109,7 +2183,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         const double conflict_calibration = activation_relative_mse(weights, conflict_aware, rows, columns, calibration);
         const double conflict_holdout = activation_relative_mse(weights, conflict_aware, rows, columns, holdout);
         const double stopped_holdout = activation_relative_mse(weights, validation_stopped, rows, columns, holdout);
-        const char * encoder_profile = pv_lite_coarse_grid ? "pv-lite-coarse-grid-v1" :
+        const char * encoder_profile = pv_alternate ? "pv-alternating-v1" :
+                                      pv_lite_coarse_grid ? "pv-lite-coarse-grid-v1" :
                                       pv_lite_grid ? "pv-lite-grid-v1" :
                                       weight_grid_gauge ? "weight-grid-gauge-v1" : "standard";
         std::vector<std::array<uint8_t, 16>> final_payloads = neutral_payloads;
@@ -2225,11 +2300,12 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                     "candidate-effective-rank=%.4g mean-positive-cosine=%.4g conflict-commits=%u "
                     "conflict-calibration=%.8g conflict-holdout=%.8g validation-best-commit=%u "
                     "validation-best=%.8g validation-stopped-holdout=%.8g\n",
-                    format.name, scalar_anchored_c_delta ? "scalar-anchored-c-delta" :
+                    format.name, pv_alternate ? "scalar-anchored-pv-alternating" :
+                    (scalar_anchored_c_delta ? "scalar-anchored-c-delta" :
                     (weight_grid_gauge ?
                         (pv_lite_coarse_grid ? "scalar-anchored-pv-lite-coarse-grid" :
                          (pv_lite_grid ? "scalar-anchored-pv-lite-grid" : "scalar-anchored-weight-grid-gauge")) :
-                        "scalar-anchored-gauge"),
+                        "scalar-anchored-gauge")),
                     encoder_search == encoder_search_mode::neural ? "neural" : "standard",
                     source_levels,
                     block_count, neutral_wins, non_neutral_wins, unique_blocks,
@@ -2565,12 +2641,13 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 "candidate-effective-rank=%.4g mean-positive-cosine=%.4g conflict-commits=%u "
                 "conflict-calibration=%.8g conflict-holdout=%.8g validation-best-commit=%u "
                 "validation-best=%.8g validation-stopped-holdout=%.8g\n",
-                format.name, scalar_anchored_gauge ?
+                format.name, pv_alternate ? "scalar-anchored-pv-alternating" :
+                    (scalar_anchored_gauge ?
                     (weight_grid_gauge ?
                         (pv_lite_coarse_grid ? "scalar-anchored-pv-lite-coarse-grid" :
                          (pv_lite_grid ? "scalar-anchored-pv-lite-grid" : "scalar-anchored-weight-grid-gauge")) :
                         "scalar-anchored-gauge") :
-                    "block-alpha",
+                    "block-alpha"),
                 encoder_search == encoder_search_mode::neural ? "neural" : "standard",
                 source_levels,
                 neutral_wins + non_neutral_wins, neutral_wins, non_neutral_wins,
@@ -3226,6 +3303,7 @@ int main(int argc, char ** argv) {
     bool few_level_weight_grid_gauge_sweep = false;
     bool pv_lite_grid_sweep = false;
     bool pv_lite_coarse_grid_sweep = false;
+    bool pv_alternate = false;
     encoder_search_mode encoder_search = encoder_search_mode::standard;
     uint32_t neural_candidate_limit = 16;
     for (int index = 1; index < argc; ++index) {
@@ -3308,6 +3386,9 @@ int main(int argc, char ** argv) {
         } else if (option == "--pv-lite-coarse-grid-sweep") {
             pv_lite_coarse_grid_sweep = true;
             weight_grid_gauge_sweep = true;
+        } else if (option == "--pv-alternate") {
+            pv_alternate = true;
+            scalar_anchored_gauge_sweep = true;
         } else if (option == "--decode-loop-log" && index + 1 < argc) {
             decode_loop_log_path = argv[++index];
         } else if (option == "--decode-loop-payloads" && index + 1 < argc) {
@@ -3363,7 +3444,7 @@ int main(int argc, char ** argv) {
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6|8x6|10x6|8x8|10x8] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
-                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--pv-lite-grid-sweep] [--pv-lite-coarse-grid-sweep] [--scalar-anchored-c-delta-sweep]\n",
+                         "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--pv-lite-grid-sweep] [--pv-lite-coarse-grid-sweep] [--pv-alternate] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
             return 2;
         }
@@ -3669,7 +3750,8 @@ int main(int argc, char ** argv) {
                                           row_strip_log_path,
                                           candidate_threads, row_strip_select, row_strip_chunked,
                                           row_strip_diagnostics, persistent_worker_contexts, false,
-                                          encoder_search, neural_candidate_limit)) {
+                                          encoder_search, neural_candidate_limit, false, 0, false, false,
+                                          pv_alternate)) {
                 std::fprintf(stderr, "ASTC scalar-anchored gauge sweep failed\n");
                 return 1;
             }

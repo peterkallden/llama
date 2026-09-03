@@ -2322,6 +2322,11 @@ only standard ASTC sampling plus the existing cheap semantic reconstruction.
 - [x] Repeat the PV-lite gate on a second tensor using F16/Q3 sources (the
   current TQ1/TQ2 crops are byte-identical) and materialize/replay the selected
   artifacts. Full PV-lite did not beat the standard weight-grid control there.
+- [x] Add an opt-in full-PV v1 candidate path in latent-smoke. `--pv-alternate`
+  performs bounded two-coordinate P-steps (gauge and block correction),
+  exact ASTC V-projection, and injects the resulting legal payload into the
+  existing conflict-aware selector. It is a candidate-family experiment, not
+  a production profile or a claim of the complete PV-Tuning optimizer.
 - [ ] Perform the model-facing replay gate with a full-shape PV artifact; crop
   artifacts are intentionally rejected by the model-replay shape contract.
 

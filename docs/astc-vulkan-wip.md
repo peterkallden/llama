@@ -6638,3 +6638,21 @@ activation-sensitive error measure, but it is still only the finite-trace
 output-covariance proxy described above. It does not promote either footprint
 to the model-facing or production matrix; those gates still require matching
 full-model replay and target-device measurements.
+
+## Two-hundred-eighty-third sweep: opt-in full PV candidate path
+
+The latent harness now has `--pv-alternate`, an explicitly experimental
+full-PV-v1 path. For each scalar-anchored block it performs bounded coordinate
+P-steps over two continuous coefficients (zero-sum gauge and block correction),
+projects every trial through the exact ASTC encode/decode oracle, and adds the
+resulting legal 16-byte payload to the unchanged conflict-aware selector.
+The scalar candidate remains mandatory and is still the exact fallback.
+
+This is deliberately narrower than the full PV-Tuning paper: it does not
+train a model, optimize arbitrary latent vectors, or introduce runtime state.
+It is an offline candidate generator whose output is ordinary ASTC. The small
+8x8 smoke (`16x128`, two calibration samples) completed successfully with
+the profile labelled `scalar-anchored-pv-alternating`; the PV/YAQA/gauge
+contract tests remained green. A full-shape quality claim is not made yet:
+the next gate is PV artifacts on frozen `10x6` and `8x8` pools followed by
+model-facing replay and untouched holdout comparison.
