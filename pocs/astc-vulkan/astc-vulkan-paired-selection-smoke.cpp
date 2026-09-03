@@ -62,11 +62,23 @@ bool parse_params(int argc, char ** argv, params & result) {
 
 class block_codec {
 public:
-    block_codec() {
+    block_codec(bool neural_backend, astc_vulkan_paired_layout layout) : layout_(layout) {
         astcenc_config config{};
         if (astcenc_config_init(ASTCENC_PRF_LDR, kBlockWidth, kPhysicalBlockHeight, 1,
                                 ASTCENC_PRE_THOROUGH, 0, &config) == ASTCENC_SUCCESS) {
+#if defined(ASTC_VULKAN_PAIRED_NEURAL_ENCODER)
+            if (neural_backend) {
+                config.flags |= ASTCENC_FLG_MAP_NEURAL_D2;
+                config.neural_d2_layout = layout == astc_vulkan_paired_layout::rg_b ? 0u : 1u;
+            }
+#else
+            if (neural_backend) return;
+#endif
+#if defined(ASTC_VULKAN_PAIRED_NEURAL_ENCODER)
+            ready_ = astcenc_context_alloc(&config, 1, &context_, nullptr) == ASTCENC_SUCCESS;
+#else
             ready_ = astcenc_context_alloc(&config, 1, &context_) == ASTCENC_SUCCESS;
+#endif
         }
     }
 
@@ -101,10 +113,8 @@ public:
         return true;
     }
 
-    void set_layout(astc_vulkan_paired_layout layout) const { layout_ = layout; }
-
 private:
-    mutable astc_vulkan_paired_layout layout_ = astc_vulkan_paired_layout::rg_b;
+    astc_vulkan_paired_layout layout_ = astc_vulkan_paired_layout::rg_b;
     astcenc_context * context_ = nullptr;
     bool ready_ = false;
 };
@@ -245,7 +255,12 @@ int main(int argc, char ** argv) {
     const uint32_t holdout_offset = validation_offset + options.validation_samples;
     const uint32_t holdout_samples = trace.samples - holdout_offset;
 
-    block_codec codec;
+    constexpr bool neural_backend =
+#if defined(ASTC_VULKAN_PAIRED_NEURAL_ENCODER)
+        true;
+#else
+        false;
+#endif
     std::vector<std::vector<generated_candidate>> generated(static_cast<size_t>(blocks_x) * blocks_y);
     std::vector<float> baseline(static_cast<size_t>(options.rows) * options.columns);
     const auto codebook = astc_vulkan_make_paired_steering_codebook();
@@ -254,11 +269,11 @@ int main(int argc, char ** argv) {
         for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
             auto & candidates = generated[static_cast<size_t>(block_y) * blocks_x + block_x];
             for (const auto layout : {astc_vulkan_paired_layout::rg_b, astc_vulkan_paired_layout::r_gb}) {
+                block_codec codec(neural_backend, layout);
                 for (const auto & steering : codebook) {
                     generated_candidate candidate;
                     candidate.layout = layout;
                     candidate.steering = steering;
-                    codec.set_layout(layout);
                     const auto source = source_block(matrix, block_y * kLogicalBlockHeight, block_x * kBlockWidth,
                         options.rows, options.columns, minimum, range, layout, steering);
                     if (!codec.roundtrip(source, candidate.block)) return 1;

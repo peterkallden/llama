@@ -2671,6 +2671,14 @@ bounded YAQA reranking of the same legal candidate pool. Only a passing
 iso-rate D1/Q comparison should proceed to full artifact materialization,
 CPU/Vulkan replay, and then `D2_10x5`.
 
+The D2 smoke now has an optional neural ASTC backend linked against the
+isolated neural-rank fork. The fork's D2-specific semantic metric must be used
+for this comparison; the original neural L+A flag is invalid for paired D2
+because D2's RGB lanes are not one replicated latent. Standard astcenc remains
+the immutable reference backend. The backend comparison is valid only when
+source, codebook, exact decode, selector, validation prefix, and holdout split
+are identical.
+
 ### D2 per-block layout metadata (v3 groundwork)
 
 YAQA may select either `RG/B` or `R/GB` for each physical D2 ASTC block. The

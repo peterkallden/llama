@@ -311,6 +311,27 @@ if (TARGET astcenc::astcenc-static)
         target_link_libraries(astc-vulkan-paired-selection-smoke PRIVATE
             astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
         target_compile_features(astc-vulkan-paired-selection-smoke PRIVATE cxx_std_17)
+
+        if (GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+            if (NOT EXISTS "${GGML_VK_ASTC_NEURAL_RANK_LIBRARY}" OR
+                NOT EXISTS "${GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR}/astcenc.h")
+                message(FATAL_ERROR
+                    "GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK requires an isolated "
+                    "ASTC fork library and include directory")
+            endif()
+            add_executable(astc-vulkan-paired-selection-smoke-neural
+                astc-vulkan-paired-selection-smoke.cpp
+                astc-vulkan-input.cpp)
+            target_include_directories(astc-vulkan-paired-selection-smoke-neural BEFORE PRIVATE
+                ${GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR}
+                ${ASTC_VULKAN_POC_INCLUDE_DIR}
+                ${CMAKE_SOURCE_DIR}/ggml/include)
+            target_link_libraries(astc-vulkan-paired-selection-smoke-neural PRIVATE
+                ${GGML_VK_ASTC_NEURAL_RANK_LIBRARY} astc-vulkan-algorithms ggml-base)
+            target_compile_features(astc-vulkan-paired-selection-smoke-neural PRIVATE cxx_std_17)
+            target_compile_definitions(astc-vulkan-paired-selection-smoke-neural PRIVATE
+                ASTC_VULKAN_PAIRED_NEURAL_ENCODER=1)
+        endif()
     endif()
 
     # One logical weight per texel, stored either as a scalar replicated across

@@ -6926,6 +6926,31 @@ were `1.237e-4`, `4.035e-4`, and `4.565e-4`. This establishes the exact
 decode-in-the-loop and conflict-aware mechanism as worth scaling, while still
 leaving the required iso-rate D1/Q and full-model comparisons open.
 
+## Two-hundred-ninety-eighth sweep: standard versus neural ASTC backend
+
+The D2 selection smoke now has two separately linked executables. The default
+uses the normal packaged `astcenc` and remains the byte/reference backend. The
+optional neural executable links the isolated neural-rank fork. Its fork was
+extended with a D2-specific ranking flag: `RG/B` reconstructs q0 as `(R+G)/2`
+and q1 as `B`, while `R/GB` reconstructs q0 as `R` and q1 as `(G+B)/2`. This
+avoids incorrectly applying the older neural L+A metric, whose RGB input must
+be a replicated single latent.
+
+Both backends use the same D2 source, steering codebook, exact CPU decode,
+activation-space selector, validation-prefix policy, and holdout split. On the
+same Pythia F16 `blk.0.ffn_down.weight` 20x256 crop (64 physical blocks):
+
+| Backend | Neutral holdout | Validation-selected holdout |
+|---|---:|---:|
+| Standard astcenc | `8.114e-4` | `4.565e-4` |
+| Neural D2 ranking | `4.556e-4` | `4.302e-4` |
+
+The 20x128 replication shows the same direction: standard selected `5.666e-4`
+versus neural selected `3.455e-4`. This is promising evidence that encoder-side
+neural ranking improves the D2 feasible candidate choice, but it is not yet a
+model-level result. The next gate is a larger independently split crop and
+then a direct D1/Q iso-rate comparison using materialized artifacts.
+
 ## Two-hundred-ninety-second sweep: paired selection-core groundwork
 
 Added `astc-vulkan-paired-selector.{h,cpp}` as the reusable offline boundary
