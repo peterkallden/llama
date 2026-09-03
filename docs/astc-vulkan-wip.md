@@ -6765,3 +6765,47 @@ not as the low-rate payload ranking objective. Contract tests for the steering
 codebook and both activation objectives pass. The next sweep must connect this
 frozen codebook to D2 exact candidate payloads, shortlist by activation, and
 only then invoke weighted/YAQA reranking.
+
+## Two-hundred-ninetieth sweep: D2 codebook activation ranking
+
+The bounded Pythia replay now evaluates all 11 frozen Alpha steering factors
+per layout through exact ASTC encode/decode and the shared activation
+objective. The winning factor was stable when selected independently on all
+three v2 traces:
+
+```text
+layout  calibration winner       validation winner       holdout winner
+RG/B    X-ramp -0.5, 0.0436569    X-ramp -0.5, 0.0358253    X-ramp -0.5, 0.0262843
+R/GB    X-minus-Y +0.5, 0.0430805 X-minus-Y +0.5, 0.0355405 X-minus-Y +0.5, 0.0285283
+D1      10x8: 0.0284894           10x8: 0.0228897           10x8: 0.0209625
+```
+
+The same winners across calibration, validation, and holdout are encouraging
+for this bounded source, but D1 still has lower activation loss at the iso-rate
+point. This is a whole-crop oracle, not blockwise conflict-aware selection;
+the next implementation must score a legal D2 candidate pool per ASTC block,
+then commit compatible candidates and apply validation-prefix stopping. No D2
+or low-rate scheduler promotion follows from this sweep.
+
+## Two-hundred-ninety-first sweep: Pythia F16 model smoke
+
+The integrated codebook path was rebuilt and exercised against the local
+`Pythia-1.4B-F16-community.gguf` model. A nine-token CPU trace was captured
+from `blk.0.ffn_down` input (8,192 activation columns); the bounded replay
+used the first 32 matrix rows and the exact ASTC CPU oracle for every candidate.
+
+```text
+comparison                 rate       activation-mse
+D1 scalar 10x8             1.60000    0.019219136
+D2 paired 8x5 RG/B          1.60000    0.029726207  (X-ramp, amplitude +0.5)
+D2 paired 8x5 R/GB          1.60000    0.027110778  (X-minus-Y, amplitude +0.5)
+```
+
+This first real-model smoke confirms that the 11-factor codebook is wired to
+the activation-aware objective and returns deterministic legal candidates, but
+it does not beat D1 at the iso-rate point on this crop. The result is bounded
+whole-crop candidate ranking, not a blockwise conflict-aware export; D2 remains
+experimental and must not enter the scheduler or production sidecar from this
+measurement alone. The next quality gate is blockwise selection with the
+scalar-compatible fallback retained, followed by validation-prefix replay on a
+disjoint trace.
