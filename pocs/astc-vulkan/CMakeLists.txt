@@ -84,6 +84,11 @@ add_executable(test-astc-vulkan-pv
 target_link_libraries(test-astc-vulkan-pv PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-pv PRIVATE cxx_std_17)
 
+add_executable(test-astc-vulkan-pv-d2
+    tests/test-astc-vulkan-pv-d2.cpp)
+target_link_libraries(test-astc-vulkan-pv-d2 PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-pv-d2 PRIVATE cxx_std_17)
+
 add_executable(test-astc-vulkan-yaqa
     tests/test-astc-vulkan-yaqa.cpp)
 target_link_libraries(test-astc-vulkan-yaqa PRIVATE astc-vulkan-algorithms)
@@ -914,6 +919,9 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-pv
         COMMAND test-astc-vulkan-pv)
     set_property(TEST test-astc-vulkan-pv PROPERTY LABELS astc)
+    add_test(NAME test-astc-vulkan-pv-d2
+        COMMAND test-astc-vulkan-pv-d2)
+    set_property(TEST test-astc-vulkan-pv-d2 PROPERTY LABELS astc)
 
     add_test(NAME test-astc-vulkan-yaqa
         COMMAND test-astc-vulkan-yaqa)

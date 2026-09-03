@@ -2873,6 +2873,12 @@ scalar/gauge candidates with activation or YAQA scoring, conflict-aware
 selection, validation stopping, and holdout. This prevents a broad CPU ASTC
 search while preserving the existing artifact oracle.
 
+The D2 PV preparation also has a dedicated contract test for both paired
+semantic mappings (`RG/B` and `R/GB`). It exercises the batched `+/-` PV
+objective seam and verifies deterministic equivalence of the layout choices.
+This is a CPU contract only; a D2 Vulkan PV session remains gated on a real
+paired-D2 candidate atlas and exact GPU/CPU score comparison.
+
 The first Vulkan kernel (`d1-prescreen.comp`) mirrors this CPU oracle and
 builds successfully for Vulkan 1.1. It evaluates one footprint/source-level
 candidate per invocation and writes one score per candidate. A device session
