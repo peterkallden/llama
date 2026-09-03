@@ -2611,6 +2611,15 @@ Implementation gates, in order:
    Vulkan artifact replay. Full PV, few-level source families, and RGB
    common-mode/subtractive layouts remain later experiments.
 
+The next D2 implementation boundary is an offline selection core that consumes
+only exact-decoded legal payloads and their activation-space deltas relative to
+the scalar fallback. It greedily commits compatible positive calibration gains,
+then materializes the best independent validation prefix. It deliberately owns
+neither ASTC candidate generation nor Vulkan upload: this keeps the standard
+codec oracle, candidate-family experiments, artifact writer, weighted scoring,
+and YAQA reranking independently testable. Candidate zero is mandatory for
+every block and must represent the byte-level scalar-compatible fallback.
+
 The first bounded Pythia crop replay does not yet pass the iso-rate gate:
 D1 `10x8` is lower activation-loss than the unselected D2 `8x5` cases on
 calibration, validation, and holdout. D2 therefore remains experimental while

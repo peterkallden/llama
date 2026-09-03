@@ -6809,3 +6809,19 @@ experimental and must not enter the scheduler or production sidecar from this
 measurement alone. The next quality gate is blockwise selection with the
 scalar-compatible fallback retained, followed by validation-prefix replay on a
 disjoint trace.
+
+## Two-hundred-ninety-second sweep: paired selection-core groundwork
+
+Added `astc-vulkan-paired-selector.{h,cpp}` as the reusable offline boundary
+between D2 exact-decode candidate production and artifact materialization. The
+module accepts a per-block pool of legal payloads plus calibration/validation
+output deltas relative to candidate zero, which is enforced as the exact scalar
+fallback. It performs serial residual-aware positive-gain commits and records a
+separate validation-selected commit prefix. Payload construction, astcenc mode
+search, artifact writing, weighted activation, and YAQA reranking deliberately
+remain outside this core.
+
+This is groundwork only. No selection test or model run was started in this
+sweep; the next change must connect the D2 exact encoder/decode producer to the
+new pool contract and add focused regression coverage before evaluating its
+quality.

@@ -12,6 +12,7 @@ add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-hash.cpp
     astc-vulkan-objective.cpp
     astc-vulkan-paired.cpp
+    astc-vulkan-paired-selector.cpp
     astc-vulkan-pv.cpp
     astc-vulkan-yaqa.cpp)
 target_include_directories(astc-vulkan-algorithms PUBLIC
