@@ -2613,12 +2613,14 @@ Implementation gates, in order:
 
 The next D2 implementation boundary is an offline selection core that consumes
 only exact-decoded legal payloads and their activation-space deltas relative to
-the scalar fallback. It greedily commits compatible positive calibration gains,
+the neutral paired-D2 baseline. It greedily commits compatible positive calibration gains,
 then materializes the best independent validation prefix. It deliberately owns
 neither ASTC candidate generation nor Vulkan upload: this keeps the standard
 codec oracle, candidate-family experiments, artifact writer, weighted scoring,
 and YAQA reranking independently testable. Candidate zero is mandatory for
-every block and must represent the byte-level scalar-compatible fallback.
+every block and represents the byte-level neutral D2 baseline. A D1/Q fallback
+is a tensor-level scheduler decision, because it cannot share D2's physical
+block geometry.
 
 The first bounded Pythia crop replay does not yet pass the iso-rate gate:
 D1 `10x8` is lower activation-loss than the unselected D2 `8x5` cases on
@@ -2648,6 +2650,26 @@ FFN-down output trace. This is an offline whole-crop gate only. The subsequent
 blockwise producer should use YAQA as a bounded rerank of the already legal
 activation shortlist, then pass the selected payload alternatives to the
 conflict-aware selector and validation-prefix artifact stage.
+
+### D2_8x5 exact candidate/selection gate
+
+Completed the first bounded producer for `D2_8x5`: each physical block emits
+the deterministic Alpha codebook under both semantic layouts, exact ASTC
+payload/layout pairs are deduplicated, each candidate is decoded through
+astcenc, and the resulting logical-weight deltas are scored in activation
+space. The conflict-aware selector then receives only those exact deltas,
+commits calibration-positive candidates serially, and materializes the best
+independent validation prefix.
+
+The first real Pythia run is intentionally small (`20x128`, nine traces) and
+is a plumbing gate, not an R-D claim. It showed the expected calibration and
+validation reduction but no holdout improvement. A second 20x256 split used
+64 physical blocks and 1,408 unique legal payload/layout candidates: its
+validation prefix reduced D2-neutral holdout activation MSE from `8.114e-4`
+to `4.565e-4`. The next quality gate is a larger, independently split crop and
+bounded YAQA reranking of the same legal candidate pool. Only a passing
+iso-rate D1/Q comparison should proceed to full artifact materialization,
+CPU/Vulkan replay, and then `D2_10x5`.
 
 ### D2 per-block layout metadata (v3 groundwork)
 

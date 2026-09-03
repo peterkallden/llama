@@ -35,6 +35,11 @@ add_executable(test-astc-vulkan-paired
 target_link_libraries(test-astc-vulkan-paired PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-paired PRIVATE cxx_std_17)
 
+add_executable(test-astc-vulkan-paired-selector
+    tests/test-astc-vulkan-paired-selector.cpp)
+target_link_libraries(test-astc-vulkan-paired-selector PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-paired-selector PRIVATE cxx_std_17)
+
 add_executable(test-astc-vulkan-paired-layout
     tests/test-astc-vulkan-paired-layout.cpp)
 target_link_libraries(test-astc-vulkan-paired-layout PRIVATE astc-vulkan-driver)
@@ -296,6 +301,16 @@ if (TARGET astcenc::astcenc-static)
         target_link_libraries(astc-vulkan-paired-model-smoke PRIVATE
             astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
         target_compile_features(astc-vulkan-paired-model-smoke PRIVATE cxx_std_17)
+
+        add_executable(astc-vulkan-paired-selection-smoke
+            astc-vulkan-paired-selection-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-paired-selection-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-paired-selection-smoke PRIVATE
+            astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
+        target_compile_features(astc-vulkan-paired-selection-smoke PRIVATE cxx_std_17)
     endif()
 
     # One logical weight per texel, stored either as a scalar replicated across
@@ -612,6 +627,10 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-paired
         COMMAND test-astc-vulkan-paired)
     set_property(TEST test-astc-vulkan-paired PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-paired-selector
+        COMMAND test-astc-vulkan-paired-selector)
+    set_property(TEST test-astc-vulkan-paired-selector PROPERTY LABELS astc)
 
     add_test(NAME test-astc-vulkan-paired-layout
         COMMAND test-astc-vulkan-paired-layout)

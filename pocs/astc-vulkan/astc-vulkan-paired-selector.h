@@ -7,12 +7,13 @@
 // Offline conflict-aware selection for paired-D2 ASTC candidates.
 //
 // Candidate producers must first run the real ASTC encoder and decoder, then
-// provide each legal 16-byte payload's output delta relative to the scalar
-// fallback. This keeps ASTC's fixed-function decode as the only runtime codec
+// provide each legal 16-byte payload's output delta relative to the neutral
+// paired-D2 baseline. This keeps ASTC's fixed-function decode as the only runtime codec
 // decoder: this module operates solely on offline activation-space vectors.
 //
-// Candidate zero in every block is mandatory and represents the exact
-// scalar-compatible fallback. Selection greedily commits only positive
+// Candidate zero in every block is mandatory and represents the exact neutral
+// paired-D2 baseline. D1/Q fallback remains a tensor-level scheduler decision,
+// because it has a different physical ASTC geometry. Selection greedily commits only positive
 // calibration gains, updating the residual after every commit. An optional
 // independent validation residual then chooses an exported commit prefix.
 //
@@ -29,7 +30,7 @@ struct astc_vulkan_paired_candidate_delta {
     // artifact writer can materialize a validation-selected prefix directly.
     std::array<uint8_t, 16> payload{};
 
-    // Candidate output minus scalar-fallback output, in row-major
+    // Candidate output minus neutral paired-D2-baseline output, in row-major
     // [sample][logical-output-row] order. The first candidate of each block
     // must be identically zero for both vectors.
     std::vector<double> calibration_delta;
@@ -59,8 +60,8 @@ struct astc_vulkan_paired_selection_result {
     double validation_residual_loss = 0.0;
 };
 
-// Selects from a scalar-anchored block candidate pool. `initial_*_residual`
-// are reference output minus scalar-fallback output. `validation` can be
+// Selects from a paired-D2-baseline block candidate pool. `initial_*_residual`
+// are reference output minus neutral paired-D2 output. `validation` can be
 // disabled by passing an empty residual and zero validation samples; then every
 // positive calibration commit is exported. Returns false on malformed shapes,
 // non-finite values, or a pool without the mandatory zero fallback.

@@ -68,6 +68,7 @@ bool astc_vulkan_select_paired_candidates(
     }
 
     result = {};
+    // Candidate zero is the neutral D2 baseline; all deltas are relative to it.
     result.calibration_selected_candidates.assign(candidates.size(), 0);
     std::vector<double> calibration_residual = initial_calibration_residual;
     std::vector<bool> committed(candidates.size(), false);

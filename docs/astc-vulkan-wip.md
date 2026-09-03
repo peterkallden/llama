@@ -6894,6 +6894,38 @@ and no scheduler promotion. A later macro-page descriptor may select an exact
 format/atlas for a region; it must not encode the choice as a per-block shader
 branch.
 
+## Two-hundred-ninety-seventh sweep: exact D2_8x5 candidate and selector chain
+
+Added a bounded offline D2_8x5 producer/selection smoke. It generates the
+eleven deterministic Alpha steering factors for both `RG/B` and `R/GB` on each
+physical 8x5 block, performs a real astcenc encode/decode for every proposal,
+deduplicates `(payload, semantic-layout)` candidates, and reconstructs the two
+logical output rows per texel exactly as the paired shader will. Candidate zero
+is now precisely defined as the neutral `RG/B` D2 baseline. It is not called a
+D1 scalar fallback: D1 and D2 have different physical block geometries, so
+that comparison belongs at the tensor/scheduler level.
+
+The producer supplies exact activation-space deltas to the existing
+conflict-aware selector. The selector commits against calibration residual and
+exports only the independent validation-selected prefix; holdout remains
+untouched. A first Pythia F16 `blk.0.ffn_down.weight` 20x128, nine-sample
+bounded run generated 704 unique legal candidates across 32 blocks. Neutral
+D2 activation MSE was `2.102e-4` calibration, `4.174e-4` validation, and
+`5.616e-4` holdout. The selector made 19 calibration commits but exported the
+first 11: calibration and validation fell to `1.287e-4` and `2.346e-4`, while
+holdout was `5.666e-4`. This small run is therefore a correct pipeline gate,
+not a quality win; it reinforces the validation-prefix contract before a
+larger, independently split evaluation.
+
+The next bounded 20x256 crop provided the first positive generalization signal
+within the D2 family: 64 physical blocks generated 1,408 unique legal
+payload/layout candidates. Neutral D2 activation MSE was `5.340e-4`
+calibration, `7.600e-4` validation, and `8.114e-4` holdout. The selector made
+37 calibration commits and validation exported prefix 31; the resulting MSEs
+were `1.237e-4`, `4.035e-4`, and `4.565e-4`. This establishes the exact
+decode-in-the-loop and conflict-aware mechanism as worth scaling, while still
+leaving the required iso-rate D1/Q and full-model comparisons open.
+
 ## Two-hundred-ninety-second sweep: paired selection-core groundwork
 
 Added `astc-vulkan-paired-selector.{h,cpp}` as the reusable offline boundary
