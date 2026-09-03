@@ -2744,6 +2744,13 @@ reduction—with no per-candidate host readback. Integrate that session and prov
 batch scores against the CPU trace oracle before allowing GPU YAQA in the
 ranking plan. This does not make NVIDIA an ASTC-decode target.
 
+The batch GPU YAQA smoke now dispatches the two-stage path for seven candidate
+error matrices and eight trace samples and matches the CPU oracle for every
+candidate. The next implementation gate is a reusable session with persistent
+device buffers and configurable candidate/sample counts; then proposal gains
+can consume the score vector without a host round-trip. ASTC candidate encode
+and ASTC decode remain separate CPU/reference stages on this NVIDIA path.
+
 ### D2 per-block layout metadata (v3 groundwork)
 
 YAQA may select either `RG/B` or `R/GB` for each physical D2 ASTC block. The

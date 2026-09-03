@@ -265,6 +265,12 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-yaqa-device-smoke PRIVATE
         astc-vulkan-algorithms Vulkan::Vulkan)
     target_compile_features(astc-vulkan-yaqa-device-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-yaqa-batch-device-smoke
+        astc-vulkan-yaqa-batch-device-smoke.cpp)
+    target_link_libraries(astc-vulkan-yaqa-batch-device-smoke PRIVATE
+        astc-vulkan-algorithms Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-yaqa-batch-device-smoke PRIVATE cxx_std_17)
 endif()
 
 find_package(astcenc CONFIG QUIET)
@@ -718,6 +724,18 @@ if (ASTC_VULKAN_GLSLC)
                 ${ASTC_VULKAN_YAQA_TRACE_SCORE_SHADER_OUTPUT})
         set_property(TEST astc-vulkan-yaqa-device-smoke PROPERTY LABELS astc)
         set_property(TEST astc-vulkan-yaqa-device-smoke PROPERTY SKIP_RETURN_CODE 77)
+    endif()
+
+    if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-yaqa-batch-device-smoke)
+        add_dependencies(astc-vulkan-yaqa-batch-device-smoke
+            astc-vulkan-yaqa-trace-partial-shader
+            astc-vulkan-yaqa-trace-reduce-shader)
+        add_test(NAME astc-vulkan-yaqa-batch-device-smoke
+            COMMAND astc-vulkan-yaqa-batch-device-smoke
+                ${ASTC_VULKAN_YAQA_TRACE_PARTIAL_SHADER_OUTPUT}
+                ${ASTC_VULKAN_YAQA_TRACE_REDUCE_SHADER_OUTPUT})
+        set_property(TEST astc-vulkan-yaqa-batch-device-smoke PROPERTY LABELS astc)
+        set_property(TEST astc-vulkan-yaqa-batch-device-smoke PROPERTY SKIP_RETURN_CODE 77)
     endif()
     if (TARGET ggml-base AND TARGET astc-vulkan-ffn-adapter)
         add_executable(astc-vulkan-ffn-e2e-smoke

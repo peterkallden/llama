@@ -7099,3 +7099,10 @@ matrices and traces stay device-resident between stages. This is the scalable
 shape for a GPU YAQA backend; its host session and batch-equivalence test are
 the next gate before it participates in ranking. The one-invocation smoke is
 kept as the stable arithmetic oracle.
+
+The batch smoke now exercises both scalable stages on the discrete GPU for
+seven candidate error matrices and eight trace samples. GPU scores match the
+CPU YAQA trace oracle within the test tolerance for every candidate. No
+per-candidate host readback occurs between the partial and reduction stages;
+only the final score vector is read back. This validates the intended NVIDIA
+offline path. It remains a measurement/PoC path, not a scheduler default.
