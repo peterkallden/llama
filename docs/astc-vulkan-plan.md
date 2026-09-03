@@ -2542,3 +2542,30 @@ low-rate matrix must report nominal storage density from the 128-bit block:
 block rates, not independently exact bits/weight; edge padding is deterministic
 and excluded from semantic loss. Batching and hot-cache measurements happen
 after correctness/replay so timing cannot mask an artifact or decoder mismatch.
+### Latest algorithm-integration status
+
+The offline YAQA module now includes a low-rank trace-backed score for a
+candidate error matrix, equivalent to `tr(H_out E H_in E^T)` when
+`H_in = X^T X` and `H_out = Y^T Y`, evaluated as `||Y E X^T||_F^2`. A replay
+smoke consumes explicit artifact metadata and matching input/output traces;
+it does not regenerate ASTC payloads. This is an output-covariance proxy for
+the next gate, not a substitute for a model-loss Hessian.
+
+The new trace pair and replay numbers are recorded in `astc-vulkan-wip.md`.
+They are intentionally not promoted to the quality matrix because the
+exploratory prompt differs from the retained v2 model-facing corpus and the
+8x8/10x8 model replays did not pass the production-quality gate. PV and YAQA
+remain offline-only and cannot add runtime state or alter the standard Vulkan
+decoder contract.
+
+Before driver promotion, the remaining algorithm gates are:
+
+1. Build full-shaped PV artifacts against frozen legal `10x6` and `8x8`
+   candidate pools, with scalar fallback and a new optimizer/profile ID.
+2. Compare PV artifacts using the exact CPU oracle and model replay before
+   changing any scheduler/profile eligibility.
+3. Use the trace-backed YAQA score on `10x8`/`10x10` as a sensitivity
+   comparison, then replace the proxy with a genuine downstream/model-loss
+   factor when the capture path is available.
+4. Keep the final production matrix separate from exploratory prompt/corpus
+   results and retain all historical tests as named regression contracts.

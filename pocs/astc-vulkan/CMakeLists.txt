@@ -370,6 +370,16 @@ if (TARGET ggml-base)
             llama-common llama ggml-base ${CMAKE_THREAD_LIBS_INIT})
         target_compile_features(astc-vulkan-model-replay-smoke PRIVATE cxx_std_17)
 
+        add_executable(astc-vulkan-yaqa-replay-smoke
+            astc-vulkan-yaqa-replay-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-yaqa-replay-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-yaqa-replay-smoke PRIVATE
+            astc-vulkan-algorithms ggml-base)
+        target_compile_features(astc-vulkan-yaqa-replay-smoke PRIVATE cxx_std_17)
+
         add_executable(astc-vulkan-model-baseline-smoke
             astc-vulkan-model-baseline-smoke.cpp)
         target_include_directories(astc-vulkan-model-baseline-smoke PRIVATE

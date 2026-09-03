@@ -6591,3 +6591,36 @@ separate selector/profile choices, with scalar and scalar-anchored gauge as
 the allowed representations; malformed or unsupported artifacts still fall
 back to the normal Q4_K_M/Q3_K_M path. Experimental 8x6/10x6/8x8/10x8 remain
 available only to explicit research/replay harnesses.
+## Two-hundred-eighty-first sweep: trace-backed YAQA replay boundary
+
+The YAQA replay gate now has a provenance-safe trace pair for the exploratory
+Pythia prompt `The quick brown fox jumps over the lazy dog and then returns
+home.`. A matching 14-sample `ffn-down-input` trace and `ffn-down-output`
+trace were captured from the same CPU-only run. The host Vulkan model path is
+not used for this capture; the limited device remains a device-replay target,
+not a source of reference activations.
+
+`astc-vulkan-yaqa.{h,cpp}` now exposes a low-rank trace score that evaluates
+`||Y E X^T||_F^2` directly, without materializing dense input/output Hessians.
+The new `astc-vulkan-yaqa-replay-smoke` reads the exported RGBA artifact, the
+F16 weight source, explicit validation metadata, and the two matching traces.
+It prints a deterministic score and rejects shape/sample mismatches. The
+artifact bytes and metadata remain the source of truth; no ASTC re-encode is
+performed during replay.
+
+For the current full-shape validation artifacts (`2048x8192`, 14 samples),
+the trace score was `288622.626` for `10x8` and `134728.306` for `8x8`.
+These values are an output-covariance sensitivity proxy (`H_out = Y^T Y`),
+not a full model-loss Hessian or a quality ranking by themselves. The new
+prompt/model-replay smoke was also exploratory and is kept separate from the
+documented v2 sum-function corpus: `10x8` reported relative logits MSE
+`0.95172606`, loss delta `+8.3942904`, and `7.1429%` top-1 agreement, while
+`8x8` reported `0.9515293`, `+8.6563215`, and `7.1429%`. Those results must
+not replace the retained v2 model-facing gate.
+
+The focused PV and YAQA contract tests pass. The implementation is therefore
+ready to rank a frozen legal candidate pool, but full PV alternation, a real
+downstream/model-loss `H_out`, and model-facing YAQA artifact comparisons are
+still open. The next integration must first materialize matching full-shape
+PV artifacts on `10x6`/`8x8`, then apply the trace/model-preserving objective
+to `10x8`/`10x10` with independently versioned provenance.

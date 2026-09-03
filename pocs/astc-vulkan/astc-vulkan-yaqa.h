@@ -19,3 +19,14 @@ double astc_vulkan_yaqa_two_sided_score(
     uint32_t columns,
     const std::vector<double> & output_hessian,
     const std::vector<double> & input_hessian);
+
+// Low-rank trace form. `input_trace` is samples x columns and `output_trace`
+// is samples x rows. With H_I = X^T X and H_O = Y^T Y this returns the same
+// score as the dense form, while using O(samples * rows * columns) storage.
+double astc_vulkan_yaqa_trace_score(
+    const std::vector<float> & error,
+    uint32_t rows,
+    uint32_t columns,
+    const std::vector<float> & input_trace,
+    const std::vector<float> & output_trace,
+    uint32_t samples);
