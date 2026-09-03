@@ -91,6 +91,8 @@ void astc_vulkan_gpu_ranking_session::reset() {
     queue_ = VK_NULL_HANDLE;
     queue_family_ = UINT32_MAX;
     candidate_count_ = source_blocks_x_ = tensor_width_ = tensor_logical_height_ = 0;
+    candidate_capacity_ = 0;
+    footprint_ = astc_vulkan_footprint::k8x5;
     calibration_samples_ = block_width_ = block_height_ = 0;
     descriptor_layout_ = VK_NULL_HANDLE;
     descriptor_pool_ = VK_NULL_HANDLE;
@@ -124,6 +126,8 @@ bool astc_vulkan_gpu_ranking_session::init(
     }
     physical_device_ = physical_device; device_ = device; queue_ = queue; queue_family_ = queue_family;
     candidate_count_ = static_cast<uint32_t>(atlas.records.size());
+    candidate_capacity_ = candidate_count_;
+    footprint_ = atlas.footprint;
     source_blocks_x_ = source_blocks_x; tensor_width_ = tensor_width;
     tensor_logical_height_ = tensor_logical_height; calibration_samples_ = calibration_samples;
     block_width_ = format.block_width; block_height_ = format.block_height;
@@ -138,8 +142,10 @@ bool astc_vulkan_gpu_ranking_session::init(
             static_cast<uint32_t>(record.layout)});
         baselines.push_back(record.baseline_record);
     }
-    const VkDeviceSize records_bytes = records.size() * sizeof(gpu_record);
-    const VkDeviceSize baselines_bytes = baselines.size() * sizeof(uint32_t);
+    const VkDeviceSize records_data_bytes = records.size() * sizeof(gpu_record);
+    const VkDeviceSize baselines_data_bytes = baselines.size() * sizeof(uint32_t);
+    const VkDeviceSize records_bytes = static_cast<VkDeviceSize>(candidate_capacity_) * sizeof(gpu_record);
+    const VkDeviceSize baselines_bytes = static_cast<VkDeviceSize>(candidate_capacity_) * sizeof(uint32_t);
     const VkDeviceSize activation_bytes = static_cast<VkDeviceSize>(calibration_samples_) * tensor_width_ * sizeof(float);
     const VkDeviceSize delta_bytes = static_cast<VkDeviceSize>(candidate_count_) * calibration_samples_ *
         block_height_ * 2u * sizeof(float);
@@ -152,8 +158,8 @@ bool astc_vulkan_gpu_ranking_session::init(
         !create_host_buffer(physical_device_, device_, delta_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, delta_buffer_, delta_memory_) ||
         !create_host_buffer(physical_device_, device_, residual_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, residual_buffer_, residual_memory_) ||
         !create_host_buffer(physical_device_, device_, gain_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, gain_buffer_, gain_memory_) ||
-        !map_write(device_, records_memory_, records.data(), records_bytes) ||
-        !map_write(device_, baseline_memory_, baselines.data(), baselines_bytes)) {
+        !map_write(device_, records_memory_, records.data(), records_data_bytes) ||
+        !map_write(device_, baseline_memory_, baselines.data(), baselines_data_bytes)) {
         error = "failed to allocate or upload GPU ranking buffers"; reset(); return false;
     }
     const VkDescriptorSetLayoutBinding bindings[7] = {
@@ -237,6 +243,38 @@ bool astc_vulkan_gpu_ranking_session::init(
         error = "failed to create GPU ranking command resources"; reset(); return false;
     }
     error.clear(); return true;
+}
+
+bool astc_vulkan_gpu_ranking_session::update_batch(
+        const astc_vulkan_gpu_ranking_atlas & atlas, std::string & error) {
+    if (!ready() || atlas.footprint != footprint_ || atlas.records.empty() ||
+        atlas.records.size() > candidate_capacity_ || atlas.width != atlas_texture_.width() ||
+        atlas.height != atlas_texture_.height() || atlas.payload.size() !=
+            astc_vulkan_image_bytes(atlas.footprint, atlas.width, atlas.height)) {
+        error = "invalid GPU ranking batch dimensions or capacity";
+        return false;
+    }
+    std::vector<gpu_record> records;
+    std::vector<uint32_t> baselines;
+    records.reserve(atlas.records.size());
+    baselines.reserve(atlas.records.size());
+    for (const auto & record : atlas.records) {
+        records.push_back({record.atlas_block_x, record.atlas_block_y, record.source_block,
+            static_cast<uint32_t>(record.layout)});
+        baselines.push_back(record.baseline_record);
+    }
+    const VkDeviceSize records_bytes = records.size() * sizeof(gpu_record);
+    const VkDeviceSize baselines_bytes = baselines.size() * sizeof(uint32_t);
+    if (!map_write(device_, records_memory_, records.data(), records_bytes) ||
+        !map_write(device_, baseline_memory_, baselines.data(), baselines_bytes) ||
+        !atlas_texture_.update_payload(physical_device_, device_, queue_, queue_family_,
+            static_cast<uint8_t>(atlas.footprint), atlas.payload, error)) {
+        if (error.empty()) error = "failed to update GPU ranking batch";
+        return false;
+    }
+    candidate_count_ = static_cast<uint32_t>(atlas.records.size());
+    error.clear();
+    return true;
 }
 
 bool astc_vulkan_gpu_ranking_session::run(const std::vector<float> & activations,

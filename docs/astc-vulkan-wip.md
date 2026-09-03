@@ -7188,3 +7188,18 @@ multi-batch partitioning, range atlas geometry, global source IDs, and the
 oversized-pool rejection path. This is CPU-side scheduling groundwork; the
 next step is to connect these bounded atlases to persistent Vulkan upload
 slots so CPU production can overlap GPU delta/gain dispatch.
+
+## Three-hundred-eighth sweep: persistent atlas update primitive
+
+The GPU ranking session now supports `update_batch()` for a new candidate atlas
+with the same D2 footprint and dimensions, provided the batch fits the initial
+candidate capacity. Record and baseline buffers are rewritten in place, global
+source-block IDs are preserved, and the sampled ASTC image is updated without
+recreating its image/view/sampler or any descriptor/pipeline resources. The
+session then runs the same delta and proposal-gain passes on the new payload.
+
+Intel validation smokes passed three times through init, first batch, atlas
+update, second batch, readback, and teardown. The batch planner and YAQA batch
+regressions also pass. Staging buffer/command allocation for the image update
+is still short-lived; persistent staging slots and CPU/GPU overlap are the
+next performance step.

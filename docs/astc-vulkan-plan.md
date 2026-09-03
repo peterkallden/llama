@@ -2783,6 +2783,14 @@ using local record indices for each upload. This is the first step toward a
 bounded producer/consumer queue; persistent Vulkan atlas slots and overlapped
 submissions remain the next throughput implementation.
 
+The first persistent-slot primitive is now available: an initialized ranking
+session can update a same-footprint, same-dimension atlas and rebuild its
+records without recreating the sampled image/view/sampler, descriptor set,
+pipelines, command pool, or GPU buffer capacity. The current update uses a
+short-lived staging copy command for safety; a later ring implementation may
+reuse staging buffers and fences to overlap slots. This keeps the first slot
+contract deterministic while avoiding per-batch pipeline setup.
+
 ### D2 per-block layout metadata (v3 groundwork)
 
 YAQA may select either `RG/B` or `R/GB` for each physical D2 ASTC block. The

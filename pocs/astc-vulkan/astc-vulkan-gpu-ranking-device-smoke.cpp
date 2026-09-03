@@ -100,7 +100,6 @@ int main(int argc, char ** argv) {
     const bool ran = initialized && session.run(activations, 1.0f, deltas, error);
     std::vector<float> gains;
     const bool gained = ran && session.run_proposal_gains(activations, residuals, 1.0f, gains, error);
-    session.reset(); vkDeviceWaitIdle(device); vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr);
     if (!gained || deltas.size() != 80 || gains.size() != 4) {
         std::fprintf(stderr, "GPU ranking smoke failed: %s\n", error.c_str());
         return 1;
@@ -140,6 +139,30 @@ int main(int argc, char ** argv) {
             return 1;
         }
     }
+    astc_vulkan_gpu_ranking_atlas updated_atlas = atlas;
+    updated_atlas.payload[8] ^= 0x10u;
+    if (!session.update_batch(updated_atlas, error)) {
+        std::fprintf(stderr, "GPU ranking batch update failed: %s\n", error.c_str());
+        return 1;
+    }
+    std::vector<float> updated_deltas;
+    std::vector<float> updated_gains;
+    if (!session.run(activations, 1.0f, updated_deltas, error) ||
+        !session.run_proposal_gains(activations, residuals, 1.0f, updated_gains, error) ||
+        updated_deltas.size() != deltas.size() || updated_gains.size() != gains.size()) {
+        std::fprintf(stderr, "GPU ranking updated-batch run failed: %s\n", error.c_str());
+        return 1;
+    }
+    bool changed = false;
+    for (size_t i = 0; i < deltas.size(); ++i) changed |= std::fabs(updated_deltas[i] - deltas[i]) > 1e-5f;
+    if (!changed) {
+        std::fprintf(stderr, "GPU ranking updated-batch smoke did not observe a payload change\n");
+        return 1;
+    }
+    session.reset();
+    vkDeviceWaitIdle(device);
+    vkDestroyDevice(device, nullptr);
+    vkDestroyInstance(instance, nullptr);
     std::printf("GPU paired-D2 batch delta/proposal-gain smoke passed\n");
     return 0;
 }

@@ -45,6 +45,12 @@ public:
                 uint32_t queue_family, uint8_t footprint, uint32_t width,
                 uint32_t height, const std::vector<uint8_t> & payload,
                 std::string & error);
+    // Replaces the contents of an existing image with an identically-sized
+    // ASTC payload. Image/view/sampler handles remain stable for descriptor
+    // reuse in streamed offline batches.
+    bool update_payload(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+                        uint32_t queue_family, uint8_t footprint,
+                        const std::vector<uint8_t> & payload, std::string & error);
     void reset();
     VkImageView view() const { return resources_.view; }
     VkSampler sampler() const { return resources_.sampler; }
@@ -54,6 +60,7 @@ public:
 private:
     VkDevice device_ = VK_NULL_HANDLE;
     astc_vulkan_image_resources resources_{};
+    uint8_t footprint_ = 0xff;
     uint32_t width_ = 0;
     uint32_t height_ = 0;
 };

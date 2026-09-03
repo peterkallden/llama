@@ -58,6 +58,10 @@ public:
                             const std::vector<float> & residuals,
                             float reconstruction_scale,
                             std::vector<float> & gains, std::string & error);
+    // Reuses all Vulkan objects for a new fixed-size atlas batch. The caller
+    // must keep atlas dimensions/footprint unchanged and stay within the
+    // initial candidate capacity; record indices are rebuilt per batch.
+    bool update_batch(const astc_vulkan_gpu_ranking_atlas & atlas, std::string & error);
     void reset();
     bool ready() const { return device_ != VK_NULL_HANDLE && pipeline_ != VK_NULL_HANDLE; }
 
@@ -68,6 +72,8 @@ private:
     uint32_t queue_family_ = UINT32_MAX;
     astc_vulkan_texture atlas_texture_;
     uint32_t candidate_count_ = 0;
+    uint32_t candidate_capacity_ = 0;
+    astc_vulkan_footprint footprint_ = astc_vulkan_footprint::k8x5;
     uint32_t source_blocks_x_ = 0;
     uint32_t tensor_width_ = 0;
     uint32_t tensor_logical_height_ = 0;
