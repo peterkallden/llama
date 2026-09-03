@@ -48,6 +48,12 @@ struct astc_vulkan_gpu_ranking_atlas {
     std::vector<astc_vulkan_gpu_ranking_record> records;
 };
 
+struct astc_vulkan_gpu_ranking_source_batch {
+    uint32_t first_source_block = 0;
+    uint32_t source_block_count = 0;
+    uint32_t candidate_count = 0;
+};
+
 // Packs a per-source-block candidate pool into a rectangular sampled ASTC
 // atlas. Every inner vector must be non-empty; element zero is its mandatory
 // neutral baseline. `atlas_blocks_x` is the upload-batch shaping choice, not
@@ -58,3 +64,21 @@ bool astc_vulkan_build_gpu_ranking_atlas(
     const std::vector<std::vector<astc_vulkan_gpu_ranking_candidate>> & candidates,
     astc_vulkan_gpu_ranking_atlas & result);
 
+// Partitions source-block candidate pools without splitting a pool. This is
+// the worker unit for streamed CPU-producer/GPU-consumer execution: every
+// source block keeps its neutral baseline and its candidates in one batch.
+// Returns false if one source pool alone exceeds max_candidate_count.
+bool astc_vulkan_plan_gpu_ranking_batches(
+    const std::vector<std::vector<astc_vulkan_gpu_ranking_candidate>> & candidates,
+    uint32_t max_candidate_count,
+    std::vector<astc_vulkan_gpu_ranking_source_batch> & batches);
+
+// Builds one atlas for a planned source-block range. `source_block` values in
+// records remain global, while baseline_record is local to this atlas.
+bool astc_vulkan_build_gpu_ranking_atlas_range(
+    astc_vulkan_footprint footprint,
+    uint32_t atlas_blocks_x,
+    const std::vector<std::vector<astc_vulkan_gpu_ranking_candidate>> & candidates,
+    uint32_t first_source_block,
+    uint32_t source_block_count,
+    astc_vulkan_gpu_ranking_atlas & result);

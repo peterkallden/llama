@@ -7172,3 +7172,19 @@ Vulkan regressions also passed. The next performance step is not additional
 shader semantics: it is a persistent multi-slot candidate-atlas producer /
 consumer queue that overlaps CPU astcenc workers with GPU batch dispatch while
 preserving candidate ordering and the CPU selector's tie-break contract.
+
+## Three-hundred-seventh sweep: source-block-safe worker batches
+
+The offline transport now exposes a deterministic batch planner for CPU
+astcenc workers. It groups complete per-source-block candidate pools under a
+maximum resident-candidate count and rejects a limit that would split one
+pool. This preserves the mandatory neutral candidate and keeps every
+`baseline_record` index local and valid.
+
+The atlas builder also accepts a source-block range. Records retain their
+global `source_block` coordinate for activation/residual addressing, while
+their baseline indices are local to the batch atlas. The contract test covers
+multi-batch partitioning, range atlas geometry, global source IDs, and the
+oversized-pool rejection path. This is CPU-side scheduling groundwork; the
+next step is to connect these bounded atlases to persistent Vulkan upload
+slots so CPU production can overlap GPU delta/gain dispatch.

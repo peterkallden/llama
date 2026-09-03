@@ -2775,6 +2775,14 @@ continues to own exact conflict-aware commit order initially. A ring of atlas
 upload slots and overlapped CPU-producer/GPU-consumer scheduling are later
 throughput work; neither may alter payloads, tie-breaking, or validation stop.
 
+The worker boundary is source-block safe. A batch planner groups complete
+candidate pools up to a configured resident-candidate limit; it never splits a
+pool, so candidate zero remains the local baseline and all baseline indices
+remain valid. A range atlas builder preserves global source-block IDs while
+using local record indices for each upload. This is the first step toward a
+bounded producer/consumer queue; persistent Vulkan atlas slots and overlapped
+submissions remain the next throughput implementation.
+
 ### D2 per-block layout metadata (v3 groundwork)
 
 YAQA may select either `RG/B` or `R/GB` for each physical D2 ASTC block. The

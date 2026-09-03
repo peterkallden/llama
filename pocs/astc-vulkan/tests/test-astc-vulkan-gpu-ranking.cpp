@@ -46,6 +46,19 @@ int main() {
     assert(atlas.records.size() == 6 && atlas.records[1].layout == astc_vulkan_paired_layout::r_gb);
     assert(!astc_vulkan_build_gpu_ranking_atlas(astc_vulkan_footprint::k8x8, 4, pools, atlas));
     assert(!astc_vulkan_build_gpu_ranking_atlas(astc_vulkan_footprint::k8x5, 0, pools, atlas));
+
+    std::vector<astc_vulkan_gpu_ranking_source_batch> batches;
+    assert(astc_vulkan_plan_gpu_ranking_batches(pools, 3, batches));
+    assert(batches.size() == 2);
+    assert(batches[0].first_source_block == 0 && batches[0].source_block_count == 2 &&
+           batches[0].candidate_count == 3);
+    assert(batches[1].first_source_block == 2 && batches[1].source_block_count == 1 &&
+           batches[1].candidate_count == 3);
+    assert(astc_vulkan_build_gpu_ranking_atlas_range(astc_vulkan_footprint::k8x5, 4, pools,
+        batches[1].first_source_block, batches[1].source_block_count, atlas));
+    assert(atlas.records.size() == 3 && atlas.records[0].source_block == 2 &&
+           atlas.records[0].baseline_record == 0 && atlas.records[2].candidate_index == 2);
+    assert(!astc_vulkan_plan_gpu_ranking_batches(pools, 2, batches));
     std::puts("ASTC Vulkan GPU ranking atlas contract passed");
     return 0;
 }
