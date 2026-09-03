@@ -6624,3 +6624,17 @@ downstream/model-loss `H_out`, and model-facing YAQA artifact comparisons are
 still open. The next integration must first materialize matching full-shape
 PV artifacts on `10x6`/`8x8`, then apply the trace/model-preserving objective
 to `10x8`/`10x10` with independently versioned provenance.
+
+## Two-hundred-eighty-second sweep: YAQA neutral controls
+
+The same trace pair was replayed against the neutral artifacts to provide a
+within-corpus control. The low-rank trace score was `432327.688` for neutral
+`10x8` versus `288622.626` for validation gauge, a reduction of about 33.2%.
+For `8x8`, neutral scored `247805.031` versus `134728.306` for validation
+gauge, a reduction of about 45.6%.
+
+This is useful mechanistic evidence that the selected payloads change an
+activation-sensitive error measure, but it is still only the finite-trace
+output-covariance proxy described above. It does not promote either footprint
+to the model-facing or production matrix; those gates still require matching
+full-model replay and target-device measurements.
