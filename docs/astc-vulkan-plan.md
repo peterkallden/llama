@@ -2451,7 +2451,11 @@ not influenced by experiments that have not survived a full model replay:
    validation-prefix streams for 8x6, 10x6, 8x8, and 10x8. Replay the exact
    bytes through the CPU oracle and Vulkan sampler, then decide from the full
    model replay whether each low-rate point is retained. Crop results remain
-   screening evidence only.
+   screening evidence only. The first three artifacts are v1-corpus records;
+   10x8 has also been completed on a regenerated, explicitly identified v2
+   CPU-capture corpus after the original temporary traces expired. A final
+   matrix must keep those corpus identities separate or regenerate all four
+   under one retained corpus before ranking formats.
 4. **Low-rate research (after the model gate):** apply full-shaped PV
    alternation and YAQA-style two-sided/model-preserving scoring to 10x8,
    10x10, and lower-rate candidates. Keep the candidate pool, objective, and

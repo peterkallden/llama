@@ -6460,6 +6460,43 @@ experimental until the complete model/performance matrix is assembled. Mixed
 footprints are deferred to per-tensor/page profiles; per-block mixing is not
 part of the current runtime design.
 
+## Two-hundred-seventy-seventh sweep: 10x8 v2 artifact, model replay, and GPU
+
+The missing temporary traces were regenerated with the PoC trace-capture tool
+running explicitly on CPU (`n_gpu_layers=0`). The new corpus is disjoint and
+provenance-named (`pythia-traces-v2`): 16 calibration, 16 validation, and 14
+holdout samples, all with 8,192 columns. This avoids the known full-model
+Vulkan allocation failure on the limited Intel device and does not change the
+production Vulkan path.
+
+Using that corpus, the full-shape `10x8` gauge artifact was regenerated for
+`blk.0.ffn_down.weight` (`2048x8192`, 209,920 blocks, `1.60` bits/texel).
+Validation selected commit `161,349`; holdout activation-relative MSE was
+`0.057659323` versus `0.29667627` for the scalar anchor. The exact payloads
+were packaged as manifest/blob/provenance artifacts with trace hashes and a
+new v2 source-family identifier.
+
+The CPU-only model replay on the 14-token sum-function holdout produced
+logits-relative MSE `0.0079400325`, loss delta `+0.087329386`, and `92.857%`
+top-1 agreement. Native controls on the same prompt were Q4_K_M `0.031430166`
+(`+0.14191231` loss delta), Q3_K_M `0.10030958` (`+0.35251795`), TQ2_0
+`1.5028586` (`+9.9070426`), and TQ1_0 `1.5647646` (`+8.0694348`). The ASTC
+number is a layer-0 FFN-down override and therefore is not a replacement for
+a full quantized-model ranking; it is a positive model-facing PoC signal.
+
+The exact 10x8 manifest/blob was replayed through the isolated Intel UHD 620
+sidecar. GPU-vs-CPU MSE was `3.02e-13` scalar and `1.73e-12` gauge; three
+hot-cache repeats measured `76.64 ms` scalar and `76.33 ms` gauge per
+14-sample dispatch. ASTC-vs-source activation-relative MSE was `0.2966396`
+and `0.057658846`, matching the CPU artifact oracle. These timings remain
+reference-device data and make no Mali/Adreno/Apple performance claim.
+
+The 10x8 artifact gate is therefore complete for this v2 corpus. Its result
+is retained as experimental low-rate evidence; the production adapter still
+offers only independently selected standard 4x4/5x5/6x6 profiles, with hard
+Q4_K_M/Q3_K_M fallback. The full quality matrix must label corpus identity so
+the earlier v1 8x6/10x6/8x8 results are never mixed numerically with v2.
+
 ## Two-hundred-seventy-sixth sweep: resume audit and standard selector contracts
 
 The interrupted `10x8` run could not be resumed because the prior session's

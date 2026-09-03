@@ -95,7 +95,13 @@ int main(int argc, char ** argv) {
     }
 
     llama_backend_init();
-    llama_model * model = llama_model_load_from_file(params.model_path.c_str(), llama_model_default_params());
+    // Trace capture is an offline oracle input. Keep the full model on CPU so
+    // a limited Vulkan device cannot fail before the requested activation is
+    // copied to the host; the isolated ASTC Vulkan replay remains a separate
+    // device test.
+    llama_model_params model_params = llama_model_default_params();
+    model_params.n_gpu_layers = 0;
+    llama_model * model = llama_model_load_from_file(params.model_path.c_str(), model_params);
     if (model == nullptr) {
         std::fprintf(stderr, "failed to load model: %s\n", params.model_path.c_str());
         llama_backend_free();
