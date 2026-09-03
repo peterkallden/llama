@@ -2679,6 +2679,27 @@ the immutable reference backend. The backend comparison is valid only when
 source, codebook, exact decode, selector, validation prefix, and holdout split
 are identical.
 
+#### D2 offline performance contract
+
+D2 candidate generation is an offline pack-time operation. Each producer
+worker owns persistent `RG/B` and `R/GB` astcenc contexts plus worker-local
+source, decode, payload-deduplication, and activation-delta scratch. Context
+creation, image-object construction, and heap allocation must not occur in the
+per-candidate inner loop. Where supported by the isolated neural fork, sibling
+contexts may share immutable ASTC lookup tables; failure to share is a
+performance fallback, not a change to payload semantics.
+
+Every optimization at this boundary must reproduce the reference candidate
+artifact: same legal payload bytes, candidate order/tie-break behavior,
+selector commit sequence, validation prefix, and replayed CPU loss. The
+producer records a timing breakdown for source construction, ASTC encode,
+exact decode, activation-delta construction, selector, and objective replay.
+This keeps later changes—source caching, encoder-preset ablation, adaptive
+steering grids, internal block-analysis reuse, or batched GPU ranking—from
+being mistaken for representation improvements. GPU work can score/offline
+rank an already-generated candidate pool later, but it neither replaces the
+standard ASTC CPU encoder nor adds a runtime decoder.
+
 ### D2 per-block layout metadata (v3 groundwork)
 
 YAQA may select either `RG/B` or `R/GB` for each physical D2 ASTC block. The

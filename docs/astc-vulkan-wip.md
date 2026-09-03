@@ -6951,6 +6951,43 @@ neural ranking improves the D2 feasible candidate choice, but it is not yet a
 model-level result. The next gate is a larger independently split crop and
 then a direct D1/Q iso-rate comparison using materialized artifacts.
 
+## Two-hundred-ninety-ninth sweep: D2 persistent encoder contexts and profile
+
+The exact D2 candidate producer now treats ASTC context lifetime and scratch
+storage as an offline performance contract rather than part of the candidate
+semantics. It creates one persistent encoder/decoder context for `RG/B` and
+one for `R/GB`, once per producer worker, and reuses a worker-local source
+block and decoded-image buffer for every codebook proposal. The neural fork
+also requests shared immutable tables between the two contexts where the fork
+accepts the semantic-layout configuration; a standalone context is a safe
+fallback if a future astcenc revision rejects that sharing arrangement.
+
+The change is intentionally behavior-preserving: it does not alter the source
+codebook, encoder preset, exact CPU decode, payload deduplication, candidate
+order, selector, or validation prefix. The standard 20x256 Pythia D2 run still
+produces all 1,408 unique candidates, 37 commits, prefix 31, and selected
+holdout `4.5653373e-4`, exactly matching the previous result. The neural run
+still produces 1,407 unique candidates, 36 commits, prefix 32, and selected
+holdout `4.3018954e-4`.
+
+Profiling establishes the next optimization boundary. On the standard 20x256
+run, source construction was `0.003 s`, ASTC encode was `1.443 s`, exact
+decode `0.007 s`, activation-delta construction `0.004 s`, and selector time
+`0.007 s`. The neural backend had the same negligible non-encode costs but
+spent `13.867 s` in encoder search. On the larger neural 40x512 run (256
+physical blocks and 5,632 exact roundtrips), the breakdown was source
+`0.019 s`, encode `53.227 s`, decode `0.188 s`, deltas `0.018 s`, and selector
+`0.352 s`; validation selected prefix 21 and reduced untouched holdout from
+`8.23999e-4` to `7.98066e-4`. The latter is a scaling/plumbing result, not a
+production quality claim.
+
+Consequently the next performance experiments are explicitly separated from
+the quality contract: first measure exact source-block cache hit rate, then
+compare ASTC presets/candidate recall on a fixed corpus, and only then consider
+specialized internal ASTC block-analysis reuse. GPU scoring remains a later
+offline batching experiment; it does not replace standard CPU ASTC encoding or
+the artifact-backed exact decoder oracle.
+
 ## Two-hundred-ninety-second sweep: paired selection-core groundwork
 
 Added `astc-vulkan-paired-selector.{h,cpp}` as the reusable offline boundary

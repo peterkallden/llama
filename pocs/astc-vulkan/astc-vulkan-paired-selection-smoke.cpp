@@ -6,9 +6,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <limits>
 #include <string>
 #include <utility>
@@ -28,11 +30,13 @@ struct params {
     uint32_t columns = 256;
     uint32_t calibration_samples = 5;
     uint32_t validation_samples = 2;
+    uint32_t progress_every_blocks = 0;
+    std::string report;
 };
 
 struct decoded_block {
     std::array<uint8_t, 16> payload{};
-    std::vector<float> logical_weights;
+    std::array<float, kLogicalBlockHeight * kBlockWidth> logical_weights{};
 };
 
 struct generated_candidate {
@@ -40,6 +44,13 @@ struct generated_candidate {
     astc_vulkan_paired_layout layout = astc_vulkan_paired_layout::rg_b;
     astc_vulkan_paired_steering_factor steering{};
     astc_vulkan_paired_candidate_delta delta;
+};
+
+struct run_profile {
+    double source_seconds = 0.0;
+    double delta_seconds = 0.0;
+    double selection_seconds = 0.0;
+    double objective_seconds = 0.0;
 };
 
 bool parse_params(int argc, char ** argv, params & result) {
@@ -54,6 +65,8 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--columns") result.columns = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--calibration-samples") result.calibration_samples = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--validation-samples") result.validation_samples = static_cast<uint32_t>(std::stoul(value));
+        else if (option == "--progress-every-blocks") result.progress_every_blocks = static_cast<uint32_t>(std::stoul(value));
+        else if (option == "--report") result.report = value;
         else return false;
     }
     return !result.model.empty() && !result.tensor.empty() && !result.trace.empty() &&
@@ -62,7 +75,15 @@ bool parse_params(int argc, char ** argv, params & result) {
 
 class block_codec {
 public:
-    block_codec(bool neural_backend, astc_vulkan_paired_layout layout) : layout_(layout) {
+    struct timing {
+        double encode_seconds = 0.0;
+        double decode_seconds = 0.0;
+        uint64_t roundtrips = 0;
+    };
+
+    block_codec(bool neural_backend, astc_vulkan_paired_layout layout,
+                const block_codec * shared_parent = nullptr) : layout_(layout),
+                                                               decoded_scratch_(kBlockWidth * kPhysicalBlockHeight * 4) {
         astcenc_config config{};
         if (astcenc_config_init(ASTCENC_PRF_LDR, kBlockWidth, kPhysicalBlockHeight, 1,
                                 ASTCENC_PRE_THOROUGH, 0, &config) == ASTCENC_SUCCESS) {
@@ -75,7 +96,15 @@ public:
             if (neural_backend) return;
 #endif
 #if defined(ASTC_VULKAN_PAIRED_NEURAL_ENCODER)
-            ready_ = astcenc_context_alloc(&config, 1, &context_, nullptr) == ASTCENC_SUCCESS;
+            const astcenc_error shared_result = astcenc_context_alloc(&config, 1, &context_,
+                shared_parent == nullptr ? nullptr : shared_parent->context_);
+            if (shared_result == ASTCENC_SUCCESS) {
+                ready_ = true;
+            } else if (shared_parent != nullptr) {
+                // The custom semantic layout does not change ASTC lookup tables, but retain a
+                // standalone fallback if a future astcenc revision tightens parent matching.
+                ready_ = astcenc_context_alloc(&config, 1, &context_, nullptr) == ASTCENC_SUCCESS;
+            }
 #else
             ready_ = astcenc_context_alloc(&config, 1, &context_) == ASTCENC_SUCCESS;
 #endif
@@ -86,24 +115,30 @@ public:
     block_codec(const block_codec &) = delete;
     block_codec & operator=(const block_codec &) = delete;
 
-    bool roundtrip(const std::vector<float> & source, decoded_block & result) const {
+    bool ready() const { return ready_; }
+    const timing & timings() const { return timings_; }
+
+    bool roundtrip(const std::vector<float> & source, decoded_block & result) {
         if (!ready_ || source.size() != kBlockWidth * kPhysicalBlockHeight * 4) return false;
         void * source_slice = const_cast<float *>(source.data());
         astcenc_image source_image{kBlockWidth, kPhysicalBlockHeight, 1, ASTCENC_TYPE_F32, &source_slice};
         const astcenc_swizzle swizzle{ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A};
+        const auto encode_start = std::chrono::steady_clock::now();
         if (astcenc_compress_image(context_, &source_image, &swizzle, result.payload.data(),
                                    result.payload.size(), 0) != ASTCENC_SUCCESS) return false;
-        std::vector<float> decoded(kBlockWidth * kPhysicalBlockHeight * 4);
-        void * decoded_slice = decoded.data();
+        timings_.encode_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - encode_start).count();
+        void * decoded_slice = decoded_scratch_.data();
         astcenc_image decoded_image{kBlockWidth, kPhysicalBlockHeight, 1, ASTCENC_TYPE_F32, &decoded_slice};
+        const auto decode_start = std::chrono::steady_clock::now();
         if (astcenc_decompress_image(context_, result.payload.data(), result.payload.size(),
                                      &decoded_image, &swizzle, 0) != ASTCENC_SUCCESS) return false;
-        result.logical_weights.resize(kLogicalBlockHeight * kBlockWidth);
+        timings_.decode_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - decode_start).count();
+        ++timings_.roundtrips;
         for (uint32_t texel_y = 0; texel_y < kPhysicalBlockHeight; ++texel_y) {
             for (uint32_t x = 0; x < kBlockWidth; ++x) {
                 const size_t offset = (static_cast<size_t>(texel_y) * kBlockWidth + x) * 4;
-                const astc_vulkan_rgba_texel texel{decoded[offset], decoded[offset + 1],
-                                                   decoded[offset + 2], decoded[offset + 3]};
+                const astc_vulkan_rgba_texel texel{decoded_scratch_[offset], decoded_scratch_[offset + 1],
+                                                   decoded_scratch_[offset + 2], decoded_scratch_[offset + 3]};
                 result.logical_weights[(2 * texel_y) * kBlockWidth + x] =
                     astc_vulkan_paired_weight(texel, 0, layout_);
                 result.logical_weights[(2 * texel_y + 1) * kBlockWidth + x] =
@@ -116,6 +151,8 @@ public:
 private:
     astc_vulkan_paired_layout layout_ = astc_vulkan_paired_layout::rg_b;
     astcenc_context * context_ = nullptr;
+    std::vector<float> decoded_scratch_;
+    timing timings_{};
     bool ready_ = false;
 };
 
@@ -126,11 +163,13 @@ float normalized_weight(const ggml_vk_astc_loaded_matrix & matrix, uint32_t row,
     return std::clamp((value - minimum) / (range > 0.0f ? range : 1.0f), 0.0f, 1.0f);
 }
 
-std::vector<float> source_block(const ggml_vk_astc_loaded_matrix & matrix, uint32_t row0, uint32_t column0,
-                                uint32_t rows, uint32_t columns, float minimum, float range,
-                                astc_vulkan_paired_layout layout,
-                                const astc_vulkan_paired_steering_factor & steering) {
-    std::vector<float> source(kBlockWidth * kPhysicalBlockHeight * 4);
+void fill_source_block(std::vector<float> & source, const ggml_vk_astc_loaded_matrix & matrix,
+                       uint32_t row0, uint32_t column0, uint32_t rows, uint32_t columns,
+                       float minimum, float range, astc_vulkan_paired_layout layout,
+                       const astc_vulkan_paired_steering_factor & steering) {
+    if (source.size() != kBlockWidth * kPhysicalBlockHeight * 4) {
+        source.resize(kBlockWidth * kPhysicalBlockHeight * 4);
+    }
     for (uint32_t y = 0; y < kPhysicalBlockHeight; ++y) {
         for (uint32_t x_index = 0; x_index < kBlockWidth; ++x_index) {
             const uint32_t logical_row0 = row0 + 2 * y;
@@ -152,7 +191,6 @@ std::vector<float> source_block(const ggml_vk_astc_loaded_matrix & matrix, uint3
             source[offset + 3] = texel.a;
         }
     }
-    return source;
 }
 
 void write_block(std::vector<float> & target, const decoded_block & block, uint32_t block_row,
@@ -227,7 +265,8 @@ int main(int argc, char ** argv) {
     params options;
     if (!parse_params(argc, argv, options)) {
         std::fprintf(stderr, "usage: %s --model model.gguf --tensor name --trace input.trace "
-                             "[--rows N --columns N --calibration-samples N --validation-samples N]\n", argv[0]);
+                             "[--rows N --columns N --calibration-samples N --validation-samples N "
+                             "--progress-every-blocks N --report path]\n", argv[0]);
         return 2;
     }
     ggml_vk_astc_loaded_matrix matrix;
@@ -263,20 +302,29 @@ int main(int argc, char ** argv) {
 #endif
     std::vector<std::vector<generated_candidate>> generated(static_cast<size_t>(blocks_x) * blocks_y);
     std::vector<float> baseline(static_cast<size_t>(options.rows) * options.columns);
+    std::vector<float> source_scratch(kBlockWidth * kPhysicalBlockHeight * 4);
     const auto codebook = astc_vulkan_make_paired_steering_codebook();
+    block_codec rg_b_codec(neural_backend, astc_vulkan_paired_layout::rg_b);
+    block_codec r_gb_codec(neural_backend, astc_vulkan_paired_layout::r_gb, &rg_b_codec);
+    if (!rg_b_codec.ready() || !r_gb_codec.ready()) return 1;
+    run_profile profile;
     uint64_t raw_candidates = 0;
+    uint32_t completed_blocks = 0;
+    const auto generation_start = std::chrono::steady_clock::now();
     for (uint32_t block_y = 0; block_y < blocks_y; ++block_y) {
         for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
             auto & candidates = generated[static_cast<size_t>(block_y) * blocks_x + block_x];
             for (const auto layout : {astc_vulkan_paired_layout::rg_b, astc_vulkan_paired_layout::r_gb}) {
-                block_codec codec(neural_backend, layout);
+                block_codec & codec = layout == astc_vulkan_paired_layout::rg_b ? rg_b_codec : r_gb_codec;
                 for (const auto & steering : codebook) {
                     generated_candidate candidate;
                     candidate.layout = layout;
                     candidate.steering = steering;
-                    const auto source = source_block(matrix, block_y * kLogicalBlockHeight, block_x * kBlockWidth,
+                    const auto source_start = std::chrono::steady_clock::now();
+                    fill_source_block(source_scratch, matrix, block_y * kLogicalBlockHeight, block_x * kBlockWidth,
                         options.rows, options.columns, minimum, range, layout, steering);
-                    if (!codec.roundtrip(source, candidate.block)) return 1;
+                    profile.source_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - source_start).count();
+                    if (!codec.roundtrip(source_scratch, candidate.block)) return 1;
                     candidate.delta.payload = candidate.block.payload;
                     ++raw_candidates;
                     bool duplicate = false;
@@ -292,21 +340,34 @@ int main(int argc, char ** argv) {
             if (neutral == candidates.end()) return 1;
             std::iter_swap(candidates.begin(), neutral);
             write_block(baseline, candidates.front().block, block_y, block_x, options.rows, options.columns);
+            ++completed_blocks;
+            if (options.progress_every_blocks != 0 &&
+                (completed_blocks % options.progress_every_blocks == 0 || completed_blocks == blocks_x * blocks_y)) {
+                const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - generation_start).count();
+                std::printf("paired-select progress backend=%s blocks=%u/%u candidates=%llu elapsed=%.1fs\n",
+                            neural_backend ? "neural-d2" : "standard", completed_blocks, blocks_x * blocks_y,
+                            static_cast<unsigned long long>(raw_candidates), seconds);
+                std::fflush(stdout);
+            }
         }
     }
 
+    const auto initial_objective_start = std::chrono::steady_clock::now();
     const auto initial_calibration = output_error(matrix, trace, baseline, options.rows, options.columns,
         0, options.calibration_samples, minimum, range);
     const auto initial_validation = output_error(matrix, trace, baseline, options.rows, options.columns,
         validation_offset, options.validation_samples, minimum, range);
+    profile.objective_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - initial_objective_start).count();
     for (uint32_t block_y = 0; block_y < blocks_y; ++block_y) for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
         auto & candidates = generated[static_cast<size_t>(block_y) * blocks_x + block_x];
         const decoded_block & neutral = candidates.front().block;
         for (auto & candidate : candidates) {
+            const auto delta_start = std::chrono::steady_clock::now();
             assign_delta(candidate.delta.calibration_delta, candidate.block, neutral, trace, block_y, block_x,
                          options.rows, options.columns, 0, options.calibration_samples, range);
             assign_delta(candidate.delta.validation_delta, candidate.block, neutral, trace, block_y, block_x,
                          options.rows, options.columns, validation_offset, options.validation_samples, range);
+            profile.delta_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - delta_start).count();
         }
     }
     std::vector<std::vector<astc_vulkan_paired_candidate_delta>> selector_candidates(generated.size());
@@ -315,8 +376,10 @@ int main(int argc, char ** argv) {
     }
     astc_vulkan_paired_selection_result selection;
     const astc_vulkan_paired_selector_config config{options.rows, options.calibration_samples, options.validation_samples};
+    const auto selection_start = std::chrono::steady_clock::now();
     if (!astc_vulkan_select_paired_candidates(config, initial_calibration, initial_validation,
                                                selector_candidates, selection)) return 1;
+    profile.selection_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - selection_start).count();
 
     std::vector<float> selected = baseline;
     for (uint32_t block_y = 0; block_y < blocks_y; ++block_y) for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
@@ -324,20 +387,61 @@ int main(int argc, char ** argv) {
         write_block(selected, generated[block][selection.validation_selected_candidates[block]].block,
                     block_y, block_x, options.rows, options.columns);
     }
+    const auto final_objective_start = std::chrono::steady_clock::now();
     const auto baseline_holdout = output_error(matrix, trace, baseline, options.rows, options.columns,
         holdout_offset, holdout_samples, minimum, range);
     const auto selected_holdout = output_error(matrix, trace, selected, options.rows, options.columns,
         holdout_offset, holdout_samples, minimum, range);
+    profile.objective_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - final_objective_start).count();
     uint64_t unique_candidates = 0;
     for (const auto & candidates : generated) unique_candidates += candidates.size();
+    const double neutral_calibration_mse = mse(initial_calibration);
+    const double neutral_validation_mse = mse(initial_validation);
+    const double neutral_holdout_mse = mse(baseline_holdout);
+    const double selected_calibration_mse = selection.calibration_residual_loss / (options.calibration_samples * options.rows);
+    const double selected_validation_mse = selection.validation_residual_loss / (options.validation_samples * options.rows);
+    const double selected_holdout_mse = mse(selected_holdout);
     std::printf("paired-select D2_8x5 rows=%u columns=%u blocks=%u raw=%llu unique=%llu\n",
                 options.rows, options.columns, blocks_x * blocks_y,
                 static_cast<unsigned long long>(raw_candidates), static_cast<unsigned long long>(unique_candidates));
     std::printf("paired-select neutral calibration-mse=%.8g validation-mse=%.8g holdout-mse=%.8g\n",
-                mse(initial_calibration), mse(initial_validation), mse(baseline_holdout));
+                neutral_calibration_mse, neutral_validation_mse, neutral_holdout_mse);
     std::printf("paired-select selected commits=%zu validation-prefix=%u calibration-mse=%.8g validation-mse=%.8g holdout-mse=%.8g\n",
                 selection.commits.size(), selection.validation_prefix,
-                selection.calibration_residual_loss / (options.calibration_samples * options.rows),
-                selection.validation_residual_loss / (options.validation_samples * options.rows), mse(selected_holdout));
+                selected_calibration_mse, selected_validation_mse, selected_holdout_mse);
+    const auto & rg_b_timing = rg_b_codec.timings();
+    const auto & r_gb_timing = r_gb_codec.timings();
+    std::printf("paired-select profile source=%.3fs encode=%.3fs decode=%.3fs delta=%.3fs selection=%.3fs objective=%.3fs roundtrips=%llu\n",
+                profile.source_seconds, rg_b_timing.encode_seconds + r_gb_timing.encode_seconds,
+                rg_b_timing.decode_seconds + r_gb_timing.decode_seconds, profile.delta_seconds,
+                profile.selection_seconds, profile.objective_seconds,
+                static_cast<unsigned long long>(rg_b_timing.roundtrips + r_gb_timing.roundtrips));
+    if (!options.report.empty()) {
+        std::ofstream report(options.report);
+        if (!report) return 1;
+        report << "backend=" << (neural_backend ? "neural-d2" : "standard") << '\n'
+               << "footprint=8x5\n"
+               << "rows=" << options.rows << '\n'
+               << "columns=" << options.columns << '\n'
+               << "blocks=" << blocks_x * blocks_y << '\n'
+               << "raw_candidates=" << raw_candidates << '\n'
+               << "unique_candidates=" << unique_candidates << '\n'
+               << "neutral_calibration_mse=" << neutral_calibration_mse << '\n'
+               << "neutral_validation_mse=" << neutral_validation_mse << '\n'
+               << "neutral_holdout_mse=" << neutral_holdout_mse << '\n'
+               << "commits=" << selection.commits.size() << '\n'
+               << "validation_prefix=" << selection.validation_prefix << '\n'
+               << "selected_calibration_mse=" << selected_calibration_mse << '\n'
+               << "selected_validation_mse=" << selected_validation_mse << '\n'
+               << "selected_holdout_mse=" << selected_holdout_mse << '\n'
+               << "profile_source_seconds=" << profile.source_seconds << '\n'
+               << "profile_encode_seconds=" << rg_b_timing.encode_seconds + r_gb_timing.encode_seconds << '\n'
+               << "profile_decode_seconds=" << rg_b_timing.decode_seconds + r_gb_timing.decode_seconds << '\n'
+               << "profile_delta_seconds=" << profile.delta_seconds << '\n'
+               << "profile_selection_seconds=" << profile.selection_seconds << '\n'
+               << "profile_objective_seconds=" << profile.objective_seconds << '\n'
+               << "roundtrips=" << rg_b_timing.roundtrips + r_gb_timing.roundtrips << '\n';
+        if (!report) return 1;
+    }
     return 0;
 }
