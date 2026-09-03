@@ -7233,3 +7233,43 @@ The next planned work is the four-step production preparation: finish the
 sidecar/adapter contract, run the full target-GPU model matrix, produce and
 replay the low-rate artifacts, and only then compare the optional PV/YAQA
 selectors on the surviving footprints.
+
+## Three-hundred-tenth sweep: D2_10x5 device smoke and geometry correction
+
+The first 10x5 device run exposed a mistake in the smoke oracle rather than in
+the shader: a physical five-row paired block produces ten local logical rows,
+while the test incorrectly expected the full twenty-row tensor height per
+candidate. The oracle now distinguishes local block rows from global tensor
+rows and uses the correct residual offset for the second source block.
+
+After rebuilding, the real render-node run with Vulkan validation passed for
+both `D2_8x5` and `D2_10x5`. The same session performs fixed-function ASTC
+sampling, paired `RG/B` and `R/GB` reconstruction, the 16-lane delta reduction,
+and device-side proposal gain (`2<R,d>-||d||²`). Focused CTests passed (5/5),
+and the full earlier paired/GPU/YAQA group remains green. The sandbox without
+`/dev/dri` continues to skip this device test; on a device that supports 8x5
+but not 10x5 the smoke reports 10x5 capability absence while retaining the
+8x5 result.
+
+CPU model smoke on the Pythia-1.4B F16 reference also runs the new profile:
+`D2_10x5` reports 1.28 b/w and its two semantic layouts, while the bounded
+selection smoke materializes 308 standard and 307 neural unique payloads on a
+20x64 crop. These are PoC and activation-level gates, not production quality
+approval; full artifact/model replay is still required.
+
+## Three-hundred-eleventh sweep: production representation fallback hardening
+
+The production-facing FFN adapter now rejects every representation other than
+standard scalar and scalar-anchored luminance/alpha before resource upload.
+This closes a direct-call hole where a paired-D2 or future experimental record
+could otherwise reach the D1 reconstruction session with incompatible metadata.
+The binding remains a successful preparation with `kFallback`, so the caller
+can deterministically select its existing Q4_K_M preferred or Q3_K_M
+low-memory path; no Vulkan object is created for the rejected representation.
+
+The adapter contract test covers a valid v3 paired-D2 manifest and verifies
+that it is rejected for the normal llama fallback with an explicit
+representation reason. Existing scalar/gauge shape, device-capability,
+manifest-version, and malformed-payload checks remain green. This is the
+production safety gate for step 1; full-shape artifact/model approval is still
+required before any ASTC profile is enabled by a scheduler.

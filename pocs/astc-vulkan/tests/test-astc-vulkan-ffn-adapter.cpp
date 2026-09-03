@@ -1,4 +1,5 @@
 #include "astc-vulkan-ffn-adapter.h"
+#include "astc-vulkan-paired-layout.h"
 
 #include <cassert>
 #include <cstdio>
@@ -45,6 +46,18 @@ int main() {
     assert(adapter.prepare(legacy, "blk.0.ffn_down.weight", 1536, true, 32, binding, error));
     assert(binding.status == astc_vulkan_binding_status::kFallback);
     assert(binding.fallback_reason.find("v1") != std::string::npos);
+
+    astc_vulkan_manifest paired = manifest;
+    paired.tensors[0].representation = astc_vulkan_representation::kPairedD2;
+    paired.tensors[0].footprint = astc_vulkan_footprint::k8x5;
+    paired.tensors[0].byte_size = astc_vulkan_image_bytes(
+        astc_vulkan_footprint::k8x5, paired.tensors[0].width,
+        astc_vulkan_paired_storage_height(paired.tensors[0].height));
+    paired.tensors[0].layout_byte_size = astc_vulkan_paired_layout_bytes(
+        astc_vulkan_footprint::k8x5, paired.tensors[0].width, paired.tensors[0].height);
+    assert(adapter.prepare(paired, "blk.0.ffn_down.weight", 1536, true, 32, binding, error));
+    assert(binding.status == astc_vulkan_binding_status::kFallback);
+    assert(binding.fallback_reason.find("representation") != std::string::npos);
     std::puts("ASTC Vulkan FFN adapter contract passed");
     return 0;
 }

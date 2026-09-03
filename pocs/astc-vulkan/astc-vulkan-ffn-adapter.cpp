@@ -18,6 +18,13 @@ bool astc_vulkan_ffn_adapter::prepare(
         error.clear();
         return true;
     }
+    if (record->representation != astc_vulkan_representation::kScalar &&
+        record->representation != astc_vulkan_representation::kGaugeLumaAlpha) {
+        binding.record = *record;
+        binding.fallback_reason = "FFN tensor representation requires the normal llama fallback";
+        error.clear();
+        return true;
+    }
     if (expected_columns == 0 || record->width != expected_columns ||
         (expected_rows != 0 && record->height != expected_rows)) {
         binding.record = *record;
