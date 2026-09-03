@@ -1,6 +1,9 @@
 #include <astcenc.h>
 
 #include "astc-vulkan-contract.h"
+#include "astc-vulkan-gauge.h"
+#include "astc-vulkan-hash.h"
+#include "astc-vulkan-block-ldlq.h"
 #include "astc-vulkan-input.h"
 
 #include <algorithm>
@@ -11,10 +14,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
-#include <iomanip>
 #include <limits>
 #include <map>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <cerrno>
@@ -28,49 +29,23 @@ constexpr uint32_t kColumns = 256;
 constexpr uint32_t kDefaultCoarseLevels = 16;
 float g_astc_preset = ASTCENC_PRE_THOROUGH;
 double g_block_ldlq_damping = 1e-4;
-enum class ldlq_order_mode { forward, reverse, pivot };
 enum class residual_basis { free, block_constant, block_row, block_column, block_plane };
-enum class gauge_basis { constant, x_ramp, y_ramp, saddle };
-
-const char * gauge_basis_name(gauge_basis basis) {
-    switch (basis) {
-        case gauge_basis::constant: return "constant";
-        case gauge_basis::x_ramp: return "x-ramp";
-        case gauge_basis::y_ramp: return "y-ramp";
-        case gauge_basis::saddle: return "saddle";
-    }
-    return "unknown";
-}
-
 const char * astc_preset_name() {
     if (g_astc_preset == ASTCENC_PRE_FAST) return "fast";
     if (g_astc_preset == ASTCENC_PRE_MEDIUM) return "medium";
     return "thorough";
 }
 
-uint64_t fnv1a_bytes(const void * data, size_t size) {
-    const auto * bytes = static_cast<const uint8_t *>(data);
-    uint64_t hash = 1469598103934665603ULL;
-    for (size_t index = 0; index < size; ++index) {
-        hash ^= bytes[index];
-        hash *= 1099511628211ULL;
-    }
-    return hash;
-}
-
 template<typename T>
 std::string vector_hash(const std::vector<T> & values) {
-    std::ostringstream stream;
-    stream << "fnv1a64-" << std::hex << std::setw(16) << std::setfill('0')
-           << fnv1a_bytes(values.data(), values.size() * sizeof(T));
-    return stream.str();
+    return astc_vulkan_fnv1a64_tagged(values.data(), values.size() * sizeof(T));
 }
 // Keep the reference encoder path separate from the experimental recall path.
 // The latter changes only which legal astcenc candidates reach the existing
 // exact-decode selector; it does not change the ASTC payload format or runtime
 // reconstruction contract.
 enum class encoder_search_mode { standard, neural };
-ldlq_order_mode g_block_ldlq_order = ldlq_order_mode::forward;
+astc_vulkan_ldlq_order g_block_ldlq_order = astc_vulkan_ldlq_order::forward;
 bool g_directional_shortlists = false;
 uint32_t g_stability_shards = 2;
 
@@ -1159,9 +1134,9 @@ bool block_ldlq_select_astc_blocks(const std::vector<float> & reference,
         for (uint32_t column_block = 0; column_block < blocks_x; ++column_block) {
             row_order.push_back(row_block * blocks_x + column_block);
         }
-        if (g_block_ldlq_order == ldlq_order_mode::reverse) {
+        if (g_block_ldlq_order == astc_vulkan_ldlq_order::reverse) {
             std::reverse(row_order.begin(), row_order.end());
-        } else if (g_block_ldlq_order == ldlq_order_mode::pivot) {
+        } else if (g_block_ldlq_order == astc_vulkan_ldlq_order::pivot) {
             std::sort(row_order.begin(), row_order.end(), [&](uint32_t left, uint32_t right) {
                 const uint32_t left_column0 = (left % blocks_x) * format.block_width;
                 const uint32_t right_column0 = (right % blocks_x) * format.block_width;
@@ -1586,56 +1561,19 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
         return astc_decode(compressed, rows, columns, format, decoded) &&
                write_binary(decoded_reference_path, decoded);
     };
-    struct gauge_factor {
-        float correction;
-        float gauge;
-        gauge_basis basis = gauge_basis::constant;
-    };
     const bool pv_grid = pv_lite_grid || pv_lite_coarse_grid;
-    const char * candidate_family = pv_lite_coarse_grid ?
-        "zero-sum-pv-lite-coarse-grid-v1(constant,x-ramp,y-ramp,saddle;gauge=0,+/-0.50)" :
-        pv_lite_grid ?
-        "zero-sum-pv-lite-grid-v1(constant,x-ramp,y-ramp,saddle;gauge=0,+/-0.25,+/-0.50,+/-0.75)" :
-        (weight_grid_gauge ? "zero-sum-weight-grid-gauge-v1" :
-                             "scalar-anchored-gauge-v1");
+    const char * candidate_family = astc_vulkan_gauge_candidate_family(
+        weight_grid_gauge, pv_lite_grid, pv_lite_coarse_grid);
     // PV-lite v1 is deliberately a fixed coefficient grid, not a claim of a
     // complete alternating optimizer. It supplies a small P-step candidate
     // family while the existing exact ASTC encode/decode and V-step selector
     // remain unchanged. The neutral scalar-anchored candidate is mandatory.
-    const std::vector<gauge_factor> factors = scalar_anchored_c_delta ?
-        std::vector<gauge_factor>{
-            {0.0f, 0.0f}, {0.0f, -0.5f}, {0.0f, 0.5f},
-            {-0.25f, 0.0f}, {0.25f, 0.0f},
-            {-0.25f, 0.25f}, {-0.25f, -0.25f}, {0.25f, 0.25f},
-        } : (scalar_anchored_gauge ?
-        (weight_grid_gauge ? (pv_grid ? (pv_lite_coarse_grid ? std::vector<gauge_factor>{
-            {0.0f, 0.0f, gauge_basis::constant},
-            {0.0f, -0.5f, gauge_basis::x_ramp}, {0.0f, 0.5f, gauge_basis::x_ramp},
-            {0.0f, -0.5f, gauge_basis::y_ramp}, {0.0f, 0.5f, gauge_basis::y_ramp},
-            {0.0f, -0.5f, gauge_basis::saddle}, {0.0f, 0.5f, gauge_basis::saddle},
-        } : std::vector<gauge_factor>{
-            {0.0f, 0.0f, gauge_basis::constant},
-            {0.0f, -0.25f, gauge_basis::x_ramp}, {0.0f, 0.25f, gauge_basis::x_ramp},
-            {0.0f, -0.50f, gauge_basis::x_ramp}, {0.0f, 0.50f, gauge_basis::x_ramp},
-            {0.0f, -0.75f, gauge_basis::x_ramp}, {0.0f, 0.75f, gauge_basis::x_ramp},
-            {0.0f, -0.25f, gauge_basis::y_ramp}, {0.0f, 0.25f, gauge_basis::y_ramp},
-            {0.0f, -0.50f, gauge_basis::y_ramp}, {0.0f, 0.50f, gauge_basis::y_ramp},
-            {0.0f, -0.75f, gauge_basis::y_ramp}, {0.0f, 0.75f, gauge_basis::y_ramp},
-            {0.0f, -0.25f, gauge_basis::saddle}, {0.0f, 0.25f, gauge_basis::saddle},
-            {0.0f, -0.50f, gauge_basis::saddle}, {0.0f, 0.50f, gauge_basis::saddle},
-            {0.0f, -0.75f, gauge_basis::saddle}, {0.0f, 0.75f, gauge_basis::saddle},
-        }) : std::vector<gauge_factor>{
-            {0.0f, 0.0f, gauge_basis::constant},
-            {0.0f, -0.5f, gauge_basis::x_ramp}, {0.0f, 0.5f, gauge_basis::x_ramp},
-            {0.0f, -0.5f, gauge_basis::y_ramp}, {0.0f, 0.5f, gauge_basis::y_ramp},
-            {0.0f, -0.5f, gauge_basis::saddle}, {0.0f, 0.5f, gauge_basis::saddle},
-        }) : std::vector<gauge_factor>{
-            {0.0f, 0.0f}, {0.0f, -0.25f}, {0.0f, 0.25f},
-            {0.0f, -0.5f}, {0.0f, 0.5f}, {0.0f, -0.75f}, {0.0f, 0.75f},
-        }) : std::vector<gauge_factor>{
-            {0.0f, 0.0f}, {0.0f, -0.5f}, {0.0f, 0.5f}, {0.0f, 1.0f},
-            {0.0f, 1.5f}, {0.0f, 2.0f},
-        });
+    const std::vector<astc_vulkan_gauge_factor> factors =
+        astc_vulkan_make_gauge_factors(scalar_anchored_c_delta,
+                                       scalar_anchored_gauge,
+                                       weight_grid_gauge,
+                                       pv_lite_grid,
+                                       pv_lite_coarse_grid);
     const std::string source_hash = vector_hash(weights);
     const std::string calibration_hash = vector_hash(calibration.values);
     const std::string validation_hash = vector_hash(validation.values);
@@ -1696,13 +1634,8 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                             2.0f * local_column / static_cast<float>(format.block_width - 1) - 1.0f : 0.0f;
                         const float y = format.block_height > 1 ?
                             2.0f * local_row / static_cast<float>(format.block_height - 1) - 1.0f : 0.0f;
-                        float basis_value = 1.0f;
-                        switch (factors[factor_index].basis) {
-                            case gauge_basis::constant: basis_value = 1.0f; break;
-                            case gauge_basis::x_ramp: basis_value = x; break;
-                            case gauge_basis::y_ramp: basis_value = y; break;
-                            case gauge_basis::saddle: basis_value = x * y; break;
-                        }
+                        const float basis_value = astc_vulkan_gauge_basis_value(
+                            factors[factor_index].basis, x, y);
                         const float delta = factors[factor_index].gauge * gauge_headroom * basis_value;
                         dst[0] = dst[1] = dst[2] = src[0] + correction + delta;
                         dst[3] = src[0] + correction - delta;
@@ -2191,8 +2124,9 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
                 commit_log << commits << ',' << residual_energy / expected_energy << ',' << validation_loss << ','
                            << best_gain << ',' << neutral_calibration - residual_energy / expected_energy;
                 if (pv_grid) {
-                    const gauge_factor & factor = factors[step.factor_index];
-                    commit_log << ',' << step.factor_index << ',' << gauge_basis_name(factor.basis) << ','
+                    const astc_vulkan_gauge_factor & factor = factors[step.factor_index];
+                    commit_log << ',' << step.factor_index << ','
+                               << astc_vulkan_gauge_basis_name(factor.basis) << ','
                                << factor.gauge << ',' << factor.correction;
                 }
                 commit_log << '\n';
@@ -2320,9 +2254,9 @@ bool decode_loop_alpha_search(const std::vector<float> & weights,
             for (const strip_step * step : committed_steps) ++factor_counts[step->factor_index];
             for (uint32_t index = 0; index < factor_counts.size(); ++index) {
                 if (factor_counts[index] == 0) continue;
-                const gauge_factor & factor = factors[index];
+                const astc_vulkan_gauge_factor & factor = factors[index];
                 std::printf("latent-pv-lite-factor index=%u basis=%s gauge=%g correction=%g commits=%u\n",
-                            index, gauge_basis_name(factor.basis), factor.gauge, factor.correction,
+                            index, astc_vulkan_gauge_basis_name(factor.basis), factor.gauge, factor.correction,
                             factor_counts[index]);
             }
         }
@@ -3203,8 +3137,7 @@ bool run_coordinate_case(const std::vector<float> & weights,
                     format.name, candidates.size(), local_calibration, coordinate_calibration,
                     ldlq_calibration, feedback_calibration, conflict_calibration, stability_calibration, local_loss,
                     coordinate_loss, ldlq_loss, ldlq.forward_changes,
-                    g_block_ldlq_order == ldlq_order_mode::reverse ? "reverse" :
-                    (g_block_ldlq_order == ldlq_order_mode::pivot ? "pivot" : "forward"),
+                    astc_vulkan_ldlq_order_name(g_block_ldlq_order),
                     feedback_loss, conflict_loss, stability_loss, recovered_gain,
                     conflict_gain, stability_gain, feedback.forward_changes,
                     conflict_aware.forward_changes, stability.forward_changes,
@@ -3372,9 +3305,9 @@ int main(int argc, char ** argv) {
             g_block_ldlq_damping = std::stod(argv[++index]);
         } else if (option == "--ldlq-order" && index + 1 < argc) {
             const std::string order = argv[++index];
-            if (order == "forward") g_block_ldlq_order = ldlq_order_mode::forward;
-            else if (order == "reverse") g_block_ldlq_order = ldlq_order_mode::reverse;
-            else if (order == "pivot") g_block_ldlq_order = ldlq_order_mode::pivot;
+            if (order == "forward") g_block_ldlq_order = astc_vulkan_ldlq_order::forward;
+            else if (order == "reverse") g_block_ldlq_order = astc_vulkan_ldlq_order::reverse;
+            else if (order == "pivot") g_block_ldlq_order = astc_vulkan_ldlq_order::pivot;
             else {
                 std::fprintf(stderr, "unsupported --ldlq-order value: %s\n", order.c_str());
                 return 2;

@@ -4,6 +4,31 @@
 
 set(ASTC_VULKAN_POC_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Offline-only primitives shared by artifact metadata and latent experiments.
+# They carry no Vulkan or ggml dependency.
+add_library(astc-vulkan-algorithms STATIC
+    astc-vulkan-block-ldlq.cpp
+    astc-vulkan-gauge.cpp
+    astc-vulkan-hash.cpp)
+target_include_directories(astc-vulkan-algorithms PUBLIC
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_compile_features(astc-vulkan-algorithms PUBLIC cxx_std_17)
+
+add_executable(test-astc-vulkan-hash
+    tests/test-astc-vulkan-hash.cpp)
+target_link_libraries(test-astc-vulkan-hash PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-hash PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-gauge
+    tests/test-astc-vulkan-gauge.cpp)
+target_link_libraries(test-astc-vulkan-gauge PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-gauge PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-block-ldlq-config
+    tests/test-astc-vulkan-block-ldlq-config.cpp)
+target_link_libraries(test-astc-vulkan-block-ldlq-config PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-block-ldlq-config PRIVATE cxx_std_17)
+
 add_executable(test-astc-vulkan-contract
     tests/test-astc-vulkan-contract.cpp)
 target_include_directories(test-astc-vulkan-contract PRIVATE
@@ -28,6 +53,7 @@ add_library(astc-vulkan-driver STATIC
     astc-vulkan-manifest.cpp)
 target_include_directories(astc-vulkan-driver PUBLIC
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_link_libraries(astc-vulkan-driver PUBLIC astc-vulkan-algorithms)
 target_compile_features(astc-vulkan-driver PUBLIC cxx_std_17)
 
 add_library(astc-vulkan-provenance STATIC
@@ -239,11 +265,11 @@ if (TARGET astcenc::astcenc-static)
         endif()
         target_include_directories(astc-vulkan-latent-smoke BEFORE PRIVATE
             ${GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR})
-        target_link_libraries(astc-vulkan-latent-smoke PRIVATE
-            ${GGML_VK_ASTC_NEURAL_RANK_LIBRARY} ggml-base)
+    target_link_libraries(astc-vulkan-latent-smoke PRIVATE
+            ${GGML_VK_ASTC_NEURAL_RANK_LIBRARY} ggml-base astc-vulkan-algorithms)
     else()
         target_link_libraries(astc-vulkan-latent-smoke PRIVATE
-            astcenc::astcenc-static ggml-base)
+        astcenc::astcenc-static ggml-base astc-vulkan-algorithms)
     endif()
     target_compile_features(astc-vulkan-latent-smoke PRIVATE cxx_std_17)
     if (GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
@@ -501,6 +527,18 @@ if (ASTC_VULKAN_GLSLC)
 endif()
 
 if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-hash
+        COMMAND test-astc-vulkan-hash)
+    set_property(TEST test-astc-vulkan-hash PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-gauge
+        COMMAND test-astc-vulkan-gauge)
+    set_property(TEST test-astc-vulkan-gauge PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-block-ldlq-config
+        COMMAND test-astc-vulkan-block-ldlq-config)
+    set_property(TEST test-astc-vulkan-block-ldlq-config PROPERTY LABELS astc)
+
     add_executable(test-astc-vulkan-provenance
         tests/test-astc-vulkan-provenance.cpp)
     target_link_libraries(test-astc-vulkan-provenance PRIVATE astc-vulkan-provenance)

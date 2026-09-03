@@ -6511,6 +6511,36 @@ report v1/v2 corpus identities separately). Only after that normalized matrix
 should low-rate PV alternation and YAQA-style objectives be compared, followed
 by the deferred per-tensor/page mixed-footprint study.
 
+## Two-hundred-seventy-ninth sweep: offline algorithm-module refactor
+
+The offline-only common code was separated without changing the ASTC candidate
+space, candidate ordering, artifact schema, or runtime shader contract.
+`astc-vulkan-hash.{h,cpp}` now owns the exact historical FNV-1a-64 payload and
+trace fingerprint, including the `fnv1a64-%016x` metadata spelling. It is
+documented as a cache/debug identifier only; SHA-256 remains the provenance
+and integrity primitive.
+
+`astc-vulkan-gauge.{h,cpp}` now owns scalar-anchored gauge bases and all
+historical ordinary, weight-grid, and PV-lite candidate families. Its header
+states the null-space construction (`L=q+G`, `A=q-G`), the mandatory scalar
+fallback, its offline-only suitability, and the PV-Tuning reference
+(`arXiv:2405.14852`). The latent smoke uses this module directly, preserving
+the old factor sequence so deterministic tie-breaking is unchanged.
+
+`astc-vulkan-block-ldlq.{h,cpp}` owns the stable Block-LDLQ order vocabulary
+and documents the QuIP#/GPTVQ research connection. The coupled matrix loop is
+not moved prematurely: it currently depends on latent-smoke-private activation
+captures, ASTC candidate payloads, and artifact state. Extracting it only after
+those types have a dedicated selection-core boundary keeps this refactor
+behavior-preserving rather than creating an underspecified public API.
+
+The profile documentation now makes source `q`, semantic representation,
+footprint, selector, and encoder profile explicit. In particular, Q4/Q3/TQ
+and future few-level sources are offline source projections, not additional
+resident model data; scalar fallback is local to the same source/footprint;
+and macro-tile mixed footprints are deferred to compatible row-height classes
+rather than per-block runtime indirection.
+
 ## Two-hundred-seventy-sixth sweep: resume audit and standard selector contracts
 
 The interrupted `10x8` run could not be resumed because the prior session's

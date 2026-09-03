@@ -1309,6 +1309,51 @@ holdout. Candidate-space-changing work (preset, grid, cache policy beyond
 exact source identity, or internal search pruning) is instead a new encoder
 experiment and must report candidate count and quality separately.
 
+### Profile axes and offline-algorithm ownership
+
+An ASTC profile must name five independent axes. This prevents a nominal
+bitrate from hiding a change in source, representation, or selection
+objective:
+
+| Axis | Current values | Contract |
+| --- | --- | --- |
+| Offline source `q` | FP16/BF16 reference; Q4, Q3, TQ research projections; future ASTC-Q8/ASTC-Q16 and few-level sources | `q` is an encoder-only latent. It is not resident alongside ASTC payloads and does not add runtime bits/weight. |
+| Representation | scalar; scalar-anchored gauge L+A; PV-lite gauge; future `c + gauge` | Scalar is mandatory as the `delta = 0` fallback within the *same* source and footprint family. |
+| ASTC footprint | 4x4, 5x5, 6x6; experimental 8x6, 10x6, 8x8, 10x8 | The footprint alone fixes physical ASTC storage rate: `128 / (width * height)` bits/weight for one logical value per texel. |
+| Selector | candidate generation, exact CPU decode, conflict-aware commit, validation prefix | Selection is scoped per tensor, source, representation, footprint, corpus, and artifact version. Calibration never directly chooses an exported final prefix. |
+| Encoder profile | `standard-thorough`; experimental neural-recall | Both emit ordinary legal 16-byte ASTC blocks. `standard-thorough` is the reference; neural recall is opt-in until it wins reproducibly on held-out tensors. |
+
+The current product boundary is deliberately narrower than the research matrix:
+FP16-derived scalar/gauge profiles at 4x4, 5x5, and 6x6 are the only standard
+scheduler candidates, each with an independent selector and hard Q4_K_M/Q3_K_M
+fallback. Q4/Q3/TQ sources, PV-lite, neural recall, and all footprints from
+8x6 onward remain experimental encoder inputs or explicit replay profiles;
+their source quantization is never a hidden runtime sidecar.
+
+`astc-vulkan-hash.{h,cpp}` owns the stable FNV-1a cache/metadata fingerprint.
+It is intentionally non-cryptographic; provenance remains SHA-256.
+`astc-vulkan-gauge.{h,cpp}` owns the deterministic scalar-anchored gauge and
+PV-lite factor families. Its candidate ordering is artifact-visible because it
+participates in deterministic tie breaking.
+`astc-vulkan-block-ldlq.{h,cpp}` owns the documented order/configuration
+surface for the offline Block-LDLQ experiment. The matrix implementation
+remains local to the latent smoke until its private capture/candidate data
+model is extracted as a coherent selection core; this avoids exposing a
+misleading half-runtime API.
+
+Relevant sources are Fowler/Noll's [FNV reference](http://www.isthe.com/chongo/tech/comp/fnv/),
+[PV-Tuning](https://arxiv.org/abs/2405.14852),
+[QuIP# / LDLQ](https://arxiv.org/abs/2402.04396), and
+[GPTVQ](https://arxiv.org/abs/2402.15319). These are offline encoder methods;
+Vulkan continues to sample standard ASTC through fixed-function decoding.
+
+At a later mixed-rate stage, source/representation changes should begin per
+tensor or page. Mixed footprints may then be selected per macro-tile only
+within compatible row-height classes (H4: 4x4; H5: 5x5; H6: 6x6/8x6/10x6;
+H8: 8x8/10x8). Per-ASTC-block mixed footprints remain out of scope because the
+metadata, address translation, and shader branching can erase the bandwidth
+gain.
+
 After the active full-tensor run, first profile its 8.19-second strip
 generation time into source construction, ASTC search, payload packing/dedup,
 decode, reconstruction, and activation-delta construction. Then audit only the

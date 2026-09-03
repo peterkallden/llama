@@ -1,4 +1,5 @@
 #include "astc-vulkan-manifest.h"
+#include "astc-vulkan-hash.h"
 
 #include "astc-vulkan-format.h"
 
@@ -51,12 +52,7 @@ bool valid_representation(astc_vulkan_representation representation) {
 } // namespace
 
 uint64_t astc_vulkan_payload_hash64(const uint8_t * data, size_t size) {
-    uint64_t hash = 1469598103934665603ull;
-    for (size_t i = 0; i < size; ++i) {
-        hash ^= data[i];
-        hash *= 1099511628211ull;
-    }
-    return hash;
+    return astc_vulkan_fnv1a64(data, size);
 }
 
 bool astc_vulkan_validate_payload(const astc_vulkan_tensor_record & tensor,
