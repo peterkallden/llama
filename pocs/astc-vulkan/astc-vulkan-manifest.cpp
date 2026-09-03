@@ -56,6 +56,14 @@ bool is_paired_d2(const astc_vulkan_tensor_record & tensor) {
     return tensor.representation == astc_vulkan_representation::kPairedD2;
 }
 
+bool paired_d2_footprint_is_supported(astc_vulkan_footprint footprint) {
+    // Both formats have a five-row physical texture stripe and map to a
+    // ten-row logical D2 stripe. They nevertheless require separate Vulkan
+    // image formats, so there is no generic H10 payload class.
+    return footprint == astc_vulkan_footprint::k8x5 ||
+           footprint == astc_vulkan_footprint::k10x5;
+}
+
 uint32_t storage_height(const astc_vulkan_tensor_record & tensor) {
     return is_paired_d2(tensor) ? astc_vulkan_paired_storage_height(tensor.height) : tensor.height;
 }
@@ -167,7 +175,7 @@ bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
             return false;
         }
         if (is_paired_d2(tensor) &&
-            (manifest.version < kCurrentManifestVersion || tensor.footprint != astc_vulkan_footprint::k8x5 ||
+            (manifest.version < kCurrentManifestVersion || !paired_d2_footprint_is_supported(tensor.footprint) ||
              tensor.layout_byte_size != expected_layout_bytes(tensor) ||
              tensor.layout_byte_size == 0 ||
              tensor.layout_byte_size > std::numeric_limits<uint64_t>::max() - tensor.layout_byte_offset)) {

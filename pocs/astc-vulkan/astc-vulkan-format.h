@@ -14,6 +14,8 @@ enum class astc_vulkan_footprint : uint8_t {
     k10x8 = 6,
     // D2's first iso-rate format. Appending preserves serialized manifests.
     k8x5 = 7,
+    // D2's next lower-rate candidate. Appending preserves serialized manifests.
+    k10x5 = 8,
 };
 
 struct astc_vulkan_format_info {
@@ -22,11 +24,11 @@ struct astc_vulkan_format_info {
     uint32_t block_bytes;
 };
 
-inline constexpr size_t astc_vulkan_footprint_count = 8;
+inline constexpr size_t astc_vulkan_footprint_count = 9;
 
 astc_vulkan_format_info astc_vulkan_format(astc_vulkan_footprint footprint);
 bool astc_vulkan_footprint_is_valid(astc_vulkan_footprint footprint);
-// 8x6, 10x6, 8x8, and 10x8 are standard Vulkan formats, but remain opt-in in this PoC
+// 8x5, 8x6, 10x5, 10x6, 8x8, and 10x8 are standard Vulkan formats, but remain opt-in in this PoC
 // until broader device coverage and quality data are available.
 bool astc_vulkan_footprint_is_experimental(astc_vulkan_footprint footprint);
 uint64_t astc_vulkan_block_count(astc_vulkan_footprint footprint,

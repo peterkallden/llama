@@ -60,6 +60,20 @@ int main() {
     record.layout_byte_size = 0;
     manifest.tensors[0] = record;
     assert(!astc_vulkan_validate_manifest(manifest, error));
+
+    // D2_10x5 uses the same logical ten-row stripe class as D2_8x5, but is a
+    // separate Vulkan image format and remains experimental.
+    record.footprint = astc_vulkan_footprint::k10x5;
+    record.byte_size = astc_vulkan_image_bytes(record.footprint, width, 11);
+    record.layout_byte_size = astc_vulkan_paired_layout_bytes(record.footprint, width, logical_height);
+    record.layout_hash64 = astc_vulkan_payload_hash64(
+        reinterpret_cast<const uint8_t *>(words.data()), sizeof(uint32_t));
+    payload.assign(static_cast<size_t>(record.byte_size), 0);
+    manifest.tensors[0] = record;
+    assert(astc_vulkan_validate_manifest(manifest, error));
+    assert(astc_vulkan_validate_payload(record, payload.data(), payload.size(), error));
+    assert(astc_vulkan_validate_layout_map(record,
+        reinterpret_cast<const uint8_t *>(words.data()), sizeof(uint32_t), error));
     std::puts("ASTC Vulkan paired layout metadata contract passed");
     return 0;
 }

@@ -196,6 +196,7 @@ int main(int argc, char ** argv) {
             else if (value == "5x5") footprint = astc_vulkan_footprint::k5x5;
             else if (value == "6x6") footprint = astc_vulkan_footprint::k6x6;
             else if (value == "8x5") footprint = astc_vulkan_footprint::k8x5;
+            else if (value == "10x5") footprint = astc_vulkan_footprint::k10x5;
             else if (value == "8x6") footprint = astc_vulkan_footprint::k8x6;
             else if (value == "10x6") footprint = astc_vulkan_footprint::k10x6;
             else if (value == "8x8") footprint = astc_vulkan_footprint::k8x8;

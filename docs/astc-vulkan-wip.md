@@ -6879,6 +6879,21 @@ the updated paired shader passes `spirv-val`. The next sweep must make the D2
 candidate producer emit the selected layout words alongside ASTC payloads,
 then run exact CPU and Vulkan replay before enabling any metadata-aware upload.
 
+## Two-hundred-ninety-sixth sweep: D2_10x5 manifest readiness
+
+`D2_8x5` remains the first concrete paired-D2 profile because it is the clean
+1.60 b/w iso-rate comparison against D1 10x8. The manifest format table now
+also recognizes `D2_10x5` (1.28 b/w) and validates its identical paired-D2
+layout-map contract. Both formats have five physical ASTC texture rows and
+therefore map to ten logical D2 rows, but they are separate Vulkan image
+formats and must not be treated as one generic “H10” payload class.
+
+This is deliberately metadata and format groundwork only: D2_10x5 remains
+experimental, has no candidate-quality result, no metadata-aware upload path,
+and no scheduler promotion. A later macro-page descriptor may select an exact
+format/atlas for a region; it must not encode the choice as a per-block shader
+branch.
+
 ## Two-hundred-ninety-second sweep: paired selection-core groundwork
 
 Added `astc-vulkan-paired-selector.{h,cpp}` as the reusable offline boundary

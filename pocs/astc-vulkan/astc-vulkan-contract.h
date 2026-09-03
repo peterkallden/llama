@@ -45,6 +45,10 @@ inline constexpr ggml_vk_astc_format_contract ggml_vk_astc_8x5_unorm_rgba = {
     "ASTC 8x5 UNORM RGBA", 8, 5, 16, 4,
 };
 
+inline constexpr ggml_vk_astc_format_contract ggml_vk_astc_10x5_unorm_rgba = {
+    "ASTC 10x5 UNORM RGBA", 10, 5, 16, 4,
+};
+
 inline constexpr ggml_vk_astc_format_contract ggml_vk_astc_8x6_unorm_rgba = {
     "ASTC 8x6 UNORM RGBA", 8, 6, 16, 4,
 };

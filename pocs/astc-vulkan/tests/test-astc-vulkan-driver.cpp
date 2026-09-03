@@ -15,17 +15,21 @@ int main() {
                   "10x8 serialized footprint ID changed");
     static_assert(static_cast<uint8_t>(astc_vulkan_footprint::k8x5) == 7,
                   "new serialized footprint must be appended");
+    static_assert(static_cast<uint8_t>(astc_vulkan_footprint::k10x5) == 8,
+                  "new serialized footprint must be appended");
     assert(!astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k6x6));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k8x6));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k10x6));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k8x8));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k10x8));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k8x5));
+    assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k10x5));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k8x6));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k10x6));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k8x8));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k10x8));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k8x5));
+    assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k10x5));
     assert(astc_vulkan_block_count(astc_vulkan_footprint::k4x4, 1536, 32) == 384 * 8);
     assert(astc_vulkan_image_bytes(astc_vulkan_footprint::k6x6, 1536, 128) == 90112);
     assert(astc_vulkan_image_bytes(astc_vulkan_footprint::k10x8, 1536, 128) ==

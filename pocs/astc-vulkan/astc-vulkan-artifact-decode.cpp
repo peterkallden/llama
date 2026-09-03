@@ -24,6 +24,7 @@ bool footprint(const std::string & value, unsigned int & width, unsigned int & h
     else if (value == "5x5") { width = 5; height = 5; }
     else if (value == "6x6") { width = 6; height = 6; }
     else if (value == "8x5") { width = 8; height = 5; }
+    else if (value == "10x5") { width = 10; height = 5; }
     else if (value == "8x6") { width = 8; height = 6; }
     else if (value == "10x6") { width = 10; height = 6; }
     else if (value == "8x8") { width = 8; height = 8; }

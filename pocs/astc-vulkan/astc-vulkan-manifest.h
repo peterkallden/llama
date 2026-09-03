@@ -34,8 +34,10 @@ struct astc_vulkan_tensor_record {
     uint64_t payload_hash64 = 0;
 
     // v3 paired-D2 metadata. `height` always means logical tensor height;
-    // paired-D2 stores ceil(height / 2) texture rows. The layout map is a
-    // separate packed uint32 blob, addressed independently from ASTC bytes.
+    // paired-D2 stores ceil(height / 2) texture rows. The first concrete
+    // profiles are D2_8x5 (1.60 b/w) and D2_10x5 (1.28 b/w). The layout map
+    // is a separate packed uint32 blob, addressed independently from ASTC
+    // bytes.
     uint64_t layout_byte_offset = 0;
     uint64_t layout_byte_size = 0;
     uint64_t layout_hash64 = 0;
