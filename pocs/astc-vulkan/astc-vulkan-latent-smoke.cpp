@@ -6,6 +6,9 @@
 #include "astc-vulkan-block-ldlq.h"
 #include "astc-vulkan-pv.h"
 #include "astc-vulkan-d1-prescreen.h"
+#if defined(ASTC_VULKAN_D1_PRESCREEN_GPU)
+#include "astc-vulkan-d1-prescreen-dispatch.h"
+#endif
 #include "astc-vulkan-input.h"
 
 #include <algorithm>
@@ -3320,6 +3323,7 @@ int main(int argc, char ** argv) {
     bool pv_lite_coarse_grid_sweep = false;
     bool pv_alternate = false;
     bool d1_prescreen = false;
+    std::string d1_prescreen_gpu_shader;
     encoder_search_mode encoder_search = encoder_search_mode::standard;
     uint32_t neural_candidate_limit = 16;
     for (int index = 1; index < argc; ++index) {
@@ -3406,6 +3410,9 @@ int main(int argc, char ** argv) {
             pv_alternate = true;
         } else if (option == "--d1-prescreen") {
             d1_prescreen = true;
+        } else if (option == "--d1-prescreen-gpu" && index + 1 < argc) {
+            d1_prescreen = true;
+            d1_prescreen_gpu_shader = argv[++index];
             scalar_anchored_gauge_sweep = true;
         } else if (option == "--decode-loop-log" && index + 1 < argc) {
             decode_loop_log_path = argv[++index];
@@ -3460,7 +3467,7 @@ int main(int argc, char ** argv) {
         } else {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
-                         "[--footprint 4x4|5x5|6x6|8x5|8x6|10x6|8x8|10x8] [--d1-prescreen] [--preset thorough|medium|fast] [--model path --tensor name] "
+                         "[--footprint 4x4|5x5|6x6|8x5|8x6|10x6|8x8|10x8] [--d1-prescreen|--d1-prescreen-gpu shader.spv] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--pv-lite-grid-sweep] [--pv-lite-coarse-grid-sweep] [--pv-alternate] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
@@ -3671,6 +3678,7 @@ int main(int argc, char ** argv) {
     crop_activation_columns(validation_inputs, columns);
     std::vector<astc_vulkan_footprint> prescreen_footprints;
     if (d1_prescreen && footprint.empty()) {
+        const char * prescreen_backend = "cpu";
         std::vector<float> column_energy(columns, 0.0f);
         for (uint32_t sample = 0; sample < calibration_inputs.samples; ++sample) {
             const float * input = calibration_inputs.values.data() + static_cast<size_t>(sample) * columns;
@@ -3683,13 +3691,27 @@ int main(int argc, char ** argv) {
             {astc_vulkan_footprint::k10x8, 8}};
         std::vector<astc_vulkan_d1_prescreen_score> scores;
         std::vector<astc_vulkan_d1_prescreen_score> shortlist;
-        if (!astc_vulkan_score_d1_prescreen_cpu(weights, rows, columns, column_energy,
-                                                screen_candidates, scores) ||
+        bool screen_ok = false;
+#if defined(ASTC_VULKAN_D1_PRESCREEN_GPU)
+        if (!d1_prescreen_gpu_shader.empty()) {
+            std::string gpu_error;
+            screen_ok = astc_vulkan_score_d1_prescreen_gpu_default(
+                d1_prescreen_gpu_shader, weights, rows, columns, column_energy,
+                screen_candidates, scores, gpu_error);
+            if (screen_ok) prescreen_backend = "gpu";
+            if (!screen_ok) {
+                std::fprintf(stderr, "D1 GPU pre-screen unavailable (%s); falling back to CPU\n", gpu_error.c_str());
+            }
+        }
+#endif
+        if (!screen_ok) screen_ok = astc_vulkan_score_d1_prescreen_cpu(
+            weights, rows, columns, column_energy, screen_candidates, scores);
+        if (!screen_ok ||
             !astc_vulkan_select_d1_prescreen_shortlist(scores, 4, 0.0, shortlist)) {
             std::fprintf(stderr, "D1 pre-screen failed\n");
             return 1;
         }
-        std::printf("d1-prescreen shortlist:");
+        std::printf("d1-prescreen backend=%s shortlist:", prescreen_backend);
         for (const auto & score : shortlist) {
             prescreen_footprints.push_back(score.candidate.footprint);
             const auto dimensions = d1_prescreen_dimensions(score.candidate.footprint);

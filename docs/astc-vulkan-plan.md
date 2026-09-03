@@ -2880,3 +2880,11 @@ and buffer-lifecycle smoke now bind the same buffers and compare every GPU
 score against the CPU oracle. The smoke passed on the available Vulkan
 compute device. This remains a pre-screen gate: its result may reduce the CPU
 astcenc search, but cannot replace exact ASTC artifact replay.
+
+`astc-vulkan-latent-smoke` now accepts `--d1-prescreen-gpu <shader.spv>`.
+It uses the one-shot Vulkan backend to score the same tensor/trace inputs,
+compares every GPU value against the CPU oracle, and only then uses the GPU
+score vector for the normal rate-aware shortlist. Any initialization or score
+contract failure prints its reason and falls back to CPU. A small `4x8` latent
+run on the available compute device passed this path and encoded only the four
+screened footprints in the subsequent exact ASTC pass.

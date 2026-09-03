@@ -193,6 +193,14 @@ if (TARGET Vulkan::Vulkan)
         astc-vulkan-resource astc-vulkan-algorithms Vulkan::Vulkan)
     target_compile_features(astc-vulkan-gpu-ranking-dispatch PUBLIC cxx_std_17)
 
+    add_library(astc-vulkan-d1-prescreen-dispatch STATIC
+        astc-vulkan-d1-prescreen-dispatch.cpp)
+    target_include_directories(astc-vulkan-d1-prescreen-dispatch PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-d1-prescreen-dispatch PUBLIC
+        astc-vulkan-resource astc-vulkan-algorithms Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-d1-prescreen-dispatch PUBLIC cxx_std_17)
+
     add_library(astc-vulkan-sidecar STATIC
         astc-vulkan-sidecar.cpp)
     target_include_directories(astc-vulkan-sidecar PUBLIC
@@ -459,6 +467,10 @@ if (TARGET astcenc::astcenc-static)
         astcenc::astcenc-static ggml-base astc-vulkan-algorithms)
     endif()
     target_compile_features(astc-vulkan-latent-smoke PRIVATE cxx_std_17)
+    if (TARGET astc-vulkan-d1-prescreen-dispatch)
+        target_link_libraries(astc-vulkan-latent-smoke PRIVATE astc-vulkan-d1-prescreen-dispatch)
+        target_compile_definitions(astc-vulkan-latent-smoke PRIVATE ASTC_VULKAN_D1_PRESCREEN_GPU=1)
+    endif()
     if (GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
         target_compile_definitions(astc-vulkan-latent-smoke PRIVATE
             GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK=1)
