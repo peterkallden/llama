@@ -2622,3 +2622,12 @@ logical row-strip height is twice its ASTC texture-block height, so row-strip
 selection, padding masks, CPU oracle, and shader indexing need their own
 explicit geometry contract. D2 is never auto-scheduled into the production
 adapter until its artifact and model gates pass.
+
+For D2 and other profiles at or below roughly 1.6 nominal b/w, selection uses
+an objective hierarchy rather than raw weight-MSE: retain weight-error/tail
+limits as safety diagnostics, shortlist legal payloads by activation-relative
+error, optionally rerank that shortlist with diagonal output-weighted
+activation, then use trace-backed YAQA as the stronger two-sided control.
+Validation chooses the commit prefix; holdout remains read-only. The bounded
+D2 steering codebook replaces full PV iteration as the default candidate
+family: neutral, signed X/Y/saddle, and signed diagonal steering bases.

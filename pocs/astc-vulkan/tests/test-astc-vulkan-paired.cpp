@@ -50,5 +50,12 @@ int main() {
     assert_close(static_cast<float>(astc_vulkan_nominal_bits_per_logical_weight(
                      ggml_vk_astc_10x8_unorm_rgba,
                      astc_vulkan_semantic_density::d1_scalar)), 1.6f);
+    const auto codebook = astc_vulkan_make_paired_steering_codebook();
+    assert(codebook.size() == 11);
+    assert(codebook.front().amplitude == 0.0f);
+    assert_close(astc_vulkan_paired_steering_basis_value(
+                     astc_vulkan_paired_steering_basis::x_plus_y, 1.0f, 1.0f), 1.0f);
+    assert_close(astc_vulkan_paired_steering_basis_value(
+                     astc_vulkan_paired_steering_basis::x_minus_y, 1.0f, -1.0f), 1.0f);
     return 0;
 }

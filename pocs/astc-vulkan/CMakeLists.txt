@@ -10,6 +10,7 @@ add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-block-ldlq.cpp
     astc-vulkan-gauge.cpp
     astc-vulkan-hash.cpp
+    astc-vulkan-objective.cpp
     astc-vulkan-paired.cpp
     astc-vulkan-pv.cpp
     astc-vulkan-yaqa.cpp)
@@ -31,6 +32,11 @@ add_executable(test-astc-vulkan-paired
     tests/test-astc-vulkan-paired.cpp)
 target_link_libraries(test-astc-vulkan-paired PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-paired PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-objective
+    tests/test-astc-vulkan-objective.cpp)
+target_link_libraries(test-astc-vulkan-objective PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-objective PRIVATE cxx_std_17)
 
 add_executable(test-astc-vulkan-block-ldlq-config
     tests/test-astc-vulkan-block-ldlq-config.cpp)
@@ -599,6 +605,10 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-paired
         COMMAND test-astc-vulkan-paired)
     set_property(TEST test-astc-vulkan-paired PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-objective
+        COMMAND test-astc-vulkan-objective)
+    set_property(TEST test-astc-vulkan-objective PROPERTY LABELS astc)
 
     add_test(NAME test-astc-vulkan-block-ldlq-config
         COMMAND test-astc-vulkan-block-ldlq-config)

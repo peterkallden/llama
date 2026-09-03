@@ -2,6 +2,8 @@
 
 #include "astc-vulkan-contract.h"
 
+#include <vector>
+
 // Experimental D2 (two logical weights per ASTC texel) semantic contract.
 //
 // D2 packs a pair of logical weights from adjacent output rows at one input
@@ -31,6 +33,24 @@ enum class astc_vulkan_paired_layout : unsigned char {
     r_gb = 1,
 };
 
+// A bounded source-side Alpha codebook for D2. These perturb only the
+// encoder-visible steering lane, never the runtime semantic decoder. They are
+// intentionally discrete, parallel and deterministic; this is the practical
+// low-rate alternative to expensive full PV iteration.
+enum class astc_vulkan_paired_steering_basis : unsigned char {
+    neutral,
+    x_ramp,
+    y_ramp,
+    saddle,
+    x_plus_y,
+    x_minus_y,
+};
+
+struct astc_vulkan_paired_steering_factor {
+    float amplitude = 0.0f;
+    astc_vulkan_paired_steering_basis basis = astc_vulkan_paired_steering_basis::neutral;
+};
+
 struct astc_vulkan_rgba_texel {
     float r;
     float g;
@@ -40,6 +60,16 @@ struct astc_vulkan_rgba_texel {
 
 const char * astc_vulkan_semantic_density_name(astc_vulkan_semantic_density density);
 const char * astc_vulkan_paired_layout_name(astc_vulkan_paired_layout layout);
+const char * astc_vulkan_paired_steering_basis_name(astc_vulkan_paired_steering_basis basis);
+
+// Returns the deterministic v1 steering order used as candidate tie-break
+// input: neutral, signed ramps/saddle, then signed diagonal combinations.
+std::vector<astc_vulkan_paired_steering_factor> astc_vulkan_make_paired_steering_codebook();
+
+// x and y are normalized coordinates in [-1, 1]. Composite bases are scaled
+// back to [-1, 1], so all codebook amplitudes have comparable headroom.
+float astc_vulkan_paired_steering_basis_value(
+    astc_vulkan_paired_steering_basis basis, float x, float y);
 
 // Maps two normalized logical scalar values plus an arbitrary normalized
 // steering value to an ASTC source texel. The steering value is intentionally

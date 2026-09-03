@@ -6748,3 +6748,20 @@ prefix, or full model replay. Steering changes the result modestly and in a
 trace-dependent way, confirming that it must remain a candidate-generation
 degree of freedom rather than a mandatory correction. D1 remains the safe
 iso-rate fallback and no scheduler eligibility changed.
+
+## Two-hundred-eighty-ninth sweep: D2 objective and codebook foundation
+
+Added a deterministic 11-member D2 Alpha steering codebook: neutral, signed
+X/Y/saddle, and signed X+Y/X-Y bases. The codebook is separate from the D1
+L+A gauge family: it perturbs only D2's encoder-visible Alpha lane and has no
+runtime semantic effect. It is the bounded, parallel alternative to full PV
+iteration.
+
+Added `astc-vulkan-objective.{h,cpp}` with three named objective categories:
+activation, diagonal output-weighted activation, and two-sided trace. The
+first two score `E X^T` directly; YAQA remains the existing exact trace
+reranker. Raw weight MSE is explicitly retained for diagnostics/outlier gates,
+not as the low-rate payload ranking objective. Contract tests for the steering
+codebook and both activation objectives pass. The next sweep must connect this
+frozen codebook to D2 exact candidate payloads, shortlist by activation, and
+only then invoke weighted/YAQA reranking.

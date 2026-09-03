@@ -26,6 +26,41 @@ const char * astc_vulkan_paired_layout_name(astc_vulkan_paired_layout layout) {
     return "unknown";
 }
 
+const char * astc_vulkan_paired_steering_basis_name(astc_vulkan_paired_steering_basis basis) {
+    switch (basis) {
+        case astc_vulkan_paired_steering_basis::neutral: return "neutral";
+        case astc_vulkan_paired_steering_basis::x_ramp: return "x-ramp";
+        case astc_vulkan_paired_steering_basis::y_ramp: return "y-ramp";
+        case astc_vulkan_paired_steering_basis::saddle: return "saddle";
+        case astc_vulkan_paired_steering_basis::x_plus_y: return "x-plus-y";
+        case astc_vulkan_paired_steering_basis::x_minus_y: return "x-minus-y";
+    }
+    return "unknown";
+}
+
+std::vector<astc_vulkan_paired_steering_factor> astc_vulkan_make_paired_steering_codebook() {
+    using basis = astc_vulkan_paired_steering_basis;
+    return {{0.0f, basis::neutral},
+            {-0.5f, basis::x_ramp}, {0.5f, basis::x_ramp},
+            {-0.5f, basis::y_ramp}, {0.5f, basis::y_ramp},
+            {-0.5f, basis::saddle}, {0.5f, basis::saddle},
+            {-0.5f, basis::x_plus_y}, {0.5f, basis::x_plus_y},
+            {-0.5f, basis::x_minus_y}, {0.5f, basis::x_minus_y}};
+}
+
+float astc_vulkan_paired_steering_basis_value(
+        astc_vulkan_paired_steering_basis basis, float x, float y) {
+    switch (basis) {
+        case astc_vulkan_paired_steering_basis::neutral: return 0.0f;
+        case astc_vulkan_paired_steering_basis::x_ramp: return x;
+        case astc_vulkan_paired_steering_basis::y_ramp: return y;
+        case astc_vulkan_paired_steering_basis::saddle: return x * y;
+        case astc_vulkan_paired_steering_basis::x_plus_y: return 0.5f * (x + y);
+        case astc_vulkan_paired_steering_basis::x_minus_y: return 0.5f * (x - y);
+    }
+    return 0.0f;
+}
+
 astc_vulkan_rgba_texel astc_vulkan_make_paired_texel(
         float q0, float q1, float steering, astc_vulkan_paired_layout layout) {
     q0 = clamp_unorm(q0);
