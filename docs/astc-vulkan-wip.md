@@ -6361,3 +6361,29 @@ This closes an ambiguity in the driver contract without widening the runtime
 dependency boundary. The adapter contract smoke asserts both enum values; the
 production-facing scheduler integration remains gated on the full-shape and
 target-device measurements.
+
+## Two-hundred-seventy-second sweep: ordered production and low-rate gates
+
+The next work package is now explicitly ordered. The production-facing
+scheduler adapter is narrower than the research sidecar: it accepts only 6x6
+scalar and scalar-anchored gauge records. Experimental footprints and c+delta
+records remain opt-in offline artifacts. Preparation failures retain a
+`kFallback` binding and the deterministic normal-llama choices `Q4_K_M`
+(preferred quality) and `Q3_K_M` (low memory); no ASTC failure may silently
+change the normal backend.
+
+The required full-shape artifact set is `8x6`, `10x6`, `8x8`, and `10x8`, each
+with neutral and validation-prefix payloads, decoded CPU references, manifest,
+provenance, and replay checks. The model/performance matrix is deliberately
+after artifact correctness and includes FP16, Q4_K_M, Q3_K_M, TQ2_0, TQ1_0,
+ASTC 6x6 scalar/gauge, and the low-rate footprints. GPU timings will separate
+cold upload, hot-cache dispatch, and batching, and will identify the exact
+device/driver. PV alternation and YAQA are postponed until 10x8/10x10 have a
+full-model replay gate; mixed footprints are last because they require
+multiple Vulkan images and macro-tile addressing.
+
+The nominal low-rate storage points are 8x6 = 2.67, 10x6 = 2.13, 8x8 =
+2.00, and 10x8 = 1.60 bits/texel. They describe 128-bit ASTC block density,
+not independent exact weight bits. This ordering preserves the distinction
+between a standard hardware-compatible payload and an experimental offline
+encoder objective while keeping all prior crop tests reproducible.

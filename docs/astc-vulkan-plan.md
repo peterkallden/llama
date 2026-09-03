@@ -2423,3 +2423,42 @@ Q4_K_M is the preferred quality fallback and Q3_K_M is the low-memory fallback.
 The sidecar does not execute either path itself; the normal llama scheduler
 remains the owner of fallback dispatch. This makes the future production
 adapter contract deterministic without coupling the PoC to scheduler internals.
+
+### Current execution order (production gate and low-rate evaluation)
+
+The remaining work is intentionally ordered so that production integration is
+not influenced by experiments that have not survived a full model replay:
+
+1. **Production sidecar/adapter:** complete the opt-in scheduler boundary for
+   6x6 scalar and scalar-anchored gauge only. Any malformed artifact, shape or
+   representation mismatch, missing sampled-ASTC capability, or unavailable
+   Vulkan device must leave the binding in `kFallback` and expose the normal
+   `Q4_K_M` (quality) and `Q3_K_M` (low-memory) choices. No experimental
+   footprint is automatically selected by this boundary.
+2. **Target-device matrix:** use the exact artifact bytes and fixed model /
+   prompt contract to measure FP16, Q4_K_M, Q3_K_M, TQ2_0, TQ1_0, ASTC 6x6
+   scalar/gauge, and each low-rate ASTC profile. Record model-facing quality,
+   storage bytes, cold upload, hot-cache dispatch, and batched timings with
+   device/driver identity. Intel Vulkan is a reproducibility reference, not a
+   mobile-performance proxy.
+3. **Full-shape low-rate artifacts:** materialize provenance-bound neutral and
+   validation-prefix streams for 8x6, 10x6, 8x8, and 10x8. Replay the exact
+   bytes through the CPU oracle and Vulkan sampler, then decide from the full
+   model replay whether each low-rate point is retained. Crop results remain
+   screening evidence only.
+4. **Low-rate research (after the model gate):** apply full-shaped PV
+   alternation and YAQA-style two-sided/model-preserving scoring to 10x8,
+   10x10, and lower-rate candidates. Keep the candidate pool, objective, and
+   source family independently versioned so an improvement is attributable.
+5. **Mixed footprint (last):** investigate macro-tile/atlas composition only
+   if the uniform matrix shows a stable hard-tile population. Vulkan images have
+   one immutable `VkFormat`; mixed rates therefore require separate images and
+   explicit tile metadata, and must not leak into the first production adapter.
+
+The required artifact set for step 3 is four full-shape pairs (`neutral` and
+`validation-prefix`) plus manifest/provenance and decoded CPU references. The
+low-rate matrix must report nominal storage density from the 128-bit block:
+8x6 = 2.67, 10x6 = 2.13, 8x8 = 2.00, and 10x8 = 1.60 bits/texel. These are
+block rates, not independently exact bits/weight; edge padding is deterministic
+and excluded from semantic loss. Batching and hot-cache measurements happen
+after correctness/replay so timing cannot mask an artifact or decoder mismatch.
