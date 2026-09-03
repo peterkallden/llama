@@ -1,0 +1,48 @@
+#version 450
+
+// Broad pre-ASTC D1 screen. One invocation evaluates one footprint/source
+// candidate. This intentionally mirrors astc-vulkan-d1-prescreen.cpp: local
+// per-physical-block min/max, uniform source levels, and diagonal activation
+// energy. It is a triage kernel; exact ASTC encode/decode remains CPU-side.
+layout(local_size_x = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Weights { float values[]; } weights;
+layout(std430, set = 0, binding = 1) readonly buffer ColumnEnergy { float values[]; } energy;
+layout(std430, set = 0, binding = 2) readonly buffer Candidates { uvec4 values[]; } candidates;
+layout(std430, set = 0, binding = 3) writeonly buffer Scores { float values[]; } scores;
+
+layout(push_constant) uniform Push {
+    uint rows;
+    uint columns;
+    uint candidate_count;
+} params;
+
+void main() {
+    uint candidate_id = gl_GlobalInvocationID.x;
+    if (candidate_id >= params.candidate_count) return;
+    uint block_width = candidates.values[candidate_id].x;
+    uint block_height = candidates.values[candidate_id].y;
+    uint levels = candidates.values[candidate_id].z;
+    float total = 0.0;
+    for (uint y0 = 0u; y0 < params.rows; y0 += block_height) {
+        for (uint x0 = 0u; x0 < params.columns; x0 += block_width) {
+            float low = 3.402823466e+38;
+            float high = -3.402823466e+38;
+            for (uint y = y0; y < min(params.rows, y0 + block_height); ++y)
+                for (uint x = x0; x < min(params.columns, x0 + block_width); ++x) {
+                    float value = weights.values[y * params.columns + x];
+                    low = min(low, value);
+                    high = max(high, value);
+                }
+            float step = (high - low) / float(levels - 1u);
+            for (uint y = y0; y < min(params.rows, y0 + block_height); ++y)
+                for (uint x = x0; x < min(params.columns, x0 + block_width); ++x) {
+                    float value = weights.values[y * params.columns + x];
+                    float quantized = step > 0.0 ? low + round((value - low) / step) * step : low;
+                    float difference = value - quantized;
+                    total += difference * difference * max(0.0, energy.values[x]);
+                }
+        }
+    }
+    scores.values[candidate_id] = total;
+}

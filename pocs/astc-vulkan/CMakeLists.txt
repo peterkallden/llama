@@ -591,6 +591,8 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/sampled-f32-matvec.comp.spv)
     set(ASTC_VULKAN_FFN_E2E_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-ffn-matvec.comp.spv)
+    set(ASTC_VULKAN_D1_PRESCREEN_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/d1-prescreen.comp.spv)
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -746,6 +748,17 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling ASTC FFN end-to-end shader")
     add_custom_target(astc-vulkan-ffn-e2e-shader
         DEPENDS ${ASTC_VULKAN_FFN_E2E_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_D1_PRESCREEN_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/d1-prescreen.comp
+            -o ${ASTC_VULKAN_D1_PRESCREEN_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/d1-prescreen.comp
+        COMMENT "Compiling D1 GPU pre-screen shader")
+    add_custom_target(astc-vulkan-d1-prescreen-shader
+        DEPENDS ${ASTC_VULKAN_D1_PRESCREEN_SHADER_OUTPUT})
     if (TARGET astc-vulkan-device-smoke)
         add_executable(astc-vulkan-shader-device-smoke
             astc-vulkan-shader-device-smoke.cpp)

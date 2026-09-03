@@ -2872,3 +2872,9 @@ second pass runs CPU astcenc only for the shortlist, then evaluates exact
 scalar/gauge candidates with activation or YAQA scoring, conflict-aware
 selection, validation stopping, and holdout. This prevents a broad CPU ASTC
 search while preserving the existing artifact oracle.
+
+The first Vulkan kernel (`d1-prescreen.comp`) mirrors this CPU oracle and
+builds successfully for Vulkan 1.1. It evaluates one footprint/source-level
+candidate per invocation and writes one score per candidate. A device session
+and buffer-lifecycle smoke are the next binding step; until that exists, the
+CPU implementation remains the reference and no GPU result is selectable.
