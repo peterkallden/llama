@@ -2611,6 +2611,11 @@ Implementation gates, in order:
    Vulkan artifact replay. Full PV, few-level source families, and RGB
    common-mode/subtractive layouts remain later experiments.
 
+The first bounded Pythia crop replay does not yet pass the iso-rate gate:
+D1 `10x8` is lower activation-loss than the unselected D2 `8x5` cases on
+calibration, validation, and holdout. D2 therefore remains experimental while
+the decode-in-the-loop candidate pool and conflict-aware selection are added.
+
 The paired shader must consume one texel once and accumulate both mapped
 output rows; otherwise the intended fetch/bandwidth benefit is lost. D2's
 logical row-strip height is twice its ASTC texture-block height, so row-strip

@@ -273,6 +273,18 @@ if (TARGET astcenc::astcenc-static)
         astcenc::astcenc-static astc-vulkan-algorithms)
     target_compile_features(astc-vulkan-paired-smoke PRIVATE cxx_std_17)
 
+    if (TARGET ggml-base)
+        add_executable(astc-vulkan-paired-model-smoke
+            astc-vulkan-paired-model-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-paired-model-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-paired-model-smoke PRIVATE
+            astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
+        target_compile_features(astc-vulkan-paired-model-smoke PRIVATE cxx_std_17)
+    endif()
+
     # One logical weight per texel, stored either as a scalar replicated across
     # RGBA or as a luminance-plus-alpha additive latent. The tool reports the
     # encoder's actual dual-plane decisions; it never assumes one was used.

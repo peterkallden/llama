@@ -6723,3 +6723,28 @@ The result is a contract/oracle gate, not a quality claim. D1 `10x8` versus
 D2 `8x5` iso-rate model replay, candidate selection, deterministic edge
 padding, and paired Vulkan replay remain open. No production scheduler change
 was made.
+
+## Two-hundred-eighty-eighth sweep: bounded D1/D2 activation replay
+
+Added `astc-vulkan-paired-model-smoke` for a bounded model-facing comparison.
+It loads the Pythia F16 `blk.0.ffn_down.weight` tensor and one trace at a time,
+normalizes a bounded 32-row crop, performs exact CPU ASTC encode/decode, and
+computes activation loss for D1 `10x8` versus D2 `8x5` at the same nominal
+`1.60 b/w`. The D2 cases include fixed Alpha and both steering-only layouts.
+
+On the retained v2 traces, D1 remained better in this simple, non-selecting
+crop oracle:
+
+```text
+trace        D1 10x8       D2 best 8x5
+calibration  0.028489357   0.04381103 (R/GB, steering)
+validation   0.022889675   0.036011265 (RG/B, steering)
+holdout      0.020962494   0.027127587 (RG/B, fixed Alpha)
+```
+
+This is a useful boundary, not a rejection. D2 has not yet had its intended
+decode-in-the-loop candidate pool, conflict-aware selection, validation
+prefix, or full model replay. Steering changes the result modestly and in a
+trace-dependent way, confirming that it must remain a candidate-generation
+degree of freedom rather than a mandatory correction. D1 remains the safe
+iso-rate fallback and no scheduler eligibility changed.
