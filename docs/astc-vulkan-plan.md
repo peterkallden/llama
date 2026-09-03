@@ -2565,8 +2565,10 @@ decoder contract.
 
 Before driver promotion, the remaining algorithm gates are:
 
-1. Build full-shaped PV artifacts against frozen legal `10x6` and `8x8`
-   candidate pools, with scalar fallback and a new optimizer/profile ID.
+1. Use the bounded/lightweight PV candidate family as the default offline PV
+   experiment. Full-shaped PV alternation remains optional research only: it
+   is not required for the driver gate and may be run later on dedicated
+   hardware/time budgets.
 2. Compare PV artifacts using the exact CPU oracle and model replay before
    changing any scheduler/profile eligibility.
 3. Use the trace-backed YAQA score on `10x8`/`10x10` as a sensitivity
@@ -2574,6 +2576,11 @@ Before driver promotion, the remaining algorithm gates are:
    factor when the capture path is available.
 4. Keep the final production matrix separate from exploratory prompt/corpus
    results and retain all historical tests as named regression contracts.
+
+The full-PV run is explicitly not a required dependency. It was stopped after
+proving that the full-shape search is too expensive for the current CPU budget.
+The bounded PV path remains the reproducible, low-cost candidate generator;
+future full-PV work must be opt-in and artifact-versioned.
 
 ### Experimental D2 paired-density track
 

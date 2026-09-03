@@ -6691,3 +6691,14 @@ texel for the mapped adjacent output-row pair and performs no semantic Alpha
 operation. It is intentionally not wired into the sidecar dispatch or a
 device smoke before an exact artifact encoder/oracle and two-tensor quality
 gate exist. No D2 tests were run in this sweep, by design.
+
+## Two-hundred-eighty-sixth sweep: full PV made optional
+
+The resource-heavy full-shape `10x6` PV alternation was explicitly stopped
+after verification of its command and output scope. It is now recorded as an
+optional research branch, not a prerequisite for the ASTC driver or the D2
+low-rate work. The bounded/lightweight PV candidate family remains the first
+PV path because it preserves the exact ASTC oracle and selector semantics at a
+manageable CPU cost. Any future full-PV run must be opt-in, separately
+artifact-versioned, and compared against the bounded profile on the same
+corpus; it must not block the production-sidecar or D2 gates.
