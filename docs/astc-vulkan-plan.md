@@ -2417,3 +2417,9 @@ few-level controls; the existing full-shape 6x6 scalar/gauge replay is the
 ASTC driver reference. The final matrix gate remains open until equivalent
 full-shape ASTC artifacts exist for the low-rate footprints and timings are
 measured on the target device.
+
+The sidecar adapter now carries an explicit fallback policy in every binding:
+Q4_K_M is the preferred quality fallback and Q3_K_M is the low-memory fallback.
+The sidecar does not execute either path itself; the normal llama scheduler
+remains the owner of fallback dispatch. This makes the future production
+adapter contract deterministic without coupling the PoC to scheduler internals.

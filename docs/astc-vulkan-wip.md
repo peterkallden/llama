@@ -6346,3 +6346,18 @@ not interpreted as ASTC payloads. The matrix is a driver-quality baseline,
 not a final throughput table: ASTC 8x6/10x6/8x8/10x8 still need full-shape
 artifacts before model-level comparison, and cold-upload/hot-cache/batched
 timings must be reported separately per target device.
+
+## Two-hundred-seventy-first sweep: explicit Q4/Q3 fallback policy
+
+The production-sidecar preparation now exposes a deterministic fallback policy
+on every FFN binding. If ASTC is unavailable, the artifact is invalid, or the
+model shape does not match, callers receive `kFallback` plus two explicit
+normal-llama choices: `Q4_K_M` as the preferred quality fallback and
+`Q3_K_M` as the low-memory fallback. The sidecar remains deliberately
+execution-neutral: it does not load or dispatch the quantized tensors, and the
+normal scheduler remains responsible for doing so.
+
+This closes an ambiguity in the driver contract without widening the runtime
+dependency boundary. The adapter contract smoke asserts both enum values; the
+production-facing scheduler integration remains gated on the full-shape and
+target-device measurements.
