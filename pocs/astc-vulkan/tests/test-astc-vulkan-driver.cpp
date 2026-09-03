@@ -83,6 +83,16 @@ int main() {
     assert(legacy_read.tensors[0].offset == 0.0f);
     assert(legacy_read.tensors[0].payload_hash64 == 0);
     std::remove(legacy_path.c_str());
+    astc_vulkan_manifest affine_v2 = expected;
+    affine_v2.version = 2;
+    const std::string affine_v2_path = "astc-vulkan-driver-test-v2.manifest";
+    assert(astc_vulkan_write_manifest(affine_v2_path, affine_v2, error));
+    astc_vulkan_manifest affine_v2_read;
+    assert(astc_vulkan_read_manifest(affine_v2_path, affine_v2_read, error));
+    assert(affine_v2_read.version == 2);
+    assert(affine_v2_read.tensors[0].representation == astc_vulkan_representation::kGaugeLumaAlpha);
+    assert(affine_v2_read.tensors[0].layout_byte_size == 0);
+    std::remove(affine_v2_path.c_str());
     invalid = expected;
     invalid.tensors[0].scale_l = NAN;
     assert(!astc_vulkan_validate_manifest(invalid, error));

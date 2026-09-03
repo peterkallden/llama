@@ -2648,3 +2648,20 @@ FFN-down output trace. This is an offline whole-crop gate only. The subsequent
 blockwise producer should use YAQA as a bounded rerank of the already legal
 activation shortlist, then pass the selected payload alternatives to the
 conflict-aware selector and validation-prefix artifact stage.
+
+### D2 per-block layout metadata (v3 groundwork)
+
+YAQA may select either `RG/B` or `R/GB` for each physical D2 ASTC block. The
+semantic choice is not encoded by standard ASTC itself, so manifest v3 adds a
+separate packed layout blob for `paired-d2` artifacts. It contains little-endian
+`uint32` words in physical ASTC raster-block order: bit zero is block zero,
+zero means `RG/B`, and one means `R/GB`. For D2 8x5 this costs one bit per 80
+logical weights (`0.0125 b/w`, with only final-word rounding overhead).
+
+The paired shader accepts a storage-buffer layout map and retains a uniform
+layout fallback when no words are supplied. Existing v1/v2 scalar/gauge
+artifacts remain readable; the production scheduler continues to reject
+`paired-d2` until the metadata-aware resource upload, exact artifact replay,
+and model gates are complete. D1 deliberately receives no new per-block
+metadata in this step. Mixed D1 footprints remain a later macro-page/atlas
+experiment, not an incidental consequence of the D2 bitplane.

@@ -13,6 +13,13 @@ bool astc_vulkan_pack_atlas(const astc_vulkan_atlas_config & config,
     struct cursor { uint32_t page = 0; uint32_t x = 0; uint32_t y = 0; uint32_t row_height = 0; };
     cursor cursors[astc_vulkan_footprint_count]{};
     for (const astc_vulkan_tensor_record & tensor : tensors) {
+        // D2 stores ceil(logical_height / 2) texture rows plus a layout map.
+        // The scalar/gauge atlas path has neither contract, so fail closed
+        // until a dedicated metadata-aware paired resource path is added.
+        if (tensor.representation == astc_vulkan_representation::kPairedD2) {
+            error = "paired-D2 requires the metadata-aware ASTC resource path";
+            return false;
+        }
         if (tensor.name.empty() || tensor.width == 0 || tensor.height == 0 ||
             !astc_vulkan_footprint_is_valid(tensor.footprint)) {
             error = "invalid ASTC Vulkan atlas tensor";

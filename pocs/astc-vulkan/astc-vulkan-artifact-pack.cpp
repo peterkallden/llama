@@ -67,6 +67,7 @@ bool parse_representation(const std::string & value, astc_vulkan_representation 
     if (value == "scalar") representation = astc_vulkan_representation::kScalar;
     else if (value == "gauge") representation = astc_vulkan_representation::kGaugeLumaAlpha;
     else if (value == "c-delta") representation = astc_vulkan_representation::kCDelta;
+    else if (value == "paired-d2") representation = astc_vulkan_representation::kPairedD2;
     else return false;
     return true;
 }
@@ -74,7 +75,7 @@ bool parse_representation(const std::string & value, astc_vulkan_representation 
 } // namespace
 
 int main(int argc, char ** argv) {
-    std::string input, metadata, manifest_path, payload_path, tensor_name,
+    std::string input, layout_input, metadata, manifest_path, payload_path, layout_payload_path, tensor_name,
                 fingerprint, provenance_path, source_family, calibration_hash,
                 validation_hash, holdout_hash, selector_config, validation_prefix,
                 commit_order_hash, padding_contract, footprint_name = "6x6",
@@ -84,9 +85,11 @@ int main(int argc, char ** argv) {
         const std::string option = argv[i];
         const std::string value = argv[i + 1];
         if (option == "--input") input = value;
+        else if (option == "--layout-input") layout_input = value;
         else if (option == "--metadata") metadata = value;
         else if (option == "--manifest") manifest_path = value;
         else if (option == "--payload") payload_path = value;
+        else if (option == "--layout-payload") layout_payload_path = value;
         else if (option == "--tensor") tensor_name = value;
         else if (option == "--model-fingerprint") fingerprint = value;
         else if (option == "--provenance") provenance_path = value;
@@ -107,12 +110,16 @@ int main(int argc, char ** argv) {
     astc_vulkan_footprint footprint;
     astc_vulkan_representation representation;
     const std::vector<uint8_t> bytes = read_bytes(input);
+    const std::vector<uint8_t> layout_bytes = read_bytes(layout_input);
     float scale_l = 1.0f, scale_a = 0.0f, offset = 0.0f;
     if (input.empty() || metadata.empty() || manifest_path.empty() || payload_path.empty() ||
         tensor_name.empty() || width == 0 || height == 0 || bytes.empty() ||
         !parse_footprint(footprint_name, footprint) ||
         !parse_representation(representation_name, representation) ||
         !read_metadata(metadata, scale_l, scale_a, offset)) return 2;
+    const bool paired_d2 = representation == astc_vulkan_representation::kPairedD2;
+    if ((paired_d2 && (layout_input.empty() || layout_payload_path.empty() || layout_bytes.empty())) ||
+        (!paired_d2 && (!layout_input.empty() || !layout_payload_path.empty()))) return 2;
     astc_vulkan_manifest manifest;
     manifest.model_fingerprint = fingerprint;
     astc_vulkan_tensor_record record;
@@ -126,12 +133,23 @@ int main(int argc, char ** argv) {
     record.scale_a = scale_a;
     record.offset = offset;
     record.payload_hash64 = astc_vulkan_payload_hash64(bytes.data(), bytes.size());
+    if (paired_d2) {
+        record.layout_byte_size = layout_bytes.size();
+        record.layout_hash64 = astc_vulkan_payload_hash64(layout_bytes.data(), layout_bytes.size());
+    }
     manifest.tensors.push_back(record);
     std::string error;
+    if (paired_d2 && !astc_vulkan_validate_layout_map(record, layout_bytes.data(),
+                                                       layout_bytes.size(), error)) return 1;
     if (!astc_vulkan_write_manifest(manifest_path, manifest, error)) return 1;
     std::ofstream payload(payload_path, std::ios::binary);
     payload.write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
     if (!payload.good()) return 1;
+    if (paired_d2) {
+        std::ofstream layout_payload(layout_payload_path, std::ios::binary);
+        layout_payload.write(reinterpret_cast<const char *>(layout_bytes.data()), layout_bytes.size());
+        if (!layout_payload.good()) return 1;
+    }
     if (!provenance_path.empty()) {
         const std::string manifest_bytes = read_text(manifest_path);
         astc_vulkan_provenance provenance;

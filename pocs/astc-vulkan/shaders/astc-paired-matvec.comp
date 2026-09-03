@@ -16,10 +16,17 @@ layout(std430, set = 0, binding = 1) buffer MatvecOutput {
     vec4 values[];
 };
 
+// Packed little-endian uint32 layout words. One bit selects the semantic
+// channel interpretation for one physical ASTC block in raster order.
+layout(std430, set = 0, binding = 2) readonly buffer PairedLayoutMap {
+    uint words[];
+} paired_layout_map;
+
 layout(push_constant) uniform PushConstants {
     uint width;
     uint logical_height;
-    uint paired_layout; // 0 = RG/B, 1 = R/GB
+    uint paired_layout; // uniform fallback: 0 = RG/B, 1 = R/GB
+    uint layout_map_words; // zero retains the uniform fallback
     float scale;
     float offset;
 } params;
@@ -29,8 +36,17 @@ float activation(uint column) {
            0.2 * cos(0.031 * float(column + 3));
 }
 
-float paired_weight(vec4 texel, uint member) {
-    if (params.paired_layout == 0u) {
+uint paired_layout_for_texel(uint column, uint texture_row) {
+    if (params.layout_map_words == 0u) return params.paired_layout;
+    const uint blocks_x = (params.width + 7u) / 8u;
+    const uint block_index = (texture_row / 5u) * blocks_x + column / 8u;
+    const uint word_index = block_index >> 5u;
+    if (word_index >= params.layout_map_words) return params.paired_layout;
+    return (paired_layout_map.words[word_index] >> (block_index & 31u)) & 1u;
+}
+
+float paired_weight(vec4 texel, uint member, uint layout_id) {
+    if (layout_id == 0u) {
         return member == 0u ? 0.5 * (texel.r + texel.g) : texel.b;
     }
     return member == 0u ? texel.r : 0.5 * (texel.g + texel.b);
@@ -47,7 +63,8 @@ void main() {
     float sum = 0.0;
     for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64) {
         const vec4 texel = texelFetch(astc_weights, ivec2(column, texture_row), 0);
-        sum += (params.scale * paired_weight(texel, member) + params.offset) * activation(column);
+        const uint layout_id = paired_layout_for_texel(column, texture_row);
+        sum += (params.scale * paired_weight(texel, member, layout_id) + params.offset) * activation(column);
     }
     partial[gl_LocalInvocationID.x] = sum;
     barrier();

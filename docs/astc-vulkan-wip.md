@@ -6858,6 +6858,27 @@ production profile. The next integration is per-block activation shortlist
 generation followed by YAQA reranking and conflict-aware selection; YAQA alone
 does not change D2's fixed adjacent-row layout.
 
+## Two-hundred-ninety-fifth sweep: D2 per-block layout-map groundwork
+
+Added a manifest-v3 `paired-d2` representation with logical tensor dimensions,
+physical ASTC storage height `ceil(logical_height / 2)`, and a separate layout
+blob. The blob is a packed little-endian `uint32` bitplane in physical ASTC
+block raster order: zero selects RG/B and one selects R/GB. It is validated and
+hashed independently from ordinary ASTC payload bytes. The artifact packer now
+accepts `--representation paired-d2 --layout-input map.bin --layout-payload
+map.bin` for a future paired artifact producer.
+
+The paired shader now accepts this map at binding 2 and computes the physical
+8x5 block index for each sampled texel. A zero word count retains the former
+uniform layout behavior, making the shader contract backwards-compatible for
+the existing paired smoke. The scheduler still rejects paired-D2 records; no
+production resource path or D1 mixed-footprint behavior changed.
+
+Focused paired, layout-map, objective, YAQA, and driver contracts pass, and
+the updated paired shader passes `spirv-val`. The next sweep must make the D2
+candidate producer emit the selected layout words alongside ASTC payloads,
+then run exact CPU and Vulkan replay before enabling any metadata-aware upload.
+
 ## Two-hundred-ninety-second sweep: paired selection-core groundwork
 
 Added `astc-vulkan-paired-selector.{h,cpp}` as the reusable offline boundary

@@ -12,6 +12,7 @@ add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-hash.cpp
     astc-vulkan-objective.cpp
     astc-vulkan-paired.cpp
+    astc-vulkan-paired-layout.cpp
     astc-vulkan-paired-selector.cpp
     astc-vulkan-pv.cpp
     astc-vulkan-yaqa.cpp)
@@ -33,6 +34,11 @@ add_executable(test-astc-vulkan-paired
     tests/test-astc-vulkan-paired.cpp)
 target_link_libraries(test-astc-vulkan-paired PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-paired PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-paired-layout
+    tests/test-astc-vulkan-paired-layout.cpp)
+target_link_libraries(test-astc-vulkan-paired-layout PRIVATE astc-vulkan-driver)
+target_compile_features(test-astc-vulkan-paired-layout PRIVATE cxx_std_17)
 
 add_executable(test-astc-vulkan-objective
     tests/test-astc-vulkan-objective.cpp)
@@ -606,6 +612,10 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-paired
         COMMAND test-astc-vulkan-paired)
     set_property(TEST test-astc-vulkan-paired PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-paired-layout
+        COMMAND test-astc-vulkan-paired-layout)
+    set_property(TEST test-astc-vulkan-paired-layout PROPERTY LABELS astc)
 
     add_test(NAME test-astc-vulkan-objective
         COMMAND test-astc-vulkan-objective)

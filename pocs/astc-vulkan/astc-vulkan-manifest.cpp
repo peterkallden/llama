@@ -1,5 +1,6 @@
 #include "astc-vulkan-manifest.h"
 #include "astc-vulkan-hash.h"
+#include "astc-vulkan-paired-layout.h"
 
 #include "astc-vulkan-format.h"
 
@@ -13,7 +14,8 @@ namespace {
 
 constexpr std::array<char, 8> kMagic = {'K', 'A', 'S', 'T', 'C', 'V', 'M', '1'};
 constexpr uint32_t kLegacyManifestVersion = 1;
-constexpr uint32_t kCurrentManifestVersion = 2;
+constexpr uint32_t kAffineManifestVersion = 2;
+constexpr uint32_t kCurrentManifestVersion = 3;
 constexpr uint32_t kMaxStringBytes = 1u << 20;
 constexpr uint32_t kMaxTensorRecords = 1u << 20;
 
@@ -46,7 +48,25 @@ bool read_string(std::ifstream & file, std::string & value) {
 bool valid_representation(astc_vulkan_representation representation) {
     return representation == astc_vulkan_representation::kScalar ||
            representation == astc_vulkan_representation::kGaugeLumaAlpha ||
-           representation == astc_vulkan_representation::kCDelta;
+           representation == astc_vulkan_representation::kCDelta ||
+           representation == astc_vulkan_representation::kPairedD2;
+}
+
+bool is_paired_d2(const astc_vulkan_tensor_record & tensor) {
+    return tensor.representation == astc_vulkan_representation::kPairedD2;
+}
+
+uint32_t storage_height(const astc_vulkan_tensor_record & tensor) {
+    return is_paired_d2(tensor) ? astc_vulkan_paired_storage_height(tensor.height) : tensor.height;
+}
+
+uint64_t expected_payload_bytes(const astc_vulkan_tensor_record & tensor) {
+    return astc_vulkan_image_bytes(tensor.footprint, tensor.width, storage_height(tensor));
+}
+
+uint64_t expected_layout_bytes(const astc_vulkan_tensor_record & tensor) {
+    return is_paired_d2(tensor) ? astc_vulkan_paired_layout_bytes(
+        tensor.footprint, tensor.width, tensor.height) : 0;
 }
 
 } // namespace
@@ -58,8 +78,7 @@ uint64_t astc_vulkan_payload_hash64(const uint8_t * data, size_t size) {
 bool astc_vulkan_validate_payload(const astc_vulkan_tensor_record & tensor,
                                   const uint8_t * data, size_t size,
                                   std::string & error) {
-    const uint64_t expected = astc_vulkan_image_bytes(tensor.footprint,
-                                                       tensor.width, tensor.height);
+    const uint64_t expected = expected_payload_bytes(tensor);
     if (expected == 0 || tensor.byte_size != expected || size != tensor.byte_size) {
         error = "ASTC Vulkan tensor payload size does not match its record";
         return false;
@@ -67,6 +86,22 @@ bool astc_vulkan_validate_payload(const astc_vulkan_tensor_record & tensor,
     if (tensor.payload_hash64 != 0 &&
         astc_vulkan_payload_hash64(data, size) != tensor.payload_hash64) {
         error = "ASTC Vulkan tensor payload checksum mismatch";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_validate_layout_map(const astc_vulkan_tensor_record & tensor,
+                                     const uint8_t * data, size_t size,
+                                     std::string & error) {
+    const uint64_t expected = expected_layout_bytes(tensor);
+    if (expected == 0 || tensor.layout_byte_size != expected || size != expected || data == nullptr) {
+        error = "ASTC Vulkan paired layout map size does not match its record";
+        return false;
+    }
+    if (tensor.layout_hash64 != 0 && astc_vulkan_payload_hash64(data, size) != tensor.layout_hash64) {
+        error = "ASTC Vulkan paired layout map checksum mismatch";
         return false;
     }
     error.clear();
@@ -87,9 +122,25 @@ bool astc_vulkan_validate_payload_blob(const astc_vulkan_manifest & manifest,
     return true;
 }
 
+bool astc_vulkan_validate_layout_blob(const astc_vulkan_manifest & manifest,
+                                      uint64_t blob_size, std::string & error) {
+    if (!astc_vulkan_validate_manifest(manifest, error)) return false;
+    for (const astc_vulkan_tensor_record & tensor : manifest.tensors) {
+        if (!is_paired_d2(tensor)) continue;
+        if (tensor.layout_byte_offset > blob_size ||
+            tensor.layout_byte_size > blob_size - tensor.layout_byte_offset) {
+            error = "ASTC Vulkan paired layout range exceeds layout blob";
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
 bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
                                    std::string & error) {
     if (manifest.version != kLegacyManifestVersion &&
+        manifest.version != kAffineManifestVersion &&
         manifest.version != kCurrentManifestVersion) {
         error = "unsupported ASTC Vulkan manifest version";
         return false;
@@ -115,8 +166,20 @@ bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
             error = "duplicate ASTC Vulkan tensor name";
             return false;
         }
-        const uint64_t expected_size = astc_vulkan_image_bytes(
-            tensor.footprint, tensor.width, tensor.height);
+        if (is_paired_d2(tensor) &&
+            (manifest.version < kCurrentManifestVersion || tensor.footprint != astc_vulkan_footprint::k8x5 ||
+             tensor.layout_byte_size != expected_layout_bytes(tensor) ||
+             tensor.layout_byte_size == 0 ||
+             tensor.layout_byte_size > std::numeric_limits<uint64_t>::max() - tensor.layout_byte_offset)) {
+            error = "invalid ASTC Vulkan paired-D2 layout metadata";
+            return false;
+        }
+        if (!is_paired_d2(tensor) &&
+            (tensor.layout_byte_offset != 0 || tensor.layout_byte_size != 0 || tensor.layout_hash64 != 0)) {
+            error = "non-paired ASTC Vulkan tensor has layout metadata";
+            return false;
+        }
+        const uint64_t expected_size = expected_payload_bytes(tensor);
         if (expected_size == 0 || tensor.byte_size != expected_size ||
             tensor.byte_offset < previous_end ||
             tensor.byte_size > std::numeric_limits<uint64_t>::max() - tensor.byte_offset) {
@@ -156,11 +219,18 @@ bool astc_vulkan_write_manifest(const std::string & path,
             error = "cannot write ASTC Vulkan tensor record";
             return false;
         }
-        if (manifest.version >= kCurrentManifestVersion &&
+        if (manifest.version >= kAffineManifestVersion &&
             (!write_scalar(file, static_cast<uint8_t>(tensor.representation)) ||
              !write_scalar(file, tensor.scale_l) || !write_scalar(file, tensor.scale_a) ||
              !write_scalar(file, tensor.offset) || !write_scalar(file, tensor.payload_hash64))) {
             error = "cannot write ASTC Vulkan tensor metadata";
+            return false;
+        }
+        if (manifest.version >= kCurrentManifestVersion &&
+            (!write_scalar(file, tensor.layout_byte_offset) ||
+             !write_scalar(file, tensor.layout_byte_size) ||
+             !write_scalar(file, tensor.layout_hash64))) {
+            error = "cannot write ASTC Vulkan paired layout metadata";
             return false;
         }
     }
@@ -197,15 +267,22 @@ bool astc_vulkan_read_manifest(const std::string & path,
             return false;
         }
         tensor.footprint = static_cast<astc_vulkan_footprint>(footprint);
-        if (version >= kCurrentManifestVersion &&
+        if (version >= kAffineManifestVersion &&
             (!read_scalar(file, representation) ||
              !read_scalar(file, tensor.scale_l) || !read_scalar(file, tensor.scale_a) ||
              !read_scalar(file, tensor.offset) || !read_scalar(file, tensor.payload_hash64))) {
             error = "truncated ASTC Vulkan tensor metadata";
             return false;
         }
-        if (version >= kCurrentManifestVersion) {
+        if (version >= kAffineManifestVersion) {
             tensor.representation = static_cast<astc_vulkan_representation>(representation);
+        }
+        if (version >= kCurrentManifestVersion &&
+            (!read_scalar(file, tensor.layout_byte_offset) ||
+             !read_scalar(file, tensor.layout_byte_size) ||
+             !read_scalar(file, tensor.layout_hash64))) {
+            error = "truncated ASTC Vulkan paired layout metadata";
+            return false;
         }
         manifest.tensors.push_back(std::move(tensor));
     }
