@@ -40,14 +40,14 @@ bool astc_vulkan_scheduler_adapter::prepare(
         return fallback("ASTC scheduler adapter tensor artifact is invalid", false);
     }
     // The production scheduler boundary is intentionally narrower than the
-    // research sidecar: only the validated 6x6 scalar/gauge payloads may be
-    // selected automatically. Experimental footprints and c+delta remain
+    // research sidecar: only standard 4x4/5x5/6x6 scalar/gauge payloads may
+    // be selected automatically. Larger footprints and c+delta remain
     // explicit offline experiments and fall back to normal llama quantization.
-    if (footprint != astc_vulkan_footprint::k6x6 ||
+    if (astc_vulkan_footprint_is_experimental(footprint) ||
         (record->representation != astc_vulkan_representation::kScalar &&
          record->representation != astc_vulkan_representation::kGaugeLumaAlpha)) {
         binding_.record = *record;
-        return fallback("ASTC production adapter accepts only 6x6 scalar/gauge", true);
+        return fallback("ASTC production adapter accepts only standard 4x4/5x5/6x6 scalar/gauge", true);
     }
     payload_.assign(blob.begin() + static_cast<size_t>(record->byte_offset),
                     blob.begin() + static_cast<size_t>(record->byte_offset + record->byte_size));

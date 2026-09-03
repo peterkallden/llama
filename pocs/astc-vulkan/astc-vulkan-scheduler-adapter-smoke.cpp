@@ -23,6 +23,7 @@ std::vector<T> read_binary(const std::string & path) {
 
 int main(int argc, char ** argv) {
     std::string shader, manifest, payload, trace_path, tensor = "blk.0.ffn_down.weight";
+    astc_vulkan_footprint footprint = astc_vulkan_footprint::k6x6;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string option = argv[i];
         const std::string value = argv[i + 1];
@@ -31,6 +32,16 @@ int main(int argc, char ** argv) {
         else if (option == "--payload-blob") payload = value;
         else if (option == "--trace") trace_path = value;
         else if (option == "--tensor") tensor = value;
+        else if (option == "--footprint") {
+            if (value == "4x4") footprint = astc_vulkan_footprint::k4x4;
+            else if (value == "5x5") footprint = astc_vulkan_footprint::k5x5;
+            else if (value == "6x6") footprint = astc_vulkan_footprint::k6x6;
+            else if (value == "8x6") footprint = astc_vulkan_footprint::k8x6;
+            else if (value == "10x6") footprint = astc_vulkan_footprint::k10x6;
+            else if (value == "8x8") footprint = astc_vulkan_footprint::k8x8;
+            else if (value == "10x8") footprint = astc_vulkan_footprint::k10x8;
+            else return 2;
+        }
         else return 2;
     }
     const std::vector<uint32_t> spirv = read_binary<uint32_t>(shader);
@@ -39,7 +50,7 @@ int main(int argc, char ** argv) {
     if (spirv.empty() || manifest.empty() || payload.empty() || trace_path.empty() ||
         !ggml_vk_astc_load_activation_trace(trace_path, trace, error) || trace.samples == 0) return 2;
     astc_vulkan_scheduler_adapter adapter;
-    if (!adapter.prepare(manifest, payload, tensor, astc_vulkan_footprint::k6x6, error)) {
+    if (!adapter.prepare(manifest, payload, tensor, footprint, error)) {
         std::fprintf(stderr, "scheduler adapter prepare failed: %s\n", error.c_str());
         return 1;
     }
@@ -57,8 +68,10 @@ int main(int argc, char ** argv) {
     }
     double energy = 0.0;
     for (float value : output) energy += static_cast<double>(value) * value;
-    std::printf("scheduler-adapter format=ASTC-6x6 tensor=%s samples=%u rows=%u columns=%u "
-                "output-values=%zu output-l2=%.8g\n", tensor.c_str(), trace.samples,
+    const auto format = astc_vulkan_format(footprint);
+    std::printf("scheduler-adapter format=ASTC-%ux%u tensor=%s samples=%u rows=%u columns=%u "
+                "output-values=%zu output-l2=%.8g\n",
+                format.block_width, format.block_height, tensor.c_str(), trace.samples,
                 adapter.binding().record.height, columns, output.size(), std::sqrt(energy));
     return 0;
 }

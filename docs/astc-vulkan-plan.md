@@ -2430,7 +2430,8 @@ The remaining work is intentionally ordered so that production integration is
 not influenced by experiments that have not survived a full model replay:
 
 1. **Production sidecar/adapter:** complete the opt-in scheduler boundary for
-   6x6 scalar and scalar-anchored gauge only. Any malformed artifact, shape or
+   standard 4x4/5x5/6x6 scalar and scalar-anchored gauge; 6x6 remains the
+   default profile. Any malformed artifact, shape or
    representation mismatch, missing sampled-ASTC capability, or unavailable
    Vulkan device must leave the binding in `kFallback` and expose the normal
    `Q4_K_M` (quality) and `Q3_K_M` (low-memory) choices. No experimental

@@ -6365,9 +6365,10 @@ target-device measurements.
 ## Two-hundred-seventy-second sweep: ordered production and low-rate gates
 
 The next work package is now explicitly ordered. The production-facing
-scheduler adapter is narrower than the research sidecar: it accepts only 6x6
-scalar and scalar-anchored gauge records. Experimental footprints and c+delta
-records remain opt-in offline artifacts. Preparation failures retain a
+scheduler adapter is narrower than the research sidecar: it accepts standard
+4x4/5x5/6x6 scalar and scalar-anchored gauge records, with 6x6 as the default.
+Experimental footprints and c+delta records remain opt-in offline artifacts.
+Preparation failures retain a
 `kFallback` binding and the deterministic normal-llama choices `Q4_K_M`
 (preferred quality) and `Q3_K_M` (low memory); no ASTC failure may silently
 change the normal backend.
