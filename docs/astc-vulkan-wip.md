@@ -7475,3 +7475,35 @@ device allocation budget only when the selected device is integrated, no
 device-local heap is advertised, and host-memory detection succeeds. Discrete
 devices still require a real device-local heap. Focused budget, sidecar, and
 cache CTests pass, followed by the full Intel D1 and D2 GPU replays above.
+## Three-hundred-twentieth sweep: D2 model-oracle comparison and D1 6x6 reference
+
+The paired model smoke now accepts an explicit `--d1-footprint` option while
+keeping D1 `10x8` as the default. This makes the lower-rate D1 `6x6`
+reference use the same GGUF loader, activation trace, normalization and
+objective as the D2 comparison. The change is evaluation-only; it does not
+alter the runtime decoder or the standard ASTC path.
+
+On the same `blk.0.ffn_down.weight` tensor and the 8192-column Pythia trace,
+activation-objective scores were:
+
+| source | D1 6x6 (3.5556 b/w) | D1 10x8 (1.6000 b/w) | D2 8x5 RG/B | D2 8x5 R/GB |
+| --- | ---: | ---: | ---: | ---: |
+| F16 | 0.00250858 | 0.0216832 | 0.0319657 | 0.0291849 |
+| Q3_K_M | 0.00201349 | 0.0256193 | 0.0352689 | 0.0328832 |
+| Q4_K_M | 0.00310247 | 0.0234940 | 0.0322144 | 0.0299074 |
+| TQ2_0 | 0.000763726 | 0.0332628 | 0.0481672 | 0.0497561 |
+| TQ1_0 | 0.000763726 | 0.0332628 | 0.0481672 | 0.0497561 |
+
+Relative to the D1 `10x8` reference, the best D2 `8x5` score is approximately
+`1.35x` (F16), `1.28x` (Q3), `1.27x` (Q4), and `1.45x` (TQ2/TQ1). Relative
+to D1 `6x6`, D2 is `9.64x` to `16.33x` worse for F16/Q4/Q3 and `63.1x`
+worse for the ternary controls. These are activation-trace crop/oracle
+ratios, not whole-model perplexity or logits claims. TQ1 and TQ2 decode
+identically for this tensor/crop and therefore produce identical numbers;
+that must not be generalized to the complete model.
+
+The current result supports D2 as an experimental low-rate representation,
+but does not promote it above D1 `10x8` or D1 `6x6` for this tensor. The next
+quality gate is a matched full-shape/model replay using exported artifacts;
+GPU Vulkan replay remains a separate correctness/performance gate, while
+these encode/decode quality numbers remain CPU-oracle measurements.

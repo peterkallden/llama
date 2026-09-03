@@ -35,6 +35,8 @@ struct paired_model_params {
     std::string input_trace;
     std::string output_trace;
     astc_vulkan_objective objective = astc_vulkan_objective::activation;
+    uint32_t d1_block_width = 10;
+    uint32_t d1_block_height = 8;
 };
 
 bool parse_params(int argc, char ** argv, paired_model_params & params) {
@@ -46,6 +48,15 @@ bool parse_params(int argc, char ** argv, paired_model_params & params) {
         else if (option == "--tensor") params.tensor = value;
         else if (option == "--trace") params.input_trace = value;
         else if (option == "--output-trace") params.output_trace = value;
+        else if (option == "--d1-footprint") {
+            if (value == "4x4") { params.d1_block_width = 4; params.d1_block_height = 4; }
+            else if (value == "5x5") { params.d1_block_width = 5; params.d1_block_height = 5; }
+            else if (value == "6x6") { params.d1_block_width = 6; params.d1_block_height = 6; }
+            else if (value == "8x6") { params.d1_block_width = 8; params.d1_block_height = 6; }
+            else if (value == "8x8") { params.d1_block_width = 8; params.d1_block_height = 8; }
+            else if (value == "10x8") { params.d1_block_width = 10; params.d1_block_height = 8; }
+            else return false;
+        }
         else if (option == "--objective") {
             if (value == "activation") params.objective = astc_vulkan_objective::activation;
             else if (value == "yaqa") params.objective = astc_vulkan_objective::two_sided_trace;
@@ -129,6 +140,7 @@ double objective_score(const std::vector<float> & error,
 
 bool run_d1(const ggml_vk_astc_loaded_matrix & matrix, const ggml_vk_astc_activation_trace & trace,
             uint32_t rows, uint32_t columns, float minimum, float range,
+            uint32_t block_width, uint32_t block_height,
             const ggml_vk_astc_activation_trace * output_trace,
             astc_vulkan_objective objective, double & result) {
     std::vector<float> source(static_cast<size_t>(rows) * columns * 4);
@@ -138,7 +150,7 @@ bool run_d1(const ggml_vk_astc_loaded_matrix & matrix, const ggml_vk_astc_activa
         source[offset] = source[offset + 1] = source[offset + 2] = source[offset + 3] = q;
     }
     decoded_image decoded;
-    if (!roundtrip(source, columns, rows, 10, 8, decoded)) return false;
+    if (!roundtrip(source, columns, rows, block_width, block_height, decoded)) return false;
     result = objective_score(decoded_error(matrix, decoded, rows, columns, minimum, range, false,
                                            astc_vulkan_paired_layout::rg_b),
                              trace, output_trace, objective, rows, columns);
@@ -180,6 +192,7 @@ int main(int argc, char ** argv) {
     paired_model_params params;
     if (!parse_params(argc, argv, params)) {
         std::fprintf(stderr, "usage: %s --model model.gguf --tensor name --trace input.trace "
+                             "[--d1-footprint 4x4|5x5|6x6|8x6|8x8|10x8] "
                              "[--objective activation|yaqa --output-trace output.trace]\n", argv[0]);
         return 2;
     }
@@ -211,9 +224,12 @@ int main(int argc, char ** argv) {
     }
     const float range = maximum - minimum;
     double d1 = 0.0;
-    if (!run_d1(matrix, trace, rows, columns, minimum, range, output_trace_ptr,
+    if (!run_d1(matrix, trace, rows, columns, minimum, range,
+                params.d1_block_width, params.d1_block_height, output_trace_ptr,
                 params.objective, d1)) return 1;
-    std::printf("paired-model D1 10x8 rate=1.60000 objective=%s score=%.8g\n",
+    const double d1_rate = 128.0 / static_cast<double>(params.d1_block_width * params.d1_block_height);
+    std::printf("paired-model D1 %ux%u rate=%.5f objective=%s score=%.8g\n",
+                params.d1_block_width, params.d1_block_height, d1_rate,
                 astc_vulkan_objective_name(params.objective), d1);
     const auto codebook = astc_vulkan_make_paired_steering_codebook();
     for (const auto layout : {astc_vulkan_paired_layout::rg_b, astc_vulkan_paired_layout::r_gb}) {
