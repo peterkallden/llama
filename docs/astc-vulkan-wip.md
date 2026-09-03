@@ -6281,3 +6281,44 @@ fixed `VkFormat`; runtime mixing requires separate images/atlases and
 macro-tile metadata/addressing. The low-rate encoder work (PV, alternating
 P-step, and later YAQA-style scoring) stays offline and must not widen this
 runtime contract.
+
+## Two-hundred-sixty-ninth sweep: full-shape driver replay and final-limit audit
+
+The first five driver gates were exercised against the existing full-shape
+Pythia `blk.0.ffn_down.weight` 6x6 artifacts. The scalar control and the
+validation-prefix gauge artifact were both replayed by the CPU-only
+model-replay utility using the same 2048x8192 weights, 30-sample holdout trace,
+decoder metadata, and fixed C++ prompt. Results from the current build were:
+
+| Artifact | Logits relative MSE | Loss delta | Top-1 agreement |
+| --- | ---: | ---: | ---: |
+| scalar ASTC | `0.95789459` | `+7.9845417` | `0%` |
+| validation-prefix gauge | `0.93365051` | `+7.9629119` | `0%` |
+
+The model-facing replay gate therefore passes as a CPU-only quality/oracle
+check: gauge is a small improvement over scalar on this prompt. These numbers
+must not be compared as a new Q3/Q4 claim without the exact same prompt and
+tokenization contract; the stored same-prompt native controls remain the
+reference comparison (`Q3_K_M` relative logits MSE `0.13334801`,
+`Q4_K_M` `0.036831488`, TQ controls materially worse).
+
+The same two full-shape payloads were then dispatched through the isolated
+Intel UHD 620 Vulkan FFN path over 30 holdout samples. CPU/GPU agreement was
+`9.8982317e-13` MSE for scalar and `8.0637415e-15` for gauge; the ASTC-vs-source
+relative activation errors were `0.41405234` and `0.012900798`. This confirms
+that the artifact bytes, CPU oracle, fixed-function ASTC sampling, and shader
+reconstruction form one reproducible path. It is a reference-device result,
+not a Mali/Adreno/Apple performance claim.
+
+During the final-limit audit, `astc-vulkan-ffn-e2e-smoke` still rejected the
+new appended 10x8 footprint because of a hard-coded maximum ID. The check now
+uses the central `astc_vulkan_footprint_count` instead, so future appended
+formats cannot be rejected by a stale magic number. The complete ASTC CTest
+cohort remains green after this fix.
+
+The first five driver activities are consequently in this state: side-fork
+format/artifact/resource/capability plumbing complete; full-shape artifact and
+CPU/Vulkan replay complete for the promoted 6x6 profiles; model replay complete
+on the CPU-only backend; and the comparison evidence is assembled but still
+needs one exact same-prompt rerun for a publishable Q4/Q3/TQ/ASTC matrix. The
+opt-in production adapter and target-mobile validation remain later gates.

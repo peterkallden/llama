@@ -2381,10 +2381,10 @@ The remaining driver gates are:
 4. [x] Exercise the same `10x8` payload path through CPU latent smoke and the
    isolated Vulkan shader/device smokes. The bounded smoke is not a portable
    performance claim.
-5. [ ] Materialize at least one full-shape validation-prefix artifact for each
+5. [x] Materialize at least one full-shape validation-prefix artifact for each
    promoted encoder profile and replay it from artifact bytes alone (CPU
    oracle, then Vulkan sampled replay). Crop artifacts remain diagnostic only.
-6. [ ] Run the model-facing replay gate on a known-good Vulkan device or a
+6. [x] Run the model-facing replay gate on a known-good Vulkan device or a
    genuinely CPU-only backend. The current host's unrelated Vulkan model path
    can lose the device; that is a test-environment limitation, not permission
    to weaken the ASTC contract.

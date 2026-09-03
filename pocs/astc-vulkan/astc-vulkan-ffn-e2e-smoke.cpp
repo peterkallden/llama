@@ -73,7 +73,8 @@ int main(int argc, char ** argv) {
         else { std::fprintf(stderr, "unknown option: %s\n", option.c_str()); return 2; }
     }
     if (shader.empty() || payload_path.empty() || activation_path.empty() || decoded_path.empty() ||
-        weights_path.empty() || width == 0 || height == 0 || footprint > 5 ||
+        weights_path.empty() || width == 0 || height == 0 ||
+        footprint >= astc_vulkan_footprint_count ||
         (footprint > 2 && !allow_experimental)) return 2;
     const std::vector<uint32_t> spirv = read_spirv(shader);
     const std::vector<uint8_t> payload = read_binary<uint8_t>(payload_path);
