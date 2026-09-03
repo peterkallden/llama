@@ -7288,3 +7288,25 @@ from 8x5. The production adapter still selects one fixed format per bound
 image and falls back before allocation whenever the requested format is not
 sampled-capable. D2_10x5 is therefore ready for the later target-GPU timing
 and artifact replay gate, but remains excluded from automatic scheduling.
+
+## Three-hundred-thirteenth sweep: Intel full-shape low-rate hot-dispatch baseline
+
+The existing full-shape Pythia artifacts were replayed from their exact ASTC
+bytes through the isolated sidecar on Intel UHD Graphics 620. The run used
+the retained 14-sample holdout trace and two repeated dispatches after warm-up;
+the table reports the per-dispatch GPU time and the sidecar's CPU-reference
+comparison for the neutral and validation/gauge streams.
+
+| footprint | nominal rate | neutral ms | gauge ms | neutral activation-relative MSE | gauge activation-relative MSE |
+|---|---:|---:|---:|---:|---:|
+| 8x6 | 2.67 b/w | 89.69 | 93.26 | 0.0879904 | 0.0219460 |
+| 10x6 | 2.13 b/w | 82.58 | 83.40 | 0.281577 | 0.0367677 |
+| 10x8 | 1.60 b/w | 83.41 | 94.74 | 0.296640 | 0.0576588 |
+
+For every case, GPU-vs-CPU reconstruction MSE stayed below `2e-12`, so the
+runtime path is replaying the artifact deterministically. The measurements
+are a device/driver baseline, not a model-level quality claim: the source
+comparison uses the layer activation trace and does not replace the full
+logit/model replay gate. Neutral and gauge are intentionally kept as separate
+artifact profiles, and timings must not be compared across devices without
+retaining the driver identity.
