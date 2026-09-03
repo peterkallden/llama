@@ -8,6 +8,7 @@ set(ASTC_VULKAN_POC_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 # They carry no Vulkan or ggml dependency.
 add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-block-ldlq.cpp
+    astc-vulkan-d1-prescreen.cpp
     astc-vulkan-gauge.cpp
     astc-vulkan-gpu-d1-ranking.cpp
     astc-vulkan-gpu-ranking.cpp
@@ -32,6 +33,11 @@ add_executable(test-astc-vulkan-gauge
     tests/test-astc-vulkan-gauge.cpp)
 target_link_libraries(test-astc-vulkan-gauge PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-gauge PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-d1-prescreen
+    tests/test-astc-vulkan-d1-prescreen.cpp)
+target_link_libraries(test-astc-vulkan-d1-prescreen PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-d1-prescreen PRIVATE cxx_std_17)
 
 add_executable(test-astc-vulkan-gpu-ranking
     tests/test-astc-vulkan-gpu-ranking.cpp)
@@ -829,6 +835,9 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-gauge
         COMMAND test-astc-vulkan-gauge)
     set_property(TEST test-astc-vulkan-gauge PROPERTY LABELS astc)
+    add_test(NAME test-astc-vulkan-d1-prescreen
+        COMMAND test-astc-vulkan-d1-prescreen)
+    set_property(TEST test-astc-vulkan-d1-prescreen PROPERTY LABELS astc)
 
     add_test(NAME test-astc-vulkan-gpu-ranking
         COMMAND test-astc-vulkan-gpu-ranking)

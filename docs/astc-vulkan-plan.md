@@ -2854,3 +2854,21 @@ GPU changes numerical throughput only, never ASTC encoding or the deployed
 bytes. The next implementation gate is a D1 Vulkan delta/proposal session
 whose `4x4` and `6x6` output matches the CPU oracle before adding `10x6` and
 `8x8` low-rate batches.
+
+### D1 two-stage rate screening
+
+The original F16/BF16 tensor is first screened before any ASTC encoding. For
+each candidate footprint and source-level family (currently 16-level/Q4-like
+or 8-level/Q3-like), the screen uses a local affine scalar quantizer per
+physical footprint block and scores the resulting error with diagonal input
+activation energy. This screen is separable over blocks, so it can be run as a
+broad GPU compute batch even on a device that cannot sample ASTC. It selects a
+bounded, rate-aware shortlist using `weighted_error + lambda * b/w`.
+
+The screen must never export a payload or claim ASTC quality. In particular,
+L+A gauge and semantic reconstruction remain absent from this first pass: their
+usefulness depends on ASTC's real discrete encode/decode choices. The exact
+second pass runs CPU astcenc only for the shortlist, then evaluates exact
+scalar/gauge candidates with activation or YAQA scoring, conflict-aware
+selection, validation stopping, and holdout. This prevents a broad CPU ASTC
+search while preserving the existing artifact oracle.
