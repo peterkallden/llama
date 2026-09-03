@@ -7426,3 +7426,34 @@ production route still applies its separate D1 quality/capability gate.
 The contract test covers both preload and bounded-stream decisions. The next
 integration step is to populate the item sizes from Vulkan requirements for
 all approved records and make the adapter retain the selected resident set.
+
+## Three-hundred-eighteenth sweep: Pythia D1/D2 cache artifacts and GPU gate
+
+Generated two caches from the existing `Pythia-1.4B-F16-community.gguf`
+fixture and validated both against the streamed source-GGUF SHA-256 contract:
+
+* D1 is the existing full `blk.0.ffn_down.weight` scalar-anchored gauge
+  artifact, `8192x2048` at ASTC `6x6`. Its payload is 7,474,752 bytes
+  (467,172 physical blocks, 3.56424 physical bits/weight including the
+  partial edge blocks). The payload has no duplicate 16-byte blocks in this
+  tensor, so payload deduplication is not an available memory win here.
+* D2 is a reproducible `20x256` Pythia crop using paired `D2_8x5`. It emits
+  64 legal ASTC blocks (1,024 bytes, exactly 1.6 bits/logical weight) and an
+  8-byte packed layout map. Validation-prefix selection committed 35 of 42
+  proposed changes; holdout activation MSE improved from `0.000785717` to
+  `0.000515858`. The selected map contains 49 RG/B and 15 R/GB blocks.
+  D2 remains experimental and is not automatic scheduler routing.
+
+The cache directories are reproducible model-adjacent equivalents under
+`.astc-cache/` in this checkout. Both `astc-vulkan-cache inspect` commands
+reported a cache hit; the D2 inspection also reported `paired-d2=true`.
+CPU ASTC decode and payload replay completed for both payloads.
+
+The local Vulkan devices (Intel/llvmpipe) do not advertise sampled ASTC, so
+the exact ASTC texture sidecar correctly fails closed with `no Vulkan device
+supports sampled ASTC and compute`; this is a hardware capability limitation,
+not a cache failure. GPU execution was nevertheless verified for the shared
+YAQA stages: trace-score and batched partial/reduce shaders passed on Vulkan.
+The paired-D2 GPU ranking smoke is likewise capability-gated (exit 77) because
+the same device lacks ASTC sampling. A mobile/embedded ASTC-capable target is
+required before claiming GPU ASTC decode timings.

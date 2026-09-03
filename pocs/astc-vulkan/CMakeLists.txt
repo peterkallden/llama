@@ -9,6 +9,7 @@ set(ASTC_VULKAN_POC_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-block-ldlq.cpp
     astc-vulkan-d1-prescreen.cpp
+    astc-vulkan-format.cpp
     astc-vulkan-gauge.cpp
     astc-vulkan-gpu-d1-ranking.cpp
     astc-vulkan-gpu-ranking.cpp

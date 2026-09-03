@@ -2,6 +2,7 @@
 
 #include "astc-vulkan-input.h"
 #include "astc-vulkan-paired.h"
+#include "astc-vulkan-paired-layout.h"
 #include "astc-vulkan-paired-selector.h"
 #include "astc-vulkan-pv.h"
 
@@ -40,6 +41,8 @@ struct params {
     uint32_t validation_samples = 2;
     uint32_t progress_every_blocks = 0;
     std::string report;
+    std::string export_payload;
+    std::string export_layout;
     bool structure_bank = false;
     bool pv_alternate = false;
 };
@@ -109,6 +112,8 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--validation-samples") result.validation_samples = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--progress-every-blocks") result.progress_every_blocks = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--report") result.report = value;
+        else if (option == "--export-payload") result.export_payload = value;
+        else if (option == "--export-layout") result.export_layout = value;
         else if (option == "--structure-bank") result.structure_bank = value == "1" || value == "true";
         else if (option == "--pv-alternate") result.pv_alternate = value == "1" || value == "true";
         else return false;
@@ -377,7 +382,7 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "usage: %s --model model.gguf --tensor name --trace input.trace "
                              "[--rows N --columns N --calibration-samples N --validation-samples N "
                              "--progress-every-blocks N --report path [--structure-bank 1] "
-                             "[--pv-alternate 1]\n", argv[0]);
+                             "[--pv-alternate 1] [--export-payload path --export-layout path]\n", argv[0]);
         return 2;
     }
     ggml_vk_astc_loaded_matrix matrix;
@@ -584,6 +589,25 @@ int main(int argc, char ** argv) {
     const double selected_calibration_mse = selection.calibration_residual_loss / (options.calibration_samples * options.rows);
     const double selected_validation_mse = selection.validation_residual_loss / (options.validation_samples * options.rows);
     const double selected_holdout_mse = mse(selected_holdout);
+    if ((!options.export_payload.empty()) != (!options.export_layout.empty())) return 1;
+    if (!options.export_payload.empty()) {
+        std::vector<uint8_t> payload(generated.size() * 16u);
+        std::vector<uint32_t> layout_words(static_cast<size_t>(astc_vulkan_paired_layout_word_count(
+            astc_vulkan_footprint::k8x5, options.columns, options.rows)), 0);
+        for (size_t block = 0; block < generated.size(); ++block) {
+            const auto & selected_candidate = generated[block][selection.validation_selected_candidates[block]];
+            std::copy(selected_candidate.block.payload.begin(), selected_candidate.block.payload.end(),
+                      payload.begin() + block * 16u);
+            if (!astc_vulkan_paired_layout_set(layout_words, block, selected_candidate.layout)) return 1;
+        }
+        std::ofstream payload_file(options.export_payload, std::ios::binary | std::ios::trunc);
+        std::ofstream layout_file(options.export_layout, std::ios::binary | std::ios::trunc);
+        if (!payload_file || !layout_file) return 1;
+        payload_file.write(reinterpret_cast<const char *>(payload.data()), payload.size());
+        layout_file.write(reinterpret_cast<const char *>(layout_words.data()),
+                          static_cast<std::streamsize>(layout_words.size() * sizeof(uint32_t)));
+        if (!payload_file.good() || !layout_file.good()) return 1;
+    }
     std::printf("paired-select D2_%s rows=%u columns=%u blocks=%u raw=%llu unique=%llu\n",
                 kFootprintName,
                 options.rows, options.columns, blocks_x * blocks_y,
