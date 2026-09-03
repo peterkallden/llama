@@ -6810,6 +6810,30 @@ measurement alone. The next quality gate is blockwise selection with the
 scalar-compatible fallback retained, followed by validation-prefix replay on a
 disjoint trace.
 
+## Two-hundred-ninety-third sweep: selector build and objective status
+
+The new paired selector library was rebuilt and the focused contracts were run:
+
+```text
+test-astc-vulkan-paired       PASS
+test-astc-vulkan-objective    PASS
+test-astc-vulkan-yaqa         PASS
+astc-vulkan-paired-smoke      PASS
+```
+
+The Pythia F16 model smoke was also reproduced on the retained nine-token CPU
+trace and returned the same D1/D2 values as the previous sweep. YAQA is linked
+into the offline algorithm library and its independent dense/trace contracts
+pass, but it is not yet a selector objective: the new D2 selector currently
+consumes activation-space deltas and an optional validation trace. The next
+integration should add an explicit YAQA/weighted rerank over the already legal
+candidate pool, keeping activation ranking as the cheap default.
+
+Sensitivity therefore can eventually influence which legal payload candidate is
+chosen for a block, but it cannot by itself remap a logical weight to a
+different texel or output row. Such remapping requires a separate layout/
+permutation candidate family and must remain explicit in the artifact contract.
+
 ## Two-hundred-ninety-second sweep: paired selection-core groundwork
 
 Added `astc-vulkan-paired-selector.{h,cpp}` as the reusable offline boundary
