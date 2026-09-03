@@ -26,11 +26,21 @@ bool create_host_buffer(VkPhysicalDevice physical_device, VkDevice device,
         type = astc_vulkan_find_memory_type(physical_device, requirements.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     }
-    if (type == std::numeric_limits<uint32_t>::max()) return false;
+    if (type == std::numeric_limits<uint32_t>::max()) {
+        vkDestroyBuffer(device, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
+        return false;
+    }
     const VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr,
         requirements.size, type};
     if (vkAllocateMemory(device, &allocation, nullptr, &memory) != VK_SUCCESS ||
-        vkBindBufferMemory(device, buffer, memory, 0) != VK_SUCCESS) return false;
+        vkBindBufferMemory(device, buffer, memory, 0) != VK_SUCCESS) {
+        vkDestroyBuffer(device, buffer, nullptr);
+        if (memory != VK_NULL_HANDLE) vkFreeMemory(device, memory, nullptr);
+        buffer = VK_NULL_HANDLE;
+        memory = VK_NULL_HANDLE;
+        return false;
+    }
     return true;
 }
 
@@ -177,11 +187,13 @@ bool astc_vulkan_gpu_ranking_session::init(
     }
     const VkCommandPoolCreateInfo command_pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr,
         VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queue_family_};
+    const VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, 0};
+    if (vkCreateCommandPool(device_, &command_pool_info, nullptr, &command_pool_) != VK_SUCCESS) {
+        error = "failed to create GPU ranking command resources"; reset(); return false;
+    }
     const VkCommandBufferAllocateInfo command_buffer_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         nullptr, command_pool_, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
-    const VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, 0};
-    if (vkCreateCommandPool(device_, &command_pool_info, nullptr, &command_pool_) != VK_SUCCESS ||
-        vkAllocateCommandBuffers(device_, &command_buffer_info, &command_buffer_) != VK_SUCCESS ||
+    if (vkAllocateCommandBuffers(device_, &command_buffer_info, &command_buffer_) != VK_SUCCESS ||
         vkCreateFence(device_, &fence_info, nullptr, &fence_) != VK_SUCCESS) {
         error = "failed to create GPU ranking command resources"; reset(); return false;
     }
@@ -207,6 +219,12 @@ bool astc_vulkan_gpu_ranking_session::run(const std::vector<float> & activations
     vkCmdBindPipeline(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout_, 0, 1, &descriptor_set_, 0, nullptr);
     vkCmdPushConstants(command_buffer_, pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
+    const VkBufferMemoryBarrier activation_barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr,
+        VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED, activation_buffer_, 0, activation_bytes};
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_HOST_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 1,
+        &activation_barrier, 0, nullptr);
     vkCmdDispatch(command_buffer_, candidate_count_, calibration_samples_ * block_height_ * 2u, 1);
     const VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT,
         VK_ACCESS_HOST_READ_BIT, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, delta_buffer_, 0, delta_bytes};

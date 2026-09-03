@@ -2751,6 +2751,14 @@ device buffers and configurable candidate/sample counts; then proposal gains
 can consume the score vector without a host round-trip. ASTC candidate encode
 and ASTC decode remain separate CPU/reference stages on this NVIDIA path.
 
+GPU resource contract: candidate-ranking command buffers must be allocated
+after their command pool, host-visible writes must be flushed and explicitly
+made visible to compute, GPU outputs must be made visible and invalidated
+before host reads, and reset must wait before destroying dependent descriptors,
+buffers, and sampled images. The current implementation satisfies this basic
+contract. Add validation-layer and repeated init/run/reset testing on a
+working ASTC target before making the ASTC GPU path selectable.
+
 ### D2 per-block layout metadata (v3 groundwork)
 
 YAQA may select either `RG/B` or `R/GB` for each physical D2 ASTC block. The

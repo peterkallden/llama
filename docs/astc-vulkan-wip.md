@@ -7106,3 +7106,20 @@ CPU YAQA trace oracle within the test tolerance for every candidate. No
 per-candidate host readback occurs between the partial and reduction stages;
 only the final score vector is read back. This validates the intended NVIDIA
 offline path. It remains a measurement/PoC path, not a scheduler default.
+
+## Three-hundred-fourth sweep: GPU resource audit and paired-layout coverage
+
+The GPU candidate-ranking session received a resource-lifetime audit. Its
+command buffer is now allocated only after its command pool exists; host
+writes to the activation buffer receive an explicit host-to-compute barrier;
+and partial host-buffer allocation failures free both the Vulkan buffer and
+memory before returning. The existing map/flush/invalidate discipline is kept:
+all host writes are flushed, all host reads are invalidated, and reset waits
+for the device before destroying descriptors, buffers, and the sampled atlas.
+
+The pure transport contract now covers both D2 semantic layouts (`RG/B` and
+`R/GB`) and both currently defined five-row physical formats: D2_8x5 and
+D2_10x5. The Intel device pipeline still cannot execute this ASTC ranking
+shader, so the latter is a CPU transport/semantic gate rather than a new
+hardware claim. A later target with a working D2 ASTC pipeline must run both
+layouts through the exact device-delta smoke.
