@@ -6656,3 +6656,14 @@ the profile labelled `scalar-anchored-pv-alternating`; the PV/YAQA/gauge
 contract tests remained green. A full-shape quality claim is not made yet:
 the next gate is PV artifacts on frozen `10x6` and `8x8` pools followed by
 model-facing replay and untouched holdout comparison.
+## Two-hundred-eighty-fourth sweep: chunked PV regression
+
+The same opt-in PV profile was exercised through the production-shaped
+row-strip path with two worker threads, persistent contexts, and chunked
+candidate residency. The `16x128` 8x8 smoke completed with two strips,
+`peak-candidates=71`, `peak-candidate-workset-bytes=32944`, and 16 compact
+commit steps. Its selected/validation-stopped metrics were stable relative to
+the non-chunked PV smoke. This confirms that the new candidate generator
+respects the existing strip factorization; it does not yet demonstrate a
+quality gain over scalar-anchored gauge, so full-shape PV artifacts remain the
+next research gate.
