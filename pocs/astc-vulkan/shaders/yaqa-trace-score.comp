@@ -1,0 +1,32 @@
+#version 450
+
+// Device smoke/reference kernel for the low-rank YAQA objective:
+// ||Y E X^T||_F^2. It deliberately uses one invocation so its arithmetic is
+// easy to compare to the CPU oracle before a tiled reduction is introduced.
+layout(local_size_x = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Error { float values[]; } error_matrix;
+layout(std430, set = 0, binding = 1) readonly buffer InputTrace { float values[]; } input_trace;
+layout(std430, set = 0, binding = 2) readonly buffer OutputTrace { float values[]; } output_trace;
+layout(std430, set = 0, binding = 3) writeonly buffer Score { float value; } score;
+
+layout(push_constant) uniform Push { uint rows; uint columns; uint samples; } params;
+
+void main() {
+    float total = 0.0;
+    for (uint output_sample = 0u; output_sample < params.samples; ++output_sample) {
+        for (uint input_sample = 0u; input_sample < params.samples; ++input_sample) {
+            float value = 0.0;
+            for (uint row = 0u; row < params.rows; ++row) {
+                float projected = 0.0;
+                for (uint column = 0u; column < params.columns; ++column) {
+                    projected += error_matrix.values[row * params.columns + column] *
+                        input_trace.values[input_sample * params.columns + column];
+                }
+                value += output_trace.values[output_sample * params.rows + row] * projected;
+            }
+            total += value * value;
+        }
+    }
+    score.value = total;
+}

@@ -1,0 +1,28 @@
+#version 450
+
+// Scalable YAQA stage 2. Reduces stage-1 partials into one score per
+// candidate. The host dispatches one workgroup per candidate. For extremely
+// large sample sets the same shape can be invoked recursively on partials.
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Partials { float values[]; } partials;
+layout(std430, set = 0, binding = 1) writeonly buffer Scores { float values[]; } scores;
+
+layout(push_constant) uniform Push { uint candidates; uint partials_per_candidate; } params;
+shared float sum[64];
+
+void main() {
+    const uint candidate = gl_WorkGroupID.x;
+    if (candidate >= params.candidates) return;
+    float value = 0.0;
+    for (uint index = gl_LocalInvocationID.x; index < params.partials_per_candidate; index += 64u) {
+        value += partials.values[candidate * params.partials_per_candidate + index];
+    }
+    sum[gl_LocalInvocationID.x] = value;
+    barrier();
+    for (uint stride = 32u; stride > 0u; stride >>= 1u) {
+        if (gl_LocalInvocationID.x < stride) sum[gl_LocalInvocationID.x] += sum[gl_LocalInvocationID.x + stride];
+        barrier();
+    }
+    if (gl_LocalInvocationID.x == 0u) scores.values[candidate] = sum[0];
+}

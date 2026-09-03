@@ -129,6 +129,8 @@ target_compile_features(astc-vulkan-artifact-pack PRIVATE cxx_std_17)
 find_package(Vulkan QUIET)
 option(GGML_VK_ASTC_EXPERIMENTAL_SCHEDULER_ADAPTER
     "Build the isolated ASTC scheduler-adapter experiment" OFF)
+option(GGML_VK_ASTC_EXPERIMENTAL_GPU_RANKING_DEVICE_SMOKE
+    "Register the experimental GPU candidate-ranking device smoke" OFF)
 # Some distributions expose the Vulkan loader and headers but make the
 # standalone FindVulkan module report Vulkan_FOUND=FALSE (for example when
 # optional shader components are absent).  The ggml Vulkan backend already
@@ -168,6 +170,16 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-dispatch PUBLIC
         astc-vulkan-resource astc-vulkan-driver Vulkan::Vulkan)
     target_compile_features(astc-vulkan-dispatch PUBLIC cxx_std_17)
+
+    # Offline-only GPU scoring session. It shares the ordinary ASTC resource
+    # uploader with runtime, but it never enters the inference scheduler.
+    add_library(astc-vulkan-gpu-ranking-dispatch STATIC
+        astc-vulkan-gpu-ranking-dispatch.cpp)
+    target_include_directories(astc-vulkan-gpu-ranking-dispatch PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-gpu-ranking-dispatch PUBLIC
+        astc-vulkan-resource astc-vulkan-algorithms Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-gpu-ranking-dispatch PUBLIC cxx_std_17)
 
     add_library(astc-vulkan-sidecar STATIC
         astc-vulkan-sidecar.cpp)
@@ -241,6 +253,18 @@ if (TARGET Vulkan::Vulkan)
         astc-vulkan-device-smoke.cpp)
     target_link_libraries(astc-vulkan-device-smoke PRIVATE Vulkan::Vulkan astc-vulkan-resource)
     target_compile_features(astc-vulkan-device-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-gpu-ranking-device-smoke
+        astc-vulkan-gpu-ranking-device-smoke.cpp)
+    target_link_libraries(astc-vulkan-gpu-ranking-device-smoke PRIVATE
+        astc-vulkan-gpu-ranking-dispatch Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-gpu-ranking-device-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-yaqa-device-smoke
+        astc-vulkan-yaqa-device-smoke.cpp)
+    target_link_libraries(astc-vulkan-yaqa-device-smoke PRIVATE
+        astc-vulkan-algorithms Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-yaqa-device-smoke PRIVATE cxx_std_17)
 endif()
 
 find_package(astcenc CONFIG QUIET)
@@ -489,6 +513,12 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-matvec.comp.spv)
     set(ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-candidate-delta.comp.spv)
+    set(ASTC_VULKAN_YAQA_TRACE_SCORE_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/yaqa-trace-score.comp.spv)
+    set(ASTC_VULKAN_YAQA_TRACE_PARTIAL_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/yaqa-trace-partial.comp.spv)
+    set(ASTC_VULKAN_YAQA_TRACE_REDUCE_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/yaqa-trace-reduce.comp.spv)
     set(ASTC_VULKAN_BUFFER_MATVEC_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/buffer-matvec.comp.spv)
     set(ASTC_VULKAN_Q4_MATVEC_SHADER_OUTPUT
@@ -547,6 +577,35 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling experimental paired-D2 GPU candidate-delta shader")
     add_custom_target(astc-vulkan-paired-candidate-delta-shader
         DEPENDS ${ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_YAQA_TRACE_SCORE_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/yaqa-trace-score.comp
+            -o ${ASTC_VULKAN_YAQA_TRACE_SCORE_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/yaqa-trace-score.comp
+        COMMENT "Compiling YAQA GPU trace-score smoke shader")
+    add_custom_target(astc-vulkan-yaqa-trace-score-shader
+        DEPENDS ${ASTC_VULKAN_YAQA_TRACE_SCORE_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_YAQA_TRACE_PARTIAL_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC} --target-env=vulkan1.1 -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/yaqa-trace-partial.comp
+            -o ${ASTC_VULKAN_YAQA_TRACE_PARTIAL_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/yaqa-trace-partial.comp
+        COMMENT "Compiling scalable YAQA partial-score shader")
+    add_custom_target(astc-vulkan-yaqa-trace-partial-shader
+        DEPENDS ${ASTC_VULKAN_YAQA_TRACE_PARTIAL_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_YAQA_TRACE_REDUCE_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC} --target-env=vulkan1.1 -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/yaqa-trace-reduce.comp
+            -o ${ASTC_VULKAN_YAQA_TRACE_REDUCE_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/yaqa-trace-reduce.comp
+        COMMENT "Compiling scalable YAQA reduction shader")
+    add_custom_target(astc-vulkan-yaqa-trace-reduce-shader
+        DEPENDS ${ASTC_VULKAN_YAQA_TRACE_REDUCE_SHADER_OUTPUT})
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_BUFFER_MATVEC_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -635,6 +694,30 @@ if (ASTC_VULKAN_GLSLC)
             astc-vulkan-q3-matvec-shader
             astc-vulkan-tq1-matvec-shader
             astc-vulkan-sampled-f32-matvec-shader)
+    endif()
+
+    # The executable is always built on a Vulkan system, but its D2 8x5
+    # pipeline test stays opt-in. The current Intel/Mesa target reports ASTC
+    # support yet faults during pipeline compilation; CPU scoring remains the
+    # default until the dispatch has a device-specific preflight/fallback.
+    if (ASTC_VULKAN_GLSLC AND GGML_VK_ASTC_EXPERIMENTAL_GPU_RANKING_DEVICE_SMOKE AND
+        TARGET astc-vulkan-gpu-ranking-device-smoke)
+        add_dependencies(astc-vulkan-gpu-ranking-device-smoke
+            astc-vulkan-paired-candidate-delta-shader)
+        add_test(NAME astc-vulkan-gpu-ranking-device-smoke
+            COMMAND astc-vulkan-gpu-ranking-device-smoke
+                ${ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT})
+        set_property(TEST astc-vulkan-gpu-ranking-device-smoke PROPERTY LABELS astc)
+        set_property(TEST astc-vulkan-gpu-ranking-device-smoke PROPERTY SKIP_RETURN_CODE 77)
+    endif()
+
+    if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-yaqa-device-smoke)
+        add_dependencies(astc-vulkan-yaqa-device-smoke astc-vulkan-yaqa-trace-score-shader)
+        add_test(NAME astc-vulkan-yaqa-device-smoke
+            COMMAND astc-vulkan-yaqa-device-smoke
+                ${ASTC_VULKAN_YAQA_TRACE_SCORE_SHADER_OUTPUT})
+        set_property(TEST astc-vulkan-yaqa-device-smoke PROPERTY LABELS astc)
+        set_property(TEST astc-vulkan-yaqa-device-smoke PROPERTY SKIP_RETURN_CODE 77)
     endif()
     if (TARGET ggml-base AND TARGET astc-vulkan-ffn-adapter)
         add_executable(astc-vulkan-ffn-e2e-smoke

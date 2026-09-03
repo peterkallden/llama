@@ -2726,6 +2726,24 @@ equivalence to the CPU oracle on bounded payloads, then reproduce the CPU
 selector's commit sequence and validation prefix. Device policy and a default
 choice come only after those gates and measured transfer/batch costs.
 
+Implementation status: the candidate-atlas transport, a Vulkan delta session,
+and a hardware-smoke executable now exist. The current Intel UHD 620/Mesa
+driver reports ASTC support but faults when creating the paired-D2 ranking
+pipeline, while ordinary ASTC sampling pipelines pass. GPU ranking is
+therefore an opt-in experiment guarded by a per-device preflight; CPU is the
+production default. The next GPU gate is to make that pipeline execute on a
+target device, prove FP32 deltas against the CPU oracle, then reproduce CPU
+commit order and validation prefix before moving YAQA or conflict-aware
+proposals to the device.
+
+YAQA is the exception to the ASTC hardware constraint: it is pure buffer math
+and can be preflighted on a discrete NVIDIA device. A CPU-equivalent
+one-invocation trace-score smoke passes there. The scalable implementation is
+two GPU stages—parallel trace-pair partials per candidate, then a per-candidate
+reduction—with no per-candidate host readback. Integrate that session and prove
+batch scores against the CPU trace oracle before allowing GPU YAQA in the
+ranking plan. This does not make NVIDIA an ASTC-decode target.
+
 ### D2 per-block layout metadata (v3 groundwork)
 
 YAQA may select either `RG/B` or `R/GB` for each physical D2 ASTC block. The

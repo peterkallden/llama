@@ -1,0 +1,41 @@
+#version 450
+
+// Scalable YAQA stage 1. One workgroup covers up to 64 (output-trace,
+// input-trace) pairs for one candidate error matrix. It emits independent
+// partial score terms; stage 2 reduces those terms per candidate. Candidate
+// errors are supplied as [candidate][row][column], so astcenc remains CPU-only
+// while a large candidate pool can stay entirely device-resident for ranking.
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Errors { float values[]; } errors;
+layout(std430, set = 0, binding = 1) readonly buffer InputTrace { float values[]; } input_trace;
+layout(std430, set = 0, binding = 2) readonly buffer OutputTrace { float values[]; } output_trace;
+layout(std430, set = 0, binding = 3) writeonly buffer Partials { float values[]; } partials;
+
+layout(push_constant) uniform Push {
+    uint candidates;
+    uint rows;
+    uint columns;
+    uint samples;
+    uint pairs_per_candidate;
+} params;
+
+void main() {
+    const uint candidate = gl_WorkGroupID.x;
+    const uint tile = gl_WorkGroupID.y;
+    const uint pair = tile * 64u + gl_LocalInvocationID.x;
+    if (candidate >= params.candidates || pair >= params.samples * params.samples) return;
+    const uint output_sample = pair / params.samples;
+    const uint input_sample = pair % params.samples;
+    float combined = 0.0;
+    const uint error_base = candidate * params.rows * params.columns;
+    for (uint row = 0u; row < params.rows; ++row) {
+        float projected = 0.0;
+        for (uint column = 0u; column < params.columns; ++column) {
+            projected += errors.values[error_base + row * params.columns + column] *
+                input_trace.values[input_sample * params.columns + column];
+        }
+        combined += output_trace.values[output_sample * params.rows + row] * projected;
+    }
+    partials.values[candidate * params.pairs_per_candidate + pair] = combined * combined;
+}

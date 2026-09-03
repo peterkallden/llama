@@ -7043,6 +7043,30 @@ objective, YAQA, and driver contracts all pass. The next gate is a Vulkan
 session that uploads a bounded atlas and proves GPU delta equivalence against
 the current CPU exact-decode oracle before YAQA/proposal/commit are moved.
 
+## Three-hundred-second sweep: device-backed ranking session and preflight result
+
+The candidate atlas now has a Vulkan session: it uploads the ordinary ASTC
+atlas, compact candidate/baseline records, and calibration activations, then
+dispatches `astc-paired-candidate-delta.comp` to produce D2
+candidate-minus-baseline deltas. Its API remains independent of the CPU
+selector, so callers may choose CPU or GPU for later ranking stages without
+changing encoder output, candidate order, or artifact bytes.
+
+The device smoke uses two known valid ASTC void-extent blocks (`UNORM16` 0.5
+and 0.75) with two activation samples. It checks that all ten logical D2 rows
+observe the expected summed delta: a genuine fixed-function ASTC decode test,
+not a software-decoder proxy.
+
+On the available Intel UHD 620/Mesa target, ordinary 4x4, 8x6, and 8x8 ASTC
+sampling smokes pass, but creation of this D2 ranking pipeline faults inside
+`libvulkan_intel.so`, before dispatch. SPIR-V validation and all CPU
+transport/selection contracts pass. This is recorded as a device/compiler
+preflight failure, not silently treated as CPU/GPU equivalence. The device
+smoke stays buildable but is opt-in
+(`GGML_VK_ASTC_EXPERIMENTAL_GPU_RANKING_DEVICE_SMOKE=ON`); CPU remains the
+default ranking backend. A future GPU backend must preflight this pipeline on
+the selected device and fall back cleanly before candidate transfer.
+
 ## Two-hundred-ninety-second sweep: paired selection-core groundwork
 
 Added `astc-vulkan-paired-selector.{h,cpp}` as the reusable offline boundary
@@ -7058,3 +7082,20 @@ This is groundwork only. No selection test or model run was started in this
 sweep; the next change must connect the D2 exact encoder/decode producer to the
 new pool contract and add focused regression coverage before evaluating its
 quality.
+
+## Three-hundred-third sweep: NVIDIA YAQA GPU smoke and scalable kernel shape
+
+YAQA is separable from ASTC decode, so it can be exercised on the local NVIDIA
+GPU even though that device exposes no Vulkan ASTC formats. The new
+`yaqa-trace-score.comp` smoke computes the same low-rank two-sided objective as
+the CPU oracle, `||Y E X^T||_F^2`, over storage buffers. It passed on the
+discrete NVIDIA device. This establishes a usable GPU path for offline
+sensitivity scoring without claiming an ASTC fixed-function result.
+
+The next kernel form is also present and SPIR-V-compiled: stage one evaluates
+independent `(output trace, input trace)` terms across candidates in parallel;
+stage two reduces those terms to one score per candidate. Candidate error
+matrices and traces stay device-resident between stages. This is the scalable
+shape for a GPU YAQA backend; its host session and batch-equivalence test are
+the next gate before it participates in ranking. The one-invocation smoke is
+kept as the stable arithmetic oracle.
