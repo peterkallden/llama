@@ -6667,3 +6667,27 @@ the non-chunked PV smoke. This confirms that the new candidate generator
 respects the existing strip factorization; it does not yet demonstrate a
 quality gain over scalar-anchored gauge, so full-shape PV artifacts remain the
 next research gate.
+
+## Two-hundred-eighty-fifth sweep: paired D2 low-rate contract
+
+Added the first implementation boundary for the experimental paired-density
+(`D2`) direction without changing the active full-shape PV run. D2 maps two
+logical weights from adjacent output rows at one input column to a single
+ordinary RGBA ASTC texel. The first layouts are `RG/B` (q0 duplicated in R/G,
+q1 in B) and the orientation control `R/GB`. Alpha is explicitly an
+encoder-only steering lane and is ignored by the semantic reconstruction.
+
+`astc-vulkan-paired.{h,cpp}` owns this mapping, its names, and nominal
+logical-rate calculation. It is deliberately separate from
+`astc-vulkan-gauge.{h,cpp}` because D1 L+A gauge and D2 alpha steering have
+different runtime semantics. A pure contract test protects exact pair
+reconstruction, Alpha invariance before ASTC, D2 row geometry, and the 1.60
+bits/weight D1-10x8/D2-8x5 comparison point. The standard Vulkan `8x5`
+footprint was appended to the format contract with a stable serialized ID; it
+is experimental and not scheduler-eligible.
+
+The initial paired shader is a correctness contract only. It fetches each
+texel for the mapped adjacent output-row pair and performs no semantic Alpha
+operation. It is intentionally not wired into the sidecar dispatch or a
+device smoke before an exact artifact encoder/oracle and two-tensor quality
+gate exist. No D2 tests were run in this sweep, by design.

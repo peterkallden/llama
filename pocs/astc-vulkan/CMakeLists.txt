@@ -10,6 +10,7 @@ add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-block-ldlq.cpp
     astc-vulkan-gauge.cpp
     astc-vulkan-hash.cpp
+    astc-vulkan-paired.cpp
     astc-vulkan-pv.cpp
     astc-vulkan-yaqa.cpp)
 target_include_directories(astc-vulkan-algorithms PUBLIC
@@ -25,6 +26,11 @@ add_executable(test-astc-vulkan-gauge
     tests/test-astc-vulkan-gauge.cpp)
 target_link_libraries(test-astc-vulkan-gauge PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-gauge PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-paired
+    tests/test-astc-vulkan-paired.cpp)
+target_link_libraries(test-astc-vulkan-paired PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-paired PRIVATE cxx_std_17)
 
 add_executable(test-astc-vulkan-block-ldlq-config
     tests/test-astc-vulkan-block-ldlq-config.cpp)
@@ -398,6 +404,8 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-validate.comp.spv)
     set(ASTC_VULKAN_MATVEC_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-matvec.comp.spv)
+    set(ASTC_VULKAN_PAIRED_MATVEC_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-matvec.comp.spv)
     set(ASTC_VULKAN_BUFFER_MATVEC_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/buffer-matvec.comp.spv)
     set(ASTC_VULKAN_Q4_MATVEC_SHADER_OUTPUT
@@ -434,6 +442,17 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling ASTC Vulkan matvec shader")
     add_custom_target(astc-vulkan-matvec-shader
         DEPENDS ${ASTC_VULKAN_MATVEC_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_PAIRED_MATVEC_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-paired-matvec.comp
+            -o ${ASTC_VULKAN_PAIRED_MATVEC_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-paired-matvec.comp
+        COMMENT "Compiling experimental paired-D2 ASTC Vulkan matvec shader")
+    add_custom_target(astc-vulkan-paired-matvec-shader
+        DEPENDS ${ASTC_VULKAN_PAIRED_MATVEC_SHADER_OUTPUT})
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_BUFFER_MATVEC_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -556,6 +575,10 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-gauge
         COMMAND test-astc-vulkan-gauge)
     set_property(TEST test-astc-vulkan-gauge PROPERTY LABELS astc)
+
+    add_test(NAME test-astc-vulkan-paired
+        COMMAND test-astc-vulkan-paired)
+    set_property(TEST test-astc-vulkan-paired PROPERTY LABELS astc)
 
     add_test(NAME test-astc-vulkan-block-ldlq-config
         COMMAND test-astc-vulkan-block-ldlq-config)

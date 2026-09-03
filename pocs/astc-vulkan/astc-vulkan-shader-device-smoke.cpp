@@ -259,6 +259,7 @@ int main(int argc, char ** argv) {
     const VkFormat format = format_name == "4x4" ? VK_FORMAT_ASTC_4x4_UNORM_BLOCK :
                             format_name == "5x5" ? VK_FORMAT_ASTC_5x5_UNORM_BLOCK :
                             format_name == "6x6" ? VK_FORMAT_ASTC_6x6_UNORM_BLOCK :
+                            format_name == "8x5" ? VK_FORMAT_ASTC_8x5_UNORM_BLOCK :
                             format_name == "8x6" ? VK_FORMAT_ASTC_8x6_UNORM_BLOCK :
                             format_name == "10x6" ? VK_FORMAT_ASTC_10x6_UNORM_BLOCK :
                             format_name == "8x8" ? VK_FORMAT_ASTC_8x8_UNORM_BLOCK :
@@ -312,9 +313,11 @@ int main(int argc, char ** argv) {
     const uint32_t block_extent = format_name == "4x4" ? 4 :
                                   format_name == "5x5" ? 5 :
                                   format_name == "6x6" ? 6 :
+                                  format_name == "8x5" ? 8 :
                                   format_name == "10x6" ? 10 :
                                   format_name == "10x8" ? 10 : 8;
-    const uint32_t block_height = (format_name == "8x6" || format_name == "10x6") ? 6 :
+    const uint32_t block_height = format_name == "8x5" ? 5 :
+                                  (format_name == "8x6" || format_name == "10x6") ? 6 :
                                   (format_name == "10x8" ? 8 : block_extent);
     const uint32_t width = supplied_width != 0 ? supplied_width :
                            benchmark ? kBenchmarkTexelExtent : block_extent;
@@ -324,6 +327,7 @@ int main(int argc, char ** argv) {
         format_name == "4x4" ? ggml_vk_astc_4x4_unorm_rgba :
         format_name == "5x5" ? ggml_vk_astc_5x5_unorm_rgba :
         format_name == "6x6" ? ggml_vk_astc_6x6_unorm_rgba :
+        format_name == "8x5" ? ggml_vk_astc_8x5_unorm_rgba :
         format_name == "8x6" ? ggml_vk_astc_8x6_unorm_rgba :
         format_name == "10x6" ? ggml_vk_astc_10x6_unorm_rgba :
         format_name == "8x8" ? ggml_vk_astc_8x8_unorm_rgba : ggml_vk_astc_10x8_unorm_rgba,

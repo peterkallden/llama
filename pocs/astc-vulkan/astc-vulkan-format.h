@@ -12,6 +12,8 @@ enum class astc_vulkan_footprint : uint8_t {
     k8x8 = 4,
     k10x6 = 5,
     k10x8 = 6,
+    // D2's first iso-rate format. Appending preserves serialized manifests.
+    k8x5 = 7,
 };
 
 struct astc_vulkan_format_info {
@@ -20,7 +22,7 @@ struct astc_vulkan_format_info {
     uint32_t block_bytes;
 };
 
-inline constexpr size_t astc_vulkan_footprint_count = 7;
+inline constexpr size_t astc_vulkan_footprint_count = 8;
 
 astc_vulkan_format_info astc_vulkan_format(astc_vulkan_footprint footprint);
 bool astc_vulkan_footprint_is_valid(astc_vulkan_footprint footprint);

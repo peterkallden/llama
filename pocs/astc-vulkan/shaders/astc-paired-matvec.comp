@@ -1,0 +1,61 @@
+#version 450
+
+// Experimental D2 ASTC matvec contract.
+//
+// One sampled texel represents q0/q1 for adjacent output rows at one input
+// column. Alpha is deliberately ignored after texelFetch: it is an offline
+// encoder steering lane, not a runtime residual or metadata channel.
+//
+// This shader is a correctness-first standalone contract. Integrating it into
+// the sidecar scheduler waits for exact ASTC artifact replay and quality gates.
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 0) uniform sampler2D astc_weights;
+
+layout(std430, set = 0, binding = 1) buffer MatvecOutput {
+    vec4 values[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint width;
+    uint logical_height;
+    uint paired_layout; // 0 = RG/B, 1 = R/GB
+    float scale;
+    float offset;
+} params;
+
+float activation(uint column) {
+    return 0.5 * sin(0.017 * float(column + 1)) +
+           0.2 * cos(0.031 * float(column + 3));
+}
+
+float paired_weight(vec4 texel, uint member) {
+    if (params.paired_layout == 0u) {
+        return member == 0u ? 0.5 * (texel.r + texel.g) : texel.b;
+    }
+    return member == 0u ? texel.r : 0.5 * (texel.g + texel.b);
+}
+
+shared float partial[64];
+
+void main() {
+    const uint row = gl_WorkGroupID.x;
+    if (row >= params.logical_height) return;
+
+    const uint texture_row = row >> 1u;
+    const uint member = row & 1u;
+    float sum = 0.0;
+    for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64) {
+        const vec4 texel = texelFetch(astc_weights, ivec2(column, texture_row), 0);
+        sum += (params.scale * paired_weight(texel, member) + params.offset) * activation(column);
+    }
+    partial[gl_LocalInvocationID.x] = sum;
+    barrier();
+    for (uint stride = 32; stride > 0; stride >>= 1) {
+        if (gl_LocalInvocationID.x < stride) {
+            partial[gl_LocalInvocationID.x] += partial[gl_LocalInvocationID.x + stride];
+        }
+        barrier();
+    }
+    if (gl_LocalInvocationID.x == 0) values[row] = vec4(partial[0], 0.0, 0.0, 0.0);
+}

@@ -11,6 +11,7 @@ int main() {
     constexpr auto format_4x4 = ggml_vk_astc_4x4_unorm_rgba;
     constexpr auto format_5x5 = ggml_vk_astc_5x5_unorm_rgba;
     constexpr auto format_6x6 = ggml_vk_astc_6x6_unorm_rgba;
+    constexpr auto format_8x5 = ggml_vk_astc_8x5_unorm_rgba;
     constexpr auto format_8x6 = ggml_vk_astc_8x6_unorm_rgba;
     constexpr auto format_10x6 = ggml_vk_astc_10x6_unorm_rgba;
     constexpr auto format_8x8 = ggml_vk_astc_8x8_unorm_rgba;
@@ -19,6 +20,7 @@ int main() {
     static_assert(format_4x4.block_size_bytes == 16, "ASTC blocks must be 128 bits");
     static_assert(format_5x5.block_size_bytes == 16, "ASTC blocks must be 128 bits");
     static_assert(format_6x6.block_size_bytes == 16, "ASTC blocks must be 128 bits");
+    static_assert(format_8x5.block_size_bytes == 16, "ASTC blocks must be 128 bits");
     static_assert(format_8x6.block_size_bytes == 16, "ASTC blocks must be 128 bits");
     static_assert(format_10x6.block_size_bytes == 16, "ASTC blocks must be 128 bits");
     static_assert(format_8x8.block_size_bytes == 16, "ASTC blocks must be 128 bits");
@@ -26,6 +28,7 @@ int main() {
     static_assert(format_4x4.texels_per_block() == 16, "ASTC 4x4 texel count changed");
     static_assert(format_5x5.texels_per_block() == 25, "ASTC 5x5 texel count changed");
     static_assert(format_6x6.texels_per_block() == 36, "ASTC 6x6 texel count changed");
+    static_assert(format_8x5.texels_per_block() == 40, "ASTC 8x5 texel count changed");
     static_assert(format_8x6.texels_per_block() == 48, "ASTC 8x6 texel count changed");
     static_assert(format_10x6.texels_per_block() == 60, "ASTC 10x6 texel count changed");
     static_assert(format_8x8.texels_per_block() == 64, "ASTC 8x8 texel count changed");
@@ -36,6 +39,7 @@ int main() {
     assert_close(format_4x4.nominal_bits_per_texel(), 8.0);
     assert_close(format_5x5.nominal_bits_per_texel(), 128.0 / 25.0);
     assert_close(format_6x6.nominal_bits_per_texel(), 128.0 / 36.0);
+    assert_close(format_8x5.nominal_bits_per_texel(), 3.2);
     assert_close(format_8x6.nominal_bits_per_texel(), 128.0 / 48.0);
     assert_close(format_10x6.nominal_bits_per_texel(), 128.0 / 60.0);
     assert_close(format_8x8.nominal_bits_per_texel(), 2.0);

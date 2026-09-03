@@ -3442,7 +3442,7 @@ int main(int argc, char ** argv) {
         } else {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
-                         "[--footprint 4x4|5x5|6x6|8x6|10x6|8x8|10x8] [--preset thorough|medium|fast] [--model path --tensor name] "
+                         "[--footprint 4x4|5x5|6x6|8x5|8x6|10x6|8x8|10x8] [--preset thorough|medium|fast] [--model path --tensor name] "
                          "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--pv-lite-grid-sweep] [--pv-lite-coarse-grid-sweep] [--pv-alternate] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
@@ -3654,6 +3654,7 @@ int main(int argc, char ** argv) {
     for (const auto & format : { ggml_vk_astc_4x4_unorm_rgba,
                                  ggml_vk_astc_5x5_unorm_rgba,
                                  ggml_vk_astc_6x6_unorm_rgba,
+                                 ggml_vk_astc_8x5_unorm_rgba,
                                  ggml_vk_astc_8x6_unorm_rgba,
                                  ggml_vk_astc_10x6_unorm_rgba,
                                  ggml_vk_astc_8x8_unorm_rgba,
@@ -3870,7 +3871,7 @@ int main(int argc, char ** argv) {
         }
     }
     if (!footprint.empty() && footprint != "4x4" && footprint != "5x5" &&
-        footprint != "6x6" && footprint != "8x6" && footprint != "10x6" && footprint != "8x8" &&
+        footprint != "6x6" && footprint != "8x5" && footprint != "8x6" && footprint != "10x6" && footprint != "8x8" &&
         footprint != "10x8") {
         std::fprintf(stderr, "unsupported --footprint value: %s\n", footprint.c_str());
         return 2;

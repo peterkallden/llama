@@ -2574,3 +2574,39 @@ Before driver promotion, the remaining algorithm gates are:
    factor when the capture path is available.
 4. Keep the final production matrix separate from exploratory prompt/corpus
    results and retain all historical tests as named regression contracts.
+
+### Experimental D2 paired-density track
+
+The low-rate plan now has a separate **D2 paired-density** research profile.
+D1 stores one logical weight per ASTC texel. D2 stores two weights from
+adjacent output rows at the same reduction/input column in one texel, so the
+nominal logical density is:
+
+`128 / (footprint_width * footprint_height * 2)` bits per weight.
+
+The first iso-rate gate is D1 `10x8` versus D2 `8x5`, both 1.60 nominal
+bits/weight. D2's initial `RG/B` mapping stores `q0` redundantly in R/G and
+`q1` in B; `R/GB` is the mandatory orientation control. Alpha is encoder-only
+codec steering and has no semantic runtime role. This deliberately differs
+from D1 L+A gauge, where both latent values enter reconstruction.
+
+Implementation gates, in order:
+
+1. The independent `astc-vulkan-paired` contract module, 8x5 format support,
+   deterministic adjacent-row pairing, and deterministic odd-row padding.
+2. CPU exact ASTC encode/decode artifacts with fixed-Alpha negative controls,
+   then constant/ramp/saddle steering; the scalar/D1 artifact remains the
+   fallback.
+3. Aligned Pythia crops on two tensors: D1 10x8, D2 8x5 RG/B fixed Alpha,
+   D2 RG/B steering, and D2 R/GB steering, all with frozen
+   calibration/validation/untouched-holdout splits.
+4. Only if D2 passes that iso-rate gate: a D2 footprint ladder and paired
+   Vulkan artifact replay. Full PV, few-level source families, and RGB
+   common-mode/subtractive layouts remain later experiments.
+
+The paired shader must consume one texel once and accumulate both mapped
+output rows; otherwise the intended fetch/bandwidth benefit is lost. D2's
+logical row-strip height is twice its ASTC texture-block height, so row-strip
+selection, padding masks, CPU oracle, and shader indexing need their own
+explicit geometry contract. D2 is never auto-scheduled into the production
+adapter until its artifact and model gates pass.
