@@ -16,6 +16,10 @@
 // Algorithm", http://www.isthe.com/chongo/tech/comp/fnv/.
 uint64_t astc_vulkan_fnv1a64(const void * data, size_t size);
 
+// Continues an FNV-1a stream from `state`. Passing the canonical offset basis
+// permits bounded-memory checks of large cache payload ranges.
+uint64_t astc_vulkan_fnv1a64_update(uint64_t state, const void * data, size_t size);
+
 // Returns the historical `fnv1a64-%016x` spelling used in latent metadata.
 // Keeping this formatting in one place protects artifact replay compatibility.
 std::string astc_vulkan_fnv1a64_tagged(const void * data, size_t size);

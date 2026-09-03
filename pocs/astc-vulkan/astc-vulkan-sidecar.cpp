@@ -2,6 +2,7 @@
 
 #include "astc-vulkan-resource.h"
 
+#include <limits>
 #include <vector>
 
 astc_vulkan_sidecar::~astc_vulkan_sidecar() {
@@ -21,6 +22,7 @@ void astc_vulkan_sidecar::reset() {
     binding_ = {};
     dispatch_spirv_.clear();
     dispatch_samples_ = 0;
+    memory_budget_ = {};
 }
 
 bool astc_vulkan_sidecar::init(astc_vulkan_footprint footprint, std::string & error,
@@ -91,6 +93,11 @@ bool astc_vulkan_sidecar::init(astc_vulkan_footprint footprint, std::string & er
         return false;
     }
     vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
+    if (!astc_vulkan_query_memory_budget(physical_device_, ASTC_VULKAN_DEFAULT_MEMORY_FRACTION,
+                                         memory_budget_, error)) {
+        reset();
+        return false;
+    }
     footprint_ = footprint;
     error.clear();
     return true;
@@ -132,6 +139,23 @@ bool astc_vulkan_sidecar::bind_tensor(
     if (binding.record.footprint != footprint_) {
         binding.status = astc_vulkan_binding_status::kFallback;
         binding.fallback_reason = "tensor footprint does not match sidecar format";
+        error.clear();
+        return true;
+    }
+    const VkFormat format = astc_vulkan_vk_format(static_cast<uint8_t>(footprint_));
+    uint64_t image_bytes = 0;
+    uint64_t staging_bytes = 0;
+    if (!astc_vulkan_sampled_image_memory_requirement(device_, format,
+                                                       binding.record.width, binding.record.height,
+                                                       image_bytes) ||
+        !astc_vulkan_upload_staging_memory_requirement(physical_device_, device_, payload.size(),
+                                                        staging_bytes) ||
+        image_bytes > std::numeric_limits<uint64_t>::max() - staging_bytes ||
+        payload.size() > std::numeric_limits<uint64_t>::max() - staging_bytes ||
+        !astc_vulkan_budget_can_reserve(memory_budget_, 0, image_bytes + staging_bytes,
+                                        static_cast<uint64_t>(payload.size()) + staging_bytes, error)) {
+        binding.status = astc_vulkan_binding_status::kFallback;
+        binding.fallback_reason = error.empty() ? "ASTC Vulkan memory budget denied upload" : error;
         error.clear();
         return true;
     }

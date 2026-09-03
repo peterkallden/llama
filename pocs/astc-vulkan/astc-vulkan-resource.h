@@ -26,6 +26,16 @@ bool astc_vulkan_create_sampled_image(VkPhysicalDevice physical_device,
                                        VkDevice device, VkFormat format,
                                        uint32_t width, uint32_t height,
                                        astc_vulkan_image_resources & resources);
+// Returns the allocation requirement for the exact sampled image created by
+// astc_vulkan_create_sampled_image, without allocating or uploading it.
+bool astc_vulkan_sampled_image_memory_requirement(VkDevice device, VkFormat format,
+                                                   uint32_t width, uint32_t height,
+                                                   uint64_t & bytes);
+// Returns the allocation requirement of the host-visible transfer buffer used
+// by upload(). The result includes Vulkan alignment, not only payload bytes.
+bool astc_vulkan_upload_staging_memory_requirement(VkPhysicalDevice physical_device,
+                                                   VkDevice device, uint64_t payload_bytes,
+                                                   uint64_t & bytes);
 void astc_vulkan_destroy_sampled_image(VkDevice device,
                                        astc_vulkan_image_resources & resources);
 

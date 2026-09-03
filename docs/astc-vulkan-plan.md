@@ -2952,3 +2952,22 @@ directory plus atomic rename and refuses to overwrite a pre-existing cache.
 Paired-D2 layout metadata is supported by the cache now, but D2 remains an
 experimental transport profile and is rejected by the automatic D1 scheduler
 until it completes artifact-backed and full-model quality gates.
+
+### Memory-resident cache admission
+
+Cache I/O and device residency are separate concerns. The cache verifier and
+loader must stream manifest checksums and read only the tensor payload range
+being bound; an aggregate `payload.astcpack` must never become a host-RAM
+requirement. Device admission uses a conservative default of 80% of currently
+available host RAM and 80% of the selected device-local Vulkan heap (or the
+current `VK_EXT_memory_budget` value where exposed). Integrated GPUs use the
+smaller of the host and device limits.
+
+The admission calculation includes actual Vulkan image allocation requirements
+and the temporary upload staging allocation, rather than estimating from ASTC
+rate alone. A rejected reservation is a normal fallback to Q4/Q3. The next
+scheduler implementation step is a cumulative resident-set planner: preload
+every approved ASTC tensor when their summed allocations fit, otherwise retain
+a bounded layer/tensor working set and stream the rest. This applies the same
+budget API with nonzero resident bytes and avoids either a whole-model RAM copy
+or an uncontrolled GPU-memory overcommit.

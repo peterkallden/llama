@@ -7383,3 +7383,29 @@ loader boundary: it resolves an adjacent or explicit cache, verifies it, then
 delegates to the existing adapter prepare path. A miss, stale GGUF, malformed
 payload or unsupported representation leaves no partial Vulkan binding. Focused
 cache, provenance, driver and scheduler-adapter tests pass.
+
+## Three-hundred-sixteenth sweep: streamed cache loading and conservative memory admission
+
+The cache path is now bounded by construction. Cache validation still verifies
+the complete SHA-256 of the source GGUF and payload files, but does so in 1 MiB
+chunks. Per-tensor FNV checks also stream only their declared record ranges.
+Most importantly, the scheduler adapter no longer reads `payload.astcpack`
+into one large vector: after manifest validation it reads only the selected
+tensor's byte range. This preserves the artifact checksum contract while
+making host peak memory proportional to one payload plus fixed hashing scratch,
+not to the aggregate cache size.
+
+The sidecar now queries a conservative memory admission budget before creating
+an image. The default is `80%` of currently available host RAM and `80%` of the
+largest device-local Vulkan heap. If `VK_EXT_memory_budget` is exposed, the
+driver-reported current heap budget is used instead of physical heap size. On
+an integrated GPU, the effective device limit is the smaller of the device and
+host limits because both draw from the same physical memory. The gate uses the
+actual Vulkan image allocation requirement plus temporary staging bytes, then
+returns normal Q4/Q3 fallback rather than risking an allocation failure.
+
+This is deliberately admission control, not an allocation promise: other
+processes and the main llama Vulkan backend may consume memory after the query.
+Future atlas/multi-tensor ownership will pass cumulative resident image bytes
+to the same check. The initial single-tensor sidecar passes zero resident bytes
+because it replaces its previous texture before uploading a new one.

@@ -105,6 +105,53 @@ bool astc_vulkan_create_sampled_image(VkPhysicalDevice physical_device,
     return true;
 }
 
+bool astc_vulkan_sampled_image_memory_requirement(VkDevice device, VkFormat format,
+                                                   uint32_t width, uint32_t height,
+                                                   uint64_t & bytes) {
+    bytes = 0;
+    const VkImageCreateInfo image_info{
+        VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, nullptr, 0, VK_IMAGE_TYPE_2D,
+        format, { width, height, 1 }, 1, 1, VK_SAMPLE_COUNT_1_BIT,
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        VK_SHARING_MODE_EXCLUSIVE, 0, nullptr, VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    VkImage image = VK_NULL_HANDLE;
+    if (device == VK_NULL_HANDLE || format == VK_FORMAT_UNDEFINED || width == 0 || height == 0 ||
+        vkCreateImage(device, &image_info, nullptr, &image) != VK_SUCCESS) return false;
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device, image, &requirements);
+    vkDestroyImage(device, image, nullptr);
+    bytes = requirements.size;
+    return bytes != 0;
+}
+
+bool astc_vulkan_upload_staging_memory_requirement(VkPhysicalDevice physical_device,
+                                                   VkDevice device, uint64_t payload_bytes,
+                                                   uint64_t & bytes) {
+    bytes = 0;
+    if (physical_device == VK_NULL_HANDLE || device == VK_NULL_HANDLE || payload_bytes == 0 ||
+        payload_bytes > static_cast<uint64_t>(std::numeric_limits<VkDeviceSize>::max())) return false;
+    const VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0,
+        static_cast<VkDeviceSize>(payload_bytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_SHARING_MODE_EXCLUSIVE, 0, nullptr};
+    VkBuffer buffer = VK_NULL_HANDLE;
+    if (vkCreateBuffer(device, &buffer_info, nullptr, &buffer) != VK_SUCCESS) return false;
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device, buffer, &requirements);
+    vkDestroyBuffer(device, buffer, nullptr);
+    uint32_t memory_type = astc_vulkan_find_memory_type(
+        physical_device, requirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (memory_type == std::numeric_limits<uint32_t>::max()) {
+        memory_type = astc_vulkan_find_memory_type(physical_device, requirements.memoryTypeBits,
+                                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    }
+    if (memory_type == std::numeric_limits<uint32_t>::max()) return false;
+    bytes = requirements.size;
+    return bytes != 0;
+}
+
 void astc_vulkan_destroy_sampled_image(VkDevice device,
                                        astc_vulkan_image_resources & resources) {
     if (resources.sampler != VK_NULL_HANDLE) vkDestroySampler(device, resources.sampler, nullptr);

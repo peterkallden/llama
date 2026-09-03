@@ -29,6 +29,11 @@ int main() {
     const bool initialized = sidecar.init(astc_vulkan_footprint::k6x6, error);
     if (initialized) {
         assert(sidecar.ready());
+        const astc_vulkan_memory_budget & budget = sidecar.memory_budget();
+        assert(budget.fraction == ASTC_VULKAN_DEFAULT_MEMORY_FRACTION);
+        assert(budget.device_available_bytes != 0);
+        assert(budget.effective_device_limit_bytes != 0);
+        assert(budget.effective_device_limit_bytes <= budget.device_available_bytes);
         sidecar.reset();
         assert(!sidecar.ready());
     } else {

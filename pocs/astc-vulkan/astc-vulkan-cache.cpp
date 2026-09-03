@@ -1,10 +1,13 @@
 #include "astc-vulkan-cache.h"
 
+#include "astc-vulkan-hash.h"
 #include "astc-vulkan-provenance.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -19,17 +22,6 @@ constexpr const char * kSourceHashFile = "source.gguf.sha256";
 constexpr const char * kManifestHashFile = "manifest.sha256";
 constexpr const char * kPayloadHashFile = "payload.sha256";
 constexpr const char * kLayoutHashFile = "layout-map.sha256";
-
-std::vector<uint8_t> read_bytes(const std::string & path) {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) return {};
-    const std::streamsize size = file.tellg();
-    if (size <= 0) return {};
-    std::vector<uint8_t> result(static_cast<size_t>(size));
-    file.seekg(0);
-    file.read(reinterpret_cast<char *>(result.data()), size);
-    return file ? result : std::vector<uint8_t>();
-}
 
 bool read_hash(const std::string & path, std::string & hash) {
     std::ifstream file(path, std::ios::binary);
@@ -53,21 +45,54 @@ bool has_paired_d2(const astc_vulkan_manifest & manifest) {
     return false;
 }
 
+bool file_size(const std::string & path, uint64_t & size) {
+    std::error_code ec;
+    size = fs::file_size(path, ec);
+    return !ec;
+}
+
+bool range_hash64(const std::string & path, uint64_t offset, uint64_t size,
+                  uint64_t & hash, std::vector<uint8_t> & buffer) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file || offset > static_cast<uint64_t>(std::numeric_limits<std::streamoff>::max()) ||
+        size > static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max())) return false;
+    file.seekg(static_cast<std::streamoff>(offset));
+    if (!file) return false;
+    if (buffer.empty()) buffer.resize(1u << 20);
+    uint64_t remaining = size;
+    hash = 1469598103934665603ULL;
+    while (remaining != 0) {
+        const std::streamsize count = static_cast<std::streamsize>(std::min<uint64_t>(remaining, buffer.size()));
+        file.read(reinterpret_cast<char *>(buffer.data()), count);
+        if (file.gcount() != count) return false;
+        hash = astc_vulkan_fnv1a64_update(hash, buffer.data(), static_cast<size_t>(count));
+        remaining -= static_cast<uint64_t>(count);
+    }
+    return true;
+}
+
 bool validate_tensor_payloads(const astc_vulkan_manifest & manifest,
-                              const std::vector<uint8_t> & payload,
-                              const std::vector<uint8_t> & layout,
+                              uint64_t payload_size, const std::string & payload_path,
+                              uint64_t layout_size, const std::string & layout_path,
                               std::string & error) {
-    if (!astc_vulkan_validate_payload_blob(manifest, payload.size(), error)) return false;
+    if (!astc_vulkan_validate_payload_blob(manifest, payload_size, error)) return false;
     const bool paired = has_paired_d2(manifest);
-    if (paired && !astc_vulkan_validate_layout_blob(manifest, layout.size(), error)) return false;
+    if (paired && !astc_vulkan_validate_layout_blob(manifest, layout_size, error)) return false;
+    std::vector<uint8_t> buffer;
     for (const auto & tensor : manifest.tensors) {
-        const auto payload_offset = static_cast<size_t>(tensor.byte_offset);
-        if (!astc_vulkan_validate_payload(tensor, payload.data() + payload_offset,
-                                          static_cast<size_t>(tensor.byte_size), error)) return false;
+        uint64_t payload_hash = 0;
+        if (!range_hash64(payload_path, tensor.byte_offset, tensor.byte_size, payload_hash, buffer) ||
+            (tensor.payload_hash64 != 0 && payload_hash != tensor.payload_hash64)) {
+            error = "ASTC cache tensor payload checksum mismatch";
+            return false;
+        }
         if (tensor.representation != astc_vulkan_representation::kPairedD2) continue;
-        const auto layout_offset = static_cast<size_t>(tensor.layout_byte_offset);
-        if (!astc_vulkan_validate_layout_map(tensor, layout.data() + layout_offset,
-                                             static_cast<size_t>(tensor.layout_byte_size), error)) return false;
+        uint64_t layout_hash = 0;
+        if (!range_hash64(layout_path, tensor.layout_byte_offset, tensor.layout_byte_size, layout_hash, buffer) ||
+            (tensor.layout_hash64 != 0 && layout_hash != tensor.layout_hash64)) {
+            error = "ASTC cache paired layout checksum mismatch";
+            return false;
+        }
     }
     error.clear();
     return true;
@@ -147,15 +172,23 @@ bool astc_vulkan_cache_validate(const std::string & model_path,
         !verify_hash(result.paths.payload, result.paths.payload_sha256, "payload", error) ||
         !astc_vulkan_read_manifest(result.paths.manifest, result.manifest, error)) return false;
 
-    const std::vector<uint8_t> payload = read_bytes(result.paths.payload);
     result.has_paired_d2 = has_paired_d2(result.manifest);
-    std::vector<uint8_t> layout;
+    uint64_t payload_size = 0;
+    uint64_t layout_size = 0;
+    if (!file_size(result.paths.payload, payload_size)) {
+        error = "cannot determine ASTC cache payload size";
+        return false;
+    }
     if (result.has_paired_d2) {
         if (!verify_hash(result.paths.layout, result.paths.layout_sha256, "layout map", error)) return false;
-        layout = read_bytes(result.paths.layout);
+        if (!file_size(result.paths.layout, layout_size)) {
+            error = "cannot determine ASTC cache layout size";
+            return false;
+        }
     }
-    if (payload.empty() || (result.has_paired_d2 && layout.empty()) ||
-        !validate_tensor_payloads(result.manifest, payload, layout, error)) return false;
+    if (payload_size == 0 || (result.has_paired_d2 && layout_size == 0) ||
+        !validate_tensor_payloads(result.manifest, payload_size, result.paths.payload,
+                                  layout_size, result.paths.layout, error)) return false;
     error.clear();
     return true;
 }
@@ -186,10 +219,11 @@ bool astc_vulkan_cache_create(const std::string & model_path,
         error = "paired-D2 cache creation requires a layout map";
         return false;
     }
-    const std::vector<uint8_t> payload = read_bytes(payload_input);
-    const std::vector<uint8_t> layout = paired ? read_bytes(layout_input) : std::vector<uint8_t>();
-    if (payload.empty() || (paired && layout.empty()) ||
-        !validate_tensor_payloads(manifest, payload, layout, error)) return false;
+    uint64_t payload_size = 0;
+    uint64_t layout_size = 0;
+    if (!file_size(payload_input, payload_size) || payload_size == 0 ||
+        (paired && (!file_size(layout_input, layout_size) || layout_size == 0)) ||
+        !validate_tensor_payloads(manifest, payload_size, payload_input, layout_size, layout_input, error)) return false;
 
     std::string source_hash, manifest_hash, payload_hash, layout_hash;
     if (!astc_vulkan_sha256_file_hex(model_path, source_hash, error) ||

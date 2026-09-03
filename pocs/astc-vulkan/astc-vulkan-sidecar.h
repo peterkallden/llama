@@ -2,6 +2,7 @@
 
 #include "astc-vulkan-dispatch.h"
 #include "astc-vulkan-ffn-adapter.h"
+#include "astc-vulkan-budget.h"
 
 #include <vulkan/vulkan.h>
 
@@ -31,6 +32,7 @@ public:
 
     bool ready() const { return device_ != VK_NULL_HANDLE; }
     const astc_vulkan_manifest & manifest() const { return manifest_; }
+    const astc_vulkan_memory_budget & memory_budget() const { return memory_budget_; }
 
 private:
     VkInstance instance_ = VK_NULL_HANDLE;
@@ -45,4 +47,5 @@ private:
     astc_vulkan_matvec_session dispatch_;
     std::vector<uint32_t> dispatch_spirv_;
     uint32_t dispatch_samples_ = 0;
+    astc_vulkan_memory_budget memory_budget_{};
 };

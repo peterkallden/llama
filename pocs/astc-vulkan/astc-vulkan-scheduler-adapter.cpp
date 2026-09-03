@@ -2,18 +2,29 @@
 
 #include "astc-vulkan-cache.h"
 
+#include <filesystem>
 #include <fstream>
+#include <limits>
 
 namespace {
-std::vector<uint8_t> read_bytes(const std::string & path) {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) return {};
-    const std::streamsize size = file.tellg();
-    if (size <= 0) return {};
-    std::vector<uint8_t> result(static_cast<size_t>(size));
-    file.seekg(0);
-    file.read(reinterpret_cast<char *>(result.data()), size);
-    return file ? result : std::vector<uint8_t>();
+bool read_range(const std::string & path, uint64_t offset, uint64_t size,
+                std::vector<uint8_t> & result) {
+    if (size == 0 || size > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+        offset > static_cast<uint64_t>(std::numeric_limits<std::streamoff>::max()) ||
+        size > static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max())) return false;
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    file.seekg(static_cast<std::streamoff>(offset));
+    if (!file) return false;
+    result.resize(static_cast<size_t>(size));
+    file.read(reinterpret_cast<char *>(result.data()), static_cast<std::streamsize>(size));
+    return file.good() || file.gcount() == static_cast<std::streamsize>(size);
+}
+
+bool get_file_size(const std::string & path, uint64_t & size) {
+    std::error_code ec;
+    size = std::filesystem::file_size(path, ec);
+    return !ec;
 }
 }
 
@@ -31,14 +42,15 @@ bool astc_vulkan_scheduler_adapter::prepare(
         return result;
     };
     astc_vulkan_manifest manifest;
-    const std::vector<uint8_t> blob = read_bytes(payload_blob_path);
-    if (blob.empty() || !astc_vulkan_read_manifest(manifest_path, manifest, error) ||
-        !astc_vulkan_validate_payload_blob(manifest, blob.size(), error)) {
+    uint64_t blob_size = 0;
+    if (!get_file_size(payload_blob_path, blob_size) || blob_size == 0 ||
+        !astc_vulkan_read_manifest(manifest_path, manifest, error) ||
+        !astc_vulkan_validate_payload_blob(manifest, blob_size, error)) {
         return fallback(error.empty() ? "ASTC scheduler artifact is invalid" : error, false);
     }
     const astc_vulkan_tensor_record * record = astc_vulkan_find_tensor(manifest, tensor_name);
     if (record == nullptr || record->footprint != footprint ||
-        record->byte_offset > blob.size() || record->byte_size > blob.size() - record->byte_offset) {
+        record->byte_offset > blob_size || record->byte_size > blob_size - record->byte_offset) {
         return fallback("ASTC scheduler adapter tensor artifact is invalid", false);
     }
     // The production scheduler boundary is intentionally narrower than the
@@ -51,8 +63,9 @@ bool astc_vulkan_scheduler_adapter::prepare(
         binding_.record = *record;
         return fallback("ASTC production adapter accepts only standard 4x4/5x5/6x6 scalar/gauge", true);
     }
-    payload_.assign(blob.begin() + static_cast<size_t>(record->byte_offset),
-                    blob.begin() + static_cast<size_t>(record->byte_offset + record->byte_size));
+    if (!read_range(payload_blob_path, record->byte_offset, record->byte_size, payload_)) {
+        return fallback("ASTC scheduler adapter cannot stream tensor payload", false);
+    }
     tensor_name_ = tensor_name;
     if (!sidecar_.set_manifest(manifest, error) ||
         !sidecar_.init(footprint, error, allow_experimental)) {

@@ -182,7 +182,8 @@ if (NOT TARGET Vulkan::Vulkan)
 endif()
 if (TARGET Vulkan::Vulkan)
     add_library(astc-vulkan-resource STATIC
-        astc-vulkan-resource.cpp)
+        astc-vulkan-resource.cpp
+        astc-vulkan-budget.cpp)
     target_include_directories(astc-vulkan-resource PUBLIC
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_link_libraries(astc-vulkan-resource PUBLIC Vulkan::Vulkan astc-vulkan-driver)
@@ -236,6 +237,13 @@ if (TARGET Vulkan::Vulkan)
     target_include_directories(test-astc-vulkan-ffn-adapter PRIVATE
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_compile_features(test-astc-vulkan-ffn-adapter PRIVATE cxx_std_17)
+
+    add_executable(test-astc-vulkan-budget
+        tests/test-astc-vulkan-budget.cpp)
+    target_link_libraries(test-astc-vulkan-budget PRIVATE astc-vulkan-resource)
+    target_include_directories(test-astc-vulkan-budget PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_compile_features(test-astc-vulkan-budget PRIVATE cxx_std_17)
 
     add_executable(test-astc-vulkan-dispatch
         tests/test-astc-vulkan-dispatch.cpp)
@@ -1007,6 +1015,12 @@ if (BUILD_TESTING)
         add_test(NAME test-astc-vulkan-sidecar
             COMMAND test-astc-vulkan-sidecar)
         set_property(TEST test-astc-vulkan-sidecar PROPERTY LABELS astc)
+    endif()
+
+    if (TARGET test-astc-vulkan-budget)
+        add_test(NAME test-astc-vulkan-budget
+            COMMAND test-astc-vulkan-budget)
+        set_property(TEST test-astc-vulkan-budget PROPERTY LABELS astc)
     endif()
 
     if (TARGET astc-vulkan-astcenc-smoke)
