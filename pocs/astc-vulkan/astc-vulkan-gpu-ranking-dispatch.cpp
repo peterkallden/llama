@@ -71,12 +71,16 @@ void astc_vulkan_gpu_ranking_session::reset() {
         vkDeviceWaitIdle(device_);
         if (fence_ != VK_NULL_HANDLE) vkDestroyFence(device_, fence_, nullptr);
         if (command_pool_ != VK_NULL_HANDLE) vkDestroyCommandPool(device_, command_pool_, nullptr);
+        if (gain_pipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, gain_pipeline_, nullptr);
         if (pipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipeline_, nullptr);
+        if (gain_shader_module_ != VK_NULL_HANDLE) vkDestroyShaderModule(device_, gain_shader_module_, nullptr);
         if (shader_module_ != VK_NULL_HANDLE) vkDestroyShaderModule(device_, shader_module_, nullptr);
         if (pipeline_layout_ != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
         if (descriptor_pool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, descriptor_pool_, nullptr);
         if (descriptor_layout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, descriptor_layout_, nullptr);
         destroy_buffer(device_, delta_buffer_, delta_memory_);
+        destroy_buffer(device_, gain_buffer_, gain_memory_);
+        destroy_buffer(device_, residual_buffer_, residual_memory_);
         destroy_buffer(device_, activation_buffer_, activation_memory_);
         destroy_buffer(device_, baseline_buffer_, baseline_memory_);
         destroy_buffer(device_, records_buffer_, records_memory_);
@@ -88,19 +92,30 @@ void astc_vulkan_gpu_ranking_session::reset() {
     queue_family_ = UINT32_MAX;
     candidate_count_ = source_blocks_x_ = tensor_width_ = tensor_logical_height_ = 0;
     calibration_samples_ = block_width_ = block_height_ = 0;
+    descriptor_layout_ = VK_NULL_HANDLE;
+    descriptor_pool_ = VK_NULL_HANDLE;
     descriptor_set_ = VK_NULL_HANDLE;
+    pipeline_layout_ = VK_NULL_HANDLE;
+    shader_module_ = VK_NULL_HANDLE;
+    pipeline_ = VK_NULL_HANDLE;
     command_buffer_ = VK_NULL_HANDLE;
+    command_pool_ = VK_NULL_HANDLE;
+    fence_ = VK_NULL_HANDLE;
+    gain_pipeline_ = VK_NULL_HANDLE;
+    gain_shader_module_ = VK_NULL_HANDLE;
 }
 
 bool astc_vulkan_gpu_ranking_session::init(
         VkPhysicalDevice physical_device, VkDevice device, VkQueue queue, uint32_t queue_family,
         const astc_vulkan_gpu_ranking_atlas & atlas, uint32_t source_blocks_x,
         uint32_t tensor_width, uint32_t tensor_logical_height, uint32_t calibration_samples,
-        const std::vector<uint32_t> & spirv, std::string & error) {
+        const std::vector<uint32_t> & delta_spirv,
+        const std::vector<uint32_t> & proposal_gain_spirv, std::string & error) {
     reset();
     const auto format = astc_vulkan_format(atlas.footprint);
     if (physical_device == VK_NULL_HANDLE || device == VK_NULL_HANDLE || queue == VK_NULL_HANDLE ||
-        queue_family == UINT32_MAX || atlas.records.empty() || spirv.empty() ||
+        queue_family == UINT32_MAX || atlas.records.empty() || delta_spirv.empty() ||
+        proposal_gain_spirv.empty() ||
         source_blocks_x == 0 || tensor_width == 0 || tensor_logical_height == 0 ||
         calibration_samples == 0 || (atlas.footprint != astc_vulkan_footprint::k8x5 &&
         atlas.footprint != astc_vulkan_footprint::k10x5)) {
@@ -128,28 +143,35 @@ bool astc_vulkan_gpu_ranking_session::init(
     const VkDeviceSize activation_bytes = static_cast<VkDeviceSize>(calibration_samples_) * tensor_width_ * sizeof(float);
     const VkDeviceSize delta_bytes = static_cast<VkDeviceSize>(candidate_count_) * calibration_samples_ *
         block_height_ * 2u * sizeof(float);
+    const VkDeviceSize residual_bytes = static_cast<VkDeviceSize>(calibration_samples_) *
+        tensor_logical_height_ * sizeof(float);
+    const VkDeviceSize gain_bytes = static_cast<VkDeviceSize>(candidate_count_) * sizeof(float);
     if (!create_host_buffer(physical_device_, device_, records_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, records_buffer_, records_memory_) ||
         !create_host_buffer(physical_device_, device_, baselines_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, baseline_buffer_, baseline_memory_) ||
         !create_host_buffer(physical_device_, device_, activation_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, activation_buffer_, activation_memory_) ||
         !create_host_buffer(physical_device_, device_, delta_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, delta_buffer_, delta_memory_) ||
+        !create_host_buffer(physical_device_, device_, residual_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, residual_buffer_, residual_memory_) ||
+        !create_host_buffer(physical_device_, device_, gain_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, gain_buffer_, gain_memory_) ||
         !map_write(device_, records_memory_, records.data(), records_bytes) ||
         !map_write(device_, baseline_memory_, baselines.data(), baselines_bytes)) {
         error = "failed to allocate or upload GPU ranking buffers"; reset(); return false;
     }
-    const VkDescriptorSetLayoutBinding bindings[5] = {
+    const VkDescriptorSetLayoutBinding bindings[7] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
     };
     const VkDescriptorSetLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        nullptr, 0, 5, bindings};
+        nullptr, 0, 7, bindings};
     if (vkCreateDescriptorSetLayout(device_, &layout_info, nullptr, &descriptor_layout_) != VK_SUCCESS) {
         error = "failed to create GPU ranking descriptor layout"; reset(); return false;
     }
     const VkDescriptorPoolSize pool_sizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}};
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6}};
     const VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr,
         0, 1, 2, pool_sizes};
     if (vkCreateDescriptorPool(device_, &pool_info, nullptr, &descriptor_pool_) != VK_SUCCESS) {
@@ -161,18 +183,19 @@ bool astc_vulkan_gpu_ranking_session::init(
         error = "failed to allocate GPU ranking descriptor set"; reset(); return false;
     }
     const VkDescriptorImageInfo image{atlas_texture_.sampler(), atlas_texture_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    const VkDescriptorBufferInfo buffers[4] = {{records_buffer_, 0, records_bytes}, {baseline_buffer_, 0, baselines_bytes},
-        {activation_buffer_, 0, activation_bytes}, {delta_buffer_, 0, delta_bytes}};
-    VkWriteDescriptorSet writes[5]{};
-    for (uint32_t i = 0; i < 5; ++i) {
+    const VkDescriptorBufferInfo buffers[6] = {{records_buffer_, 0, records_bytes}, {baseline_buffer_, 0, baselines_bytes},
+        {activation_buffer_, 0, activation_bytes}, {delta_buffer_, 0, delta_bytes},
+        {residual_buffer_, 0, residual_bytes}, {gain_buffer_, 0, gain_bytes}};
+    VkWriteDescriptorSet writes[7]{};
+    for (uint32_t i = 0; i < 7; ++i) {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[i].dstSet = descriptor_set_;
         writes[i].dstBinding = i; writes[i].descriptorCount = 1;
         writes[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         if (i == 0) writes[i].pImageInfo = &image; else writes[i].pBufferInfo = &buffers[i - 1];
     }
-    vkUpdateDescriptorSets(device_, 5, writes, 0, nullptr);
+    vkUpdateDescriptorSets(device_, 7, writes, 0, nullptr);
     const VkShaderModuleCreateInfo shader_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0,
-        spirv.size() * sizeof(uint32_t), spirv.data()};
+        delta_spirv.size() * sizeof(uint32_t), delta_spirv.data()};
     if (vkCreateShaderModule(device_, &shader_info, nullptr, &shader_module_) != VK_SUCCESS) {
         error = "failed to create GPU ranking shader module"; reset(); return false;
     }
@@ -188,6 +211,18 @@ bool astc_vulkan_gpu_ranking_session::init(
         0, stage, pipeline_layout_, VK_NULL_HANDLE, -1};
     if (vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline_) != VK_SUCCESS) {
         error = "failed to create GPU ranking compute pipeline"; reset(); return false;
+    }
+    const VkShaderModuleCreateInfo gain_shader_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0,
+        proposal_gain_spirv.size() * sizeof(uint32_t), proposal_gain_spirv.data()};
+    if (vkCreateShaderModule(device_, &gain_shader_info, nullptr, &gain_shader_module_) != VK_SUCCESS) {
+        error = "failed to create GPU proposal-gain shader module"; reset(); return false;
+    }
+    const VkPipelineShaderStageCreateInfo gain_stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+        VK_SHADER_STAGE_COMPUTE_BIT, gain_shader_module_, "main", nullptr};
+    const VkComputePipelineCreateInfo gain_pipeline_info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, nullptr,
+        0, gain_stage, pipeline_layout_, VK_NULL_HANDLE, -1};
+    if (vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &gain_pipeline_info, nullptr, &gain_pipeline_) != VK_SUCCESS) {
+        error = "failed to create GPU proposal-gain pipeline"; reset(); return false;
     }
     const VkCommandPoolCreateInfo command_pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr,
         VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queue_family_};
@@ -249,4 +284,95 @@ bool astc_vulkan_gpu_ranking_session::run(const std::vector<float> & activations
     vkUnmapMemory(device_, delta_memory_);
     if (invalidate != VK_SUCCESS) { error = "failed to invalidate GPU ranking deltas"; return false; }
     error.clear(); return true;
+}
+
+bool astc_vulkan_gpu_ranking_session::run_proposal_gains(
+        const std::vector<float> & activations, const std::vector<float> & residuals,
+        float reconstruction_scale, std::vector<float> & gains, std::string & error) {
+    if (!ready() || gain_pipeline_ == VK_NULL_HANDLE ||
+        activations.size() != static_cast<size_t>(calibration_samples_) * tensor_width_ ||
+        residuals.size() != static_cast<size_t>(calibration_samples_) * tensor_logical_height_) {
+        error = "invalid GPU proposal-gain inputs";
+        return false;
+    }
+    const VkDeviceSize activation_bytes = activations.size() * sizeof(float);
+    const VkDeviceSize residual_bytes = residuals.size() * sizeof(float);
+    const VkDeviceSize delta_bytes = static_cast<VkDeviceSize>(candidate_count_) * calibration_samples_ *
+        block_height_ * 2u * sizeof(float);
+    const VkDeviceSize gain_bytes = static_cast<VkDeviceSize>(candidate_count_) * sizeof(float);
+    if (!map_write(device_, activation_memory_, activations.data(), activation_bytes) ||
+        !map_write(device_, residual_memory_, residuals.data(), residual_bytes) ||
+        vkResetFences(device_, 1, &fence_) != VK_SUCCESS ||
+        vkResetCommandBuffer(command_buffer_, 0) != VK_SUCCESS) {
+        error = "failed to prepare GPU proposal-gain dispatch";
+        return false;
+    }
+    const VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
+        VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr};
+    if (vkBeginCommandBuffer(command_buffer_, &begin) != VK_SUCCESS) {
+        error = "failed to begin GPU proposal-gain dispatch";
+        return false;
+    }
+    const astc_vulkan_gpu_ranking_push_constants constants{candidate_count_, calibration_samples_, tensor_width_,
+        tensor_logical_height_, source_blocks_x_, block_width_, block_height_, reconstruction_scale};
+    const VkBufferMemoryBarrier host_to_compute[2] = {
+        {VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, activation_buffer_, 0, activation_bytes},
+        {VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, residual_buffer_, 0, residual_bytes},
+    };
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 2, host_to_compute, 0, nullptr);
+    vkCmdBindPipeline(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
+    vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout_, 0, 1,
+        &descriptor_set_, 0, nullptr);
+    vkCmdPushConstants(command_buffer_, pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+        sizeof(constants), &constants);
+    vkCmdDispatch(command_buffer_, candidate_count_, calibration_samples_ * block_height_ * 2u, 1);
+    const VkBufferMemoryBarrier delta_to_gain{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED, delta_buffer_, 0, delta_bytes};
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 1, &delta_to_gain, 0, nullptr);
+    vkCmdBindPipeline(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, gain_pipeline_);
+    vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout_, 0, 1,
+        &descriptor_set_, 0, nullptr);
+    vkCmdPushConstants(command_buffer_, pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+        sizeof(constants), &constants);
+    vkCmdDispatch(command_buffer_, candidate_count_, 1, 1);
+    const VkBufferMemoryBarrier gain_to_host{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT, VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED, gain_buffer_, 0, gain_bytes};
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+        0, 0, nullptr, 1, &gain_to_host, 0, nullptr);
+    if (vkEndCommandBuffer(command_buffer_) != VK_SUCCESS) {
+        error = "failed to end GPU proposal-gain dispatch";
+        return false;
+    }
+    const VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr,
+        1, &command_buffer_, 0, nullptr};
+    if (vkQueueSubmit(queue_, 1, &submit, fence_) != VK_SUCCESS ||
+        vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+        error = "GPU proposal-gain dispatch failed";
+        return false;
+    }
+    void * mapped = nullptr;
+    if (vkMapMemory(device_, gain_memory_, 0, gain_bytes, 0, &mapped) != VK_SUCCESS) {
+        error = "failed to map GPU proposal gains";
+        return false;
+    }
+    const VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE, nullptr,
+        gain_memory_, 0, VK_WHOLE_SIZE};
+    const VkResult invalidate = vkInvalidateMappedMemoryRanges(device_, 1, &range);
+    if (invalidate == VK_SUCCESS) {
+        gains.resize(candidate_count_);
+        std::memcpy(gains.data(), mapped, static_cast<size_t>(gain_bytes));
+    }
+    vkUnmapMemory(device_, gain_memory_);
+    if (invalidate != VK_SUCCESS) {
+        error = "failed to invalidate GPU proposal gains";
+        return false;
+    }
+    error.clear();
+    return true;
 }

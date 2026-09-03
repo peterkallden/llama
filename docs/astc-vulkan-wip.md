@@ -7146,3 +7146,29 @@ Focused Vulkan/ASTC regressions (23 tests, including both YAQA device smokes,
 paired transport, resource/dispatch/driver contracts, and ASTC encoder smokes)
 also passed with validation enabled. No NVIDIA ASTC capability is inferred
 from the YAQA batch result; YAQA is buffer-only math on that device.
+
+## Three-hundred-sixth sweep: D2 GPU batch delta and proposal gain
+
+The paired-D2 GPU path now uses a 16-lane workgroup for each
+`(candidate, calibration sample, logical row)` tuple. Lanes cover the eight or
+ten reduction columns of D2_8x5/D2_10x5 and reduce in shared memory. The
+former one-invocation form remains conceptually the CPU/GPU delta oracle; the
+new shape changes only execution parallelism and was checked against the same
+per-row expected values.
+
+A second standard Vulkan compute pass receives the device-resident candidate
+delta field and current residual and computes one proposal gain per candidate:
+`2<R,d> - ||d||^2`. Therefore the normal offline ranking handoff need not read
+back the full `[candidate][sample][logical-row]` delta tensor. Candidate
+payload construction remains CPU astcenc, and CPU retains conflict-aware
+commit order for exact current semantics. This is intentionally analogous to
+the YAQA partial/reduction split, but it operates after fixed-function ASTC
+sampling and paired semantic reconstruction.
+
+The new two-stage smoke covers both D2 layouts over two source blocks. GPU
+deltas and gains match the CPU formulas with validation enabled, and five
+consecutive Intel UHD 620/Mesa lifecycle runs passed. Eleven focused ASTC /
+Vulkan regressions also passed. The next performance step is not additional
+shader semantics: it is a persistent multi-slot candidate-atlas producer /
+consumer queue that overlaps CPU astcenc workers with GPU batch dispatch while
+preserving candidate ordering and the CPU selector's tie-break contract.

@@ -8,13 +8,12 @@
 // semantic mapping and activation-space delta calculation. It is deliberately
 // separate from runtime matvec and from conflict-aware commit selection.
 
-// Keep the first device-backed oracle deliberately conservative. Some older
-// mobile-derived drivers are fragile around shared-memory reductions combined
-// with less common ASTC footprints. Candidate blocks are tiny (8 or 10
-// columns), so one invocation per candidate/sample/logical-row remains a
-// useful correctness and transport gate. A later profiling pass may replace
-// this with a subgroup/shared reduction without changing the data contract.
-layout(local_size_x = 1) in;
+// One workgroup owns one candidate/sample/logical-row. The 8x5 and 10x5 D2
+// formats need only 8 or 10 reduction columns, so 16 lanes cover a complete
+// ASTC block with a small, portable shared-memory reduction. This is a batch
+// worker shape: many candidate workgroups run independently, while astcenc
+// remains CPU-side and supplies legal payloads.
+layout(local_size_x = 16) in;
 
 layout(set = 0, binding = 0) uniform sampler2D candidate_atlas;
 
@@ -48,6 +47,8 @@ layout(push_constant) uniform PushConstants {
     float reconstruction_scale;
 } params;
 
+shared float partial[16];
+
 float paired_weight(vec4 texel, uint member, uint layout_id) {
     if (layout_id == 0u) {
         return member == 0u ? 0.5 * (texel.r + texel.g) : texel.b;
@@ -63,6 +64,7 @@ vec4 candidate_texel(uvec4 record, uint column, uint texture_row) {
 
 void main() {
     const uint candidate_id = gl_WorkGroupID.x;
+    const uint lane = gl_LocalInvocationID.x;
     const uint logical_rows_per_block = params.block_height * 2u;
     // Flatten sample × local-row into Y. Besides matching the compact output
     // layout, this avoids relying on a non-trivial Z workgroup count in older
@@ -80,15 +82,23 @@ void main() {
     const uint member = local_logical_row & 1u;
     const uint global_row = source_block_y * logical_rows_per_block + local_logical_row;
     float sum = 0.0;
-    for (uint column = 0u; column < params.block_width; ++column) {
+    if (lane < params.block_width) {
+        const uint column = lane;
         const uint global_column = source_block_x * params.block_width + column;
-        if (global_column >= params.tensor_width || global_row >= params.tensor_logical_height) continue;
-        const float candidate_q = paired_weight(candidate_texel(candidate, column, texture_row), member, candidate.w);
-        const float baseline_q = paired_weight(candidate_texel(baseline, column, texture_row), member, baseline.w);
-        sum += params.reconstruction_scale * (candidate_q - baseline_q) *
-            activations.values[sample_index * params.tensor_width + global_column];
+        if (global_column < params.tensor_width && global_row < params.tensor_logical_height) {
+            const float candidate_q = paired_weight(candidate_texel(candidate, column, texture_row), member, candidate.w);
+            const float baseline_q = paired_weight(candidate_texel(baseline, column, texture_row), member, baseline.w);
+            sum = params.reconstruction_scale * (candidate_q - baseline_q) *
+                activations.values[sample_index * params.tensor_width + global_column];
+        }
+    }
+    partial[lane] = sum;
+    barrier();
+    for (uint stride = 8u; stride > 0u; stride >>= 1u) {
+        if (lane < stride) partial[lane] += partial[lane + stride];
+        barrier();
     }
     const uint output_index = (candidate_id * params.calibration_samples + sample_index) *
         logical_rows_per_block + local_logical_row;
-    candidate_deltas.values[output_index] = sum;
+    if (lane == 0u) candidate_deltas.values[output_index] = partial[0];
 }

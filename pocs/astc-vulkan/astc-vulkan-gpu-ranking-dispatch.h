@@ -13,9 +13,12 @@
 //
 // Candidate construction and ASTC encoding stay on the CPU. This session is
 // deliberately limited to the device-resident part of the experiment:
-// fixed-function ASTC decode, paired semantic reconstruction, and activation
-// delta construction. The host may select this session or the CPU oracle via
-// astc_vulkan_ranking_plan; neither path changes an exported ASTC payload.
+// fixed-function ASTC decode, paired semantic reconstruction, activation
+// delta construction, and proposal-gain reduction. The host may select this
+// session or the CPU oracle via astc_vulkan_ranking_plan; neither path changes
+// an exported ASTC payload. Candidate construction stays CPU-side, while a
+// persistent session batches the device stages and only needs to read one gain
+// per candidate for the normal proposal path.
 
 struct astc_vulkan_gpu_ranking_push_constants {
     uint32_t candidate_count = 0;
@@ -42,10 +45,19 @@ public:
               uint32_t queue_family, const astc_vulkan_gpu_ranking_atlas & atlas,
               uint32_t source_blocks_x, uint32_t tensor_width,
               uint32_t tensor_logical_height, uint32_t calibration_samples,
-              const std::vector<uint32_t> & spirv, std::string & error);
+              const std::vector<uint32_t> & delta_spirv,
+              const std::vector<uint32_t> & proposal_gain_spirv,
+              std::string & error);
 
     bool run(const std::vector<float> & activations, float reconstruction_scale,
              std::vector<float> & deltas, std::string & error);
+    // Computes 2<R,d>-||d||^2 for every candidate entirely on the device after
+    // the ASTC delta pass. `residuals` is [calibration sample][logical output
+    // row]. This is the compact batch result consumed by CPU-side commit order.
+    bool run_proposal_gains(const std::vector<float> & activations,
+                            const std::vector<float> & residuals,
+                            float reconstruction_scale,
+                            std::vector<float> & gains, std::string & error);
     void reset();
     bool ready() const { return device_ != VK_NULL_HANDLE && pipeline_ != VK_NULL_HANDLE; }
 
@@ -70,12 +82,18 @@ private:
     VkDeviceMemory activation_memory_ = VK_NULL_HANDLE;
     VkBuffer delta_buffer_ = VK_NULL_HANDLE;
     VkDeviceMemory delta_memory_ = VK_NULL_HANDLE;
+    VkBuffer residual_buffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory residual_memory_ = VK_NULL_HANDLE;
+    VkBuffer gain_buffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory gain_memory_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptor_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
     VkDescriptorSet descriptor_set_ = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE;
     VkShaderModule shader_module_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
+    VkShaderModule gain_shader_module_ = VK_NULL_HANDLE;
+    VkPipeline gain_pipeline_ = VK_NULL_HANDLE;
     VkCommandPool command_pool_ = VK_NULL_HANDLE;
     VkCommandBuffer command_buffer_ = VK_NULL_HANDLE;
     VkFence fence_ = VK_NULL_HANDLE;

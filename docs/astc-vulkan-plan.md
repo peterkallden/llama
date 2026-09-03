@@ -2764,6 +2764,17 @@ this basic contract, and the Intel validation/repetition gate is green. Add
 selector-equivalence and validation-prefix replay before making the ASTC GPU
 path selectable.
 
+The next batch form is now explicit. CPU astcenc workers keep generating legal
+payloads, while a persistent GPU session consumes a rectangular candidate atlas
+in batches. A 16-lane D2 delta workgroup reduces the eight or ten reduction
+columns for one `(candidate, calibration sample, logical row)`. A second GPU
+pass consumes the device-resident delta and residual and emits one proposal
+gain, `2<R,d>-||d||^2`, per candidate. This reduces normal ranking readback
+from a candidate-by-sample-by-row delta field to one float per candidate. CPU
+continues to own exact conflict-aware commit order initially. A ring of atlas
+upload slots and overlapped CPU-producer/GPU-consumer scheduling are later
+throughput work; neither may alter payloads, tie-breaking, or validation stop.
+
 ### D2 per-block layout metadata (v3 groundwork)
 
 YAQA may select either `RG/B` or `R/GB` for each physical D2 ASTC block. The

@@ -519,6 +519,8 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-matvec.comp.spv)
     set(ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-candidate-delta.comp.spv)
+    set(ASTC_VULKAN_PAIRED_PROPOSAL_GAIN_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-proposal-gain.comp.spv)
     set(ASTC_VULKAN_YAQA_TRACE_SCORE_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/yaqa-trace-score.comp.spv)
     set(ASTC_VULKAN_YAQA_TRACE_PARTIAL_SHADER_OUTPUT
@@ -583,6 +585,17 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling experimental paired-D2 GPU candidate-delta shader")
     add_custom_target(astc-vulkan-paired-candidate-delta-shader
         DEPENDS ${ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_PAIRED_PROPOSAL_GAIN_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-paired-proposal-gain.comp
+            -o ${ASTC_VULKAN_PAIRED_PROPOSAL_GAIN_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-paired-proposal-gain.comp
+        COMMENT "Compiling experimental paired-D2 GPU proposal-gain shader")
+    add_custom_target(astc-vulkan-paired-proposal-gain-shader
+        DEPENDS ${ASTC_VULKAN_PAIRED_PROPOSAL_GAIN_SHADER_OUTPUT})
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_YAQA_TRACE_SCORE_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -703,16 +716,18 @@ if (ASTC_VULKAN_GLSLC)
     endif()
 
     # The executable is always built on a Vulkan system, but its D2 8x5
-    # pipeline test stays opt-in. The current Intel/Mesa target reports ASTC
-    # support yet faults during pipeline compilation; CPU scoring remains the
-    # default until the dispatch has a device-specific preflight/fallback.
+    # pipeline test stays opt-in. It passes on the current Intel/Mesa smoke
+    # target, but CPU scoring remains the default until the device path also
+    # reproduces selector commit order and validation-prefix replay.
     if (ASTC_VULKAN_GLSLC AND GGML_VK_ASTC_EXPERIMENTAL_GPU_RANKING_DEVICE_SMOKE AND
         TARGET astc-vulkan-gpu-ranking-device-smoke)
         add_dependencies(astc-vulkan-gpu-ranking-device-smoke
-            astc-vulkan-paired-candidate-delta-shader)
+            astc-vulkan-paired-candidate-delta-shader
+            astc-vulkan-paired-proposal-gain-shader)
         add_test(NAME astc-vulkan-gpu-ranking-device-smoke
             COMMAND astc-vulkan-gpu-ranking-device-smoke
-                ${ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT})
+                ${ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT}
+                ${ASTC_VULKAN_PAIRED_PROPOSAL_GAIN_SHADER_OUTPUT})
         set_property(TEST astc-vulkan-gpu-ranking-device-smoke PROPERTY LABELS astc)
         set_property(TEST astc-vulkan-gpu-ranking-device-smoke PROPERTY SKIP_RETURN_CODE 77)
     endif()

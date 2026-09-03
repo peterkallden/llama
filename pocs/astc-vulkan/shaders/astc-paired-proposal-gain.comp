@@ -1,0 +1,70 @@
+#version 450
+
+// Second stage of the offline paired-D2 GPU batch path. The first stage has
+// already materialized d = candidate - baseline in activation space. Keep the
+// residual on device and emit only one exact proposal gain per candidate:
+//
+//     gain = 2 * <residual, d> - ||d||^2 .
+//
+// This preserves the CPU conflict-aware commit policy while avoiding a host
+// readback of [candidate][sample][logical-row] delta values for normal ranking.
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 1) readonly buffer CandidateRecords {
+    uvec4 records[];
+} candidate_records;
+
+layout(std430, set = 0, binding = 4) readonly buffer CandidateDeltas {
+    float values[];
+} candidate_deltas;
+
+layout(std430, set = 0, binding = 5) readonly buffer Residuals {
+    float values[];
+} residuals;
+
+layout(std430, set = 0, binding = 6) writeonly buffer CandidateGains {
+    float values[];
+} candidate_gains;
+
+layout(push_constant) uniform PushConstants {
+    uint candidate_count;
+    uint calibration_samples;
+    uint tensor_width;
+    uint tensor_logical_height;
+    uint source_blocks_x;
+    uint block_width;
+    uint block_height;
+    float reconstruction_scale;
+} params;
+
+shared float partial[64];
+
+void main() {
+    const uint candidate_id = gl_WorkGroupID.x;
+    const uint lane = gl_LocalInvocationID.x;
+    if (candidate_id >= params.candidate_count) return;
+
+    const uint logical_rows_per_block = params.block_height * 2u;
+    const uint source_block_y = candidate_records.records[candidate_id].z / params.source_blocks_x;
+    const uint terms = params.calibration_samples * logical_rows_per_block;
+    float sum = 0.0;
+    for (uint term = lane; term < terms; term += 64u) {
+        const uint sample_index = term / logical_rows_per_block;
+        const uint local_row = term % logical_rows_per_block;
+        const uint global_row = source_block_y * logical_rows_per_block + local_row;
+        if (global_row >= params.tensor_logical_height) continue;
+        const uint delta_index = (candidate_id * params.calibration_samples + sample_index) *
+            logical_rows_per_block + local_row;
+        const float delta = candidate_deltas.values[delta_index];
+        const float residual = residuals.values[sample_index * params.tensor_logical_height + global_row];
+        sum += delta * (2.0 * residual - delta);
+    }
+    partial[lane] = sum;
+    barrier();
+    for (uint stride = 32u; stride > 0u; stride >>= 1u) {
+        if (lane < stride) partial[lane] += partial[lane + stride];
+        barrier();
+    }
+    if (lane == 0u) candidate_gains.values[candidate_id] = partial[0];
+}

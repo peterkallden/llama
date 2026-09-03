@@ -52,9 +52,16 @@ bool select_device(VkInstance instance, VkPhysicalDevice & physical, uint32_t & 
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc != 2) { std::fprintf(stderr, "usage: %s <paired-candidate-delta.spv>\n", argv[0]); return 2; }
-    const auto spirv = read_spirv(argv[1]);
-    if (spirv.empty()) { std::fprintf(stderr, "GPU ranking smoke skipped: missing SPIR-V\n"); return 77; }
+    if (argc != 3) {
+        std::fprintf(stderr, "usage: %s <paired-candidate-delta.spv> <paired-proposal-gain.spv>\n", argv[0]);
+        return 2;
+    }
+    const auto delta_spirv = read_spirv(argv[1]);
+    const auto gain_spirv = read_spirv(argv[2]);
+    if (delta_spirv.empty() || gain_spirv.empty()) {
+        std::fprintf(stderr, "GPU ranking smoke skipped: missing SPIR-V\n");
+        return 77;
+    }
     const VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr,
         "astc-vulkan-gpu-ranking-device-smoke", 1, "llama.cpp", 1, VK_API_VERSION_1_1};
     const VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, 0,
@@ -82,12 +89,22 @@ int main(int argc, char ** argv) {
     std::string error;
     const bool packed = astc_vulkan_build_gpu_ranking_atlas(astc_vulkan_footprint::k8x5, 2, pools, atlas);
     astc_vulkan_gpu_ranking_session session;
-    const bool initialized = packed && session.init(physical, device, queue, family, atlas, 1, 8, 20, 2, spirv, error);
+    const bool initialized = packed && session.init(physical, device, queue, family, atlas, 1, 8, 20, 2,
+        delta_spirv, gain_spirv, error);
     const std::vector<float> activations{1,2,3,4,5,6,7,8, 0.5f,0.5f,0.5f,0.5f,0.5f,0.5f,0.5f,0.5f};
+    std::vector<float> residuals(40);
+    for (uint32_t sample = 0; sample < 2; ++sample) for (uint32_t row = 0; row < 20; ++row) {
+        residuals[sample * 20 + row] = 0.125f * static_cast<float>((sample + 1) * (row + 1));
+    }
     std::vector<float> deltas;
     const bool ran = initialized && session.run(activations, 1.0f, deltas, error);
+    std::vector<float> gains;
+    const bool gained = ran && session.run_proposal_gains(activations, residuals, 1.0f, gains, error);
     session.reset(); vkDeviceWaitIdle(device); vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr);
-    if (!ran || deltas.size() != 80) { std::fprintf(stderr, "GPU ranking smoke failed: %s\n", error.c_str()); return 1; }
+    if (!gained || deltas.size() != 80 || gains.size() != 4) {
+        std::fprintf(stderr, "GPU ranking smoke failed: %s\n", error.c_str());
+        return 1;
+    }
     const float sum = 36.0f;
     const float sample_scale = 4.0f;
     const float rg_b_delta[2] = {
@@ -109,6 +126,20 @@ int main(int argc, char ** argv) {
             }
         }
     }
-    std::printf("GPU paired-D2 candidate delta smoke passed\n");
+    for (uint32_t candidate = 0; candidate < 4; ++candidate) {
+        const uint32_t source_block_y = candidate < 2 ? 0 : 1;
+        float expected_gain = 0.0f;
+        for (uint32_t sample = 0; sample < 2; ++sample) for (uint32_t row = 0; row < 10; ++row) {
+            const float delta = deltas[(candidate * 2 + sample) * 10 + row];
+            const float residual = residuals[sample * 20 + source_block_y * 10 + row];
+            expected_gain += delta * (2.0f * residual - delta);
+        }
+        if (std::fabs(gains[candidate] - expected_gain) > 2e-3f) {
+            std::fprintf(stderr, "GPU proposal gain mismatch c=%u: %.6f != %.6f\n",
+                candidate, gains[candidate], expected_gain);
+            return 1;
+        }
+    }
+    std::printf("GPU paired-D2 batch delta/proposal-gain smoke passed\n");
     return 0;
 }
