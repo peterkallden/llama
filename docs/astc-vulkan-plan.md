@@ -2835,3 +2835,22 @@ artifacts remain readable; the production scheduler continues to reject
 and model gates are complete. D1 deliberately receives no new per-block
 metadata in this step. Mixed D1 footprints remain a later macro-page/atlas
 experiment, not an incidental consequence of the D2 bitplane.
+
+### D1 GPU scoring foundation for scalar and PV families
+
+D1 GPU scoring is a separate transport from paired D2. It accepts any defined
+D1 footprint (`4x4`, `5x5`, `6x6`, `8x6`, `10x6`, `8x8`, `10x8`) and records
+only a semantic decoder profile (`scalar` or scalar-anchored `gauge_la`), not
+per-block side metadata. CPU astcenc remains the only legal payload producer;
+the D1 atlas is an offline sampled-ASTC upload used solely to score many exact
+candidate payloads in parallel.
+
+PV now has a batch-objective seam. The bounded coordinate optimizer retains
+CPU projection, accepted-step order, tie-breaking, validation prefix, and
+artifact ownership. Its two `+/-` projected candidates for one coordinate can
+be scored together by a CPU or Vulkan/YAQA backend. This keeps both the
+fixed-grid PV-lite and optional full alternating PV behaviorally reproducible:
+GPU changes numerical throughput only, never ASTC encoding or the deployed
+bytes. The next implementation gate is a D1 Vulkan delta/proposal session
+whose `4x4` and `6x6` output matches the CPU oracle before adding `10x6` and
+`8x8` low-rate batches.

@@ -7234,6 +7234,24 @@ sidecar/adapter contract, run the full target-GPU model matrix, produce and
 replay the low-rate artifacts, and only then compare the optional PV/YAQA
 selectors on the surviving footprints.
 
+## D1 PV GPU-offload foundation
+
+The offline path now has a D1-only candidate-atlas contract distinct from the
+paired-D2 transport. It preserves the key invariant that CPU astcenc creates
+all legal payloads: the atlas only batches already-created `16-byte` blocks
+for future sampled-ASTC GPU scoring. The contract is footprint-generic over
+the currently defined D1 family (`4x4` through `10x8`) and carries one
+per-artifact semantic decoder selection, `scalar` or `gauge_la`; it adds no
+runtime metadata to D1 artifacts.
+
+PV has also gained a batched objective seam. The new bounded alternating form
+projects the two +/- coordinate candidates on CPU, then asks one backend to
+score them together. Today the test supplies a CPU objective. A Vulkan
+activation or YAQA backend can supply the same interface later, while CPU
+still owns ASTC projection, strict score ordering, accepted-step updates,
+validation stopping, and the exported artifact. Therefore offload changes
+offline throughput only, not payload bytes or model runtime behavior.
+
 ## Three-hundred-tenth sweep: D2_10x5 device smoke and geometry correction
 
 The first 10x5 device run exposed a mistake in the smoke oracle rather than in

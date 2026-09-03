@@ -9,6 +9,7 @@ set(ASTC_VULKAN_POC_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-block-ldlq.cpp
     astc-vulkan-gauge.cpp
+    astc-vulkan-gpu-d1-ranking.cpp
     astc-vulkan-gpu-ranking.cpp
     astc-vulkan-hash.cpp
     astc-vulkan-objective.cpp
@@ -36,6 +37,11 @@ add_executable(test-astc-vulkan-gpu-ranking
     tests/test-astc-vulkan-gpu-ranking.cpp)
 target_link_libraries(test-astc-vulkan-gpu-ranking PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-gpu-ranking PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-gpu-d1-ranking
+    tests/test-astc-vulkan-gpu-d1-ranking.cpp)
+target_link_libraries(test-astc-vulkan-gpu-d1-ranking PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-gpu-d1-ranking PRIVATE cxx_std_17)
 
 add_executable(test-astc-vulkan-ranking-plan
     tests/test-astc-vulkan-ranking-plan.cpp)
@@ -827,6 +833,9 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-gpu-ranking
         COMMAND test-astc-vulkan-gpu-ranking)
     set_property(TEST test-astc-vulkan-gpu-ranking PROPERTY LABELS astc)
+    add_test(NAME test-astc-vulkan-gpu-d1-ranking
+        COMMAND test-astc-vulkan-gpu-d1-ranking)
+    set_property(TEST test-astc-vulkan-gpu-d1-ranking PROPERTY LABELS astc)
 
     add_test(NAME test-astc-vulkan-ranking-plan
         COMMAND test-astc-vulkan-ranking-plan)

@@ -24,6 +24,13 @@ using astc_vulkan_pv_projector = std::function<bool(
     const std::vector<float> & continuous, std::vector<float> & deployed)>;
 using astc_vulkan_pv_objective = std::function<double(
     const std::vector<float> & deployed)>;
+// A batched objective is the CPU/GPU seam for PV. It receives exact deployed
+// candidates produced by the CPU ASTC projection and returns one score per
+// candidate. A Vulkan backend may score the batch in parallel; the caller
+// still owns deterministic tie-breaking and accepted-coordinate order.
+using astc_vulkan_pv_batch_objective = std::function<bool(
+    const std::vector<std::vector<float>> & deployed,
+    std::vector<double> & objectives)>;
 
 struct astc_vulkan_pv_result {
     std::vector<float> continuous;
@@ -42,4 +49,16 @@ bool astc_vulkan_pv_alternate(
     uint32_t max_iterations,
     const astc_vulkan_pv_projector & project,
     const astc_vulkan_pv_objective & objective,
+    astc_vulkan_pv_result & result);
+
+// Same bounded coordinate search, but evaluates the negative and positive
+// projected trials for each coordinate as one batch. It is behaviorally
+// equivalent to astc_vulkan_pv_alternate when the batch objective returns the
+// scalar objective for every member in order.
+bool astc_vulkan_pv_alternate_batched(
+    const std::vector<float> & initial,
+    const std::vector<float> & coordinate_steps,
+    uint32_t max_iterations,
+    const astc_vulkan_pv_projector & project,
+    const astc_vulkan_pv_batch_objective & objective,
     astc_vulkan_pv_result & result);
