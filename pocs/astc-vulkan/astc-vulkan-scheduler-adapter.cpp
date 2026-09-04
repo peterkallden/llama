@@ -28,6 +28,51 @@ bool get_file_size(const std::string & path, uint64_t & size) {
 }
 }
 
+bool astc_vulkan_scheduler_adapter::resolve_from_cache(
+        const std::string & model_path, const std::string & cache_path,
+        const std::string & tensor_name, astc_vulkan_footprint footprint,
+        astc_vulkan_scheduler_artifact & artifact, std::string & error) const {
+    artifact = {};
+    astc_vulkan_cache_validation cache;
+    if (!astc_vulkan_cache_validate(model_path, cache_path, cache, error)) return false;
+    const astc_vulkan_tensor_record * record = astc_vulkan_find_tensor(cache.manifest, tensor_name);
+    if (record == nullptr || record->footprint != footprint) {
+        error = "ASTC cache has no matching tensor artifact";
+        return false;
+    }
+    uint64_t payload_size = 0;
+    uint64_t layout_size = 0;
+    if (!get_file_size(cache.paths.payload, payload_size) ||
+        record->byte_offset > payload_size || record->byte_size > payload_size - record->byte_offset ||
+        !read_range(cache.paths.payload, record->byte_offset, record->byte_size, artifact.payload)) {
+        error = "ASTC scheduler adapter cannot stream tensor payload";
+        return false;
+    }
+    artifact.record = *record;
+    artifact.cache_root = cache.paths.root;
+    if (record->representation == astc_vulkan_representation::kPairedD2) {
+        if (!get_file_size(cache.paths.layout, layout_size) ||
+            record->layout_byte_offset > layout_size || record->layout_byte_size > layout_size - record->layout_byte_offset ||
+            !read_range(cache.paths.layout, record->layout_byte_offset,
+                        record->layout_byte_size, artifact.layout) ||
+            !astc_vulkan_validate_layout_map(*record, artifact.layout.data(), artifact.layout.size(), error)) {
+            if (error.empty()) error = "ASTC scheduler adapter cannot stream paired-D2 layout";
+            artifact = {};
+            return false;
+        }
+        artifact.kind = astc_vulkan_scheduler_artifact_kind::kD2;
+    } else if (record->representation == astc_vulkan_representation::kScalar ||
+               record->representation == astc_vulkan_representation::kGaugeLumaAlpha) {
+        artifact.kind = astc_vulkan_scheduler_artifact_kind::kD1;
+    } else {
+        error = "ASTC cache representation has no scheduler runtime";
+        artifact = {};
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool astc_vulkan_scheduler_adapter::prepare(
         const std::string & manifest_path, const std::string & payload_blob_path,
         const std::string & tensor_name, astc_vulkan_footprint footprint,
@@ -91,15 +136,26 @@ bool astc_vulkan_scheduler_adapter::prepare_from_cache(
         const std::string & tensor_name, astc_vulkan_footprint footprint,
         std::string & error, bool allow_experimental) {
     reset();
-    astc_vulkan_cache_validation cache;
-    if (!astc_vulkan_cache_validate(model_path, cache_path, cache, error)) {
+    astc_vulkan_scheduler_artifact artifact;
+    if (!resolve_from_cache(model_path, cache_path, tensor_name, footprint, artifact, error)) {
         binding_.status = astc_vulkan_binding_status::kFallback;
         binding_.fallback_reason = error.empty() ? "ASTC cache is unavailable" : error;
         error = binding_.fallback_reason;
         return false;
     }
-    return prepare(cache.paths.manifest, cache.paths.payload, tensor_name, footprint,
-                   error, allow_experimental);
+    // No JIT cache generation belongs here. Cache creation is an explicit
+    // offline tool operation; a missing artifact is always normal fallback.
+    if (artifact.kind == astc_vulkan_scheduler_artifact_kind::kD2) {
+        binding_.record = artifact.record;
+        binding_.status = astc_vulkan_binding_status::kFallback;
+        binding_.fallback_reason =
+            "paired-D2 artifact is verified but the normal scheduler has no paired runtime dispatch";
+        error = binding_.fallback_reason;
+        return true;
+    }
+    return prepare((std::filesystem::path(artifact.cache_root) / "manifest.astcv").string(),
+                   (std::filesystem::path(artifact.cache_root) / "payload.astcpack").string(),
+                   tensor_name, footprint, error, allow_experimental);
 }
 
 bool astc_vulkan_scheduler_adapter::run(const std::vector<uint32_t> & spirv,

@@ -7842,3 +7842,18 @@ data. That guard is deliberate: current paired-D2 payload ordering and the
 one-bit `RG/B` versus `R/GB` map encode the deployed row-paired geometry.
 A transposed stream would need a separately versioned mapping, manifest field,
 and shader address calculation before it could be consumed at runtime.
+# Scheduler cache-only D1/D2 admission — 2026-09-04
+
+While the full `D2_8x5` row-strip run is executing, the scheduler/cache seam
+was tightened without changing any payload or shader ABI. The adapter now
+resolves one verified range from a model-adjacent cache before any device setup.
+For D1 it delegates to the existing scalar/gauge sidecar. For D2 it also reads
+and validates the mandatory packed layout map, but reports a deterministic
+normal-quant fallback because the current paired shader is still a standalone
+contract and does not yet bind real activation data through the scheduler.
+
+This is deliberate: treating a D2 texture as a scalar D1 texture would produce
+plausible-looking but wrong output. No JIT cache creation is enabled or hidden
+behind the cache miss path; the only cache producer remains the explicit offline
+artifact tool. The focused scheduler/cache/FFN-adapter CTests pass with a D2
+fixture that verifies the exact payload and layout bytes seen by the resolver.

@@ -2953,6 +2953,27 @@ Paired-D2 layout metadata is supported by the cache now, but D2 remains an
 experimental transport profile and is rejected by the automatic D1 scheduler
 until it completes artifact-backed and full-model quality gates.
 
+### Scheduler cache-only admission (2026-09-04)
+
+The scheduler adapter now has an explicit **cache-resolution** step before any
+Vulkan binding. It validates the source GGUF, cache-file SHA-256 records,
+per-tensor payload range/checksum, and, for D2, the packed layout-map range and
+checksum. It then returns one immutable artifact kind:
+
+* **D1** (`scalar` or `gauge_la`): the existing 4x4/5x5/6x6 sidecar may bind
+  the payload and use the ordinary ASTC shader path when device admission
+  succeeds.
+* **D2** (`paired-d2`): the scheduler can discover and validate both payload
+  and layout bytes, but deliberately retains normal Q4/Q3 execution until the
+  paired runtime dispatch consumes real activation and layout buffers.
+
+This is intentionally not a just-in-time encoder. `jit_cache_build_enabled()`
+is false: a cache miss, checksum mismatch, unsupported footprint, memory-budget
+denial, or unavailable paired dispatch is a complete normal-quant fallback.
+The offline cache tool remains the only producer. The split prevents a model
+load from accidentally encoding against user-prompt data or partially binding a
+different representation.
+
 ### Memory-resident cache admission
 
 Cache I/O and device residency are separate concerns. The cache verifier and
