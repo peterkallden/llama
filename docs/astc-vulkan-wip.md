@@ -7740,3 +7740,43 @@ smoke produced `3.5985523e-4` selected holdout MSE versus `3.0242996e-4` for
 the direct reference. It is a functioning test path, not a pass: it must be
 tested on a second tensor before spending metadata/runtime complexity on a
 versioned basis map.
+
+## Three-hundred-twenty-eighth sweep: D2 main-track candidate family with YAQA
+
+The retained D2 candidate family (`balanced-a025` channel weights plus the
+fixed-budget source-derived Alpha replacement) is now wired into an exact
+two-sided YAQA conflict-aware selector for bounded global crops. It uses the
+same legal ASTC payload pool and scalar-neutral candidate zero as activation
+selection, but maintains the residual
+
+\[
+Q = Y(E X^T), \qquad \mathcal{L}=\|Q\|_F^2.
+\]
+
+For each candidate, its local decoded-weight delta is projected through the
+matching input and output trace windows. Candidate gain is then computed
+against the current `Q`, so conflicts are evaluated in the real two-sided
+space. The incremental residual is checked numerically against
+`astc_vulkan_yaqa_trace_score()` before selection proceeds. YAQA deliberately
+requires global selection; row-strip streaming remains activation-only because
+the output trace couples logical output rows across strips.
+
+The Pythia v3 input/output trace pair did **not** support promotion of YAQA as
+the D2 selector default:
+
+| crop | neutral YAQA holdout | validation-selected YAQA holdout | outcome |
+| --- | ---: | ---: | --- |
+| 20x256 | `0.0490092` | `0.0530305` | +8.2% regression |
+| 48x384 | `0.153110` | `0.205530` | +34.2% regression |
+
+The larger crop produced 109 calibration-positive commits, but validation
+selected only the first 83. This is genuine two-sided calibration/validation
+overfit, not an ASTC roundtrip or incremental-score discrepancy. Therefore:
+
+* **retain** `balanced-a025 + source-derived Alpha` as the experimental D2
+  *activation-objective* main track, subject to cross-tensor and full-shape
+  artifact replay;
+* **do not** make YAQA the D2 default selector or fold it into the artifact
+  encoder at this point;
+* retain the YAQA path as an explicit offline diagnostic/research backend for
+  later low-rate models with stronger downstream sensitivity traces.

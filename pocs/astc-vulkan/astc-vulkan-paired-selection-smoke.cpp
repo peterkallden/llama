@@ -1,10 +1,12 @@
 #include <astcenc.h>
 
 #include "astc-vulkan-input.h"
+#include "astc-vulkan-objective.h"
 #include "astc-vulkan-paired.h"
 #include "astc-vulkan-paired-layout.h"
 #include "astc-vulkan-paired-selector.h"
 #include "astc-vulkan-pv.h"
+#include "astc-vulkan-yaqa.h"
 
 #include <algorithm>
 #include <array>
@@ -64,6 +66,7 @@ struct params {
     std::string model;
     std::string tensor;
     std::string trace;
+    std::string output_trace;
     uint32_t rows = 20;
     uint32_t columns = 256;
     uint32_t calibration_samples = 5;
@@ -78,6 +81,7 @@ struct params {
     d2_channel_weight_profile channel_weights = d2_channel_weight_profile::legacy;
     bool source_derived_alpha = false;
     d2_basis_selection paired_basis = d2_basis_selection::direct;
+    astc_vulkan_objective objective = astc_vulkan_objective::activation;
 };
 
 struct decoded_block {
@@ -188,6 +192,7 @@ bool parse_params(int argc, char ** argv, params & result) {
         if (option == "--model") result.model = value;
         else if (option == "--tensor") result.tensor = value;
         else if (option == "--trace") result.trace = value;
+        else if (option == "--output-trace") result.output_trace = value;
         else if (option == "--rows") result.rows = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--columns") result.columns = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--calibration-samples") result.calibration_samples = static_cast<uint32_t>(std::stoul(value));
@@ -206,10 +211,16 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--paired-basis") {
             if (!parse_paired_basis_selection(value, result.paired_basis)) return false;
         }
+        else if (option == "--objective") {
+            if (value == "activation") result.objective = astc_vulkan_objective::activation;
+            else if (value == "yaqa") result.objective = astc_vulkan_objective::two_sided_trace;
+            else return false;
+        }
         else return false;
     }
     return !result.model.empty() && !result.tensor.empty() && !result.trace.empty() &&
-           result.rows != 0 && result.columns != 0 && result.calibration_samples != 0;
+           result.rows != 0 && result.columns != 0 && result.calibration_samples != 0 &&
+           (result.objective != astc_vulkan_objective::two_sided_trace || !result.output_trace.empty());
 }
 
 class block_codec {
@@ -525,6 +536,214 @@ bool same_candidate(const generated_candidate & lhs, const generated_candidate &
     return lhs.layout == rhs.layout && lhs.basis == rhs.basis && lhs.block.payload == rhs.block.payload;
 }
 
+struct yaqa_candidate_delta {
+    std::vector<double> calibration;
+    std::vector<double> validation;
+};
+
+bool make_yaqa_trace_window(const ggml_vk_astc_activation_trace & input,
+                            const ggml_vk_astc_activation_trace & output,
+                            uint32_t sample_offset, uint32_t samples,
+                            uint32_t rows, uint32_t columns,
+                            std::vector<float> & input_window,
+                            std::vector<float> & output_window) {
+    if (sample_offset + samples > input.samples || sample_offset + samples > output.samples ||
+        columns > input.columns || rows > output.columns || samples == 0) return false;
+    input_window.resize(static_cast<size_t>(samples) * columns);
+    output_window.resize(static_cast<size_t>(samples) * rows);
+    for (uint32_t sample = 0; sample < samples; ++sample) {
+        std::copy_n(input.values.data() + static_cast<size_t>(sample_offset + sample) * input.columns,
+                    columns, input_window.data() + static_cast<size_t>(sample) * columns);
+        std::copy_n(output.values.data() + static_cast<size_t>(sample_offset + sample) * output.columns,
+                    rows, output_window.data() + static_cast<size_t>(sample) * rows);
+    }
+    return true;
+}
+
+std::vector<double> yaqa_residual(const ggml_vk_astc_loaded_matrix & matrix,
+                                  const std::vector<float> & decoded, uint32_t rows,
+                                  uint32_t columns, float minimum, float range,
+                                  const std::vector<float> & input_window,
+                                  const std::vector<float> & output_window,
+                                  uint32_t samples) {
+    std::vector<double> projected(static_cast<size_t>(rows) * samples, 0.0);
+    for (uint32_t row = 0; row < rows; ++row) {
+        for (uint32_t sample = 0; sample < samples; ++sample) {
+            double value = 0.0;
+            for (uint32_t column = 0; column < columns; ++column) {
+                const float error = (normalized_weight(matrix, row, column, minimum, range) -
+                    decoded[static_cast<size_t>(row) * columns + column]) * range;
+                value += error * input_window[static_cast<size_t>(sample) * columns + column];
+            }
+            projected[static_cast<size_t>(row) * samples + sample] = value;
+        }
+    }
+    std::vector<double> residual(static_cast<size_t>(samples) * samples, 0.0);
+    for (uint32_t output_sample = 0; output_sample < samples; ++output_sample) {
+        for (uint32_t input_sample = 0; input_sample < samples; ++input_sample) {
+            double value = 0.0;
+            for (uint32_t row = 0; row < rows; ++row) {
+                value += output_window[static_cast<size_t>(output_sample) * rows + row] *
+                    projected[static_cast<size_t>(row) * samples + input_sample];
+            }
+            residual[static_cast<size_t>(output_sample) * samples + input_sample] = value;
+        }
+    }
+    return residual;
+}
+
+double yaqa_trace_score_from_decoded(const ggml_vk_astc_loaded_matrix & matrix,
+                                     const std::vector<float> & decoded, uint32_t rows,
+                                     uint32_t columns, float minimum, float range,
+                                     const std::vector<float> & input_window,
+                                     const std::vector<float> & output_window,
+                                     uint32_t samples) {
+    std::vector<float> error(static_cast<size_t>(rows) * columns);
+    for (uint32_t row = 0; row < rows; ++row) for (uint32_t column = 0; column < columns; ++column) {
+        error[static_cast<size_t>(row) * columns + column] =
+            (normalized_weight(matrix, row, column, minimum, range) -
+             decoded[static_cast<size_t>(row) * columns + column]) * range;
+    }
+    return astc_vulkan_yaqa_trace_score(error, rows, columns, input_window, output_window, samples);
+}
+
+bool matches_yaqa_oracle(const ggml_vk_astc_loaded_matrix & matrix,
+                         const std::vector<float> & decoded, uint32_t rows,
+                         uint32_t columns, float minimum, float range,
+                         const std::vector<float> & input_window,
+                         const std::vector<float> & output_window,
+                         uint32_t samples, const std::vector<double> & residual) {
+    double incremental_score = 0.0;
+    for (const double value : residual) incremental_score += value * value;
+    const double oracle_score = yaqa_trace_score_from_decoded(matrix, decoded, rows, columns, minimum, range,
+                                                               input_window, output_window, samples);
+    return std::isfinite(oracle_score) && std::fabs(incremental_score - oracle_score) <=
+        1e-8 * std::max(1.0, std::fabs(oracle_score));
+}
+
+std::vector<double> yaqa_delta_for_block(const decoded_block & candidate,
+                                          const decoded_block & baseline,
+                                          uint32_t block_row, uint32_t block_column,
+                                          uint32_t rows, uint32_t columns, float range,
+                                          const std::vector<float> & input_window,
+                                          const std::vector<float> & output_window,
+                                          uint32_t samples) {
+    std::vector<double> projected(static_cast<size_t>(kLogicalBlockHeight) * samples, 0.0);
+    for (uint32_t local_row = 0; local_row < kLogicalBlockHeight; ++local_row) {
+        const uint32_t row = block_row * kLogicalBlockHeight + local_row;
+        if (row >= rows) continue;
+        for (uint32_t sample = 0; sample < samples; ++sample) {
+            double value = 0.0;
+            for (uint32_t x = 0; x < kBlockWidth; ++x) {
+                const uint32_t column = block_column * kBlockWidth + x;
+                if (column >= columns) continue;
+                const float decoded_delta = (candidate.logical_weights[local_row * kBlockWidth + x] -
+                    baseline.logical_weights[local_row * kBlockWidth + x]) * range;
+                value += decoded_delta * input_window[static_cast<size_t>(sample) * columns + column];
+            }
+            projected[static_cast<size_t>(local_row) * samples + sample] = value;
+        }
+    }
+    std::vector<double> result(static_cast<size_t>(samples) * samples, 0.0);
+    for (uint32_t output_sample = 0; output_sample < samples; ++output_sample) {
+        for (uint32_t input_sample = 0; input_sample < samples; ++input_sample) {
+            double value = 0.0;
+            for (uint32_t local_row = 0; local_row < kLogicalBlockHeight; ++local_row) {
+                const uint32_t row = block_row * kLogicalBlockHeight + local_row;
+                if (row >= rows) continue;
+                value += output_window[static_cast<size_t>(output_sample) * rows + row] *
+                    projected[static_cast<size_t>(local_row) * samples + input_sample];
+            }
+            result[static_cast<size_t>(output_sample) * samples + input_sample] = value;
+        }
+    }
+    return result;
+}
+
+double squared_norm(const std::vector<double> & values) {
+    double result = 0.0;
+    for (const double value : values) result += value * value;
+    return result;
+}
+
+double residual_gain(const std::vector<double> & residual, const std::vector<double> & delta) {
+    double result = 0.0;
+    for (size_t index = 0; index < residual.size(); ++index) {
+        result += 2.0 * residual[index] * delta[index] - delta[index] * delta[index];
+    }
+    return result;
+}
+
+void subtract_delta(std::vector<double> & residual, const std::vector<double> & delta) {
+    for (size_t index = 0; index < residual.size(); ++index) residual[index] -= delta[index];
+}
+
+bool select_yaqa_candidates(const std::vector<double> & initial_calibration,
+                            const std::vector<double> & initial_validation,
+                            const std::vector<std::vector<yaqa_candidate_delta>> & candidates,
+                            astc_vulkan_paired_selection_result & result) {
+    if (initial_calibration.empty() || initial_validation.empty() || candidates.empty()) return false;
+    const size_t calibration_size = initial_calibration.size();
+    const size_t validation_size = initial_validation.size();
+    for (const auto & block : candidates) {
+        if (block.empty() || block.front().calibration.size() != calibration_size ||
+            block.front().validation.size() != validation_size ||
+            std::any_of(block.front().calibration.begin(), block.front().calibration.end(),
+                        [](double value) { return value != 0.0; }) ||
+            std::any_of(block.front().validation.begin(), block.front().validation.end(),
+                        [](double value) { return value != 0.0; })) return false;
+        for (const auto & candidate : block) {
+            if (candidate.calibration.size() != calibration_size ||
+                candidate.validation.size() != validation_size) return false;
+        }
+    }
+    result = {};
+    result.calibration_selected_candidates.assign(candidates.size(), 0);
+    std::vector<double> calibration_residual = initial_calibration;
+    std::vector<bool> committed(candidates.size(), false);
+    while (true) {
+        uint32_t best_block = 0, best_candidate = 0;
+        double best_gain = 0.0;
+        bool found = false;
+        for (uint32_t block = 0; block < candidates.size(); ++block) {
+            if (committed[block]) continue;
+            for (uint32_t candidate = 1; candidate < candidates[block].size(); ++candidate) {
+                const double gain = residual_gain(calibration_residual, candidates[block][candidate].calibration);
+                if (gain > best_gain || (gain == best_gain && found &&
+                    (block < best_block || (block == best_block && candidate < best_candidate)))) {
+                    best_block = block;
+                    best_candidate = candidate;
+                    best_gain = gain;
+                    found = true;
+                }
+            }
+        }
+        if (!found || !(best_gain > 0.0)) break;
+        subtract_delta(calibration_residual, candidates[best_block][best_candidate].calibration);
+        committed[best_block] = true;
+        result.calibration_selected_candidates[best_block] = best_candidate;
+        result.commits.push_back({best_block, best_candidate, best_gain});
+    }
+    result.calibration_residual_loss = squared_norm(calibration_residual);
+    std::vector<double> validation_residual = initial_validation;
+    result.validation_selected_candidates.assign(candidates.size(), 0);
+    result.validation_residual_loss = squared_norm(validation_residual);
+    for (uint32_t index = 0; index < result.commits.size(); ++index) {
+        const auto & commit = result.commits[index];
+        subtract_delta(validation_residual, candidates[commit.block][commit.candidate].validation);
+        const double loss = squared_norm(validation_residual);
+        if (loss < result.validation_residual_loss) {
+            result.validation_residual_loss = loss;
+            result.validation_prefix = index + 1;
+        }
+    }
+    for (uint32_t index = 0; index < result.validation_prefix; ++index) {
+        const auto & commit = result.commits[index];
+        result.validation_selected_candidates[commit.block] = commit.candidate;
+    }
+    return true;
+}
+
 // // select one strip at a time, keeping the candidate working set proportional
 // to the strip width instead of the full tensor.  Validation stopping is
 // applied independently per strip; this is the exact separable objective and
@@ -772,17 +991,24 @@ int main(int argc, char ** argv) {
                              "[--channel-weights legacy|balanced-a025|balanced-a050] "
                              "[--source-derived-alpha 1] "
                              "[--paired-basis direct|common-difference] "
+                             "[--objective activation|yaqa --output-trace output.trace] "
                              "[--export-payload path --export-layout path]\n", argv[0]);
         return 2;
     }
     ggml_vk_astc_loaded_matrix matrix;
-    ggml_vk_astc_activation_trace trace;
+    ggml_vk_astc_activation_trace trace, output_trace;
     std::string error;
     if (!ggml_vk_astc_load_gguf_matrix(options.model, options.tensor, matrix, error) ||
         !ggml_vk_astc_load_activation_trace(options.trace, trace, error) ||
         options.rows > matrix.rows || options.columns > matrix.columns || options.columns > trace.columns ||
         options.calibration_samples + options.validation_samples >= trace.samples) {
         std::fprintf(stderr, "paired selection smoke input error: %s\n", error.c_str());
+        return 1;
+    }
+    if (options.objective == astc_vulkan_objective::two_sided_trace &&
+        (!ggml_vk_astc_load_activation_trace(options.output_trace, output_trace, error) ||
+         output_trace.samples != trace.samples || output_trace.columns < options.rows)) {
+        std::fprintf(stderr, "paired selection YAQA output trace error: %s\n", error.c_str());
         return 1;
     }
 
@@ -806,6 +1032,10 @@ int main(int argc, char ** argv) {
 #else
         false;
 #endif
+    if (options.row_strip_chunked && options.objective != astc_vulkan_objective::activation) {
+        std::fprintf(stderr, "paired selection YAQA requires global selection; disable --row-strip-chunked\n");
+        return 1;
+    }
     if (options.row_strip_chunked) {
         return run_row_strip_chunked(options, matrix, trace, minimum, range, neural_backend) ? 0 : 1;
     }
@@ -951,27 +1181,61 @@ int main(int argc, char ** argv) {
     const auto initial_validation = output_error(matrix, trace, baseline, options.rows, options.columns,
         validation_offset, options.validation_samples, minimum, range);
     profile.objective_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - initial_objective_start).count();
-    for (uint32_t block_y = 0; block_y < blocks_y; ++block_y) for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
-        auto & candidates = generated[static_cast<size_t>(block_y) * blocks_x + block_x];
-        const decoded_block & neutral = candidates.front().block;
-        for (auto & candidate : candidates) {
-            const auto delta_start = std::chrono::steady_clock::now();
-            assign_delta(candidate.delta.calibration_delta, candidate.block, neutral, trace, block_y, block_x,
-                         options.rows, options.columns, 0, options.calibration_samples, range);
-            assign_delta(candidate.delta.validation_delta, candidate.block, neutral, trace, block_y, block_x,
-                         options.rows, options.columns, validation_offset, options.validation_samples, range);
-            profile.delta_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - delta_start).count();
-        }
-    }
-    std::vector<std::vector<astc_vulkan_paired_candidate_delta>> selector_candidates(generated.size());
-    for (size_t block = 0; block < generated.size(); ++block) {
-        for (const auto & candidate : generated[block]) selector_candidates[block].push_back(candidate.delta);
-    }
     astc_vulkan_paired_selection_result selection;
-    const astc_vulkan_paired_selector_config config{options.rows, options.calibration_samples, options.validation_samples};
     const auto selection_start = std::chrono::steady_clock::now();
-    if (!astc_vulkan_select_paired_candidates(config, initial_calibration, initial_validation,
-                                               selector_candidates, selection)) return 1;
+    if (options.objective == astc_vulkan_objective::activation) {
+        for (uint32_t block_y = 0; block_y < blocks_y; ++block_y) for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
+            auto & candidates = generated[static_cast<size_t>(block_y) * blocks_x + block_x];
+            const decoded_block & neutral = candidates.front().block;
+            for (auto & candidate : candidates) {
+                const auto delta_start = std::chrono::steady_clock::now();
+                assign_delta(candidate.delta.calibration_delta, candidate.block, neutral, trace, block_y, block_x,
+                             options.rows, options.columns, 0, options.calibration_samples, range);
+                assign_delta(candidate.delta.validation_delta, candidate.block, neutral, trace, block_y, block_x,
+                             options.rows, options.columns, validation_offset, options.validation_samples, range);
+                profile.delta_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - delta_start).count();
+            }
+        }
+        std::vector<std::vector<astc_vulkan_paired_candidate_delta>> selector_candidates(generated.size());
+        for (size_t block = 0; block < generated.size(); ++block) {
+            for (const auto & candidate : generated[block]) selector_candidates[block].push_back(candidate.delta);
+        }
+        const astc_vulkan_paired_selector_config config{options.rows, options.calibration_samples, options.validation_samples};
+        if (!astc_vulkan_select_paired_candidates(config, initial_calibration, initial_validation,
+                                                   selector_candidates, selection)) return 1;
+    } else {
+        std::vector<float> calibration_input, calibration_output, validation_input, validation_output;
+        if (!make_yaqa_trace_window(trace, output_trace, 0, options.calibration_samples, options.rows, options.columns,
+                                    calibration_input, calibration_output) ||
+            !make_yaqa_trace_window(trace, output_trace, validation_offset, options.validation_samples,
+                                    options.rows, options.columns, validation_input, validation_output)) return 1;
+        const auto yaqa_calibration = yaqa_residual(matrix, baseline, options.rows, options.columns, minimum, range,
+                                                    calibration_input, calibration_output, options.calibration_samples);
+        const auto yaqa_validation = yaqa_residual(matrix, baseline, options.rows, options.columns, minimum, range,
+                                                   validation_input, validation_output, options.validation_samples);
+        if (!matches_yaqa_oracle(matrix, baseline, options.rows, options.columns, minimum, range,
+                                 calibration_input, calibration_output, options.calibration_samples, yaqa_calibration) ||
+            !matches_yaqa_oracle(matrix, baseline, options.rows, options.columns, minimum, range,
+                                 validation_input, validation_output, options.validation_samples, yaqa_validation)) return 1;
+        std::vector<std::vector<yaqa_candidate_delta>> selector_candidates(generated.size());
+        for (uint32_t block_y = 0; block_y < blocks_y; ++block_y) for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
+            auto & candidates = generated[static_cast<size_t>(block_y) * blocks_x + block_x];
+            const decoded_block & neutral = candidates.front().block;
+            auto & deltas = selector_candidates[static_cast<size_t>(block_y) * blocks_x + block_x];
+            deltas.reserve(candidates.size());
+            for (const auto & candidate : candidates) {
+                yaqa_candidate_delta delta;
+                delta.calibration = yaqa_delta_for_block(candidate.block, neutral, block_y, block_x,
+                    options.rows, options.columns, range, calibration_input, calibration_output,
+                    options.calibration_samples);
+                delta.validation = yaqa_delta_for_block(candidate.block, neutral, block_y, block_x,
+                    options.rows, options.columns, range, validation_input, validation_output,
+                    options.validation_samples);
+                deltas.push_back(std::move(delta));
+            }
+        }
+        if (!select_yaqa_candidates(yaqa_calibration, yaqa_validation, selector_candidates, selection)) return 1;
+    }
     profile.selection_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - selection_start).count();
 
     std::vector<float> selected = baseline;
@@ -993,15 +1257,28 @@ int main(int argc, char ** argv) {
         holdout_offset, holdout_samples, minimum, range);
     const auto selected_holdout = output_error(matrix, trace, selected, options.rows, options.columns,
         holdout_offset, holdout_samples, minimum, range);
+    double neutral_holdout_objective = mse(baseline_holdout);
+    double selected_holdout_objective = mse(selected_holdout);
+    if (options.objective == astc_vulkan_objective::two_sided_trace) {
+        std::vector<float> holdout_input, holdout_output;
+        if (!make_yaqa_trace_window(trace, output_trace, holdout_offset, holdout_samples,
+                                    options.rows, options.columns, holdout_input, holdout_output)) return 1;
+        neutral_holdout_objective = squared_norm(yaqa_residual(matrix, baseline, options.rows, options.columns,
+            minimum, range, holdout_input, holdout_output, holdout_samples));
+        selected_holdout_objective = squared_norm(yaqa_residual(matrix, selected, options.rows, options.columns,
+            minimum, range, holdout_input, holdout_output, holdout_samples));
+    }
     profile.objective_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - final_objective_start).count();
     uint64_t unique_candidates = 0;
     for (const auto & candidates : generated) unique_candidates += candidates.size();
     const double neutral_calibration_mse = mse(initial_calibration);
     const double neutral_validation_mse = mse(initial_validation);
     const double neutral_holdout_mse = mse(baseline_holdout);
-    const double selected_calibration_mse = selection.calibration_residual_loss / (options.calibration_samples * options.rows);
-    const double selected_validation_mse = selection.validation_residual_loss / (options.validation_samples * options.rows);
-    const double selected_holdout_mse = mse(selected_holdout);
+    const double selected_calibration_mse = options.objective == astc_vulkan_objective::activation ?
+        selection.calibration_residual_loss / (options.calibration_samples * options.rows) : selection.calibration_residual_loss;
+    const double selected_validation_mse = options.objective == astc_vulkan_objective::activation ?
+        selection.validation_residual_loss / (options.validation_samples * options.rows) : selection.validation_residual_loss;
+    const double selected_holdout_mse = selected_holdout_objective;
     if ((!options.export_payload.empty()) != (!options.export_layout.empty())) return 1;
     if (!options.export_payload.empty() && options.paired_basis != d2_basis_selection::direct) {
         std::fprintf(stderr, "paired selection cannot export common/difference without a versioned basis map\n");
@@ -1025,20 +1302,23 @@ int main(int argc, char ** argv) {
                           static_cast<std::streamsize>(layout_words.size() * sizeof(uint32_t)));
         if (!payload_file.good() || !layout_file.good()) return 1;
     }
-    std::printf("paired-select D2_%s rows=%u columns=%u channel-weights=%s source-alpha=%s basis=%s blocks=%u raw=%llu unique=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu\n",
+    std::printf("paired-select D2_%s rows=%u columns=%u objective=%s channel-weights=%s source-alpha=%s basis=%s blocks=%u raw=%llu unique=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu\n",
                 kFootprintName,
-                options.rows, options.columns, channel_weight_profile_name(options.channel_weights),
+                options.rows, options.columns, astc_vulkan_objective_name(options.objective), channel_weight_profile_name(options.channel_weights),
                 options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1",
                 paired_basis_selection_name(options.paired_basis), blocks_x * blocks_y,
                 static_cast<unsigned long long>(raw_candidates), static_cast<unsigned long long>(unique_candidates),
                 static_cast<unsigned long long>(selected_dual_planes),
                 static_cast<unsigned long long>(selected_semantic_dual_planes),
                 static_cast<unsigned long long>(selected_alpha_dual_planes));
-    std::printf("paired-select neutral calibration-mse=%.8g validation-mse=%.8g holdout-mse=%.8g\n",
+    std::printf("paired-select neutral activation calibration-mse=%.8g validation-mse=%.8g holdout-mse=%.8g\n",
                 neutral_calibration_mse, neutral_validation_mse, neutral_holdout_mse);
-    std::printf("paired-select selected commits=%zu validation-prefix=%u calibration-mse=%.8g validation-mse=%.8g holdout-mse=%.8g\n",
+    std::printf("paired-select selected objective=%s commits=%zu validation-prefix=%u calibration-score=%.8g validation-score=%.8g holdout-score=%.8g\n",
+                astc_vulkan_objective_name(options.objective),
                 selection.commits.size(), selection.validation_prefix,
                 selected_calibration_mse, selected_validation_mse, selected_holdout_mse);
+    std::printf("paired-select objective holdout neutral-score=%.8g selected-score=%.8g\n",
+                neutral_holdout_objective, selected_holdout_objective);
     const auto & rg_b_timing = rg_b_codec.timings();
     const auto & r_gb_timing = r_gb_codec.timings();
     std::printf("paired-select profile source=%.3fs encode=%.3fs decode=%.3fs delta=%.3fs selection=%.3fs objective=%.3fs roundtrips=%llu\n",
@@ -1060,6 +1340,8 @@ int main(int argc, char ** argv) {
                << "channel_weights=" << channel_weight_profile_name(options.channel_weights) << '\n'
                << "source_alpha=" << (options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1") << '\n'
                << "paired_basis=" << paired_basis_selection_name(options.paired_basis) << '\n'
+               << "objective=" << astc_vulkan_objective_name(options.objective) << '\n'
+               << "output_trace=" << (options.output_trace.empty() ? "" : options.output_trace) << '\n'
                << "blocks=" << blocks_x * blocks_y << '\n'
                << "raw_candidates=" << raw_candidates << '\n'
                << "unique_candidates=" << unique_candidates << '\n'
@@ -1068,9 +1350,11 @@ int main(int argc, char ** argv) {
                << "neutral_holdout_mse=" << neutral_holdout_mse << '\n'
                << "commits=" << selection.commits.size() << '\n'
                << "validation_prefix=" << selection.validation_prefix << '\n'
-               << "selected_calibration_mse=" << selected_calibration_mse << '\n'
-               << "selected_validation_mse=" << selected_validation_mse << '\n'
-               << "selected_holdout_mse=" << selected_holdout_mse << '\n'
+               << "selected_calibration_objective=" << selected_calibration_mse << '\n'
+               << "selected_validation_objective=" << selected_validation_mse << '\n'
+               << "selected_holdout_objective=" << selected_holdout_mse << '\n'
+               << "selected_holdout_activation_mse=" << mse(selected_holdout) << '\n'
+               << "neutral_holdout_objective=" << neutral_holdout_objective << '\n'
                << "selected_dual_planes=" << selected_dual_planes << '\n'
                << "selected_semantic_dual_planes=" << selected_semantic_dual_planes << '\n'
                << "selected_alpha_dual_planes=" << selected_alpha_dual_planes << '\n'

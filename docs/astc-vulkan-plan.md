@@ -3065,3 +3065,13 @@ next dual-plane action is a larger audit, not forced dual-plane search.
 
 These steps preserve standard ASTC payloads and the versioned D2 layout map;
 there is no custom runtime ASTC decoder or additional deployed sidecar.
+
+The bounded global YAQA selector is now available behind
+`--objective yaqa --output-trace ...`. Its incremental `Y(E X^T)` gain update
+is checked against the shared YAQA trace oracle, but the initial Pythia v3
+tests regressed untouched holdout at both 20x256 and 48x384. YAQA therefore
+remains an opt-in diagnostic for D2, not an additional requirement for the
+activation-selected `balanced-a025 + source-derived Alpha` main track. A
+future YAQA revisit needs a stronger downstream trace/model-loss signal or a
+separately validated sensitivity objective; it must not be tuned against the
+current holdout.
