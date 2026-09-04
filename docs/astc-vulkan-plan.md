@@ -3051,9 +3051,11 @@ bounded, separately measurable steps:
    combined profile improves bounded untouched holdout on both Pythia
    `blk.0.ffn_down` (−26.3%) and `blk.1.ffn_down` (−35.8%) `8x5` crops, and a
    bounded `10x5` screen improves by −27.7%. The full `D2_8x5` artifact is now
-   being generated with row-strip streaming. It must still improve
-   exported-byte full-shape/model replay versus legacy D2 before becoming
-   D2's default encoder profile.
+   being generated with row-strip streaming. `D2_10x5` is included in the
+   same follow-up evidence matrix because its bounded gate is positive; it
+   remains experimental until its exported-byte full-shape/model replay is
+   compared at the lower 1.28 b/w rate. Neither shape becomes the scheduler
+   default from a crop result alone.
 4. **Next independent representation tests (open).** Test direct versus
    common/difference pair bases and audit targeted semantic-singleton
    dual-plane candidates. Do not mix either test with row pairing, per-row
