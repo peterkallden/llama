@@ -7563,3 +7563,11 @@ The full D1 `10x8` and D2 `8x5` jobs are running with resident memory bounded
 by the model plus one strip. D2 `10x5` will follow with the same artifact and
 replay contract. No original Vulkan implementation is modified by this
 research-side path.
+
+The first full-run profiling pass caught and corrected a setup regression in
+the new D2 path: worker ASTC contexts were initially allocated inside every
+row strip. They are now allocated once before the strip loop and reused by
+four block workers. The correction is performance-only and preserves the
+candidate family, exact ASTC bytes, selector math, and per-strip validation
+contract. The full runs were restarted after this fix so their timings are
+comparable and no partial outputs are treated as evidence.

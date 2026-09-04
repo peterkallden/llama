@@ -395,10 +395,6 @@ bool run_row_strip_chunked(const params & options,
     const uint32_t holdout_offset = validation_offset + options.validation_samples;
     const uint32_t holdout_samples = trace.samples - holdout_offset;
     const auto codebook = astc_vulkan_make_paired_steering_codebook();
-    block_codec rg_b_codec(neural_backend, astc_vulkan_paired_layout::rg_b);
-    block_codec r_gb_codec(neural_backend, astc_vulkan_paired_layout::r_gb, &rg_b_codec);
-    if (!rg_b_codec.ready() || !r_gb_codec.ready()) return false;
-
     std::vector<float> neutral(static_cast<size_t>(options.rows) * options.columns, 0.0f);
     std::vector<float> selected(neutral.size(), 0.0f);
     const size_t block_count = static_cast<size_t>(blocks_x) * blocks_y;
@@ -407,51 +403,72 @@ bool run_row_strip_chunked(const params & options,
         kFootprint, options.columns, options.rows)), 0);
     uint64_t unique_candidates = 0, raw_candidates = 0;
     uint64_t accepted = 0, peak_candidates = 0;
+    constexpr uint32_t worker_count = 4;
+    std::vector<std::unique_ptr<block_codec>> worker_rg_b;
+    std::vector<std::unique_ptr<block_codec>> worker_r_gb;
+    for (uint32_t worker = 0; worker < worker_count; ++worker) {
+        worker_rg_b.emplace_back(std::make_unique<block_codec>(neural_backend, astc_vulkan_paired_layout::rg_b));
+        worker_r_gb.emplace_back(std::make_unique<block_codec>(neural_backend, astc_vulkan_paired_layout::r_gb));
+    }
+    for (const auto & codec : worker_rg_b) if (!codec->ready()) return false;
+    for (const auto & codec : worker_r_gb) if (!codec->ready()) return false;
     const auto start = std::chrono::steady_clock::now();
 
     for (uint32_t strip = 0; strip < blocks_y; ++strip) {
         const uint32_t row0 = strip * kLogicalBlockHeight;
         const uint32_t strip_rows = std::min(kLogicalBlockHeight, options.rows - row0);
         std::vector<std::vector<generated_candidate>> generated(blocks_x);
-        std::vector<float> source_scratch(kBlockWidth * kPhysicalBlockHeight * 4);
         std::vector<float> strip_neutral(static_cast<size_t>(strip_rows) * options.columns, 0.0f);
-        for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
-            auto & candidates = generated[block_x];
-            for (const auto layout : {astc_vulkan_paired_layout::rg_b, astc_vulkan_paired_layout::r_gb}) {
-                block_codec & codec = layout == astc_vulkan_paired_layout::rg_b ? rg_b_codec : r_gb_codec;
-                codec.begin_block();
-                for (const auto & steering : codebook) {
-                    generated_candidate candidate;
-                    candidate.layout = layout;
-                    candidate.steering = steering;
-                    fill_source_block(source_scratch, matrix, row0, block_x * kBlockWidth,
-                        options.rows, options.columns, minimum, range, layout, steering);
-                    if (!codec.roundtrip(source_scratch, candidate.block)) return false;
-                    candidate.delta.payload = candidate.block.payload;
-                    ++raw_candidates;
-                    bool duplicate = false;
-                    for (const auto & existing : candidates) duplicate = duplicate || same_candidate(existing, candidate);
-                    if (!duplicate) candidates.push_back(std::move(candidate));
+        std::atomic<uint32_t> next_block{0};
+        std::atomic<bool> generation_failed{false};
+        std::atomic<uint64_t> strip_raw{0}, strip_unique{0};
+        auto worker = [&](uint32_t worker_index) {
+            std::vector<float> source_scratch(kBlockWidth * kPhysicalBlockHeight * 4);
+            for (;;) {
+                const uint32_t block_x = next_block.fetch_add(1, std::memory_order_relaxed);
+                if (block_x >= blocks_x || generation_failed.load(std::memory_order_relaxed)) return;
+                auto & candidates = generated[block_x];
+                for (const auto layout : {astc_vulkan_paired_layout::rg_b, astc_vulkan_paired_layout::r_gb}) {
+                    block_codec & codec = layout == astc_vulkan_paired_layout::rg_b ? *worker_rg_b[worker_index] : *worker_r_gb[worker_index];
+                    codec.begin_block();
+                    for (const auto & steering : codebook) {
+                        generated_candidate candidate;
+                        candidate.layout = layout;
+                        candidate.steering = steering;
+                        fill_source_block(source_scratch, matrix, row0, block_x * kBlockWidth,
+                            options.rows, options.columns, minimum, range, layout, steering);
+                        if (!codec.roundtrip(source_scratch, candidate.block)) { generation_failed.store(true); return; }
+                        candidate.delta.payload = candidate.block.payload;
+                        ++strip_raw;
+                        bool duplicate = false;
+                        for (const auto & existing : candidates) duplicate = duplicate || same_candidate(existing, candidate);
+                        if (!duplicate) candidates.push_back(std::move(candidate));
+                    }
                 }
-            }
-            auto neutral_it = std::find_if(candidates.begin(), candidates.end(), [](const generated_candidate & candidate) {
-                return candidate.layout == astc_vulkan_paired_layout::rg_b &&
-                       candidate.steering.basis == astc_vulkan_paired_steering_basis::neutral &&
-                       candidate.steering.amplitude == 0.0f;
-            });
-            if (neutral_it == candidates.end()) return false;
-            std::iter_swap(candidates.begin(), neutral_it);
-            const decoded_block & block = candidates.front().block;
-            for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) {
-                for (uint32_t x = 0; x < kBlockWidth; ++x) {
+                auto neutral_it = std::find_if(candidates.begin(), candidates.end(), [](const generated_candidate & candidate) {
+                    return candidate.layout == astc_vulkan_paired_layout::rg_b &&
+                           candidate.steering.basis == astc_vulkan_paired_steering_basis::neutral &&
+                           candidate.steering.amplitude == 0.0f;
+                });
+                if (neutral_it == candidates.end()) { generation_failed.store(true); return; }
+                std::iter_swap(candidates.begin(), neutral_it);
+                const decoded_block & block = candidates.front().block;
+                for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) for (uint32_t x = 0; x < kBlockWidth; ++x) {
                     const uint32_t column = block_x * kBlockWidth + x;
                     if (column < options.columns) strip_neutral[static_cast<size_t>(local_row) * options.columns + column] =
                         block.logical_weights[local_row * kBlockWidth + x];
                 }
+                strip_unique += candidates.size();
             }
-            unique_candidates += candidates.size();
-            peak_candidates = std::max<uint64_t>(peak_candidates, candidates.size());
-        }
+        };
+        std::vector<std::thread> workers;
+        workers.reserve(worker_count);
+        for (uint32_t worker_index = 0; worker_index < worker_count; ++worker_index) workers.emplace_back(worker, worker_index);
+        for (auto & thread : workers) thread.join();
+        if (generation_failed.load(std::memory_order_relaxed)) return false;
+        raw_candidates += strip_raw.load();
+        unique_candidates += strip_unique.load();
+        peak_candidates = std::max<uint64_t>(peak_candidates, strip_unique.load());
         for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) {
             std::copy_n(strip_neutral.data() + static_cast<size_t>(local_row) * options.columns,
                         options.columns, neutral.data() + static_cast<size_t>(row0 + local_row) * options.columns);
