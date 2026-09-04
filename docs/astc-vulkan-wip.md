@@ -7780,3 +7780,35 @@ overfit, not an ASTC roundtrip or incremental-score discrepancy. Therefore:
   encoder at this point;
 * retain the YAQA path as an explicit offline diagnostic/research backend for
   later low-rate models with stronger downstream sensitivity traces.
+
+## Three-hundred-twenty-ninth sweep: D2 main-track cross-tensor gate
+
+The retained activation-objective profile (`balanced-a025` channel weights plus
+the fixed-budget source-derived Alpha family) was rebuilt and rerun on the
+current Pythia v3 build. The runtime representation, selector, candidate cap,
+and validation/holdout split were unchanged. On the layer-0 `20x256` D2
+`8x5` crop, selected holdout activation MSE was `3.0242996e-4` versus
+`4.1054302e-4` for the neutral anchor (−26.3%). On the independent
+`blk.1.ffn_down.weight` crop the corresponding values were
+`4.4790853e-4` versus `6.9778582e-4` (−35.8%). The selected dual-plane
+blocks remained predominantly semantic-singleton planes; no runtime metadata
+or shader change was required.
+
+A bounded `D2_10x5` layer-0 run with the same profile also improved untouched
+crop holdout from `6.3427567e-4` to `4.5896666e-4` (−27.7%). This is positive
+screening evidence for the lower-rate shape, but it is not a promotion by
+itself: the full-shape artifact and model replay remain the gate.
+
+The bytes-only Intel Vulkan replay of the existing full-shape D2 `8x5` and
+`10x5` artifacts passed exact GPU-vs-CPU ASTC sampling. The 68-test ASTC
+regression suite passed 68/68. These tests confirm that the new offline
+candidate profile remains ABI-compatible: `balanced-a025` and source-derived
+Alpha affect candidate ranking only; the deployed payload, layout map, and
+semantic shader contract are unchanged.
+
+The full `2048x8192` D2 `8x5` export using this profile is now running with
+the required row-strip streaming (`selection_scope=row-strip-independent`).
+Its output will be accepted only after exported-byte CPU replay and the
+artifact-backed GPU decode check. D2 `10x5` will be included in the same
+production-evidence matrix if that full `8x5` gate remains positive; until
+then both profiles remain experimental/opt-in.

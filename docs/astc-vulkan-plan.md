@@ -3047,10 +3047,13 @@ bounded, separately measurable steps:
    rather than add geometric probes so all profiles retain exactly eleven
    candidates/layout. It is retained only in combination with
    `balanced-a025`; alone it regressed holdout.
-3. **Cross-tensor and full-shape confirmation (open).** Run the retained
-   combined profile on a second tensor, then export/replay a D2_8x5 artifact.
-   It must improve untouched full-shape/model replay versus legacy D2 before
-   becoming D2's default encoder profile.
+3. **Cross-tensor and full-shape confirmation (in progress).** The retained
+   combined profile improves bounded untouched holdout on both Pythia
+   `blk.0.ffn_down` (−26.3%) and `blk.1.ffn_down` (−35.8%) `8x5` crops, and a
+   bounded `10x5` screen improves by −27.7%. The full `D2_8x5` artifact is now
+   being generated with row-strip streaming. It must still improve
+   exported-byte full-shape/model replay versus legacy D2 before becoming
+   D2's default encoder profile.
 4. **Next independent representation tests (open).** Test direct versus
    common/difference pair bases and audit targeted semantic-singleton
    dual-plane candidates. Do not mix either test with row pairing, per-row
