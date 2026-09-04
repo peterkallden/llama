@@ -7665,3 +7665,50 @@ standard/experimental shader-device smoke tests and paired/cache/driver
 contracts. The remaining production work is scheduler binding and a paired-D2
 semantic matvec shader that consumes the layout map; the three artifacts now
 have CPU quality evidence plus hardware decode evidence.
+
+## Three-hundred-twenty-sixth sweep: D2 channel weighting and source-derived Alpha
+
+This sweep isolates two low-cost candidate-generation changes for experimental
+paired `D2_8x5` without changing its physical format, shader reconstruction,
+candidate budget, ASTC preset, exact CPU roundtrip, conflict-aware selector, or
+calibration/validation/holdout split.
+
+1. **Balanced ASTC channel weights.** `RG/B` stores the first semantic lane in
+   two channels and the second in one. `R/GB` is the inverse. The legacy image
+   encoder weights all four channels equally, including the semantically ignored
+   Alpha steering channel. The `balanced-a025` profile gives the duplicated
+   semantic channels `0.5 + 0.5`, the singleton semantic channel `1.0`, and
+   Alpha `0.25`. `balanced-a050` is the same profile with Alpha `0.50`.
+2. **Source-derived Alpha.** This preserves the fixed eleven probes per layout:
+   the neutral and signed X/Y/saddle geometric probes remain, while the two
+   signed diagonal pairs are replaced by `A=q0`, `A=q1`,
+   `A=(q0+q1)/2`, and `A=0.5+0.5(q0-q1)`. Alpha remains steering-only; the
+   runtime D2 decoder still ignores it.
+
+The first Pythia `blk.0.ffn_down.weight` screen used a `20x256` crop, ten
+calibration samples, seven validation samples, and untouched remaining trace
+samples for holdout. All variants generated exactly 22 raw candidates per
+physical block (11 per semantic layout).
+
+| encoder profile | selected holdout activation MSE | change vs legacy selected |
+| --- | ---: | ---: |
+| legacy geometric | `4.1682557e-4` | reference |
+| balanced Alpha `0.25`, geometric | `3.3354062e-4` | -20.0% |
+| balanced Alpha `0.50`, geometric | `3.8779186e-4` | -7.0% |
+| legacy, source-derived Alpha | `4.3153282e-4` | +3.5% |
+| balanced Alpha `0.25`, source-derived Alpha | `3.0242996e-4` | -27.4% |
+
+The interaction matters: source-derived Alpha alone is not a win, but it
+improves the selected balanced-channel candidate family. The combined profile
+was therefore confirmed on a larger `48x384` crop with the same frozen split:
+legacy selected holdout was `5.4909560e-4`; balanced-`0.25` plus source-derived
+Alpha reached `4.9339249e-4` (-10.1%). Its neutral baseline was also lower
+(`6.0088032e-4` vs `6.2850236e-4`), so this is an encoder-search improvement,
+not evidence that the selector alone caused the result.
+
+The new options are explicit in the D2 smoke tool:
+`--channel-weights legacy|balanced-a025|balanced-a050` and
+`--source-derived-alpha 1`. They are experimental and default to legacy;
+promotion requires a second tensor plus artifact-backed full-shape/model replay.
+The next D2 representation gates are common/difference paired bases and
+semantic-singleton dual-plane auditing, not a larger unconstrained Alpha grid.

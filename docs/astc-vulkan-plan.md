@@ -3031,3 +3031,30 @@ respectively because its paired layout halves logical rows. Full model
 execution through the paired D2 semantic shader is still intentionally open;
 the existing ASTC matvec smoke is not used as a substitute because it has a
 separate full-tensor mismatch.
+
+### D2 representation refinement gate
+
+Before expanding the D2 footprint ladder or promoting any paired profile, keep
+the runtime ABI fixed and improve the offline legal-ASTC candidate pool in
+bounded, separately measurable steps:
+
+1. **Channel-weight ablation (complete, provisional pass).** Evaluate legacy,
+   balanced Alpha `0.25`, and balanced Alpha `0.50` ASTC component weights.
+   The duplicated semantic pair must sum to the singleton semantic weight; Alpha
+   is a steering input and receives a smaller image-error weight. On the first
+   Pythia crop, `balanced-a025` is the only profile to retain as a candidate.
+2. **Source-derived Alpha ablation (complete, conditional pass).** Replace
+   rather than add geometric probes so all profiles retain exactly eleven
+   candidates/layout. It is retained only in combination with
+   `balanced-a025`; alone it regressed holdout.
+3. **Cross-tensor and full-shape confirmation (open).** Run the retained
+   combined profile on a second tensor, then export/replay a D2_8x5 artifact.
+   It must improve untouched full-shape/model replay versus legacy D2 before
+   becoming D2's default encoder profile.
+4. **Next independent representation tests (open).** Test direct versus
+   common/difference pair bases and audit targeted semantic-singleton
+   dual-plane candidates. Do not mix either test with row pairing, per-row
+   affine normalization, or YAQA changes; they alter different hypotheses.
+
+These steps preserve standard ASTC payloads and the versioned D2 layout map;
+there is no custom runtime ASTC decoder or additional deployed sidecar.
