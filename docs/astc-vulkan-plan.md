@@ -3013,3 +3013,13 @@ Required sequence:
 4. Run artifact-backed Vulkan replay/timing on the available target GPU;
    record that this validates the hardware/runtime path, not cross-device
    quality.
+
+### Evidence gate status (2026-09-04)
+
+Items 1–3 are complete for the v3 Pythia tensor. D1 `10x8`, D2 `8x5`, and D2
+`10x5` artifacts were exported, SHA-256 verified, and replayed from bytes in
+the CPU model harness. D1 `10x8` is the strongest 1.60 b/logical-weight point
+in this matched run; D2 `8x5` is a weaker same-rate experimental alternative,
+and D2 `10x5` is a lower-rate but materially lower-quality fallback. The
+remaining item is artifact-backed Vulkan replay/timing, followed by a final
+cross-check against the Q3/Q4/TQ controls before any scheduler promotion.

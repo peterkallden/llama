@@ -7608,3 +7608,35 @@ The replay smoke now handles D2 physical dimensions and per-block layout-map
 strides for both 8x5 and 10x5. Focused ASTC/Vulkan contract tests remain green
 (11/11). CPU replay remains the quality oracle; Vulkan artifact replay will
 measure device correctness and timing separately.
+
+## Three-hundred-twenty-fourth sweep: D1 10x8 full-shape gate
+
+The matching D1 `10x8` full-shape run completed for the same 2048 x 8192
+Pythia tensor and v3 disjoint traces. It used the scalar-anchored gauge
+family, standard ASTC thorough search, deterministic edge handling, and
+chunked ten-row strips. The exported validation prefix contains 142,169
+commits (151,117 were accepted by the full conflict pass).
+
+The activation oracle reported neutral holdout `0.32158675`, full conflict
+holdout `0.072777686`, and validation-stopped holdout `0.072810248`. The 10x8
+payload is 3,358,720 bytes, exactly 1.60 b/logical weight for this shape. It
+changed 151,117 payloads; 12,447 commits changed partitioning, 17,191 endpoint
+modes, and 25,958 weight-grid selections. No dual-plane transition was
+observed in this run.
+
+Artifact-backed CPU model replay from the validation payload produced
+`logits-MSE=0.45957965`, relative logits MSE `0.064819575`, top-1 agreement
+`84%`, reference loss `2.7486336`, replay loss `3.048628`, loss delta
+`+0.29999434`.
+
+This is materially better than the matched D2 8x5 artifact at the same nominal
+1.60 b/logical weight (D2 8x5: relative logits MSE `0.160027`, top-1 `76%`,
+loss delta `+0.81813`). D2 10x5 reaches 1.28 b/logical weight but is weaker
+(relative logits MSE `0.241324`, top-1 `52%`, loss delta `+1.27767`). The
+result supports D1 10x8 as the current low-rate default candidate for this
+tensor, while D2 8x5 and D2 10x5 remain opt-in experimental fallbacks.
+
+The D1 payload is also packaged as a manifest-backed cache and passes cache
+SHA-256 inspection alongside the two D2 caches. Focused contract tests remain
+green (11/11). These results are CPU quality-oracle/model-replay evidence;
+artifact-backed Vulkan replay and timing are still a separate driver gate.
