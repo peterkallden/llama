@@ -3023,3 +3023,11 @@ in this matched run; D2 `8x5` is a weaker same-rate experimental alternative,
 and D2 `10x5` is a lower-rate but materially lower-quality fallback. The
 remaining item is artifact-backed Vulkan replay/timing, followed by a final
 cross-check against the Q3/Q4/TQ controls before any scheduler promotion.
+
+The artifact-backed Vulkan decode portion of item 4 is now complete on the
+Intel target: D1 `10x8`, D2 `8x5`, and D2 `10x5` all match their CPU-decoded
+RGBA references. D2 uses physical extents `8192x1025` and `8200x1025`
+respectively because its paired layout halves logical rows. Full model
+execution through the paired D2 semantic shader is still intentionally open;
+the existing ASTC matvec smoke is not used as a substitute because it has a
+separate full-tensor mismatch.

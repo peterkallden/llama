@@ -7640,3 +7640,28 @@ The D1 payload is also packaged as a manifest-backed cache and passes cache
 SHA-256 inspection alongside the two D2 caches. Focused contract tests remain
 green (11/11). These results are CPU quality-oracle/model-replay evidence;
 artifact-backed Vulkan replay and timing are still a separate driver gate.
+
+## Three-hundred-twenty-fifth sweep: full-shape Vulkan decode gate
+
+The exported full-shape payloads were sampled directly by the Vulkan ASTC
+texture path on the available Intel UHD Graphics 620 device. The GPU smoke
+compared every returned RGBA texel against the exact CPU ASTC reference:
+
+| artifact | physical extent | GPU decode result | shader timestamp |
+| --- | ---: | --- | ---: |
+| D1 10x8 | 8192 x 2048 | pass, exact reference comparison | ~41.15 ms |
+| D2 8x5 | 8192 x 1025 | pass, exact reference comparison | ~12.49 ms |
+| D2 10x5 | 8200 x 1025 | pass, exact reference comparison | ~12.04 ms |
+
+The smoke harness now accepts D2 `8x5` and `10x5` explicitly; both were
+already represented by the Vulkan format contract, but were missing from this
+test tool's argument table. This does not change the driver or shader ABI.
+The separate legacy ASTC matvec shader still reports a full-tensor numerical
+mismatch and is not treated as an end-to-end model result; the decode-only
+contract is the valid hardware gate here.
+
+The relevant 18-test ASTC/Vulkan regression set passes 18/18, including all
+standard/experimental shader-device smoke tests and paired/cache/driver
+contracts. The remaining production work is scheduler binding and a paired-D2
+semantic matvec shader that consumes the layout map; the three artifacts now
+have CPU quality evidence plus hardware decode evidence.
