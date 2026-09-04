@@ -7571,3 +7571,40 @@ four block workers. The correction is performance-only and preserves the
 candidate family, exact ASTC bytes, selector math, and per-strip validation
 contract. The full runs were restarted after this fix so their timings are
 comparable and no partial outputs are treated as evidence.
+
+## Three-hundred-twenty-third sweep: D2 full-shape artifacts and model replay
+
+The full-shape D2 selector completed on the v3 Pythia corpus for
+`blk.0.ffn_down.weight` (2048 x 8192), using standard ASTC, scalar-anchored
+paired-D2 candidates, deterministic edge padding, and row-strip-independent
+validation selection.
+
+| artifact | blocks | payload | layout map | rate | neutral holdout | selected holdout |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| D2 8x5 | 209,920 | 3,358,720 B | 26,240 B | 1.60 b/logical weight | 0.125613 | 0.0441165 |
+| D2 10x5 | 168,100 | 2,689,600 B | 21,016 B | 1.28 b/logical weight | 0.136211 | 0.0536533 |
+
+Both cache directories pass manifest, source-GGUF, payload, and layout
+SHA-256 verification. The 10x5 artifact requires physical width 8200 for its
+8192 logical columns; this exposed and fixed a replay-side block-stride
+assumption that had been hard-coded to 8x5. No payload or selector bytes
+changed.
+
+Exact artifact-backed CPU model replay used the same prompt tokens and the
+original FP16-derived weights as reference:
+
+| artifact | logits MSE | relative MSE | top-1 agreement | reference loss | replay loss | loss delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| D2 8x5 | 1.13461 | 0.160027 | 76% | 2.74863 | 3.56677 | +0.81813 |
+| D2 10x5 | 1.71102 | 0.241324 | 52% | 2.74863 | 4.02630 | +1.27767 |
+
+These are full-model replay diagnostics from exported bytes, not activation
+crop scores. D2 8x5 is the stronger point on this tensor; D2 10x5 trades a
+further 20% payload reduction for substantial quality loss and remains
+experimental. D1 10x8 is still running its full-shape encode/selection gate;
+no D1 result is inferred from the earlier timeout.
+
+The replay smoke now handles D2 physical dimensions and per-block layout-map
+strides for both 8x5 and 10x5. Focused ASTC/Vulkan contract tests remain green
+(11/11). CPU replay remains the quality oracle; Vulkan artifact replay will
+measure device correctness and timing separately.

@@ -256,8 +256,11 @@ int main(int argc, char ** argv) {
                     const uint64_t block_x = column / paired_block_width;
                     const uint64_t block_y = (row / 2u) / 5u;
                     astc_vulkan_paired_layout layout;
+                    const uint64_t physical_blocks_x =
+                        (static_cast<uint64_t>(width) + paired_block_width - 1u) /
+                        paired_block_width;
                     if (!astc_vulkan_paired_layout_get(layout_map,
-                            block_y * ((width + 7u) / 8u) + block_x, layout)) {
+                            block_y * physical_blocks_x + block_x, layout)) {
                         std::fprintf(stderr, "paired-d2 layout-map lookup failed\n");
                         llama_model_free(model);
                         llama_backend_free();
