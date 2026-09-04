@@ -1,4 +1,6 @@
 #include "astc-vulkan-input.h"
+#include "astc-vulkan-paired.h"
+#include "astc-vulkan-paired-layout.h"
 
 #include "ggml-backend.h"
 #include "llama-ext.h"
@@ -129,6 +131,7 @@ logits_result run_model(llama_model * model, const std::vector<llama_token> & to
 
 int main(int argc, char ** argv) {
     std::string model_path, rgba_path, weights_path, activation_path, metadata_path, prompt;
+    std::string layout_map_path, representation = "d1", footprint_name = "8x5";
     uint32_t layer = 0, width = 0, height = 0;
     bool cpu_only = false;
     for (int i = 1; i < argc; ++i) {
@@ -143,13 +146,17 @@ int main(int argc, char ** argv) {
         else if (option == "--weights") weights_path = argv[++i];
         else if (option == "--activations") activation_path = argv[++i];
         else if (option == "--metadata") metadata_path = argv[++i];
+        else if (option == "--layout-map") layout_map_path = argv[++i];
+        else if (option == "--representation") representation = argv[++i];
+        else if (option == "--footprint") footprint_name = argv[++i];
         else if (option == "--prompt") prompt = argv[++i];
         else if (option == "--layer") layer = static_cast<uint32_t>(std::stoul(argv[++i]));
         else if (option == "--width") width = static_cast<uint32_t>(std::stoul(argv[++i]));
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(argv[++i]));
         else { std::fprintf(stderr, "unknown option: %s\n", option.c_str()); return 2; }
     }
-    if (model_path.empty() || rgba_path.empty() || weights_path.empty() || activation_path.empty() || prompt.empty() ||
+    const bool paired_d2 = representation == "paired-d2";
+    if ((!paired_d2 && representation != "d1") || model_path.empty() || rgba_path.empty() || weights_path.empty() || activation_path.empty() || prompt.empty() ||
         width == 0 || height == 0) {
         std::fprintf(stderr, "usage: %s --model model.gguf --rgba decoded.rgba --weights weights.f32 --activations trace "
                             "--layer N --width columns --height rows --metadata export.meta --prompt text [--cpu-only]\n", argv[0]);
@@ -158,13 +165,36 @@ int main(int argc, char ** argv) {
 
     const std::vector<float> rgba = read_binary<float>(rgba_path);
     const std::vector<float> weights = read_binary<float>(weights_path);
+    std::vector<uint32_t> layout_map;
+    if (paired_d2) layout_map = read_binary<uint32_t>(layout_map_path);
     ggml_vk_astc_activation_trace activations;
     std::string trace_error;
     if (!ggml_vk_astc_load_activation_trace(activation_path, activations, trace_error)) {
         std::fprintf(stderr, "invalid activation trace: %s\n", trace_error.c_str());
         return 2;
     }
-    if (rgba.size() != static_cast<size_t>(width) * height * 4 ||
+    uint32_t physical_width = width, physical_height = height;
+    const uint32_t paired_block_width = footprint_name == "10x5" ? 10u : 8u;
+    astc_vulkan_footprint paired_footprint = footprint_name == "10x5" ?
+        astc_vulkan_footprint::k10x5 : astc_vulkan_footprint::k8x5;
+    if (paired_d2) {
+        if (layout_map_path.empty()) {
+            std::fprintf(stderr, "paired-d2 replay requires --layout-map\n");
+            return 2;
+        }
+        if (footprint_name != "8x5" && footprint_name != "10x5") {
+            std::fprintf(stderr, "paired-d2 replay supports only 8x5 and 10x5\n");
+            return 2;
+        }
+        physical_width = ((width + paired_block_width - 1u) / paired_block_width) * paired_block_width;
+        physical_height = ((height + 9u) / 10u) * 5u;
+        if (rgba.size() != static_cast<size_t>(physical_width) * physical_height * 4 ||
+            layout_map.size() != astc_vulkan_paired_layout_word_count(paired_footprint, width, height)) {
+            std::fprintf(stderr, "paired-d2 decoded texture/layout-map sizes do not match the logical matrix\n");
+            return 2;
+        }
+    }
+    if ((!paired_d2 && rgba.size() != static_cast<size_t>(width) * height * 4) ||
         weights.size() != static_cast<size_t>(width) * height) {
         std::fprintf(stderr, "decoded RGBA and source weight sizes do not match the requested matrix\n");
         return 2;
@@ -220,8 +250,26 @@ int main(int argc, char ** argv) {
         for (uint32_t row = 0; row < height; ++row) {
             float value = 0.0f;
             for (uint32_t column = 0; column < width; ++column) {
-                const size_t index = (static_cast<size_t>(row) * width + column) * 4;
-                const float latent = (rgba[index] + rgba[index + 1] + rgba[index + 2]) / 3.0f;
+                size_t index = (static_cast<size_t>(row) * width + column) * 4;
+                float latent = 0.0f;
+                if (paired_d2) {
+                    const uint64_t block_x = column / paired_block_width;
+                    const uint64_t block_y = (row / 2u) / 5u;
+                    astc_vulkan_paired_layout layout;
+                    if (!astc_vulkan_paired_layout_get(layout_map,
+                            block_y * ((width + 7u) / 8u) + block_x, layout)) {
+                        std::fprintf(stderr, "paired-d2 layout-map lookup failed\n");
+                        llama_model_free(model);
+                        llama_backend_free();
+                        return 2;
+                    }
+                    const uint32_t texel_y = row / 2u;
+                    index = (static_cast<size_t>(texel_y) * physical_width + column) * 4;
+                    const astc_vulkan_rgba_texel texel{rgba[index], rgba[index + 1], rgba[index + 2], rgba[index + 3]};
+                    latent = astc_vulkan_paired_weight(texel, row & 1u, layout);
+                } else {
+                    latent = (rgba[index] + rgba[index + 1] + rgba[index + 2]) / 3.0f;
+                }
                 const float activation = activations.values[sample * activations.columns + column];
                 value += (scale_l * latent + scale_a * rgba[index + 3] + offset) * activation;
             }

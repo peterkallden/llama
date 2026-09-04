@@ -27,9 +27,11 @@ namespace {
 #if defined(ASTC_VULKAN_PAIRED_D2_10X5)
 constexpr uint32_t kBlockWidth = 10;
 constexpr const char * kFootprintName = "10x5";
+constexpr astc_vulkan_footprint kFootprint = astc_vulkan_footprint::k10x5;
 #else
 constexpr uint32_t kBlockWidth = 8;
 constexpr const char * kFootprintName = "8x5";
+constexpr astc_vulkan_footprint kFootprint = astc_vulkan_footprint::k8x5;
 #endif
 constexpr uint32_t kPhysicalBlockHeight = 5;
 constexpr uint32_t kLogicalBlockHeight = kPhysicalBlockHeight * 2;
@@ -402,10 +404,9 @@ bool run_row_strip_chunked(const params & options,
     const size_t block_count = static_cast<size_t>(blocks_x) * blocks_y;
     std::vector<uint8_t> selected_payload(block_count * 16u, 0);
     std::vector<uint32_t> selected_layout(static_cast<size_t>(astc_vulkan_paired_layout_word_count(
-        astc_vulkan_footprint::k8x5, options.columns, options.rows)), 0);
+        kFootprint, options.columns, options.rows)), 0);
     uint64_t unique_candidates = 0, raw_candidates = 0;
     uint64_t accepted = 0, peak_candidates = 0;
-    double neutral_cal = 0.0, selected_cal = 0.0;
     const auto start = std::chrono::steady_clock::now();
 
     for (uint32_t strip = 0; strip < blocks_y; ++strip) {
@@ -507,9 +508,6 @@ bool run_row_strip_chunked(const params & options,
         astc_vulkan_paired_selection_result selection;
         const astc_vulkan_paired_selector_config config{strip_rows, options.calibration_samples, options.validation_samples};
         if (!astc_vulkan_select_paired_candidates(config, initial_cal, initial_val, selector_candidates, selection)) return false;
-        neutral_cal += mse(initial_cal);
-        selected_cal += selection.calibration_residual_loss /
-            static_cast<double>(options.calibration_samples * strip_rows);
         accepted += selection.commits.size();
         for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
             const auto & base = generated[block_x].front().block;
@@ -532,7 +530,6 @@ bool run_row_strip_chunked(const params & options,
         }
     }
 
-    const auto cal_error = output_error(matrix, trace, selected, options.rows, options.columns, 0, options.calibration_samples, minimum, range);
     const auto hold_error = output_error(matrix, trace, selected, options.rows, options.columns, holdout_offset, holdout_samples, minimum, range);
     const auto neutral_hold = output_error(matrix, trace, neutral, options.rows, options.columns, holdout_offset, holdout_samples, minimum, range);
     const double selected_holdout = mse(hold_error), neutral_holdout = mse(neutral_hold);
@@ -792,7 +789,7 @@ int main(int argc, char ** argv) {
     if (!options.export_payload.empty()) {
         std::vector<uint8_t> payload(generated.size() * 16u);
         std::vector<uint32_t> layout_words(static_cast<size_t>(astc_vulkan_paired_layout_word_count(
-            astc_vulkan_footprint::k8x5, options.columns, options.rows)), 0);
+            kFootprint, options.columns, options.rows)), 0);
         for (size_t block = 0; block < generated.size(); ++block) {
             const auto & selected_candidate = generated[block][selection.validation_selected_candidates[block]];
             std::copy(selected_candidate.block.payload.begin(), selected_candidate.block.payload.end(),

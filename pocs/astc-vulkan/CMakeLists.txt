@@ -592,7 +592,9 @@ if (TARGET ggml-base)
 
         add_executable(astc-vulkan-model-replay-smoke
             astc-vulkan-model-replay-smoke.cpp
-            astc-vulkan-input.cpp)
+            astc-vulkan-input.cpp
+            astc-vulkan-paired.cpp
+            astc-vulkan-paired-layout.cpp)
         target_include_directories(astc-vulkan-model-replay-smoke PRIVATE
             ${ASTC_VULKAN_POC_INCLUDE_DIR}
             ${CMAKE_SOURCE_DIR}/ggml/include
