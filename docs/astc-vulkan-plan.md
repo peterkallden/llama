@@ -2979,3 +2979,37 @@ bounded prefix for streaming. It does not reorder or evict resources; those
 policies remain scheduler responsibilities. The next production step is to
 feed it per-record Vulkan requirements and retain/release the resulting
 resident set around layer execution.
+
+### Full-shape evidence gate (current)
+
+The next production-quality evidence set is fixed to the same Pythia tensor,
+the same captured activation corpus, and disjoint calibration/validation/
+holdout samples for all three selected shapes:
+
+* D1 `10x8` (1.60 b/w), scalar-anchored gauge;
+* D2 `8x5` (1.60 logical b/w), paired `RG/B` and `R/GB` layouts;
+* D2 `10x5` (1.28 logical b/w), paired `RG/B` and `R/GB` layouts.
+
+Each artifact must be replayed from exported bytes (never re-encoded), and
+must report physical payload size, layout-map size, SHA-256,
+calibration/validation-prefix, untouched activation holdout, and full
+model/logit replay. Vulkan sampled-ASTC replay is a separate correctness and
+timing gate; CPU exact decode remains the quality oracle.
+
+The D2 full-shape selector uses bounded row-strip streaming. A D2 physical
+block covers ten logical output rows, so candidate generation and conflict
+selection are performed per ten-row strip and released before the next strip.
+This prevents O(full-tensor × candidates × trace) resident allocations. The
+implementation reports `selection_scope=row-strip-independent`; the
+small-crop global selector remains the regression reference. D2 stays
+experimental until all three full-shape artifacts and model replay pass.
+
+Required sequence:
+
+1. Finish/export D1 `10x8` full-shape artifact and replay it.
+2. Generate/export D2 `8x5` and `10x5` full-shape artifacts with layout maps.
+3. Run the matched model/logit replay matrix and compare against D1 `6x6`,
+   D1 `10x8`, Q3/Q4 and TQ controls.
+4. Run artifact-backed Vulkan replay/timing on the available target GPU;
+   record that this validates the hardware/runtime path, not cross-device
+   quality.

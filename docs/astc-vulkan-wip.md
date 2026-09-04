@@ -7534,3 +7534,32 @@ reduction is important, but it is not a generally safe replacement for
 `8x5`; the ternary controls show a clear failure mode that requires a
 different source projection or model-aware objective. Neither D2 footprint
 is promoted to automatic production routing by this crop-level result.
+
+## Three-hundred-twenty-second sweep: full-shape evidence pipeline
+
+The requested evidence gate is now implemented as a bounded extension of the
+paired-D2 selection smoke. `--row-strip-chunked true` processes one D2
+ten-logical-row strip at a time, uses four worker-local ASTC contexts for
+candidate generation, performs exact CPU ASTC encode/decode and conflict-aware
+selection, then releases the strip candidate pool. The output payload and
+paired layout map are written only after all strips complete. Small-crop
+regression remains available through the original global selector; the new
+full-shape report explicitly records `selection_scope=row-strip-independent`.
+
+This is an engineering/memory gate, not yet a production promotion: D2
+validation stopping is per independent output strip, and the full-model replay
+and artifact-backed Vulkan replay still have to pass. The D1 `10x8` full-shape
+run and D2 `8x5`/`10x5` full-shape runs use the same Pythia tensor and
+disjoint v3 calibration/validation/holdout trace corpus. CPU exact decode is
+the quality oracle; GPU replay will consume the exported bytes afterward.
+
+The bounded crop check passed before full runs: D2 `8x5`, 20x256, 64 blocks,
+42 accepted proposals, neutral holdout `0.00078571668`, selected holdout
+`0.00051005735`. The previous global selector on the same crop produced
+`0.00051585819`; the small difference is expected because per-strip
+validation prefixes are intentionally a separate full-shape contract.
+
+The full D1 `10x8` and D2 `8x5` jobs are running with resident memory bounded
+by the model plus one strip. D2 `10x5` will follow with the same artifact and
+replay contract. No original Vulkan implementation is modified by this
+research-side path.

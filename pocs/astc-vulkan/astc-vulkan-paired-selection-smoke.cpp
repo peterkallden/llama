@@ -15,7 +15,10 @@
 #include <fstream>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <string>
+#include <thread>
+#include <atomic>
 #include <utility>
 #include <vector>
 
@@ -45,6 +48,7 @@ struct params {
     std::string export_layout;
     bool structure_bank = false;
     bool pv_alternate = false;
+    bool row_strip_chunked = false;
 };
 
 struct decoded_block {
@@ -116,6 +120,7 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--export-layout") result.export_layout = value;
         else if (option == "--structure-bank") result.structure_bank = value == "1" || value == "true";
         else if (option == "--pv-alternate") result.pv_alternate = value == "1" || value == "true";
+        else if (option == "--row-strip-chunked") result.row_strip_chunked = value == "1" || value == "true";
         else return false;
     }
     return !result.model.empty() && !result.tensor.empty() && !result.trace.empty() &&
@@ -374,6 +379,197 @@ bool same_candidate(const generated_candidate & lhs, const generated_candidate &
     return lhs.layout == rhs.layout && lhs.block.payload == rhs.block.payload;
 }
 
+// // select one strip at a time, keeping the candidate working set proportional
+// to the strip width instead of the full tensor.  Validation stopping is
+// applied independently per strip; this is the exact separable objective and
+// is deliberately reported as such in the artifact metadata.
+bool run_row_strip_chunked(const params & options,
+                           const ggml_vk_astc_loaded_matrix & matrix,
+                           const ggml_vk_astc_activation_trace & trace,
+                           float minimum, float range, bool neural_backend) {
+    const uint32_t blocks_x = (options.columns + kBlockWidth - 1) / kBlockWidth;
+    const uint32_t blocks_y = (options.rows + kLogicalBlockHeight - 1) / kLogicalBlockHeight;
+    const uint32_t validation_offset = options.calibration_samples;
+    const uint32_t holdout_offset = validation_offset + options.validation_samples;
+    const uint32_t holdout_samples = trace.samples - holdout_offset;
+    const auto codebook = astc_vulkan_make_paired_steering_codebook();
+    block_codec rg_b_codec(neural_backend, astc_vulkan_paired_layout::rg_b);
+    block_codec r_gb_codec(neural_backend, astc_vulkan_paired_layout::r_gb, &rg_b_codec);
+    if (!rg_b_codec.ready() || !r_gb_codec.ready()) return false;
+
+    std::vector<float> neutral(static_cast<size_t>(options.rows) * options.columns, 0.0f);
+    std::vector<float> selected(neutral.size(), 0.0f);
+    const size_t block_count = static_cast<size_t>(blocks_x) * blocks_y;
+    std::vector<uint8_t> selected_payload(block_count * 16u, 0);
+    std::vector<uint32_t> selected_layout(static_cast<size_t>(astc_vulkan_paired_layout_word_count(
+        astc_vulkan_footprint::k8x5, options.columns, options.rows)), 0);
+    uint64_t unique_candidates = 0, raw_candidates = 0;
+    uint64_t accepted = 0, peak_candidates = 0;
+    double neutral_cal = 0.0, selected_cal = 0.0;
+    const auto start = std::chrono::steady_clock::now();
+
+    for (uint32_t strip = 0; strip < blocks_y; ++strip) {
+        const uint32_t row0 = strip * kLogicalBlockHeight;
+        const uint32_t strip_rows = std::min(kLogicalBlockHeight, options.rows - row0);
+        std::vector<std::vector<generated_candidate>> generated(blocks_x);
+        std::vector<float> source_scratch(kBlockWidth * kPhysicalBlockHeight * 4);
+        std::vector<float> strip_neutral(static_cast<size_t>(strip_rows) * options.columns, 0.0f);
+        for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
+            auto & candidates = generated[block_x];
+            for (const auto layout : {astc_vulkan_paired_layout::rg_b, astc_vulkan_paired_layout::r_gb}) {
+                block_codec & codec = layout == astc_vulkan_paired_layout::rg_b ? rg_b_codec : r_gb_codec;
+                codec.begin_block();
+                for (const auto & steering : codebook) {
+                    generated_candidate candidate;
+                    candidate.layout = layout;
+                    candidate.steering = steering;
+                    fill_source_block(source_scratch, matrix, row0, block_x * kBlockWidth,
+                        options.rows, options.columns, minimum, range, layout, steering);
+                    if (!codec.roundtrip(source_scratch, candidate.block)) return false;
+                    candidate.delta.payload = candidate.block.payload;
+                    ++raw_candidates;
+                    bool duplicate = false;
+                    for (const auto & existing : candidates) duplicate = duplicate || same_candidate(existing, candidate);
+                    if (!duplicate) candidates.push_back(std::move(candidate));
+                }
+            }
+            auto neutral_it = std::find_if(candidates.begin(), candidates.end(), [](const generated_candidate & candidate) {
+                return candidate.layout == astc_vulkan_paired_layout::rg_b &&
+                       candidate.steering.basis == astc_vulkan_paired_steering_basis::neutral &&
+                       candidate.steering.amplitude == 0.0f;
+            });
+            if (neutral_it == candidates.end()) return false;
+            std::iter_swap(candidates.begin(), neutral_it);
+            const decoded_block & block = candidates.front().block;
+            for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) {
+                for (uint32_t x = 0; x < kBlockWidth; ++x) {
+                    const uint32_t column = block_x * kBlockWidth + x;
+                    if (column < options.columns) strip_neutral[static_cast<size_t>(local_row) * options.columns + column] =
+                        block.logical_weights[local_row * kBlockWidth + x];
+                }
+            }
+            unique_candidates += candidates.size();
+            peak_candidates = std::max<uint64_t>(peak_candidates, candidates.size());
+        }
+        for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) {
+            std::copy_n(strip_neutral.data() + static_cast<size_t>(local_row) * options.columns,
+                        options.columns, neutral.data() + static_cast<size_t>(row0 + local_row) * options.columns);
+        }
+
+        auto make_delta = [&](const generated_candidate & candidate, uint32_t sample_offset, uint32_t samples) {
+            std::vector<double> delta(static_cast<size_t>(samples) * strip_rows, 0.0);
+            const decoded_block & base = generated[0].front().block; // overwritten below per block
+            (void) base;
+            return delta;
+        };
+        std::vector<double> initial_cal(static_cast<size_t>(options.calibration_samples) * strip_rows, 0.0);
+        std::vector<double> initial_val(static_cast<size_t>(options.validation_samples) * strip_rows, 0.0);
+        for (uint32_t sample = 0; sample < options.calibration_samples + options.validation_samples; ++sample) {
+            const uint32_t sample_offset = sample < options.calibration_samples ? 0 : validation_offset;
+            const uint32_t local_sample = sample < options.calibration_samples ? sample : sample - options.calibration_samples;
+            auto & output = sample < options.calibration_samples ? initial_cal : initial_val;
+            for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) {
+                double value = 0.0;
+                for (uint32_t column = 0; column < options.columns; ++column) {
+                    const float source = normalized_weight(matrix, row0 + local_row, column, minimum, range);
+                    const float decoded = strip_neutral[static_cast<size_t>(local_row) * options.columns + column];
+                    value += (source - decoded) * range * trace.values[static_cast<size_t>(sample_offset + local_sample) * trace.columns + column];
+                }
+                output[static_cast<size_t>(local_sample) * strip_rows + local_row] = value;
+            }
+        }
+
+        std::vector<std::vector<astc_vulkan_paired_candidate_delta>> selector_candidates(blocks_x);
+        for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
+            const auto & base = generated[block_x].front().block;
+            for (auto & candidate : generated[block_x]) {
+                candidate.delta.calibration_delta.assign(static_cast<size_t>(options.calibration_samples) * strip_rows, 0.0);
+                candidate.delta.validation_delta.assign(static_cast<size_t>(options.validation_samples) * strip_rows, 0.0);
+                for (uint32_t sample = 0; sample < options.calibration_samples + options.validation_samples; ++sample) {
+                    const uint32_t sample_offset = sample < options.calibration_samples ? 0 : validation_offset;
+                    const uint32_t local_sample = sample < options.calibration_samples ? sample : sample - options.calibration_samples;
+                    auto & output = sample < options.calibration_samples ? candidate.delta.calibration_delta : candidate.delta.validation_delta;
+                    for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) {
+                        double value = 0.0;
+                        for (uint32_t x = 0; x < kBlockWidth; ++x) {
+                            const uint32_t column = block_x * kBlockWidth + x;
+                            if (column >= options.columns) continue;
+                            value += (candidate.block.logical_weights[local_row * kBlockWidth + x] -
+                                      base.logical_weights[local_row * kBlockWidth + x]) * range *
+                                     trace.values[static_cast<size_t>(sample_offset + local_sample) * trace.columns + column];
+                        }
+                        output[static_cast<size_t>(local_sample) * strip_rows + local_row] = value;
+                    }
+                }
+                selector_candidates[block_x].push_back(candidate.delta);
+            }
+        }
+        astc_vulkan_paired_selection_result selection;
+        const astc_vulkan_paired_selector_config config{strip_rows, options.calibration_samples, options.validation_samples};
+        if (!astc_vulkan_select_paired_candidates(config, initial_cal, initial_val, selector_candidates, selection)) return false;
+        neutral_cal += mse(initial_cal);
+        selected_cal += selection.calibration_residual_loss /
+            static_cast<double>(options.calibration_samples * strip_rows);
+        accepted += selection.commits.size();
+        for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
+            const auto & base = generated[block_x].front().block;
+            const uint32_t chosen = selection.validation_selected_candidates[block_x];
+            const auto & block = generated[block_x][chosen].block;
+            for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) for (uint32_t x = 0; x < kBlockWidth; ++x) {
+                const uint32_t column = block_x * kBlockWidth + x;
+                if (column >= options.columns) continue;
+                neutral[static_cast<size_t>(row0 + local_row) * options.columns + column] = base.logical_weights[local_row * kBlockWidth + x];
+                selected[static_cast<size_t>(row0 + local_row) * options.columns + column] = block.logical_weights[local_row * kBlockWidth + x];
+            }
+            const size_t block_index = static_cast<size_t>(strip) * blocks_x + block_x;
+            std::copy(block.payload.begin(), block.payload.end(), selected_payload.begin() + block_index * 16u);
+            if (!astc_vulkan_paired_layout_set(selected_layout, block_index, generated[block_x][chosen].layout)) return false;
+        }
+        if ((strip + 1) % 8 == 0 || strip + 1 == blocks_y) {
+            std::printf("paired-select chunked progress strips=%u/%u accepted=%llu elapsed=%.1fs\n", strip + 1, blocks_y,
+                        static_cast<unsigned long long>(accepted), std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+            std::fflush(stdout);
+        }
+    }
+
+    const auto cal_error = output_error(matrix, trace, selected, options.rows, options.columns, 0, options.calibration_samples, minimum, range);
+    const auto hold_error = output_error(matrix, trace, selected, options.rows, options.columns, holdout_offset, holdout_samples, minimum, range);
+    const auto neutral_hold = output_error(matrix, trace, neutral, options.rows, options.columns, holdout_offset, holdout_samples, minimum, range);
+    const double selected_holdout = mse(hold_error), neutral_holdout = mse(neutral_hold);
+    if ((!options.export_payload.empty()) != (!options.export_layout.empty())) return false;
+    if (!options.export_payload.empty()) {
+        std::ofstream payload(options.export_payload, std::ios::binary | std::ios::trunc);
+        std::ofstream layout(options.export_layout, std::ios::binary | std::ios::trunc);
+        if (!payload || !layout) return false;
+        payload.write(reinterpret_cast<const char *>(selected_payload.data()), selected_payload.size());
+        layout.write(reinterpret_cast<const char *>(selected_layout.data()), static_cast<std::streamsize>(selected_layout.size() * sizeof(uint32_t)));
+        if (!payload.good() || !layout.good()) return false;
+    }
+    std::printf("paired-select chunked D2_%s rows=%u columns=%u blocks=%zu raw=%llu unique=%llu peak-candidates=%llu accepted=%llu neutral-holdout=%.8g selected-holdout=%.8g\n",
+                kFootprintName, options.rows, options.columns, block_count,
+                static_cast<unsigned long long>(raw_candidates), static_cast<unsigned long long>(unique_candidates),
+                static_cast<unsigned long long>(peak_candidates), static_cast<unsigned long long>(accepted), neutral_holdout, selected_holdout);
+    if (!options.report.empty()) {
+        std::ofstream report(options.report);
+        if (!report) return false;
+        report << "backend=" << (neural_backend ? "neural-d2" : "standard") << '\n'
+               << "footprint=" << kFootprintName << '\n'
+               << "rows=" << options.rows << '\n'
+               << "columns=" << options.columns << '\n'
+               << "blocks=" << block_count << '\n'
+               << "selection_scope=row-strip-independent\n"
+               << "raw_candidates=" << raw_candidates << '\n'
+               << "unique_candidates=" << unique_candidates << '\n'
+               << "peak_candidates=" << peak_candidates << '\n'
+               << "accepted=" << accepted << '\n'
+               << "neutral_holdout_mse=" << neutral_holdout << '\n'
+
+
+               << "selected_holdout_mse=" << selected_holdout << '\n';
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -416,6 +612,9 @@ int main(int argc, char ** argv) {
 #else
         false;
 #endif
+    if (options.row_strip_chunked) {
+        return run_row_strip_chunked(options, matrix, trace, minimum, range, neural_backend) ? 0 : 1;
+    }
     std::vector<std::vector<generated_candidate>> generated(static_cast<size_t>(blocks_x) * blocks_y);
     std::vector<float> baseline(static_cast<size_t>(options.rows) * options.columns);
     std::vector<float> source_scratch(kBlockWidth * kPhysicalBlockHeight * 4);
