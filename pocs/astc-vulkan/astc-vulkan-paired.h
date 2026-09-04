@@ -33,6 +33,15 @@ enum class astc_vulkan_paired_layout : unsigned char {
     r_gb = 1,
 };
 
+// The semantic basis used before mapping a D2 pair into RGB. Direct is the
+// deployed v1 contract. Common/difference is an offline research basis: it
+// preserves q0/q1 before ASTC but needs additional basis metadata before it
+// can be exported to the existing one-bit layout map.
+enum class astc_vulkan_paired_basis : unsigned char {
+    direct = 0,
+    common_difference = 1,
+};
+
 // A bounded source-side Alpha codebook for D2. These perturb only the
 // encoder-visible steering lane, never the runtime semantic decoder. They are
 // intentionally discrete, parallel and deterministic; this is the practical
@@ -60,6 +69,7 @@ struct astc_vulkan_rgba_texel {
 
 const char * astc_vulkan_semantic_density_name(astc_vulkan_semantic_density density);
 const char * astc_vulkan_paired_layout_name(astc_vulkan_paired_layout layout);
+const char * astc_vulkan_paired_basis_name(astc_vulkan_paired_basis basis);
 const char * astc_vulkan_paired_steering_basis_name(astc_vulkan_paired_steering_basis basis);
 
 // Returns the deterministic v1 steering order used as candidate tie-break
@@ -75,13 +85,15 @@ float astc_vulkan_paired_steering_basis_value(
 // steering value to an ASTC source texel. The steering value is intentionally
 // not part of paired_weight reconstruction.
 astc_vulkan_rgba_texel astc_vulkan_make_paired_texel(
-    float q0, float q1, float steering, astc_vulkan_paired_layout layout);
+    float q0, float q1, float steering, astc_vulkan_paired_layout layout,
+    astc_vulkan_paired_basis basis = astc_vulkan_paired_basis::direct);
 
 // Reconstructs either member from a decoded D2 texel. This exact operation is
 // shared by the CPU oracle and the later Vulkan paired shader contract.
 float astc_vulkan_paired_weight(
     const astc_vulkan_rgba_texel & texel, unsigned int member,
-    astc_vulkan_paired_layout layout);
+    astc_vulkan_paired_layout layout,
+    astc_vulkan_paired_basis basis = astc_vulkan_paired_basis::direct);
 
 // D2 maps texture row y to logical output rows 2*y and 2*y+1. The final odd
 // row is padded deterministically by the packer and is excluded from loss.

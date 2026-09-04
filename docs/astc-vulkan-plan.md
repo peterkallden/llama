@@ -3056,5 +3056,12 @@ bounded, separately measurable steps:
    dual-plane candidates. Do not mix either test with row pairing, per-row
    affine normalization, or YAQA changes; they alter different hypotheses.
 
+The common/difference and dual-plane test infrastructure is prepared. The
+common/difference path is deliberately non-exportable until a basis-map version
+is designed; this preserves the current D2 cache and shader ABI. The initial
+small audit found that the neural encoder already selected semantic-singleton
+dual-plane blocks for 19 of 20 selected dual-plane D2 candidates. Therefore the
+next dual-plane action is a larger audit, not forced dual-plane search.
+
 These steps preserve standard ASTC payloads and the versioned D2 layout map;
 there is no custom runtime ASTC decoder or additional deployed sidecar.

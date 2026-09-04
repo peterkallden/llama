@@ -26,6 +26,14 @@ const char * astc_vulkan_paired_layout_name(astc_vulkan_paired_layout layout) {
     return "unknown";
 }
 
+const char * astc_vulkan_paired_basis_name(astc_vulkan_paired_basis basis) {
+    switch (basis) {
+        case astc_vulkan_paired_basis::direct: return "direct";
+        case astc_vulkan_paired_basis::common_difference: return "common-difference";
+    }
+    return "unknown";
+}
+
 const char * astc_vulkan_paired_steering_basis_name(astc_vulkan_paired_steering_basis basis) {
     switch (basis) {
         case astc_vulkan_paired_steering_basis::neutral: return "neutral";
@@ -62,17 +70,30 @@ float astc_vulkan_paired_steering_basis_value(
 }
 
 astc_vulkan_rgba_texel astc_vulkan_make_paired_texel(
-        float q0, float q1, float steering, astc_vulkan_paired_layout layout) {
+        float q0, float q1, float steering, astc_vulkan_paired_layout layout,
+        astc_vulkan_paired_basis basis) {
     q0 = clamp_unorm(q0);
     q1 = clamp_unorm(q1);
     steering = clamp_unorm(steering);
-    if (layout == astc_vulkan_paired_layout::rg_b) return {q0, q0, q1, steering};
-    return {q0, q1, q1, steering};
+    const float common = basis == astc_vulkan_paired_basis::common_difference ?
+        0.5f * (q0 + q1) : q0;
+    const float singleton = basis == astc_vulkan_paired_basis::common_difference ?
+        0.5f + 0.5f * (q0 - q1) : q1;
+    if (layout == astc_vulkan_paired_layout::rg_b) return {common, common, singleton, steering};
+    return {common, singleton, singleton, steering};
 }
 
 float astc_vulkan_paired_weight(
         const astc_vulkan_rgba_texel & texel, unsigned int member,
-        astc_vulkan_paired_layout layout) {
+        astc_vulkan_paired_layout layout, astc_vulkan_paired_basis basis) {
+    const float common = layout == astc_vulkan_paired_layout::rg_b ?
+        0.5f * (texel.r + texel.g) : texel.r;
+    const float singleton = layout == astc_vulkan_paired_layout::rg_b ?
+        texel.b : 0.5f * (texel.g + texel.b);
+    if (basis == astc_vulkan_paired_basis::common_difference) {
+        const float difference = singleton - 0.5f;
+        return member == 0 ? common + difference : common - difference;
+    }
     if (layout == astc_vulkan_paired_layout::rg_b) {
         return member == 0 ? 0.5f * (texel.r + texel.g) : texel.b;
     }

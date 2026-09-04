@@ -50,6 +50,11 @@ enum class d2_alpha_source_kind : uint8_t {
     difference,
 };
 
+enum class d2_basis_selection : uint8_t {
+    direct,
+    common_difference,
+};
+
 struct d2_source_candidate {
     astc_vulkan_paired_steering_factor steering{};
     d2_alpha_source_kind alpha_source = d2_alpha_source_kind::geometric;
@@ -72,11 +77,14 @@ struct params {
     bool row_strip_chunked = false;
     d2_channel_weight_profile channel_weights = d2_channel_weight_profile::legacy;
     bool source_derived_alpha = false;
+    d2_basis_selection paired_basis = d2_basis_selection::direct;
 };
 
 struct decoded_block {
     std::array<uint8_t, 16> payload{};
     std::array<float, kLogicalBlockHeight * kBlockWidth> logical_weights{};
+    astcenc_block_info info{};
+    bool info_valid = false;
 };
 
 struct generated_candidate {
@@ -84,6 +92,7 @@ struct generated_candidate {
     astc_vulkan_paired_layout layout = astc_vulkan_paired_layout::rg_b;
     astc_vulkan_paired_steering_factor steering{};
     d2_alpha_source_kind alpha_source = d2_alpha_source_kind::geometric;
+    astc_vulkan_paired_basis basis = astc_vulkan_paired_basis::direct;
     astc_vulkan_paired_candidate_delta delta;
     bool pv_generated = false;
 };
@@ -135,6 +144,14 @@ const char * channel_weight_profile_name(d2_channel_weight_profile profile) {
     return "unknown";
 }
 
+const char * paired_basis_selection_name(d2_basis_selection selection) {
+    switch (selection) {
+        case d2_basis_selection::direct: return "direct";
+        case d2_basis_selection::common_difference: return "common-difference";
+    }
+    return "unknown";
+}
+
 bool parse_channel_weight_profile(const std::string & value,
                                   d2_channel_weight_profile & profile) {
     if (value == "legacy") profile = d2_channel_weight_profile::legacy;
@@ -142,6 +159,25 @@ bool parse_channel_weight_profile(const std::string & value,
     else if (value == "balanced-a050") profile = d2_channel_weight_profile::balanced_alpha_050;
     else return false;
     return true;
+}
+
+bool parse_paired_basis_selection(const std::string & value,
+                                  d2_basis_selection & selection) {
+    if (value == "direct") selection = d2_basis_selection::direct;
+    else if (value == "common-difference") selection = d2_basis_selection::common_difference;
+    else return false;
+    return true;
+}
+
+std::vector<astc_vulkan_paired_basis> selected_paired_bases(d2_basis_selection selection) {
+    if (selection == d2_basis_selection::direct) return {astc_vulkan_paired_basis::direct};
+    // The direct RG/B neutral block is the scalar-anchored reference for every
+    // selector run. Common/difference is therefore an added legal candidate
+    // family, never a replacement baseline.
+    if (selection == d2_basis_selection::common_difference) {
+        return {astc_vulkan_paired_basis::direct, astc_vulkan_paired_basis::common_difference};
+    }
+    return {astc_vulkan_paired_basis::direct};
 }
 
 bool parse_params(int argc, char ** argv, params & result) {
@@ -167,6 +203,9 @@ bool parse_params(int argc, char ** argv, params & result) {
             if (!parse_channel_weight_profile(value, result.channel_weights)) return false;
         }
         else if (option == "--source-derived-alpha") result.source_derived_alpha = value == "1" || value == "true";
+        else if (option == "--paired-basis") {
+            if (!parse_paired_basis_selection(value, result.paired_basis)) return false;
+        }
         else return false;
     }
     return !result.model.empty() && !result.tensor.empty() && !result.trace.empty() &&
@@ -239,7 +278,8 @@ public:
 #endif
     }
 
-    bool roundtrip(const std::vector<float> & source, decoded_block & result) {
+    bool roundtrip(const std::vector<float> & source, decoded_block & result,
+                   astc_vulkan_paired_basis basis = astc_vulkan_paired_basis::direct) {
         if (!ready_ || source.size() != kBlockWidth * kPhysicalBlockHeight * 4) return false;
         void * source_slice = const_cast<float *>(source.data());
         astcenc_image source_image{kBlockWidth, kPhysicalBlockHeight, 1, ASTCENC_TYPE_F32, &source_slice};
@@ -248,6 +288,7 @@ public:
         if (astcenc_compress_image(context_, &source_image, &swizzle, result.payload.data(),
                                    result.payload.size(), 0) != ASTCENC_SUCCESS) return false;
         timings_.encode_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - encode_start).count();
+        result.info_valid = astcenc_get_block_info(context_, result.payload.data(), &result.info) == ASTCENC_SUCCESS;
         void * decoded_slice = decoded_scratch_.data();
         astcenc_image decoded_image{kBlockWidth, kPhysicalBlockHeight, 1, ASTCENC_TYPE_F32, &decoded_slice};
         const auto decode_start = std::chrono::steady_clock::now();
@@ -261,9 +302,9 @@ public:
                 const astc_vulkan_rgba_texel texel{decoded_scratch_[offset], decoded_scratch_[offset + 1],
                                                    decoded_scratch_[offset + 2], decoded_scratch_[offset + 3]};
                 result.logical_weights[(2 * texel_y) * kBlockWidth + x] =
-                    astc_vulkan_paired_weight(texel, 0, layout_);
+                    astc_vulkan_paired_weight(texel, 0, layout_, basis);
                 result.logical_weights[(2 * texel_y + 1) * kBlockWidth + x] =
-                    astc_vulkan_paired_weight(texel, 1, layout_);
+                    astc_vulkan_paired_weight(texel, 1, layout_, basis);
             }
         }
         return true;
@@ -347,6 +388,7 @@ void fill_source_block_with_steering(std::vector<float> & source,
                        const ggml_vk_astc_loaded_matrix & matrix, uint32_t row0, uint32_t column0,
                        uint32_t rows, uint32_t columns, float minimum, float range,
                        astc_vulkan_paired_layout layout,
+                       astc_vulkan_paired_basis basis,
                        const std::function<float(float, float, float, float)> & steering_value) {
     if (source.size() != kBlockWidth * kPhysicalBlockHeight * 4) {
         source.resize(kBlockWidth * kPhysicalBlockHeight * 4);
@@ -363,7 +405,7 @@ void fill_source_block_with_steering(std::vector<float> & source,
             const float q1 = logical_row1 < rows && column < columns ?
                 normalized_weight(matrix, logical_row1, column, minimum, range) : 0.5f;
             const float alpha = std::clamp(steering_value(q0, q1, x, y_value), 0.0f, 1.0f);
-            const auto texel = astc_vulkan_make_paired_texel(q0, q1, alpha, layout);
+            const auto texel = astc_vulkan_make_paired_texel(q0, q1, alpha, layout, basis);
             const size_t offset = (static_cast<size_t>(y) * kBlockWidth + x_index) * 4;
             source[offset] = texel.r;
             source[offset + 1] = texel.g;
@@ -376,9 +418,9 @@ void fill_source_block_with_steering(std::vector<float> & source,
 void fill_source_block(std::vector<float> & source, const ggml_vk_astc_loaded_matrix & matrix,
                        uint32_t row0, uint32_t column0, uint32_t rows, uint32_t columns,
                        float minimum, float range, astc_vulkan_paired_layout layout,
-                       const d2_source_candidate & candidate) {
+                       astc_vulkan_paired_basis basis, const d2_source_candidate & candidate) {
     fill_source_block_with_steering(source, matrix, row0, column0, rows, columns, minimum, range,
-        layout, [&candidate](float q0, float q1, float x, float y) {
+        layout, basis, [&candidate](float q0, float q1, float x, float y) {
             return source_alpha_value(candidate, q0, q1, x, y);
         });
 }
@@ -480,7 +522,7 @@ double block_activation_objective(const ggml_vk_astc_loaded_matrix & matrix,
 }
 
 bool same_candidate(const generated_candidate & lhs, const generated_candidate & rhs) {
-    return lhs.layout == rhs.layout && lhs.block.payload == rhs.block.payload;
+    return lhs.layout == rhs.layout && lhs.basis == rhs.basis && lhs.block.payload == rhs.block.payload;
 }
 
 // // select one strip at a time, keeping the candidate working set proportional
@@ -505,6 +547,7 @@ bool run_row_strip_chunked(const params & options,
         kFootprint, options.columns, options.rows)), 0);
     uint64_t unique_candidates = 0, raw_candidates = 0;
     uint64_t accepted = 0, peak_candidates = 0;
+    uint64_t selected_dual_planes = 0, selected_semantic_dual_planes = 0, selected_alpha_dual_planes = 0;
     constexpr uint32_t worker_count = 4;
     std::vector<std::unique_ptr<block_codec>> worker_rg_b;
     std::vector<std::unique_ptr<block_codec>> worker_r_gb;
@@ -534,24 +577,28 @@ bool run_row_strip_chunked(const params & options,
                 auto & candidates = generated[block_x];
                 for (const auto layout : {astc_vulkan_paired_layout::rg_b, astc_vulkan_paired_layout::r_gb}) {
                     block_codec & codec = layout == astc_vulkan_paired_layout::rg_b ? *worker_rg_b[worker_index] : *worker_r_gb[worker_index];
-                    codec.begin_block();
-                    for (const auto & steering : codebook) {
-                        generated_candidate candidate;
-                        candidate.layout = layout;
-                        candidate.steering = steering.steering;
-                        candidate.alpha_source = steering.alpha_source;
-                        fill_source_block(source_scratch, matrix, row0, block_x * kBlockWidth,
-                            options.rows, options.columns, minimum, range, layout, steering);
-                        if (!codec.roundtrip(source_scratch, candidate.block)) { generation_failed.store(true); return; }
-                        candidate.delta.payload = candidate.block.payload;
-                        ++strip_raw;
-                        bool duplicate = false;
-                        for (const auto & existing : candidates) duplicate = duplicate || same_candidate(existing, candidate);
-                        if (!duplicate) candidates.push_back(std::move(candidate));
+                    for (const auto basis : selected_paired_bases(options.paired_basis)) {
+                        codec.begin_block();
+                        for (const auto & steering : codebook) {
+                            generated_candidate candidate;
+                            candidate.layout = layout;
+                            candidate.steering = steering.steering;
+                            candidate.alpha_source = steering.alpha_source;
+                            candidate.basis = basis;
+                            fill_source_block(source_scratch, matrix, row0, block_x * kBlockWidth,
+                                options.rows, options.columns, minimum, range, layout, basis, steering);
+                            if (!codec.roundtrip(source_scratch, candidate.block, basis)) { generation_failed.store(true); return; }
+                            candidate.delta.payload = candidate.block.payload;
+                            ++strip_raw;
+                            bool duplicate = false;
+                            for (const auto & existing : candidates) duplicate = duplicate || same_candidate(existing, candidate);
+                            if (!duplicate) candidates.push_back(std::move(candidate));
+                        }
                     }
                 }
                 auto neutral_it = std::find_if(candidates.begin(), candidates.end(), [](const generated_candidate & candidate) {
                     return candidate.layout == astc_vulkan_paired_layout::rg_b &&
+                           candidate.basis == astc_vulkan_paired_basis::direct &&
                            candidate.alpha_source == d2_alpha_source_kind::geometric &&
                            candidate.steering.basis == astc_vulkan_paired_steering_basis::neutral &&
                            candidate.steering.amplitude == 0.0f;
@@ -635,7 +682,14 @@ bool run_row_strip_chunked(const params & options,
         for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
             const auto & base = generated[block_x].front().block;
             const uint32_t chosen = selection.validation_selected_candidates[block_x];
-            const auto & block = generated[block_x][chosen].block;
+            const auto & chosen_candidate = generated[block_x][chosen];
+            const auto & block = chosen_candidate.block;
+            if (block.info_valid && block.info.is_dual_plane_block) {
+                ++selected_dual_planes;
+                const unsigned int semantic_singleton = chosen_candidate.layout == astc_vulkan_paired_layout::rg_b ? 2u : 0u;
+                if (block.info.dual_plane_component == semantic_singleton) ++selected_semantic_dual_planes;
+                if (block.info.dual_plane_component == 3u) ++selected_alpha_dual_planes;
+            }
             for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) for (uint32_t x = 0; x < kBlockWidth; ++x) {
                 const uint32_t column = block_x * kBlockWidth + x;
                 if (column >= options.columns) continue;
@@ -657,6 +711,10 @@ bool run_row_strip_chunked(const params & options,
     const auto neutral_hold = output_error(matrix, trace, neutral, options.rows, options.columns, holdout_offset, holdout_samples, minimum, range);
     const double selected_holdout = mse(hold_error), neutral_holdout = mse(neutral_hold);
     if ((!options.export_payload.empty()) != (!options.export_layout.empty())) return false;
+    if (!options.export_payload.empty() && options.paired_basis != d2_basis_selection::direct) {
+        std::fprintf(stderr, "paired selection cannot export common/difference without a versioned basis map\n");
+        return false;
+    }
     if (!options.export_payload.empty()) {
         std::ofstream payload(options.export_payload, std::ios::binary | std::ios::trunc);
         std::ofstream layout(options.export_layout, std::ios::binary | std::ios::trunc);
@@ -665,12 +723,16 @@ bool run_row_strip_chunked(const params & options,
         layout.write(reinterpret_cast<const char *>(selected_layout.data()), static_cast<std::streamsize>(selected_layout.size() * sizeof(uint32_t)));
         if (!payload.good() || !layout.good()) return false;
     }
-    std::printf("paired-select chunked D2_%s rows=%u columns=%u channel-weights=%s source-alpha=%s blocks=%zu raw=%llu unique=%llu peak-candidates=%llu accepted=%llu neutral-holdout=%.8g selected-holdout=%.8g\n",
+    std::printf("paired-select chunked D2_%s rows=%u columns=%u channel-weights=%s source-alpha=%s basis=%s blocks=%zu raw=%llu unique=%llu peak-candidates=%llu accepted=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu neutral-holdout=%.8g selected-holdout=%.8g\n",
                 kFootprintName, options.rows, options.columns,
                 channel_weight_profile_name(options.channel_weights),
-                options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1", block_count,
+                options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1",
+                paired_basis_selection_name(options.paired_basis), block_count,
                 static_cast<unsigned long long>(raw_candidates), static_cast<unsigned long long>(unique_candidates),
-                static_cast<unsigned long long>(peak_candidates), static_cast<unsigned long long>(accepted), neutral_holdout, selected_holdout);
+                static_cast<unsigned long long>(peak_candidates), static_cast<unsigned long long>(accepted),
+                static_cast<unsigned long long>(selected_dual_planes),
+                static_cast<unsigned long long>(selected_semantic_dual_planes),
+                static_cast<unsigned long long>(selected_alpha_dual_planes), neutral_holdout, selected_holdout);
     if (!options.report.empty()) {
         std::ofstream report(options.report);
         if (!report) return false;
@@ -680,12 +742,16 @@ bool run_row_strip_chunked(const params & options,
                << "columns=" << options.columns << '\n'
                << "channel_weights=" << channel_weight_profile_name(options.channel_weights) << '\n'
                << "source_alpha=" << (options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1") << '\n'
+               << "paired_basis=" << paired_basis_selection_name(options.paired_basis) << '\n'
                << "blocks=" << block_count << '\n'
                << "selection_scope=row-strip-independent\n"
                << "raw_candidates=" << raw_candidates << '\n'
                << "unique_candidates=" << unique_candidates << '\n'
                << "peak_candidates=" << peak_candidates << '\n'
                << "accepted=" << accepted << '\n'
+               << "selected_dual_planes=" << selected_dual_planes << '\n'
+               << "selected_semantic_dual_planes=" << selected_semantic_dual_planes << '\n'
+               << "selected_alpha_dual_planes=" << selected_alpha_dual_planes << '\n'
                << "neutral_holdout_mse=" << neutral_holdout << '\n'
 
 
@@ -705,6 +771,7 @@ int main(int argc, char ** argv) {
                              "[--pv-alternate 1] [--row-strip-chunked 1] "
                              "[--channel-weights legacy|balanced-a025|balanced-a050] "
                              "[--source-derived-alpha 1] "
+                             "[--paired-basis direct|common-difference] "
                              "[--export-payload path --export-layout path]\n", argv[0]);
         return 2;
     }
@@ -760,29 +827,33 @@ int main(int argc, char ** argv) {
             auto & candidates = generated[static_cast<size_t>(block_y) * blocks_x + block_x];
             for (const auto layout : {astc_vulkan_paired_layout::rg_b, astc_vulkan_paired_layout::r_gb}) {
                 block_codec & codec = layout == astc_vulkan_paired_layout::rg_b ? rg_b_codec : r_gb_codec;
-                codec.begin_block();
-                for (const auto & steering : codebook) {
-                    generated_candidate candidate;
-                    candidate.layout = layout;
-                    candidate.steering = steering.steering;
-                    candidate.alpha_source = steering.alpha_source;
-                    const auto source_start = std::chrono::steady_clock::now();
-                    fill_source_block(source_scratch, matrix, block_y * kLogicalBlockHeight, block_x * kBlockWidth,
-                        options.rows, options.columns, minimum, range, layout, steering);
-                    profile.source_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - source_start).count();
-                    if (!codec.roundtrip(source_scratch, candidate.block)) return 1;
-                    if (steering.steering.basis == astc_vulkan_paired_steering_basis::neutral &&
-                        steering.steering.amplitude == 0.0f &&
-                        steering.alpha_source == d2_alpha_source_kind::geometric) {
-                        codec.commit_structure_bank();
+                for (const auto basis : selected_paired_bases(options.paired_basis)) {
+                    codec.begin_block();
+                    for (const auto & steering : codebook) {
+                        generated_candidate candidate;
+                        candidate.layout = layout;
+                        candidate.steering = steering.steering;
+                        candidate.alpha_source = steering.alpha_source;
+                        candidate.basis = basis;
+                        const auto source_start = std::chrono::steady_clock::now();
+                        fill_source_block(source_scratch, matrix, block_y * kLogicalBlockHeight, block_x * kBlockWidth,
+                            options.rows, options.columns, minimum, range, layout, basis, steering);
+                        profile.source_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - source_start).count();
+                        if (!codec.roundtrip(source_scratch, candidate.block, basis)) return 1;
+                        if (basis == astc_vulkan_paired_basis::direct &&
+                            steering.steering.basis == astc_vulkan_paired_steering_basis::neutral &&
+                            steering.steering.amplitude == 0.0f &&
+                            steering.alpha_source == d2_alpha_source_kind::geometric) {
+                            codec.commit_structure_bank();
+                        }
+                        candidate.delta.payload = candidate.block.payload;
+                        ++raw_candidates;
+                        bool duplicate = false;
+                        for (const auto & existing : candidates) duplicate = duplicate || same_candidate(existing, candidate);
+                        if (!duplicate) candidates.push_back(std::move(candidate));
                     }
-                    candidate.delta.payload = candidate.block.payload;
-                    ++raw_candidates;
-                    bool duplicate = false;
-                    for (const auto & existing : candidates) duplicate = duplicate || same_candidate(existing, candidate);
-                    if (!duplicate) candidates.push_back(std::move(candidate));
                 }
-                if (options.pv_alternate) {
+                if (options.pv_alternate && options.paired_basis == d2_basis_selection::direct) {
                     // A deliberately small PV family: two continuous steering
                     // coordinates (x/y ramps), projected through the exact
                     // paired ASTC codec on every trial. This is a candidate
@@ -798,7 +869,7 @@ int main(int argc, char ** argv) {
                             fill_source_block_with_steering(
                                 pv_source, matrix, block_y * kLogicalBlockHeight,
                                 block_x * kBlockWidth, options.rows, options.columns,
-                                minimum, range, layout,
+                                minimum, range, layout, astc_vulkan_paired_basis::direct,
                                 [&coefficients](float, float, float x, float y) {
                                     return 0.5f + coefficients[0] * x + coefficients[1] * y;
                                 });
@@ -831,7 +902,7 @@ int main(int argc, char ** argv) {
                                 fill_source_block_with_steering(
                                     pv_source, matrix, block_y * kLogicalBlockHeight,
                                     block_x * kBlockWidth, options.rows, options.columns,
-                                    minimum, range, layout,
+                                    minimum, range, layout, astc_vulkan_paired_basis::direct,
                                     [&pv_result](float, float, float x, float y) {
                                         return 0.5f + pv_result.continuous[0] * x +
                                             pv_result.continuous[1] * y;
@@ -854,6 +925,7 @@ int main(int argc, char ** argv) {
             // A deterministic neutral RG/B candidate is mandatory at index zero.
             const auto neutral = std::find_if(candidates.begin(), candidates.end(), [](const generated_candidate & candidate) {
                 return candidate.layout == astc_vulkan_paired_layout::rg_b &&
+                       candidate.basis == astc_vulkan_paired_basis::direct &&
                        candidate.alpha_source == d2_alpha_source_kind::geometric &&
                        candidate.steering.basis == astc_vulkan_paired_steering_basis::neutral &&
                        candidate.steering.amplitude == 0.0f;
@@ -903,9 +975,17 @@ int main(int argc, char ** argv) {
     profile.selection_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - selection_start).count();
 
     std::vector<float> selected = baseline;
+    uint64_t selected_dual_planes = 0, selected_semantic_dual_planes = 0, selected_alpha_dual_planes = 0;
     for (uint32_t block_y = 0; block_y < blocks_y; ++block_y) for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
         const size_t block = static_cast<size_t>(block_y) * blocks_x + block_x;
-        write_block(selected, generated[block][selection.validation_selected_candidates[block]].block,
+        const auto & chosen_candidate = generated[block][selection.validation_selected_candidates[block]];
+        if (chosen_candidate.block.info_valid && chosen_candidate.block.info.is_dual_plane_block) {
+            ++selected_dual_planes;
+            const unsigned int semantic_singleton = chosen_candidate.layout == astc_vulkan_paired_layout::rg_b ? 2u : 0u;
+            if (chosen_candidate.block.info.dual_plane_component == semantic_singleton) ++selected_semantic_dual_planes;
+            if (chosen_candidate.block.info.dual_plane_component == 3u) ++selected_alpha_dual_planes;
+        }
+        write_block(selected, chosen_candidate.block,
                     block_y, block_x, options.rows, options.columns);
     }
     const auto final_objective_start = std::chrono::steady_clock::now();
@@ -923,6 +1003,10 @@ int main(int argc, char ** argv) {
     const double selected_validation_mse = selection.validation_residual_loss / (options.validation_samples * options.rows);
     const double selected_holdout_mse = mse(selected_holdout);
     if ((!options.export_payload.empty()) != (!options.export_layout.empty())) return 1;
+    if (!options.export_payload.empty() && options.paired_basis != d2_basis_selection::direct) {
+        std::fprintf(stderr, "paired selection cannot export common/difference without a versioned basis map\n");
+        return 1;
+    }
     if (!options.export_payload.empty()) {
         std::vector<uint8_t> payload(generated.size() * 16u);
         std::vector<uint32_t> layout_words(static_cast<size_t>(astc_vulkan_paired_layout_word_count(
@@ -941,11 +1025,15 @@ int main(int argc, char ** argv) {
                           static_cast<std::streamsize>(layout_words.size() * sizeof(uint32_t)));
         if (!payload_file.good() || !layout_file.good()) return 1;
     }
-    std::printf("paired-select D2_%s rows=%u columns=%u channel-weights=%s source-alpha=%s blocks=%u raw=%llu unique=%llu\n",
+    std::printf("paired-select D2_%s rows=%u columns=%u channel-weights=%s source-alpha=%s basis=%s blocks=%u raw=%llu unique=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu\n",
                 kFootprintName,
                 options.rows, options.columns, channel_weight_profile_name(options.channel_weights),
-                options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1", blocks_x * blocks_y,
-                static_cast<unsigned long long>(raw_candidates), static_cast<unsigned long long>(unique_candidates));
+                options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1",
+                paired_basis_selection_name(options.paired_basis), blocks_x * blocks_y,
+                static_cast<unsigned long long>(raw_candidates), static_cast<unsigned long long>(unique_candidates),
+                static_cast<unsigned long long>(selected_dual_planes),
+                static_cast<unsigned long long>(selected_semantic_dual_planes),
+                static_cast<unsigned long long>(selected_alpha_dual_planes));
     std::printf("paired-select neutral calibration-mse=%.8g validation-mse=%.8g holdout-mse=%.8g\n",
                 neutral_calibration_mse, neutral_validation_mse, neutral_holdout_mse);
     std::printf("paired-select selected commits=%zu validation-prefix=%u calibration-mse=%.8g validation-mse=%.8g holdout-mse=%.8g\n",
@@ -971,6 +1059,7 @@ int main(int argc, char ** argv) {
                << "columns=" << options.columns << '\n'
                << "channel_weights=" << channel_weight_profile_name(options.channel_weights) << '\n'
                << "source_alpha=" << (options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1") << '\n'
+               << "paired_basis=" << paired_basis_selection_name(options.paired_basis) << '\n'
                << "blocks=" << blocks_x * blocks_y << '\n'
                << "raw_candidates=" << raw_candidates << '\n'
                << "unique_candidates=" << unique_candidates << '\n'
@@ -982,6 +1071,9 @@ int main(int argc, char ** argv) {
                << "selected_calibration_mse=" << selected_calibration_mse << '\n'
                << "selected_validation_mse=" << selected_validation_mse << '\n'
                << "selected_holdout_mse=" << selected_holdout_mse << '\n'
+               << "selected_dual_planes=" << selected_dual_planes << '\n'
+               << "selected_semantic_dual_planes=" << selected_semantic_dual_planes << '\n'
+               << "selected_alpha_dual_planes=" << selected_alpha_dual_planes << '\n'
                << "profile_source_seconds=" << profile.source_seconds << '\n'
                << "profile_encode_seconds=" << rg_b_timing.encode_seconds + r_gb_timing.encode_seconds << '\n'
                << "profile_decode_seconds=" << rg_b_timing.decode_seconds + r_gb_timing.decode_seconds << '\n'

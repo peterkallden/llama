@@ -7712,3 +7712,31 @@ The new options are explicit in the D2 smoke tool:
 promotion requires a second tensor plus artifact-backed full-shape/model replay.
 The next D2 representation gates are common/difference paired bases and
 semantic-singleton dual-plane auditing, not a larger unconstrained Alpha grid.
+
+## Three-hundred-twenty-seventh sweep: prepared D2 basis and dual-plane gates
+
+The two next representation tests now share the exact D2 CPU oracle and
+selector rather than relying on a separate approximation.
+
+* `--paired-basis common-difference` retains direct D2 as the mandatory scalar
+  anchor and adds common/difference candidates. The source mapping is
+  `m=(q0+q1)/2`, `d=0.5+(q0-q1)/2`; the semantic oracle reconstructs
+  `q0=m+(d-0.5)` and `q1=m-(d-0.5)`. It is exactly invertible before ASTC.
+  It is intentionally non-exportable: the deployed D2 layout map has one bit
+  for `RG/B` versus `R/GB`, while common/difference needs a versioned basis bit
+  as well. The tool therefore rejects an artifact export for this test mode.
+* Every exact-decoded selected candidate now records ASTC block information:
+  dual-plane count, semantic-singleton dual-plane count, and Alpha-plane count.
+  A semantic singleton is B for `RG/B`, R for `R/GB`; this is the desired
+  second-plane allocation for two independently meaningful D2 lanes.
+
+The `20x256` Pythia smoke for the retained `balanced-a025` plus
+source-derived-Alpha profile selected 20 dual-plane blocks out of 64, and 19
+of those 20 used the semantic singleton rather than Alpha. Thus the neural
+fork already has strong recall for the targeted semantic-plane family; a forced
+dual-plane candidate is not justified until a larger/two-tensor audit shows
+that useful blocks are being pruned. The initial common/difference added-family
+smoke produced `3.5985523e-4` selected holdout MSE versus `3.0242996e-4` for
+the direct reference. It is a functioning test path, not a pass: it must be
+tested on a second tensor before spending metadata/runtime complexity on a
+versioned basis map.

@@ -23,6 +23,8 @@ int main() {
                astc_vulkan_semantic_density::d2_paired), "paired-d2") == 0);
     assert(std::strcmp(astc_vulkan_paired_layout_name(
                astc_vulkan_paired_layout::rg_b), "rg-b") == 0);
+    assert(std::strcmp(astc_vulkan_paired_basis_name(
+               astc_vulkan_paired_basis::common_difference), "common-difference") == 0);
 
     const auto rg_b = astc_vulkan_make_paired_texel(0.25f, 0.75f, 0.5f,
                                                      astc_vulkan_paired_layout::rg_b);
@@ -37,6 +39,21 @@ int main() {
                                                       astc_vulkan_paired_layout::r_gb);
     assert_close(astc_vulkan_paired_weight(r_gb, 0, astc_vulkan_paired_layout::r_gb), 0.25f);
     assert_close(astc_vulkan_paired_weight(r_gb, 1, astc_vulkan_paired_layout::r_gb), 0.75f);
+
+    // Common/difference is exactly invertible before ASTC. It remains an
+    // offline test basis until a versioned two-bit basis map is deployed.
+    const auto common_diff_rg_b = astc_vulkan_make_paired_texel(
+        0.25f, 0.75f, 0.5f, astc_vulkan_paired_layout::rg_b,
+        astc_vulkan_paired_basis::common_difference);
+    assert_close(common_diff_rg_b.r, 0.50f);
+    assert_close(common_diff_rg_b.g, 0.50f);
+    assert_close(common_diff_rg_b.b, 0.25f);
+    assert_close(astc_vulkan_paired_weight(common_diff_rg_b, 0,
+                                            astc_vulkan_paired_layout::rg_b,
+                                            astc_vulkan_paired_basis::common_difference), 0.25f);
+    assert_close(astc_vulkan_paired_weight(common_diff_rg_b, 1,
+                                            astc_vulkan_paired_layout::rg_b,
+                                            astc_vulkan_paired_basis::common_difference), 0.75f);
 
     // Alpha is an encoder-only steering lane in D2; changing it cannot alter
     // the semantic runtime reconstruction before ASTC compression.
