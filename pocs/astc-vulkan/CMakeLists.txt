@@ -470,6 +470,23 @@ if (TARGET astcenc::astcenc-static)
             target_compile_definitions(astc-vulkan-paired-selection-smoke-neural PRIVATE
                 ASTC_VULKAN_PAIRED_NEURAL_ENCODER=1)
 
+            # Isolated research target: physical ASTC remains 8x5, while the
+            # offline semantic map swaps the reduction and paired-row axes.
+            # It is intentionally not installed or used by cache/runtime code.
+            add_executable(astc-vulkan-paired-selection-smoke-neural-8x5-transposed
+                astc-vulkan-paired-selection-smoke.cpp
+                astc-vulkan-input.cpp)
+            target_include_directories(astc-vulkan-paired-selection-smoke-neural-8x5-transposed BEFORE PRIVATE
+                ${GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR}
+                ${ASTC_VULKAN_POC_INCLUDE_DIR}
+                ${CMAKE_SOURCE_DIR}/ggml/include)
+            target_link_libraries(astc-vulkan-paired-selection-smoke-neural-8x5-transposed PRIVATE
+                ${GGML_VK_ASTC_NEURAL_RANK_LIBRARY} astc-vulkan-algorithms ggml-base)
+            target_compile_features(astc-vulkan-paired-selection-smoke-neural-8x5-transposed PRIVATE cxx_std_17)
+            target_compile_definitions(astc-vulkan-paired-selection-smoke-neural-8x5-transposed PRIVATE
+                ASTC_VULKAN_PAIRED_NEURAL_ENCODER=1
+                ASTC_VULKAN_PAIRED_D2_TRANSPOSED=1)
+
             add_executable(astc-vulkan-paired-selection-smoke-neural-10x5
                 astc-vulkan-paired-selection-smoke.cpp
                 astc-vulkan-input.cpp)

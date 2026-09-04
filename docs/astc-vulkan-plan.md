@@ -3068,6 +3068,14 @@ small audit found that the neural encoder already selected semantic-singleton
 dual-plane blocks for 19 of 20 selected dual-plane D2 candidates. Therefore the
 next dual-plane action is a larger audit, not forced dual-plane search.
 
+An isolated transposed `D2_8x5` semantic map (`16` output rows by `5`
+reduction columns per physical block) is also available as a non-exportable
+screening target. It gives small matched-crop gains (0.23% and 2.18% on the
+first two Pythia FFN-down tensors), so it remains a later rate-distortion
+layout question rather than a new D2 runtime ABI. A production candidate would
+need a versioned payload ordering, mapping metadata, and paired shader address
+calculation; none are added from this screen.
+
 These steps preserve standard ASTC payloads and the versioned D2 layout map;
 there is no custom runtime ASTC decoder or additional deployed sidecar.
 

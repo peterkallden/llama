@@ -36,7 +36,19 @@ constexpr const char * kFootprintName = "8x5";
 constexpr astc_vulkan_footprint kFootprint = astc_vulkan_footprint::k8x5;
 #endif
 constexpr uint32_t kPhysicalBlockHeight = 5;
+#if defined(ASTC_VULKAN_PAIRED_D2_TRANSPOSED)
+// Research-only semantic mapping: keep the physical 8x5 ASTC block, but map
+// its X axis to eight paired output rows and its Y axis to five reduction
+// columns. This remains non-exportable until a separate runtime layout ABI is
+// designed and validated.
+constexpr uint32_t kLogicalBlockWidth = kPhysicalBlockHeight;
+constexpr uint32_t kLogicalBlockHeight = kBlockWidth * 2;
+constexpr const char * kMappingName = "transposed";
+#else
+constexpr uint32_t kLogicalBlockWidth = kBlockWidth;
 constexpr uint32_t kLogicalBlockHeight = kPhysicalBlockHeight * 2;
+constexpr const char * kMappingName = "row-paired";
+#endif
 
 enum class d2_channel_weight_profile : uint8_t {
     legacy,
@@ -86,7 +98,7 @@ struct params {
 
 struct decoded_block {
     std::array<uint8_t, 16> payload{};
-    std::array<float, kLogicalBlockHeight * kBlockWidth> logical_weights{};
+    std::array<float, kLogicalBlockHeight * kLogicalBlockWidth> logical_weights{};
     astcenc_block_info info{};
     bool info_valid = false;
 };
@@ -312,10 +324,17 @@ public:
                 const size_t offset = (static_cast<size_t>(texel_y) * kBlockWidth + x) * 4;
                 const astc_vulkan_rgba_texel texel{decoded_scratch_[offset], decoded_scratch_[offset + 1],
                                                    decoded_scratch_[offset + 2], decoded_scratch_[offset + 3]};
-                result.logical_weights[(2 * texel_y) * kBlockWidth + x] =
+#if defined(ASTC_VULKAN_PAIRED_D2_TRANSPOSED)
+                result.logical_weights[(2 * x) * kLogicalBlockWidth + texel_y] =
                     astc_vulkan_paired_weight(texel, 0, layout_, basis);
-                result.logical_weights[(2 * texel_y + 1) * kBlockWidth + x] =
+                result.logical_weights[(2 * x + 1) * kLogicalBlockWidth + texel_y] =
                     astc_vulkan_paired_weight(texel, 1, layout_, basis);
+#else
+                result.logical_weights[(2 * texel_y) * kLogicalBlockWidth + x] =
+                    astc_vulkan_paired_weight(texel, 0, layout_, basis);
+                result.logical_weights[(2 * texel_y + 1) * kLogicalBlockWidth + x] =
+                    astc_vulkan_paired_weight(texel, 1, layout_, basis);
+#endif
             }
         }
         return true;
@@ -406,9 +425,15 @@ void fill_source_block_with_steering(std::vector<float> & source,
     }
     for (uint32_t y = 0; y < kPhysicalBlockHeight; ++y) {
         for (uint32_t x_index = 0; x_index < kBlockWidth; ++x_index) {
-            const uint32_t logical_row0 = row0 + 2 * y;
-            const uint32_t logical_row1 = logical_row0 + 1;
+            const uint32_t logical_row0 =
+#if defined(ASTC_VULKAN_PAIRED_D2_TRANSPOSED)
+                row0 + 2 * x_index;
+            const uint32_t column = column0 + y;
+#else
+                row0 + 2 * y;
             const uint32_t column = column0 + x_index;
+#endif
+            const uint32_t logical_row1 = logical_row0 + 1;
             const float x = 2.0f * static_cast<float>(x_index) / (kBlockWidth - 1) - 1.0f;
             const float y_value = 2.0f * static_cast<float>(y) / (kPhysicalBlockHeight - 1) - 1.0f;
             const float q0 = logical_row0 < rows && column < columns ?
@@ -441,10 +466,10 @@ void write_block(std::vector<float> & target, const decoded_block & block, uint3
     for (uint32_t y = 0; y < kLogicalBlockHeight; ++y) {
         const uint32_t row = block_row * kLogicalBlockHeight + y;
         if (row >= rows) continue;
-        for (uint32_t x = 0; x < kBlockWidth; ++x) {
-            const uint32_t column = block_column * kBlockWidth + x;
+        for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
+            const uint32_t column = block_column * kLogicalBlockWidth + x;
             if (column >= columns) continue;
-            target[static_cast<size_t>(row) * columns + column] = block.logical_weights[y * kBlockWidth + x];
+            target[static_cast<size_t>(row) * columns + column] = block.logical_weights[y * kLogicalBlockWidth + x];
         }
     }
 }
@@ -486,11 +511,11 @@ void assign_delta(std::vector<double> & delta, const decoded_block & candidate,
             const uint32_t row = block_row * kLogicalBlockHeight + local_row;
             if (row >= rows) continue;
             double output_delta = 0.0;
-            for (uint32_t x = 0; x < kBlockWidth; ++x) {
-                const uint32_t column = block_column * kBlockWidth + x;
+            for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
+                const uint32_t column = block_column * kLogicalBlockWidth + x;
                 if (column >= columns) continue;
-                const float weight_delta = (candidate.logical_weights[local_row * kBlockWidth + x] -
-                                            baseline.logical_weights[local_row * kBlockWidth + x]) * range;
+                const float weight_delta = (candidate.logical_weights[local_row * kLogicalBlockWidth + x] -
+                                            baseline.logical_weights[local_row * kLogicalBlockWidth + x]) * range;
                 output_delta += weight_delta * trace.values[static_cast<size_t>(sample + sample_offset) * trace.columns + column];
             }
             delta[static_cast<size_t>(sample) * rows + row] = output_delta;
@@ -515,12 +540,12 @@ double block_activation_objective(const ggml_vk_astc_loaded_matrix & matrix,
             if (row >= rows) continue;
             double output = 0.0;
             double reference = 0.0;
-            for (uint32_t x = 0; x < kBlockWidth; ++x) {
-                const uint32_t column = block_column * kBlockWidth + x;
+            for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
+                const uint32_t column = block_column * kLogicalBlockWidth + x;
                 if (column >= columns) continue;
                 const float activation = trace.values[static_cast<size_t>(sample + sample_offset) * trace.columns + column];
                 const float source = normalized_weight(matrix, row, column, minimum, range) * range;
-                const float decoded = candidate.logical_weights[local_row * kBlockWidth + x] * range;
+                const float decoded = candidate.logical_weights[local_row * kLogicalBlockWidth + x] * range;
                 reference += source * activation;
                 output += decoded * activation;
             }
@@ -634,11 +659,11 @@ std::vector<double> yaqa_delta_for_block(const decoded_block & candidate,
         if (row >= rows) continue;
         for (uint32_t sample = 0; sample < samples; ++sample) {
             double value = 0.0;
-            for (uint32_t x = 0; x < kBlockWidth; ++x) {
-                const uint32_t column = block_column * kBlockWidth + x;
+            for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
+                const uint32_t column = block_column * kLogicalBlockWidth + x;
                 if (column >= columns) continue;
-                const float decoded_delta = (candidate.logical_weights[local_row * kBlockWidth + x] -
-                    baseline.logical_weights[local_row * kBlockWidth + x]) * range;
+                const float decoded_delta = (candidate.logical_weights[local_row * kLogicalBlockWidth + x] -
+                    baseline.logical_weights[local_row * kLogicalBlockWidth + x]) * range;
                 value += decoded_delta * input_window[static_cast<size_t>(sample) * columns + column];
             }
             projected[static_cast<size_t>(local_row) * samples + sample] = value;
@@ -752,7 +777,7 @@ bool run_row_strip_chunked(const params & options,
                            const ggml_vk_astc_loaded_matrix & matrix,
                            const ggml_vk_astc_activation_trace & trace,
                            float minimum, float range, bool neural_backend) {
-    const uint32_t blocks_x = (options.columns + kBlockWidth - 1) / kBlockWidth;
+    const uint32_t blocks_x = (options.columns + kLogicalBlockWidth - 1) / kLogicalBlockWidth;
     const uint32_t blocks_y = (options.rows + kLogicalBlockHeight - 1) / kLogicalBlockHeight;
     const uint32_t validation_offset = options.calibration_samples;
     const uint32_t holdout_offset = validation_offset + options.validation_samples;
@@ -804,7 +829,7 @@ bool run_row_strip_chunked(const params & options,
                             candidate.steering = steering.steering;
                             candidate.alpha_source = steering.alpha_source;
                             candidate.basis = basis;
-                            fill_source_block(source_scratch, matrix, row0, block_x * kBlockWidth,
+                            fill_source_block(source_scratch, matrix, row0, block_x * kLogicalBlockWidth,
                                 options.rows, options.columns, minimum, range, layout, basis, steering);
                             if (!codec.roundtrip(source_scratch, candidate.block, basis)) { generation_failed.store(true); return; }
                             candidate.delta.payload = candidate.block.payload;
@@ -825,10 +850,10 @@ bool run_row_strip_chunked(const params & options,
                 if (neutral_it == candidates.end()) { generation_failed.store(true); return; }
                 std::iter_swap(candidates.begin(), neutral_it);
                 const decoded_block & block = candidates.front().block;
-                for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) for (uint32_t x = 0; x < kBlockWidth; ++x) {
-                    const uint32_t column = block_x * kBlockWidth + x;
+                for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
+                    const uint32_t column = block_x * kLogicalBlockWidth + x;
                     if (column < options.columns) strip_neutral[static_cast<size_t>(local_row) * options.columns + column] =
-                        block.logical_weights[local_row * kBlockWidth + x];
+                        block.logical_weights[local_row * kLogicalBlockWidth + x];
                 }
                 strip_unique += candidates.size();
             }
@@ -881,11 +906,11 @@ bool run_row_strip_chunked(const params & options,
                     auto & output = sample < options.calibration_samples ? candidate.delta.calibration_delta : candidate.delta.validation_delta;
                     for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) {
                         double value = 0.0;
-                        for (uint32_t x = 0; x < kBlockWidth; ++x) {
-                            const uint32_t column = block_x * kBlockWidth + x;
+                        for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
+                            const uint32_t column = block_x * kLogicalBlockWidth + x;
                             if (column >= options.columns) continue;
-                            value += (candidate.block.logical_weights[local_row * kBlockWidth + x] -
-                                      base.logical_weights[local_row * kBlockWidth + x]) * range *
+                            value += (candidate.block.logical_weights[local_row * kLogicalBlockWidth + x] -
+                                      base.logical_weights[local_row * kLogicalBlockWidth + x]) * range *
                                      trace.values[static_cast<size_t>(sample_offset + local_sample) * trace.columns + column];
                         }
                         output[static_cast<size_t>(local_sample) * strip_rows + local_row] = value;
@@ -909,11 +934,11 @@ bool run_row_strip_chunked(const params & options,
                 if (block.info.dual_plane_component == semantic_singleton) ++selected_semantic_dual_planes;
                 if (block.info.dual_plane_component == 3u) ++selected_alpha_dual_planes;
             }
-            for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) for (uint32_t x = 0; x < kBlockWidth; ++x) {
-                const uint32_t column = block_x * kBlockWidth + x;
+            for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
+                const uint32_t column = block_x * kLogicalBlockWidth + x;
                 if (column >= options.columns) continue;
-                neutral[static_cast<size_t>(row0 + local_row) * options.columns + column] = base.logical_weights[local_row * kBlockWidth + x];
-                selected[static_cast<size_t>(row0 + local_row) * options.columns + column] = block.logical_weights[local_row * kBlockWidth + x];
+                neutral[static_cast<size_t>(row0 + local_row) * options.columns + column] = base.logical_weights[local_row * kLogicalBlockWidth + x];
+                selected[static_cast<size_t>(row0 + local_row) * options.columns + column] = block.logical_weights[local_row * kLogicalBlockWidth + x];
             }
             const size_t block_index = static_cast<size_t>(strip) * blocks_x + block_x;
             std::copy(block.payload.begin(), block.payload.end(), selected_payload.begin() + block_index * 16u);
@@ -942,8 +967,8 @@ bool run_row_strip_chunked(const params & options,
         layout.write(reinterpret_cast<const char *>(selected_layout.data()), static_cast<std::streamsize>(selected_layout.size() * sizeof(uint32_t)));
         if (!payload.good() || !layout.good()) return false;
     }
-    std::printf("paired-select chunked D2_%s rows=%u columns=%u channel-weights=%s source-alpha=%s basis=%s blocks=%zu raw=%llu unique=%llu peak-candidates=%llu accepted=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu neutral-holdout=%.8g selected-holdout=%.8g\n",
-                kFootprintName, options.rows, options.columns,
+    std::printf("paired-select chunked D2_%s mapping=%s rows=%u columns=%u channel-weights=%s source-alpha=%s basis=%s blocks=%zu raw=%llu unique=%llu peak-candidates=%llu accepted=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu neutral-holdout=%.8g selected-holdout=%.8g\n",
+                kFootprintName, kMappingName, options.rows, options.columns,
                 channel_weight_profile_name(options.channel_weights),
                 options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1",
                 paired_basis_selection_name(options.paired_basis), block_count,
@@ -957,6 +982,7 @@ bool run_row_strip_chunked(const params & options,
         if (!report) return false;
         report << "backend=" << (neural_backend ? "neural-d2" : "standard") << '\n'
                << "footprint=" << kFootprintName << '\n'
+               << "mapping=" << kMappingName << '\n'
                << "rows=" << options.rows << '\n'
                << "columns=" << options.columns << '\n'
                << "channel_weights=" << channel_weight_profile_name(options.channel_weights) << '\n'
@@ -995,6 +1021,12 @@ int main(int argc, char ** argv) {
                              "[--export-payload path --export-layout path]\n", argv[0]);
         return 2;
     }
+#if defined(ASTC_VULKAN_PAIRED_D2_TRANSPOSED)
+    if (!options.export_payload.empty() || !options.export_layout.empty()) {
+        std::fprintf(stderr, "transposed D2 mapping is a non-exportable research variant\n");
+        return 2;
+    }
+#endif
     ggml_vk_astc_loaded_matrix matrix;
     ggml_vk_astc_activation_trace trace, output_trace;
     std::string error;
@@ -1020,7 +1052,7 @@ int main(int argc, char ** argv) {
         maximum = std::max(maximum, value);
     }
     const float range = maximum - minimum;
-    const uint32_t blocks_x = (options.columns + kBlockWidth - 1) / kBlockWidth;
+    const uint32_t blocks_x = (options.columns + kLogicalBlockWidth - 1) / kLogicalBlockWidth;
     const uint32_t blocks_y = (options.rows + kLogicalBlockHeight - 1) / kLogicalBlockHeight;
     const uint32_t validation_offset = options.calibration_samples;
     const uint32_t holdout_offset = validation_offset + options.validation_samples;
@@ -1066,7 +1098,7 @@ int main(int argc, char ** argv) {
                         candidate.alpha_source = steering.alpha_source;
                         candidate.basis = basis;
                         const auto source_start = std::chrono::steady_clock::now();
-                        fill_source_block(source_scratch, matrix, block_y * kLogicalBlockHeight, block_x * kBlockWidth,
+                        fill_source_block(source_scratch, matrix, block_y * kLogicalBlockHeight, block_x * kLogicalBlockWidth,
                             options.rows, options.columns, minimum, range, layout, basis, steering);
                         profile.source_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - source_start).count();
                         if (!codec.roundtrip(source_scratch, candidate.block, basis)) return 1;
@@ -1098,7 +1130,7 @@ int main(int argc, char ** argv) {
                             if (coefficients.size() != 2) return false;
                             fill_source_block_with_steering(
                                 pv_source, matrix, block_y * kLogicalBlockHeight,
-                                block_x * kBlockWidth, options.rows, options.columns,
+                                block_x * kLogicalBlockWidth, options.rows, options.columns,
                                 minimum, range, layout, astc_vulkan_paired_basis::direct,
                                 [&coefficients](float, float, float x, float y) {
                                     return 0.5f + coefficients[0] * x + coefficients[1] * y;
@@ -1131,7 +1163,7 @@ int main(int argc, char ** argv) {
                             [&]() {
                                 fill_source_block_with_steering(
                                     pv_source, matrix, block_y * kLogicalBlockHeight,
-                                    block_x * kBlockWidth, options.rows, options.columns,
+                                    block_x * kLogicalBlockWidth, options.rows, options.columns,
                                     minimum, range, layout, astc_vulkan_paired_basis::direct,
                                     [&pv_result](float, float, float x, float y) {
                                         return 0.5f + pv_result.continuous[0] * x +
@@ -1302,9 +1334,9 @@ int main(int argc, char ** argv) {
                           static_cast<std::streamsize>(layout_words.size() * sizeof(uint32_t)));
         if (!payload_file.good() || !layout_file.good()) return 1;
     }
-    std::printf("paired-select D2_%s rows=%u columns=%u objective=%s channel-weights=%s source-alpha=%s basis=%s blocks=%u raw=%llu unique=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu\n",
+    std::printf("paired-select D2_%s mapping=%s rows=%u columns=%u objective=%s channel-weights=%s source-alpha=%s basis=%s blocks=%u raw=%llu unique=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu\n",
                 kFootprintName,
-                options.rows, options.columns, astc_vulkan_objective_name(options.objective), channel_weight_profile_name(options.channel_weights),
+                kMappingName, options.rows, options.columns, astc_vulkan_objective_name(options.objective), channel_weight_profile_name(options.channel_weights),
                 options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1",
                 paired_basis_selection_name(options.paired_basis), blocks_x * blocks_y,
                 static_cast<unsigned long long>(raw_candidates), static_cast<unsigned long long>(unique_candidates),
@@ -1335,6 +1367,7 @@ int main(int argc, char ** argv) {
         if (!report) return 1;
         report << "backend=" << (neural_backend ? "neural-d2" : "standard") << '\n'
                << "footprint=" << kFootprintName << '\n'
+               << "mapping=" << kMappingName << '\n'
                << "rows=" << options.rows << '\n'
                << "columns=" << options.columns << '\n'
                << "channel_weights=" << channel_weight_profile_name(options.channel_weights) << '\n'

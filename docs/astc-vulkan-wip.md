@@ -7812,3 +7812,33 @@ Its output will be accepted only after exported-byte CPU replay and the
 artifact-backed GPU decode check. D2 `10x5` will be included in the same
 production-evidence matrix if that full `8x5` gate remains positive; until
 then both profiles remain experimental/opt-in.
+
+## Three-hundred-thirtieth sweep: transposed D2_8x5 semantic mapping
+
+An isolated neural-D2 test target now maps the unchanged physical `8x5` ASTC
+footprint as `16` logical output rows by `5` reduction columns, rather than
+the deployed row-paired `10` logical output rows by `8` reduction columns.
+Both mappings therefore encode exactly 80 logical weights per 16-byte ASTC
+block (1.60 b/logical weight); the experiment changes only which tensor axis
+receives the larger physical ASTC resolution. It does not change the running
+full-shape encoder, cache format, layout map, or GPU shader.
+
+On matching aligned `80x80`, ten-calibration, seven-validation screens using
+the retained `balanced-a025 + source-derived Alpha` profile:
+
+| tensor | row-paired selected holdout | transposed selected holdout | change |
+| --- | ---: | ---: | ---: |
+| `blk.0.ffn_down.weight` | `1.6934139e-4` | `1.6895322e-4` | -0.23% |
+| `blk.1.ffn_down.weight` | `2.1695138e-4` | `2.1221182e-4` | -2.18% |
+
+The second result is a real but small signal; it does not justify a runtime
+ABI fork. The transposed neutral anchors were lower on both screens, while
+the layer-0 validation-selected stream slightly regressed against its own
+neutral anchor. Treat this as an axis-allocation hypothesis for later D2
+layout/rate-distortion work, not as a production or full-shape candidate.
+
+The target rejects `--export-payload`/`--export-layout` before reading model
+data. That guard is deliberate: current paired-D2 payload ordering and the
+one-bit `RG/B` versus `R/GB` map encode the deployed row-paired geometry.
+A transposed stream would need a separately versioned mapping, manifest field,
+and shader address calculation before it could be consumed at runtime.
