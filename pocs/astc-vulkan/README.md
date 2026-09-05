@@ -474,6 +474,29 @@ version intentionally handles one D1 scalar tensor; D1 gauge and D2 will use
 the same staging/publish contract after their model-level evidence is wired
 into the builder.
 
+The builder also has an explicit paired-D2 path for the supported `6x5`,
+`8x5`, and `10x5` footprints. D2 requires logical dimensions because one
+physical texel represents two output-row weights, and it exports a layout map
+alongside the ASTC payload:
+
+```bash
+build-astc-neural/bin/astc-vulkan-cache build \
+  --representation paired-d2 \
+  --model /absolute/path/model.gguf \
+  --tensor blk.0.ffn_down.weight \
+  --trace /absolute/path/calibration.trace \
+  --footprint 8x5 --rows 2048 --columns 8192 \
+  --calibration-samples 8 --validation-samples 7 \
+  --paired-semantic la --channel-weights balanced-a025 \
+  --source-derived-alpha 1 --row-scale none \
+  --cache auto
+```
+
+`--row-scale absmax` additionally carries the per-output-row scale blob.
+This D2 producer currently records model/Vulkan gates as false; its cache is
+therefore suitable for replay and inspection but remains ineligible for
+automatic production scheduling until those gates are established.
+
 `create` is the lower-level equivalent when the artifact pieces are held in
 separate paths:
 

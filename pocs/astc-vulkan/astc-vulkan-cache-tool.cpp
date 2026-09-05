@@ -119,8 +119,11 @@ void print_help(const char * executable) {
         "  %s inspect --model model.gguf [--cache path|auto]\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
         "  %s build --model model.gguf --tensor name --trace activations.bin --footprint 6x6\n"
-        "            [--cache path|auto] [--backend hybrid|cpu] [--gpu-proposer-shader shader.spv]\n"
-        "            [--preset thorough|medium|fast] [--artifact-dir dir] [--source-family name]\n"
+            "            [--cache path|auto] [--backend hybrid|cpu] [--gpu-proposer-shader shader.spv]\n"
+            "            [--preset thorough|medium|fast] [--artifact-dir dir] [--source-family name]\n"
+        "            [--representation scalar|paired-d2] [--rows N --columns N]\n"
+        "            [--paired-semantic direct|la] [--channel-weights legacy|balanced-a025]\n"
+        "            [--source-derived-alpha 0|1] [--row-scale none|absmax]\n"
         "  %s publish --model model.gguf --artifact-dir artifact-dir [--storage-profile name] [--cache path|auto]\n"
         "  %s install --model model.gguf --artifact-dir artifact-dir [--profile name] [--cache path|auto]\n"
         "  %s create --model model.gguf --manifest artifact.manifest --payload payload.bin\n"
@@ -196,9 +199,9 @@ std::filesystem::path sibling_tool(const char * argv0, const char * name) {
     return std::filesystem::path(name);
 }
 
-std::string sanitized_id(const std::string & tensor, const std::string & footprint) {
+std::string sanitized_tensor_name(const std::string & tensor) {
     std::string result;
-    result.reserve(tensor.size() + footprint.size() + 8);
+    result.reserve(tensor.size());
     for (const char character : tensor) {
         if ((character >= 'a' && character <= 'z') ||
             (character >= 'A' && character <= 'Z') ||
@@ -208,8 +211,11 @@ std::string sanitized_id(const std::string & tensor, const std::string & footpri
             result += '_';
         }
     }
-    result += "-d1-" + footprint + "-scalar";
     return result;
+}
+
+std::string sanitized_id(const std::string & tensor, const std::string & footprint) {
+    return sanitized_tensor_name(tensor) + "-d1-" + footprint + "-scalar";
 }
 
 bool build_d1_cache(const char * argv0, const std::string & model,
@@ -324,6 +330,154 @@ bool build_d1_cache(const char * argv0, const std::string & model,
     return true;
 }
 
+bool build_d2_cache(const char * argv0, const std::string & model,
+                    const std::string & tensor, const std::string & trace,
+                    const std::string & footprint, const std::string & cache,
+                    const std::string & artifact_dir, const std::string & source_family,
+                    const std::string & paired_semantic, const std::string & channel_weights,
+                    const std::string & source_alpha, const std::string & row_scale,
+                    const std::string & rows_text, const std::string & columns_text,
+                    const std::string & calibration_samples,
+                    const std::string & validation_samples,
+                    astc_vulkan_cache_paths & paths, std::string & error) {
+    if (model.empty() || tensor.empty() || trace.empty() || footprint.empty() ||
+        rows_text.empty() || columns_text.empty()) {
+        error = "paired-D2 build requires --model, --tensor, --trace, --footprint, --rows and --columns";
+        return false;
+    }
+    if (find_profile("d2-" + footprint) == nullptr) {
+        error = "paired-D2 build supports only 6x5, 8x5 and 10x5 footprints";
+        return false;
+    }
+    if (paired_semantic != "direct" && paired_semantic != "la") {
+        error = "--paired-semantic must be direct or la";
+        return false;
+    }
+    if (channel_weights != "legacy" && channel_weights != "balanced-a025" && channel_weights != "balanced-a050") {
+        error = "--channel-weights must be legacy, balanced-a025 or balanced-a050";
+        return false;
+    }
+    if (row_scale != "none" && row_scale != "absmax") {
+        error = "--row-scale must be none or absmax";
+        return false;
+    }
+    uint32_t rows = 0, columns = 0, calibration = 0, validation = 0;
+    try {
+        rows = static_cast<uint32_t>(std::stoul(rows_text));
+        columns = static_cast<uint32_t>(std::stoul(columns_text));
+        calibration = static_cast<uint32_t>(std::stoul(calibration_samples));
+        validation = static_cast<uint32_t>(std::stoul(validation_samples));
+    } catch (...) {
+        error = "D2 dimensions and trace split must be unsigned integers";
+        return false;
+    }
+    if (rows == 0 || columns == 0 || calibration == 0 || validation == 0) {
+        error = "D2 dimensions and trace split must be non-zero";
+        return false;
+    }
+    if (paired_semantic != "la" && row_scale != "none") {
+        error = "row scaling currently requires the D2-LA semantic";
+        return false;
+    }
+    std::string fingerprint, trace_hash;
+    if (!astc_vulkan_sha256_file_hex(model, fingerprint, error) ||
+        !astc_vulkan_sha256_file_hex(trace, trace_hash, error)) return false;
+
+    std::filesystem::path output_dir;
+    bool remove_output = false;
+    if (!artifact_dir.empty()) {
+        output_dir = artifact_dir;
+        std::error_code ec;
+        if (std::filesystem::exists(output_dir, ec)) {
+            error = "--artifact-dir already exists; refusing to overwrite it";
+            return false;
+        }
+    } else {
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        output_dir = std::filesystem::temp_directory_path() /
+                     ("astc-vulkan-build-d2-" + std::to_string(stamp));
+        remove_output = true;
+    }
+    std::error_code ec;
+    if (!std::filesystem::create_directories(output_dir, ec) || ec) {
+        error = "cannot create D2 build artifact staging directory";
+        return false;
+    }
+    const auto cleanup = [&]() {
+        if (remove_output) {
+            std::error_code ignored;
+            std::filesystem::remove_all(output_dir, ignored);
+        }
+    };
+    const std::filesystem::path generated_payload = output_dir / "generated.astcpack";
+    const std::filesystem::path generated_layout = output_dir / "generated.layout.bin";
+    const std::filesystem::path generated_scales = output_dir / "generated.row-scales.bin";
+    const std::filesystem::path report = output_dir / "generated.report.txt";
+    std::string executable_name = "astc-vulkan-paired-selection-smoke-neural";
+    if (footprint == "6x5") executable_name += "-6x5";
+    else if (footprint == "10x5") executable_name += "-10x5";
+    std::vector<std::string> generator_args{
+        "--model", model, "--tensor", tensor, "--trace", trace,
+        "--rows", std::to_string(rows), "--columns", std::to_string(columns),
+        "--calibration-samples", std::to_string(calibration),
+        "--validation-samples", std::to_string(validation), "--report", report.string(),
+        "--export-payload", generated_payload.string(), "--export-layout", generated_layout.string(),
+        "--channel-weights", channel_weights, "--source-derived-alpha", source_alpha,
+        "--paired-semantic", paired_semantic, "--paired-basis", "direct",
+        "--row-strip-chunked", "1"};
+    if (row_scale == "absmax") {
+        generator_args.push_back("--row-scale");
+        generator_args.push_back("absmax");
+        generator_args.push_back("--export-row-scales");
+        generator_args.push_back(generated_scales.string());
+    }
+    if (!run_tool(sibling_tool(argv0, executable_name.c_str()), generator_args, error)) {
+        cleanup();
+        return false;
+    }
+    const std::filesystem::path manifest = output_dir / "manifest.astcv";
+    const std::filesystem::path payload = output_dir / "payload.astcpack";
+    const std::filesystem::path layout_payload = output_dir / "layout-map.bin";
+    const std::filesystem::path row_scales_payload = output_dir / "row-scales.bin";
+    const std::filesystem::path provenance = output_dir / "provenance.txt";
+    const std::string artifact_id = sanitized_tensor_name(tensor) + "-d2-" + footprint + "-la-selected";
+    std::vector<std::string> pack_args{
+        "--input", generated_payload.string(), "--layout-input", generated_layout.string(),
+        "--metadata", report.string(), "--manifest", manifest.string(), "--payload", payload.string(),
+        "--layout-payload", layout_payload.string(), "--tensor", tensor,
+        "--model-fingerprint", fingerprint, "--provenance", provenance.string(),
+        "--source-family", source_family, "--calibration-hash", trace_hash,
+        "--validation-hash", trace_hash, "--holdout-hash", "unspecified",
+        "--selector-config", "d2-row-strip-chunked", "--validation-prefix", "selected",
+        "--commit-order-hash", "unspecified", "--padding-contract", "deterministic-clamp-v1",
+        "--width", std::to_string(columns), "--height", std::to_string(rows),
+        "--footprint", footprint, "--representation", "paired-d2", "--artifact-id", artifact_id,
+        "--encoder-profile", "d2-neural-selection", "--paired-semantic", paired_semantic,
+        "--variant", "selected", "--normalization", row_scale,
+        "--model-gate", "false", "--vulkan-gate", "false"};
+    if (row_scale == "absmax") {
+        pack_args.push_back("--row-scales-input");
+        pack_args.push_back(generated_scales.string());
+        pack_args.push_back("--row-scales-payload");
+        pack_args.push_back(row_scales_payload.string());
+    }
+    if (!run_tool(sibling_tool(argv0, "astc-vulkan-artifact-pack"), pack_args, error)) {
+        cleanup();
+        return false;
+    }
+    if (!astc_vulkan_cache_create_with_row_scales(
+            model, manifest.string(), payload.string(), layout_payload.string(),
+            row_scale == "absmax" ? row_scales_payload.string() : std::string(),
+            provenance.string(), cache, paths, error)) {
+        cleanup();
+        return false;
+    }
+    std::printf("astc-cache build tensor=%s footprint=%s representation=paired-d2 semantic=%s artifact=%s gates=model:false/vulkan:false\n",
+                tensor.c_str(), footprint.c_str(), paired_semantic.c_str(), artifact_id.c_str());
+    if (remove_output) cleanup();
+    return true;
+}
+
 bool artifact_directory_paths(const std::string & root, std::string & manifest,
                               std::string & payload, std::string & layout,
                               std::string & row_scales, std::string & provenance) {
@@ -358,7 +512,9 @@ int main(int argc, char ** argv) {
     }
     std::string model, manifest, payload, layout, row_scales, provenance, cache = "auto", artifact_dir, profile_name;
     std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
-    std::string max_rows, max_columns;
+    std::string max_rows, max_columns, representation = "scalar", paired_semantic = "la";
+    std::string channel_weights = "balanced-a025", source_alpha = "1", row_scale = "none";
+    std::string rows, columns, calibration_samples = "8", validation_samples = "7";
     for (int index = 2; index < argc; index += 2) {
         if (index + 1 >= argc) return 2;
         const std::string option = argv[index];
@@ -381,10 +537,23 @@ int main(int argc, char ** argv) {
         else if (option == "--source-family") source_family = value;
         else if (option == "--max-rows") max_rows = value;
         else if (option == "--max-columns") max_columns = value;
+        else if (option == "--representation") representation = value;
+        else if (option == "--paired-semantic") paired_semantic = value;
+        else if (option == "--channel-weights") channel_weights = value;
+        else if (option == "--source-derived-alpha") source_alpha = value;
+        else if (option == "--row-scale") row_scale = value;
+        else if (option == "--rows") rows = value;
+        else if (option == "--columns") columns = value;
+        else if (option == "--calibration-samples") calibration_samples = value;
+        else if (option == "--validation-samples") validation_samples = value;
         else return 2;
     }
     std::string error;
     if (command == "build") {
+        if (representation != "scalar" && representation != "paired-d2") {
+            std::fprintf(stderr, "astc-cache build failed: --representation must be scalar or paired-d2\n");
+            return 2;
+        }
         if (backend != "hybrid" && backend != "cpu") {
             std::fprintf(stderr, "astc-cache build failed: --backend must be hybrid or cpu\n");
             return 2;
@@ -394,9 +563,14 @@ int main(int argc, char ** argv) {
             return 2;
         }
         astc_vulkan_cache_paths paths;
-        if (!build_d1_cache(argv[0], model, tensor, trace, footprint,
-                            cache, backend, shader, preset, artifact_dir, source_family,
-                            max_rows, max_columns, paths, error)) {
+        const bool d2 = representation == "paired-d2";
+        const bool built = d2 ? build_d2_cache(
+            argv[0], model, tensor, trace, footprint, cache, artifact_dir, source_family,
+            paired_semantic, channel_weights, source_alpha, row_scale, rows, columns,
+            calibration_samples, validation_samples, paths, error) : build_d1_cache(
+            argv[0], model, tensor, trace, footprint, cache, backend, shader, preset,
+            artifact_dir, source_family, max_rows, max_columns, paths, error);
+        if (!built) {
             std::fprintf(stderr, "astc-cache build failed: %s\n", error.c_str());
             return 1;
         }
