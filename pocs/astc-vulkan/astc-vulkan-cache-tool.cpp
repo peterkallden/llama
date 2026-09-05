@@ -224,6 +224,10 @@ bool build_d1_cache(const char * argv0, const std::string & model,
         error = "build requires --model, --tensor, --trace and --footprint";
         return false;
     }
+    if (find_profile("d1-" + footprint) == nullptr) {
+        error = "the first build command supports D1 footprints only (use publish/create for D2 artifacts)";
+        return false;
+    }
     std::string fingerprint, trace_hash;
     if (!astc_vulkan_sha256_file_hex(model, fingerprint, error) ||
         !astc_vulkan_sha256_file_hex(trace, trace_hash, error)) return false;
