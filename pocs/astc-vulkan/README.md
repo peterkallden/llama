@@ -488,11 +488,15 @@ build-astc-neural/bin/astc-vulkan-cache build \
   --footprint 8x5 --rows 2048 --columns 8192 \
   --calibration-samples 8 --validation-samples 7 \
   --paired-semantic la --channel-weights balanced-a025 \
-  --source-derived-alpha 1 --row-scale none \
+  --source-derived-alpha 1 --row-scale none --workers 8 \
   --cache auto
 ```
 
 `--row-scale absmax` additionally carries the per-output-row scale blob.
+`--workers N` controls the number of CPU ASTC contexts used for parallel D2
+block generation (default: 4); selection and commit ordering remain
+deterministic after the worker phase. Use a value near the available physical
+cores and leave headroom for the rest of the system.
 This D2 producer currently records model/Vulkan gates as false; its cache is
 therefore suitable for replay and inspection but remains ineligible for
 automatic production scheduling until those gates are established.

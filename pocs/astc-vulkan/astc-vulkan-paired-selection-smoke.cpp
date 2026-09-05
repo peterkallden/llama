@@ -88,6 +88,7 @@ struct params {
     uint32_t columns = 256;
     uint32_t calibration_samples = 5;
     uint32_t validation_samples = 2;
+    uint32_t worker_count = 4;
     uint32_t progress_every_blocks = 0;
     std::string report;
     std::string export_payload;
@@ -228,6 +229,7 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--columns") result.columns = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--calibration-samples") result.calibration_samples = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--validation-samples") result.validation_samples = static_cast<uint32_t>(std::stoul(value));
+        else if (option == "--workers") result.worker_count = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--progress-every-blocks") result.progress_every_blocks = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--report") result.report = value;
         else if (option == "--export-payload") result.export_payload = value;
@@ -846,7 +848,8 @@ bool run_row_strip_chunked(const params & options,
     uint64_t unique_candidates = 0, raw_candidates = 0;
     uint64_t accepted = 0, peak_candidates = 0;
     uint64_t selected_dual_planes = 0, selected_semantic_dual_planes = 0, selected_alpha_dual_planes = 0;
-    constexpr uint32_t worker_count = 4;
+    const uint32_t worker_count = std::min(std::max(1u, options.worker_count),
+                                           std::max(1u, blocks_x));
     std::vector<std::unique_ptr<block_codec>> worker_rg_b;
     std::vector<std::unique_ptr<block_codec>> worker_r_gb;
     for (uint32_t worker = 0; worker < worker_count; ++worker) {
@@ -1110,7 +1113,7 @@ int main(int argc, char ** argv) {
     params options;
     if (!parse_params(argc, argv, options)) {
         std::fprintf(stderr, "usage: %s --model model.gguf --tensor name --trace input.trace "
-                             "[--rows N --columns N --calibration-samples N --validation-samples N "
+                             "[--rows N --columns N --calibration-samples N --validation-samples N --workers N "
                              "--progress-every-blocks N --report path [--structure-bank 1] "
                              "[--pv-alternate 1] [--row-strip-chunked 1] "
                              "[--channel-weights legacy|balanced-a025|balanced-a050] "

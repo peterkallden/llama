@@ -124,6 +124,7 @@ void print_help(const char * executable) {
         "            [--representation scalar|paired-d2] [--rows N --columns N]\n"
         "            [--paired-semantic direct|la] [--channel-weights legacy|balanced-a025]\n"
         "            [--source-derived-alpha 0|1] [--row-scale none|absmax]\n"
+        "            [--workers N]\n"
         "  %s publish --model model.gguf --artifact-dir artifact-dir [--storage-profile name] [--cache path|auto]\n"
         "  %s install --model model.gguf --artifact-dir artifact-dir [--profile name] [--cache path|auto]\n"
         "  %s create --model model.gguf --manifest artifact.manifest --payload payload.bin\n"
@@ -224,7 +225,8 @@ bool build_d1_cache(const char * argv0, const std::string & model,
                     const std::string & backend, const std::string & shader,
                     const std::string & preset, const std::string & artifact_dir,
                     const std::string & source_family, const std::string & max_rows,
-                    const std::string & max_columns, astc_vulkan_cache_paths & paths,
+                    const std::string & max_columns, const std::string & workers,
+                    astc_vulkan_cache_paths & paths,
                     std::string & error) {
     if (model.empty() || tensor.empty() || trace.empty() || footprint.empty()) {
         error = "build requires --model, --tensor, --trace and --footprint";
@@ -275,6 +277,7 @@ bool build_d1_cache(const char * argv0, const std::string & model,
         "--export-metadata", exported_metadata.string(), "--export-only"};
     if (!max_rows.empty()) { generator_args.push_back("--max-rows"); generator_args.push_back(max_rows); }
     if (!max_columns.empty()) { generator_args.push_back("--max-columns"); generator_args.push_back(max_columns); }
+    if (!workers.empty()) { generator_args.push_back("--candidate-threads"); generator_args.push_back(workers); }
     if (backend == "cpu") {
         generator_args.push_back("--backend"); generator_args.push_back("cpu");
     } else {
@@ -339,6 +342,7 @@ bool build_d2_cache(const char * argv0, const std::string & model,
                     const std::string & rows_text, const std::string & columns_text,
                     const std::string & calibration_samples,
                     const std::string & validation_samples,
+                    const std::string & workers,
                     astc_vulkan_cache_paths & paths, std::string & error) {
     if (model.empty() || tensor.empty() || trace.empty() || footprint.empty() ||
         rows_text.empty() || columns_text.empty()) {
@@ -425,6 +429,10 @@ bool build_d2_cache(const char * argv0, const std::string & model,
         "--channel-weights", channel_weights, "--source-derived-alpha", source_alpha,
         "--paired-semantic", paired_semantic, "--paired-basis", "direct",
         "--row-strip-chunked", "1"};
+    if (!workers.empty()) {
+        generator_args.push_back("--workers");
+        generator_args.push_back(workers);
+    }
     if (row_scale == "absmax") {
         generator_args.push_back("--row-scale");
         generator_args.push_back("absmax");
@@ -512,7 +520,7 @@ int main(int argc, char ** argv) {
     }
     std::string model, manifest, payload, layout, row_scales, provenance, cache = "auto", artifact_dir, profile_name;
     std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
-    std::string max_rows, max_columns, representation = "scalar", paired_semantic = "la";
+    std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
     std::string channel_weights = "balanced-a025", source_alpha = "1", row_scale = "none";
     std::string rows, columns, calibration_samples = "8", validation_samples = "7";
     for (int index = 2; index < argc; index += 2) {
@@ -537,6 +545,7 @@ int main(int argc, char ** argv) {
         else if (option == "--source-family") source_family = value;
         else if (option == "--max-rows") max_rows = value;
         else if (option == "--max-columns") max_columns = value;
+        else if (option == "--workers") workers = value;
         else if (option == "--representation") representation = value;
         else if (option == "--paired-semantic") paired_semantic = value;
         else if (option == "--channel-weights") channel_weights = value;
@@ -567,9 +576,9 @@ int main(int argc, char ** argv) {
         const bool built = d2 ? build_d2_cache(
             argv[0], model, tensor, trace, footprint, cache, artifact_dir, source_family,
             paired_semantic, channel_weights, source_alpha, row_scale, rows, columns,
-            calibration_samples, validation_samples, paths, error) : build_d1_cache(
+            calibration_samples, validation_samples, workers, paths, error) : build_d1_cache(
             argv[0], model, tensor, trace, footprint, cache, backend, shader, preset,
-            artifact_dir, source_family, max_rows, max_columns, paths, error);
+            artifact_dir, source_family, max_rows, max_columns, workers, paths, error);
         if (!built) {
             std::fprintf(stderr, "astc-cache build failed: %s\n", error.c_str());
             return 1;
