@@ -7419,6 +7419,31 @@ record fits, it returns a preload-all plan. Otherwise it returns the largest
 ordered prefix that fits, allowing the caller to stream the remaining tensors
 in a layer/tensor window. A caller may cap the window size independently.
 
+## Three-hundred-eighteenth sweep: evidence-gated D2_6x5 scheduler admission
+
+The isolated scheduler adapter now has one deliberately narrow paired-D2
+admission path. `prepare_from_cache()` admits an artifact only when the caller
+explicitly sets `allow_experimental`, the cache resolves a v4 artifact with
+both model and Vulkan evidence gates, the physical footprint is `6x5`, and the
+paired semantic decoder is L+A. This maps directly to the prompt-matched,
+multi-tensor D2_6x5 evidence obtained for Pythia `blk.0.ffn_down.weight` and
+`blk.1.ffn_down.weight`; it is not a general promotion of D2.
+
+All other paired representations remain hard fallbacks: direct-D2,
+legacy/unprovenance caches, D2_8x5, D2_10x5, missing evidence, or a caller
+that leaves experimental admission disabled. Direct manifest loading also
+remains D1-only because it cannot carry the v4 evidence record. This preserves
+the principle that runtime selects already validated artifacts rather than
+re-deciding encoder policy.
+
+An artifact was packed from the selected Layer-0 D2_6x5 payload and layout
+map into a v4 model-adjacent cache, then resolved by the adapter and dispatched
+through `astc-paired-matvec.comp.spv` on Intel UHD Graphics 620. Across the
+42-sample held-out trace, CPU-vs-GPU output MSE was `2.6336039e-13` and maximum
+absolute error `4.1007996e-05`. This verifies the cache → scheduler → paired
+Vulkan replay boundary for the admitted profile. It remains an opt-in sidecar
+PoC: no llama scheduler or ordinary `llama-cli` path is changed yet.
+
 The planner deliberately does not reorder tensors or implement eviction: the
 scheduler owns locality and can supply manifest records in layer order. D2
 records are transport-compatible with the same planner, while the automatic
@@ -7426,6 +7451,32 @@ production route still applies its separate D1 quality/capability gate.
 The contract test covers both preload and bounded-stream decisions. The next
 integration step is to populate the item sizes from Vulkan requirements for
 all approved records and make the adapter retain the selected resident set.
+
+## Three-hundred-nineteenth sweep: evidence-gated D2_8x5 scheduler admission
+
+The scheduler admission rule is now extended to the next validated paired
+profile, D2 `8x5` L+A. The rule remains deliberately narrow: the caller must
+opt in to experimental admission, the cache must be a valid v4 index, the
+artifact must carry passing model and Vulkan gates, and its semantic decoder
+must be L+A. D2 `6x5` remains admitted by the same rule. D2 `10x5`, direct-D2,
+legacy caches and artifacts without evidence still take the normal Q4/Q3
+fallback. This keeps the scheduler decision artifact-based and prevents an
+older or lower-rate D2 stream from becoming active accidentally.
+
+The D2 `8x5` full-shape L+A evidence includes tensor-specific model gates: the
+layer-0 selected replay measured relative logits MSE `0.31421167` versus
+`0.32182783` for neutral, while layer 1 selected replay measured `0.015361685`
+versus `0.041150437` for neutral. The corresponding Intel Vulkan full-shape
+replay was rerun through the updated scheduler using the exact v4 cache payload
+and paired shader. For `blk.0.ffn_down.weight` (`2048x8192`, 14 held-out
+samples), CPU-vs-GPU reconstruction MSE was `1.5759656e-10` and maximum
+absolute difference was `9.9182129e-05`, within the existing replay limits.
+No ASTC bytes were regenerated during this replay.
+
+This promotes D2 `8x5` to an explicit scheduler candidate, not a global
+default. The deployment artifact remains tensor-specific (`neutral` or
+`validation-selected` according to model-loss evidence), and ordinary llama
+runtime integration remains a later production gate.
 
 ## Three-hundred-eighteenth sweep: Pythia D1/D2 cache artifacts and GPU gate
 
@@ -7806,12 +7857,23 @@ candidate profile remains ABI-compatible: `balanced-a025` and source-derived
 Alpha affect candidate ranking only; the deployed payload, layout map, and
 semantic shader contract are unchanged.
 
-The full `2048x8192` D2 `8x5` export using this profile is now running with
-the required row-strip streaming (`selection_scope=row-strip-independent`).
-Its output will be accepted only after exported-byte CPU replay and the
-artifact-backed GPU decode check. D2 `10x5` will be included in the same
-production-evidence matrix if that full `8x5` gate remains positive; until
-then both profiles remain experimental/opt-in.
+The full `2048x8192` D2 `8x5` export using this profile completed with the
+required row-strip streaming (`selection_scope=row-strip-independent`). It
+generated `4,618,240` raw candidates and retained `4,593,556` unique legal
+payloads while keeping the peak resident candidate pool at `22,436`. The
+selector accepted `102,977` proposals over `209,920` physical blocks. Exact
+selection reporting measured neutral holdout activation MSE `0.055548478` and
+validation-selected holdout `0.032201165` (a 42.0% reduction). Of the
+selected payloads, `130,295` used dual-plane and `112,025` used a semantic
+singleton plane; this supports the existing conclusion that standard ASTC's
+legal mode space is being used rather than emulated by a custom decoder.
+
+This is a positive full-shape *selection* gate, not scheduler promotion. The
+exported payload and mandatory layout map must next pass byte-backed CPU
+artifact replay, artifact-backed GPU decode, and model/output replay. D2
+`10x5` joins the same evidence matrix only after these checks establish that
+the selected `8x5` stream survives the cache/runtime boundary. Both profiles
+remain experimental/opt-in.
 
 ## Three-hundred-thirtieth sweep: transposed D2_8x5 semantic mapping
 
@@ -7842,18 +7904,1036 @@ data. That guard is deliberate: current paired-D2 payload ordering and the
 one-bit `RG/B` versus `R/GB` map encode the deployed row-paired geometry.
 A transposed stream would need a separately versioned mapping, manifest field,
 and shader address calculation before it could be consumed at runtime.
-# Scheduler cache-only D1/D2 admission — 2026-09-04
+# Scheduler cache-backed D1/D2 admission — 2026-09-04
 
 While the full `D2_8x5` row-strip run is executing, the scheduler/cache seam
 was tightened without changing any payload or shader ABI. The adapter now
 resolves one verified range from a model-adjacent cache before any device setup.
 For D1 it delegates to the existing scalar/gauge sidecar. For D2 it also reads
-and validates the mandatory packed layout map, but reports a deterministic
-normal-quant fallback because the current paired shader is still a standalone
-contract and does not yet bind real activation data through the scheduler.
+and validates the mandatory packed layout map. The paired runtime path now owns
+a physical half-height ASTC texture, a storage-buffer layout map, and a real
+row-major activation buffer; it is enabled only with an explicit experimental
+cache/profile request.
 
-This is deliberate: treating a D2 texture as a scalar D1 texture would produce
-plausible-looking but wrong output. No JIT cache creation is enabled or hidden
-behind the cache miss path; the only cache producer remains the explicit offline
-artifact tool. The focused scheduler/cache/FFN-adapter CTests pass with a D2
-fixture that verifies the exact payload and layout bytes seen by the resolver.
+Treating a D2 texture as a scalar D1 texture would produce plausible-looking
+but wrong output, hence the separate dispatch. No JIT cache creation is enabled
+or hidden behind the cache miss path; the only cache producer remains the
+explicit offline artifact tool. The focused scheduler/cache/FFN-adapter CTests
+pass with a D2 fixture that verifies the exact payload and layout bytes seen by
+the resolver. The new paired-dispatch lifecycle and device smokes are prepared
+but intentionally deferred until the ongoing full-shape encoder run completes.
+
+### Cache CLI profile surface — 2026-09-04
+
+The cache tool now has `help`, `profiles`, `inspect`, and `install` commands.
+Profile rows include ASTC footprint, D1/D2 semantic representation, nominal
+bits per logical weight, and whether the profile is experimental. `inspect`
+emits the same classification for every verified cached tensor. `install`
+publishes a conventional prebuilt artifact directory after optional profile
+validation, preserving the existing atomic/no-overwrite cache contract.
+
+This intentionally simplifies cache publication and discovery first. It does
+not pretend that a full encoder build exists in the loader: candidate
+generation, calibration, validation-prefix selection, and provenance remain
+offline. A future one-command `build` will call a shared encoder API rather
+than launch opaque subprocesses.
+
+### Regression sweep after full D2 export and cache/scheduler changes
+
+The complete ASTC-labeled CTest suite was rebuilt and run after the full-shape
+D2 export and the cache/scheduler integration changes. All `70/70` tests
+passed. This includes cache profile admission, paired-D2 dispatch and layout
+contracts, D1/D2 selector and algorithm tests, neural-rank and PV/YAQA smokes,
+artifact/latent checks, Vulkan capability/device checks, and shader compile /
+device smokes for the standard and experimental D1 footprints. The suite ran
+against the Intel Vulkan target; this establishes local correctness and
+lifecycle behavior, not portable quality or performance on Mali/Adreno/Apple.
+
+The full D2 `8x5` payload was also decoded directly from its exported bytes:
+the `3,358,720`-byte ASTC stream maps to a physical `8192x1025` image and a
+`134,348,800`-byte CPU RGBA-F32 decode buffer. Payload and layout SHA-256 values
+are retained with the run artifacts. Cache publication/model replay remains
+the next gate before any experimental D2 profile is considered for scheduler
+promotion.
+## Three-hundred-twenty-seventh sweep: D2 prompt-matched replay follow-up
+
+The new full D2 8x5 payload was replayed from its exported decoded artifact
+against a newly captured, CPU-only Pythia trace for the explicit prompt
+`The quick brown fox jumps over the lazy dog and then returns home.` (14 token
+positions, layer 0, 8,192 columns). This prompt/trace pair is intentionally
+separate from the v2 sum-function corpus; it closes the provenance gap without
+pretending that the old 25-sample trace had a recoverable prompt.
+
+| artifact | logits-relative MSE | top-1 agreement | loss delta | replay time | peak RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| D2 8x5 validation artifact | `0.3477208` | `64.29%` | `+1.4530811` | `11.34 s` | `3,207,088 KiB` |
+| D2 10x5 validation artifact | `0.53455759` | `35.71%` | `+2.828279` | `13.11 s` | `3,207,308 KiB` |
+
+The two D2 profiles were evaluated with the same model, weights, prompt, and
+trace. D2 8x5 is the stronger point on this exploratory prompt, while the
+additional rate reduction of 10x5 has a clear quality cost. These are
+artifact-backed CPU model diagnostics, not a promotion decision or a
+replacement for the fixed v2 multi-prompt matrix. The prompt/trace identity
+is now recorded so later replays can be reproduced rather than inferred.
+
+The ASTC README was also corrected to match the actual scheduler smoke CLI:
+`--allow-experimental` is not accepted by that tool; experimental permission is
+carried by the cache/profile contract and the harness passes the explicit
+opt-in internally. No runtime or production scheduler behavior was changed.
+
+## Three-hundred-twenty-eighth sweep: same-prompt native controls
+
+The local native controls were run with the same Pythia FP16 reference, CPU
+backend, and the exact 14-token prompt used by the D2 replay above. This keeps
+the comparison tied to one tokenization and one model revision:
+
+| source | logits-relative MSE | top-1 agreement | loss delta |
+| --- | ---: | ---: | ---: |
+| Q4_K_M | `0.067129474` | `78.57%` | `+0.1313537` |
+| Q3_K_M | `0.23277898` | `50.00%` | `+0.28356166` |
+| D2 8x5 | `0.3477208` | `64.29%` | `+1.4530811` |
+| D2 10x5 | `0.53455759` | `35.71%` | `+2.828279` |
+| TQ2_0 | `1.4203107` | `0%` | `+9.5453036` |
+| TQ1_0 | `1.4138829` | `7.14%` | `+8.0979513` |
+
+This short same-prompt matrix places D2 8x5 between Q3 and the ternary
+controls on logits-relative MSE, while D2 10x5 is weaker. It is still a
+diagnostic—not a model-wide ranking—because the ASTC entries replace only the
+layer-0 FFN-down output and the prompt is short. The result does justify
+retaining D2 8x5 as the stronger experimental profile and keeping 10x5 as a
+lower-rate research profile rather than a default.
+
+## Three-hundred-twenty-ninth sweep: longer D2 model replay
+
+To test prompt-length sensitivity, both exported D2 artifacts were replayed
+with the same 53-token technical prompt and a newly captured matching layer-0
+FFN-down input trace. The prompt was:
+`Explain how a Vulkan compute shader reads an ASTC texture, how fixed-function
+decompression differs from shader arithmetic, and why cache locality, memory
+bandwidth, and deterministic padding matter when storing neural-network weights
+in 8x5 and 10x5 blocks.`
+
+| artifact | logits-relative MSE | top-1 agreement | loss delta | replay time | peak RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| D2 8x5 validation artifact | `0.14541922` | `64.15%` | `+0.32877389` | `22.43 s` | `3,239,692 KiB` |
+| D2 10x5 validation artifact | `0.476192` | `30.19%` | `+2.3404719` | `39.50 s` | `3,239,164 KiB` |
+
+The longer replay preserves the ordering seen in the short prompt: D2 8x5 is
+materially stronger, while 10x5's extra rate reduction produces a large model
+quality penalty. These remain layer-0 replacement diagnostics, not a
+full-model quantization benchmark; the matching trace and prompt are retained
+for reproducibility. CPU-only replay is the quality oracle, while the separate
+Intel Vulkan artifact/scheduler smokes already verify GPU decode and dispatch.
+
+## Three-hundred-thirtieth sweep: D2 low-rate proposal recheck
+
+The retained `balanced-a025 + source-derived Alpha` D2 candidate family was
+rerun against the legacy geometric/legacy-channel profile using the same
+Pythia FP16 model, `D2_8x5`, 20x256 crop, and a valid 8-calibration/7-validation
+split from the 16-sample calibration trace. This is a controlled recheck of the
+existing result, not a new selector or runtime change.
+
+| tensor | profile | neutral holdout | selected holdout | commits |
+| --- | --- | ---: | ---: | ---: |
+| `blk.0.ffn_down` | legacy | `4.9443848e-4` | `4.7194836e-4` | 39 |
+| `blk.0.ffn_down` | balanced-a025 + source Alpha | `3.7610765e-4` | `3.0999897e-4` | 47 |
+| `blk.1.ffn_down` | legacy | `6.8885692e-4` | `5.9253556e-4` | 39 |
+| `blk.1.ffn_down` | balanced-a025 + source Alpha | `7.3473446e-4` | `6.1982500e-4` | 48 |
+
+On layer 0 the combined profile is approximately 34.3% below the legacy
+selected holdout and 17.6% below its own neutral anchor. On layer 1 it improves
+its neutral anchor by approximately 15.6%, but is approximately 4.6% above the
+legacy selected stream. This confirms that the candidate family is useful but
+tensor- and calibration-split-dependent; it must remain an offline experimental
+profile and cannot be promoted from this recheck alone. Each run generated 1,408
+legal roundtrips in 0.92--1.04 seconds, with no PV trials and no runtime ABI
+change. The first attempt used an invalid 10+7 split for a 16-sample trace and
+was rejected by the input contract before encoding.
+
+The result reinforces the next low-rate gates: model-level artifact replay,
+then a separate D2-LA representation test and per-row-scale test. Predictive
+D2 should first use activation/Hessian-weighted row correlation; raw weight
+correlation is only a pre-screen and is not yet an encoder decision rule.
+
+## Three-hundred-thirty-first sweep: full-shape balanced D2 artifact and model gate
+
+The full `2048x8192` `blk.0.ffn_down.weight` D2_8x5 artifact was generated for
+the retained `balanced-a025 + source-derived Alpha` profile using the chunked
+row-strip selector and the valid 8-calibration/7-validation v2 split. The
+export is separate from the existing legacy D2 cache.
+
+| quantity | value |
+| --- | ---: |
+| physical blocks | `209,920` |
+| raw / unique legal candidates | `4,618,240` / `4,601,936` |
+| peak resident candidates | `22,473` |
+| accepted proposals | `82,592` |
+| selected dual-plane / semantic-plane / Alpha-plane | `123,179` / `108,820` / `14,251` |
+| neutral / selected activation holdout MSE | `0.0302544` / `0.021559508` |
+| payload / layout bytes | `3,358,720` / `26,240` |
+
+The selected full-shape activation result is 28.7% below its neutral anchor.
+The resulting payload and layout map were decoded directly from the exported
+bytes, then replayed by the paired-D2 model oracle using the prompt-matched
+14-sample holdout input trace and CPU-only Pythia FP16 reference:
+
+| profile artifact | logits-relative MSE | top-1 agreement | loss delta |
+| --- | ---: | ---: | ---: |
+| balanced-a025 + source Alpha, selected | `0.36271246` | `57.14%` | `+1.7896881` |
+| earlier D2_8x5 validation artifact | `0.3477208` | `64.29%` | `+1.4530811` |
+| D1_10x8 reference from its matched suite | `0.064819575` | `84%` | `+0.29999434` |
+
+The first row is a valid bytes-to-model replay; it does **not** demonstrate a
+model-level improvement for the balanced profile. The earlier D2 artifact was
+selected with an older full-shape split, so the D2-to-D2 difference is an
+indication rather than a final paired profile comparison. Do not promote the
+profile. A fair next model gate must export and replay, with one frozen split,
+the neutral anchor, legacy selected stream, and balanced selected stream before
+interpreting the encoder-profile effect. The D1 reference remains the stronger
+same-rate representation on the available evidence.
+
+## Three-hundred-thirty-second sweep: neutral-stream artifact contract
+
+The paired-D2 selection tool now has an explicit `--export-neutral 1` mode.
+It writes the already-generated direct scalar-anchored candidate (`candidate 0`)
+instead of the validation-selected candidate, while leaving candidate generation,
+selection, validation stopping, and all reported selection statistics unchanged.
+The mode requires both `--export-payload` and `--export-layout`; its report
+records `exported_stream=neutral` or `validation-selected` so an artifact cannot
+be mistaken for a selected stream.
+
+This closes the first practical gap in the frozen D2 profile matrix: neutral,
+legacy-selected, and balanced-selected artifacts can now all be materialized
+through the exact same pack/decode contract. A 20x256 `D2_8x5` smoke exported
+64 standard 16-byte blocks plus the expected 8-byte layout map, and the
+standalone artifact decoder read the payload successfully. This is provenance
+and replay plumbing only; it does not alter any ASTC payload search decision.
+
+The full-shape neutral artifact was then generated with the same frozen
+`8+7` split and candidate run as the balanced selected artifact. Its payload
+and layout SHA-256 values are respectively
+`946e46afc248da600b29f51dfd5a7242eff3f4609c9ad3de2bf10f88675c995a` and
+`4d1021570e18f9a7fe46b8f21f1dfc93435f752464bc8353d8b3fd45ddceaec3`.
+The direct CPU artifact decode produced the expected `8192x1025` physical
+RGBA image. Prompt-matched model replay measured:
+
+| stream | logits-relative MSE | top-1 agreement | loss delta |
+| --- | ---: | ---: | ---: |
+| balanced neutral | `0.3936605` | `57.14%` | `+1.7384677` |
+| balanced selected | `0.36271246` | `57.14%` | `+1.7896881` |
+
+Selection therefore reduces relative logits MSE by about 7.9% on this oracle,
+but does not improve all model-facing metrics: loss delta is slightly worse.
+The profile remains experimental. The matched legacy full-shape artifact is
+now required before making any profile comparison or beginning D2-LA/scale.
+
+## Three-hundred-thirty-third sweep: matched legacy profile gate
+
+The legacy D2_8x5 profile was regenerated for the same `2048x8192` tensor,
+the same frozen 8-calibration/7-validation split, row-strip selector, and
+prompt-matched model oracle. Its 3,358,720-byte payload and 26,240-byte layout
+map were independently decoded before replay. This makes the following D2
+profile comparison fair for this tensor and oracle:
+
+| stream | activation holdout MSE | logits-relative MSE | top-1 agreement | loss delta |
+| --- | ---: | ---: | ---: | ---: |
+| balanced neutral | `0.0302544` | `0.3936605` | `57.14%` | `+1.7384677` |
+| balanced-a025 + source Alpha, selected | `0.021559508` | `0.36271246` | `57.14%` | `+1.7896881` |
+| legacy geometric, selected | `0.02935609` | `0.41099391` | `57.14%` | `+2.0997478` |
+
+For `blk.0.ffn_down`, the balanced/source-derived selected profile improves
+over legacy selected by about 26.6% in activation holdout and 11.8% in relative
+logits MSE, while reducing loss delta by about 14.8%. This passes the narrow
+*per-tensor encoder-profile* gate. It does not promote D2 globally: balanced
+selection still makes loss delta slightly worse than its own neutral stream,
+and the available D1 10x8 model reference remains substantially stronger.
+The profile must therefore be chosen only by an offline tensor/model gate and
+remain explicit/experimental in cache and scheduler metadata.
+
+### D2 evaluation decomposition
+
+Every new D2 representation experiment must retain three artifacts under one
+frozen trace split: the current direct-balanced neutral control, the new
+representation's neutral stream, and the new representation's
+validation-selected stream. Legacy-selected remains a reference encoder profile
+where applicable. Each artifact is decoded from its written payload and replayed
+through the same prompt/model oracle.
+
+The report must distinguish representation from selection rather than treating
+a selected activation score as a sufficient result:
+
+```text
+G_repr   = L(reference neutral) - L(new neutral)
+G_select = L(new neutral) - L(new selected)
+```
+
+Both gains are recorded independently for activation holdout, relative logits
+MSE, and loss delta. A representation that improves only `G_select` has created
+a better candidate space; one that improves `G_repr` has improved the deployed
+baseline itself. The current D2_8x5 balanced result demonstrates why this is
+necessary: selection improves activation/logits relative to neutral while its
+loss delta is slightly worse.
+
+## Three-hundred-thirty-fourth sweep: D2-LA semantic foundation
+
+D2-LA now exists as an isolated `luminance-alpha` paired semantic in the
+offline encoder and CPU replay oracle. It stores either `(q0,q1)` as
+`RGB=q0, A=q1` or the reverse, using the existing one-bit orientation map. In
+contrast to paired-direct, Alpha is semantic and there is deliberately no
+steering codebook: only the neutral source is generated for each orientation.
+The semantic decoder is version-distinct from direct RGB; it is not admitted to
+the cache scheduler or Vulkan paired shader yet.
+
+The initial 20x256 Pythia layer-0 screen, using the frozen 8/7 split, produced:
+
+| representation | neutral activation holdout | selected activation holdout |
+| --- | ---: | ---: |
+| direct balanced + source Alpha | `3.7610765e-4` | `3.0999897e-4` |
+| D2-LA balanced channel allocation | `3.0019985e-4` | `2.6787187e-4` |
+
+The D2-LA candidate pool is intentionally much smaller (`128` raw candidates
+over 64 blocks, two orientations/block) than direct gauge D2. The positive
+small-crop representation signal justifies the next bounded cross-tensor
+screen, followed only then by full-shape neutral/selected artifact export and
+`paired-d2-la` model replay. Unit tests cover both LA orientations, artifact
+decode succeeds, and the existing direct-D2 tests remain green.
+
+The same bounded D2-LA screen on `blk.1.ffn_down` measured neutral
+`4.4630845e-4` and selected `4.5544257e-4`. Selection is slightly negative
+there, but the neutral representation is still much better than the prior
+direct-balanced neutral (`7.3473446e-4`) and selected (`6.1982500e-4`) screen.
+Thus D2-LA currently has positive cross-tensor **representation** evidence,
+while its two-orientation selector has not yet earned a general selection
+claim. Full-shape work must retain both streams and must not export only the
+selected D2-LA payload by convention.
+
+## Three-hundred-thirty-fifth sweep: full-shape D2-LA artifact/model gate
+
+The full `2048x8192` layer-0 D2-LA run emitted both neutral and
+validation-selected payload/layout pairs from one candidate pass. It took
+`89.4 s`, generated `419,840` legal candidates (two orientations per physical
+block), kept a peak of `2,048` candidates, and accepted `70,915` proposals.
+Exact CPU artifact decode confirmed all `33,587,200` floats in each decoded
+RGBA image were finite. The earlier secondary-neutral export bug (allocated
+but not copied payload bytes) was fixed and covered by a dual-export smoke
+before this final run.
+
+| D2_8x5 stream | activation holdout | logits-relative MSE | top-1 | loss delta |
+| --- | ---: | ---: | ---: | ---: |
+| direct balanced selected | `0.021559508` | `0.36271246` | `57.14%` | `+1.7896881` |
+| D2-LA neutral | `0.018669769` | `0.32182783` | **`78.57%`** | **`+0.96589602`** |
+| D2-LA selected | **`0.011750914`** | **`0.31421167`** | `64.29%` | `+1.1289318` |
+
+D2-LA therefore passes a strong **representation** gate: its neutral stream
+improves every model-facing measure over current direct balanced D2 on this
+fixed layer-0 oracle. The current activation selector also improves logits MSE,
+but worsens loss and top-1 relative to D2-LA neutral. Consequently D2-LA
+neutral, not D2-LA selected, is the current candidate for a future
+tensor-specific experimental artifact. This does not yet admit D2-LA to the
+scheduler: it still requires a manifest/shader semantic version, Vulkan replay,
+and at least one additional tensor/model gate.
+
+## Three-hundred-thirty-sixth sweep: full-shape D2-LA cross-tensor gate
+
+The same `2048x8192` D2-LA procedure was repeated for
+`blk.1.ffn_down.weight`. This run uses a separately captured 14-position
+prompt trace for the fixed prompt `The quick brown fox jumps over the lazy dog
+and then returns home.`; six positions are calibration, six validation, and
+the remaining two are untouched activation holdout. This is a distinct
+cross-tensor model gate, not a replacement for the layer-0 trace corpus.
+
+The streamed encoder emitted `419,840` legal candidates (two orientations per
+block), selected `56,919` proposals, and retained a peak of only `2,048`
+candidates. Both exported streams CPU-decoded to `33,587,200` finite RGBA
+values. The activation holdout improved from `0.0447881` for neutral to
+`0.0190335` for validation-stopped selection. All `117,936` selected
+dual-plane blocks assigned the second plane to a semantic lane rather than to
+unused steering data.
+
+| D2-LA layer-1 stream | activation holdout | logits-relative MSE | top-1 | loss delta |
+| --- | ---: | ---: | ---: | ---: |
+| neutral | `0.0447881` | `0.041150437` | `78.57%` | `+0.12772805` |
+| validation-selected | **`0.0190335`** | **`0.015361685`** | **`100.00%`** | **`+0.024095251`** |
+
+Unlike layer 0, the activation selector improves every measured model-facing
+metric on layer 1. Together the two full-shape gates establish that D2-LA has
+cross-tensor representation evidence and that selection can help, but not
+universally: the deployable stream remains tensor-specific. The immediate next
+step is *not* scheduler promotion. First version the D2-LA storage semantic in
+the manifest and paired Vulkan shader, prove byte-identical Vulkan replay, and
+then admit only artifacts that individually satisfy their evidence policy.
+
+## Three-hundred-thirty-seventh sweep: artifact-backed D2-LA mode audit
+
+`astc-vulkan-artifact-decode` now accepts `--mode-report <path>`. It inspects
+the already-exported 16-byte standard ASTC payloads with
+`astcenc_get_block_info` while performing the ordinary CPU decode; it never
+re-encodes, ranks, or changes an artifact. A report records endpoint mode,
+partition count, weight-grid dimensions, endpoint/weight level counts, and the
+dual-plane component for every used block mode.
+
+On the matched layer-0 artifacts, direct balanced D2 selected used six material
+endpoint-mode families (`13`: 50.6%, `4`: 19.7%, `5`: 13.4%, `10`: 9.0%,
+`12`: 7.3%), whereas D2-LA neutral used only endpoint modes `4` (34.8%) and
+`5` (65.2%). Direct used dual-plane in 58.7% of blocks; D2-LA neutral used it
+in 40.8%. Layer-1 D2-LA uses dual-plane in 55.5% of neutral blocks and 56.2%
+of selected blocks; the selected stream's dual plane is always assigned to a
+semantic lane.
+
+This does not prove a single causal bit-allocation mechanism, but it supports
+the representation explanation: D2-LA presents ASTC with exactly two semantic
+components and reaches a much narrower legal mode family than direct D2 with
+an encoder-only Alpha lane. The mode report is now the required diagnostic
+before any future constrained D2 encoder profile is proposed.
+
+## Three-hundred-thirty-eighth sweep: D2-LA row-scale foundation
+
+`astc-vulkan-d2-row-scale.{h,cpp}` is a separate, tested offline primitive for
+the next representation experiment. It produces finite symmetric absmax scales
+per logical output row, normalizes a dense row-major source, and restores it
+exactly. The planned artifact cost is one FP16 scale per output row: `4096`
+bytes for a `2048x8192` tensor, about `0.00195` bits/weight. Runtime would
+apply one scale multiply after each output-row reduction.
+
+The module is deliberately not wired into D2-LA encoding, manifests, shaders,
+or the scheduler yet. That preserves the current D2-LA neutral/selected
+evidence as a clean control. The next row-scale sweep will compare only
+unscaled D2-LA neutral/selected against scaled D2-LA neutral/selected under
+the same frozen traces and model replay protocol.
+
+## Three-hundred-thirty-ninth sweep: full D2-LA absmax-scale artifact
+
+The first full `2048x8192` D2-LA absmax-scale run is complete with the frozen
+layer-0 calibration/validation split. It emitted both neutral and selected
+payloads plus one F32 scale per logical row. The report records the scaled
+decoder affine (`scale_l=2`, `offset=-1`) so CPU replay can restore the source
+before applying each row scale. The exported scale sidecar is research-format
+F32; a future approved artifact ABI may compact it to FP16.
+
+| stream | activation holdout MSE |
+| --- | ---: |
+| scaled neutral | `0.0379967` |
+| scaled validation-selected | `0.0185730` |
+
+The selected activation result is promising, but it is not a representation
+promotion yet. Exact artifact decode plus model replay with the scale sidecar
+must establish `G_scale,neutral` and `G_selection` for logits/loss/top-1.
+
+## Three-hundred-forty-first sweep: v4 artifact index and D2-LA runtime ABI
+
+The cache/dispatch boundary now has an additive manifest v4. It does **not**
+replace manifest v1-v3: old single-record caches continue to deserialize and
+validate. V4 adds a separately addressed artifact table so one logical tensor
+can retain multiple immutable payloads, for example:
+
+```text
+blk.0.ffn_down.weight / paired-d2-la / none   / neutral
+blk.0.ffn_down.weight / paired-d2-la / absmax / validation-selected
+blk.1.ffn_down.weight / paired-d2-la / none   / validation-selected
+```
+
+Each v4 artifact owns a standard-ASTC payload range, optional packed D2 layout
+range, semantic decoder (`direct-rgb` or `luminance-alpha`), normalization,
+artifact variant, encoder provenance, calibration/replay hashes, evidence
+metrics/gates, and an optional row-scale range. `row-scales.bin` is independently
+SHA-256 verified at cache level and FNV-verified per artifact; the current
+research ABI stores F32 scales, while a later production gate may compact them
+to FP16 without changing selection semantics.
+
+The paired Vulkan shader now receives this information explicitly. Its fixed
+function texture read is unchanged; post-fetch reconstruction selects either
+direct RGB pairing or D2-LA RGB-luminance/Alpha pairing, then applies the
+recorded affine transform and one row-scale multiply. An all-ones scale buffer
+keeps unscaled and scaled artifacts on the same descriptor ABI. Unit tests
+cover v4 roundtrip, cache hashing, evidence policy selection, semantic choice,
+and streamed scale recovery; the updated paired shader compiles and passes
+`spirv-val`.
+
+This is an implementation gate, not scheduler promotion. The adapter now has
+the necessary cache/runtime contract for individually validated D2-LA artifacts,
+but actual GPU replay and the per-tensor model/Vulkan evidence gate remain
+mandatory before an artifact can displace normal GGUF execution.
+
+## Three-hundred-fortieth sweep: prompt-matched absmax matrix
+
+Prompt-matched CPU replay closes the first absmax gate. The prior severe
+layer-0 replay from the v2 trace is not an artifact restore failure: the same
+scaled artifact is substantially better when its output is constructed from
+the prompt's actual layer-0 FFN input. This confirms that absmax makes the
+artifact more activation-distribution-sensitive, so every scale variant needs
+its own trace and model gate.
+
+| tensor / stream | relative logits MSE | top-1 | loss delta |
+| --- | ---: | ---: | ---: |
+| layer 0, D2-LA unscaled neutral | `0.32182783` | `78.57%` | `+0.96589602` |
+| layer 0, D2-LA absmax neutral | `0.30337320` | `71.43%` | `+0.97377576` |
+| layer 0, D2-LA absmax selected | **`0.20992542`** | **`92.86%`** | **`+0.62022950`** |
+| layer 1, D2-LA unscaled selected | `0.015361685` | `100.00%` | **`+0.024095251`** |
+| layer 1, D2-LA absmax neutral | `0.031200412` | `92.86%` | `+0.14015157` |
+| layer 1, D2-LA absmax selected | **`0.006985325`** | **`100.00%`** | `+0.054764856` |
+
+Absmax selected is a strong layer-0 artifact candidate: it improves all
+available model measures versus the unscaled selected stream. On layer 1 it
+improves logits MSE but loses to unscaled selected on loss delta. The correct
+conclusion is therefore tensor-specific eligibility, not a global row-scale
+default. The scheduler may later rank the validated variants under an explicit
+metric policy; it must not replace a loss-preferred unscaled artifact simply
+because scaled logits MSE is lower.
+
+## Three-hundred-forty-second sweep: first cache-backed Vulkan replay
+
+The v4 cache/scheduler path was exercised end-to-end with the existing
+`blk.1.ffn_down.weight` D2-LA `8x5` artifact. The smoke loaded the model hash,
+resolved the evidence-approved artifact from the v4 index, streamed its ASTC
+payload and layout map, created the paired descriptor/pipeline resources,
+uploaded the cache-backed texture, and dispatched the compiled paired matvec
+shader. The run produced:
+
+```text
+scheduler-adapter format=ASTC-8x5
+tensor=blk.1.ffn_down.weight samples=14 rows=2048 columns=8192
+output-values=28672 output-l2=35.547901
+```
+
+The same run was repeated with the Vulkan loader forced to the Intel ICD. It
+passed. Forcing the NVIDIA 920MX ICD correctly rejected the run with
+`no Vulkan device supports sampled ASTC and compute`; this is a device
+capability result, not a cache or shader failure. The unforced loader selected
+the first compatible Intel device. The capability smoke also passed for the
+Intel ASTC resource path (`4x4`, `5x5`, `6x6`, and the experimental `8x5`,
+`8x6`, `10x6`, `8x8`, `10x8` footprints).
+
+The smoke now also decodes the exact exported payload with the CPU ASTC oracle,
+reconstructs D2-LA using the artifact's layout/semantic/affine/scale contract,
+and gates the GPU result against it. Intel passed with
+`cpu-vs-gpu-mse=9.2297073e-14` and `cpu-vs-gpu-max-abs=1.0490417e-05` (limits
+`1e-8` and `1e-3`). This closes the numerical CPU/Vulkan replay gate for this
+artifact and footprint. The NVIDIA result still confirms that device selection
+must remain capability-driven and that ASTC artifacts need a normal GGUF/Q
+fallback on devices without sampled ASTC support.
+
+The cross-tensor replay was then repeated with a temporary v4 cache containing
+the existing layer-0 `blk.0.ffn_down.weight` D2-LA `8x5` selected artifact. It
+also passed the exact CPU/Vulkan comparison:
+
+```text
+output-values=28672 output-l2=1091.161
+cpu-vs-gpu-mse=6.4349242e-11 cpu-vs-gpu-max-abs=6.8664551e-05
+```
+
+Together with the layer-1 result above, this verifies both a layer-0 and a
+layer-1 cache artifact through the same v4 index, paired layout map, semantic
+reconstruction, and Intel Vulkan execution path. These are execution gates;
+they do not promote either artifact globally because model-quality evidence
+remains tensor-specific.
+
+## Three-hundred-forty-third sweep: full-shape low-rate GPU matrix
+
+The remaining exported full-shape artifacts were replayed on the Intel UHD
+Graphics 620 with the exact CPU ASTC reference comparison. No artifact was
+re-encoded and no model weights were modified:
+
+| artifact | physical payload | samples | GPU-vs-CPU MSE | max absolute error | status |
+| --- | ---: | ---: | ---: | ---: | --- |
+| D1 `10x8` validation | 3,358,720 B | 25 | `1.7931048e-12` | (within shader smoke gate) | PASS |
+| D2 `8x5` validation | 3,358,720 B | 25 | `3.1013126e-13` | `3.2424927e-05` | PASS |
+| D2 `10x5` validation | 2,689,600 B | 25 | `2.8635230e-13` | `2.8610229e-05` | PASS |
+
+The D1 smoke reports `gpu-vs-cpu-mse=1.7931048e-12`; its existing scalar
+contract uses the same bounded numerical comparison even though that tool's
+summary does not print max-absolute error. The paired scheduler smoke prints
+both metrics for D2. This closes the full-shape hardware execution gate for
+the three planned low-rate points. It does not promote D2 `10x5`: the model
+replay evidence still shows a substantial quality cost at `1.28` b/logical
+weight, and scheduler eligibility remains per tensor and evidence policy.
+
+## Three-hundred-forty-fourth sweep: matched model-level replay of three full-shape artifacts
+
+A fresh CPU-only 14-token trace was captured from the same Pythia-1.4B F16
+model and the documented prompt `The quick brown fox jumps over the lazy dog
+and then returns home.`. The three exported full-shape artifacts were replayed
+with identical source weights, trace, prompt, layer (`blk.0.ffn_down`), and
+model-level oracle. The replay consumes the exported decoded artifact bytes;
+it does not re-encode ASTC data.
+
+| artifact | footprint | rate | logits-relative MSE | top-1 agreement | loss delta |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| D1 validation | `10x8` | `1.60 bpw` | `0.26716979` | `85.71%` | `+0.82959067` |
+| D2 validation | `8x5` | `1.60 bpw` | `0.41231141` | `50.00%` | `+2.0882774` |
+| D2 validation | `10x5` | `1.28 bpw` | `0.53455759` | `35.71%` | `+2.828279` |
+
+This prompt-matched matrix preserves the expected ordering: D1 `10x8` is
+the strongest of the three at the same nominal rate, D2 `8x5` is usable only
+as an experimental tensor-specific artifact, and D2 `10x5` incurs a clear
+additional model-quality penalty at the lower rate. These are layer-replay
+results, not a full-model quantization claim; the trace and prompt are retained
+for reproducibility at `/tmp/pythia-model3-input.trace` and in the run logs.
+
+## Three-hundred-forty-fifth sweep: D2 `6x5` implementation and GPU readiness
+
+Added `D2_6x5` as the higher-rate member of the existing five-row paired-D2
+family. It maps a physical `6x5` ASTC image to ten logical output rows and
+six reduction columns per block, for `128 / (6 * 5 * 2) = 2.1333 b/logical
+weight` before the one-bit-per-60-weight layout map. It is appended to the
+serialized footprint enum, so existing manifest IDs remain unchanged.
+
+The cache profile, manifest validator, artifact tooling, scheduler smoke,
+model replay parser, Vulkan format map, sampled-image capability smoke, GPU
+candidate-atlas builder, and paired proposal-gain session now accept `6x5`.
+New bounded CPU/neural selection targets are available, but no full quality
+encode was started. Focused contract tests passed 7/7. On Intel UHD 620,
+the sampled ASTC `6x5` shader smoke and paired GPU candidate-delta/
+proposal-gain smoke both passed; the latter now covers `6x5`, `8x5`, and
+`10x5` under the same shader/session contract.
+
+`D2_6x5` remains experimental pending the prepared artifact and model-level
+matrix. Its purpose is not to displace D1 automatically, but to establish
+whether paired L+A can use a modestly larger bit budget than `D2_8x5` while
+retaining the same compact D2 runtime layout.
+### D2 6x5 full-shape generation (2026-09-05)
+
+The full `blk.0.ffn_down.weight` 2048x8192 artifact was generated with the
+chunked row-strip neural selector and the existing luminance-alpha D2 contract.
+The run completed in 307.7 seconds and produced 280,030 ASTC blocks (2.133
+bits/weight), 79,759 validation-selected commits, and 560,060 unique payload
+candidates. Offline holdout activation MSE was 0.0312179 for the selected
+stream versus 0.0879538 for the neutral stream. The selected stream contained
+613 dual-plane blocks, all on the semantic plane. Payload and layout artifacts
+were exported under `/tmp/pythia-v3-d2-6x5/` and CPU-decoded successfully with
+the physical padded shape 8196x1025.
+
+The first model-replay attempt produced a large loss delta for both selected
+and neutral controls. This was traced primarily to activation provenance: the
+artifact was selected using the 25-sample `pythia-v3` trace while the replay
+prompt has 14 tokens. Replaying the same artifact with the prompt-matched
+14-sample trace reduced selected loss delta from +8.2075 to +1.8247; the
+matching neutral control was +2.2636, so selection still improves the
+model-facing result. The remaining loss gap is real evidence that this
+artifact must be selected and gated on a prompt-/model-matched calibration,
+validation and holdout corpus. The 6x5 cache remains experimental and is not
+production-eligible until that matched model gate passes. The scheduler
+adapter correctly keeps experimental footprints out of the automatic
+production path.
+
+### D2 6x5 prompt-matched model gate (2026-09-05)
+
+A separate 50-token Pythia prompt was captured as a layer-0 FFN-down input
+trace and used consistently for a full-shape `D2_6x5` selection: 18 calibration
+samples, 16 validation samples, and 16 untouched holdout samples. The selected
+artifact achieved offline holdout MSE 0.0359016 versus 0.1000884 for neutral.
+Exact CPU ASTC decode followed by model replay of the *same prompt* produced
+relative logits MSE 0.04053696, top-1 agreement 86%, and loss delta -0.0139172.
+
+This replaces the earlier high-loss replay as the valid evidence for this
+single-prompt gate. It demonstrates that the 6x5 D2-LA artifact, physical
+padding, layout map, decoder metadata, and model override contract are
+compatible when activation provenance is kept identical. It is not yet a
+general production approval: a multi-prompt corpus and a second tensor still
+need to pass before the experimental scheduler policy can promote the profile.
+
+### D2 6x5 multi-prompt, two-tensor scheduler gate (2026-09-05)
+
+`astc-vulkan-trace-merge` was added to concatenate versioned activation traces
+from distinct model prompts while preserving their sample order. For both
+`blk.0.ffn_down.weight` and `blk.1.ffn_down.weight`, Pythia layer-specific
+FFN-down inputs were captured for three prompts: A (41 samples) was calibration,
+B (38 samples) validation, and C (42 samples) an untouched prompt-level
+holdout. Each full 2048x8192 artifact used D2 L+A, `6x5`, balanced-a025,
+chunked row-strip selection, and exact CPU ASTC decode before model replay.
+
+| tensor | offline neutral | offline selected | held-out C relative logits MSE | top-1 | held-out C loss delta |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `blk.0.ffn_down` | 0.1001435 | 0.0271844 | 0.0973236 | 78.57% | +0.1185961 |
+| `blk.1.ffn_down` | 0.0480874 | 0.0135748 | 0.0141018 | 85.71% | +0.0336280 |
+
+Neutral controls on the same prompt C were worse: layer 0 loss delta +0.7173273
+and layer 1 +0.0549897. Therefore validation-selected payloads improve held-out
+model loss by approximately 83% and 39%, respectively. The two-tensor,
+multi-prompt gate is sufficient to admit `D2_6x5` as an **explicit
+experimental** scheduler artifact profile. It is not eligible for automatic
+production selection: the scheduler must require an installed, hash-valid
+artifact with this provenance and an explicit experimental/compact policy.
+
+## Three-hundred-twentieth sweep: D2_10x5 full-shape model replay gate
+
+The existing full `2048x8192` D2 `10x5` payload was replayed again from its
+exact decoded RGBA artifact with the prompt-matched 14-sample Pythia trace.
+The corrected invocation explicitly used the paired-D2 representation and its
+layout map; the initial invocation without that flag was rejected before any
+model computation because it described a D1 matrix shape.
+
+The model-level replay completed successfully and reported:
+
+```text
+logits-relative-mse=0.53455759
+top1-agreement=0.35714286
+loss-delta=2.828279
+```
+
+The artifact remains physically valid: the earlier Intel full-shape Vulkan
+replay measured CPU-vs-GPU MSE `2.8635230e-13` (maximum absolute error
+`2.8610229e-05`). Thus the failure is not an ASTC decode, layout, cache, or
+shader problem; it is the model-quality cost of the `1.28` b/weight D2
+representation on this tensor and trace. D2 `10x5` is therefore registered as
+an experimental/fallback-only profile, not admitted by the scheduler's
+evidence-approved D2 rule. A future tensor-specific artifact could revisit
+it only with new model-level evidence (for example a different representation
+or source quantizer).
+
+## Three-hundred-twenty-first sweep: lightweight scheduler profile foundation
+
+Added a small, test-covered profile vocabulary to the artifact policy:
+`quality`, `balanced`, `size` (with `compact` as a compatibility alias),
+`speed`, and `auto`. The parser is deliberately independent of model weights
+and Vulkan resources. Profiles rank only immutable, evidence-approved cache
+records; they never trigger just-in-time encoding or infer a representation at
+runtime. `quality`/`balanced` use model loss first, `size` prioritizes lower
+bits/weight after eligibility, and `speed`/`auto` currently use deterministic
+quality ordering because measured device timings are not yet part of the v4
+evidence record. This keeps the interface ready for later per-device timing
+data without making the false assumption that lower bitrate is always faster.
+
+## Three-hundred-twenty-second sweep: isolated GPU-encoder v1 wiring
+
+Created `pocs/astc-vulkan/gpu-encoder/` as a deliberately isolated offline
+backend boundary. `shared/` owns physical RGBA source texels, deterministic
+batch planning, and compact symbolic proposal descriptors. `d1/` owns the
+first scalar source builder; `d2/` is explicitly reserved for paired-row
+semantics, D2-LA, scales, prediction, and layout metadata. No D2 assumption is
+permitted in shared/D1 code.
+
+The first implementation is intentionally *not* a general GPU ASTC encoder:
+it contains a CPU proposal reference so source geometry and batch contracts can
+be tested before adding a Vulkan kernel. The next implementation will make the
+GPU a D1 scalar `4x4` proposer; CPU astcenc will finish/verify legal payloads.
+This preserves one unambiguous correctness chain: GPU proposal -> CPU legal
+block oracle -> CPU ASTC decode -> Vulkan fixed-function decode. Cache,
+scheduler, artifact semantics, and inference dispatch are untouched.
+
+The new `test-astc-vulkan-gpu-encoder` verifies D1 raster mapping, deterministic
+edge padding, batching, endpoint proposal bounds, and invalid-source rejection
+in a Release build. It passed after the test was made independent of disabled
+`assert` expressions.
+
+The next sub-sweep added the minimal generic-Vulkan D1 `4x4` proposer. One
+16-thread workgroup calculates per-channel endpoint bounds and a mean-based
+physical reconstruction-error hint for one physical block. A persistent session
+owns source/proposal buffers, descriptors, pipeline, command pool, command
+buffer, and fence; source blocks are uploaded/read back only once per batch.
+The same device smoke passed CPU-reference comparison on the available Vulkan
+device. The CPU finisher now consumes those retained proposal IDs, invokes
+astcenc at the requested quality level, checks `astcenc_get_block_info`, and
+performs exact CPU decode. It also passed in the same smoke chain.
+
+This completes GPU-proposal plus CPU-legal-payload stages. The remaining v1
+correctness gate is to upload the newly finished payloads as a sampled ASTC
+image and compare their fixed-function Vulkan decode with the CPU result;
+candidate recall and performance benchmarking come only after that gate.
+
+The sampled-ASTC gate is now implemented and green. The device smoke finishes
+two D1 `4x4` GPU proposals with CPU astcenc, uploads exactly those 16-byte
+payloads into a normal sampled `VK_FORMAT_ASTC_4x4_UNORM_BLOCK` image, runs the
+ordinary `texelFetch` validation shader, and compares all decoded RGBA values
+against the finisher's exact CPU decode (`MSE <= 1e-8`, maximum absolute error
+`<= 1e-3`). This runs independently of a model or a cache artifact.
+
+The CPU finisher/source contract was also generalized over every declared D1
+physical footprint. Its `6x6` scalar smoke is green, including deterministic
+edge padding and exact CPU ASTC decode. The GPU proposer remains intentionally
+restricted to `4x4`: this avoids accidentally presenting an unvalidated 4x4
+workgroup shader as if it could represent 6x6 geometry. A future 6x6 kernel
+will reuse the same host/finisher/verifier interfaces and gain its own device
+gate.
+
+### D1 6x6 proposer and reusable-session sweep
+
+The shared proposer session now fixes its source stride from an explicit
+footprint, so an implementation cannot send `6x6` source texels through the
+`4x4` shader ABI. A separate `36`-lane D1 `6x6` shader has passed CPU proposal
+comparison, CPU astcenc finishing, and the same sampled-ASTC Vulkan decode
+gate. Its first reduction is deliberately simple (one invocation computes the
+block statistic after geometry-correct dispatch); parallel reduction is a
+performance refinement, not a correctness dependency.
+
+The session now has a small reusable-batch benchmark helper. It creates the
+device/session once, warms it, and measures only repeated source upload +
+proposal dispatch + result readback. The two-block smoke reports approximately
+`23.7k` blocks/s on the current device, but this is explicitly **not** an
+encoding throughput claim: it is too small to amortize setup fully and omits
+CPU astcenc finishing and source construction. It only proves the persistent
+session's reset/reuse path is live. A later benchmark must use representative
+batch sizes and report the complete CPU/GPU breakdown.
+
+The D1 gauge L+A source frontend is also in place. It constructs
+`L=q+delta`, `A=q-delta` without clamping, preserves `(L+A)/2=q` exactly for
+real texels, and uses deterministic zero gauge padding at edges. It has no
+selection or model-quality claim yet; it is the source-side building block for
+the later GPU proposer + CPU exact candidate-bank experiment.
+
+### D1 5x5 proposer sweep
+
+Added the missing middle D1 rung before candidate-bank work. `5x5` now has a
+separate 25-lane proposer shader, source-stride-aware persistent session,
+CPU-reference proposal comparison, astcenc legal-payload finishing, and the
+same exact CPU-to-fixed-function-Vulkan decode gate as `4x4` and `6x6`.
+All three D1 physical shapes are therefore first-class verified proposer
+profiles; the 4x4/5x5/6x6 distinction is explicit in SPIR-V and never inferred
+from an unchecked runtime value.
+
+### D1 GPU-proposer candidate-bank wiring
+
+The D1 hybrid path now has an explicit candidate-bank contract. For each
+logical physical block it materializes a unique-ID scalar candidate (mandatory
+fallback) plus zero or more alternative source families, currently gauge-L+A.
+The mapping preserves `candidate source id -> logical block id -> family`, so
+the generic GPU physical proposer and CPU exact finisher stay unaware of D1
+selection semantics while later neural scoring can recover them exactly.
+
+The current bounded policy retains scalar first and then the lowest physical
+proposal-error alternatives up to a caller-specified budget. This is only a
+CPU-finisher budget/pruning policy; it is explicitly not the neural objective.
+The device smoke now proves the full small chain: scalar/gauge bank -> GPU
+proposal for every candidate -> CPU-equivalent proposal values -> mandatory
+scalar plus retained alternatives -> CPU astcenc legal payloads. This gives
+the later activation-aware selector a real bank of distinct legal ASTC
+encodings rather than multiple symbolic labels for one encoded source.
+
+### D1 exact decoded candidate ranking
+
+The candidate bank now continues through a deliberately separate exact-ranking
+stage after CPU finishing. Each retained candidate is decoded by the ASTC
+oracle, reconstructed with its actual D1 semantic decoder (scalar RGB mean or
+gauge `(R + A) / 2`), and scored against calibration activations. Scalar stays
+as a mandatory fallback per logical block; remaining bounded slots are sorted
+by this decoded activation score and can be passed unchanged to a later global
+conflict-aware selector.
+
+The objective was made explicitly row-correct. For a one-sided layer objective
+`||E X^T||^2`, output rows are orthogonal: the dot-product error is accumulated
+and squared **per output row**, not once across all rows in an ASTC block. This
+prevents unrelated row errors from cancelling before the square. The host
+candidate-bank test and the device chain for 4x4, 5x5, and 6x6 all pass after
+this correction. The GPU proposer still uses physical proposal error only to
+keep CPU finishing bounded; decoded activation ranking, not that surrogate, is
+the first neural-quality decision.
+
+### D1 8x6 GPU proposer sweep
+
+The 2.67 bpw D1 `8x6` rung now has its own 48-lane proposer shader rather than
+sharing a smaller footprint's texel stride. Its batch proposal matches the CPU
+physical reference; its CPU-finished payload is legal and its Vulkan
+fixed-function decode agrees with the CPU ASTC oracle. This makes `8x6`
+available to the same GPU-proposer -> CPU-finisher candidate-bank experiment
+as `4x4`, `5x5`, and `6x6`. It is not a performance result and does not alter
+the separate full-tensor quality gate currently running in the background.
+
+### D2 8x5 GPU-encoder seam
+
+Added the first D2 frontend without putting paired semantics into shared GPU
+code. The D2 source builder maps adjacent logical output rows into physical
+RGBA texels, requires one RG/B-or-R/GB layout entry per physical block, and
+uses deterministic `0.5` source padding for missing paired rows and edges. Its
+candidate-bank records retain family, layout and semantic interpretation while
+the generic proposer and CPU finisher remain physical-only.
+
+The direct-neutral D2 `6x5`, `8x5`, and `10x5` sources, with 30-, 40-, and
+50-lane GPU proposers, generic CPU astcenc legal finish, and Vulkan
+fixed-function decode gate now pass together. The candidate bank also accepts
+direct-steered and Luminance+Alpha source alternatives without changing the
+shared ABI, but no neural D2 candidate score or runtime/cache use is claimed
+yet. D2 8x8/10x10 are deliberately left for a later row-height class. This
+work is isolated from the running D1 8x6 quality experiment.
+
+### GPU proposer seam: stable IDs and true multi-batch dispatch
+
+The reusable Vulkan session now runs every planned contiguous batch in the same
+persistent session. It owns host-visible source, source-ID, and proposal
+buffers; results are appended in request order after each dispatch. The device
+smoke uses non-contiguous IDs `41` and `99` with one block per batch, proving
+that global caller IDs are not confused with local workgroup indices.
+
+Candidate-bank requests carry a shared opaque identity envelope
+(`source_block_id`, `logical_source_block_id`, `candidate_index`, `family_id`).
+The physical shared layer validates the envelope while D1/D2 retain all
+semantic interpretation in their own frontends.
+
+The exact CPU finisher now has explicit `reference` and `guided` modes. Guided
+mode is candidate-bank-guided but still calls the unchanged authoritative
+astcenc search in this version. A regression requires identical payloads for
+guided/reference on identical inputs; low-level astcenc hint seeding is a
+future optimization, not a hidden quality claim.
+
+### GPU encoder D1/D2 physical evaluation
+
+The new isolated GPU encoder was exercised across the complete currently
+implemented footprint set. D1 `4x4`, `5x5`, `6x6`, and `8x6` each passed GPU
+proposal/reference equality, legal CPU astcenc finishing, and fixed-function
+Vulkan decode. D2 `6x5`, `8x5`, and `10x5` passed the same chain through their
+paired source frontend and candidate-bank seam.
+
+The device smoke also covered non-contiguous source IDs (`41`, `99`) with
+one-block batches, and verified that `guided` and `reference` CPU finishing
+produce byte-identical payloads for identical inputs. The small GPU benchmark
+reported `25,542.98` blocks/s on the current device; this is a transport/
+proposal smoke measurement, not a full-tensor encoding or quality claim.
+
+The focused six-test cohort (`test-astc-vulkan-gpu-encoder`, device smoke,
+D2 row-scale, D1 ranking, paired contract, and paired smoke) passed `6/6`.
+These results establish the D1/D2 GPU-to-CPU physical seam. Model-level
+quality must still be evaluated from exported artifacts, and GPU proposer
+endpoint/grid hints are not yet consumed by low-level astcenc.
+
+### GPU-to-CPU candidate pipeline smoke
+
+The D2 frontend now has the same exact post-decode semantic ranking boundary
+as D1. For every finished candidate it reconstructs both paired logical rows
+from the D2 record's layout and semantic fields, accumulates the activation
+dot-product error per output row, and keeps direct-neutral as the mandatory
+fallback. This prevents physical RGBA proposal error from becoming an
+implicit D2 quality objective.
+
+The device smoke now exercises the complete small pipeline for D1 and D2:
+
+```text
+source construction
+  -> GPU proposal (batched, stable IDs)
+  -> candidate-bank selection
+  -> CPU exact astcenc finish/decode
+  -> D1/D2 semantic activation ranking
+```
+
+The updated two-test build/CTest gate passed, and the manual Vulkan run passed
+with decode MSE `0`, maximum error `0`, and approximately `27,102` proposal
+blocks/s on the current device. This is a reproducible pipeline/correctness
+gate on small fixtures; it is not yet a real-tensor quality or full-GPU
+encoding benchmark.
+
+### Hybrid offline backend wiring
+
+The latent/cache-producing path now accepts `--backend hybrid|cpu`, with
+`hybrid` as the default. Hybrid is intentionally defined as GPU physical
+proposal generation followed by the existing exact CPU `astcenc` finisher and
+decode; it is not a GPU ASTC bit-packer. A matching `--footprint` and
+`--gpu-proposer-shader` are required to opt in. Missing Vulkan support,
+unsupported geometry, neural semantic ranking, or any proposer failure falls
+back to the CPU path and emits an informational diagnostic. `--backend cpu`
+forces the reference path.
+
+The integration is restricted to full-image physical roundtrips so the
+existing per-block D1/D2 candidate experiments retain their CPU semantics.
+The cache format, manifest, scheduler, runtime shader ABI, and Vulkan sampled
+image path are unchanged. This makes the hybrid backend a reversible offline
+producer choice: artifacts are still ordinary standard ASTC blocks and the
+runtime has no knowledge of which backend created them.
+
+The ABI-corrected build passed the GPU encoder contract/device tests (`2/2`)
+and the existing latent regression (`1/1`). Small explicit CPU and hybrid
+smokes both returned status `0`; hybrid was exercised with D1 `4x4` and `8x6`
+proposer shaders. Export metadata recorded `backend=hybrid`, while an omitted
+shader/footprint reported and used the CPU fallback.
+
+### GPU residency and lifecycle audit
+
+The GPU proposer previously created buffers for the complete request even when
+the request had a smaller logical batch plan. The session capacity is now
+bounded by `max_blocks_per_batch`, and every submitted batch is checked against
+that resident capacity. This keeps source, proposal, and readback buffers
+bounded by the batch rather than by a full tensor request.
+
+The focused device smoke also repeats ASTC image create, upload, submit, and
+destruction three times on one logical device for both `4x4` and `8x6`. The
+GPU encoder and ASTC device smokes pass after this change. This is regression
+coverage for the ownership order, not a claim that it can rule out all driver
+faults.
+
+The Pythia F16 replay exposed a separate capacity issue on the NVIDIA 920MX:
+llama.cpp fails model allocation with `VK_ERROR_OUT_OF_DEVICE_MEMORY`. That is
+not an ASTC decode failure. Historical Intel journal entries do contain both
+`libvulkan_intel` user-space faults and an i915 reset, so Intel model-level
+runs remain a separate stability gate. No matching fresh kernel event was
+observed for the most recent Intel attempt.
+
+Offline encoding already streams candidate work by row-strip/batch. Runtime
+sidecar upload does not yet stream within one tensor: it materializes one
+payload and one ASTC image per tensor. `requires_streaming` is currently a
+residency-plan result, not a tiled runtime implementation. A future D1-first
+row-band loader must use footprint-aligned bands, bounded reusable staging,
+row-offset dispatch, and fence-proven reuse before it can solve a tensor that
+does not fit resident memory.
+
+### Shared intra-tensor streaming design
+
+The row-band loader is intended for both D1 and D2. It must be one physical
+resource path, not two loaders. Shared code owns payload range reads, band
+geometry, reusable staging, ASTC image upload/transition, descriptor lifetime,
+fences, and residency accounting. A band is aligned to the ASTC footprint and
+contains complete physical block rows; arbitrary byte or texel-row slicing is
+not allowed.
+
+D1 supplies a direct semantic band description: physical texture rows map to
+the corresponding output rows. D2 supplies a paired description: the image has
+storage height derived from logical height, each physical row serves two
+logical rows, and the layout-map/row-scale ranges are selected for that band.
+The shared loader does not know about RG/B, R/GB, L+A, pairing, or prediction.
+
+The intended runtime flow is:
+
+```text
+cache range reader -> reusable staging -> band image upload
+                  -> representation-specific dispatch
+                  -> output slice -> fence-proven reuse
+```
+
+The first implementation should be D1, with one resident band and an exact
+full-resident versus streamed-output regression. D2 then reuses the same
+loader and adds only its paired logical-row offset and sidecar-range mapping.
+Double buffering and overlap are later optimizations; the correctness version
+may wait for each band. A full tensor remains the fast path when its image and
+staging allocation fit the memory budget.
+
+The first shared implementation now includes a footprint-aligned geometry
+planner and a tensor-offset-aware payload reader. It has CPU contract coverage
+for D1 bands, D2 half-height bands, edge bands, invalid ranges, and
+reassembling streamed ranges into the resident payload byte sequence. No
+Vulkan descriptor or shader ABI has changed yet.
+
+The payload reader keeps one sequential file handle per tensor stream and
+reuses the caller-owned band vector. It validates the complete tensor range at
+open time and each band against that range, so a malformed manifest cannot
+turn a later band read into an unchecked file access.
+
+The D1 dispatch seam now accepts a band image through descriptor rebind and
+executes only that band's rows using `row_base` and `output_height` push
+constants. The paired D2 dispatcher now has the corresponding stream contract:
+it rebinds a half-height band, maps local physical texture rows to global
+logical rows, and addresses the global paired layout map with the physical-row
+base. Resident execution is routed through the same band routines with a zero
+base. Band image replacement and descriptor rebind explicitly quiesce the
+device first; this is intentionally conservative for Intel lifecycle
+stability. A full model-side streamed orchestrator is not enabled yet.
+
+The updated D1 shader was replayed on Vulkan against the existing 2048x8192
+8x6 artifact. GPU-vs-CPU MSE remained approximately `1.05e-12`, matching the
+pre-band ABI result.
+
+The device smoke now exercises the shared band-upload contract for both a D1
+`8x6` tensor and a paired D2 `8x5` tensor, including multiple physical bands
+and destruction/recreation on the same device. It also dispatches a resident
+paired D2 image and then replays the same tensor band-by-band; the assembled
+streamed output is compared with the resident output. The current Vulkan
+device reports both paths passed, as well as the existing ASTC footprint
+checks.
+
+The model-replay smoke now has an explicit GPU-cache mode, guarded by the
+experimental scheduler-adapter build option. It binds a model-verified cache
+artifact, runs the paired D2 matvec on Vulkan, and feeds that output into the
+existing CPU model/logits replay. The first Pythia D2-LA `8x5` run completed
+without a lifecycle or allocation error: GPU/CPU matvec agreement was
+`1.31e-13` MSE with `6.44e-6` maximum absolute difference; model replay then
+reported `0.2382` relative logits MSE, `71.4%` top-1 agreement, and `+1.033`
+loss delta for the tested layer-1 artifact. The latter is artifact/model
+quality evidence, not a GPU correctness failure. Full model-side streaming
+orchestration is now exercised by the same smoke with `--streamed`; the
+resident and banded runs produced byte-identical model metrics. Enabling this
+in the production scheduler remains a separate policy gate; the CPU model path
+is still the reference and fallback.

@@ -8,8 +8,8 @@
 // semantic mapping and activation-space delta calculation. It is deliberately
 // separate from runtime matvec and from conflict-aware commit selection.
 
-// One workgroup owns one candidate/sample/logical-row. The 8x5 and 10x5 D2
-// formats need only 8 or 10 reduction columns, so 16 lanes cover a complete
+// One workgroup owns one candidate/sample/logical-row. The 6x5, 8x5, and 10x5 D2
+// formats need at most 10 reduction columns, so 16 lanes cover a complete
 // ASTC block with a small, portable shared-memory reduction. This is a batch
 // worker shape: many candidate workgroups run independently, while astcenc
 // remains CPU-side and supplies legal payloads.

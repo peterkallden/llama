@@ -15,7 +15,7 @@
 // is chosen over byte-at-a-time metadata so Vulkan can read it directly from a
 // storage buffer without unpack/copy staging.
 //
-// Suitable for: standard five-row paired-D2 artifacts (8x5 and 10x5). This is offline/runtime
+// Suitable for: standard five-row paired-D2 artifacts (6x5, 8x5, and 10x5). This is offline/runtime
 // metadata only; it neither changes ASTC bytes nor applies a decoder. D1 and
 // mixed-footprint page metadata are intentionally separate concerns.
 

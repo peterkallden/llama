@@ -6,7 +6,8 @@
 namespace {
 
 bool is_paired_d2_footprint(astc_vulkan_footprint footprint) {
-    return footprint == astc_vulkan_footprint::k8x5 ||
+    return footprint == astc_vulkan_footprint::k6x5 ||
+           footprint == astc_vulkan_footprint::k8x5 ||
            footprint == astc_vulkan_footprint::k10x5;
 }
 

@@ -1,0 +1,58 @@
+#version 450
+
+// D1 scalar 4x4 proposal kernel. One workgroup analyses one physical source
+// block; this is deliberately a symbolic first stage, not an ASTC encoder.
+layout(local_size_x = 16) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Source { vec4 texels[]; } source;
+struct Proposal {
+    vec4 endpoint_low;
+    vec4 endpoint_high;
+    float approximate_error;
+    uint source_block_id;
+    uint weight_grid_x;
+    uint weight_grid_y;
+    uint mode_family;
+};
+layout(std430, set = 0, binding = 1) writeonly buffer Proposals { Proposal values[]; } proposals;
+layout(std430, set = 0, binding = 2) readonly buffer SourceIds { uint values[]; } source_ids;
+
+layout(push_constant) uniform Push { uint block_count; } params;
+shared vec4 low_values[16];
+shared vec4 high_values[16];
+shared vec4 source_values[16];
+
+void main() {
+    uint lane = gl_LocalInvocationID.x;
+    uint block = gl_WorkGroupID.x;
+    if (block >= params.block_count) return;
+    vec4 value = source.texels[block * 16u + lane];
+    source_values[lane] = value;
+    low_values[lane] = value;
+    high_values[lane] = value;
+    barrier();
+    for (uint step = 8u; step > 0u; step >>= 1u) {
+        if (lane < step) {
+            low_values[lane] = min(low_values[lane], low_values[lane + step]);
+            high_values[lane] = max(high_values[lane], high_values[lane + step]);
+        }
+        barrier();
+    }
+    if (lane == 0u) {
+        vec4 mean = vec4(0.0);
+        for (uint i = 0u; i < 16u; ++i) mean += source_values[i];
+        mean *= 1.0 / 16.0;
+        float error = 0.0;
+        for (uint i = 0u; i < 16u; ++i) {
+            vec4 d = source_values[i] - mean;
+            error += dot(d, d);
+        }
+        proposals.values[block].endpoint_low = low_values[0];
+        proposals.values[block].endpoint_high = high_values[0];
+        proposals.values[block].approximate_error = error / 16.0;
+    proposals.values[block].source_block_id = source_ids.values[block];
+        proposals.values[block].weight_grid_x = 4u;
+        proposals.values[block].weight_grid_y = 4u;
+        proposals.values[block].mode_family = 0u;
+    }
+}

@@ -80,7 +80,7 @@ void astc_vulkan_matvec_session::reset() {
     device_ = VK_NULL_HANDLE;
     queue_ = VK_NULL_HANDLE;
     queue_family_ = UINT32_MAX;
-    width_ = height_ = samples_ = 0;
+    width_ = height_ = texture_height_ = samples_ = 0;
     descriptor_set_ = VK_NULL_HANDLE;
     command_buffer_ = VK_NULL_HANDLE;
 }
@@ -95,7 +95,8 @@ bool astc_vulkan_matvec_session::init(
         queue == VK_NULL_HANDLE || queue_family == UINT32_MAX || spirv.empty() ||
         width == 0 || height == 0 || samples == 0 ||
         tensor.texture().view() == VK_NULL_HANDLE || tensor.texture().sampler() == VK_NULL_HANDLE ||
-        tensor.texture().width() != width || tensor.texture().height() != height) {
+        tensor.texture().width() != width || tensor.texture().height() == 0 ||
+        tensor.texture().height() > height) {
         error = "invalid ASTC matvec session configuration";
         return false;
     }
@@ -106,6 +107,7 @@ bool astc_vulkan_matvec_session::init(
     queue_family_ = queue_family;
     width_ = width;
     height_ = height;
+    texture_height_ = tensor.texture().height();
     samples_ = samples;
     const VkDeviceSize activation_bytes = static_cast<VkDeviceSize>(samples) * width * sizeof(float);
     const VkDeviceSize output_bytes = static_cast<VkDeviceSize>(samples) * height * sizeof(float);
@@ -232,38 +234,73 @@ bool astc_vulkan_matvec_session::run(
         const std::vector<float> & activations,
         const astc_vulkan_reconstruction & reconstruction,
         std::vector<float> & output, std::string & error) {
+    return run_band(activations, reconstruction, 0, height_, output, error);
+}
+
+bool astc_vulkan_matvec_session::rebind_texture(
+        const astc_vulkan_tensor_session & tensor, std::string & error) {
+    if (device_ == VK_NULL_HANDLE || tensor.texture().view() == VK_NULL_HANDLE ||
+        tensor.texture().sampler() == VK_NULL_HANDLE || tensor.texture().width() != width_ ||
+        tensor.texture().height() == 0 || tensor.texture().height() > height_) {
+        error = "invalid ASTC matvec texture rebind";
+        return false;
+    }
+    if (vkDeviceWaitIdle(device_) != VK_SUCCESS) {
+        error = "ASTC matvec texture rebind could not quiesce the device";
+        return false;
+    }
+    const VkDescriptorImageInfo image_info{
+        tensor.texture().sampler(), tensor.texture().view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkWriteDescriptorSet write{
+        VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set_,
+        static_cast<uint32_t>(astc_vulkan_descriptor_binding::kWeights), 0, 1,
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &image_info, nullptr, nullptr};
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    texture_height_ = tensor.texture().height();
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_matvec_session::run_band(
+        const std::vector<float> & activations,
+        const astc_vulkan_reconstruction & reconstruction,
+        uint32_t row_base, uint32_t band_height,
+        std::vector<float> & output, std::string & error) {
     if (device_ == VK_NULL_HANDLE || activations.size() !=
-            static_cast<size_t>(samples_) * width_) {
-        error = "invalid ASTC matvec run inputs";
+            static_cast<size_t>(samples_) * width_ || band_height == 0 ||
+        row_base > height_ || band_height > height_ - row_base ||
+        texture_height_ < band_height) {
+        error = "invalid ASTC matvec band run inputs";
         return false;
     }
     const VkDeviceSize activation_bytes = static_cast<VkDeviceSize>(activations.size()) * sizeof(float);
     const VkDeviceSize output_bytes = static_cast<VkDeviceSize>(samples_) * height_ * sizeof(float);
     if (!map_write(device_, activation_memory_, activations.data(), activation_bytes)) {
-        error = "failed to upload ASTC matvec activations";
+        error = "failed to upload ASTC matvec band activations";
         return false;
     }
     if (vkResetFences(device_, 1, &fence_) != VK_SUCCESS ||
         vkResetCommandBuffer(command_buffer_, 0) != VK_SUCCESS) {
-        error = "failed to reset ASTC matvec synchronization";
+        error = "failed to reset ASTC matvec band synchronization";
         return false;
     }
     const VkCommandBufferBeginInfo begin_info{
         VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
         VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr};
     if (vkBeginCommandBuffer(command_buffer_, &begin_info) != VK_SUCCESS) {
-        error = "failed to begin ASTC matvec command buffer";
+        error = "failed to begin ASTC matvec band command buffer";
         return false;
     }
     vkCmdBindPipeline(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE,
                             pipeline_layout_, 0, 1, &descriptor_set_, 0, nullptr);
     for (uint32_t sample = 0; sample < samples_; ++sample) {
-        const auto constants = astc_vulkan_make_push_constants(
-            width_, height_, sample, reconstruction);
+        const astc_vulkan_matvec_push_constants constants{
+            width_, band_height, sample, row_base, height_, reconstruction.scale_l,
+            reconstruction.scale_a, reconstruction.offset};
         vkCmdPushConstants(command_buffer_, pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT,
                            0, sizeof(constants), &constants);
-        vkCmdDispatch(command_buffer_, height_, 1, 1);
+        vkCmdDispatch(command_buffer_, band_height, 1, 1);
     }
     const VkBufferMemoryBarrier output_barrier{
         VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT,
@@ -273,7 +310,7 @@ bool astc_vulkan_matvec_session::run(
                          VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1,
                          &output_barrier, 0, nullptr);
     if (vkEndCommandBuffer(command_buffer_) != VK_SUCCESS) {
-        error = "failed to end ASTC matvec command buffer";
+        error = "failed to end ASTC matvec band command buffer";
         return false;
     }
     const VkSubmitInfo submit_info{
@@ -281,24 +318,29 @@ bool astc_vulkan_matvec_session::run(
         &command_buffer_, 0, nullptr};
     if (vkQueueSubmit(queue_, 1, &submit_info, fence_) != VK_SUCCESS ||
         vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
-        error = "failed to submit ASTC matvec dispatch";
+        error = "failed to submit ASTC matvec band dispatch";
         return false;
     }
     void * mapped = nullptr;
     if (vkMapMemory(device_, output_memory_, 0, output_bytes, 0, &mapped) != VK_SUCCESS) {
-        error = "failed to map ASTC matvec output";
+        error = "failed to map ASTC matvec band output";
         return false;
     }
     const VkMappedMemoryRange invalidate_range{
         VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE, nullptr, output_memory_, 0, VK_WHOLE_SIZE};
     const VkResult invalidate = vkInvalidateMappedMemoryRanges(device_, 1, &invalidate_range);
     if (invalidate == VK_SUCCESS) {
-        output.resize(static_cast<size_t>(samples_) * height_);
-        std::memcpy(output.data(), mapped, static_cast<size_t>(output_bytes));
+        output.assign(static_cast<size_t>(samples_) * band_height, 0.0f);
+        const float * source = static_cast<const float *>(mapped);
+        for (uint32_t sample = 0; sample < samples_; ++sample) {
+            std::memcpy(output.data() + static_cast<size_t>(sample) * band_height,
+                        source + static_cast<size_t>(sample) * height_ + row_base,
+                        static_cast<size_t>(band_height) * sizeof(float));
+        }
     }
     vkUnmapMemory(device_, output_memory_);
     if (invalidate != VK_SUCCESS) {
-        error = "failed to invalidate ASTC matvec output";
+        error = "failed to invalidate ASTC matvec band output";
         return false;
     }
     error.clear();

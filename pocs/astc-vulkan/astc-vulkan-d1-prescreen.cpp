@@ -8,6 +8,7 @@ namespace {
 
 bool valid_footprint(astc_vulkan_footprint footprint) {
     return static_cast<uint8_t>(footprint) < astc_vulkan_footprint_count &&
+           footprint != astc_vulkan_footprint::k6x5 &&
            footprint != astc_vulkan_footprint::k8x5 && footprint != astc_vulkan_footprint::k10x5;
 }
 

@@ -119,7 +119,8 @@ bool astc_vulkan_gpu_ranking_session::init(
         queue_family == UINT32_MAX || atlas.records.empty() || delta_spirv.empty() ||
         proposal_gain_spirv.empty() ||
         source_blocks_x == 0 || tensor_width == 0 || tensor_logical_height == 0 ||
-        calibration_samples == 0 || (atlas.footprint != astc_vulkan_footprint::k8x5 &&
+        calibration_samples == 0 || (atlas.footprint != astc_vulkan_footprint::k6x5 &&
+        atlas.footprint != astc_vulkan_footprint::k8x5 &&
         atlas.footprint != astc_vulkan_footprint::k10x5)) {
         error = "invalid GPU ranking session configuration";
         return false;

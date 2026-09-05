@@ -1,51 +1,52 @@
 #version 450
 
-// Experimental D2 ASTC matvec contract.
+// Exported paired-D2 ASTC matvec contract.
 //
-// One sampled texel represents q0/q1 for adjacent output rows at one input
-// column. Alpha is deliberately ignored after texelFetch: it is an offline
-// encoder steering lane, not a runtime residual or metadata channel.
-//
-// This shader is a correctness-first standalone contract. Integrating it into
-// the sidecar scheduler waits for exact ASTC artifact replay and quality gates.
+// One sampled texel represents two logical weights from adjacent output rows.
+// Alpha is encoder-only steering and is deliberately ignored at runtime. The
+// layout buffer selects RG/B or R/GB per physical ASTC block. The shader reads
+// real row-major activation samples; it is not the former synthetic smoke.
 layout(local_size_x = 64) in;
 
 layout(set = 0, binding = 0) uniform sampler2D astc_weights;
-
-layout(std430, set = 0, binding = 1) buffer MatvecOutput {
-    vec4 values[];
-};
-
-// Packed little-endian uint32 layout words. One bit selects the semantic
-// channel interpretation for one physical ASTC block in raster order.
-layout(std430, set = 0, binding = 2) readonly buffer PairedLayoutMap {
-    uint words[];
-} paired_layout_map;
+layout(std430, set = 0, binding = 1) readonly buffer Activations { float values[]; } activations;
+layout(std430, set = 0, binding = 2) buffer MatvecOutput { float values[]; } output_values;
+layout(std430, set = 0, binding = 3) readonly buffer PairedLayoutMap { uint words[]; } paired_layout_map;
+layout(std430, set = 0, binding = 4) readonly buffer RowScales { float values[]; } row_scales;
 
 layout(push_constant) uniform PushConstants {
     uint width;
     uint logical_height;
-    uint paired_layout; // uniform fallback: 0 = RG/B, 1 = R/GB
-    uint layout_map_words; // zero retains the uniform fallback
+    uint sample_index;
+    uint block_width;
+    uint block_height;
+    uint layout_map_words;
+    uint paired_semantic;
+    uint row_scale_count;
+    uint dispatch_height;
+    uint row_base;
+    uint texture_row_base;
     float scale;
     float offset;
 } params;
 
-float activation(uint column) {
-    return 0.5 * sin(0.017 * float(column + 1)) +
-           0.2 * cos(0.031 * float(column + 3));
-}
-
 uint paired_layout_for_texel(uint column, uint texture_row) {
-    if (params.layout_map_words == 0u) return params.paired_layout;
-    const uint blocks_x = (params.width + 7u) / 8u;
-    const uint block_index = (texture_row / 5u) * blocks_x + column / 8u;
+    const uint blocks_x = (params.width + params.block_width - 1u) / params.block_width;
+    const uint global_texture_row = params.texture_row_base + texture_row;
+    const uint block_index = (global_texture_row / params.block_height) * blocks_x + column / params.block_width;
     const uint word_index = block_index >> 5u;
-    if (word_index >= params.layout_map_words) return params.paired_layout;
+    if (word_index >= params.layout_map_words) return 0u;
     return (paired_layout_map.words[word_index] >> (block_index & 31u)) & 1u;
 }
 
 float paired_weight(vec4 texel, uint member, uint layout_id) {
+    if (params.paired_semantic == 1u) {
+        const float luminance = (texel.r + texel.g + texel.b) / 3.0;
+        if (layout_id == 0u) {
+            return member == 0u ? luminance : texel.a;
+        }
+        return member == 0u ? texel.a : luminance;
+    }
     if (layout_id == 0u) {
         return member == 0u ? 0.5 * (texel.r + texel.g) : texel.b;
     }
@@ -55,24 +56,29 @@ float paired_weight(vec4 texel, uint member, uint layout_id) {
 shared float partial[64];
 
 void main() {
-    const uint row = gl_WorkGroupID.x;
-    if (row >= params.logical_height) return;
-
-    const uint texture_row = row >> 1u;
+    const uint local_row = gl_WorkGroupID.x;
+    if (local_row >= params.dispatch_height) return;
+    const uint row = params.row_base + local_row;
+    const uint texture_row = local_row >> 1u;
     const uint member = row & 1u;
     float sum = 0.0;
-    for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64) {
+    for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64u) {
         const vec4 texel = texelFetch(astc_weights, ivec2(column, texture_row), 0);
         const uint layout_id = paired_layout_for_texel(column, texture_row);
-        sum += (params.scale * paired_weight(texel, member, layout_id) + params.offset) * activation(column);
+        const float affine_weight = params.scale * paired_weight(texel, member, layout_id) + params.offset;
+        const float row_scale = row < params.row_scale_count ? row_scales.values[row] : 1.0;
+        const float weight = row_scale * affine_weight;
+        sum += weight * activations.values[params.sample_index * params.width + column];
     }
     partial[gl_LocalInvocationID.x] = sum;
     barrier();
-    for (uint stride = 32; stride > 0; stride >>= 1) {
+    for (uint stride = 32u; stride > 0u; stride >>= 1u) {
         if (gl_LocalInvocationID.x < stride) {
             partial[gl_LocalInvocationID.x] += partial[gl_LocalInvocationID.x + stride];
         }
         barrier();
     }
-    if (gl_LocalInvocationID.x == 0) values[row] = vec4(partial[0], 0.0, 0.0, 0.0);
+    if (gl_LocalInvocationID.x == 0u) {
+        output_values.values[params.sample_index * params.logical_height + row] = partial[0];
+    }
 }

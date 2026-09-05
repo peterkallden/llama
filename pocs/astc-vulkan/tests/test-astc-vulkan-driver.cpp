@@ -1,4 +1,5 @@
 #include "astc-vulkan-driver.h"
+#include "astc-vulkan-paired-layout.h"
 
 #include <cassert>
 #include <array>
@@ -17,6 +18,8 @@ int main() {
                   "new serialized footprint must be appended");
     static_assert(static_cast<uint8_t>(astc_vulkan_footprint::k10x5) == 8,
                   "new serialized footprint must be appended");
+    static_assert(static_cast<uint8_t>(astc_vulkan_footprint::k6x5) == 9,
+                  "new serialized footprint must be appended");
     assert(!astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k6x6));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k8x6));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k10x6));
@@ -24,12 +27,15 @@ int main() {
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k10x8));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k8x5));
     assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k10x5));
+    assert(astc_vulkan_footprint_is_experimental(astc_vulkan_footprint::k6x5));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k8x6));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k10x6));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k8x8));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k10x8));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k8x5));
     assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k10x5));
+    assert(astc_vulkan_footprint_is_valid(astc_vulkan_footprint::k6x5));
+    assert(astc_vulkan_image_bytes(astc_vulkan_footprint::k6x5, 6, 5) == 16);
     assert(astc_vulkan_block_count(astc_vulkan_footprint::k4x4, 1536, 32) == 384 * 8);
     assert(astc_vulkan_image_bytes(astc_vulkan_footprint::k6x6, 1536, 128) == 90112);
     assert(astc_vulkan_image_bytes(astc_vulkan_footprint::k10x8, 1536, 128) ==
@@ -106,6 +112,49 @@ int main() {
     invalid = expected;
     invalid.tensors[1].name = invalid.tensors[0].name;
     assert(!astc_vulkan_validate_manifest(invalid, error));
+
+    // v4 stores multiple immutable, evidence-bearing artifacts for one tensor.
+    // In particular, neutral and validation-selected D2-LA may legitimately
+    // share a logical tensor name while owning distinct payload ranges.
+    astc_vulkan_manifest v4;
+    v4.version = 4;
+    v4.model_fingerprint = "pythia-d2-la-test";
+    const uint64_t d2_bytes = astc_vulkan_image_bytes(astc_vulkan_footprint::k8x5, 8, 5);
+    const uint64_t d2_layout_bytes = astc_vulkan_paired_layout_bytes(
+        astc_vulkan_footprint::k8x5, 8, 10);
+    astc_vulkan_artifact_record neutral_artifact;
+    neutral_artifact.id = "blk.0.ffn_down.weight/d2-la/neutral";
+    neutral_artifact.storage = {"blk.0.ffn_down.weight", 8, 10,
+        astc_vulkan_footprint::k8x5, 0, d2_bytes,
+        astc_vulkan_representation::kPairedD2, 1.0f, 0.0f, 0.0f, 0,
+        0, d2_layout_bytes, 0};
+    neutral_artifact.paired_semantic = astc_vulkan_paired_semantic::luminance_alpha;
+    neutral_artifact.encoder_profile = "d2-la-neutral";
+    neutral_artifact.evidence = {true, true, 0.1f, 0.2f, 0.3f, 90.0f,
+                                 "calibration-hash", "replay-hash"};
+    astc_vulkan_artifact_record selected_artifact = neutral_artifact;
+    selected_artifact.id = "blk.0.ffn_down.weight/d2-la/selected";
+    selected_artifact.storage.byte_offset = d2_bytes;
+    selected_artifact.variant = astc_vulkan_artifact_variant::validation_selected;
+    selected_artifact.encoder_profile = "d2-la-selected";
+    v4.artifacts = {neutral_artifact, selected_artifact};
+    const std::string v4_path = "astc-vulkan-driver-test-v4.manifest";
+    assert(astc_vulkan_validate_manifest(v4, error));
+    assert(astc_vulkan_write_manifest(v4_path, v4, error));
+    astc_vulkan_manifest v4_read;
+    assert(astc_vulkan_read_manifest(v4_path, v4_read, error));
+    assert(v4_read.version == 4 && v4_read.tensors.empty() && v4_read.artifacts.size() == 2);
+    const auto * selected = astc_vulkan_find_artifact(v4_read, selected_artifact.id);
+    assert(selected != nullptr);
+    assert(selected->paired_semantic == astc_vulkan_paired_semantic::luminance_alpha);
+    assert(selected->variant == astc_vulkan_artifact_variant::validation_selected);
+    assert(selected->evidence.loss_delta == 0.3f);
+    assert(!astc_vulkan_validate_payload_blob(v4_read, d2_bytes, error));
+    assert(astc_vulkan_validate_payload_blob(v4_read, d2_bytes * 2, error));
+    astc_vulkan_manifest duplicate_artifact = v4;
+    duplicate_artifact.artifacts[1].id = duplicate_artifact.artifacts[0].id;
+    assert(!astc_vulkan_validate_manifest(duplicate_artifact, error));
+    std::remove(v4_path.c_str());
     std::vector<astc_vulkan_atlas_placement> placements;
     assert(astc_vulkan_pack_atlas({4096, 4096}, expected.tensors, placements, error));
     assert(placements.size() == expected.tensors.size());

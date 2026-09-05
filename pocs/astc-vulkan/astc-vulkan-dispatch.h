@@ -12,17 +12,19 @@
 
 // Stable interface shared by the sidecar dispatch and astc-ffn-matvec.comp.
 // Vulkan push constants are scalar-aligned here, so the C++ and GLSL layouts
-// are six consecutive 32-bit values (24 bytes).
+// are eight consecutive 32-bit values (32 bytes).
 struct astc_vulkan_matvec_push_constants {
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t sample_index = 0;
+    uint32_t row_base = 0;
+    uint32_t output_height = 0;
     float scale_l = 1.0f;
     float scale_a = 0.0f;
     float offset = 0.0f;
 };
 
-static_assert(sizeof(astc_vulkan_matvec_push_constants) == 24,
+static_assert(sizeof(astc_vulkan_matvec_push_constants) == 32,
               "ASTC matvec push constants must match the GLSL block");
 
 enum class astc_vulkan_descriptor_binding : uint32_t {
@@ -34,7 +36,7 @@ enum class astc_vulkan_descriptor_binding : uint32_t {
 inline astc_vulkan_matvec_push_constants astc_vulkan_make_push_constants(
         uint32_t width, uint32_t height, uint32_t sample_index,
         const astc_vulkan_reconstruction & reconstruction) {
-    return {width, height, sample_index, reconstruction.scale_l,
+    return {width, height, sample_index, 0, height, reconstruction.scale_l,
             reconstruction.scale_a, reconstruction.offset};
 }
 
@@ -55,6 +57,11 @@ public:
     bool run(const std::vector<float> & activations,
              const astc_vulkan_reconstruction & reconstruction,
              std::vector<float> & output, std::string & error);
+    bool rebind_texture(const astc_vulkan_tensor_session & tensor, std::string & error);
+    bool run_band(const std::vector<float> & activations,
+                  const astc_vulkan_reconstruction & reconstruction,
+                  uint32_t row_base, uint32_t band_height,
+                  std::vector<float> & output, std::string & error);
     void reset();
     bool ready() const { return device_ != VK_NULL_HANDLE && pipeline_ != VK_NULL_HANDLE; }
 
@@ -65,6 +72,7 @@ private:
     uint32_t queue_family_ = UINT32_MAX;
     uint32_t width_ = 0;
     uint32_t height_ = 0;
+    uint32_t texture_height_ = 0;
     uint32_t samples_ = 0;
     VkBuffer activation_buffer_ = VK_NULL_HANDLE;
     VkDeviceMemory activation_memory_ = VK_NULL_HANDLE;

@@ -9,6 +9,10 @@
 #if defined(ASTC_VULKAN_D1_PRESCREEN_GPU)
 #include "astc-vulkan-d1-prescreen-dispatch.h"
 #endif
+#if defined(ASTC_VULKAN_GPU_ENCODER_BACKEND)
+#include "astc-gpu-encoder-dispatch.h"
+#include "astc-gpu-encoder-finisher.h"
+#endif
 #include "astc-vulkan-input.h"
 
 #include <algorithm>
@@ -21,6 +25,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <thread>
 #include <utility>
@@ -64,6 +69,14 @@ std::string vector_hash(const std::vector<T> & values) {
 // exact-decode selector; it does not change the ASTC payload format or runtime
 // reconstruction contract.
 enum class encoder_search_mode { standard, neural };
+// Offline encode backend. Hybrid is deliberately only a proposer offload:
+// GPU proposal generation is followed by the exact CPU astcenc finisher.
+enum class encoder_backend { hybrid, cpu };
+encoder_backend g_encoder_backend = encoder_backend::hybrid;
+std::string g_gpu_proposer_shader;
+std::string g_gpu_proposer_footprint;
+std::string g_effective_backend = "cpu";
+bool g_backend_notice_printed = false;
 astc_vulkan_ldlq_order g_block_ldlq_order = astc_vulkan_ldlq_order::forward;
 bool g_directional_shortlists = false;
 uint32_t g_stability_shards = 2;
@@ -375,6 +388,7 @@ bool write_export_metadata(const std::string & path, const ggml_vk_astc_format_c
          << "candidate_family=" << candidate_family << "\n"
          << "objective=" << objective << "\n"
          << "optimizer=" << optimizer << "\n"
+         << "backend=" << g_effective_backend << "\n"
          << "validation_prefix=" << validation_prefix << "\n"
          << "astc_preset=" << astc_preset_name() << "\n"
          << "source_hash=" << source_hash << "\n"
@@ -1222,12 +1236,164 @@ bool block_ldlq_select_astc_blocks(const std::vector<float> & reference,
     return maximum_error <= 1e-6;
 }
 
+#if defined(ASTC_VULKAN_GPU_ENCODER_BACKEND)
+bool format_to_gpu_footprint(const ggml_vk_astc_format_contract & format,
+                             astc_vulkan_footprint & footprint) {
+    for (const astc_vulkan_footprint candidate : {
+             astc_vulkan_footprint::k4x4, astc_vulkan_footprint::k5x5,
+             astc_vulkan_footprint::k6x6, astc_vulkan_footprint::k6x5,
+             astc_vulkan_footprint::k8x5, astc_vulkan_footprint::k10x5,
+             astc_vulkan_footprint::k8x6, astc_vulkan_footprint::k10x6,
+             astc_vulkan_footprint::k8x8, astc_vulkan_footprint::k10x8}) {
+        const auto info = astc_vulkan_format(candidate);
+        if (info.block_width == format.block_width &&
+            info.block_height == format.block_height &&
+            info.block_bytes == format.block_size_bytes) {
+            footprint = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Hybrid physical full-image path. The GPU only produces one proposal per
+// source block; the existing CPU finisher remains authoritative for legal
+// ASTC packing and exact decode. This keeps the cache artifact contract
+// unchanged and makes an unavailable GPU path a safe CPU fallback.
+bool astc_roundtrip_hybrid(const std::vector<float> & source, uint32_t rows,
+                           uint32_t columns, const ggml_vk_astc_format_contract & format,
+                           astc_roundtrip_result & result, std::string & error) {
+    astc_vulkan_footprint footprint{};
+    if (!format_to_gpu_footprint(format, footprint)) {
+        error = "unsupported ASTC format for GPU proposer";
+        return false;
+    }
+    const auto info = astc_vulkan_format(footprint);
+    const uint32_t blocks_x = (columns + info.block_width - 1u) / info.block_width;
+    const uint32_t blocks_y = (rows + info.block_height - 1u) / info.block_height;
+    astc_gpu_encoder_request request;
+    request.mode = astc_gpu_encode_mode::propose;
+    request.footprint = footprint;
+    request.max_blocks_per_batch = 256;
+    request.blocks.reserve(static_cast<size_t>(blocks_x) * blocks_y);
+    for (uint32_t by = 0; by < blocks_y; ++by) {
+        for (uint32_t bx = 0; bx < blocks_x; ++bx) {
+            astc_gpu_encoder_source_block block;
+            block.footprint = footprint;
+            block.source_block_id = static_cast<uint32_t>(request.blocks.size());
+            block.texels.resize(static_cast<size_t>(info.block_width) * info.block_height);
+            for (uint32_t y = 0; y < info.block_height; ++y) {
+                for (uint32_t x = 0; x < info.block_width; ++x) {
+                    const uint32_t row = by * info.block_height + y;
+                    const uint32_t column = bx * info.block_width + x;
+                    const size_t source_index = (static_cast<size_t>(row) * columns + column) * 4u;
+                    auto & destination = block.texels[static_cast<size_t>(y) * info.block_width + x].rgba;
+                    for (uint32_t channel = 0; channel < 4; ++channel) {
+                        const float value = (row < rows && column < columns)
+                            ? source[source_index + channel]
+                            : (channel == 3 ? 1.0f : 0.0f);
+                        if (!std::isfinite(value)) {
+                            error = "non-finite source texel in GPU proposer input";
+                            return false;
+                        }
+                        destination[channel] = value;
+                    }
+                }
+            }
+            request.blocks.push_back(std::move(block));
+        }
+    }
+    std::vector<astc_gpu_encoder_proposal> proposals;
+    if (!astc_gpu_encoder_propose_gpu_for_footprint_default(
+            g_gpu_proposer_shader, footprint, request, proposals, error)) {
+        return false;
+    }
+    if (proposals.size() != request.blocks.size()) {
+        error = "GPU proposer returned an incomplete proposal batch";
+        return false;
+    }
+    astc_gpu_encoder_finish_options options;
+    options.quality = g_astc_preset;
+    options.mode = astc_gpu_encoder_finish_mode::guided;
+    std::vector<astc_gpu_encoder_finished_block> finished;
+    if (!astc_gpu_encoder_finish_with_options(request, proposals, options, finished, error) ||
+        finished.size() != request.blocks.size()) {
+        if (error.empty()) error = "CPU ASTC finisher returned an incomplete block set";
+        return false;
+    }
+    result = {};
+    result.compressed_bytes = ggml_vk_astc_image_storage_bytes(format, columns, rows);
+    result.compressed.resize(result.compressed_bytes);
+    result.texels.assign(source.size(), 0.0f);
+    for (const auto & block : finished) {
+        if (block.source_block_id >= request.blocks.size()) {
+            error = "CPU finisher returned an invalid source block id";
+            return false;
+        }
+        const uint32_t block_index = block.source_block_id;
+        if (static_cast<size_t>(block_index + 1u) * 16u > result.compressed.size() ||
+            block.decoded_rgba.size() != static_cast<size_t>(info.block_width) * info.block_height * 4u) {
+            error = "hybrid ASTC finisher returned malformed block data";
+            return false;
+        }
+        std::copy(block.payload.begin(), block.payload.end(),
+                  result.compressed.begin() + static_cast<size_t>(block_index) * 16u);
+        const uint32_t bx = block_index % blocks_x;
+        const uint32_t by = block_index / blocks_x;
+        for (uint32_t y = 0; y < info.block_height; ++y) {
+            const uint32_t row = by * info.block_height + y;
+            if (row >= rows) continue;
+            for (uint32_t x = 0; x < info.block_width; ++x) {
+                const uint32_t column = bx * info.block_width + x;
+                if (column >= columns) continue;
+                const size_t dst = (static_cast<size_t>(row) * columns + column) * 4u;
+                const size_t src = (static_cast<size_t>(y) * info.block_width + x) * 4u;
+                std::copy_n(block.decoded_rgba.data() + src, 4, result.texels.data() + dst);
+            }
+        }
+    }
+    result.block_count = static_cast<uint32_t>(finished.size());
+    error.clear();
+    return true;
+}
+#endif
+
 bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t columns,
                     const ggml_vk_astc_format_contract & format,
                     const affine_decoder * ranking_decoder,
                     astc_roundtrip_result & result,
                     unsigned int candidate_limit = 0,
                     astc_candidate_capture * candidate_capture = nullptr) {
+#if defined(ASTC_VULKAN_GPU_ENCODER_BACKEND)
+    // Per-block candidate experiments and neural semantic ranking remain on
+    // CPU. The explicit footprint gate prevents one fixed shader from being
+    // accidentally reused for another ASTC geometry.
+    if (g_encoder_backend == encoder_backend::hybrid && ranking_decoder == nullptr &&
+        candidate_limit == 0 && candidate_capture == nullptr &&
+        !g_gpu_proposer_shader.empty() && !g_gpu_proposer_footprint.empty() &&
+        g_gpu_proposer_footprint ==
+            std::to_string(format.block_width) + "x" + std::to_string(format.block_height) &&
+        rows > format.block_height && columns > format.block_width) {
+        astc_roundtrip_result hybrid;
+        std::string hybrid_error;
+        if (astc_roundtrip_hybrid(source, rows, columns, format, hybrid, hybrid_error)) {
+            g_effective_backend = "hybrid";
+            if (!g_backend_notice_printed) {
+                std::printf("latent-encoder-backend requested=hybrid effective=gpu-proposer-cpu-finisher footprint=%ux%u\n",
+                            format.block_width, format.block_height);
+                g_backend_notice_printed = true;
+            }
+            result = std::move(hybrid);
+            return true;
+        }
+        g_effective_backend = "cpu";
+        if (!g_backend_notice_printed) {
+            std::fprintf(stderr, "latent-encoder-backend hybrid unavailable (%s); falling back to cpu\n",
+                         hybrid_error.c_str());
+            g_backend_notice_printed = true;
+        }
+    }
+#endif
     result.compressed_bytes = ggml_vk_astc_image_storage_bytes(format, columns, rows);
     astcenc_config config{};
 #if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
@@ -3453,6 +3619,17 @@ int main(int argc, char ** argv) {
                 std::fprintf(stderr, "unsupported --encoder-search value: %s\n", search.c_str());
                 return 2;
             }
+        } else if ((option == "--backend" || option == "-backend") && index + 1 < argc) {
+            const std::string backend = argv[++index];
+            if (backend == "hybrid") g_encoder_backend = encoder_backend::hybrid;
+            else if (backend == "cpu") g_encoder_backend = encoder_backend::cpu;
+            else {
+                std::fprintf(stderr, "unsupported --backend value: %s (expected hybrid|cpu)\n",
+                             backend.c_str());
+                return 2;
+            }
+        } else if (option == "--gpu-proposer-shader" && index + 1 < argc) {
+            g_gpu_proposer_shader = argv[++index];
         } else if (option == "--neural-candidate-limit" && index + 1 < argc) {
             neural_candidate_limit = std::max(1u, static_cast<uint32_t>(std::stoul(argv[++index])));
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
@@ -3467,8 +3644,8 @@ int main(int argc, char ** argv) {
         } else {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
-                         "[--footprint 4x4|5x5|6x6|8x5|8x6|10x6|8x8|10x8] [--d1-prescreen|--d1-prescreen-gpu shader.spv] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--footprint 4x4|5x5|6x6|6x5|8x5|8x6|10x6|8x8|10x8] [--d1-prescreen|--d1-prescreen-gpu shader.spv] [--preset thorough|medium|fast] [--model path --tensor name] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--backend hybrid|cpu] [--gpu-proposer-shader path] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--pv-lite-grid-sweep] [--pv-lite-coarse-grid-sweep] [--pv-alternate] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
             return 2;
@@ -3565,6 +3742,15 @@ int main(int argc, char ** argv) {
     if (g_stability_shards < 2) {
         std::fprintf(stderr, "--stability-shards must be at least 2\n");
         return 2;
+    }
+    g_gpu_proposer_footprint = footprint;
+    if (g_encoder_backend == encoder_backend::cpu) {
+        std::printf("latent-encoder-backend requested=cpu effective=cpu\n");
+    } else if (g_gpu_proposer_shader.empty() || g_gpu_proposer_footprint.empty()) {
+        std::printf("latent-encoder-backend requested=hybrid effective=cpu reason=missing-shader-or-footprint\n");
+    } else {
+        std::printf("latent-encoder-backend requested=hybrid proposer=gpu finisher=cpu footprint=%s\n",
+                    g_gpu_proposer_footprint.c_str());
     }
 #if !defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
     if (neural_rank) {
@@ -3949,7 +4135,7 @@ int main(int argc, char ** argv) {
         }
     }
     if (!footprint.empty() && footprint != "4x4" && footprint != "5x5" &&
-        footprint != "6x6" && footprint != "8x5" && footprint != "8x6" && footprint != "10x6" && footprint != "8x8" &&
+        footprint != "6x6" && footprint != "6x5" && footprint != "8x5" && footprint != "8x6" && footprint != "10x6" && footprint != "8x8" &&
         footprint != "10x8") {
         std::fprintf(stderr, "unsupported --footprint value: %s\n", footprint.c_str());
         return 2;

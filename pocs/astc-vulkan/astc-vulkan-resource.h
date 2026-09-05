@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan.h>
 #include "astc-vulkan-driver.h"
+#include "astc-vulkan-stream-loader.h"
 
 #include <cstdint>
 #include <string>
@@ -61,6 +62,10 @@ public:
     bool update_payload(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
                         uint32_t queue_family, uint8_t footprint,
                         const std::vector<uint8_t> & payload, std::string & error);
+    bool upload_band(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+                     uint32_t queue_family, const astc_vulkan_stream_geometry & geometry,
+                     const astc_vulkan_stream_band & band,
+                     const std::vector<uint8_t> & payload, std::string & error);
     void reset();
     VkImageView view() const { return resources_.view; }
     VkSampler sampler() const { return resources_.sampler; }
@@ -83,7 +88,14 @@ public:
     bool upload(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
                 uint32_t queue_family, const astc_vulkan_tensor_record & record,
                 const astc_vulkan_reconstruction & reconstruction,
-                const std::vector<uint8_t> & payload, std::string & error);
+                const std::vector<uint8_t> & payload, std::string & error,
+                uint32_t storage_height = 0);
+    bool upload_band(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+                     uint32_t queue_family, const astc_vulkan_tensor_record & record,
+                     const astc_vulkan_reconstruction & reconstruction,
+                     const astc_vulkan_stream_geometry & geometry,
+                     const astc_vulkan_stream_band & band,
+                     const std::vector<uint8_t> & payload, std::string & error);
     void reset() { texture_.reset(); record_ = {}; reconstruction_ = {}; }
     const astc_vulkan_texture & texture() const { return texture_; }
     const astc_vulkan_tensor_record & record() const { return record_; }

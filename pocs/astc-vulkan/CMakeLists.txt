@@ -4,11 +4,22 @@
 
 set(ASTC_VULKAN_POC_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Keep the optional neural astcenc ABI visible before the shared GPU finisher
+# target is declared; hybrid offline builds must use the same ABI as latent-smoke.
+option(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK
+    "Enable the side-fork ASTC neural-ranking API in the latent PoC" OFF)
+set(GGML_VK_ASTC_NEURAL_RANK_LIBRARY "" CACHE FILEPATH
+    "Static library from the isolated ASTC neural-ranking fork")
+set(GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR "" CACHE PATH
+    "Source include directory from the isolated ASTC neural-ranking fork")
+
 # Offline-only primitives shared by artifact metadata and latent experiments.
 # They carry no Vulkan or ggml dependency.
 add_library(astc-vulkan-algorithms STATIC
+    astc-vulkan-artifact-policy.cpp
     astc-vulkan-block-ldlq.cpp
     astc-vulkan-d1-prescreen.cpp
+    astc-vulkan-d2-row-scale.cpp
     astc-vulkan-format.cpp
     astc-vulkan-gauge.cpp
     astc-vulkan-gpu-d1-ranking.cpp
@@ -25,10 +36,47 @@ target_include_directories(astc-vulkan-algorithms PUBLIC
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(astc-vulkan-algorithms PUBLIC cxx_std_17)
 
+# Offline GPU-encoder experiment.  The cache generator may opt into its
+# hybrid backend (GPU proposer + CPU astcenc finisher); CPU astcenc remains the
+# legal-block oracle and fallback.  No GPU encoder code participates in the
+# inference runtime dispatch.
+add_library(astc-vulkan-gpu-encoder STATIC
+    gpu-encoder/shared/astc-gpu-encoder.cpp
+    gpu-encoder/shared/astc-gpu-selector-adapter.cpp
+    gpu-encoder/d1/astc-gpu-d1-hybrid.cpp
+    gpu-encoder/d1/astc-gpu-d1-candidates.cpp
+    gpu-encoder/d1/astc-gpu-d1-neural-rank.cpp
+    gpu-encoder/d1/astc-gpu-d1-source.cpp
+    gpu-encoder/d2/astc-gpu-d2-candidates.cpp
+    gpu-encoder/d2/astc-gpu-d2-neural-rank.cpp
+    gpu-encoder/d2/astc-gpu-d2-source.cpp)
+target_include_directories(astc-vulkan-gpu-encoder PUBLIC
+    ${ASTC_VULKAN_POC_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared
+    ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/d1
+    ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/d2)
+target_link_libraries(astc-vulkan-gpu-encoder PUBLIC astc-vulkan-algorithms)
+target_compile_features(astc-vulkan-gpu-encoder PUBLIC cxx_std_17)
+
+add_executable(test-astc-vulkan-gpu-encoder
+    tests/test-astc-vulkan-gpu-encoder.cpp)
+target_link_libraries(test-astc-vulkan-gpu-encoder PRIVATE astc-vulkan-gpu-encoder)
+target_compile_features(test-astc-vulkan-gpu-encoder PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-gpu-encoder
+        COMMAND test-astc-vulkan-gpu-encoder)
+    set_property(TEST test-astc-vulkan-gpu-encoder PROPERTY LABELS astc)
+endif()
+
 add_executable(test-astc-vulkan-hash
     tests/test-astc-vulkan-hash.cpp)
 target_link_libraries(test-astc-vulkan-hash PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-hash PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-artifact-policy
+    tests/test-astc-vulkan-artifact-policy.cpp)
+target_link_libraries(test-astc-vulkan-artifact-policy PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-artifact-policy PRIVATE cxx_std_17)
 
 add_executable(test-astc-vulkan-gauge
     tests/test-astc-vulkan-gauge.cpp)
@@ -39,6 +87,11 @@ add_executable(test-astc-vulkan-d1-prescreen
     tests/test-astc-vulkan-d1-prescreen.cpp)
 target_link_libraries(test-astc-vulkan-d1-prescreen PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-d1-prescreen PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-d2-row-scale
+    tests/test-astc-vulkan-d2-row-scale.cpp)
+target_link_libraries(test-astc-vulkan-d2-row-scale PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-d2-row-scale PRIVATE cxx_std_17)
 
 add_executable(test-astc-vulkan-gpu-ranking
     tests/test-astc-vulkan-gpu-ranking.cpp)
@@ -137,6 +190,25 @@ target_link_libraries(astc-vulkan-cache PUBLIC
     astc-vulkan-driver astc-vulkan-provenance)
 target_compile_features(astc-vulkan-cache PUBLIC cxx_std_17)
 
+# Shared physical row-band/range contract for D1 and D2. It is deliberately
+# independent of Vulkan resources so geometry and cache-range tests stay fast.
+add_library(astc-vulkan-stream-loader STATIC
+    astc-vulkan-stream-loader.cpp)
+target_include_directories(astc-vulkan-stream-loader PUBLIC
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_link_libraries(astc-vulkan-stream-loader PUBLIC astc-vulkan-driver)
+target_compile_features(astc-vulkan-stream-loader PUBLIC cxx_std_17)
+
+add_executable(test-astc-vulkan-stream-loader
+    tests/test-astc-vulkan-stream-loader.cpp)
+target_link_libraries(test-astc-vulkan-stream-loader PRIVATE astc-vulkan-stream-loader)
+target_compile_features(test-astc-vulkan-stream-loader PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-stream-loader
+        COMMAND test-astc-vulkan-stream-loader)
+    set_property(TEST test-astc-vulkan-stream-loader PROPERTY LABELS astc)
+endif()
+
 add_executable(test-astc-vulkan-driver
     tests/test-astc-vulkan-driver.cpp)
 target_link_libraries(test-astc-vulkan-driver PRIVATE astc-vulkan-driver)
@@ -159,6 +231,11 @@ target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-cache)
 target_include_directories(astc-vulkan-cache-tool PRIVATE
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(astc-vulkan-cache-tool PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-cache-tool-profiles
+        COMMAND astc-vulkan-cache-tool profiles)
+    set_property(TEST test-astc-vulkan-cache-tool-profiles PROPERTY LABELS astc)
+endif()
 
 find_package(Vulkan QUIET)
 option(GGML_VK_ASTC_EXPERIMENTAL_SCHEDULER_ADAPTER
@@ -213,6 +290,28 @@ if (TARGET Vulkan::Vulkan)
         astc-vulkan-resource astc-vulkan-driver Vulkan::Vulkan)
     target_compile_features(astc-vulkan-dispatch PUBLIC cxx_std_17)
 
+    # D2 consumes the same sampled-ASTC resource as D1, but needs a distinct
+    # logical-height/layout-buffer dispatch contract.
+    add_library(astc-vulkan-paired-dispatch STATIC
+        astc-vulkan-paired-dispatch.cpp)
+    target_include_directories(astc-vulkan-paired-dispatch PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-paired-dispatch PUBLIC
+        astc-vulkan-resource astc-vulkan-driver Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-paired-dispatch PUBLIC cxx_std_17)
+
+    add_executable(test-astc-vulkan-paired-dispatch
+        tests/test-astc-vulkan-paired-dispatch.cpp)
+    target_include_directories(test-astc-vulkan-paired-dispatch PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(test-astc-vulkan-paired-dispatch PRIVATE astc-vulkan-paired-dispatch)
+    target_compile_features(test-astc-vulkan-paired-dispatch PRIVATE cxx_std_17)
+    if (BUILD_TESTING)
+        add_test(NAME test-astc-vulkan-paired-dispatch
+            COMMAND test-astc-vulkan-paired-dispatch)
+        set_property(TEST test-astc-vulkan-paired-dispatch PROPERTY LABELS astc)
+    endif()
+
     # Offline-only GPU scoring session. It shares the ordinary ASTC resource
     # uploader with runtime, but it never enters the inference scheduler.
     add_library(astc-vulkan-gpu-ranking-dispatch STATIC
@@ -231,12 +330,26 @@ if (TARGET Vulkan::Vulkan)
         astc-vulkan-resource astc-vulkan-algorithms Vulkan::Vulkan)
     target_compile_features(astc-vulkan-d1-prescreen-dispatch PUBLIC cxx_std_17)
 
+    # Experimental offline physical ASTC proposer. It is linked into the
+    # latent/cache producer only through the opt-in hybrid backend; scheduler
+    # selection and inference runtime dispatch remain unchanged.
+    add_library(astc-vulkan-gpu-encoder-dispatch STATIC
+        gpu-encoder/shared/astc-gpu-encoder-dispatch.cpp)
+    target_include_directories(astc-vulkan-gpu-encoder-dispatch PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/d1)
+    target_link_libraries(astc-vulkan-gpu-encoder-dispatch PUBLIC
+        astc-vulkan-gpu-encoder astc-vulkan-resource Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-gpu-encoder-dispatch PUBLIC cxx_std_17)
+
     add_library(astc-vulkan-sidecar STATIC
         astc-vulkan-sidecar.cpp)
     target_include_directories(astc-vulkan-sidecar PUBLIC
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_link_libraries(astc-vulkan-sidecar PUBLIC
-        astc-vulkan-ffn-adapter astc-vulkan-dispatch Vulkan::Vulkan)
+        astc-vulkan-ffn-adapter astc-vulkan-dispatch astc-vulkan-paired-dispatch
+        astc-vulkan-stream-loader Vulkan::Vulkan)
     target_compile_features(astc-vulkan-sidecar PUBLIC cxx_std_17)
 
     add_executable(test-astc-vulkan-ffn-adapter
@@ -303,9 +416,10 @@ if (TARGET Vulkan::Vulkan)
             ${ASTC_VULKAN_POC_INCLUDE_DIR}
             ${CMAKE_SOURCE_DIR}/ggml/include)
         target_link_libraries(astc-vulkan-scheduler-adapter-smoke PRIVATE
-            astc-vulkan-scheduler-adapter ggml-base)
+            astc-vulkan-scheduler-adapter astcenc::astcenc-static ggml-base)
         target_compile_features(astc-vulkan-scheduler-adapter-smoke PRIVATE cxx_std_17)
-        add_dependencies(astc-vulkan-scheduler-adapter-smoke astc-vulkan-ffn-e2e-shader)
+        add_dependencies(astc-vulkan-scheduler-adapter-smoke
+            astc-vulkan-ffn-e2e-shader astc-vulkan-paired-matvec-shader)
     endif()
 
     add_executable(astc-vulkan-capability-probe
@@ -315,8 +429,12 @@ if (TARGET Vulkan::Vulkan)
 
     add_executable(astc-vulkan-device-smoke
         astc-vulkan-device-smoke.cpp)
-    target_link_libraries(astc-vulkan-device-smoke PRIVATE Vulkan::Vulkan astc-vulkan-resource)
+    target_link_libraries(astc-vulkan-device-smoke PRIVATE
+        Vulkan::Vulkan astc-vulkan-resource astc-vulkan-stream-loader
+        astc-vulkan-paired-dispatch)
     target_compile_features(astc-vulkan-device-smoke PRIVATE cxx_std_17)
+    target_compile_definitions(astc-vulkan-device-smoke PRIVATE
+        ASTC_VULKAN_PAIRED_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-paired-matvec.comp.spv")
 
     add_executable(astc-vulkan-gpu-ranking-device-smoke
         astc-vulkan-gpu-ranking-device-smoke.cpp)
@@ -343,21 +461,80 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-d1-prescreen-device-smoke PRIVATE
         astc-vulkan-algorithms astc-vulkan-resource Vulkan::Vulkan)
     target_compile_features(astc-vulkan-d1-prescreen-device-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-gpu-encoder-device-smoke
+        astc-vulkan-gpu-encoder-device-smoke.cpp)
+    target_include_directories(astc-vulkan-gpu-encoder-device-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/d1)
+    target_link_libraries(astc-vulkan-gpu-encoder-device-smoke PRIVATE
+        astc-vulkan-gpu-encoder-dispatch)
+    target_compile_features(astc-vulkan-gpu-encoder-device-smoke PRIVATE cxx_std_17)
 endif()
 
 find_package(astcenc CONFIG QUIET)
 if (TARGET astcenc::astcenc-static)
+    # CPU exact finisher for the isolated GPU-proposer experiment. This is
+    # intentionally separate from the generic proposer/dispatch so builds
+    # without astcenc can still exercise the physical host contract.
+    add_library(astc-vulkan-gpu-encoder-finisher STATIC
+        gpu-encoder/shared/astc-gpu-encoder-finisher.cpp)
+    target_include_directories(astc-vulkan-gpu-encoder-finisher PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared)
+    target_link_libraries(astc-vulkan-gpu-encoder-finisher PUBLIC
+        astc-vulkan-gpu-encoder)
+    if (GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+        target_include_directories(astc-vulkan-gpu-encoder-finisher BEFORE PUBLIC
+            ${GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR})
+        target_link_libraries(astc-vulkan-gpu-encoder-finisher PUBLIC
+            ${GGML_VK_ASTC_NEURAL_RANK_LIBRARY})
+        target_compile_definitions(astc-vulkan-gpu-encoder-finisher PUBLIC
+            GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK=1)
+    else()
+        target_link_libraries(astc-vulkan-gpu-encoder-finisher PUBLIC
+            astcenc::astcenc-static)
+    endif()
+    target_compile_features(astc-vulkan-gpu-encoder-finisher PUBLIC cxx_std_17)
+
+    # Representation-specific bridge above the shared physical proposer and
+    # finisher. Kept separate so the base GPU-encoder contract stays free of
+    # D2 paired-row semantics and builds without astcenc remain possible.
+    add_library(astc-vulkan-gpu-encoder-d2-hybrid STATIC
+        gpu-encoder/d2/astc-gpu-d2-hybrid.cpp)
+    target_include_directories(astc-vulkan-gpu-encoder-d2-hybrid PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/d2)
+    target_link_libraries(astc-vulkan-gpu-encoder-d2-hybrid PUBLIC
+        astc-vulkan-gpu-encoder-finisher)
+    target_compile_features(astc-vulkan-gpu-encoder-d2-hybrid PUBLIC cxx_std_17)
+
+    if (TARGET astc-vulkan-gpu-encoder-device-smoke)
+        target_link_libraries(astc-vulkan-gpu-encoder-device-smoke PRIVATE
+            astc-vulkan-gpu-encoder-finisher astc-vulkan-gpu-encoder-d2-hybrid)
+    endif()
+    if (TARGET astc-vulkan-gpu-encoder-dispatch AND TARGET astc-vulkan-resource)
+        add_library(astc-vulkan-gpu-encoder-verify STATIC
+            gpu-encoder/shared/astc-gpu-encoder-vulkan-verify.cpp)
+        target_include_directories(astc-vulkan-gpu-encoder-verify PUBLIC
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared)
+        target_link_libraries(astc-vulkan-gpu-encoder-verify PUBLIC
+            astc-vulkan-gpu-encoder-finisher astc-vulkan-resource Vulkan::Vulkan)
+        target_compile_features(astc-vulkan-gpu-encoder-verify PUBLIC cxx_std_17)
+        if (TARGET astc-vulkan-gpu-encoder-device-smoke)
+            target_link_libraries(astc-vulkan-gpu-encoder-device-smoke PRIVATE
+                astc-vulkan-gpu-encoder-verify)
+        endif()
+    endif()
+
     add_executable(astc-vulkan-artifact-decode
         astc-vulkan-artifact-decode.cpp)
     target_link_libraries(astc-vulkan-artifact-decode PRIVATE astcenc::astcenc-static)
     target_compile_features(astc-vulkan-artifact-decode PRIVATE cxx_std_17)
 
-    option(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK
-        "Enable the side-fork ASTC neural-ranking API in the latent PoC" OFF)
-    set(GGML_VK_ASTC_NEURAL_RANK_LIBRARY "" CACHE FILEPATH
-        "Static library from the isolated ASTC neural-ranking fork")
-    set(GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR "" CACHE PATH
-        "Source include directory from the isolated ASTC neural-ranking fork")
     add_executable(astc-vulkan-astcenc-smoke
         astc-vulkan-astcenc-smoke.cpp)
     target_include_directories(astc-vulkan-astcenc-smoke PRIVATE
@@ -416,6 +593,18 @@ if (TARGET astcenc::astcenc-static)
             astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
         target_compile_features(astc-vulkan-paired-model-smoke PRIVATE cxx_std_17)
 
+        add_executable(astc-vulkan-paired-model-smoke-6x5
+            astc-vulkan-paired-model-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-paired-model-smoke-6x5 PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-paired-model-smoke-6x5 PRIVATE
+            astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
+        target_compile_features(astc-vulkan-paired-model-smoke-6x5 PRIVATE cxx_std_17)
+        target_compile_definitions(astc-vulkan-paired-model-smoke-6x5 PRIVATE
+            ASTC_VULKAN_PAIRED_D2_6X5=1)
+
         add_executable(astc-vulkan-paired-model-smoke-10x5
             astc-vulkan-paired-model-smoke.cpp
             astc-vulkan-input.cpp)
@@ -437,6 +626,18 @@ if (TARGET astcenc::astcenc-static)
         target_link_libraries(astc-vulkan-paired-selection-smoke PRIVATE
             astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
         target_compile_features(astc-vulkan-paired-selection-smoke PRIVATE cxx_std_17)
+
+        add_executable(astc-vulkan-paired-selection-smoke-6x5
+            astc-vulkan-paired-selection-smoke.cpp
+            astc-vulkan-input.cpp)
+        target_include_directories(astc-vulkan-paired-selection-smoke-6x5 PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-paired-selection-smoke-6x5 PRIVATE
+            astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
+        target_compile_features(astc-vulkan-paired-selection-smoke-6x5 PRIVATE cxx_std_17)
+        target_compile_definitions(astc-vulkan-paired-selection-smoke-6x5 PRIVATE
+            ASTC_VULKAN_PAIRED_D2_6X5=1)
 
         add_executable(astc-vulkan-paired-selection-smoke-10x5
             astc-vulkan-paired-selection-smoke.cpp
@@ -469,6 +670,20 @@ if (TARGET astcenc::astcenc-static)
             target_compile_features(astc-vulkan-paired-selection-smoke-neural PRIVATE cxx_std_17)
             target_compile_definitions(astc-vulkan-paired-selection-smoke-neural PRIVATE
                 ASTC_VULKAN_PAIRED_NEURAL_ENCODER=1)
+
+            add_executable(astc-vulkan-paired-selection-smoke-neural-6x5
+                astc-vulkan-paired-selection-smoke.cpp
+                astc-vulkan-input.cpp)
+            target_include_directories(astc-vulkan-paired-selection-smoke-neural-6x5 BEFORE PRIVATE
+                ${GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR}
+                ${ASTC_VULKAN_POC_INCLUDE_DIR}
+                ${CMAKE_SOURCE_DIR}/ggml/include)
+            target_link_libraries(astc-vulkan-paired-selection-smoke-neural-6x5 PRIVATE
+                ${GGML_VK_ASTC_NEURAL_RANK_LIBRARY} astc-vulkan-algorithms ggml-base)
+            target_compile_features(astc-vulkan-paired-selection-smoke-neural-6x5 PRIVATE cxx_std_17)
+            target_compile_definitions(astc-vulkan-paired-selection-smoke-neural-6x5 PRIVATE
+                ASTC_VULKAN_PAIRED_NEURAL_ENCODER=1
+                ASTC_VULKAN_PAIRED_D2_6X5=1)
 
             # Isolated research target: physical ASTC remains 8x5, while the
             # offline semantic map swaps the reduction and paired-row axes.
@@ -532,6 +747,15 @@ if (TARGET astcenc::astcenc-static)
         target_link_libraries(astc-vulkan-latent-smoke PRIVATE astc-vulkan-d1-prescreen-dispatch)
         target_compile_definitions(astc-vulkan-latent-smoke PRIVATE ASTC_VULKAN_D1_PRESCREEN_GPU=1)
     endif()
+    if (TARGET astc-vulkan-gpu-encoder-dispatch AND
+        TARGET astc-vulkan-gpu-encoder-finisher)
+        target_include_directories(astc-vulkan-latent-smoke PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared)
+        target_link_libraries(astc-vulkan-latent-smoke PRIVATE
+            astc-vulkan-gpu-encoder-dispatch astc-vulkan-gpu-encoder-finisher)
+        target_compile_definitions(astc-vulkan-latent-smoke PRIVATE
+            ASTC_VULKAN_GPU_ENCODER_BACKEND=1)
+    endif()
     if (GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
         target_compile_definitions(astc-vulkan-latent-smoke PRIVATE
             GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK=1)
@@ -592,6 +816,17 @@ if (TARGET ggml-base)
     target_link_libraries(astc-vulkan-quant-export PRIVATE ggml-base)
     target_compile_features(astc-vulkan-quant-export PRIVATE cxx_std_17)
 
+    # Reproducibly constructs a multi-prompt activation corpus without changing
+    # the versioned trace representation used by selector and replay tools.
+    add_executable(astc-vulkan-trace-merge
+        astc-vulkan-trace-merge.cpp
+        astc-vulkan-input.cpp)
+    target_include_directories(astc-vulkan-trace-merge PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/ggml/include)
+    target_link_libraries(astc-vulkan-trace-merge PRIVATE ggml-base)
+    target_compile_features(astc-vulkan-trace-merge PRIVATE cxx_std_17)
+
     # This tool intentionally uses the current internal layer-input capture
     # extension. It stays in the PoC until an upstream-facing capture API is
     # justified by the measurements it enables.
@@ -620,6 +855,12 @@ if (TARGET ggml-base)
         target_link_libraries(astc-vulkan-model-replay-smoke PRIVATE
             llama-common llama ggml-base ${CMAKE_THREAD_LIBS_INIT})
         target_compile_features(astc-vulkan-model-replay-smoke PRIVATE cxx_std_17)
+        if (TARGET astc-vulkan-scheduler-adapter)
+            target_link_libraries(astc-vulkan-model-replay-smoke PRIVATE
+                astc-vulkan-scheduler-adapter)
+            target_compile_definitions(astc-vulkan-model-replay-smoke PRIVATE
+                ASTC_VULKAN_MODEL_REPLAY_GPU=1)
+        endif()
 
         add_executable(astc-vulkan-yaqa-replay-smoke
             astc-vulkan-yaqa-replay-smoke.cpp
@@ -677,6 +918,20 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-ffn-matvec.comp.spv)
     set(ASTC_VULKAN_D1_PRESCREEN_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/d1-prescreen.comp.spv)
+    set(ASTC_VULKAN_GPU_D1_PROPOSER_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-d1-proposer.comp.spv)
+    set(ASTC_VULKAN_GPU_D1_PROPOSER_6X6_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-d1-proposer-6x6.comp.spv)
+    set(ASTC_VULKAN_GPU_D1_PROPOSER_8X6_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-d1-proposer-8x6.comp.spv)
+    set(ASTC_VULKAN_GPU_D2_PROPOSER_8X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-d2-proposer-8x5.comp.spv)
+    set(ASTC_VULKAN_GPU_D2_PROPOSER_6X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-d2-proposer-6x5.comp.spv)
+    set(ASTC_VULKAN_GPU_D2_PROPOSER_10X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-d2-proposer-10x5.comp.spv)
+    set(ASTC_VULKAN_GPU_D1_PROPOSER_5X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-d1-proposer-5x5.comp.spv)
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -843,6 +1098,83 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling D1 GPU pre-screen shader")
     add_custom_target(astc-vulkan-d1-prescreen-shader
         DEPENDS ${ASTC_VULKAN_D1_PRESCREEN_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_D1_PROPOSER_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d1-proposer.comp
+            -o ${ASTC_VULKAN_GPU_D1_PROPOSER_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d1-proposer.comp
+        COMMENT "Compiling offline D1 GPU ASTC proposer shader")
+    add_custom_target(astc-vulkan-gpu-d1-proposer-shader
+        DEPENDS ${ASTC_VULKAN_GPU_D1_PROPOSER_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_D1_PROPOSER_6X6_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d1-proposer-6x6.comp
+            -o ${ASTC_VULKAN_GPU_D1_PROPOSER_6X6_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d1-proposer-6x6.comp
+        COMMENT "Compiling offline D1 6x6 GPU ASTC proposer shader")
+    add_custom_target(astc-vulkan-gpu-d1-proposer-6x6-shader
+        DEPENDS ${ASTC_VULKAN_GPU_D1_PROPOSER_6X6_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_D1_PROPOSER_8X6_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d1-proposer-8x6.comp
+            -o ${ASTC_VULKAN_GPU_D1_PROPOSER_8X6_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d1-proposer-8x6.comp
+        COMMENT "Compiling offline D1 8x6 GPU ASTC proposer shader")
+    add_custom_target(astc-vulkan-gpu-d1-proposer-8x6-shader
+        DEPENDS ${ASTC_VULKAN_GPU_D1_PROPOSER_8X6_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_D2_PROPOSER_8X5_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d2-proposer-8x5.comp
+            -o ${ASTC_VULKAN_GPU_D2_PROPOSER_8X5_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d2-proposer-8x5.comp
+        COMMENT "Compiling offline D2 8x5 GPU ASTC proposer shader")
+    add_custom_target(astc-vulkan-gpu-d2-proposer-8x5-shader
+        DEPENDS ${ASTC_VULKAN_GPU_D2_PROPOSER_8X5_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_D2_PROPOSER_6X5_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d2-proposer-6x5.comp
+            -o ${ASTC_VULKAN_GPU_D2_PROPOSER_6X5_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d2-proposer-6x5.comp
+        COMMENT "Compiling offline D2 6x5 GPU ASTC proposer shader")
+    add_custom_target(astc-vulkan-gpu-d2-proposer-6x5-shader
+        DEPENDS ${ASTC_VULKAN_GPU_D2_PROPOSER_6X5_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_D2_PROPOSER_10X5_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d2-proposer-10x5.comp
+            -o ${ASTC_VULKAN_GPU_D2_PROPOSER_10X5_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d2-proposer-10x5.comp
+        COMMENT "Compiling offline D2 10x5 GPU ASTC proposer shader")
+    add_custom_target(astc-vulkan-gpu-d2-proposer-10x5-shader
+        DEPENDS ${ASTC_VULKAN_GPU_D2_PROPOSER_10X5_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_D1_PROPOSER_5X5_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d1-proposer-5x5.comp
+            -o ${ASTC_VULKAN_GPU_D1_PROPOSER_5X5_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-d1-proposer-5x5.comp
+        COMMENT "Compiling offline D1 5x5 GPU ASTC proposer shader")
+    add_custom_target(astc-vulkan-gpu-d1-proposer-5x5-shader
+        DEPENDS ${ASTC_VULKAN_GPU_D1_PROPOSER_5X5_SHADER_OUTPUT})
     if (TARGET astc-vulkan-device-smoke)
         add_executable(astc-vulkan-shader-device-smoke
             astc-vulkan-shader-device-smoke.cpp)
@@ -907,6 +1239,29 @@ if (ASTC_VULKAN_GLSLC)
         set_property(TEST astc-vulkan-d1-prescreen-device-smoke PROPERTY LABELS astc)
         set_property(TEST astc-vulkan-d1-prescreen-device-smoke PROPERTY SKIP_RETURN_CODE 77)
     endif()
+    if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-gpu-encoder-device-smoke)
+        add_dependencies(astc-vulkan-gpu-encoder-device-smoke
+            astc-vulkan-gpu-d1-proposer-shader
+            astc-vulkan-gpu-d1-proposer-5x5-shader
+            astc-vulkan-gpu-d1-proposer-6x6-shader
+            astc-vulkan-gpu-d1-proposer-8x6-shader
+            astc-vulkan-gpu-d2-proposer-8x5-shader
+            astc-vulkan-gpu-d2-proposer-6x5-shader
+            astc-vulkan-gpu-d2-proposer-10x5-shader
+            astc-vulkan-shader-smoke)
+        add_test(NAME astc-vulkan-gpu-encoder-device-smoke
+            COMMAND astc-vulkan-gpu-encoder-device-smoke
+                ${ASTC_VULKAN_GPU_D1_PROPOSER_SHADER_OUTPUT}
+                ${ASTC_VULKAN_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_D1_PROPOSER_6X6_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_D1_PROPOSER_5X5_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_D1_PROPOSER_8X6_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_D2_PROPOSER_8X5_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_D2_PROPOSER_6X5_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_D2_PROPOSER_10X5_SHADER_OUTPUT})
+        set_property(TEST astc-vulkan-gpu-encoder-device-smoke PROPERTY LABELS astc)
+        set_property(TEST astc-vulkan-gpu-encoder-device-smoke PROPERTY SKIP_RETURN_CODE 77)
+    endif()
     if (TARGET ggml-base AND TARGET astc-vulkan-ffn-adapter)
         add_executable(astc-vulkan-ffn-e2e-smoke
             astc-vulkan-ffn-e2e-smoke.cpp
@@ -933,6 +1288,9 @@ if (ASTC_VULKAN_GLSLC)
 endif()
 
 if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-artifact-policy
+        COMMAND test-astc-vulkan-artifact-policy)
+    set_property(TEST test-astc-vulkan-artifact-policy PROPERTY LABELS astc)
     add_test(NAME test-astc-vulkan-hash
         COMMAND test-astc-vulkan-hash)
     set_property(TEST test-astc-vulkan-hash PROPERTY LABELS astc)
@@ -943,6 +1301,9 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-d1-prescreen
         COMMAND test-astc-vulkan-d1-prescreen)
     set_property(TEST test-astc-vulkan-d1-prescreen PROPERTY LABELS astc)
+    add_test(NAME test-astc-vulkan-d2-row-scale
+        COMMAND test-astc-vulkan-d2-row-scale)
+    set_property(TEST test-astc-vulkan-d2-row-scale PROPERTY LABELS astc)
 
     add_test(NAME test-astc-vulkan-gpu-ranking
         COMMAND test-astc-vulkan-gpu-ranking)

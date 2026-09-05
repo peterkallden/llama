@@ -3,6 +3,7 @@
 #include <limits>
 #include <cstring>
 #include "astc-vulkan-driver.h"
+#include "astc-vulkan-paired-layout.h"
 
 uint32_t astc_vulkan_find_memory_type(VkPhysicalDevice physical_device,
                                       uint32_t type_bits,
@@ -172,6 +173,7 @@ VkFormat astc_vulkan_vk_format(uint8_t footprint) {
         case 6: return VK_FORMAT_ASTC_10x8_UNORM_BLOCK;
         case 7: return VK_FORMAT_ASTC_8x5_UNORM_BLOCK;
         case 8: return VK_FORMAT_ASTC_10x5_UNORM_BLOCK;
+        case 9: return VK_FORMAT_ASTC_6x5_UNORM_BLOCK;
         default: return VK_FORMAT_UNDEFINED;
     }
 }
@@ -402,22 +404,80 @@ bool astc_vulkan_texture::update_payload(
     return true;
 }
 
+bool astc_vulkan_texture::upload_band(
+        VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+        uint32_t queue_family, const astc_vulkan_stream_geometry & geometry,
+        const astc_vulkan_stream_band & band,
+        const std::vector<uint8_t> & payload, std::string & error) {
+    if (geometry.physical_width == 0 || geometry.block_height == 0 ||
+        band.physical_height == 0 || band.payload_size != payload.size() ||
+        band.payload_size == 0) {
+        error = "ASTC Vulkan band upload geometry or payload mismatch";
+        return false;
+    }
+    const uint64_t expected = astc_vulkan_image_bytes(
+        geometry.footprint, geometry.physical_width, band.physical_height);
+    if (expected != payload.size()) {
+        error = "ASTC Vulkan band payload dimensions do not match";
+        return false;
+    }
+    if (device_ != VK_NULL_HANDLE && vkDeviceWaitIdle(device_) != VK_SUCCESS) {
+        error = "ASTC Vulkan band upload could not quiesce the device";
+        return false;
+    }
+    return upload(physical_device, device, queue, queue_family,
+                  static_cast<uint8_t>(geometry.footprint), geometry.physical_width,
+                  band.physical_height, payload, error);
+}
+
 bool astc_vulkan_tensor_session::upload(
         VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
         uint32_t queue_family, const astc_vulkan_tensor_record & record,
         const astc_vulkan_reconstruction & reconstruction,
-        const std::vector<uint8_t> & payload, std::string & error) {
+        const std::vector<uint8_t> & payload, std::string & error,
+        uint32_t storage_height) {
     if (record.name.empty() || !astc_vulkan_validate_payload(
             record, payload.data(), payload.size(), error)) {
         if (error.empty()) error = "ASTC Vulkan tensor session record/payload mismatch";
         return false;
     }
+    const uint32_t expected_height = record.representation == astc_vulkan_representation::kPairedD2 ?
+        astc_vulkan_paired_storage_height(record.height) : record.height;
+    if (storage_height == 0) storage_height = expected_height;
+    if (storage_height != expected_height) {
+        error = "ASTC Vulkan tensor storage height does not match its representation";
+        return false;
+    }
     if (!texture_.upload(physical_device, device, queue, queue_family,
                          static_cast<uint8_t>(record.footprint), record.width,
-                         record.height, payload, error)) {
+                         storage_height, payload, error)) {
         return false;
     }
     record_ = record;
     reconstruction_ = reconstruction;
+    return true;
+}
+
+bool astc_vulkan_tensor_session::upload_band(
+        VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+        uint32_t queue_family, const astc_vulkan_tensor_record & record,
+        const astc_vulkan_reconstruction & reconstruction,
+        const astc_vulkan_stream_geometry & geometry,
+        const astc_vulkan_stream_band & band,
+        const std::vector<uint8_t> & payload, std::string & error) {
+    const bool paired = record.representation == astc_vulkan_representation::kPairedD2;
+    if (record.name.empty() || record.width != geometry.physical_width ||
+        record.height != geometry.logical_height || paired != geometry.paired ||
+        record.footprint != geometry.footprint || band.payload_size != payload.size()) {
+        error = "ASTC Vulkan tensor band record or geometry mismatch";
+        return false;
+    }
+    if (!texture_.upload_band(physical_device, device, queue, queue_family,
+                              geometry, band, payload, error)) {
+        return false;
+    }
+    record_ = record;
+    reconstruction_ = reconstruction;
+    error.clear();
     return true;
 }

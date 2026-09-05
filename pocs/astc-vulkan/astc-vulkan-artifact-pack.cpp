@@ -54,6 +54,7 @@ bool parse_footprint(const std::string & value, astc_vulkan_footprint & footprin
     if (value == "4x4") footprint = astc_vulkan_footprint::k4x4;
     else if (value == "5x5") footprint = astc_vulkan_footprint::k5x5;
     else if (value == "6x6") footprint = astc_vulkan_footprint::k6x6;
+    else if (value == "6x5") footprint = astc_vulkan_footprint::k6x5;
     else if (value == "8x5") footprint = astc_vulkan_footprint::k8x5;
     else if (value == "10x5") footprint = astc_vulkan_footprint::k10x5;
     else if (value == "8x6") footprint = astc_vulkan_footprint::k8x6;
@@ -73,6 +74,34 @@ bool parse_representation(const std::string & value, astc_vulkan_representation 
     return true;
 }
 
+bool parse_semantic(const std::string & value, astc_vulkan_paired_semantic & semantic) {
+    if (value == "direct") semantic = astc_vulkan_paired_semantic::direct_rgb;
+    else if (value == "la") semantic = astc_vulkan_paired_semantic::luminance_alpha;
+    else return false;
+    return true;
+}
+
+bool parse_variant(const std::string & value, astc_vulkan_artifact_variant & variant) {
+    if (value == "neutral") variant = astc_vulkan_artifact_variant::neutral;
+    else if (value == "selected") variant = astc_vulkan_artifact_variant::validation_selected;
+    else return false;
+    return true;
+}
+
+bool parse_normalization(const std::string & value, astc_vulkan_normalization & normalization) {
+    if (value == "none") normalization = astc_vulkan_normalization::none;
+    else if (value == "absmax") normalization = astc_vulkan_normalization::per_row_absmax;
+    else return false;
+    return true;
+}
+
+bool parse_bool(const std::string & value, bool & result) {
+    if (value == "0" || value == "false") result = false;
+    else if (value == "1" || value == "true") result = true;
+    else return false;
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -80,7 +109,13 @@ int main(int argc, char ** argv) {
                 fingerprint, provenance_path, source_family, calibration_hash,
                 validation_hash, holdout_hash, selector_config, validation_prefix,
                 commit_order_hash, padding_contract, footprint_name = "6x6",
-                representation_name = "scalar";
+                representation_name = "scalar", artifact_id, encoder_profile,
+                paired_semantic_name = "direct", variant_name = "neutral",
+                normalization_name = "none", row_scales_input, row_scales_payload;
+    bool model_gate = false, vulkan_gate = false;
+    bool have_scale_l = false, have_scale_a = false, have_offset = false;
+    float activation_mse = 0.0f, logits_mse = 0.0f, loss_delta = 0.0f, top1 = 0.0f;
+    float scale_l = 1.0f, scale_a = 0.0f, offset = 0.0f;
     uint32_t width = 0, height = 0;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string option = argv[i];
@@ -106,22 +141,53 @@ int main(int argc, char ** argv) {
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--footprint") footprint_name = value;
         else if (option == "--representation") representation_name = value;
+        else if (option == "--artifact-id") artifact_id = value;
+        else if (option == "--encoder-profile") encoder_profile = value;
+        else if (option == "--paired-semantic") paired_semantic_name = value;
+        else if (option == "--variant") variant_name = value;
+        else if (option == "--normalization") normalization_name = value;
+        else if (option == "--row-scales-input") row_scales_input = value;
+        else if (option == "--row-scales-payload") row_scales_payload = value;
+        else if (option == "--model-gate") { if (!parse_bool(value, model_gate)) return 2; }
+        else if (option == "--vulkan-gate") { if (!parse_bool(value, vulkan_gate)) return 2; }
+        else if (option == "--activation-mse") activation_mse = std::stof(value);
+        else if (option == "--logits-mse") logits_mse = std::stof(value);
+        else if (option == "--loss-delta") loss_delta = std::stof(value);
+        else if (option == "--top1") top1 = std::stof(value);
+        else if (option == "--scale-l") { scale_l = std::stof(value); have_scale_l = true; }
+        else if (option == "--scale-a") { scale_a = std::stof(value); have_scale_a = true; }
+        else if (option == "--offset") { offset = std::stof(value); have_offset = true; }
         else return 2;
     }
     astc_vulkan_footprint footprint;
     astc_vulkan_representation representation;
     const std::vector<uint8_t> bytes = read_bytes(input);
     const std::vector<uint8_t> layout_bytes = read_bytes(layout_input);
-    float scale_l = 1.0f, scale_a = 0.0f, offset = 0.0f;
-    if (input.empty() || metadata.empty() || manifest_path.empty() || payload_path.empty() ||
+    const std::vector<uint8_t> row_scale_bytes = read_bytes(row_scales_input);
+    astc_vulkan_paired_semantic paired_semantic;
+    astc_vulkan_artifact_variant variant;
+    astc_vulkan_normalization normalization;
+    if (input.empty() || manifest_path.empty() || payload_path.empty() ||
         tensor_name.empty() || width == 0 || height == 0 || bytes.empty() ||
         !parse_footprint(footprint_name, footprint) ||
         !parse_representation(representation_name, representation) ||
-        !read_metadata(metadata, scale_l, scale_a, offset)) return 2;
+        !parse_semantic(paired_semantic_name, paired_semantic) ||
+        !parse_variant(variant_name, variant) ||
+        !parse_normalization(normalization_name, normalization)) return 2;
+    if ((!have_scale_l || !have_scale_a || !have_offset) &&
+        (metadata.empty() || !read_metadata(metadata, scale_l, scale_a, offset))) return 2;
     const bool paired_d2 = representation == astc_vulkan_representation::kPairedD2;
     if ((paired_d2 && (layout_input.empty() || layout_payload_path.empty() || layout_bytes.empty())) ||
         (!paired_d2 && (!layout_input.empty() || !layout_payload_path.empty()))) return 2;
+    const bool v4 = !artifact_id.empty();
+    if (!v4 && (!row_scales_input.empty() || !row_scales_payload.empty() ||
+                paired_semantic != astc_vulkan_paired_semantic::direct_rgb ||
+                normalization != astc_vulkan_normalization::none)) return 2;
+    if (normalization == astc_vulkan_normalization::per_row_absmax &&
+        (row_scales_input.empty() || row_scales_payload.empty() ||
+         row_scale_bytes.size() != static_cast<size_t>(height) * sizeof(float))) return 2;
     astc_vulkan_manifest manifest;
+    if (v4) manifest.version = 4;
     manifest.model_fingerprint = fingerprint;
     astc_vulkan_tensor_record record;
     record.name = tensor_name;
@@ -138,7 +204,24 @@ int main(int argc, char ** argv) {
         record.layout_byte_size = layout_bytes.size();
         record.layout_hash64 = astc_vulkan_payload_hash64(layout_bytes.data(), layout_bytes.size());
     }
-    manifest.tensors.push_back(record);
+    if (v4) {
+        astc_vulkan_artifact_record artifact;
+        artifact.id = artifact_id;
+        artifact.storage = record;
+        artifact.variant = variant;
+        artifact.normalization = normalization;
+        artifact.paired_semantic = paired_semantic;
+        artifact.encoder_profile = encoder_profile;
+        artifact.evidence = {model_gate, vulkan_gate, activation_mse, logits_mse, loss_delta,
+                             top1, calibration_hash + ":" + validation_hash, holdout_hash};
+        if (normalization == astc_vulkan_normalization::per_row_absmax) {
+            artifact.row_scale_byte_size = row_scale_bytes.size();
+            artifact.row_scale_hash64 = astc_vulkan_payload_hash64(row_scale_bytes.data(), row_scale_bytes.size());
+        }
+        manifest.artifacts.push_back(std::move(artifact));
+    } else {
+        manifest.tensors.push_back(record);
+    }
     std::string error;
     if (paired_d2 && !astc_vulkan_validate_layout_map(record, layout_bytes.data(),
                                                        layout_bytes.size(), error)) return 1;
@@ -150,6 +233,11 @@ int main(int argc, char ** argv) {
         std::ofstream layout_payload(layout_payload_path, std::ios::binary);
         layout_payload.write(reinterpret_cast<const char *>(layout_bytes.data()), layout_bytes.size());
         if (!layout_payload.good()) return 1;
+    }
+    if (normalization == astc_vulkan_normalization::per_row_absmax) {
+        std::ofstream row_scale_payload(row_scales_payload, std::ios::binary);
+        row_scale_payload.write(reinterpret_cast<const char *>(row_scale_bytes.data()), row_scale_bytes.size());
+        if (!row_scale_payload.good()) return 1;
     }
     if (!provenance_path.empty()) {
         const std::string manifest_bytes = read_text(manifest_path);

@@ -13,6 +13,7 @@ astc_vulkan_format_info astc_vulkan_format(astc_vulkan_footprint footprint) {
         case astc_vulkan_footprint::k10x8: return {10, 8, 16};
         case astc_vulkan_footprint::k8x5: return {8, 5, 16};
         case astc_vulkan_footprint::k10x5: return {10, 5, 16};
+        case astc_vulkan_footprint::k6x5: return {6, 5, 16};
     }
     return {0, 0, 0};
 }
@@ -26,6 +27,7 @@ bool astc_vulkan_footprint_is_experimental(astc_vulkan_footprint footprint) {
            footprint == astc_vulkan_footprint::k10x6 ||
            footprint == astc_vulkan_footprint::k8x8 ||
            footprint == astc_vulkan_footprint::k10x8 ||
+           footprint == astc_vulkan_footprint::k6x5 ||
            footprint == astc_vulkan_footprint::k8x5 ||
            footprint == astc_vulkan_footprint::k10x5;
 }

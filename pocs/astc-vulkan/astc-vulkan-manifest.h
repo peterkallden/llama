@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "astc-vulkan-artifact.h"
 #include "astc-vulkan-format.h"
 
 // The representation is an offline encoding choice. Runtime code must treat
@@ -35,7 +36,8 @@ struct astc_vulkan_tensor_record {
 
     // v3 paired-D2 metadata. `height` always means logical tensor height;
     // paired-D2 stores ceil(height / 2) texture rows. The first concrete
-    // profiles are D2_8x5 (1.60 b/w) and D2_10x5 (1.28 b/w). The layout map
+    // profiles are D2_6x5 (2.133 b/w), D2_8x5 (1.60 b/w), and D2_10x5
+    // (1.28 b/w). The layout map
     // is a separate packed uint32 blob, addressed independently from ASTC
     // bytes.
     uint64_t layout_byte_offset = 0;
@@ -43,10 +45,31 @@ struct astc_vulkan_tensor_record {
     uint64_t layout_hash64 = 0;
 };
 
+// v4 multi-artifact cache entry. Storage ranges remain independently
+// verifiable so a single cache can contain neutral/selected, normalized and
+// semantic variants for the same source tensor. `storage` keeps the existing
+// per-payload contract intact; the artifact fields explain how it was made and
+// which runtime semantic must be used.
+struct astc_vulkan_artifact_record {
+    std::string id;
+    astc_vulkan_tensor_record storage;
+    astc_vulkan_artifact_variant variant = astc_vulkan_artifact_variant::neutral;
+    astc_vulkan_normalization normalization = astc_vulkan_normalization::none;
+    astc_vulkan_paired_semantic paired_semantic = astc_vulkan_paired_semantic::direct_rgb;
+    std::string encoder_profile;
+    astc_vulkan_artifact_evidence evidence{};
+    uint64_t row_scale_byte_offset = 0;
+    uint64_t row_scale_byte_size = 0;
+    uint64_t row_scale_hash64 = 0;
+};
+
 struct astc_vulkan_manifest {
     uint32_t version = 3;
     std::string model_fingerprint;
+    // v1-v3 legacy single-artifact tensor table. v4 writers use artifacts;
+    // keeping this table preserves read compatibility and low-level tools.
     std::vector<astc_vulkan_tensor_record> tensors;
+    std::vector<astc_vulkan_artifact_record> artifacts;
 };
 
 // Plain data shared by manifest loading, CPU reference code, and the shader
@@ -60,6 +83,8 @@ struct astc_vulkan_reconstruction {
 
 const astc_vulkan_tensor_record * astc_vulkan_find_tensor(
     const astc_vulkan_manifest & manifest, const std::string & name);
+const astc_vulkan_artifact_record * astc_vulkan_find_artifact(
+    const astc_vulkan_manifest & manifest, const std::string & id);
 
 // FNV-1a is deliberately small and dependency-free. It detects stale or
 // mismatched sidecar payloads; it is not intended as a cryptographic hash.

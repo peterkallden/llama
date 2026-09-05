@@ -20,6 +20,11 @@ constexpr uint32_t kD2BlockWidth = 10;
 constexpr uint32_t kD2BlockHeight = 5;
 constexpr const char * kD2FootprintName = "10x5";
 constexpr double kD2Rate = 1.28;
+#elif defined(ASTC_VULKAN_PAIRED_D2_6X5)
+constexpr uint32_t kD2BlockWidth = 6;
+constexpr uint32_t kD2BlockHeight = 5;
+constexpr const char * kD2FootprintName = "6x5";
+constexpr double kD2Rate = 128.0 / 60.0;
 #else
 constexpr uint32_t kD2BlockWidth = 8;
 constexpr uint32_t kD2BlockHeight = 5;

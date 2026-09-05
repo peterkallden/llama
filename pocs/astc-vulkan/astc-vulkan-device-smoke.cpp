@@ -1,11 +1,15 @@
 #include "astc-vulkan-contract.h"
 #include "astc-vulkan-driver.h"
 #include "astc-vulkan-resource.h"
+#include "astc-vulkan-paired-dispatch.h"
+#include "astc-vulkan-paired-layout.h"
 
 #include <vulkan/vulkan.h>
 
 #include <cstdio>
 #include <cstring>
+#include <cmath>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -257,6 +261,125 @@ bool create_and_upload_image(VkPhysicalDevice physical_device, VkDevice device,
                           reconstruction, payload, error);
 }
 
+bool repeat_create_and_upload_image(VkPhysicalDevice physical_device, VkDevice device,
+                                    VkQueue queue, uint32_t queue_family,
+                                    VkFormat format, VkExtent3D extent,
+                                    uint32_t repeats) {
+    for (uint32_t repeat = 0; repeat < repeats; ++repeat) {
+        if (!create_and_upload_image(physical_device, device, queue, queue_family, format, extent)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool stream_upload_bands(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+                         uint32_t queue_family, astc_vulkan_footprint footprint,
+                         uint32_t width, uint32_t logical_height, bool paired) {
+    astc_vulkan_stream_geometry geometry;
+    std::string error;
+    if (!astc_vulkan_make_stream_geometry(footprint, width, logical_height, paired,
+                                           geometry, error)) return false;
+    std::vector<astc_vulkan_stream_band> bands;
+    if (!astc_vulkan_plan_stream(geometry, geometry.blocks_x * 16u * 2u,
+                                 bands, error)) return false;
+    std::vector<uint8_t> resident(static_cast<size_t>(geometry.payload_bytes), 0);
+    astc_vulkan_tensor_record record{
+        "stream-smoke", width, logical_height, footprint, 0, geometry.payload_bytes};
+    record.representation = paired ? astc_vulkan_representation::kPairedD2 :
+                                     astc_vulkan_representation::kScalar;
+    astc_vulkan_tensor_session session;
+    for (const auto & band : bands) {
+        std::vector<uint8_t> payload(
+            resident.begin() + static_cast<size_t>(band.payload_offset),
+            resident.begin() + static_cast<size_t>(band.payload_offset + band.payload_size));
+        if (!session.upload_band(physical_device, device, queue, queue_family, record, {},
+                                 geometry, band, payload, error)) return false;
+    }
+    session.reset();
+    return true;
+}
+
+std::vector<uint32_t> read_spirv(const char * path) {
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input) return {};
+    const std::streamsize size = input.tellg();
+    if (size <= 0 || size % static_cast<std::streamsize>(sizeof(uint32_t)) != 0) return {};
+    std::vector<uint32_t> code(static_cast<size_t>(size) / sizeof(uint32_t));
+    input.seekg(0);
+    input.read(reinterpret_cast<char *>(code.data()), size);
+    return input ? code : std::vector<uint32_t>();
+}
+
+bool stream_dispatch_d2(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+                        uint32_t queue_family, const char * shader_path) {
+    const astc_vulkan_footprint footprint = astc_vulkan_footprint::k8x5;
+    constexpr uint32_t width = 16;
+    constexpr uint32_t logical_height = 21;
+    constexpr uint32_t samples = 2;
+    const std::vector<uint32_t> spirv = read_spirv(shader_path);
+    if (spirv.empty()) return false;
+    astc_vulkan_stream_geometry geometry;
+    std::string error;
+    if (!astc_vulkan_make_stream_geometry(footprint, width, logical_height, true,
+                                           geometry, error)) return false;
+    std::vector<astc_vulkan_stream_band> bands;
+    if (!astc_vulkan_plan_stream(geometry, geometry.blocks_x * 16u, bands, error)) return false;
+    constexpr uint8_t constant_half_block[16] = {
+        0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x00, 0x80};
+    std::vector<uint8_t> payload(static_cast<size_t>(geometry.payload_bytes));
+    for (size_t offset = 0; offset < payload.size(); offset += sizeof(constant_half_block)) {
+        std::memcpy(payload.data() + offset, constant_half_block, sizeof(constant_half_block));
+    }
+    std::vector<uint32_t> layout(static_cast<size_t>(astc_vulkan_paired_layout_bytes(
+        footprint, width, logical_height) / sizeof(uint32_t)), 0u);
+    astc_vulkan_tensor_record record{
+        "stream-dispatch-d2", width, logical_height, footprint, 0, geometry.payload_bytes};
+    record.representation = astc_vulkan_representation::kPairedD2;
+    astc_vulkan_tensor_session tensor;
+    const astc_vulkan_reconstruction reconstruction{};
+    if (!tensor.upload(physical_device, device, queue, queue_family, record,
+                       reconstruction, payload, error)) return false;
+    astc_vulkan_paired_matvec_session dispatch;
+    if (!dispatch.init(physical_device, device, queue, queue_family, tensor,
+                       std::vector<uint8_t>(reinterpret_cast<uint8_t *>(layout.data()),
+                                            reinterpret_cast<uint8_t *>(layout.data()) + layout.size() * sizeof(uint32_t)),
+                       spirv, width, logical_height, samples, error,
+                       astc_vulkan_paired_semantic::direct_rgb)) return false;
+    std::vector<float> activations(static_cast<size_t>(samples) * width);
+    for (size_t i = 0; i < activations.size(); ++i) activations[i] = 0.01f * static_cast<float>(i + 1);
+    std::vector<float> full_output;
+    if (!dispatch.run(activations, reconstruction, full_output, error)) return false;
+    std::vector<float> streamed(static_cast<size_t>(samples) * logical_height, 0.0f);
+    for (const auto & band : bands) {
+        std::vector<uint8_t> band_payload(
+            payload.begin() + static_cast<size_t>(band.payload_offset),
+            payload.begin() + static_cast<size_t>(band.payload_offset + band.payload_size));
+        if (!tensor.upload_band(physical_device, device, queue, queue_family, record,
+                                reconstruction, geometry, band, band_payload, error) ||
+            !dispatch.rebind_texture(tensor, band.physical_height, band.physical_y, error)) {
+            return false;
+        }
+        std::vector<float> band_output;
+        if (!dispatch.run_band(activations, reconstruction, band.logical_row_base,
+                               band.logical_row_count, band_output, error) ||
+            band_output.size() != static_cast<size_t>(samples) * band.logical_row_count) {
+            return false;
+        }
+        for (uint32_t sample = 0; sample < samples; ++sample) {
+            std::memcpy(streamed.data() + static_cast<size_t>(sample) * logical_height + band.logical_row_base,
+                        band_output.data() + static_cast<size_t>(sample) * band.logical_row_count,
+                        static_cast<size_t>(band.logical_row_count) * sizeof(float));
+        }
+    }
+    if (full_output.size() != streamed.size()) return false;
+    for (size_t i = 0; i < full_output.size(); ++i) {
+        if (std::fabs(full_output[i] - streamed[i]) > 1.0e-5f) return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -288,6 +411,7 @@ int main() {
 
     VkPhysicalDevice selected_device = VK_NULL_HANDLE;
     uint32_t selected_queue_family = UINT32_MAX;
+    bool supports_6x5 = false;
     bool supports_8x5 = false;
     bool supports_8x6 = false;
     bool supports_10x6 = false;
@@ -301,6 +425,7 @@ int main() {
             !format_supports(device, VK_FORMAT_ASTC_6x6_UNORM_BLOCK, required)) {
             continue;
         }
+        supports_6x5 = format_supports(device, VK_FORMAT_ASTC_6x5_UNORM_BLOCK, required);
         supports_8x5 = format_supports(device, VK_FORMAT_ASTC_8x5_UNORM_BLOCK, required);
         supports_8x6 = format_supports(device, VK_FORMAT_ASTC_8x6_UNORM_BLOCK, required);
         supports_10x6 = format_supports(device, VK_FORMAT_ASTC_10x6_UNORM_BLOCK, required);
@@ -344,21 +469,24 @@ int main() {
     }
     VkQueue queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, selected_queue_family, 0, &queue);
-    const bool success_4x4 = create_and_upload_image(
+    const bool success_4x4 = repeat_create_and_upload_image(
         selected_device, device, queue, selected_queue_family,
-        VK_FORMAT_ASTC_4x4_UNORM_BLOCK, { 4, 4, 1 });
+        VK_FORMAT_ASTC_4x4_UNORM_BLOCK, { 4, 4, 1 }, 3);
     const bool success_5x5 = create_and_upload_image(
         selected_device, device, queue, selected_queue_family,
         VK_FORMAT_ASTC_5x5_UNORM_BLOCK, { 5, 5, 1 });
     const bool success_6x6 = create_and_upload_image(
         selected_device, device, queue, selected_queue_family,
         VK_FORMAT_ASTC_6x6_UNORM_BLOCK, { 6, 6, 1 });
+    const bool success_6x5 = !supports_6x5 || create_and_upload_image(
+        selected_device, device, queue, selected_queue_family,
+        VK_FORMAT_ASTC_6x5_UNORM_BLOCK, { 6, 5, 1 });
     const bool success_8x5 = !supports_8x5 || create_and_upload_image(
         selected_device, device, queue, selected_queue_family,
         VK_FORMAT_ASTC_8x5_UNORM_BLOCK, { 8, 5, 1 });
-    const bool success_8x6 = !supports_8x6 || create_and_upload_image(
+    const bool success_8x6 = !supports_8x6 || repeat_create_and_upload_image(
         selected_device, device, queue, selected_queue_family,
-        VK_FORMAT_ASTC_8x6_UNORM_BLOCK, { 8, 6, 1 });
+        VK_FORMAT_ASTC_8x6_UNORM_BLOCK, { 8, 6, 1 }, 3);
     const bool success_10x6 = !supports_10x6 || create_and_upload_image(
         selected_device, device, queue, selected_queue_family,
         VK_FORMAT_ASTC_10x6_UNORM_BLOCK, { 10, 6, 1 });
@@ -368,14 +496,31 @@ int main() {
     const bool success_10x8 = !supports_10x8 || create_and_upload_image(
         selected_device, device, queue, selected_queue_family,
         VK_FORMAT_ASTC_10x8_UNORM_BLOCK, { 10, 8, 1 });
+    const bool success_stream_d1 = stream_upload_bands(
+        selected_device, device, queue, selected_queue_family,
+        astc_vulkan_footprint::k8x6, 16, 13, false);
+    const bool success_stream_d2 = !supports_8x5 || stream_upload_bands(
+        selected_device, device, queue, selected_queue_family,
+        astc_vulkan_footprint::k8x5, 16, 21, true);
+    const bool success_dispatch_d2 = !supports_8x5 || stream_dispatch_d2(
+        selected_device, device, queue, selected_queue_family,
+#ifdef ASTC_VULKAN_PAIRED_SHADER_PATH
+        ASTC_VULKAN_PAIRED_SHADER_PATH
+#else
+        "pocs/astc-vulkan/astc-paired-matvec.comp.spv"
+#endif
+    );
     vkDeviceWaitIdle(device);
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
-    if (!success_4x4 || !success_5x5 || !success_6x6 || !success_8x5 || !success_8x6 || !success_10x6 || !success_8x8 || !success_10x8) {
+    if (!success_4x4 || !success_5x5 || !success_6x6 || !success_6x5 || !success_8x5 || !success_8x6 || !success_10x6 || !success_8x8 || !success_10x8 || !success_stream_d1 || !success_stream_d2 || !success_dispatch_d2) {
         std::fprintf(stderr, "ASTC device smoke failed: image upload or layout transition failed\n");
         return 1;
     }
-    std::printf("ASTC 4x4, 5x5, and 6x6 image resource smoke passed; experimental 8x5=%s, 8x6=%s, 10x6=%s, 8x8=%s, 10x8=%s\n",
+    std::printf("ASTC 4x4, 5x5, and 6x6 image resource smoke passed; streamed D1=passed, streamed D2=%s, paired D2 dispatch=%s; experimental 6x5=%s, 8x5=%s, 8x6=%s, 10x6=%s, 8x8=%s, 10x8=%s\n",
+                supports_8x5 ? "passed" : "unsupported",
+                supports_8x5 ? "passed" : "unsupported",
+                supports_6x5 ? "passed" : "unsupported",
                 supports_8x5 ? "passed" : "unsupported",
                 supports_8x6 ? "passed" : "unsupported",
                 supports_10x6 ? "passed" : "unsupported",

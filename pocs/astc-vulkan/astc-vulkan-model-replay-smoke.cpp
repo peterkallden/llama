@@ -1,6 +1,9 @@
 #include "astc-vulkan-input.h"
 #include "astc-vulkan-paired.h"
 #include "astc-vulkan-paired-layout.h"
+#if defined(ASTC_VULKAN_MODEL_REPLAY_GPU)
+#include "astc-vulkan-scheduler-adapter.h"
+#endif
 
 #include "ggml-backend.h"
 #include "llama-ext.h"
@@ -13,6 +16,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -131,13 +135,19 @@ logits_result run_model(llama_model * model, const std::vector<llama_token> & to
 
 int main(int argc, char ** argv) {
     std::string model_path, rgba_path, weights_path, activation_path, metadata_path, prompt;
-    std::string layout_map_path, representation = "d1", footprint_name = "8x5";
+    std::string layout_map_path, row_scales_path, representation = "d1", footprint_name = "8x5";
+    std::string gpu_shader_path, cache_path, tensor_name;
     uint32_t layer = 0, width = 0, height = 0;
-    bool cpu_only = false;
+    uint64_t stream_band_bytes = 0;
+    bool cpu_only = false, streamed = false;
     for (int i = 1; i < argc; ++i) {
         const std::string option = argv[i];
         if (option == "--cpu-only") {
             cpu_only = true;
+            continue;
+        }
+        if (option == "--streamed") {
+            streamed = true;
             continue;
         }
         if (i + 1 >= argc) break;
@@ -147,6 +157,11 @@ int main(int argc, char ** argv) {
         else if (option == "--activations") activation_path = argv[++i];
         else if (option == "--metadata") metadata_path = argv[++i];
         else if (option == "--layout-map") layout_map_path = argv[++i];
+        else if (option == "--row-scales") row_scales_path = argv[++i];
+        else if (option == "--gpu-shader") gpu_shader_path = argv[++i];
+        else if (option == "--cache") cache_path = argv[++i];
+        else if (option == "--tensor") tensor_name = argv[++i];
+        else if (option == "--stream-band-bytes") stream_band_bytes = std::stoull(argv[++i]);
         else if (option == "--representation") representation = argv[++i];
         else if (option == "--footprint") footprint_name = argv[++i];
         else if (option == "--prompt") prompt = argv[++i];
@@ -155,18 +170,36 @@ int main(int argc, char ** argv) {
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(argv[++i]));
         else { std::fprintf(stderr, "unknown option: %s\n", option.c_str()); return 2; }
     }
-    const bool paired_d2 = representation == "paired-d2";
-    if ((!paired_d2 && representation != "d1") || model_path.empty() || rgba_path.empty() || weights_path.empty() || activation_path.empty() || prompt.empty() ||
+    const bool gpu_requested = !gpu_shader_path.empty() || !cache_path.empty() || !tensor_name.empty();
+#if !defined(ASTC_VULKAN_MODEL_REPLAY_GPU)
+    if (gpu_requested) {
+        std::fprintf(stderr, "GPU model replay is unavailable in this build; enable the experimental scheduler adapter\n");
+        return 2;
+    }
+#endif
+    bool paired_d2 = representation == "paired-d2" || representation == "paired-d2-la";
+    astc_vulkan_paired_semantic paired_semantic = representation == "paired-d2-la" ?
+        astc_vulkan_paired_semantic::luminance_alpha : astc_vulkan_paired_semantic::direct_rgb;
+    if ((!gpu_requested && (!paired_d2 && representation != "d1")) || model_path.empty() ||
+        (!gpu_requested && (rgba_path.empty() || weights_path.empty())) ||
+        (gpu_requested && (gpu_shader_path.empty() || cache_path.empty() || tensor_name.empty())) ||
+        activation_path.empty() || prompt.empty() ||
         width == 0 || height == 0) {
         std::fprintf(stderr, "usage: %s --model model.gguf --rgba decoded.rgba --weights weights.f32 --activations trace "
-                            "--layer N --width columns --height rows --metadata export.meta --prompt text [--cpu-only]\n", argv[0]);
+                            "--layer N --width columns --height rows --metadata export.meta --prompt text [--cpu-only]\n"
+                            "       %s --model model.gguf --cache cache-dir --gpu-shader paired-matvec.spv "
+                            "--tensor name --activations trace --layer N --width columns --height rows --prompt text "
+                            "[--streamed --stream-band-bytes N]\n",
+                     argv[0], argv[0]);
         return 2;
     }
 
-    const std::vector<float> rgba = read_binary<float>(rgba_path);
-    const std::vector<float> weights = read_binary<float>(weights_path);
+    const std::vector<float> rgba = gpu_requested ? std::vector<float>() : read_binary<float>(rgba_path);
+    const std::vector<float> weights = gpu_requested ? std::vector<float>() : read_binary<float>(weights_path);
     std::vector<uint32_t> layout_map;
-    if (paired_d2) layout_map = read_binary<uint32_t>(layout_map_path);
+    std::vector<float> row_scales;
+    if (!gpu_requested && paired_d2) layout_map = read_binary<uint32_t>(layout_map_path);
+    if (!gpu_requested && !row_scales_path.empty()) row_scales = read_binary<float>(row_scales_path);
     ggml_vk_astc_activation_trace activations;
     std::string trace_error;
     if (!ggml_vk_astc_load_activation_trace(activation_path, activations, trace_error)) {
@@ -174,16 +207,22 @@ int main(int argc, char ** argv) {
         return 2;
     }
     uint32_t physical_width = width, physical_height = height;
-    const uint32_t paired_block_width = footprint_name == "10x5" ? 10u : 8u;
-    astc_vulkan_footprint paired_footprint = footprint_name == "10x5" ?
+    const uint32_t paired_block_width = footprint_name == "6x5" ? 6u :
+        footprint_name == "10x5" ? 10u : 8u;
+    astc_vulkan_footprint paired_footprint = footprint_name == "6x5" ?
+        astc_vulkan_footprint::k6x5 : footprint_name == "10x5" ?
         astc_vulkan_footprint::k10x5 : astc_vulkan_footprint::k8x5;
-    if (paired_d2) {
+    if (!gpu_requested && paired_d2) {
         if (layout_map_path.empty()) {
             std::fprintf(stderr, "paired-d2 replay requires --layout-map\n");
             return 2;
         }
-        if (footprint_name != "8x5" && footprint_name != "10x5") {
-            std::fprintf(stderr, "paired-d2 replay supports only 8x5 and 10x5\n");
+        if (!row_scales.empty() && row_scales.size() != height) {
+            std::fprintf(stderr, "row-scale sidecar must contain one F32 scale per logical output row\n");
+            return 2;
+        }
+        if (footprint_name != "6x5" && footprint_name != "8x5" && footprint_name != "10x5") {
+            std::fprintf(stderr, "paired-d2 replay supports only 6x5, 8x5, and 10x5\n");
             return 2;
         }
         physical_width = ((width + paired_block_width - 1u) / paired_block_width) * paired_block_width;
@@ -194,16 +233,18 @@ int main(int argc, char ** argv) {
             return 2;
         }
     }
-    if ((!paired_d2 && rgba.size() != static_cast<size_t>(width) * height * 4) ||
-        weights.size() != static_cast<size_t>(width) * height) {
+    if (!gpu_requested && ((!paired_d2 && rgba.size() != static_cast<size_t>(width) * height * 4) ||
+        weights.size() != static_cast<size_t>(width) * height)) {
         std::fprintf(stderr, "decoded RGBA and source weight sizes do not match the requested matrix\n");
         return 2;
     }
-    const auto weight_minmax = std::minmax_element(weights.begin(), weights.end());
-    float scale_l = *weight_minmax.second - *weight_minmax.first;
+    const auto weight_minmax = weights.empty() ? std::pair<std::vector<float>::const_iterator,
+                                                            std::vector<float>::const_iterator>(weights.end(), weights.end()) :
+                                                 std::minmax_element(weights.begin(), weights.end());
+    float scale_l = weights.empty() ? 1.0f : *weight_minmax.second - *weight_minmax.first;
     float scale_a = 0.0f;
-    float offset = *weight_minmax.first;
-    if (!metadata_path.empty() && !read_decoder_metadata(metadata_path, scale_l, scale_a, offset)) {
+    float offset = weights.empty() ? 0.0f : *weight_minmax.first;
+    if (!gpu_requested && !metadata_path.empty() && !read_decoder_metadata(metadata_path, scale_l, scale_a, offset)) {
         std::fprintf(stderr, "invalid decoder metadata: %s\n", metadata_path.c_str());
         return 2;
     }
@@ -211,7 +252,7 @@ int main(int argc, char ** argv) {
     llama_backend_init();
     llama_model_params model_params = llama_model_default_params();
     ggml_backend_dev_t cpu_devices[2] = { nullptr, nullptr };
-    if (cpu_only) {
+    if (cpu_only || gpu_requested) {
         model_params.n_gpu_layers = 0;
         cpu_devices[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
         if (cpu_devices[0] == nullptr) {
@@ -231,6 +272,36 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
+#if defined(ASTC_VULKAN_MODEL_REPLAY_GPU)
+    astc_vulkan_scheduler_adapter gpu_adapter;
+    std::vector<uint32_t> gpu_spirv;
+    if (gpu_requested) {
+        gpu_spirv = read_binary<uint32_t>(gpu_shader_path);
+        if (gpu_spirv.empty()) {
+            std::fprintf(stderr, "GPU model replay shader is missing or invalid\n");
+            llama_model_free(model);
+            llama_backend_free();
+            return 2;
+        }
+        std::string gpu_error;
+        if (!gpu_adapter.prepare_from_cache(model_path, cache_path, tensor_name, paired_footprint,
+                                            gpu_error, true) || !gpu_adapter.ready()) {
+            std::fprintf(stderr, "GPU model replay cache prepare failed: %s\n", gpu_error.c_str());
+            llama_model_free(model);
+            llama_backend_free();
+            return 1;
+        }
+        paired_d2 = gpu_adapter.dispatch_kind() == astc_vulkan_scheduler_dispatch_kind::kD2Paired;
+        if (gpu_adapter.binding().record.width != width || gpu_adapter.binding().record.height != height) {
+            std::fprintf(stderr, "GPU model replay cache shape does not match requested matrix\n");
+            llama_model_free(model);
+            llama_backend_free();
+            return 2;
+        }
+        if (paired_d2) paired_semantic = gpu_adapter.paired_semantic();
+    }
+#endif
+
     std::vector<llama_token> tokens;
     if (!tokenize(llama_model_get_vocab(model), prompt, tokens) || tokens.empty()) {
         std::fprintf(stderr, "failed to tokenize prompt\n");
@@ -246,6 +317,27 @@ int main(int argc, char ** argv) {
         return 2;
     }
     std::vector<float> override_output(static_cast<size_t>(tokens.size()) * height);
+#if defined(ASTC_VULKAN_MODEL_REPLAY_GPU)
+    if (gpu_requested) {
+        std::vector<float> gpu_activations(static_cast<size_t>(tokens.size()) * width);
+        for (size_t sample = 0; sample < tokens.size(); ++sample) {
+            std::copy_n(activations.values.begin() + sample * activations.columns, width,
+                        gpu_activations.begin() + sample * width);
+        }
+        std::string gpu_error;
+        const bool dispatched = streamed ?
+            gpu_adapter.run_streamed(stream_band_bytes == 0 ? (1u << 20) : stream_band_bytes,
+                                     gpu_spirv, gpu_activations, override_output, gpu_error) :
+            gpu_adapter.run(gpu_spirv, gpu_activations, override_output, gpu_error);
+        if (!dispatched ||
+            override_output.size() != static_cast<size_t>(tokens.size()) * height) {
+            std::fprintf(stderr, "GPU model replay dispatch failed: %s\n", gpu_error.c_str());
+            llama_model_free(model);
+            llama_backend_free();
+            return 1;
+        }
+    } else
+#endif
     for (size_t sample = 0; sample < tokens.size(); ++sample) {
         for (uint32_t row = 0; row < height; ++row) {
             float value = 0.0f;
@@ -269,12 +361,16 @@ int main(int argc, char ** argv) {
                     const uint32_t texel_y = row / 2u;
                     index = (static_cast<size_t>(texel_y) * physical_width + column) * 4;
                     const astc_vulkan_rgba_texel texel{rgba[index], rgba[index + 1], rgba[index + 2], rgba[index + 3]};
-                    latent = astc_vulkan_paired_weight(texel, row & 1u, layout);
+                    latent = astc_vulkan_paired_weight(texel, row & 1u, layout,
+                                                        astc_vulkan_paired_basis::direct,
+                                                        paired_semantic);
                 } else {
                     latent = (rgba[index] + rgba[index + 1] + rgba[index + 2]) / 3.0f;
                 }
                 const float activation = activations.values[sample * activations.columns + column];
-                value += (scale_l * latent + scale_a * rgba[index + 3] + offset) * activation;
+                float weight = scale_l * latent + scale_a * rgba[index + 3] + offset;
+                if (!row_scales.empty()) weight *= row_scales[row];
+                value += weight * activation;
             }
             override_output[sample * height + row] = value;
         }

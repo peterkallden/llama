@@ -11,6 +11,8 @@ layout(push_constant) uniform PushConstants {
     uint width;
     uint height;
     uint sample_index;
+    uint row_base;
+    uint output_height;
     float scale_l;
     float scale_a;
     float offset;
@@ -19,12 +21,13 @@ layout(push_constant) uniform PushConstants {
 shared float partial[64];
 
 void main() {
-    const uint row = gl_WorkGroupID.x;
-    if (row >= params.height) return;
+    const uint local_row = gl_WorkGroupID.x;
+    if (local_row >= params.height) return;
+    const uint row = params.row_base + local_row;
     float sum = 0.0;
     const uint activation_base = params.sample_index * params.width;
     for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64) {
-        const vec4 texel = texelFetch(astc_weights, ivec2(column, row), 0);
+        const vec4 texel = texelFetch(astc_weights, ivec2(column, local_row), 0);
         const float latent = (texel.r + texel.g + texel.b) / 3.0;
         const float weight = params.scale_l * latent + params.scale_a * texel.a + params.offset;
         sum += weight * activations.values[activation_base + column];
@@ -35,5 +38,7 @@ void main() {
         if (gl_LocalInvocationID.x < stride) partial[gl_LocalInvocationID.x] += partial[gl_LocalInvocationID.x + stride];
         barrier();
     }
-    if (gl_LocalInvocationID.x == 0) output_values.values[params.sample_index * params.height + row] = partial[0];
+    if (gl_LocalInvocationID.x == 0) {
+        output_values.values[params.sample_index * params.output_height + row] = partial[0];
+    }
 }

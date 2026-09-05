@@ -26,6 +26,14 @@ const char * astc_vulkan_paired_layout_name(astc_vulkan_paired_layout layout) {
     return "unknown";
 }
 
+const char * astc_vulkan_paired_semantic_name(astc_vulkan_paired_semantic semantic) {
+    switch (semantic) {
+        case astc_vulkan_paired_semantic::direct_rgb: return "direct-rgb";
+        case astc_vulkan_paired_semantic::luminance_alpha: return "luminance-alpha";
+    }
+    return "unknown";
+}
+
 const char * astc_vulkan_paired_basis_name(astc_vulkan_paired_basis basis) {
     switch (basis) {
         case astc_vulkan_paired_basis::direct: return "direct";
@@ -71,10 +79,17 @@ float astc_vulkan_paired_steering_basis_value(
 
 astc_vulkan_rgba_texel astc_vulkan_make_paired_texel(
         float q0, float q1, float steering, astc_vulkan_paired_layout layout,
-        astc_vulkan_paired_basis basis) {
+        astc_vulkan_paired_basis basis, astc_vulkan_paired_semantic semantic) {
     q0 = clamp_unorm(q0);
     q1 = clamp_unorm(q1);
     steering = clamp_unorm(steering);
+    if (semantic == astc_vulkan_paired_semantic::luminance_alpha) {
+        // The orientation map decides which logical member receives the
+        // luminance lane. Alpha is semantic here, so steering is discarded.
+        return layout == astc_vulkan_paired_layout::rg_b ?
+            astc_vulkan_rgba_texel{q0, q0, q0, q1} :
+            astc_vulkan_rgba_texel{q1, q1, q1, q0};
+    }
     const float common = basis == astc_vulkan_paired_basis::common_difference ?
         0.5f * (q0 + q1) : q0;
     const float singleton = basis == astc_vulkan_paired_basis::common_difference ?
@@ -85,7 +100,15 @@ astc_vulkan_rgba_texel astc_vulkan_make_paired_texel(
 
 float astc_vulkan_paired_weight(
         const astc_vulkan_rgba_texel & texel, unsigned int member,
-        astc_vulkan_paired_layout layout, astc_vulkan_paired_basis basis) {
+        astc_vulkan_paired_layout layout, astc_vulkan_paired_basis basis,
+        astc_vulkan_paired_semantic semantic) {
+    if (semantic == astc_vulkan_paired_semantic::luminance_alpha) {
+        const float luminance = (texel.r + texel.g + texel.b) / 3.0f;
+        if (layout == astc_vulkan_paired_layout::rg_b) {
+            return member == 0 ? luminance : texel.a;
+        }
+        return member == 0 ? texel.a : luminance;
+    }
     const float common = layout == astc_vulkan_paired_layout::rg_b ?
         0.5f * (texel.r + texel.g) : texel.r;
     const float singleton = layout == astc_vulkan_paired_layout::rg_b ?

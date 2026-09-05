@@ -1,5 +1,6 @@
 #pragma once
 
+#include "astc-vulkan-artifact.h"
 #include "astc-vulkan-contract.h"
 
 #include <vector>
@@ -32,6 +33,10 @@ enum class astc_vulkan_paired_layout : unsigned char {
     // q0 is stored in R; q1 is duplicated in G/B.
     r_gb = 1,
 };
+
+// astc_vulkan_paired_semantic is owned by astc-vulkan-artifact.h because the
+// semantic is part of a serialized cache artifact as well as this CPU/GPU
+// paired-D2 contract.
 
 // The semantic basis used before mapping a D2 pair into RGB. Direct is the
 // deployed v1 contract. Common/difference is an offline research basis: it
@@ -69,6 +74,7 @@ struct astc_vulkan_rgba_texel {
 
 const char * astc_vulkan_semantic_density_name(astc_vulkan_semantic_density density);
 const char * astc_vulkan_paired_layout_name(astc_vulkan_paired_layout layout);
+const char * astc_vulkan_paired_semantic_name(astc_vulkan_paired_semantic semantic);
 const char * astc_vulkan_paired_basis_name(astc_vulkan_paired_basis basis);
 const char * astc_vulkan_paired_steering_basis_name(astc_vulkan_paired_steering_basis basis);
 
@@ -86,14 +92,16 @@ float astc_vulkan_paired_steering_basis_value(
 // not part of paired_weight reconstruction.
 astc_vulkan_rgba_texel astc_vulkan_make_paired_texel(
     float q0, float q1, float steering, astc_vulkan_paired_layout layout,
-    astc_vulkan_paired_basis basis = astc_vulkan_paired_basis::direct);
+    astc_vulkan_paired_basis basis = astc_vulkan_paired_basis::direct,
+    astc_vulkan_paired_semantic semantic = astc_vulkan_paired_semantic::direct_rgb);
 
 // Reconstructs either member from a decoded D2 texel. This exact operation is
 // shared by the CPU oracle and the later Vulkan paired shader contract.
 float astc_vulkan_paired_weight(
     const astc_vulkan_rgba_texel & texel, unsigned int member,
     astc_vulkan_paired_layout layout,
-    astc_vulkan_paired_basis basis = astc_vulkan_paired_basis::direct);
+    astc_vulkan_paired_basis basis = astc_vulkan_paired_basis::direct,
+    astc_vulkan_paired_semantic semantic = astc_vulkan_paired_semantic::direct_rgb);
 
 // D2 maps texture row y to logical output rows 2*y and 2*y+1. The final odd
 // row is padded deterministically by the packer and is excluded from loss.

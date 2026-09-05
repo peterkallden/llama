@@ -18,6 +18,10 @@ int main() {
                       ggml_vk_astc_8x5_unorm_rgba,
                       astc_vulkan_semantic_density::d2_paired) == 1.6,
                   "D2 8x5 must be the 1.6 b/w iso-rate test point");
+    static_assert(astc_vulkan_nominal_bits_per_logical_weight(
+                      ggml_vk_astc_6x5_unorm_rgba,
+                      astc_vulkan_semantic_density::d2_paired) == 128.0 / 60.0,
+                  "D2 6x5 must retain the five-row paired mapping");
 
     assert(std::strcmp(astc_vulkan_semantic_density_name(
                astc_vulkan_semantic_density::d2_paired), "paired-d2") == 0);
@@ -63,6 +67,33 @@ int main() {
                                             astc_vulkan_paired_layout::rg_b), 0.25f);
     assert_close(astc_vulkan_paired_weight(steering_changed, 1,
                                             astc_vulkan_paired_layout::rg_b), 0.75f);
+
+    // D2-LA is a distinct semantic decoder: Alpha carries a real second
+    // logical lane, so the orientation bit selects luminance-versus-Alpha.
+    const auto la_rg_b = astc_vulkan_make_paired_texel(
+        0.25f, 0.75f, 0.0f, astc_vulkan_paired_layout::rg_b,
+        astc_vulkan_paired_basis::direct,
+        astc_vulkan_paired_semantic::luminance_alpha);
+    assert_close(la_rg_b.r, 0.25f);
+    assert_close(la_rg_b.g, 0.25f);
+    assert_close(la_rg_b.b, 0.25f);
+    assert_close(la_rg_b.a, 0.75f);
+    assert_close(astc_vulkan_paired_weight(la_rg_b, 0, astc_vulkan_paired_layout::rg_b,
+                                            astc_vulkan_paired_basis::direct,
+                                            astc_vulkan_paired_semantic::luminance_alpha), 0.25f);
+    assert_close(astc_vulkan_paired_weight(la_rg_b, 1, astc_vulkan_paired_layout::rg_b,
+                                            astc_vulkan_paired_basis::direct,
+                                            astc_vulkan_paired_semantic::luminance_alpha), 0.75f);
+    const auto la_r_gb = astc_vulkan_make_paired_texel(
+        0.25f, 0.75f, 0.0f, astc_vulkan_paired_layout::r_gb,
+        astc_vulkan_paired_basis::direct,
+        astc_vulkan_paired_semantic::luminance_alpha);
+    assert_close(astc_vulkan_paired_weight(la_r_gb, 0, astc_vulkan_paired_layout::r_gb,
+                                            astc_vulkan_paired_basis::direct,
+                                            astc_vulkan_paired_semantic::luminance_alpha), 0.25f);
+    assert_close(astc_vulkan_paired_weight(la_r_gb, 1, astc_vulkan_paired_layout::r_gb,
+                                            astc_vulkan_paired_basis::direct,
+                                            astc_vulkan_paired_semantic::luminance_alpha), 0.75f);
 
     assert_close(static_cast<float>(astc_vulkan_nominal_bits_per_logical_weight(
                      ggml_vk_astc_10x8_unorm_rgba,

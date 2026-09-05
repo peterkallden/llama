@@ -1,9 +1,11 @@
 #include <astcenc.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <fstream>
 #include <cstdio>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -23,6 +25,7 @@ bool footprint(const std::string & value, unsigned int & width, unsigned int & h
     if (value == "4x4") { width = 4; height = 4; }
     else if (value == "5x5") { width = 5; height = 5; }
     else if (value == "6x6") { width = 6; height = 6; }
+    else if (value == "6x5") { width = 6; height = 5; }
     else if (value == "8x5") { width = 8; height = 5; }
     else if (value == "10x5") { width = 10; height = 5; }
     else if (value == "8x6") { width = 8; height = 6; }
@@ -35,7 +38,7 @@ bool footprint(const std::string & value, unsigned int & width, unsigned int & h
 }
 
 int main(int argc, char ** argv) {
-    std::string input, output, footprint_name;
+    std::string input, output, footprint_name, mode_report;
     uint32_t width = 0, height = 0;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string option = argv[i];
@@ -45,6 +48,7 @@ int main(int argc, char ** argv) {
         else if (option == "--width") width = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--footprint") footprint_name = value;
+        else if (option == "--mode-report") mode_report = value;
         else return 2;
     }
     unsigned int block_width = 0, block_height = 0;
@@ -72,6 +76,25 @@ int main(int argc, char ** argv) {
     if (!file) { astcenc_context_free(context); return 1; }
     const uint32_t blocks_x = (width + block_width - 1) / block_width;
     const uint32_t blocks_y = (height + block_height - 1) / block_height;
+    using mode_key = std::array<uint32_t, 7>;
+    std::map<mode_key, uint64_t> modes;
+    for (size_t offset = 0; offset + 16 <= compressed.size(); offset += 16) {
+        astcenc_block_info info{};
+        if (astcenc_get_block_info(context, compressed.data() + offset, &info) != ASTCENC_SUCCESS) {
+            std::fprintf(stderr, "ASTC block inspection failed at block %zu\n", offset / 16);
+            astcenc_context_free(context);
+            return 1;
+        }
+        ++modes[{
+            static_cast<uint32_t>(info.color_endpoint_modes[0]),
+            info.partition_count,
+            info.weight_x,
+            info.weight_y,
+            info.weight_level_count,
+            info.color_level_count,
+            info.is_dual_plane_block ? info.dual_plane_component + 1u : 0u,
+        }];
+    }
     const uint32_t chunk_block_rows = 32;
     for (uint32_t block_y = 0; block_y < blocks_y; block_y += chunk_block_rows) {
         const uint32_t chunk_blocks = std::min(chunk_block_rows, blocks_y - block_y);
@@ -104,6 +127,21 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "ASTC output write failed at row %u\n", y);
             astcenc_context_free(context);
             return 1;
+        }
+    }
+    if (!mode_report.empty()) {
+        std::ofstream report(mode_report);
+        if (!report) { astcenc_context_free(context); return 1; }
+        report << "footprint=" << footprint_name << '\n'
+               << "blocks=" << static_cast<size_t>(blocks_x) * blocks_y << '\n';
+        for (const auto & [mode, count] : modes) {
+            report << "mode endpoint=" << mode[0]
+                   << " partitions=" << mode[1]
+                   << " grid=" << mode[2] << 'x' << mode[3]
+                   << " weight_levels=" << mode[4]
+                   << " endpoint_levels=" << mode[5]
+                   << " dual_component=" << mode[6]
+                   << " count=" << count << '\n';
         }
     }
     astcenc_context_free(context);

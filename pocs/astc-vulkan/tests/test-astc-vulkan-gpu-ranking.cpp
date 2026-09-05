@@ -39,8 +39,11 @@ int main() {
     assert(atlas.records[1].layout == astc_vulkan_paired_layout::r_gb);
     assert(atlas.records[5].layout == astc_vulkan_paired_layout::r_gb);
 
-    // D2_10x5 has the same two-logical-rows semantic contract as D2_8x5,
+    // D2_6x5 and D2_10x5 have the same two-logical-rows semantic contract as D2_8x5,
     // but a distinct standard ASTC image format and atlas geometry.
+    assert(astc_vulkan_build_gpu_ranking_atlas(astc_vulkan_footprint::k6x5, 2, pools, atlas));
+    assert(atlas.width == 12 && atlas.height == 15);
+    assert(atlas.records.size() == 6 && atlas.records[1].layout == astc_vulkan_paired_layout::r_gb);
     assert(astc_vulkan_build_gpu_ranking_atlas(astc_vulkan_footprint::k10x5, 2, pools, atlas));
     assert(atlas.width == 20 && atlas.height == 15);
     assert(atlas.records.size() == 6 && atlas.records[1].layout == astc_vulkan_paired_layout::r_gb);

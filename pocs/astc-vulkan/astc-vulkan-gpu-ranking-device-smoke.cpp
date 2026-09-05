@@ -160,72 +160,70 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // Reuse the same Vulkan device/session contract for the second five-row
-    // footprint when the selected device advertises it. This is deliberately
-    // a separate atlas because block width is part of the shader push-constant
-    // contract. A device may support 8x5 but not 10x5; keep the 8x5 result
-    // useful in that case and report the capability as an explicit skip.
-    const bool supports_10x5 = astc_vulkan_supports_sampled_transfer_extent(
-        physical, VK_FORMAT_ASTC_10x5_UNORM_BLOCK, 20, 5);
-    if (!supports_10x5) {
+    // Each alternate five-row format uses the same logical D2 shader semantics,
+    // but gets a separate atlas because physical block width is part of the
+    // push-constant contract. Test every format the device advertises.
+    const auto run_secondary = [&](astc_vulkan_footprint footprint, VkFormat format,
+                                   uint32_t width, const char * name) {
+        if (!astc_vulkan_supports_sampled_transfer_extent(physical, format, width * 2, 5)) {
+            std::printf("GPU paired-D2 %s unsupported\n", name);
+            return true;
+        }
         session.reset();
-        vkDeviceWaitIdle(device);
-        vkDestroyDevice(device, nullptr);
-        vkDestroyInstance(instance, nullptr);
-        std::printf("GPU paired-D2 8x5 batch delta/proposal-gain smoke passed; 10x5 unsupported\n");
-        return 0;
-    }
-    session.reset();
-    astc_vulkan_gpu_ranking_atlas atlas_10x5;
-    const bool packed_10x5 = astc_vulkan_build_gpu_ranking_atlas(
-        astc_vulkan_footprint::k10x5, 2, pools, atlas_10x5);
-    if (!packed_10x5 || !session.init(physical, device, queue, family, atlas_10x5, 1, 10, 20, 2,
-                                       delta_spirv, gain_spirv, error)) {
-        std::fprintf(stderr, "GPU D2 10x5 init failed: %s\n", error.c_str());
-        return 1;
-    }
-    const std::vector<float> activations_10{1,2,3,4,5,6,7,8,9,10,
-                                            0.5f,0.5f,0.5f,0.5f,0.5f,
-                                            0.5f,0.5f,0.5f,0.5f,0.5f};
-    std::vector<float> deltas_10, gains_10;
-    if (!session.run(activations_10, 1.0f, deltas_10, error) ||
-        !session.run_proposal_gains(activations_10, residuals, 1.0f, gains_10, error) ||
-        deltas_10.size() != 80 || gains_10.size() != 4) {
-        std::fprintf(stderr, "GPU D2 10x5 run failed: %s\n", error.c_str());
-        return 1;
-    }
-    const float sum_10 = 55.0f;
-    const float sample_scale_10 = 5.0f;
-    for (uint32_t candidate = 0; candidate < 4; ++candidate) {
-        const bool alternate = candidate == 1 || candidate == 3;
-        const float * deltas_for_layout = candidate < 2 ? rg_b_delta : r_gb_delta;
-        for (uint32_t sample = 0; sample < 2; ++sample) for (uint32_t row = 0; row < 10; ++row) {
-            const float expected = alternate ? deltas_for_layout[row & 1u] *
-                (sample == 0 ? sum_10 : sample_scale_10) : 0.0f;
-            const float actual = deltas_10[(candidate * 2 + sample) * 10 + row];
-            if (std::fabs(actual - expected) > 2e-3f) {
-                std::fprintf(stderr, "GPU D2 10x5 mismatch c=%u s=%u row=%u: %.6f != %.6f\n",
-                    candidate, sample, row, actual, expected);
-                return 1;
+        astc_vulkan_gpu_ranking_atlas secondary;
+        if (!astc_vulkan_build_gpu_ranking_atlas(footprint, 2, pools, secondary) ||
+            !session.init(physical, device, queue, family, secondary, 1, width, 20, 2,
+                          delta_spirv, gain_spirv, error)) {
+            std::fprintf(stderr, "GPU D2 %s init failed: %s\n", name, error.c_str());
+            return false;
+        }
+        std::vector<float> secondary_activations(width * 2, 0.5f);
+        float sum = 0.0f;
+        for (uint32_t column = 0; column < width; ++column) {
+            secondary_activations[column] = static_cast<float>(column + 1);
+            sum += secondary_activations[column];
+        }
+        std::vector<float> secondary_deltas, secondary_gains;
+        if (!session.run(secondary_activations, 1.0f, secondary_deltas, error) ||
+            !session.run_proposal_gains(secondary_activations, residuals, 1.0f, secondary_gains, error) ||
+            secondary_deltas.size() != 80 || secondary_gains.size() != 4) {
+            std::fprintf(stderr, "GPU D2 %s run failed: %s\n", name, error.c_str());
+            return false;
+        }
+        const float sample_scale = 0.5f * static_cast<float>(width);
+        for (uint32_t candidate = 0; candidate < 4; ++candidate) {
+            const bool alternate = candidate == 1 || candidate == 3;
+            const float * deltas_for_layout = candidate < 2 ? rg_b_delta : r_gb_delta;
+            const uint32_t source_block_y = candidate < 2 ? 0 : 1;
+            float expected_gain = 0.0f;
+            for (uint32_t sample = 0; sample < 2; ++sample) for (uint32_t row = 0; row < 10; ++row) {
+                const float expected = alternate ? deltas_for_layout[row & 1u] *
+                    (sample == 0 ? sum : sample_scale) : 0.0f;
+                const float actual = secondary_deltas[(candidate * 2 + sample) * 10 + row];
+                if (std::fabs(actual - expected) > 2e-3f) {
+                    std::fprintf(stderr, "GPU D2 %s mismatch c=%u s=%u row=%u: %.6f != %.6f\n",
+                        name, candidate, sample, row, actual, expected);
+                    return false;
+                }
+                const float residual = residuals[sample * 20 + source_block_y * 10 + row];
+                expected_gain += actual * (2.0f * residual - actual);
+            }
+            if (std::fabs(secondary_gains[candidate] - expected_gain) > 2e-3f) {
+                std::fprintf(stderr, "GPU D2 %s gain mismatch c=%u: %.6f != %.6f\n",
+                    name, candidate, secondary_gains[candidate], expected_gain);
+                return false;
             }
         }
-        const uint32_t source_block_y = candidate < 2 ? 0 : 1;
-        float expected_gain = 0.0f;
-        for (uint32_t sample = 0; sample < 2; ++sample) for (uint32_t row = 0; row < 10; ++row) {
-            const float delta = deltas_10[(candidate * 2 + sample) * 10 + row];
-            const float residual = residuals[sample * 20 + source_block_y * 10 + row];
-            expected_gain += delta * (2.0f * residual - delta);
-        }
-        if (std::fabs(gains_10[candidate] - expected_gain) > 2e-3f) {
-            std::fprintf(stderr, "GPU D2 10x5 gain mismatch c=%u: %.6f != %.6f\n",
-                candidate, gains_10[candidate], expected_gain);
-            return 1;
-        }
+        return true;
+    };
+    if (!run_secondary(astc_vulkan_footprint::k6x5, VK_FORMAT_ASTC_6x5_UNORM_BLOCK, 6, "6x5") ||
+        !run_secondary(astc_vulkan_footprint::k10x5, VK_FORMAT_ASTC_10x5_UNORM_BLOCK, 10, "10x5")) {
+        return 1;
     }
     session.reset();
     vkDeviceWaitIdle(device);
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
-    std::printf("GPU paired-D2 8x5/10x5 batch delta/proposal-gain smoke passed\n");
+    std::printf("GPU paired-D2 6x5/8x5/10x5 batch delta/proposal-gain smoke passed\n");
     return 0;
 }
