@@ -36,6 +36,7 @@ layout(push_constant) uniform PushConstants {
     uint block_width;
     uint block_height;
     float reconstruction_scale;
+    uint logical_rows_per_physical;
 } params;
 
 shared float partial[64];
@@ -45,7 +46,7 @@ void main() {
     const uint lane = gl_LocalInvocationID.x;
     if (candidate_id >= params.candidate_count) return;
 
-    const uint logical_rows_per_block = params.block_height * 2u;
+    const uint logical_rows_per_block = params.block_height * params.logical_rows_per_physical;
     const uint source_block_y = candidate_records.records[candidate_id].z / params.source_blocks_x;
     const uint terms = params.calibration_samples * logical_rows_per_block;
     float sum = 0.0;

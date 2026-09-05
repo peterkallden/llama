@@ -112,8 +112,15 @@ std::vector<T> read_binary(const std::string & path) {
 int main(int argc, char ** argv) {
     std::string shader, manifest, payload, model, cache, trace_path, tensor = "blk.0.ffn_down.weight";
     astc_vulkan_footprint footprint = astc_vulkan_footprint::k6x6;
-    for (int i = 1; i + 1 < argc; i += 2) {
+    bool research = false;
+    for (int i = 1; i < argc;) {
         const std::string option = argv[i];
+        if (option == "--research") {
+            research = true;
+            ++i;
+            continue;
+        }
+        if (i + 1 >= argc) return 2;
         const std::string value = argv[i + 1];
         if (option == "--shader") shader = value;
         else if (option == "--manifest") manifest = value;
@@ -136,6 +143,7 @@ int main(int argc, char ** argv) {
             else return 2;
         }
         else return 2;
+        i += 2;
     }
     const std::vector<uint32_t> spirv = read_binary<uint32_t>(shader);
     ggml_vk_astc_activation_trace trace;
@@ -147,7 +155,7 @@ int main(int argc, char ** argv) {
         !ggml_vk_astc_load_activation_trace(trace_path, trace, error) || trace.samples == 0) return 2;
     astc_vulkan_scheduler_adapter adapter;
     const bool prepared = cached_artifact ?
-        adapter.prepare_from_cache(model, cache.empty() ? "auto" : cache, tensor, footprint, error, true) :
+        adapter.prepare_from_cache(model, cache.empty() ? "auto" : cache, tensor, footprint, error, true, research) :
         adapter.prepare(manifest, payload, tensor, footprint, error, true);
     if (!prepared || !adapter.ready()) {
         std::fprintf(stderr, "scheduler adapter prepare failed: %s\n", error.c_str());

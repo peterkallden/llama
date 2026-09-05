@@ -439,12 +439,64 @@ build-astc/bin/astc-vulkan-cache inspect \
   --model /absolute/path/model.gguf --cache auto
 ```
 
+### Registering a quantized runtime base
+
+An ASTC artifact is normally generated from the highest-quality available
+source (usually F16/BF16). A Q4 or Q3 GGUF of the same model revision can be
+registered as a *structurally compatible runtime base* without encoding the
+ASTC payload again:
+
+```bash
+build-astc/bin/astc-vulkan-cache admit-base \
+  --source-model /absolute/path/model-f16.gguf \
+  --model /absolute/path/model-q4_k_m.gguf \
+  --family q4_k_m \
+  --cache /absolute/path/model-f16.gguf.astc-vulkan
+```
+
+The command requires the exact original source GGUF, validates the cache
+against it, and then checks that the runtime GGUF has the same architecture,
+tensor names, and tensor shapes. It writes a small provenance record below
+`compatible-bases/`; it does **not** copy or re-encode payload data.
+
+Admission is intentionally only a structural gate. It records no model or
+Vulkan quality evidence and does not make the runtime cache auto-selectable.
+That keeps a F16-derived cache from silently being used on a Q3/Q4 base whose
+activation distribution has not yet passed its own replay gate.
+
 `--cache auto` creates/uses a sibling directory derived from the GGUF name.
 An explicit path is supported when the cache belongs on another filesystem:
 
 ```bash
 --cache /absolute/path/to/model.gguf.astc-vulkan
 ```
+
+For portable model-level replay, use the normal `llama-astc-replay` binary
+(the older `astc-vulkan-model-replay-smoke` name remains a regression alias):
+
+```bash
+build-astc-neural/bin/llama-astc-replay \
+  --model /absolute/path/model-f16.gguf \
+  --cache /absolute/path/model-f16.gguf.astc-vulkan \
+  --tensor blk.0.ffn_down.weight \
+  --activations /absolute/path/activations.trace \
+  --layer 0 --width 8192 --height 2048 \
+  --prompt-file /absolute/path/replay-prompts.txt \
+  --gpu-shader build-astc-neural/pocs/astc-vulkan/astc-paired-matvec.comp.spv \
+  --streamed --research
+```
+
+`--prompt-file` supplies the same deterministic text corpus on every machine;
+it is a plain UTF-8 text file and may be produced from a HuggingFace dataset
+by an external preprocessing step. The activation trace must correspond to
+the tokenized text. `--prompt` remains useful for a one-prompt smoke. The
+replay tool emits model logits/loss/top-1 metrics and keeps the exact cache
+payload, model hashes, and runtime backend explicit in the invocation.
+Add `--source-model` when the cache was generated from F16/BF16 and the
+runtime model is Q4/Q3; the tool verifies the previously created
+`admit-base` record before replay. `--evidence evidence.json` writes a small
+machine-readable result containing model/cache hashes and logits/loss/top-1
+metrics.
 
 For a small, reproducible D1 cache build, the cache tool now provides a
 bounded orchestration command. It runs the existing latent exporter, packs a
@@ -535,6 +587,7 @@ model.gguf.astc-vulkan/
   manifest.sha256      integrity checksum
   payload.sha256       integrity checksum
   layout-map.sha256    D2 only, when a map exists
+  compatible-bases/    optional structural Q3/Q4 runtime-base records
 ```
 
 The manifest records tensor name, dimensions, ASTC footprint, representation,

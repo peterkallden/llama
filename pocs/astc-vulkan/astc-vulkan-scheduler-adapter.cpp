@@ -6,6 +6,7 @@
 #include <fstream>
 #include <limits>
 #include <cstring>
+#include <cmath>
 
 namespace {
 bool read_range(const std::string & path, uint64_t offset, uint64_t size,
@@ -111,27 +112,29 @@ bool materialize_artifact(const astc_vulkan_cache_validation & cache,
 // direct manifests and legacy D2 caches cannot accidentally activate it.
 // 6x5 and 8x5 are the profiles with current full-shape evidence gates.
 bool is_explicit_d2_candidate(const astc_vulkan_scheduler_artifact & artifact,
-                              bool allow_experimental) {
+                              bool allow_experimental, bool allow_unverified) {
     return allow_experimental &&
            artifact.kind == astc_vulkan_scheduler_artifact_kind::kD2 &&
            (artifact.record.footprint == astc_vulkan_footprint::k6x5 ||
             artifact.record.footprint == astc_vulkan_footprint::k8x5) &&
            artifact.paired_semantic == astc_vulkan_paired_semantic::luminance_alpha &&
-           artifact.evidence.model_gate_passed &&
-           artifact.evidence.vulkan_gate_passed;
+           (allow_unverified || (artifact.evidence.model_gate_passed &&
+                                 artifact.evidence.vulkan_gate_passed));
 }
 }
 
 bool astc_vulkan_scheduler_adapter::resolve_from_cache(
         const std::string & model_path, const std::string & cache_path,
         const std::string & tensor_name, astc_vulkan_footprint footprint,
-        astc_vulkan_scheduler_artifact & artifact, std::string & error) const {
+        astc_vulkan_scheduler_artifact & artifact, std::string & error,
+        bool allow_unverified) const {
     artifact = {};
     astc_vulkan_cache_validation cache;
     if (!astc_vulkan_cache_validate(model_path, cache_path, cache, error)) return false;
     if (cache.manifest.version == 4) {
         return resolve_best_from_cache(model_path, cache_path, tensor_name, footprint,
-                                       astc_vulkan_quality_policy::balanced, artifact, error);
+                                       astc_vulkan_quality_policy::balanced, artifact, error,
+                                       allow_unverified);
     }
     const astc_vulkan_tensor_record * record = astc_vulkan_find_tensor(cache.manifest, tensor_name);
     if (record == nullptr || record->footprint != footprint) {
@@ -175,7 +178,7 @@ bool astc_vulkan_scheduler_adapter::resolve_best_from_cache(
         const std::string & model_path, const std::string & cache_path,
         const std::string & tensor_name, astc_vulkan_footprint footprint,
         astc_vulkan_quality_policy policy, astc_vulkan_scheduler_artifact & artifact,
-        std::string & error) const {
+        std::string & error, bool allow_unverified) const {
     artifact = {};
     astc_vulkan_cache_validation cache;
     if (!astc_vulkan_cache_validate(model_path, cache_path, cache, error)) return false;
@@ -193,7 +196,12 @@ bool astc_vulkan_scheduler_adapter::resolve_best_from_cache(
         candidate.normalization = source.normalization;
         candidate.evidence = source.evidence;
         candidate.rate_bpw = rate_bpw(source.storage);
-        if (!astc_vulkan_artifact_is_eligible(candidate, true, true)) continue;
+        const bool metadata_eligible = candidate.tensor != nullptr &&
+            std::isfinite(candidate.evidence.loss_delta) &&
+            std::isfinite(candidate.evidence.logits_relative_mse) &&
+            std::isfinite(candidate.rate_bpw) && candidate.rate_bpw > 0.0;
+        if (allow_unverified ? !metadata_eligible :
+                               !astc_vulkan_artifact_is_eligible(candidate, true, true)) continue;
         if (best == nullptr || astc_vulkan_artifact_policy_precedes(candidate, best_candidate, policy)) {
             best = &source;
             best_candidate = std::move(candidate);
@@ -262,10 +270,11 @@ bool astc_vulkan_scheduler_adapter::prepare(
 bool astc_vulkan_scheduler_adapter::prepare_from_cache(
         const std::string & model_path, const std::string & cache_path,
         const std::string & tensor_name, astc_vulkan_footprint footprint,
-        std::string & error, bool allow_experimental) {
+        std::string & error, bool allow_experimental, bool allow_unverified) {
     reset();
     astc_vulkan_scheduler_artifact artifact;
-    if (!resolve_from_cache(model_path, cache_path, tensor_name, footprint, artifact, error)) {
+    if (!resolve_from_cache(model_path, cache_path, tensor_name, footprint, artifact, error,
+                            allow_unverified)) {
         binding_.status = astc_vulkan_binding_status::kFallback;
         binding_.fallback_reason = error.empty() ? "ASTC cache is unavailable" : error;
         error = binding_.fallback_reason;
@@ -287,7 +296,7 @@ bool astc_vulkan_scheduler_adapter::prepare_from_cache(
         return true;
     }
     if (artifact.kind == astc_vulkan_scheduler_artifact_kind::kD2 &&
-        !is_explicit_d2_candidate(artifact, allow_experimental)) {
+        !is_explicit_d2_candidate(artifact, allow_experimental, allow_unverified)) {
         binding_.record = artifact.record;
         binding_.status = astc_vulkan_binding_status::kFallback;
         binding_.fallback_reason =

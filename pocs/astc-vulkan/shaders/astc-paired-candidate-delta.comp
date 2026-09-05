@@ -45,6 +45,7 @@ layout(push_constant) uniform PushConstants {
     uint block_width;
     uint block_height;
     float reconstruction_scale;
+    uint logical_rows_per_physical;
 } params;
 
 shared float partial[16];
@@ -65,7 +66,7 @@ vec4 candidate_texel(uvec4 record, uint column, uint texture_row) {
 void main() {
     const uint candidate_id = gl_WorkGroupID.x;
     const uint lane = gl_LocalInvocationID.x;
-    const uint logical_rows_per_block = params.block_height * 2u;
+    const uint logical_rows_per_block = params.block_height * params.logical_rows_per_physical;
     // Flatten sample × local-row into Y. Besides matching the compact output
     // layout, this avoids relying on a non-trivial Z workgroup count in older
     // Vulkan compiler stacks.

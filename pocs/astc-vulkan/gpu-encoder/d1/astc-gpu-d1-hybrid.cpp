@@ -45,6 +45,62 @@ std::vector<double> make_delta(
 
 } // namespace
 
+bool astc_gpu_d1_finish_candidate_bank(
+    const astc_gpu_d1_candidate_bank & bank,
+    const std::vector<astc_gpu_encoder_proposal> & proposals,
+    const astc_gpu_d1_hybrid_options & options,
+    astc_gpu_d1_hybrid_result & result,
+    std::string & error) {
+    result = {};
+    if (options.max_finish_candidates_per_logical == 0) {
+        error = "invalid D1 hybrid candidate budgets";
+        return false;
+    }
+    if (!astc_gpu_d1_select_candidate_bank_proposals(
+            bank, proposals, options.max_finish_candidates_per_logical,
+            result.retained_proposals)) {
+        error = "D1 hybrid proposal retention failed";
+        return false;
+    }
+    astc_gpu_encoder_request request;
+    if (!astc_gpu_d1_candidate_bank_request(
+            bank, static_cast<uint32_t>(bank.candidate_blocks.size()), request)) {
+        error = "D1 hybrid request construction failed";
+        return false;
+    }
+    if (!astc_gpu_encoder_finish(
+            request, result.retained_proposals, options.astcenc_quality,
+            result.finished_blocks, error)) {
+        return false;
+    }
+    return true;
+}
+
+bool astc_gpu_d1_finish_and_rank(
+    const astc_gpu_d1_candidate_bank & bank,
+    const std::vector<astc_gpu_encoder_proposal> & proposals,
+    const astc_gpu_d1_activation_rank_request & rank_request,
+    const astc_gpu_d1_hybrid_options & options,
+    astc_gpu_d1_hybrid_result & result,
+    std::string & error) {
+    if (options.max_ranked_candidates_per_logical == 0 ||
+        options.max_ranked_candidates_per_logical >
+            options.max_finish_candidates_per_logical) {
+        error = "invalid D1 hybrid ranking budget";
+        return false;
+    }
+    if (!astc_gpu_d1_finish_candidate_bank(
+            bank, proposals, options, result, error)) return false;
+    if (!astc_gpu_d1_rank_finished_candidates_activation(
+            bank, result.finished_blocks, rank_request,
+            options.max_ranked_candidates_per_logical,
+            result.ranked_blocks, result.activation_scores)) {
+        error = "D1 hybrid exact activation ranking failed";
+        return false;
+    }
+    return true;
+}
+
 bool astc_gpu_d1_make_selector_candidates(
     const astc_gpu_d1_candidate_bank & bank,
     const std::vector<astc_gpu_encoder_finished_block> & finished,

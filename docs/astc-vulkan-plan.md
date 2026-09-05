@@ -2732,9 +2732,10 @@ can enter the scheduler.
 ### Offline ranking backend selection
 
 The packer has an explicit stage plan rather than a hard-coded CPU/GPU choice.
-`candidate_encode` is always CPU astcenc; `delta_score`, `objective`,
-`proposal_gain`, and `conflict_commit` may be CPU or GPU. The initial default
-is the all-CPU plan. A GPU plan keeps decoded deltas and residuals device-side;
+`candidate_encode` is always CPU astcenc; the currently validated GPU plan uses
+GPU `delta_score` and `proposal_gain`, while `objective` and ordered
+`conflict_commit` remain CPU stages. The initial default
+is the all-CPU plan, with a preflight-selected default helper available. A GPU plan keeps decoded deltas and residuals device-side;
 it is invalid to request GPU proposal/commit while producing deltas on CPU,
 because that would disguise per-iteration host transfers as acceleration.
 
@@ -3695,3 +3696,23 @@ footprint-aligned cache reader/band dispatcher; resident and streamed D2-LA
 the CPU path unchanged while providing a model-level GPU gate. Production
 scheduler enablement remains a separate policy decision until D1/D2 artifact
 coverage and device timing are complete.
+
+## Three-hundred-and-sixty-eighth sweep: resident YAQA backend
+
+The reusable `astc_vulkan_yaqa_session` is now implemented as an offline-only
+Vulkan library. It keeps trace buffers, pipelines, descriptor sets, command
+buffer, and fence alive for one tensor shape. `upload_traces()` is called once;
+each subsequent candidate batch uploads only decoded error matrices and reads
+back one score per candidate. A two-batch device smoke verifies exact CPU trace
+equivalence and the focused plus full ASTC test suites remain green.
+
+This changes the performance boundary, not the quality contract: candidate
+construction/ASTC encoding remains CPU-side, while YAQA's two-sided trace
+reduction can run on GPU after an explicit preflight. Direct fusion with the
+existing D2 ranking session is deliberately not enabled yet. That session's
+delta buffer contains activation-space output deltas, whereas YAQA requires
+decoded weight-error matrices. A correct future fusion therefore needs a
+representation-specific decoded-error builder (or resident decoded candidate
+errors), followed by the same YAQA session. Global conflict commit and
+validation-prefix selection remain ordered host decisions until that contract
+is implemented and model-gated.

@@ -1,6 +1,8 @@
 #include "astc-vulkan-cache.h"
 #include "astc-vulkan-paired-layout.h"
 
+#include "gguf.h"
+
 #include <array>
 #include <cassert>
 #include <cstdio>
@@ -16,6 +18,18 @@ void write_bytes(const std::string & path, const std::vector<uint8_t> & bytes) {
     std::ofstream file(path, std::ios::binary);
     file.write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
     assert(file.good());
+}
+
+void write_schema_fixture_gguf(const std::string & path, const char * name) {
+    gguf_context * context = gguf_init_empty();
+    assert(context != nullptr);
+    gguf_set_val_str(context, "general.architecture", "astc-cache-fixture");
+    // Deliberately differs between the source and runtime fixture. It must not
+    // affect structural compatibility, but it does give each GGUF a distinct
+    // file hash.
+    gguf_set_val_str(context, "general.name", name);
+    assert(gguf_write_to_file(context, path.c_str(), false));
+    gguf_free(context);
 }
 
 } // namespace
@@ -118,6 +132,29 @@ int main() {
     assert(validation.manifest.version == 4 && validation.manifest.artifacts.size() == 2);
     assert(validation.has_paired_d2 && validation.has_row_scales);
 
+    // A cache may record a structurally compatible quantized runtime base
+    // without weakening the strict source-model validation contract. The
+    // binding starts with no model/Vulkan quality evidence.
+    const fs::path admit_source("astc-vulkan-cache-admit-source.gguf");
+    const fs::path admit_runtime("astc-vulkan-cache-admit-runtime.gguf");
+    const fs::path admit_root("astc-vulkan-cache-admit-test-dir");
+    fs::remove_all(admit_root, ignored);
+    fs::remove(admit_source, ignored);
+    fs::remove(admit_runtime, ignored);
+    write_schema_fixture_gguf(admit_source.string(), "source-f16");
+    write_schema_fixture_gguf(admit_runtime.string(), "runtime-q4");
+    assert(astc_vulkan_cache_create(
+        admit_source.string(), manifest_path.string(), payload_path.string(), layout_path.string(), {},
+        admit_root.string(), paths, error));
+    astc_vulkan_cache_runtime_base binding;
+    assert(astc_vulkan_cache_admit_runtime_base(
+        admit_source.string(), admit_runtime.string(), admit_root.string(), "q4_k_m", binding, error));
+    assert(binding.admitted && !binding.model_gate_passed && !binding.vulkan_gate_passed);
+    assert(fs::is_regular_file(fs::path(paths.compatible_bases) / (binding.runtime_sha256 + ".astcbase")));
+    // Admission is provenance only: regular runtime validation remains tied to
+    // the exact source GGUF until a future evidence-gated runtime path exists.
+    assert(!astc_vulkan_cache_validate(admit_runtime.string(), admit_root.string(), validation, error));
+
     fs::remove_all(root, ignored);
     fs::remove(model, ignored);
     fs::remove(manifest_path, ignored);
@@ -128,6 +165,9 @@ int main() {
     fs::remove(v4_payload_path, ignored);
     fs::remove(v4_layout_path, ignored);
     fs::remove(v4_scales_path, ignored);
+    fs::remove_all(admit_root, ignored);
+    fs::remove(admit_source, ignored);
+    fs::remove(admit_runtime, ignored);
     std::puts("ASTC Vulkan cache D1/D2 contract passed");
     return 0;
 }

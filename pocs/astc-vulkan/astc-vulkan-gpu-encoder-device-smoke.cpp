@@ -13,6 +13,7 @@
 #include <astcenc.h>
 
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <vector>
 
@@ -165,6 +166,164 @@ int main(int argc, char ** argv) {
         gpu_proposed_6x6[0].weight_grid_x != 6 || gpu_proposed_6x6[0].weight_grid_y != 6) return 1;
     if (!astc_gpu_encoder_verify_d1_vulkan_decode_default(
             argv[2], finished_6x6, 1, decode_mse, decode_max_abs, error)) return 1;
+
+    // Real GPU-proposer candidate-bank path for 6x6.  Four physical source
+    // candidates are proposed, but only K=2 (scalar plus the best alternative)
+    // reach the exact CPU/libastc finisher.  This is intentionally an opt-in
+    // offline smoke; it does not alter the production cache path yet.
+    std::vector<float> gauge_delta_a(weights.size());
+    std::vector<float> gauge_delta_b(weights.size());
+    std::vector<float> gauge_delta_c(weights.size());
+    for (size_t index = 0; index < weights.size(); ++index) {
+        gauge_delta_a[index] = (index & 1u) ? -0.025f : 0.025f;
+        gauge_delta_b[index] = (index % 3u == 0) ? 0.04f : -0.015f;
+        gauge_delta_c[index] = (index % 4u < 2u) ? -0.035f : 0.02f;
+    }
+    std::vector<astc_gpu_encoder_source_block> gauge_a_6x6;
+    std::vector<astc_gpu_encoder_source_block> gauge_b_6x6;
+    std::vector<astc_gpu_encoder_source_block> gauge_c_6x6;
+    astc_gpu_d1_candidate_bank bank_6x6;
+    astc_gpu_encoder_request bank_request_6x6;
+    if (!astc_gpu_d1_build_gauge_la_source_blocks(
+            astc_vulkan_footprint::k6x6, weights, gauge_delta_a, 3, 5, gauge_a_6x6) ||
+        !astc_gpu_d1_build_gauge_la_source_blocks(
+            astc_vulkan_footprint::k6x6, weights, gauge_delta_b, 3, 5, gauge_b_6x6) ||
+        !astc_gpu_d1_build_gauge_la_source_blocks(
+            astc_vulkan_footprint::k6x6, weights, gauge_delta_c, 3, 5, gauge_c_6x6) ||
+        !astc_gpu_d1_build_candidate_bank(
+            astc_vulkan_footprint::k6x6, blocks_6x6,
+            {{astc_gpu_d1_candidate_family::gauge_la, gauge_a_6x6},
+             {astc_gpu_d1_candidate_family::gauge_la, gauge_b_6x6},
+             {astc_gpu_d1_candidate_family::gauge_la, gauge_c_6x6}},
+            bank_6x6) ||
+        !astc_gpu_d1_candidate_bank_request(bank_6x6, 4, bank_request_6x6)) return 1;
+    std::vector<astc_gpu_encoder_proposal> bank_proposals_6x6;
+    if (!astc_gpu_encoder_propose_gpu_for_footprint_default(
+            argv[3], astc_vulkan_footprint::k6x6, bank_request_6x6,
+            bank_proposals_6x6, error) || bank_proposals_6x6.size() != 4) return 1;
+    astc_gpu_d1_hybrid_result bank_result_6x6;
+    if (!astc_gpu_d1_finish_candidate_bank(
+            bank_6x6, bank_proposals_6x6,
+            astc_gpu_d1_hybrid_options{2, 2, ASTCENC_PRE_FAST},
+            bank_result_6x6, error) ||
+        bank_result_6x6.retained_proposals.size() != 2 ||
+        bank_result_6x6.finished_blocks.size() != 2) return 1;
+    for (const auto & block : bank_result_6x6.finished_blocks) {
+        if (block.decoded_rgba.size() != 6 * 6 * 4) return 1;
+        for (float value : block.decoded_rgba) if (!std::isfinite(value)) return 1;
+    }
+    std::printf("GPU D1 6x6 candidate-bank: proposed=%zu retained=%zu finished=%zu K=2\n",
+                bank_proposals_6x6.size(), bank_result_6x6.retained_proposals.size(),
+                bank_result_6x6.finished_blocks.size());
+
+    // Multi-block timing gate.  The one-block smoke above verifies wiring;
+    // this bounded 48x96 fixture measures the actual batch behaviour before
+    // the bank can become the default GPU path.
+    constexpr uint32_t benchmark_rows = 48;
+    constexpr uint32_t benchmark_columns = 96;
+    std::vector<float> benchmark_weights(size_t(benchmark_rows) * benchmark_columns);
+    for (uint32_t row = 0; row < benchmark_rows; ++row) {
+        for (uint32_t column = 0; column < benchmark_columns; ++column) {
+            benchmark_weights[size_t(row) * benchmark_columns + column] =
+                0.15f + 0.70f * (static_cast<float>((row * 17u + column * 13u) % 97u) / 96.0f);
+        }
+    }
+    std::vector<astc_gpu_encoder_source_block> benchmark_scalar;
+    if (!astc_gpu_d1_build_scalar_source_blocks(
+            astc_vulkan_footprint::k6x6, benchmark_weights,
+            benchmark_rows, benchmark_columns, benchmark_scalar)) return 1;
+    const size_t benchmark_logical_blocks = benchmark_scalar.size();
+    std::vector<float> benchmark_delta_a(benchmark_weights.size());
+    std::vector<float> benchmark_delta_b(benchmark_weights.size());
+    std::vector<float> benchmark_delta_c(benchmark_weights.size());
+    for (size_t index = 0; index < benchmark_weights.size(); ++index) {
+        benchmark_delta_a[index] = (index & 1u) ? -0.02f : 0.02f;
+        benchmark_delta_b[index] = (index % 3u == 0) ? 0.03f : -0.01f;
+        benchmark_delta_c[index] = (index % 5u < 2u) ? -0.025f : 0.015f;
+    }
+    std::vector<astc_gpu_encoder_source_block> benchmark_a;
+    std::vector<astc_gpu_encoder_source_block> benchmark_b;
+    std::vector<astc_gpu_encoder_source_block> benchmark_c;
+    astc_gpu_d1_candidate_bank benchmark_bank;
+    astc_gpu_encoder_request benchmark_bank_request;
+    if (!astc_gpu_d1_build_gauge_la_source_blocks(
+            astc_vulkan_footprint::k6x6, benchmark_weights,
+            benchmark_delta_a, benchmark_rows, benchmark_columns, benchmark_a) ||
+        !astc_gpu_d1_build_gauge_la_source_blocks(
+            astc_vulkan_footprint::k6x6, benchmark_weights,
+            benchmark_delta_b, benchmark_rows, benchmark_columns, benchmark_b) ||
+        !astc_gpu_d1_build_gauge_la_source_blocks(
+            astc_vulkan_footprint::k6x6, benchmark_weights,
+            benchmark_delta_c, benchmark_rows, benchmark_columns, benchmark_c) ||
+        !astc_gpu_d1_build_candidate_bank(
+            astc_vulkan_footprint::k6x6, benchmark_scalar,
+            {{astc_gpu_d1_candidate_family::gauge_la, benchmark_a},
+             {astc_gpu_d1_candidate_family::gauge_la, benchmark_b},
+             {astc_gpu_d1_candidate_family::gauge_la, benchmark_c}},
+            benchmark_bank) ||
+        !astc_gpu_d1_candidate_bank_request(
+            benchmark_bank, 256, benchmark_bank_request)) return 1;
+    std::vector<astc_gpu_encoder_proposal> benchmark_proposals;
+    const auto proposal_begin = std::chrono::steady_clock::now();
+    if (!astc_gpu_encoder_propose_gpu_for_footprint_default(
+            argv[3], astc_vulkan_footprint::k6x6,
+            benchmark_bank_request, benchmark_proposals, error)) return 1;
+    const auto proposal_end = std::chrono::steady_clock::now();
+    if (benchmark_proposals.size() != benchmark_bank.candidate_blocks.size()) return 1;
+    astc_gpu_d1_hybrid_result benchmark_result;
+    const auto finish_begin = std::chrono::steady_clock::now();
+    if (!astc_gpu_d1_finish_candidate_bank(
+            benchmark_bank, benchmark_proposals,
+            astc_gpu_d1_hybrid_options{2, 2, ASTCENC_PRE_FAST},
+            benchmark_result, error)) return 1;
+    const auto finish_end = std::chrono::steady_clock::now();
+    if (benchmark_result.retained_proposals.size() != benchmark_logical_blocks * 2u ||
+        benchmark_result.finished_blocks.size() != benchmark_logical_blocks * 2u) return 1;
+    for (const auto & block : benchmark_result.finished_blocks) {
+        if (block.decoded_rgba.size() != 6 * 6 * 4) return 1;
+        for (float value : block.decoded_rgba) if (!std::isfinite(value)) return 1;
+    }
+    const double proposal_ms = std::chrono::duration<double, std::milli>(proposal_end - proposal_begin).count();
+    const double finish_ms = std::chrono::duration<double, std::milli>(finish_end - finish_begin).count();
+
+    astc_gpu_encoder_request benchmark_scalar_request;
+    benchmark_scalar_request.mode = astc_gpu_encode_mode::propose;
+    benchmark_scalar_request.footprint = astc_vulkan_footprint::k6x6;
+    benchmark_scalar_request.max_blocks_per_batch = 256;
+    benchmark_scalar_request.blocks = benchmark_scalar;
+    std::vector<astc_gpu_encoder_proposal> benchmark_scalar_proposals;
+    const auto scalar_proposal_begin = std::chrono::steady_clock::now();
+    if (!astc_gpu_encoder_propose_gpu_for_footprint_default(
+            argv[3], astc_vulkan_footprint::k6x6, benchmark_scalar_request,
+            benchmark_scalar_proposals, error) ||
+        benchmark_scalar_proposals.size() != benchmark_logical_blocks) return 1;
+    const auto scalar_proposal_end = std::chrono::steady_clock::now();
+    astc_gpu_d1_candidate_bank scalar_bank;
+    if (!astc_gpu_d1_build_candidate_bank(
+            astc_vulkan_footprint::k6x6, benchmark_scalar, {}, scalar_bank)) return 1;
+    astc_gpu_d1_hybrid_result scalar_result;
+    const auto scalar_finish_begin = std::chrono::steady_clock::now();
+    if (!astc_gpu_d1_finish_candidate_bank(
+            scalar_bank, benchmark_scalar_proposals,
+            astc_gpu_d1_hybrid_options{1, 1, ASTCENC_PRE_FAST},
+            scalar_result, error) ||
+        scalar_result.finished_blocks.size() != benchmark_logical_blocks) return 1;
+    const auto scalar_finish_end = std::chrono::steady_clock::now();
+    const double scalar_proposal_ms = std::chrono::duration<double, std::milli>(
+        scalar_proposal_end - scalar_proposal_begin).count();
+    const double scalar_finish_ms = std::chrono::duration<double, std::milli>(
+        scalar_finish_end - scalar_finish_begin).count();
+    std::printf("GPU D1 6x6 bank benchmark: logical=%zu proposed=%zu retained=%zu "
+                "proposal_ms=%.3f finish_ms=%.3f retain_ratio=%.3f\n",
+                benchmark_logical_blocks, benchmark_proposals.size(),
+                benchmark_result.finished_blocks.size(), proposal_ms, finish_ms,
+                static_cast<double>(benchmark_result.finished_blocks.size()) /
+                    static_cast<double>(benchmark_proposals.size()));
+    std::printf("GPU D1 6x6 scalar baseline: logical=%zu proposed=%zu finished=%zu "
+                "proposal_ms=%.3f finish_ms=%.3f total_ms=%.3f\n",
+                benchmark_logical_blocks, benchmark_scalar_proposals.size(),
+                scalar_result.finished_blocks.size(), scalar_proposal_ms, scalar_finish_ms,
+                scalar_proposal_ms + scalar_finish_ms);
     std::vector<astc_gpu_encoder_source_block> blocks_8x6;
     if (!astc_gpu_d1_build_scalar_source_blocks(astc_vulkan_footprint::k8x6,
                                                   weights, 3, 5, blocks_8x6)) return 1;

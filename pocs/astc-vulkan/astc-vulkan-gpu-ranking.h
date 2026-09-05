@@ -42,6 +42,9 @@ struct astc_vulkan_gpu_ranking_atlas {
     uint32_t atlas_blocks_y = 0;
     uint32_t width = 0;
     uint32_t height = 0;
+    // D2 uses paired-row semantics. D1 ranking uses the same physical atlas
+    // transport but a one-row-per-texel semantic delta shader.
+    bool d1_scalar = false;
 
     // ASTC blocks in normal raster order, exactly 16 bytes per atlas block.
     std::vector<uint8_t> payload;

@@ -52,13 +52,16 @@ bool select_device(VkInstance instance, VkPhysicalDevice & physical, uint32_t & 
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc != 3) {
-        std::fprintf(stderr, "usage: %s <paired-candidate-delta.spv> <paired-proposal-gain.spv>\n", argv[0]);
+    if (argc < 3 || argc > 5) {
+        std::fprintf(stderr, "usage: %s <paired-candidate-delta.spv> <paired-proposal-gain.spv> [d1-candidate-delta.spv] [local-select.spv]\n", argv[0]);
         return 2;
     }
     const auto delta_spirv = read_spirv(argv[1]);
     const auto gain_spirv = read_spirv(argv[2]);
-    if (delta_spirv.empty() || gain_spirv.empty()) {
+    const auto d1_delta_spirv = argc >= 4 ? read_spirv(argv[3]) : std::vector<uint32_t>{};
+    const auto local_select_spirv = argc == 5 ? read_spirv(argv[4]) : std::vector<uint32_t>{};
+    if (delta_spirv.empty() || gain_spirv.empty() || (argc >= 4 && d1_delta_spirv.empty()) ||
+        (argc == 5 && local_select_spirv.empty())) {
         std::fprintf(stderr, "GPU ranking smoke skipped: missing SPIR-V\n");
         return 77;
     }
@@ -90,7 +93,7 @@ int main(int argc, char ** argv) {
     const bool packed = astc_vulkan_build_gpu_ranking_atlas(astc_vulkan_footprint::k8x5, 2, pools, atlas);
     astc_vulkan_gpu_ranking_session session;
     const bool initialized = packed && session.init(physical, device, queue, family, atlas, 1, 8, 20, 2,
-        delta_spirv, gain_spirv, error);
+        delta_spirv, gain_spirv, local_select_spirv, error);
     const std::vector<float> activations{1,2,3,4,5,6,7,8, 0.5f,0.5f,0.5f,0.5f,0.5f,0.5f,0.5f,0.5f};
     std::vector<float> residuals(40);
     for (uint32_t sample = 0; sample < 2; ++sample) for (uint32_t row = 0; row < 20; ++row) {
@@ -139,6 +142,25 @@ int main(int argc, char ** argv) {
             return 1;
         }
     }
+    if (!local_select_spirv.empty()) {
+        std::vector<uint32_t> selected;
+        if (!session.upload_inputs(activations, residuals, error)) {
+            std::fprintf(stderr, "GPU resident-input upload failed: %s\n", error.c_str());
+            return 1;
+        }
+        if (!session.run_proposal_gains_and_local_selection(
+                activations, residuals, 1.0f, selected, error) || selected.size() != 2) {
+            std::fprintf(stderr, "GPU local selection smoke failed: %s\n", error.c_str());
+            return 1;
+        }
+        const uint32_t expected_selected_0 = gains[1] > gains[0] ? 1u : 0u;
+        const uint32_t expected_selected_1 = gains[3] > gains[2] ? 3u : 2u;
+        if (selected[0] != expected_selected_0 || selected[1] != expected_selected_1) {
+            std::fprintf(stderr, "GPU local selection mismatch: [%u,%u] != [%u,%u]\n",
+                selected[0], selected[1], expected_selected_0, expected_selected_1);
+            return 1;
+        }
+    }
     astc_vulkan_gpu_ranking_atlas updated_atlas = atlas;
     updated_atlas.payload[8] ^= 0x10u;
     if (!session.update_batch(updated_atlas, error)) {
@@ -173,7 +195,7 @@ int main(int argc, char ** argv) {
         astc_vulkan_gpu_ranking_atlas secondary;
         if (!astc_vulkan_build_gpu_ranking_atlas(footprint, 2, pools, secondary) ||
             !session.init(physical, device, queue, family, secondary, 1, width, 20, 2,
-                          delta_spirv, gain_spirv, error)) {
+                          delta_spirv, gain_spirv, local_select_spirv, error)) {
             std::fprintf(stderr, "GPU D2 %s init failed: %s\n", name, error.c_str());
             return false;
         }
@@ -220,6 +242,111 @@ int main(int argc, char ** argv) {
         !run_secondary(astc_vulkan_footprint::k10x5, VK_FORMAT_ASTC_10x5_UNORM_BLOCK, 10, "10x5")) {
         return 1;
     }
+
+    // D1 uses the same atlas/session resources but one logical output row per
+    // physical ASTC row. Exercise all three low/mid-rate scalar footprints.
+    const auto run_d1 = [&](astc_vulkan_footprint footprint, VkFormat format,
+                            uint32_t width, uint32_t height, const char * name) {
+        if (argc != 4 || !astc_vulkan_supports_sampled_transfer_extent(
+                physical, format, width * 2, height * 2)) {
+            std::printf("GPU D1 %s unsupported or shader not supplied\n", name);
+            return true;
+        }
+        const auto neutral = astc_vulkan_gpu_d1_ranking_candidate{
+            constant_astc({0x3000, 0x3000, 0x3000, 0xffff})};
+        const auto alternate = astc_vulkan_gpu_d1_ranking_candidate{
+            constant_astc({0x6800, 0x6800, 0x6800, 0xffff})};
+        const std::vector<std::vector<astc_vulkan_gpu_d1_ranking_candidate>> d1_pools{
+            {neutral, alternate}, {neutral, alternate}};
+        astc_vulkan_gpu_d1_ranking_atlas d1_atlas;
+        if (!astc_vulkan_build_gpu_d1_ranking_atlas(
+                footprint, astc_vulkan_d1_semantic_decoder::scalar, 2,
+                d1_pools, d1_atlas)) {
+            std::fprintf(stderr, "GPU D1 %s atlas build failed\n", name);
+            return false;
+        }
+        session.reset();
+        if (!session.init_d1(physical, device, queue, family, d1_atlas, 1,
+                             width, height * 2, 2, d1_delta_spirv, gain_spirv,
+                             local_select_spirv, error)) {
+            std::fprintf(stderr, "GPU D1 %s init failed: %s\n", name, error.c_str());
+            return false;
+        }
+        std::vector<float> d1_activations(width * 2, 1.0f);
+        std::vector<float> d1_residuals(height * 2 * 2, 0.25f);
+        std::vector<float> d1_deltas, d1_gains;
+        if (!session.run(d1_activations, 1.0f, d1_deltas, error) ||
+            !session.run_proposal_gains(d1_activations, d1_residuals, 1.0f, d1_gains, error) ||
+            d1_deltas.size() != 4u * 2u * height || d1_gains.size() != 4) {
+            std::fprintf(stderr, "GPU D1 %s run failed: %s\n", name, error.c_str());
+            return false;
+        }
+        for (float value : d1_deltas) if (!std::isfinite(value)) return false;
+        // Candidate zero is the baseline and must have zero delta. The
+        // alternate constant block must produce a non-zero semantic delta.
+        for (uint32_t index = 0; index < 2u * height; ++index) {
+            if (std::fabs(d1_deltas[index]) > 2e-3f) {
+                std::fprintf(stderr, "GPU D1 %s baseline delta is non-zero\n", name);
+                return false;
+            }
+        }
+        bool changed = false;
+        for (size_t index = 2u * height; index < 4u * height; ++index)
+            changed |= std::fabs(d1_deltas[index]) > 1e-3f;
+        if (!changed) {
+            std::fprintf(stderr, "GPU D1 %s alternate delta is zero\n", name);
+            return false;
+        }
+        // Exact CPU oracle: all activations are one and every residual is
+        // 0.25, so a constant scalar block has delta=(q1-q0)*width.
+        const float delta_q = (static_cast<float>(0x6800u) - static_cast<float>(0x3000u)) / 65535.0f;
+        const float expected_delta = delta_q * static_cast<float>(width);
+        const float expected_gain = static_cast<float>(2 * height) *
+            expected_delta * (0.5f - expected_delta);
+        for (uint32_t candidate = 0; candidate < 4; ++candidate) {
+            const bool alternate_candidate = candidate == 1 || candidate == 3;
+            for (uint32_t sample = 0; sample < 2; ++sample) {
+                for (uint32_t row = 0; row < height; ++row) {
+                    const float expected = alternate_candidate ? expected_delta : 0.0f;
+                    const float actual = d1_deltas[(candidate * 2 + sample) * height + row];
+                    if (std::fabs(actual - expected) > 2e-3f) {
+                        std::fprintf(stderr,
+                            "GPU D1 %s oracle delta mismatch c=%u s=%u row=%u: %.6f != %.6f\n",
+                            name, candidate, sample, row, actual, expected);
+                        return false;
+                    }
+                }
+            }
+            const float expected_candidate_gain = alternate_candidate ? expected_gain : 0.0f;
+            if (std::fabs(d1_gains[candidate] - expected_candidate_gain) > 2e-3f) {
+                std::fprintf(stderr,
+                    "GPU D1 %s oracle gain mismatch c=%u: %.6f != %.6f\n",
+                    name, candidate, d1_gains[candidate], expected_candidate_gain);
+                return false;
+            }
+        }
+        if (!local_select_spirv.empty()) {
+            std::vector<uint32_t> selected;
+            if (!session.upload_inputs(d1_activations, d1_residuals, error)) {
+                std::fprintf(stderr, "GPU D1 %s resident-input upload failed\n", name);
+                return false;
+            }
+            const uint32_t expected_selected_0 = d1_gains[1] > d1_gains[0] ? 1u : 0u;
+            const uint32_t expected_selected_1 = d1_gains[3] > d1_gains[2] ? 3u : 2u;
+            if (!session.run_proposal_gains_and_local_selection(
+                    d1_activations, d1_residuals, 1.0f, selected, error) || selected.size() != 2 ||
+                selected[0] != expected_selected_0 || selected[1] != expected_selected_1) {
+                std::fprintf(stderr, "GPU D1 %s local selection mismatch\n", name);
+                return false;
+            }
+        }
+        std::printf("GPU D1 %s semantic ranking passed (deltas=%zu gains=%zu)\n",
+                    name, d1_deltas.size(), d1_gains.size());
+        return true;
+    };
+    if (!run_d1(astc_vulkan_footprint::k4x4, VK_FORMAT_ASTC_4x4_UNORM_BLOCK, 4, 4, "4x4") ||
+        !run_d1(astc_vulkan_footprint::k5x5, VK_FORMAT_ASTC_5x5_UNORM_BLOCK, 5, 5, "5x5") ||
+        !run_d1(astc_vulkan_footprint::k6x6, VK_FORMAT_ASTC_6x6_UNORM_BLOCK, 6, 6, "6x6")) return 1;
     session.reset();
     vkDeviceWaitIdle(device);
     vkDestroyDevice(device, nullptr);

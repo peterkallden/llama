@@ -187,7 +187,7 @@ add_library(astc-vulkan-cache STATIC
 target_include_directories(astc-vulkan-cache PUBLIC
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_link_libraries(astc-vulkan-cache PUBLIC
-    astc-vulkan-driver astc-vulkan-provenance)
+    astc-vulkan-driver astc-vulkan-provenance ggml-base)
 target_compile_features(astc-vulkan-cache PUBLIC cxx_std_17)
 
 # Shared physical row-band/range contract for D1 and D2. It is deliberately
@@ -322,6 +322,16 @@ if (TARGET Vulkan::Vulkan)
         astc-vulkan-resource astc-vulkan-algorithms Vulkan::Vulkan)
     target_compile_features(astc-vulkan-gpu-ranking-dispatch PUBLIC cxx_std_17)
 
+    # Reusable two-stage YAQA scorer. Trace buffers and Vulkan pipelines stay
+    # resident across candidate batches; this is offline-only and does not
+    # change the runtime scheduler or ASTC cache ABI.
+    add_library(astc-vulkan-yaqa-dispatch STATIC
+        astc-vulkan-yaqa-dispatch.cpp)
+    target_include_directories(astc-vulkan-yaqa-dispatch PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-yaqa-dispatch PUBLIC Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-yaqa-dispatch PUBLIC cxx_std_17)
+
     add_library(astc-vulkan-d1-prescreen-dispatch STATIC
         astc-vulkan-d1-prescreen-dispatch.cpp)
     target_include_directories(astc-vulkan-d1-prescreen-dispatch PUBLIC
@@ -454,6 +464,14 @@ if (TARGET Vulkan::Vulkan)
         astc-vulkan-algorithms Vulkan::Vulkan)
     target_compile_features(astc-vulkan-yaqa-batch-device-smoke PRIVATE cxx_std_17)
 
+    add_executable(astc-vulkan-yaqa-session-device-smoke
+        astc-vulkan-yaqa-session-device-smoke.cpp)
+    target_include_directories(astc-vulkan-yaqa-session-device-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-yaqa-session-device-smoke PRIVATE
+        astc-vulkan-yaqa-dispatch astc-vulkan-algorithms Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-yaqa-session-device-smoke PRIVATE cxx_std_17)
+
     add_executable(astc-vulkan-d1-prescreen-device-smoke
         astc-vulkan-d1-prescreen-device-smoke.cpp)
     target_include_directories(astc-vulkan-d1-prescreen-device-smoke PRIVATE
@@ -497,6 +515,10 @@ if (TARGET astcenc::astcenc-static)
             astcenc::astcenc-static)
     endif()
     target_compile_features(astc-vulkan-gpu-encoder-finisher PUBLIC cxx_std_17)
+    if (TARGET test-astc-vulkan-gpu-encoder)
+        target_link_libraries(test-astc-vulkan-gpu-encoder PRIVATE
+            astc-vulkan-gpu-encoder-finisher)
+    endif()
 
     # Representation-specific bridge above the shared physical proposer and
     # finisher. Kept separate so the base GPU-encoder contract stays free of
@@ -857,9 +879,40 @@ if (TARGET ggml-base)
         target_compile_features(astc-vulkan-model-replay-smoke PRIVATE cxx_std_17)
         if (TARGET astc-vulkan-scheduler-adapter)
             target_link_libraries(astc-vulkan-model-replay-smoke PRIVATE
-                astc-vulkan-scheduler-adapter)
+                astc-vulkan-scheduler-adapter astc-vulkan-stream-loader)
             target_compile_definitions(astc-vulkan-model-replay-smoke PRIVATE
                 ASTC_VULKAN_MODEL_REPLAY_GPU=1)
+            if (TARGET astcenc::astcenc-static)
+                target_link_libraries(astc-vulkan-model-replay-smoke PRIVATE
+                    astcenc::astcenc-static)
+            endif()
+        endif()
+
+        # Public, portable replay entry point.  It intentionally shares the
+        # proven replay implementation with the smoke target; the latter is
+        # retained for regression fixtures and historical scripts.
+        add_executable(llama-astc-replay
+            astc-vulkan-model-replay-smoke.cpp
+            astc-vulkan-input.cpp
+            astc-vulkan-format.cpp
+            astc-vulkan-paired.cpp
+            astc-vulkan-paired-layout.cpp)
+        target_include_directories(llama-astc-replay PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/ggml/include
+            ${CMAKE_SOURCE_DIR}/src)
+        target_link_libraries(llama-astc-replay PRIVATE
+            llama-common llama ggml-base ${CMAKE_THREAD_LIBS_INIT})
+        target_compile_features(llama-astc-replay PRIVATE cxx_std_17)
+        if (TARGET astc-vulkan-scheduler-adapter)
+            target_link_libraries(llama-astc-replay PRIVATE
+                astc-vulkan-scheduler-adapter astc-vulkan-stream-loader)
+            target_compile_definitions(llama-astc-replay PRIVATE
+                ASTC_VULKAN_MODEL_REPLAY_GPU=1)
+            if (TARGET astcenc::astcenc-static)
+                target_link_libraries(llama-astc-replay PRIVATE
+                    astcenc::astcenc-static)
+            endif()
         endif()
 
         add_executable(astc-vulkan-yaqa-replay-smoke
@@ -896,6 +949,10 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-candidate-delta.comp.spv)
     set(ASTC_VULKAN_PAIRED_PROPOSAL_GAIN_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-proposal-gain.comp.spv)
+    set(ASTC_VULKAN_D1_CANDIDATE_DELTA_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-d1-candidate-delta.comp.spv)
+    set(ASTC_VULKAN_LOCAL_SELECT_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-local-select.comp.spv)
     set(ASTC_VULKAN_YAQA_TRACE_SCORE_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/yaqa-trace-score.comp.spv)
     set(ASTC_VULKAN_YAQA_TRACE_PARTIAL_SHADER_OUTPUT
@@ -987,6 +1044,28 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling experimental paired-D2 GPU proposal-gain shader")
     add_custom_target(astc-vulkan-paired-proposal-gain-shader
         DEPENDS ${ASTC_VULKAN_PAIRED_PROPOSAL_GAIN_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_D1_CANDIDATE_DELTA_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-d1-candidate-delta.comp
+            -o ${ASTC_VULKAN_D1_CANDIDATE_DELTA_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-d1-candidate-delta.comp
+        COMMENT "Compiling experimental D1 GPU candidate-delta shader")
+    add_custom_target(astc-vulkan-d1-candidate-delta-shader
+        DEPENDS ${ASTC_VULKAN_D1_CANDIDATE_DELTA_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_LOCAL_SELECT_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-local-select.comp
+            -o ${ASTC_VULKAN_LOCAL_SELECT_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-local-select.comp
+        COMMENT "Compiling experimental GPU local-selection shader")
+    add_custom_target(astc-vulkan-local-select-shader
+        DEPENDS ${ASTC_VULKAN_LOCAL_SELECT_SHADER_OUTPUT})
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_YAQA_TRACE_SCORE_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -1196,17 +1275,21 @@ if (ASTC_VULKAN_GLSLC)
 
     # The executable is always built on a Vulkan system, but its D2 8x5/10x5
     # pipeline test stays opt-in. It passes on the current Intel/Mesa smoke
-    # target, but CPU scoring remains the default until the device path also
-    # reproduces selector commit order and validation-prefix replay.
+    # target. The validated policy may prefer GPU delta/gain stages after
+    # preflight; selector commit and validation-prefix replay remain on CPU.
     if (ASTC_VULKAN_GLSLC AND GGML_VK_ASTC_EXPERIMENTAL_GPU_RANKING_DEVICE_SMOKE AND
         TARGET astc-vulkan-gpu-ranking-device-smoke)
         add_dependencies(astc-vulkan-gpu-ranking-device-smoke
             astc-vulkan-paired-candidate-delta-shader
-            astc-vulkan-paired-proposal-gain-shader)
+            astc-vulkan-paired-proposal-gain-shader
+            astc-vulkan-d1-candidate-delta-shader
+            astc-vulkan-local-select-shader)
         add_test(NAME astc-vulkan-gpu-ranking-device-smoke
             COMMAND astc-vulkan-gpu-ranking-device-smoke
                 ${ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT}
-                ${ASTC_VULKAN_PAIRED_PROPOSAL_GAIN_SHADER_OUTPUT})
+                ${ASTC_VULKAN_PAIRED_PROPOSAL_GAIN_SHADER_OUTPUT}
+                ${ASTC_VULKAN_D1_CANDIDATE_DELTA_SHADER_OUTPUT}
+                ${ASTC_VULKAN_LOCAL_SELECT_SHADER_OUTPUT})
         set_property(TEST astc-vulkan-gpu-ranking-device-smoke PROPERTY LABELS astc)
         set_property(TEST astc-vulkan-gpu-ranking-device-smoke PROPERTY SKIP_RETURN_CODE 77)
     endif()
@@ -1230,6 +1313,17 @@ if (ASTC_VULKAN_GLSLC)
                 ${ASTC_VULKAN_YAQA_TRACE_REDUCE_SHADER_OUTPUT})
         set_property(TEST astc-vulkan-yaqa-batch-device-smoke PROPERTY LABELS astc)
         set_property(TEST astc-vulkan-yaqa-batch-device-smoke PROPERTY SKIP_RETURN_CODE 77)
+    endif()
+    if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-yaqa-session-device-smoke)
+        add_dependencies(astc-vulkan-yaqa-session-device-smoke
+            astc-vulkan-yaqa-trace-partial-shader
+            astc-vulkan-yaqa-trace-reduce-shader)
+        add_test(NAME astc-vulkan-yaqa-session-device-smoke
+            COMMAND astc-vulkan-yaqa-session-device-smoke
+                ${ASTC_VULKAN_YAQA_TRACE_PARTIAL_SHADER_OUTPUT}
+                ${ASTC_VULKAN_YAQA_TRACE_REDUCE_SHADER_OUTPUT})
+        set_property(TEST astc-vulkan-yaqa-session-device-smoke PROPERTY LABELS astc)
+        set_property(TEST astc-vulkan-yaqa-session-device-smoke PROPERTY SKIP_RETURN_CODE 77)
     endif()
     if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-d1-prescreen-device-smoke)
         add_dependencies(astc-vulkan-d1-prescreen-device-smoke astc-vulkan-d1-prescreen-shader)

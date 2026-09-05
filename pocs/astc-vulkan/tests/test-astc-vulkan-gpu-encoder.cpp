@@ -94,6 +94,22 @@ int main() {
     }
     const astc_gpu_d1_activation_rank_request rank_request{5, 3, 2,
         {1, 1, 1, 1, 1}};
+    astc_gpu_d1_hybrid_result hybrid_result;
+    std::string hybrid_error;
+    require(astc_gpu_d1_finish_and_rank(
+            bank, bank_proposals, rank_request,
+            astc_gpu_d1_hybrid_options{2, 2, ASTCENC_PRE_FAST},
+            hybrid_result, hybrid_error));
+    require(hybrid_result.retained_proposals.size() == selected_pair.size());
+    require(hybrid_result.finished_blocks.size() == finished.size());
+    require(hybrid_result.ranked_blocks.size() == finished.size());
+    require(hybrid_result.activation_scores.size() == finished.size());
+    astc_gpu_d1_hybrid_result bank_only_result;
+    require(astc_gpu_d1_finish_candidate_bank(
+        bank, bank_proposals, astc_gpu_d1_hybrid_options{2, 2, ASTCENC_PRE_FAST},
+        bank_only_result, hybrid_error));
+    require(bank_only_result.retained_proposals.size() == 4);
+    require(bank_only_result.finished_blocks.size() == 4);
     std::vector<astc_gpu_encoder_finished_block> activation_selected;
     std::vector<astc_gpu_d1_finished_candidate_score> activation_scores;
     require(astc_gpu_d1_rank_finished_candidates_activation(

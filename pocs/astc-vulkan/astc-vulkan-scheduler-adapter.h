@@ -48,23 +48,27 @@ public:
     // artifact. Standard D1 is available by default. Evidence-approved D2_6x5
     // or D2_8x5 L+A requires
     // allow_experimental=true plus v4 model/Vulkan evidence. A cache miss is a
-    // normal fallback condition, never a partial binding.
+    // normal fallback condition, never a partial binding. allow_unverified is
+    // reserved for explicit offline/research replay and must never be enabled
+    // by the production scheduler.
     bool prepare_from_cache(const std::string & model_path, const std::string & cache_path,
                             const std::string & tensor_name, astc_vulkan_footprint footprint,
-                            std::string & error, bool allow_experimental = false);
+                            std::string & error, bool allow_experimental = false,
+                            bool allow_unverified = false);
     // Reads one already-created cache artifact. This is the scheduler's only
     // artifact discovery API; it intentionally never invokes an encoder. D1
     // and D2 share validation, but D2 additionally owns a packed layout map.
     bool resolve_from_cache(const std::string & model_path, const std::string & cache_path,
                             const std::string & tensor_name, astc_vulkan_footprint footprint,
-                            astc_vulkan_scheduler_artifact & artifact, std::string & error) const;
+                            astc_vulkan_scheduler_artifact & artifact, std::string & error,
+                            bool allow_unverified = false) const;
     // v4-only evidence-aware lookup. The policy ranks pre-validated artifacts
     // for a tensor; it never derives a representation at runtime.
     bool resolve_best_from_cache(const std::string & model_path, const std::string & cache_path,
                                  const std::string & tensor_name, astc_vulkan_footprint footprint,
                                  astc_vulkan_quality_policy policy,
                                  astc_vulkan_scheduler_artifact & artifact,
-                                 std::string & error) const;
+                                 std::string & error, bool allow_unverified = false) const;
     bool run(const std::vector<uint32_t> & spirv, const std::vector<float> & activations,
              std::vector<float> & output, std::string & error);
     bool run_streamed(uint64_t max_resident_payload_bytes,

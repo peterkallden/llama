@@ -1,0 +1,73 @@
+#version 450
+
+// D1 scalar candidate delta pass. CPU astcenc has already produced legal
+// payloads; texelFetch invokes the fixed-function ASTC decoder. The semantic
+// value is the luminance lane (RGB average), one logical output row per
+// physical ASTC row. Proposal-gain reduction is shared with D2.
+layout(local_size_x = 16) in;
+
+layout(set = 0, binding = 0) uniform sampler2D candidate_atlas;
+layout(std430, set = 0, binding = 1) readonly buffer CandidateRecords { uvec4 records[]; } candidate_records;
+layout(std430, set = 0, binding = 2) readonly buffer BaselineRecords { uint baseline_record[]; } baseline_records;
+layout(std430, set = 0, binding = 3) readonly buffer Activations { float values[]; } activations;
+layout(std430, set = 0, binding = 4) buffer CandidateDeltas { float values[]; } candidate_deltas;
+
+layout(push_constant) uniform PushConstants {
+    uint candidate_count;
+    uint calibration_samples;
+    uint tensor_width;
+    uint tensor_logical_height;
+    uint source_blocks_x;
+    uint block_width;
+    uint block_height;
+    float reconstruction_scale;
+    uint logical_rows_per_physical;
+} params;
+
+shared float partial[16];
+
+float d1_weight(vec4 texel) {
+    return (texel.r + texel.g + texel.b) / 3.0;
+}
+
+vec4 candidate_texel(uvec4 record, uint column, uint texture_row) {
+    return texelFetch(candidate_atlas, ivec2(
+        record.x * params.block_width + column,
+        record.y * params.block_height + texture_row), 0);
+}
+
+void main() {
+    const uint candidate_id = gl_WorkGroupID.x;
+    const uint lane = gl_LocalInvocationID.x;
+    const uint logical_rows_per_block = params.block_height * params.logical_rows_per_physical;
+    const uint sample_index = gl_WorkGroupID.y / logical_rows_per_block;
+    const uint local_row = gl_WorkGroupID.y % logical_rows_per_block;
+    if (candidate_id >= params.candidate_count || sample_index >= params.calibration_samples ||
+        local_row >= logical_rows_per_block) return;
+
+    const uvec4 candidate = candidate_records.records[candidate_id];
+    const uvec4 baseline = candidate_records.records[baseline_records.baseline_record[candidate_id]];
+    const uint source_block_x = candidate.z % params.source_blocks_x;
+    const uint source_block_y = candidate.z / params.source_blocks_x;
+    const uint global_row = source_block_y * logical_rows_per_block + local_row;
+    float sum = 0.0;
+    if (lane < params.block_width) {
+        const uint global_column = source_block_x * params.block_width + lane;
+        if (global_column < params.tensor_width && global_row < params.tensor_logical_height) {
+            const uint texture_row = local_row;
+            const float candidate_q = d1_weight(candidate_texel(candidate, lane, texture_row));
+            const float baseline_q = d1_weight(candidate_texel(baseline, lane, texture_row));
+            sum = params.reconstruction_scale * (candidate_q - baseline_q) *
+                activations.values[sample_index * params.tensor_width + global_column];
+        }
+    }
+    partial[lane] = sum;
+    barrier();
+    for (uint stride = 8u; stride > 0u; stride >>= 1u) {
+        if (lane < stride) partial[lane] += partial[lane + stride];
+        barrier();
+    }
+    const uint output_index = (candidate_id * params.calibration_samples + sample_index) *
+        logical_rows_per_block + local_row;
+    if (lane == 0u) candidate_deltas.values[output_index] = partial[0];
+}

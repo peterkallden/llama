@@ -169,6 +169,7 @@ int main(int argc, char ** argv) {
     bool tq1_matvec = false;
     bool tq2_matvec = false;
     bool sampled_f32 = false;
+    bool no_validate = false;
     std::string payload_path;
     std::string reference_path;
     std::string weights_path;
@@ -183,6 +184,7 @@ int main(int argc, char ** argv) {
     while (index < argc) {
         const std::string option = argv[index++];
         if (option == "--benchmark") benchmark = true;
+        else if (option == "--no-validate") no_validate = true;
         else if (option == "--matvec") matvec = true;
         else if (option == "--buffer-matvec") { matvec = true; buffer_matvec = true; }
         else if (option == "--q4-matvec") { matvec = true; q4_matvec = true; }
@@ -215,7 +217,8 @@ int main(int argc, char ** argv) {
                      format_name != "8x8" &&
                      format_name != "10x8") ||
         (pattern_name != "sequential" && pattern_name != "nonlocal") ||
-        ((payload_path.empty() != reference_path.empty()) && !buffer_matvec && !sampled_f32) ||
+        ((payload_path.empty() != reference_path.empty()) && !no_validate && !buffer_matvec && !sampled_f32 &&
+         !q4_matvec && !q3_matvec && !tq1_matvec && !tq2_matvec) ||
         (buffer_matvec && reference_path.empty()) ||
         (static_cast<int>(q4_matvec) + static_cast<int>(q3_matvec) +
          static_cast<int>(tq1_matvec) + static_cast<int>(tq2_matvec) > 1) ||
@@ -224,7 +227,7 @@ int main(int argc, char ** argv) {
         (matvec && ((!buffer_matvec && !sampled_f32 && payload_path.empty()) || pattern_name != "sequential"))) {
         std::fprintf(stderr,
                      "usage: %s <validation.spv> <4x4|5x5|6x6|6x5|8x5|10x5|8x6|10x6|8x8|10x8> "
-                     "[sequential|nonlocal] [--benchmark] "
+                     "[sequential|nonlocal] [--benchmark] [--no-validate] "
                      "[--payload astc.bin --reference decoded-rgba-f32.bin --width N --height N] "
                      "[--matvec|--buffer-matvec|--q4-matvec|--q3-matvec|--tq1-matvec|--tq2-matvec|--sampled-f32 --weights weights-f32.bin "
                      "--scale-l S --scale-a S --offset B --repeats N]\n",
@@ -360,7 +363,7 @@ int main(int argc, char ** argv) {
         vkDestroyInstance(instance, nullptr);
         return 2;
     }
-    if ((q4_matvec || tq2_matvec) && source_weights.empty()) {
+    if ((q4_matvec || tq2_matvec) && source_weights.empty() && !no_validate) {
         std::fprintf(stderr, "packed matvec requires --weights with the FP32 source matrix\n");
         vkDestroyDevice(device, nullptr);
         vkDestroyInstance(instance, nullptr);
@@ -625,7 +628,7 @@ int main(int argc, char ** argv) {
         std::memcpy(values.data(), output_mapped, static_cast<size_t>(output_bytes));
         vkUnmapMemory(device, output_memory);
         const size_t validation_count = matvec ? height : values.size();
-        for (size_t value_index = 0; value_index < validation_count; ++value_index) {
+        for (size_t value_index = 0; !no_validate && value_index < validation_count; ++value_index) {
             float expected = kExpectedChannel;
             if (!expected_values.empty()) {
                 if (matvec) {

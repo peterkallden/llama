@@ -1,0 +1,46 @@
+#version 450
+
+// Deterministic local candidate selection. Conflict-aware residual updates
+// remain a separate host stage; this shader only chooses the best candidate
+// for each source block from already-computed proposal gains.
+layout(local_size_x = 1) in;
+
+layout(std430, set = 0, binding = 1) readonly buffer CandidateRecords {
+    uvec4 records[];
+} candidate_records;
+
+layout(std430, set = 0, binding = 6) readonly buffer CandidateGains {
+    float values[];
+} candidate_gains;
+
+layout(std430, set = 0, binding = 7) writeonly buffer SelectedRecords {
+    uint values[];
+} selected_records;
+
+layout(push_constant) uniform PushConstants {
+    uint candidate_count;
+    uint calibration_samples;
+    uint tensor_width;
+    uint tensor_logical_height;
+    uint source_blocks_x;
+    uint block_width;
+    uint block_height;
+    float reconstruction_scale;
+    uint logical_rows_per_physical;
+} params;
+
+void main() {
+    const uint source_block = gl_GlobalInvocationID.x;
+    float best_gain = -3.402823466e+38;
+    uint best_record = 0xffffffffu;
+    for (uint candidate = 0u; candidate < params.candidate_count; ++candidate) {
+        if (candidate_records.records[candidate].z != source_block) continue;
+        const float gain = candidate_gains.values[candidate];
+        if (best_record == 0xffffffffu || gain > best_gain ||
+            (gain == best_gain && candidate < best_record)) {
+            best_gain = gain;
+            best_record = candidate;
+        }
+    }
+    selected_records.values[source_block] = best_record;
+}

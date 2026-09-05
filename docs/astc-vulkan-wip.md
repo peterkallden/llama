@@ -8937,3 +8937,440 @@ orchestration is now exercised by the same smoke with `--streamed`; the
 resident and banded runs produced byte-identical model metrics. Enabling this
 in the production scheduler remains a separate policy gate; the CPU model path
 is still the reference and fallback.
+
+## Three-hundred-fifty-first sweep: full D2 `8x5` cache replay (CPU and Intel Vulkan)
+
+The newly generated full-shape cache
+`Pythia-1.4B-F16-community.gguf.astc-vulkan` was verified without modifying it:
+the v4 manifest contains one paired-D2 `8x5` artifact, payload/layout hashes
+are valid, and its model/Vulkan evidence gates remain false. A direct attempt
+to use it through the production scheduler/replay path was rejected with
+`ASTC cache has no matching evidence-approved artifact`, which confirms the
+hard safety fallback is still active.
+
+The exported `3,358,720`-byte payload was decoded from its bytes into the
+physical `8192x1025` texture (`134,348,800` bytes of CPU RGBA-F32). A prompt-
+matched exploratory replay used the separate 14-token quick-brown trace
+(`The quick brown fox jumps over the lazy dog and then returns home.`); the
+cache itself was selected from the `pythia-traces-v2` calibration corpus, so
+these numbers are diagnostic rather than a promotion gate:
+
+| path | logits-relative MSE | top-1 | loss delta |
+| --- | ---: | ---: | ---: |
+| CPU ASTC decode | `0.36015989` | `57.14%` | `+1.6678068` |
+| Intel Vulkan, streamed 1 MiB bands | `0.36045884` | `57.14%` | `+1.6665724` |
+| Intel Vulkan, resident image | `0.36045884` | `57.14%` | `+1.6665724` |
+
+The paired scheduler adapter independently compared the resident Vulkan
+matvec with the CPU reference at `1.36e-12` MSE and `2.10e-5` maximum absolute
+error. Thus both resident and streamed GPU paths completed without the earlier
+Intel lifecycle/allocation failure; their tiny model-metric difference is
+consistent with GPU reduction/order effects. The temporary diagnostic cache
+used for GPU replay had the manifest's exact `scale_l=0.56982398` and
+`scale_a=0`; it was not published to the model cache. Production D2 remains
+ineligible until real model- and Vulkan-gate evidence is produced by the
+normal replay/publish workflow.
+
+## Three-hundred-fifty-second sweep: explicit research replay policy
+
+The replay tool now accepts `--research` as an explicit, offline-only override
+for artifacts whose payload and source hashes are valid but whose model/Vulkan
+evidence gates are not yet published. The default path is unchanged and still
+fails closed on the full D2 cache with `no matching evidence-approved artifact`.
+The override is carried through a separate `allow_unverified` argument in the
+scheduler adapter; production scheduler callers cannot enable it through their
+existing API defaults. It still requires a legal ASTC payload, matching model
+fingerprint, supported Vulkan footprint, and successful resource binding—it is
+not a bypass of format, hash, shape, or lifecycle validation.
+
+The real full D2 `8x5` cache was replayed with `--research` on Intel Vulkan and
+completed successfully through the streamed GPU path. The standalone
+scheduler-adapter smoke accepts the same flag and also passed. It reproduced the
+diagnostic result above (`0.36045884` relative logits MSE, `57.14%` top-1,
+`+1.6665724` loss delta). The focused cache, scheduler-adapter, and artifact
+policy tests passed `4/4`. This flag is intended for research/replay and
+artifact investigation only; it must not be used to promote an artifact or to
+change the production fallback policy.
+
+## Three-hundred-fifty-third sweep: streamed CPU model oracle
+
+The model-replay smoke now has a separate `--oracle-streamed` cache mode. It
+resolves the same verified artifact as the scheduler, opens the tensor range
+through the shared ASTC stream-loader, and decodes one physical block-row band
+at a time with the CPU `astcenc` reference. The decoded band is immediately
+reconstructed into the D1/D2 semantic weights and accumulated against the
+activation trace; the band buffer is then released before the next band is
+read. `--stream-band-bytes` controls the compressed payload budget and defaults
+to `1 MiB`. The GPU `--streamed` path and resident CPU/reference paths are
+unchanged.
+
+The streamed oracle was run against the real Pythia `blk.0.ffn_down.weight`
+D2 `8x5` cache with `--research` (the cache is still intentionally not
+production-gate approved). Both a `1 MiB` band and a `64 KiB` band produced the
+same model replay metrics as the prior resident CPU oracle:
+
+| CPU oracle path | logits-relative MSE | top-1 | loss delta | max RSS |
+| --- | ---: | ---: | ---: | ---: |
+| streamed, 1 MiB bands | `0.36015989` | `57.14%` | `+1.6678068` | `~2.88 GiB` |
+| streamed, 64 KiB bands | `0.36015989` | `57.14%` | `+1.6678068` | `~2.88 GiB` |
+
+The resident set is still dominated by the 2.64 GiB F16 GGUF and the two
+model contexts, not by the ASTC sidecar. The new mode therefore bounds decoded
+sidecar working memory and makes large cache artifacts streamable, but it does
+not by itself make a GGUF larger than available RAM streamable; that requires
+separate GGUF/layer mmap or model-execution changes. Equality across band sizes
+confirms that range geometry, edge handling, D2 layout addressing, and affine
+reconstruction are equivalent to the resident CPU oracle.
+
+The focused stream-loader, cache, scheduler-adapter, and artifact-policy
+regressions passed `5/5`. The feature remains offline/research-only and does
+not alter production scheduler fallback or Vulkan runtime semantics.
+
+## Three-hundred-fifty-fourth sweep: F16-derived cache admission for Q bases
+
+The cache tool now has a deliberately narrow `admit-base` command. It records
+that an F16/BF16-derived ASTC cache is structurally compatible with a Q4/Q3
+runtime GGUF of the same logical model, without re-encoding the ASTC payload:
+
+```text
+astc-vulkan-cache admit-base --source-model model-f16.gguf \
+  --model model-q4_k_m.gguf --family q4_k_m --cache model-f16.gguf.astc-vulkan
+```
+
+Admission first performs the existing strict source-cache validation against
+the supplied F16/BF16 GGUF. It then compares the runtime GGUF's architecture,
+tensor-name set, and tensor shapes (intentionally independent of GGUF tensor
+storage order and quantization type). The output is a small
+`compatible-bases/<runtime-sha256>.astcbase` record containing source/runtime
+file hashes, a structural-schema hash, and the declared family. The original
+source hash remains provenance; no payload or model data is copied.
+
+The registration intentionally starts with `model_gate=false` and
+`vulkan_gate=false`, and ordinary cache validation remains tied to the exact
+source GGUF. Thus it cannot silently cause an F16-derived payload to be loaded
+over a Q3/Q4 model merely because their tensor schemas match. A later
+runtime-base evidence/publish path must establish prompt-matched replay and
+Vulkan quality gates before the scheduler is allowed to consume an admitted
+base. This cleanly separates *structural compatibility* from *quality
+eligibility*.
+
+An actual F16-to-Q4_K_M Pythia smoke passed after normalizing tensor order in
+the schema comparison. The focused cache contract also now covers admission
+of two minimal, same-schema GGUFs with distinct file hashes and verifies that
+strict runtime cache validation still rejects the admitted non-source GGUF.
+
+## Three-hundred-fifty-fifth sweep: portable replay entry point
+
+The model replay implementation now also builds as the normal
+`llama-astc-replay` executable. The existing `astc-vulkan-model-replay-smoke`
+name remains as a regression alias, but the portable entry point accepts
+`--prompt-file` for a deterministic UTF-8 text corpus instead of requiring an
+inline prompt. The corpus is supplied by the caller (for example, an
+externally preprocessed HuggingFace dataset), while the matching activation
+trace remains an explicit input.
+
+This is intentionally a small first step. It does not download datasets,
+interpret arbitrary dataset schemas, or hide corpus/tokenizer provenance.
+Those inputs remain visible and reproducible in the command line. The replay
+binary still covers the currently supported FFN-down override path; broader
+per-tensor model integration remains a separate production gate.
+
+## Three-hundred-fifty-sixth sweep: Q4 overlay replay and evidence output
+
+`llama-astc-replay` now accepts `--source-model` for the explicit F16-derived
+cache plus Q3/Q4 runtime-base path. It verifies the structural admission file
+before asking the scheduler adapter to validate the cache against the exact
+F16 source, while loading and evaluating the Q4/Q3 GGUF as the runtime model.
+`--evidence <file>.json` records both model hashes, cache manifest hash,
+runtime backend, tensor geometry, prompt source, and model-level logits/loss
+metrics. This keeps replay portable and makes the result suitable for a later
+evidence/publish command.
+
+The local Pythia Q4_K_M model (875 MiB) was used with the existing full-shape
+F16-derived D2 8x5 cache for `blk.0.ffn_down.weight`. Structural admission
+passed and streamed Vulkan replay completed. The resulting evidence was:
+
+```text
+logits-relative-mse = 0.0798624
+top-1 agreement     = 80.0%
+loss delta          = +0.695432
+```
+
+This is a valid, reproducible Q4 overlay result, but it is not production
+approved: the loss shift is still too large for the current quality gate and
+the admission record intentionally remains `model_gate=false` and
+`vulkan_gate=false`. The cache payload and Q4 GGUF are unchanged.
+
+## Three-hundred-fifty-seventh sweep: F16-derived D1 6x6 versus D2 8x5 on Q4
+
+Two full-shape, side-by-side cache roots are intentionally kept separate:
+
+```text
+Pythia-1.4B-F16-community.gguf.astc-vulkan       D2 8x5, 1.60 b/w
+Pythia-1.4B-F16-community.gguf-d1-6x6            D1 6x6, 3.56 b/w
+```
+
+Both replace only `blk.0.ffn_down.weight` in the Q4_K_M runtime model and are
+derived from the same F16 source tensor. The D2 payload is 3,358,720 bytes
+(209,920 blocks); the D1 payload is 7,474,752 bytes (467,172 blocks). The D1
+cache was generated with the hybrid GPU-proposer/CPU-finisher path and the
+replay tool now accepts all D1 footprints explicitly, including `--footprint
+6x6`.
+
+Using the same prompt-file splits and streamed CPU ASTC oracle, the model-loss
+comparison was:
+
+```text
+validation (241 tokens): F16 2.776389 | Q4 2.832862 |
+  Q4 + D2 8x5 3.414738 | Q4 + D1 6x6 2.838339
+holdout (434 tokens):    F16 1.964654 | Q4 1.993678 |
+  Q4 + D2 8x5 2.534576 | Q4 + D1 6x6 2.002448
+```
+
+D2 8x5 therefore does not yet behave more like F16 on this one-tensor Q4
+overlay; at 1.60 b/w it moves farther from the F16 loss. D1 6x6 remains close
+to the native Q4 baseline (validation delta +0.00548, holdout +0.00877) and is
+the stronger Q4 overlay candidate, although neither artifact is model-gate
+approved until broader tensor coverage and the final publish/replay gate pass.
+The direct Vulkan D1 replay was also verified with the D1 `astc-ffn-matvec`
+shader; the first attempted paired shader was rejected as an invalid D1 ABI
+and is not used for the result.
+
+## Three-hundred-and-fifty-eighth sweep: isolated Q4 Vulkan layer timing
+
+The current cache contains one tensor only: `blk.0.ffn_down.weight` with
+logical shape 2048x8192. Therefore the first performance comparison is kept
+strictly at that layer and does not claim a full-model tokens/s result.
+
+The Vulkan shader smoke gained a `--no-validate` benchmark mode so the same
+GPU dispatch can be timed without mixing in a value-comparison reference.
+Using the same 2048x8192 extent and the same synthetic activation function,
+three 100-dispatch runs produced these GPU timestamp medians/means:
+
+```text
+Q4_0 packed Vulkan: 8.033, 7.877, 7.716 ms/dispatch (mean 7.875 ms)
+D1 ASTC 6x6:        6.865, 6.540, 6.296 ms/dispatch (mean 6.567 ms)
+```
+
+On this isolated control, D1 6x6 is about 1.20x faster (16.6% lower GPU
+dispatch time) than the Q4_0 shader for the one replaced layer. This is a
+steady-state dispatch-only result: image/buffer upload, pipeline creation,
+model execution, and all other layers are excluded. The Q4 path here is the
+existing Q4_0 control shader, not the full ggml Vulkan Q4_K_M matmul kernel;
+the latter remains a separate backend-level benchmark before making any
+Q4_K_M production performance claim.
+
+## Three-hundred-and-fifty-ninth sweep: D1 hybrid top-K seam
+
+D1 now has the same reusable hybrid hand-off that D2 already had:
+`astc_gpu_d1_finish_and_rank()` retains a bounded top-K proposal set, sends
+only that set to the CPU/libastc finisher, and then performs exact decoded
+activation ranking. Scalar candidate zero remains mandatory. The shared cache
+format and runtime path are unchanged.
+
+The focused GPU-encoder test covers the new D1 bridge and passed. The default
+cache builder is intentionally not switched yet: the current scalar-only D1
+path has one candidate per physical block, so switching it immediately would
+add GPU overhead without reducing CPU astcenc work. The next gate is to feed
+the 6x6 D1 candidate bank (scalar plus bounded gauge alternatives) through this
+seam and compare finish count, build time, legality, and holdout quality.
+
+## Three-hundred-and-sixtieth sweep: D1 6x6 GPU candidate-bank finisher
+
+The reusable seam is now exercised end to end in the device smoke. A 6x6 D1
+bank is built with one scalar source and three bounded L+A gauge alternatives
+per logical block. The Vulkan proposer sees all four physical candidates, while
+the D1 retention policy keeps K=2 (the mandatory scalar plus the best physical
+alternative) before invoking the exact CPU/libastc finisher.
+
+```text
+GPU proposals: 4
+retained proposals: 2
+CPU finished blocks: 2
+```
+
+The smoke passed on the local Intel Vulkan device, including finite decoded
+RGBA checks and the existing fixed-function ASTC decode gate. The host unit
+test also passed. This proves the intended proposer -> bounded candidate bank ->
+CPU finisher wiring without changing the production cache builder or runtime
+ABI. It is an experimental offline path only; quality selection still belongs
+to the later activation/model-aware selector, and the default scalar cache
+path remains unchanged until that comparison is complete.
+
+## Three-hundred-and-sixty-first sweep: multi-block D1 bank timing gate
+
+The one-block smoke was followed by a 48x96 fixture containing 128 logical
+6x6 blocks. The bank generated four physical proposals per logical block and
+retained K=2 before exact CPU finishing. A scalar-only request over the same
+128 blocks was timed in the same process as the control:
+
+```text
+                         GPU proposal   CPU finish   total
+scalar, 128 blocks          119.973 ms    121.430 ms  241.402 ms
+bank, 512 -> 256 blocks     106.245 ms    223.211 ms  329.456 ms
+```
+
+All 256 retained blocks decoded to finite RGBA and the Vulkan device smoke
+passed. The bank therefore has the intended 4-to-2 retention behaviour, but it
+is not yet a default GPU path: compared with the current scalar hybrid path it
+adds about 36% total time on this fixture because the CPU finisher still does
+one exact astcenc encode for every retained candidate. The GPU proposer itself
+is not the bottleneck; the next optimization must either make the finisher
+candidate-aware/cheaper or add a semantic selector that justifies the extra
+candidate work. Production GPU mode remains scalar by default until that gate
+is improved.
+## Three-hundred-and-sixty-second sweep: GPU semantic ranking for D1 and D2
+
+The GPU ranking session is now shared between the paired D2 path and a new D1
+scalar path. The common session keeps the ASTC atlas, persistent Vulkan
+buffers, activation upload, delta reduction, and proposal-gain reduction. A
+single explicit row-geometry field distinguishes the semantics:
+
+```text
+D1: logical_rows_per_physical = 1
+D2: logical_rows_per_physical = 2
+```
+
+D1 uses a dedicated delta shader that samples the fixed-function ASTC atlas and
+reconstructs the scalar value from decoded RGB. D2 keeps its paired RG/B or
+R/GB shader. Both use the same GPU proposal-gain reduction, so only one gain
+per candidate needs to return to the host.
+
+The Vulkan device smoke now covers D1 4x4, 5x5, and 6x6 as well as the existing
+D2 6x5/8x5/10x5 formats. All passed on the local Intel/Mesa device. This is an
+offline ranking backend only: CPU astcenc remains the exact payload finisher,
+and the CPU selector still owns commit order and validation-prefix decisions.
+D1 gauge-L+A semantic reconstruction is deliberately not enabled in this first
+GPU ranking pass; scalar D1 is the correctness baseline. The bounded fixture
+gate is now complete for both D1 and D2, so the default policy may prefer GPU
+delta/proposal stages after device preflight; real finished-candidate batches
+and model traces remain the next quality/throughput gate before cache-builder
+integration.
+## Three-hundred-and-sixty-third sweep: GPU semantic ranking gate and enable policy
+
+The device smoke now validates D1 scalar ranking against an exact CPU oracle,
+not only against finite/non-zero output. For 4x4, 5x5, and 6x6, the expected
+decoded delta is the constant ASTC luminance difference multiplied by the
+activation sum, and proposal gain is checked against
+`2 * residual * delta - delta^2`. The existing paired-D2 smoke already applies
+the same exact delta/gain checks for 6x5, 8x5, and 10x5. This gives the shared
+GPU semantic stage an FP32 oracle gate for both representations.
+
+The ranking plan is now honest about the enabled boundary. After a successful
+device/SPIR-V preflight, `astc_vulkan_make_default_ranking_plan(true)` selects
+GPU delta scoring and GPU proposal-gain reduction. CPU astcenc candidate
+generation, CPU model/YAQA objective evaluation, and ordered conflict-aware
+commit remain unchanged. `false` selects the all-CPU fallback. No GPU ASTC
+encoder or runtime decoder is implied by this switch, and the slower D1
+candidate-bank path remains experimental rather than default.
+
+This is the first safe enable point: the GPU path is preferred only where the
+caller has completed the preflight and the exact smoke passes; unsupported or
+unverified devices retain the CPU oracle without changing cache artifacts or
+the inference ABI.
+## Three-hundred-and-sixty-fourth sweep: GPU-local candidate selection
+
+The shared ranking session now has an optional local-selection pipeline. It
+consumes the already computed per-candidate proposal gains, scans candidates
+belonging to each source block, and emits one selected record index per block.
+Tie-breaking is deterministic: higher gain wins, then the lower record index.
+The same shader is used for D1 and D2 because source-block ownership is carried
+by the atlas record metadata; the semantic difference remains in the preceding
+delta shader (`logical_rows_per_physical = 1` for D1 and `2` for D2).
+
+The device smoke compares the GPU-selected record IDs with a CPU argmax oracle
+for the D2 fixture and all D1 4x4/5x5/6x6 fixtures. The focused Vulkan and
+contract tests pass. This is a local per-block reduction, not yet the global
+conflict-aware selector: ordered residual updates, validation-prefix choice,
+and model/YAQA objective evaluation remain host stages. The first implementation
+also uploads the compact gain vector before local selection; the next
+optimization can chain gain and selection on-device to remove that round trip.
+## Three-hundred-and-sixty-fifth sweep: fused GPU ranking and local selection
+
+The GPU ranking session now exposes a fused path that records candidate delta,
+proposal-gain, and local per-source-block argmax in one Vulkan command buffer.
+Only one selected record ID per source block is read back. This removes the
+previous gain readback/re-upload round trip from the intended fast path while
+preserving the separate diagnostic `run_proposal_gains()` and
+`run_local_selection()` APIs.
+
+The device smoke exercises the fused path for paired D2 and D1 scalar 4x4,
+5x5, and 6x6 and compares selected IDs with the CPU gain argmax, including the
+same deterministic lower-index tie-break. Focused GPU-ranking, encoder, and
+plan tests pass. The fused path still stops at local selection: global
+conflict-aware residual updates, validation-prefix selection, and YAQA/model
+objective evaluation remain explicit host stages.
+## Three-hundred-and-sixty-sixth sweep: YAQA-aware backend policy
+
+The ranking plan now distinguishes the ordinary activation objective from the
+two-sided YAQA objective. If the caller's GPU semantic preflight and the
+separate GPU-YAQA batch preflight both pass, selecting
+`astc_vulkan_objective::two_sided_trace` enables the GPU YAQA objective. If
+either preflight fails, the same request remains valid but uses the CPU YAQA
+oracle. Activation and weighted-activation objectives are not silently routed
+to an unvalidated GPU kernel.
+
+The existing scalar and batched YAQA device smokes pass and match the CPU trace
+oracle. This makes GPU YAQA the preferred backend when explicitly requested
+and preflighted, not a universal D2 default: previous model-level evidence
+still showed tensor-dependent YAQA overfit, so artifact/model gates remain
+mandatory. Conflict-aware commit and validation-prefix ordering remain on the
+host even when both semantic ranking and YAQA scoring run on the device.
+## Three-hundred-and-sixty-seventh sweep: resident D2 ranking inputs
+
+The GPU ranking session now supports explicit resident activation/residual
+buffers. `upload_inputs()` uploads the tensor trace and current residual once;
+subsequent delta, proposal-gain, and fused local-selection calls reuse those
+device buffers across candidate-bank batches. The existing per-call upload
+behaviour remains available when the caller does not opt into residency.
+
+The D1/D2 device smoke exercises the resident path before fused selection and
+the focused ranking tests pass. This removes repeated trace transfers from the
+normal multi-batch path without changing candidate payloads, selection order,
+or the cache/runtime ABI. Residual updates for a future global conflict-aware
+GPU selector will explicitly invalidate/re-upload or update the resident
+residual buffer; they are not silently assumed here.
+
+## Three-hundred-and-sixty-eighth sweep: reusable resident YAQA session
+
+YAQA now has a reusable `astc_vulkan_yaqa_session` separate from the original
+monolithic device smoke. It owns the two compute pipelines, descriptor sets,
+command buffer, fence, and bounded host-visible buffers for one tensor shape.
+Input and output traces are uploaded once with `upload_traces()` and remain
+resident while `run()` replaces only the candidate error matrix and reads back
+one score per candidate. The reduce shader uses its own two-binding descriptor
+set; it is not accidentally bound to the partial-stage five-buffer layout.
+
+The new resident-session smoke runs two candidate batches without re-uploading
+the traces and compares both batches with the CPU trace oracle. Existing scalar,
+batched, ranking-plan, D1/D2 GPU ranking and YAQA tests remain green. This is
+the first reusable GPU-YAQA backend suitable for explicit two-sided-trace
+objective requests; it is still opt-in because the model-level YAQA evidence is
+tensor-dependent.
+
+The remaining D2 integration boundary is intentional: the current ranking
+session produces activation-space deltas, while YAQA requires decoded weight
+error matrices. Directly treating the former as the latter would produce a
+numerically plausible but invalid objective. A future fused D2 path must either
+keep decoded candidate errors resident or add a representation-specific error
+builder before invoking this YAQA session. Global conflict-aware commit and
+validation-prefix selection also remain host-side.
+
+## Three-hundred-and-sixty-ninth sweep: repeated GPU proposer timing
+
+The established `astc-vulkan-gpu-encoder-device-smoke` was rebuilt and run
+three times with the same eight SPIR-V arguments and the same bounded D1/D2
+fixture. All three runs passed the legal-payload and fixed-function decode
+checks. The reported proposer rates were `26,638`, `30,312`, and `14,813`
+blocks/s (mean `23,888`, median `26,638`). The spread is large because this is
+still a small smoke and includes short GPU/CPU synchronization intervals; it
+must not be treated as a stable throughput claim.
+
+The documented historical points for the same smoke were approximately
+`25,543` and `27,102` blocks/s, plus an older two-block persistent-session
+measurement around `23.7k` blocks/s. The current median is therefore in the
+same range, while the mean is pulled down by one outlier. The benchmark does
+not measure full ASTC encoding: CPU `astcenc` finishing, model-sized source
+construction, cache I/O, and neural selection are separate costs. A proper
+speed gate should use a larger repeated batch, warm-up, median/p95, and a
+breakdown for source upload, dispatch, readback, CPU finisher, and YAQA.

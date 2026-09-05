@@ -118,6 +118,8 @@ void print_help(const char * executable) {
         "  %s profiles\n"
         "  %s inspect --model model.gguf [--cache path|auto]\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
+        "  %s admit-base --source-model source-f16.gguf --model runtime-q4.gguf\n"
+            "            [--family q4_k_m] [--cache path|auto]\n"
         "  %s build --model model.gguf --tensor name --trace activations.bin --footprint 6x6\n"
             "            [--cache path|auto] [--backend hybrid|cpu] [--gpu-proposer-shader shader.spv]\n"
             "            [--preset thorough|medium|fast] [--artifact-dir dir] [--source-family name]\n"
@@ -138,7 +140,7 @@ void print_help(const char * executable) {
         "build is a bounded D1 orchestrator: it runs the existing latent exporter, packs a\n"
         "v4 artifact and publishes it atomically. It does not perform JIT encoding and\n"
         "defaults model/vulkan evidence gates to false until replay has passed.\n",
-        executable, executable, executable, executable, executable, executable, executable);
+        executable, executable, executable, executable, executable, executable, executable, executable);
 }
 
 std::string shell_quote(const std::string & value) {
@@ -518,8 +520,9 @@ int main(int argc, char ** argv) {
         print_profiles();
         return 0;
     }
-    std::string model, manifest, payload, layout, row_scales, provenance, cache = "auto", artifact_dir, profile_name;
+    std::string model, source_model, manifest, payload, layout, row_scales, provenance, cache = "auto", artifact_dir, profile_name;
     std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
+    std::string runtime_family = "unspecified";
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
     std::string channel_weights = "balanced-a025", source_alpha = "1", row_scale = "none";
     std::string rows, columns, calibration_samples = "8", validation_samples = "7";
@@ -528,6 +531,7 @@ int main(int argc, char ** argv) {
         const std::string option = argv[index];
         const std::string value = argv[index + 1];
         if (option == "--model") model = value;
+        else if (option == "--source-model") source_model = value;
         else if (option == "--manifest") manifest = value;
         else if (option == "--payload") payload = value;
         else if (option == "--layout") layout = value;
@@ -543,6 +547,7 @@ int main(int argc, char ** argv) {
         else if (option == "--gpu-proposer-shader") shader = value;
         else if (option == "--preset") preset = value;
         else if (option == "--source-family") source_family = value;
+        else if (option == "--family") runtime_family = value;
         else if (option == "--max-rows") max_rows = value;
         else if (option == "--max-columns") max_columns = value;
         else if (option == "--workers") workers = value;
@@ -558,6 +563,20 @@ int main(int argc, char ** argv) {
         else return 2;
     }
     std::string error;
+    if (command == "admit-base") {
+        astc_vulkan_cache_runtime_base binding;
+        if (source_model.empty() || model.empty() ||
+            !astc_vulkan_cache_admit_runtime_base(source_model, model, cache, runtime_family,
+                                                   binding, error)) {
+            std::fprintf(stderr, "astc-cache admit-base failed: %s\n", error.c_str());
+            return 1;
+        }
+        std::printf("astc-cache admit-base source=%s runtime=%s family=%s schema=%s gates=model:false/vulkan:false\n",
+                    source_model.c_str(), model.c_str(), binding.family.c_str(),
+                    binding.schema_sha256.c_str());
+        std::printf("astc-cache admit-base note=structural-only; run a runtime-specific replay gate before production scheduling\n");
+        return 0;
+    }
     if (command == "build") {
         if (representation != "scalar" && representation != "paired-d2") {
             std::fprintf(stderr, "astc-cache build failed: --representation must be scalar or paired-d2\n");

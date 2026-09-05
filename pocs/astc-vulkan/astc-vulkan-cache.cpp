@@ -3,7 +3,10 @@
 #include "astc-vulkan-hash.h"
 #include "astc-vulkan-provenance.h"
 
+#include "gguf.h"
+
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -24,6 +27,12 @@ constexpr const char * kManifestHashFile = "manifest.sha256";
 constexpr const char * kPayloadHashFile = "payload.sha256";
 constexpr const char * kLayoutHashFile = "layout-map.sha256";
 constexpr const char * kRowScalesHashFile = "row-scales.sha256";
+constexpr const char * kCompatibleBasesDirectory = "compatible-bases";
+constexpr const char * kRuntimeBaseExtension = ".astcbase";
+
+bool valid_binding_value(const std::string & value) {
+    return !value.empty() && value.find_first_of("\r\n=") == std::string::npos;
+}
 
 bool read_hash(const std::string & path, std::string & hash) {
     std::ifstream file(path, std::ios::binary);
@@ -38,6 +47,138 @@ bool write_hash(const std::string & path, const std::string & hash) {
     std::ofstream file(path, std::ios::binary);
     file << hash << '\n';
     return file.good();
+}
+
+bool read_binding(const std::string & path, astc_vulkan_cache_runtime_base & binding) {
+    binding = {};
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    std::string version;
+    std::string line;
+    while (std::getline(file, line)) {
+        const size_t separator = line.find('=');
+        if (separator == std::string::npos) return false;
+        const std::string key = line.substr(0, separator);
+        const std::string value = line.substr(separator + 1);
+        if (key == "version") version = value;
+        else if (key == "source_sha256") binding.source_sha256 = value;
+        else if (key == "runtime_sha256") binding.runtime_sha256 = value;
+        else if (key == "schema_sha256") binding.schema_sha256 = value;
+        else if (key == "family") binding.family = value;
+        else if (key == "model_gate") binding.model_gate_passed = value == "1";
+        else if (key == "vulkan_gate") binding.vulkan_gate_passed = value == "1";
+        else return false;
+    }
+    const auto valid_hash = [](const std::string & hash) {
+        if (hash.size() != 64) return false;
+        for (const unsigned char value : hash) {
+            if (!((value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'))) return false;
+        }
+        return true;
+    };
+    binding.admitted = version == "1" && valid_hash(binding.source_sha256) &&
+        valid_hash(binding.runtime_sha256) && valid_hash(binding.schema_sha256) &&
+        valid_binding_value(binding.family);
+    return binding.admitted;
+}
+
+bool write_binding(const std::string & path, const astc_vulkan_cache_runtime_base & binding,
+                   std::string & error) {
+    if (!binding.admitted || !valid_binding_value(binding.family)) {
+        error = "invalid ASTC runtime-base binding";
+        return false;
+    }
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file || !(file << "version=1\n"
+                       << "source_sha256=" << binding.source_sha256 << '\n'
+                       << "runtime_sha256=" << binding.runtime_sha256 << '\n'
+                       << "schema_sha256=" << binding.schema_sha256 << '\n'
+                       << "family=" << binding.family << '\n'
+                       << "model_gate=" << (binding.model_gate_passed ? 1 : 0) << '\n'
+                       << "vulkan_gate=" << (binding.vulkan_gate_passed ? 1 : 0) << '\n')) {
+        error = "cannot write ASTC runtime-base binding";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool gguf_schema_components(const std::string & path, std::string & architecture,
+                            std::vector<std::string> & tensor_lines, std::string & error) {
+    architecture.clear();
+    tensor_lines.clear();
+    gguf_init_params params{true, nullptr};
+    gguf_context * context = gguf_init_from_file(path.c_str(), params);
+    if (context == nullptr) {
+        error = "cannot read GGUF schema: " + path;
+        return false;
+    }
+    const int64_t architecture_key = gguf_find_key(context, "general.architecture");
+    if (architecture_key < 0 || gguf_get_kv_type(context, architecture_key) != GGUF_TYPE_STRING) {
+        gguf_free(context);
+        error = "GGUF has no general.architecture string";
+        return false;
+    }
+    architecture = gguf_get_val_str(context, architecture_key);
+    tensor_lines.reserve(static_cast<size_t>(gguf_get_n_tensors(context)));
+    for (int64_t tensor_id = 0; tensor_id < gguf_get_n_tensors(context); ++tensor_id) {
+        const char * name = gguf_get_tensor_name(context, tensor_id);
+        const int64_t * dimensions = gguf_get_tensor_ne(context, tensor_id);
+        if (name == nullptr || dimensions == nullptr) {
+            gguf_free(context);
+            error = "GGUF tensor schema is incomplete";
+            return false;
+        }
+        std::string line(name);
+        for (int dimension = 0; dimension < GGML_MAX_DIMS; ++dimension) {
+            line += ':' + std::to_string(dimensions[dimension]);
+        }
+        tensor_lines.push_back(std::move(line));
+    }
+    gguf_free(context);
+    std::sort(tensor_lines.begin(), tensor_lines.end());
+    error.clear();
+    return true;
+}
+
+bool gguf_schema_sha256(const std::string & path, std::string & hash, std::string & error) {
+    std::string architecture;
+    std::vector<std::string> tensor_lines;
+    if (!gguf_schema_components(path, architecture, tensor_lines, error)) return false;
+    std::string canonical = "astc-runtime-schema-v1\narchitecture=" + architecture +
+        "\ntensors=" + std::to_string(tensor_lines.size()) + '\n';
+    for (const std::string & line : tensor_lines) canonical += line + '\n';
+    hash = astc_vulkan_sha256_hex(canonical.data(), canonical.size());
+    error.clear();
+    return true;
+}
+
+bool gguf_schema_matches(const std::string & source_path, const std::string & runtime_path,
+                         std::string & error) {
+    std::string source_architecture;
+    std::string runtime_architecture;
+    std::vector<std::string> source_tensors;
+    std::vector<std::string> runtime_tensors;
+    if (!gguf_schema_components(source_path, source_architecture, source_tensors, error) ||
+        !gguf_schema_components(runtime_path, runtime_architecture, runtime_tensors, error)) {
+        return false;
+    }
+    if (source_architecture != runtime_architecture) {
+        error = "GGUF architecture metadata differs";
+        return false;
+    }
+    if (source_tensors.size() != runtime_tensors.size()) {
+        error = "GGUF tensor count differs: source=" + std::to_string(source_tensors.size()) +
+            " runtime=" + std::to_string(runtime_tensors.size());
+        return false;
+    }
+    for (size_t index = 0; index < source_tensors.size(); ++index) {
+        if (source_tensors[index] == runtime_tensors[index]) continue;
+        error = "GGUF tensor set/shape differs near " + source_tensors[index];
+        return false;
+    }
+    error.clear();
+    return true;
 }
 
 bool has_paired_d2(const astc_vulkan_manifest & manifest) {
@@ -191,6 +332,7 @@ bool astc_vulkan_cache_resolve(const std::string & model_path,
     paths.payload_sha256 = (root / kPayloadHashFile).string();
     paths.layout_sha256 = (root / kLayoutHashFile).string();
     paths.row_scales_sha256 = (root / kRowScalesHashFile).string();
+    paths.compatible_bases = (root / kCompatibleBasesDirectory).string();
     error.clear();
     return true;
 }
@@ -210,6 +352,16 @@ bool astc_vulkan_cache_validate(const std::string & model_path,
         !verify_hash(result.paths.manifest, result.paths.manifest_sha256, "manifest", error) ||
         !verify_hash(result.paths.payload, result.paths.payload_sha256, "payload", error) ||
         !astc_vulkan_read_manifest(result.paths.manifest, result.manifest, error)) return false;
+    if (!read_hash(result.paths.source_sha256, result.runtime_base.source_sha256)) {
+        error = "missing or invalid source GGUF SHA-256 record";
+        return false;
+    }
+    result.runtime_base.is_source = true;
+    result.runtime_base.admitted = true;
+    result.runtime_base.model_gate_passed = true;
+    result.runtime_base.vulkan_gate_passed = true;
+    result.runtime_base.runtime_sha256 = result.runtime_base.source_sha256;
+    result.runtime_base.family = "source";
 
     result.has_paired_d2 = has_paired_d2(result.manifest);
     result.has_row_scales = has_row_scales(result.manifest);
@@ -239,6 +391,106 @@ bool astc_vulkan_cache_validate(const std::string & model_path,
         !validate_tensor_payloads(result.manifest, payload_size, result.paths.payload,
                                   layout_size, result.paths.layout,
                                   row_scale_size, result.paths.row_scales, error)) return false;
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_cache_admit_runtime_base(
+        const std::string & source_model_path, const std::string & runtime_model_path,
+        const std::string & requested_cache_path, const std::string & family,
+        astc_vulkan_cache_runtime_base & binding, std::string & error) {
+    binding = {};
+    if (!valid_binding_value(family)) {
+        error = "ASTC runtime-base family must be a non-empty single-line value";
+        return false;
+    }
+    // Admission starts from the original strict validation: the cache must
+    // still be proven against its exact F16/BF16 source model.
+    astc_vulkan_cache_validation source_cache;
+    if (!astc_vulkan_cache_validate(source_model_path, requested_cache_path, source_cache, error)) {
+        return false;
+    }
+    std::string source_schema;
+    std::string runtime_schema;
+    std::string source_hash;
+    std::string runtime_hash;
+    if (!gguf_schema_sha256(source_model_path, source_schema, error) ||
+        !gguf_schema_sha256(runtime_model_path, runtime_schema, error) ||
+        !astc_vulkan_sha256_file_hex(source_model_path, source_hash, error) ||
+        !astc_vulkan_sha256_file_hex(runtime_model_path, runtime_hash, error)) return false;
+    if (source_hash != source_cache.runtime_base.runtime_sha256) {
+        error = "ASTC cache source hash changed during runtime-base admission";
+        return false;
+    }
+    if (source_schema != runtime_schema) {
+        std::string schema_error;
+        if (!gguf_schema_matches(source_model_path, runtime_model_path, schema_error)) {
+            error = "runtime GGUF schema does not match the ASTC source model: " + schema_error;
+        } else {
+            error = "runtime GGUF schema fingerprint differs from the ASTC source model";
+        }
+        return false;
+    }
+    if (source_hash == runtime_hash) {
+        error = "runtime GGUF is already the ASTC cache source model";
+        return false;
+    }
+    std::error_code ec;
+    const fs::path directory(source_cache.paths.compatible_bases);
+    if (!fs::create_directories(directory, ec) && ec) {
+        error = "cannot create ASTC compatible-base directory";
+        return false;
+    }
+    const fs::path final_path = directory / (runtime_hash + kRuntimeBaseExtension);
+    if (fs::exists(final_path, ec)) {
+        error = "runtime GGUF is already admitted for this ASTC cache";
+        return false;
+    }
+    binding.admitted = true;
+    binding.source_sha256 = source_hash;
+    binding.runtime_sha256 = runtime_hash;
+    binding.schema_sha256 = source_schema;
+    binding.family = family;
+    // Runtime quality gates are deliberately false at registration. A later
+    // replay/publish flow must attach measured evidence before auto-selection.
+    const fs::path temporary = final_path.string() + ".partial";
+    if (!write_binding(temporary.string(), binding, error)) return false;
+    fs::rename(temporary, final_path, ec);
+    if (ec) {
+        fs::remove(temporary, ec);
+        error = "cannot atomically publish ASTC runtime-base binding";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_cache_validate_runtime_base(
+        const std::string & source_model_path, const std::string & runtime_model_path,
+        const std::string & requested_cache_path, astc_vulkan_cache_runtime_base & binding,
+        std::string & error) {
+    binding = {};
+    astc_vulkan_cache_validation source_cache;
+    if (!astc_vulkan_cache_validate(source_model_path, requested_cache_path, source_cache, error)) {
+        return false;
+    }
+    std::string runtime_hash;
+    std::string runtime_schema;
+    if (!astc_vulkan_sha256_file_hex(runtime_model_path, runtime_hash, error) ||
+        !gguf_schema_sha256(runtime_model_path, runtime_schema, error)) return false;
+    const fs::path binding_path = fs::path(source_cache.paths.compatible_bases) /
+        (runtime_hash + kRuntimeBaseExtension);
+    if (!read_binding(binding_path.string(), binding)) {
+        error = "runtime GGUF has no ASTC admission record";
+        return false;
+    }
+    if (binding.source_sha256 != source_cache.runtime_base.runtime_sha256 ||
+        binding.runtime_sha256 != runtime_hash || binding.schema_sha256 != runtime_schema) {
+        error = "ASTC runtime-base admission record does not match the supplied GGUFs";
+        binding = {};
+        return false;
+    }
+    binding.is_source = false;
     error.clear();
     return true;
 }

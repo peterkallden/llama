@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -15,6 +17,7 @@ struct trace_capture_params {
     std::string model_path;
     std::string output_path;
     std::string prompt;
+    std::string prompt_file;
     uint32_t layer = 0;
     bool ffn_down_input = false;
     bool ffn_down_output = false;
@@ -22,8 +25,17 @@ struct trace_capture_params {
 
 void print_usage(const char * program) {
     std::fprintf(stderr,
-                 "usage: %s --model model.gguf --output trace.astc --layer N --prompt text [--ffn-down-input|--ffn-down-output]\n",
+                 "usage: %s --model model.gguf --output trace.astc --layer N (--prompt text | --prompt-file prompts.txt) [--ffn-down-input|--ffn-down-output]\n",
                  program);
+}
+
+bool read_text_file(const std::string & path, std::string & text) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    std::ostringstream stream;
+    stream << file.rdbuf();
+    text = stream.str();
+    return file.good() || file.eof();
 }
 
 bool parse_u32(const char * text, uint32_t & value) {
@@ -63,6 +75,8 @@ bool parse_args(int argc, char ** argv, trace_capture_params & params) {
             params.output_path = value;
         } else if (std::strcmp(option, "--prompt") == 0 || std::strcmp(option, "-p") == 0) {
             params.prompt = value;
+        } else if (std::strcmp(option, "--prompt-file") == 0) {
+            params.prompt_file = value;
         } else if (std::strcmp(option, "--layer") == 0) {
             if (!parse_u32(value, params.layer)) {
                 return false;
@@ -71,6 +85,9 @@ bool parse_args(int argc, char ** argv, trace_capture_params & params) {
             return false;
         }
     }
+    if (!params.prompt.empty() && !params.prompt_file.empty()) return false;
+    if (params.prompt.empty() && !params.prompt_file.empty() &&
+        !read_text_file(params.prompt_file, params.prompt)) return false;
     return !params.model_path.empty() && !params.output_path.empty() && !params.prompt.empty();
 }
 
