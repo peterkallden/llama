@@ -342,6 +342,56 @@ of the ASTC flags changes its regular quantized tensor path.
 
 ## Building and publishing a cache
 
+### Enklaste användarflödet
+
+Tänk på en ASTC-cache som en färdig, offline-byggd sidofil. Du behöver normalt
+bara känna till tre saker:
+
+1. `build` skapar cachen från en modell och ett activation-trace.
+2. `verify` kontrollerar att cachen är hel och hör till modellen.
+3. `inspect` visar representation, footprint, bitrate och evidensstatus.
+
+Runtime startar inte encoding automatiskt. Om cachen saknas används den vanliga
+GGUF-vägen.
+
+För en cache som byggs direkt från den modell som ska köras:
+
+```bash
+build-astc-neural/bin/astc-vulkan-cache build \
+  --model /absolute/path/model.gguf \
+  --tensor blk.0.ffn_down.weight \
+  --trace /absolute/path/activations.trace \
+  --footprint 6x6 --representation scalar --backend hybrid \
+  --cache auto
+
+build-astc-neural/bin/astc-vulkan-cache verify \
+  --model /absolute/path/model.gguf --cache auto
+
+build-astc-neural/bin/astc-vulkan-cache inspect \
+  --model /absolute/path/model.gguf --cache auto
+```
+
+`hybrid` är standard: GPU-proposer där den finns och CPU-astcenc som exakt
+finisher. Använd `--backend cpu` när du vill ha en ren CPU-reference.
+
+### F16-källa med Q4/Q3 som runtime-bas
+
+Det här är ett separat, avancerat flöde. Cachen byggs en gång från F16/BF16
+och binds sedan strukturellt till en Q4- eller Q3-GGUF av samma logiska modell:
+
+```bash
+build-astc-neural/bin/astc-vulkan-cache bind \
+  --source-model /absolute/path/model-f16.gguf \
+  --runtime-model /absolute/path/model-q4_k_m.gguf \
+  --family q4_k_m \
+  --cache /absolute/path/model-f16.gguf.astc-vulkan
+```
+
+`bind` kontrollerar modellens arkitektur, tensornamn och former. Det är inte ett
+kvalitetsgodkännande; Q4/Q3-basens model-replay måste fortfarande passera innan
+schedulern får välja artefakten automatiskt. Det äldre kommandot `admit-base`
+finns kvar som alias.
+
 An ASTC cache is deliberately an **offline** sidecar.  Model loading validates
 and consumes an already-built cache; it never starts a long ASTC encode job
 just-in-time.

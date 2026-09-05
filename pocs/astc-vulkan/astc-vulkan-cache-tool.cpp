@@ -114,19 +114,26 @@ void print_profiles() {
 
 void print_help(const char * executable) {
     std::printf(
-        "usage:\n"
+        "Vanligt flöde (offline-cache; ingen JIT-encoding):\n"
         "  %s profiles\n"
+        "  %s build --model model.gguf --tensor name --trace activations.bin --footprint 6x6\n"
+            "            [--representation scalar|paired-d2] [--cache path|auto]\n"
+            "            [--backend hybrid|cpu] [--workers N]\n"
         "  %s inspect --model model.gguf [--cache path|auto]\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
+        "\nF16-cache ovanpå Q4/Q3 (avancerat, kräver separat model-replay):\n"
+        "  %s bind --source-model source-f16.gguf --runtime-model runtime-q4.gguf\n"
+            "            [--family q4_k_m] [--cache source-cache|auto]\n"
         "  %s admit-base --source-model source-f16.gguf --model runtime-q4.gguf\n"
-            "            [--family q4_k_m] [--cache path|auto]\n"
-        "  %s build --model model.gguf --tensor name --trace activations.bin --footprint 6x6\n"
-            "            [--cache path|auto] [--backend hybrid|cpu] [--gpu-proposer-shader shader.spv]\n"
-            "            [--preset thorough|medium|fast] [--artifact-dir dir] [--source-family name]\n"
-        "            [--representation scalar|paired-d2] [--rows N --columns N]\n"
+            "            [--family q4_k_m] [--cache source-cache|auto]  (alias)\n"
+        "\nDetaljerade build-argument (valfria):\n"
+        "  --gpu-proposer-shader shader.spv --preset thorough|medium|fast\n"
+        "  --artifact-dir dir --source-family fp16|bf16|q4_k_m|q3_k_m\n"
+        "  --rows N --columns N (D2-shape; alias för crop-gränser i D1)\n"
         "            [--paired-semantic direct|la] [--channel-weights legacy|balanced-a025]\n"
         "            [--source-derived-alpha 0|1] [--row-scale none|absmax]\n"
         "            [--workers N]\n"
+        "\nAvancerat/artifact-packning (för reproducerbara scripts):\n"
         "  %s publish --model model.gguf --artifact-dir artifact-dir [--storage-profile name] [--cache path|auto]\n"
         "  %s install --model model.gguf --artifact-dir artifact-dir [--profile name] [--cache path|auto]\n"
         "  %s create --model model.gguf --manifest artifact.manifest --payload payload.bin\n"
@@ -140,7 +147,7 @@ void print_help(const char * executable) {
         "build is a bounded D1 orchestrator: it runs the existing latent exporter, packs a\n"
         "v4 artifact and publishes it atomically. It does not perform JIT encoding and\n"
         "defaults model/vulkan evidence gates to false until replay has passed.\n",
-        executable, executable, executable, executable, executable, executable, executable, executable);
+        executable, executable, executable, executable, executable, executable, executable, executable, executable);
 }
 
 std::string shell_quote(const std::string & value) {
@@ -262,6 +269,9 @@ bool build_d1_cache(const char * argv0, const std::string & model,
         error = "cannot create build artifact staging directory";
         return false;
     }
+    std::printf("astc-cache build stage=prepare tensor=%s footprint=%s source-family=%s backend=%s\n",
+                tensor.c_str(), footprint.c_str(), source_family.c_str(), backend.c_str());
+    std::fflush(stdout);
     const auto cleanup = [&]() {
         if (remove_output) {
             std::error_code ignored;
@@ -289,10 +299,14 @@ bool build_d1_cache(const char * argv0, const std::string & model,
             generator_args.push_back(shader);
         }
     }
+    std::printf("astc-cache build stage=latent-export status=running\n");
+    std::fflush(stdout);
     if (!run_tool(sibling_tool(argv0, "astc-vulkan-latent-smoke"), generator_args, error)) {
         cleanup();
         return false;
     }
+    std::printf("astc-cache build stage=latent-export status=done\n");
+    std::fflush(stdout);
     uint32_t width = 0, height = 0;
     if (!read_metadata_uint(exported_metadata, "columns", width) ||
         !read_metadata_uint(exported_metadata, "rows", height)) {
@@ -318,16 +332,24 @@ bool build_d1_cache(const char * argv0, const std::string & model,
         "--representation", "scalar", "--artifact-id", sanitized_id(tensor, footprint),
         "--encoder-profile", encoder_profile, "--variant", "neutral",
         "--normalization", "none", "--model-gate", "false", "--vulkan-gate", "false"};
+    std::printf("astc-cache build stage=artifact-pack status=running\n");
+    std::fflush(stdout);
     if (!run_tool(sibling_tool(argv0, "astc-vulkan-artifact-pack"), pack_args, error)) {
         cleanup();
         return false;
     }
+    std::printf("astc-cache build stage=artifact-pack status=done\n");
+    std::fflush(stdout);
+    std::printf("astc-cache build stage=publish status=running (hashing source GGUF)\n");
+    std::fflush(stdout);
     if (!astc_vulkan_cache_create_with_row_scales(
             model, manifest.string(), payload.string(), {}, {}, provenance.string(),
             cache, paths, error)) {
         cleanup();
         return false;
     }
+    std::printf("astc-cache build stage=publish status=done\n");
+    std::fflush(stdout);
     std::printf("astc-cache build tensor=%s footprint=%s backend=%s artifact=%s gates=model:false/vulkan:false\n",
                 tensor.c_str(), footprint.c_str(), encoder_profile.c_str(),
                 sanitized_id(tensor, footprint).c_str());
@@ -530,7 +552,7 @@ int main(int argc, char ** argv) {
         if (index + 1 >= argc) return 2;
         const std::string option = argv[index];
         const std::string value = argv[index + 1];
-        if (option == "--model") model = value;
+        if (option == "--model" || option == "--runtime-model") model = value;
         else if (option == "--source-model") source_model = value;
         else if (option == "--manifest") manifest = value;
         else if (option == "--payload") payload = value;
@@ -563,18 +585,18 @@ int main(int argc, char ** argv) {
         else return 2;
     }
     std::string error;
-    if (command == "admit-base") {
+    if (command == "bind" || command == "admit-base") {
         astc_vulkan_cache_runtime_base binding;
         if (source_model.empty() || model.empty() ||
             !astc_vulkan_cache_admit_runtime_base(source_model, model, cache, runtime_family,
                                                    binding, error)) {
-            std::fprintf(stderr, "astc-cache admit-base failed: %s\n", error.c_str());
+            std::fprintf(stderr, "astc-cache %s failed: %s\n", command.c_str(), error.c_str());
             return 1;
         }
-        std::printf("astc-cache admit-base source=%s runtime=%s family=%s schema=%s gates=model:false/vulkan:false\n",
+        std::printf("astc-cache bind source=%s runtime=%s family=%s schema=%s gates=model:false/vulkan:false\n",
                     source_model.c_str(), model.c_str(), binding.family.c_str(),
                     binding.schema_sha256.c_str());
-        std::printf("astc-cache admit-base note=structural-only; run a runtime-specific replay gate before production scheduling\n");
+        std::printf("astc-cache bind note=structural-only; run a runtime-specific replay gate before production scheduling\n");
         return 0;
     }
     if (command == "build") {
@@ -592,6 +614,12 @@ int main(int argc, char ** argv) {
         }
         astc_vulkan_cache_paths paths;
         const bool d2 = representation == "paired-d2";
+        // For D1, accept the familiar --rows/--columns spelling as aliases
+        // for crop limits. D2 uses these options for its physical shape.
+        if (!d2) {
+            if (max_rows.empty()) max_rows = rows;
+            if (max_columns.empty()) max_columns = columns;
+        }
         const bool built = d2 ? build_d2_cache(
             argv[0], model, tensor, trace, footprint, cache, artifact_dir, source_family,
             paired_semantic, channel_weights, source_alpha, row_scale, rows, columns,

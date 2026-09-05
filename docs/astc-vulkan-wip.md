@@ -9374,3 +9374,43 @@ not measure full ASTC encoding: CPU `astcenc` finishing, model-sized source
 construction, cache I/O, and neural selection are separate costs. A proper
 speed gate should use a larger repeated batch, warm-up, median/p95, and a
 breakdown for source upload, dispatch, readback, CPU finisher, and YAQA.
+
+## Three-hundred-and-seventieth sweep: simplified cache UX and Qwen D1 6x6 full-shape pilot
+
+The cache CLI now presents a small normal path and keeps provenance/low-level
+artifact packing separate. The normal path is `build`, `verify`, and `inspect`.
+The explicit F16-source/Q4-or-Q3-runtime binding path is named `bind`; the
+older `admit-base` spelling remains an alias so existing scripts keep working.
+`--runtime-model` is accepted as the clearer spelling of the old `--model`
+argument for that binding command. No cache or runtime semantics changed.
+
+The full-shape D1 pilot used the Qwen2.5-1.5B-Instruct `Q4_K_M` GGUF, not an
+F16/BF16 source, and encoded `blk.0.ffn_down.weight` (1536 x 8960) with the
+hybrid GPU-proposer/CPU-finisher path, thorough preset, and eight workers.
+The run took about 24 minutes. It produced 382,464 ASTC 6x6 blocks, a
+6,119,424-byte payload, and a nominal 3.5556 bits/weight. Cache SHA checks,
+full CPU ASTC decode, and the streamed CPU-oracle model replay all passed.
+
+The corrected full-shape metrics against the Q4-dequantized source were:
+
+| metric | result |
+| --- | ---: |
+| element MSE | `4.638909e-05` |
+| element relative MSE | `0.0648183` |
+| activation relative MSE (10 captured activations) | `0.0458939` |
+| maximum absolute weight error | `0.0636761` |
+| model replay logits relative MSE | `0.0102044` |
+| model replay top-1 agreement | `100%` |
+| model replay loss delta | `-0.0726633` |
+
+The replay was prompt-matched to the trace (`Explain why cache locality
+matters in matrix multiplication.`) and used the CPU ASTC oracle with streamed
+cache access. The artifact remains research-only until a Vulkan gate and a
+broader model-evidence corpus are attached. These numbers must not be described
+as F16-derived quality: the source was already Q4-quantized.
+
+During this sweep an affine-metadata bug in ordinary scalar latent export was
+fixed. The few-level margin is now applied only for explicit few-level sources;
+normal scalar export uses the full normalized interval and the true source
+minimum as decoder offset. Earlier pilot runs with the shifted offset are
+discarded for quality comparisons.

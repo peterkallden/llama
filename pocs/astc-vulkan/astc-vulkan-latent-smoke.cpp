@@ -2879,8 +2879,14 @@ latent_representation make_scalar_latents(const std::vector<float> & weights,
     constexpr float kFewLevelLatentMargin = 1.0f / 16.0f;
     const bool few_level = source_levels >= 2;
     const float latent_scale = few_level ? 1.0f - 2.0f * kFewLevelLatentMargin : 1.0f;
-    result.decoder = { range / latent_scale, 0.0,
-                       minimum - range * kFewLevelLatentMargin / latent_scale };
+    // Ordinary scalar latents use the full [0, 1] interval.  The margin is
+    // reserved for explicit few-level sources; applying it unconditionally
+    // shifts every normal scalar decode by range/16, which is catastrophic on
+    // wide-range tensors and makes the exported affine metadata inconsistent
+    // with the source normalization.
+    const float decoder_offset = few_level ?
+        minimum - range * kFewLevelLatentMargin / latent_scale : minimum;
+    result.decoder = { range / latent_scale, 0.0, decoder_offset };
     for (size_t index = 0; index < weights.size(); ++index) {
         float normalized = (weights[index] - minimum) / range;
         if (few_level) {
