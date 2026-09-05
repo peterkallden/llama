@@ -42,6 +42,7 @@
 # Build Artifacts
 
 /tags
+/.astc-cache/
 /.build/
 /build*
 /release
