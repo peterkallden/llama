@@ -111,15 +111,18 @@ void print_help(const char * executable) {
         "usage:\n"
         "  %s profiles\n"
         "  %s inspect --model model.gguf [--cache path|auto]\n"
+        "  %s verify --model model.gguf [--cache path|auto]\n"
+        "  %s publish --model model.gguf --artifact-dir artifact-dir [--storage-profile name] [--cache path|auto]\n"
         "  %s install --model model.gguf --artifact-dir artifact-dir [--profile name] [--cache path|auto]\n"
         "  %s create --model model.gguf --manifest artifact.manifest --payload payload.bin\n"
-        "            [--layout layout.bin --row-scales scales.bin --provenance provenance.txt --profile name --cache path|auto]\n"
+        "            [--layout layout.bin --row-scales scales.bin --provenance provenance.txt --storage-profile name --cache path|auto]\n"
         "\n"
-        "install expects manifest.astcv, payload.astcpack, optional layout-map.bin/row-scales.bin, and optional\n"
+        "publish expects manifest.astcv, payload.astcpack, optional layout-map.bin/row-scales.bin, and optional\n"
         "provenance.txt in artifact-dir. It publishes only already-generated offline artifacts;\n"
         "it never performs just-in-time encoding during model loading. Profiles marked experimental\n"
-        "require an explicit experimental runtime selection.\n",
-        executable, executable, executable, executable);
+        "require an explicit experimental runtime selection. `install` and `--profile` remain\n"
+        "compatibility aliases; use `publish` and `--storage-profile` for new scripts.\n",
+        executable, executable, executable, executable, executable, executable);
 }
 
 bool artifact_directory_paths(const std::string & root, std::string & manifest,
@@ -167,15 +170,23 @@ int main(int argc, char ** argv) {
         else if (option == "--provenance") provenance = value;
         else if (option == "--cache") cache = value;
         else if (option == "--artifact-dir") artifact_dir = value;
-        else if (option == "--profile") profile_name = value;
+        else if (option == "--profile" || option == "--storage-profile") profile_name = value;
         else return 2;
     }
     std::string error;
-    if (command == "inspect") {
+    if (command == "inspect" || command == "verify") {
         astc_vulkan_cache_validation validation;
         if (model.empty() || !astc_vulkan_cache_validate(model, cache, validation, error)) {
             std::fprintf(stderr, "astc-cache miss: %s\n", error.c_str());
             return 1;
+        }
+        if (command == "verify") {
+            const size_t records = validation.manifest.version == 4 ? validation.manifest.artifacts.size() :
+                validation.manifest.tensors.size();
+            std::printf("astc-cache verify ok records=%zu paired-d2=%s row-scales=%s\n",
+                        records, validation.has_paired_d2 ? "true" : "false",
+                        validation.has_row_scales ? "true" : "false");
+            return 0;
         }
         const size_t records = validation.manifest.version == 4 ? validation.manifest.artifacts.size() :
             validation.manifest.tensors.size();
@@ -205,7 +216,7 @@ int main(int argc, char ** argv) {
         print_paths(validation.paths);
         return 0;
     }
-    if (command == "install") {
+    if (command == "install" || command == "publish") {
         if (!artifact_directory_paths(artifact_dir, manifest, payload, layout, row_scales, provenance)) return 2;
     } else if (command != "create") {
         std::fprintf(stderr, "unknown astc-cache command: %s\n", command.c_str());
@@ -219,7 +230,7 @@ int main(int argc, char ** argv) {
             return 1;
         }
     }
-    if (command == "create" || command == "install") {
+    if (command == "create" || command == "install" || command == "publish") {
         astc_vulkan_cache_paths paths;
         if (model.empty() || manifest.empty() || payload.empty() ||
             !astc_vulkan_cache_create_with_row_scales(model, manifest, payload, layout, row_scales,

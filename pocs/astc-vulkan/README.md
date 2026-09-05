@@ -423,13 +423,18 @@ build-astc/bin/astc-vulkan-cache profiles
 
 # artifact-dir must contain manifest.astcv and payload.astcpack; D2 also has
 # layout-map.bin. provenance.txt is optional but recommended.
-build-astc/bin/astc-vulkan-cache install \
+# Publish an already generated artifact directory atomically.
+build-astc/bin/astc-vulkan-cache publish \
   --model /absolute/path/model.gguf \
   --artifact-dir /absolute/path/artifact-dir \
-  --profile d2-8x5 \
+  --storage-profile d2-8x5 \
   --cache auto
 
 # Verify source hashes, manifest/payload checksums, and every tensor record.
+build-astc/bin/astc-vulkan-cache verify \
+  --model /absolute/path/model.gguf --cache auto
+
+# Use `inspect` when the individual tensor/artifact evidence should also be printed.
 build-astc/bin/astc-vulkan-cache inspect \
   --model /absolute/path/model.gguf --cache auto
 ```
@@ -451,12 +456,16 @@ build-astc/bin/astc-vulkan-cache create \
   --payload /absolute/path/payload.astcpack \
   --layout /absolute/path/layout-map.bin \
   --provenance /absolute/path/provenance.txt \
-  --profile d2-8x5 --cache auto
+  --storage-profile d2-8x5 --cache auto
 ```
 
 For D1, omit `--layout`.  Use `d1-6x6`, `d1-8x6`, and so forth as appropriate.
-`install`/`create` validate that the selected profile agrees with all manifest
-records, then publish atomically.  They do not generate ASTC blocks.
+`publish`/`create` validate that the selected storage profile agrees with all
+manifest records, then publish atomically.  They do not generate ASTC blocks;
+`install` and `--profile` remain compatibility aliases.  The higher-level
+`build` command, which will connect model loading, GPU proposal, CPU finishing,
+selection and artifact publication in one invocation, is intentionally the
+next cache-builder step rather than being emulated by these packaging commands.
 
 ### Cache contents
 
