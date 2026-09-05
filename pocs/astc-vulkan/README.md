@@ -446,6 +446,34 @@ An explicit path is supported when the cache belongs on another filesystem:
 --cache /absolute/path/to/model.gguf.astc-vulkan
 ```
 
+For a small, reproducible D1 cache build, the cache tool now provides a
+bounded orchestration command. It runs the existing latent exporter, packs a
+v4 scalar artifact, and publishes it through the same atomic/hash-validated
+path as `publish`. The command does not perform model replay and therefore
+stores the artifact with `model_gate=false` and `vulkan_gate=false`; run the
+replay gates and update/publish an evidence-bearing artifact before enabling
+it in the production scheduler.
+
+```bash
+build-astc-neural/bin/astc-vulkan-cache build \
+  --model /absolute/path/model.gguf \
+  --tensor blk.0.ffn_down.weight \
+  --trace /absolute/path/calibration.trace \
+  --footprint 6x6 \
+  --backend hybrid \
+  --gpu-proposer-shader build-astc-neural/pocs/astc-vulkan/astc-gpu-d1-proposer.comp.spv \
+  --preset medium \
+  --cache auto
+```
+
+`--backend cpu` forces the CPU `astcenc` reference path. `--artifact-dir`
+keeps the generated manifest/payload/provenance for inspection instead of
+using an automatically removed temporary staging directory. `--max-rows`
+and `--max-columns` are available for bounded smoke builds. This first
+version intentionally handles one D1 scalar tensor; D1 gauge and D2 will use
+the same staging/publish contract after their model-level evidence is wired
+into the builder.
+
 `create` is the lower-level equivalent when the artifact pieces are held in
 separate paths:
 
@@ -461,11 +489,10 @@ build-astc/bin/astc-vulkan-cache create \
 
 For D1, omit `--layout`.  Use `d1-6x6`, `d1-8x6`, and so forth as appropriate.
 `publish`/`create` validate that the selected storage profile agrees with all
-manifest records, then publish atomically.  They do not generate ASTC blocks;
-`install` and `--profile` remain compatibility aliases.  The higher-level
-`build` command, which will connect model loading, GPU proposal, CPU finishing,
-selection and artifact publication in one invocation, is intentionally the
-next cache-builder step rather than being emulated by these packaging commands.
+manifest records, then publish atomically. They do not generate ASTC blocks;
+`install` and `--profile` remain compatibility aliases. The bounded D1
+`build` command above is the first explicit producer path; it reuses the
+existing generator and packer rather than duplicating ASTC encoding logic.
 
 ### Cache contents
 

@@ -1,10 +1,16 @@
 #include "astc-vulkan-cache.h"
 #include "astc-vulkan-format.h"
+#include "astc-vulkan-provenance.h"
 
 #include <array>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -112,6 +118,9 @@ void print_help(const char * executable) {
         "  %s profiles\n"
         "  %s inspect --model model.gguf [--cache path|auto]\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
+        "  %s build --model model.gguf --tensor name --trace activations.bin --footprint 6x6\n"
+        "            [--cache path|auto] [--backend hybrid|cpu] [--gpu-proposer-shader shader.spv]\n"
+        "            [--preset thorough|medium|fast] [--artifact-dir dir] [--source-family name]\n"
         "  %s publish --model model.gguf --artifact-dir artifact-dir [--storage-profile name] [--cache path|auto]\n"
         "  %s install --model model.gguf --artifact-dir artifact-dir [--profile name] [--cache path|auto]\n"
         "  %s create --model model.gguf --manifest artifact.manifest --payload payload.bin\n"
@@ -121,8 +130,194 @@ void print_help(const char * executable) {
         "provenance.txt in artifact-dir. It publishes only already-generated offline artifacts;\n"
         "it never performs just-in-time encoding during model loading. Profiles marked experimental\n"
         "require an explicit experimental runtime selection. `install` and `--profile` remain\n"
-        "compatibility aliases; use `publish` and `--storage-profile` for new scripts.\n",
-        executable, executable, executable, executable, executable, executable);
+        "compatibility aliases; use `publish` and `--storage-profile` for new scripts.\n"
+        "build is a bounded D1 orchestrator: it runs the existing latent exporter, packs a\n"
+        "v4 artifact and publishes it atomically. It does not perform JIT encoding and\n"
+        "defaults model/vulkan evidence gates to false until replay has passed.\n",
+        executable, executable, executable, executable, executable, executable, executable);
+}
+
+std::string shell_quote(const std::string & value) {
+    std::string quoted("'");
+    for (const char character : value) {
+        if (character == '\'') quoted += "'\\''";
+        else quoted += character;
+    }
+    quoted += '\'';
+    return quoted;
+}
+
+bool run_tool(const std::filesystem::path & executable,
+              const std::vector<std::string> & arguments, std::string & error) {
+    std::string command = shell_quote(executable.string());
+    for (const std::string & argument : arguments) command += " " + shell_quote(argument);
+    const int status = std::system(command.c_str());
+    if (status != 0) {
+        error = "offline ASTC tool failed (status " + std::to_string(status) + ")";
+        return false;
+    }
+    return true;
+}
+
+bool read_metadata_value(const std::filesystem::path & path, const char * key,
+                         std::string & value) {
+    std::ifstream input(path);
+    if (!input) return false;
+    const std::string prefix = std::string(key) + "=";
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.rfind(prefix, 0) == 0) {
+            value = line.substr(prefix.size());
+            return !value.empty();
+        }
+    }
+    return false;
+}
+
+bool read_metadata_uint(const std::filesystem::path & path, const char * key,
+                        uint32_t & value) {
+    std::string text;
+    if (!read_metadata_value(path, key, text)) return false;
+    try {
+        const unsigned long parsed = std::stoul(text);
+        if (parsed == 0 || parsed > UINT32_MAX) return false;
+        value = static_cast<uint32_t>(parsed);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::filesystem::path sibling_tool(const char * argv0, const char * name) {
+    const std::filesystem::path invoked = std::filesystem::absolute(argv0);
+    const std::filesystem::path sibling = invoked.parent_path() / name;
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(sibling, ec)) return sibling;
+    return std::filesystem::path(name);
+}
+
+std::string sanitized_id(const std::string & tensor, const std::string & footprint) {
+    std::string result;
+    result.reserve(tensor.size() + footprint.size() + 8);
+    for (const char character : tensor) {
+        if ((character >= 'a' && character <= 'z') ||
+            (character >= 'A' && character <= 'Z') ||
+            (character >= '0' && character <= '9') || character == '_' || character == '-') {
+            result += character;
+        } else {
+            result += '_';
+        }
+    }
+    result += "-d1-" + footprint + "-scalar";
+    return result;
+}
+
+bool build_d1_cache(const char * argv0, const std::string & model,
+                    const std::string & tensor, const std::string & trace,
+                    const std::string & footprint, const std::string & cache,
+                    const std::string & backend, const std::string & shader,
+                    const std::string & preset, const std::string & artifact_dir,
+                    const std::string & source_family, const std::string & max_rows,
+                    const std::string & max_columns, astc_vulkan_cache_paths & paths,
+                    std::string & error) {
+    if (model.empty() || tensor.empty() || trace.empty() || footprint.empty()) {
+        error = "build requires --model, --tensor, --trace and --footprint";
+        return false;
+    }
+    std::string fingerprint, trace_hash;
+    if (!astc_vulkan_sha256_file_hex(model, fingerprint, error) ||
+        !astc_vulkan_sha256_file_hex(trace, trace_hash, error)) return false;
+
+    std::filesystem::path output_dir;
+    bool remove_output = false;
+    if (!artifact_dir.empty()) {
+        output_dir = artifact_dir;
+        std::error_code ec;
+        if (std::filesystem::exists(output_dir, ec)) {
+            error = "--artifact-dir already exists; refusing to overwrite it";
+            return false;
+        }
+    } else {
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        output_dir = std::filesystem::temp_directory_path() /
+                     ("astc-vulkan-build-" + std::to_string(stamp));
+        remove_output = true;
+    }
+    std::error_code ec;
+    if (!std::filesystem::create_directories(output_dir, ec) || ec) {
+        error = "cannot create build artifact staging directory";
+        return false;
+    }
+    const auto cleanup = [&]() {
+        if (remove_output) {
+            std::error_code ignored;
+            std::filesystem::remove_all(output_dir, ignored);
+        }
+    };
+    const std::filesystem::path exported_astc = output_dir / "generated.astcpack";
+    const std::filesystem::path exported_reference = output_dir / "generated.reference.bin";
+    const std::filesystem::path exported_metadata = output_dir / "generated.metadata.txt";
+    std::vector<std::string> generator_args{
+        "--model", model, "--tensor", tensor, "--trace", trace,
+        "--footprint", footprint, "--preset", preset,
+        "--export-mode", "scalar", "--export-astc", exported_astc.string(),
+        "--export-reference", exported_reference.string(),
+        "--export-metadata", exported_metadata.string(), "--export-only"};
+    if (!max_rows.empty()) { generator_args.push_back("--max-rows"); generator_args.push_back(max_rows); }
+    if (!max_columns.empty()) { generator_args.push_back("--max-columns"); generator_args.push_back(max_columns); }
+    if (backend == "cpu") {
+        generator_args.push_back("--backend"); generator_args.push_back("cpu");
+    } else {
+        generator_args.push_back("--backend"); generator_args.push_back("hybrid");
+        if (!shader.empty()) {
+            generator_args.push_back("--gpu-proposer-shader");
+            generator_args.push_back(shader);
+        }
+    }
+    if (!run_tool(sibling_tool(argv0, "astc-vulkan-latent-smoke"), generator_args, error)) {
+        cleanup();
+        return false;
+    }
+    uint32_t width = 0, height = 0;
+    if (!read_metadata_uint(exported_metadata, "columns", width) ||
+        !read_metadata_uint(exported_metadata, "rows", height)) {
+        error = "latent exporter metadata did not contain tensor dimensions";
+        cleanup();
+        return false;
+    }
+    const std::filesystem::path manifest = output_dir / "manifest.astcv";
+    const std::filesystem::path payload = output_dir / "payload.astcpack";
+    const std::filesystem::path provenance = output_dir / "provenance.txt";
+    const std::string encoder_profile = backend == "cpu" || shader.empty() ?
+        "cpu-astcenc" : "gpu-proposer-cpu-finisher";
+    const std::vector<std::string> pack_args{
+        "--input", exported_astc.string(), "--metadata", exported_metadata.string(),
+        "--manifest", manifest.string(), "--payload", payload.string(),
+        "--tensor", tensor, "--model-fingerprint", fingerprint,
+        "--provenance", provenance.string(), "--source-family", source_family,
+        "--calibration-hash", trace_hash, "--validation-hash", trace_hash,
+        "--holdout-hash", "unspecified", "--selector-config", "build-d1-scalar",
+        "--validation-prefix", "0", "--commit-order-hash", "none",
+        "--padding-contract", "deterministic-clamp-v1", "--width", std::to_string(width),
+        "--height", std::to_string(height), "--footprint", footprint,
+        "--representation", "scalar", "--artifact-id", sanitized_id(tensor, footprint),
+        "--encoder-profile", encoder_profile, "--variant", "neutral",
+        "--normalization", "none", "--model-gate", "false", "--vulkan-gate", "false"};
+    if (!run_tool(sibling_tool(argv0, "astc-vulkan-artifact-pack"), pack_args, error)) {
+        cleanup();
+        return false;
+    }
+    if (!astc_vulkan_cache_create_with_row_scales(
+            model, manifest.string(), payload.string(), {}, {}, provenance.string(),
+            cache, paths, error)) {
+        cleanup();
+        return false;
+    }
+    std::printf("astc-cache build tensor=%s footprint=%s backend=%s artifact=%s gates=model:false/vulkan:false\n",
+                tensor.c_str(), footprint.c_str(), encoder_profile.c_str(),
+                sanitized_id(tensor, footprint).c_str());
+    if (remove_output) cleanup();
+    return true;
 }
 
 bool artifact_directory_paths(const std::string & root, std::string & manifest,
@@ -158,6 +353,8 @@ int main(int argc, char ** argv) {
         return 0;
     }
     std::string model, manifest, payload, layout, row_scales, provenance, cache = "auto", artifact_dir, profile_name;
+    std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
+    std::string max_rows, max_columns;
     for (int index = 2; index < argc; index += 2) {
         if (index + 1 >= argc) return 2;
         const std::string option = argv[index];
@@ -171,9 +368,38 @@ int main(int argc, char ** argv) {
         else if (option == "--cache") cache = value;
         else if (option == "--artifact-dir") artifact_dir = value;
         else if (option == "--profile" || option == "--storage-profile") profile_name = value;
+        else if (option == "--tensor") tensor = value;
+        else if (option == "--trace") trace = value;
+        else if (option == "--footprint") footprint = value;
+        else if (option == "--backend") backend = value;
+        else if (option == "--gpu-proposer-shader") shader = value;
+        else if (option == "--preset") preset = value;
+        else if (option == "--source-family") source_family = value;
+        else if (option == "--max-rows") max_rows = value;
+        else if (option == "--max-columns") max_columns = value;
         else return 2;
     }
     std::string error;
+    if (command == "build") {
+        if (backend != "hybrid" && backend != "cpu") {
+            std::fprintf(stderr, "astc-cache build failed: --backend must be hybrid or cpu\n");
+            return 2;
+        }
+        if (preset != "thorough" && preset != "medium" && preset != "fast") {
+            std::fprintf(stderr, "astc-cache build failed: --preset must be thorough, medium or fast\n");
+            return 2;
+        }
+        astc_vulkan_cache_paths paths;
+        if (!build_d1_cache(argv[0], model, tensor, trace, footprint,
+                            cache, backend, shader, preset, artifact_dir, source_family,
+                            max_rows, max_columns, paths, error)) {
+            std::fprintf(stderr, "astc-cache build failed: %s\n", error.c_str());
+            return 1;
+        }
+        std::printf("astc-cache build published root=%s\n", paths.root.c_str());
+        print_paths(paths);
+        return 0;
+    }
     if (command == "inspect" || command == "verify") {
         astc_vulkan_cache_validation validation;
         if (model.empty() || !astc_vulkan_cache_validate(model, cache, validation, error)) {
