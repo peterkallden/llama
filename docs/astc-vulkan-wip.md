@@ -9494,3 +9494,9 @@ fragment directory; the merge/publication path is now ready for it.
 The focused cache, model-plan, residency, stream-loader, and cache-tool tests
 all pass after this integration. No production scheduler or Vulkan runtime
 semantics were changed.
+
+The same library now exposes a catalog loader for the exact source GGUF. It
+first delegates integrity checks to `astc_vulkan_cache_validate()` and then
+builds the tensor plan; it does not treat a structural Q3/Q4 admission as a
+model-quality approval. Compatible-base replay remains a separate explicit
+gate, as required by the existing cache contract.

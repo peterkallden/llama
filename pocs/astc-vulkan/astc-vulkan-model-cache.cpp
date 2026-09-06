@@ -187,6 +187,21 @@ bool astc_vulkan_model_cache_make_plan(
     return true;
 }
 
+bool astc_vulkan_model_cache_load_catalog(
+    const std::string & model_path,
+    const std::string & requested_cache_path,
+    const astc_vulkan_model_cache_plan_options & options,
+    astc_vulkan_model_cache_catalog & result,
+    std::string & error) {
+    result = {};
+    if (!astc_vulkan_cache_validate(
+            model_path, requested_cache_path, result.validation, error)) return false;
+    if (!astc_vulkan_model_cache_make_plan(
+            result.validation.manifest, options, result.plan, error)) return false;
+    error.clear();
+    return true;
+}
+
 bool astc_vulkan_model_cache_plan_residency(
     const astc_vulkan_model_cache_plan & model_plan,
     const astc_vulkan_memory_budget & budget,

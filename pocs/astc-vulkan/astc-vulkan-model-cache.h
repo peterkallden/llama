@@ -41,6 +41,22 @@ struct astc_vulkan_model_cache_plan {
     astc_vulkan_residency_plan residency;
 };
 
+struct astc_vulkan_model_cache_catalog {
+    astc_vulkan_cache_validation validation;
+    astc_vulkan_model_cache_plan plan;
+};
+
+// Loads and validates one immutable model-adjacent cache, then builds the
+// tensor-level artifact plan. Compatible Q3/Q4 bases remain an explicit
+// admission/replay path in astc-vulkan-cache; this function intentionally
+// handles the exact source model only.
+bool astc_vulkan_model_cache_load_catalog(
+    const std::string & model_path,
+    const std::string & requested_cache_path,
+    const astc_vulkan_model_cache_plan_options & options,
+    astc_vulkan_model_cache_catalog & result,
+    std::string & error);
+
 // Selects at most one validated artifact per tensor, preserving manifest
 // order. Tensors without an eligible artifact remain explicit native-Q
 // fallbacks; they are not silently dropped from the model plan.
