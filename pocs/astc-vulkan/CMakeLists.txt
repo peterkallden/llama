@@ -402,6 +402,19 @@ if (TARGET Vulkan::Vulkan)
         astc-vulkan-stream-loader Vulkan::Vulkan)
     target_compile_features(astc-vulkan-sidecar PUBLIC cxx_std_17)
 
+    add_executable(test-astc-vulkan-page-owner-device
+        tests/test-astc-vulkan-page-owner-device.cpp)
+    target_include_directories(test-astc-vulkan-page-owner-device PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(test-astc-vulkan-page-owner-device PRIVATE
+        astc-vulkan-page-owner astc-vulkan-sidecar)
+    target_compile_features(test-astc-vulkan-page-owner-device PRIVATE cxx_std_17)
+    if (BUILD_TESTING)
+        add_test(NAME test-astc-vulkan-page-owner-device
+            COMMAND test-astc-vulkan-page-owner-device)
+        set_property(TEST test-astc-vulkan-page-owner-device PROPERTY LABELS astc)
+    endif()
+
     add_executable(test-astc-vulkan-ffn-adapter
         tests/test-astc-vulkan-ffn-adapter.cpp)
     target_link_libraries(test-astc-vulkan-ffn-adapter PRIVATE astc-vulkan-ffn-adapter)

@@ -738,6 +738,9 @@ For a resident entry, the owner can also load one validated material range
 (payload plus optional D2 layout and row-scales) into plain buffers. A
 non-resident entry returns an explicit native fallback, so the scheduler never
 uploads an unadmitted page.
+The page-owner contract test covers both scalar D1 and paired-D2 material;
+the device smoke forwards resident D1 material through the existing sidecar
+upload path and reports whether a compatible Vulkan device was available.
 
 ## Offline GPU encoder seam
 

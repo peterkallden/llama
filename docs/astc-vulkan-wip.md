@@ -9670,3 +9670,23 @@ and avoids accidentally uploading a page that the planner did not admit.
 The loader validates catalog/plan identity and row-scale byte geometry, while
 the existing cache validator remains responsible for hashes and manifest
 integrity. No Vulkan allocation or cache-format change was introduced.
+
+## Three-hundred-and-seventy-ninth sweep: page-owner material/device gate
+
+The page-owner material contract is now covered for both storage families. The
+CPU contract test exercises a scalar D1 entry and a paired-D2 entry carrying a
+layout map plus per-row scales through the same owner and range-loader path.
+The device smoke then passes resident D1 material to the existing
+`astc_vulkan_sidecar::bind_tensor`; this uses the established Vulkan memory
+budget, staging upload, sampled-image creation and lifecycle teardown rather
+than introducing a second uploader. The smoke reports an explicit skip when no
+sampled-ASTC/compute-capable device exists, and otherwise reports a successful
+Vulkan upload.
+
+This closes the static owner/material seam without pretending that atlas
+allocation or asynchronous page eviction is complete. Page slots remain
+runtime-local and deterministic, D1/D2 resources remain separated by their
+storage key, and non-resident entries still resolve to native fallback. The
+next implementation gate is an owner that consumes one page at a time and
+binds the same material through the existing stream/tensor session; only after
+that should asynchronous prefetch or cross-tensor atlases be considered.
