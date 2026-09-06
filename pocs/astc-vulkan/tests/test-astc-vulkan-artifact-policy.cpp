@@ -14,6 +14,19 @@ int main() {
     assert(!astc_vulkan_parse_quality_policy("unknown", parsed));
     assert(std::string(astc_vulkan_quality_policy_name(astc_vulkan_quality_policy::speed)) == "speed");
 
+    astc_vulkan_user_profile_defaults defaults;
+    assert(astc_vulkan_resolve_user_profile("quality", defaults));
+    assert(defaults.policy == astc_vulkan_quality_policy::quality &&
+           defaults.footprint == astc_vulkan_footprint::k4x4 &&
+           defaults.representation == astc_vulkan_representation::kScalar);
+    assert(astc_vulkan_resolve_user_profile("compact", defaults));
+    assert(defaults.policy == astc_vulkan_quality_policy::size &&
+           defaults.footprint == astc_vulkan_footprint::k8x5 &&
+           defaults.representation == astc_vulkan_representation::kPairedD2);
+    assert(astc_vulkan_resolve_user_profile("auto", defaults));
+    assert(defaults.policy == astc_vulkan_quality_policy::automatic);
+    assert(!astc_vulkan_resolve_user_profile("d2-8x5", defaults));
+
     astc_vulkan_tensor_record tensor;
     tensor.name = "blk.0.ffn_down.weight";
     astc_vulkan_artifact_candidate unscaled{&tensor, astc_vulkan_artifact_variant::validation_selected,

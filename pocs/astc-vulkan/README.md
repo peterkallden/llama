@@ -763,6 +763,26 @@ tensor-order baseline without requiring a pre-existing cache. A real usage
 file is still preferred when routing, batching or tensor heat differs from
 that static assumption.
 
+For a simpler user-facing invocation, select a high-level profile instead of
+choosing D1/D2 explicitly:
+
+```bash
+build-astc/bin/astc-vulkan-cache discover \
+  --source-model /absolute/path/source-f16.gguf \
+  --usage auto --output /absolute/path/discovery.tsv \
+  --profile balanced
+```
+
+These profiles are conservative first-pass discovery defaults, not approval
+claims: `quality` starts at D1 4x4 scalar, `balanced` at D1 6x6 scalar,
+`compact` at D2 8x5 paired, and `speed`/`auto` at D1 6x6 scalar. Explicit
+`--footprint` and `--representation` override those defaults for research
+and reproducible comparisons. The resulting shortlist still requires the
+normal artifact, model-replay, Vulkan, and memory gates. For post-build
+residency planning, the same user intent can be passed as `--profile` to
+`plan`; `--policy` remains the explicit expert spelling and wins if both are
+provided.
+
 ## Offline GPU encoder seam
 
 The experimental GPU encoder is an offline proposer, not a runtime ASTC

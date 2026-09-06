@@ -9729,3 +9729,23 @@ blocks of an admitted tensor are encoded; sparse macro-tile discovery can be
 added later if measurements justify the extra runtime metadata. Runtime
 residency remains a separate concern: it can only load pages that discovery
 and quality gates caused us to create.
+
+## Three-hundred-and-eighty-first sweep: high-level cache profiles
+
+Discovery and post-build planning now accept the same user-facing intent
+profiles: `quality`, `balanced`, `compact`, `speed`, and `auto`. The resolver
+maps these to conservative first-pass defaults (`4x4` D1 scalar, `6x6` D1
+scalar, `8x5` paired-D2, and `6x6` D1 scalar respectively). This is only a
+convenience default for a first discovery/build pass; it is not a model or
+device approval and never bypasses artifact evidence. Explicit footprint and
+representation flags remain available and override the profile for controlled
+research runs. The existing `--policy` spelling remains an expert alias for
+post-build planning and takes precedence when both policy and profile are
+provided.
+
+This keeps the user workflow simple without making runtime selection heuristic:
+the offline tool may discover a candidate from a profile, while scheduler
+eligibility still requires the normal model-replay, Vulkan, integrity and
+memory gates. The profile resolver is covered by the artifact-policy test and
+the compact discovery path was exercised against the local Qwen fixture with
+`--usage auto`.

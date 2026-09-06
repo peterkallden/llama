@@ -24,6 +24,34 @@ const char * astc_vulkan_quality_policy_name(astc_vulkan_quality_policy policy) 
     return "unknown";
 }
 
+bool astc_vulkan_resolve_user_profile(const std::string & name,
+                                      astc_vulkan_user_profile_defaults & defaults) {
+    if (name == "quality") {
+        defaults.policy = astc_vulkan_quality_policy::quality;
+        defaults.footprint = astc_vulkan_footprint::k4x4;
+        defaults.representation = astc_vulkan_representation::kScalar;
+    } else if (name == "balanced") {
+        defaults.policy = astc_vulkan_quality_policy::balanced;
+        defaults.footprint = astc_vulkan_footprint::k6x6;
+        defaults.representation = astc_vulkan_representation::kScalar;
+    } else if (name == "compact") {
+        defaults.policy = astc_vulkan_quality_policy::size;
+        defaults.footprint = astc_vulkan_footprint::k8x5;
+        defaults.representation = astc_vulkan_representation::kPairedD2;
+    } else if (name == "speed") {
+        defaults.policy = astc_vulkan_quality_policy::speed;
+        defaults.footprint = astc_vulkan_footprint::k6x6;
+        defaults.representation = astc_vulkan_representation::kScalar;
+    } else if (name == "auto") {
+        defaults.policy = astc_vulkan_quality_policy::automatic;
+        defaults.footprint = astc_vulkan_footprint::k6x6;
+        defaults.representation = astc_vulkan_representation::kScalar;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 bool astc_vulkan_artifact_is_eligible(const astc_vulkan_artifact_candidate & candidate,
                                       bool device_supports_format, bool fits_memory_budget) {
     const auto & evidence = candidate.evidence;

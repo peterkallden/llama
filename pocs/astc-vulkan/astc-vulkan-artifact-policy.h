@@ -19,11 +19,27 @@ enum class astc_vulkan_quality_policy : unsigned char {
     automatic,
 };
 
+// High-level user intent used by cache discovery and planning.  The resolver
+// supplies a conservative first-pass physical candidate; it does not claim
+// that this candidate is model-approved.  Artifact evidence remains the
+// authority for production selection.
+struct astc_vulkan_user_profile_defaults {
+    astc_vulkan_quality_policy policy = astc_vulkan_quality_policy::balanced;
+    astc_vulkan_footprint footprint = astc_vulkan_footprint::k6x6;
+    astc_vulkan_representation representation = astc_vulkan_representation::kScalar;
+};
+
 // User-facing profile spelling. Runtime selection still operates only on
 // evidence-backed artifacts; this parser does not inspect model weights.
 bool astc_vulkan_parse_quality_policy(const std::string & name,
                                       astc_vulkan_quality_policy & policy);
 const char * astc_vulkan_quality_policy_name(astc_vulkan_quality_policy policy);
+
+// Resolve the user-facing profile without requiring a D1/D2 spelling.  The
+// explicit --footprint/--representation options can override these defaults
+// for reproducible research runs.
+bool astc_vulkan_resolve_user_profile(const std::string & name,
+                                      astc_vulkan_user_profile_defaults & defaults);
 
 struct astc_vulkan_artifact_candidate {
     const astc_vulkan_tensor_record * tensor = nullptr;

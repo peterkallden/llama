@@ -1,4 +1,5 @@
 #include "astc-vulkan-cache.h"
+#include "astc-vulkan-artifact-policy.h"
 #include "astc-vulkan-format.h"
 #include "astc-vulkan-provenance.h"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
@@ -132,11 +133,14 @@ void print_help(const char * executable) {
         "  %s verify --model model.gguf [--cache path|auto]\n"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
         "  %s discover --source-model model.gguf --usage usage.txt|auto --output discovery.tsv\n"
-        "            --footprint 6x6 [--representation scalar|gauge-la|paired-d2]\n"
+        "            [--profile quality|balanced|compact|speed|auto]\n"
+        "            [--footprint 4x4|5x5|6x6|8x5|10x5 ...]\n"
+        "            [--representation scalar|gauge-la|paired-d2]\n"
         "            [--min-source-bytes N] [--max-cache-bytes N] [--max-tensors N]\n"
         "  %s build-model --source-model model.gguf --fragment-dir fragments/\n"
             "            --staging build-state/ [--tensor-list tensors.txt] [--cache path|auto]\n"
         "  %s plan --model model.gguf --usage usage.txt [--cache path|auto]\n"
+        "            [--profile quality|balanced|compact|speed|auto]\n"
         "            [--policy quality|balanced|size|speed|auto]\n"
         "            [--device-budget bytes] [--host-budget bytes] [--page-bytes bytes]\n"
             "            [--require-usage 0|1] [--require-benefit 0|1]\n"
@@ -811,6 +815,7 @@ int main(int argc, char ** argv) {
         return 0;
     }
     std::string model, source_model, manifest, payload, layout, row_scales, provenance, cache = "auto", artifact_dir, profile_name;
+    std::string user_profile_name;
     std::string fragment_dir, staging_root, tensor_list;
     std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
     std::string runtime_family = "unspecified";
@@ -820,6 +825,7 @@ int main(int argc, char ** argv) {
     std::string channel_weights = "balanced-a025", source_alpha = "1", row_scale = "none";
     std::string rows, columns, calibration_samples = "8", validation_samples = "7";
     bool no_publish = false, require_usage = false, require_benefit = false;
+    bool representation_explicit = false, policy_explicit = false;
     bool allow_experimental = false, allow_unverified = false;
     for (int index = 2; index < argc; index += 2) {
         if (index + 1 >= argc) return 2;
@@ -837,7 +843,8 @@ int main(int argc, char ** argv) {
         else if (option == "--fragment-dir") fragment_dir = value;
         else if (option == "--staging") staging_root = value;
         else if (option == "--tensor-list") tensor_list = value;
-        else if (option == "--profile" || option == "--storage-profile") profile_name = value;
+        else if (option == "--profile") { profile_name = value; user_profile_name = value; }
+        else if (option == "--storage-profile") profile_name = value;
         else if (option == "--tensor") tensor = value;
         else if (option == "--trace") trace = value;
         else if (option == "--footprint") footprint = value;
@@ -848,7 +855,7 @@ int main(int argc, char ** argv) {
         else if (option == "--family") runtime_family = value;
         else if (option == "--usage") usage_path = value;
         else if (option == "--output") discovery_output = value;
-        else if (option == "--policy") policy_name = value;
+        else if (option == "--policy") { policy_name = value; policy_explicit = true; }
         else if (option == "--device-budget") device_budget = value;
         else if (option == "--host-budget") host_budget = value;
         else if (option == "--page-bytes") page_bytes = value;
@@ -862,7 +869,7 @@ int main(int argc, char ** argv) {
         else if (option == "--max-rows") max_rows = value;
         else if (option == "--max-columns") max_columns = value;
         else if (option == "--workers") workers = value;
-        else if (option == "--representation") representation = value;
+        else if (option == "--representation") { representation = value; representation_explicit = true; }
         else if (option == "--paired-semantic") paired_semantic = value;
         else if (option == "--channel-weights") channel_weights = value;
         else if (option == "--source-derived-alpha") source_alpha = value;
@@ -905,15 +912,28 @@ int main(int argc, char ** argv) {
     }
     if (command == "discover") {
         const std::string inventory_model = source_model.empty() ? model : source_model;
-        if (inventory_model.empty() || usage_path.empty() || discovery_output.empty() ||
-            footprint.empty()) {
-            std::fprintf(stderr, "astc-cache discover requires --source-model/--model, --usage, --output and --footprint\n");
+        if (inventory_model.empty() || usage_path.empty() || discovery_output.empty()) {
+            std::fprintf(stderr, "astc-cache discover requires --source-model/--model, --usage and --output\n");
+            return 2;
+        }
+        const std::string selected_profile_name = user_profile_name.empty() ? "balanced" : user_profile_name;
+        astc_vulkan_user_profile_defaults profile_defaults;
+        if (!astc_vulkan_resolve_user_profile(selected_profile_name, profile_defaults)) {
+            std::fprintf(stderr, "astc-cache discover failed: unknown profile '%s'\n",
+                         selected_profile_name.c_str());
             return 2;
         }
         astc_vulkan_footprint selected_footprint;
         astc_vulkan_representation selected_representation;
-        if (!parse_discovery_footprint(footprint, selected_footprint) ||
-            !parse_discovery_representation(representation, selected_representation)) {
+        if (footprint.empty()) {
+            selected_footprint = profile_defaults.footprint;
+        } else if (!parse_discovery_footprint(footprint, selected_footprint)) {
+            std::fprintf(stderr, "astc-cache discover failed: invalid footprint\n");
+            return 2;
+        }
+        if (!representation_explicit) {
+            selected_representation = profile_defaults.representation;
+        } else if (!parse_discovery_representation(representation, selected_representation)) {
             std::fprintf(stderr, "astc-cache discover failed: invalid footprint or representation\n");
             return 2;
         }
@@ -981,7 +1001,10 @@ int main(int argc, char ** argv) {
             ++selected_count;
             selected_bytes += entry.estimated_astc_bytes + entry.estimated_layout_bytes;
         }
-        std::printf("astc-cache discover tensors=%zu selected=%zu estimated-cache-bytes=%llu report=%s\n",
+        const auto selected_format = astc_vulkan_format(selected_footprint);
+        std::printf("astc-cache discover profile=%s ASTC-%ux%u representation=%s tensors=%zu selected=%zu estimated-cache-bytes=%llu report=%s\n",
+                    selected_profile_name.c_str(), selected_format.block_width,
+                    selected_format.block_height, representation_name(selected_representation),
                     entries.size(), selected_count,
                     static_cast<unsigned long long>(selected_bytes), discovery_output.c_str());
         for (const auto & entry : entries) {
@@ -998,6 +1021,15 @@ int main(int argc, char ** argv) {
         if (model.empty() || usage_path.empty()) {
             std::fprintf(stderr, "astc-cache plan requires --model and --usage\n");
             return 2;
+        }
+        if (!policy_explicit && !user_profile_name.empty()) {
+            astc_vulkan_user_profile_defaults profile_defaults;
+            if (!astc_vulkan_resolve_user_profile(user_profile_name, profile_defaults)) {
+                std::fprintf(stderr, "astc-cache plan failed: unknown profile '%s'\n",
+                             user_profile_name.c_str());
+                return 2;
+            }
+            policy_name = astc_vulkan_quality_policy_name(profile_defaults.policy);
         }
         astc_vulkan_quality_policy policy;
         if (!astc_vulkan_parse_quality_policy(policy_name, policy)) {
