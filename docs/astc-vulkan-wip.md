@@ -9622,6 +9622,8 @@ fallback behavior. No encoder, Vulkan allocation, weight inspection or JIT
 path was added to the command.
 
 Focused model-cache tests cover metrics roundtrip, malformed-contract checks,
-usage ordering/fallback and page grouping. The CLI target and cache-tool help
-also build successfully; the next sweep should add a small fixture-backed
-`plan` integration test once a checked-in model-cache fixture is available.
+usage ordering/fallback and page grouping. A temporary fixture-backed CLI test
+now invokes the real `astc-vulkan-cache plan` binary and verifies resident
+prefix, fallback count and page splitting under a constrained budget. The
+fixture is generated in the system temporary directory and is removed after
+the test; no model-specific cache is checked in.

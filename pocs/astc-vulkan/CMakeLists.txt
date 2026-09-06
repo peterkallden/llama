@@ -408,9 +408,12 @@ if (TARGET Vulkan::Vulkan)
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_compile_features(test-astc-vulkan-model-cache PRIVATE cxx_std_17)
     if (BUILD_TESTING)
-        add_test(NAME test-astc-vulkan-model-cache
-            COMMAND test-astc-vulkan-model-cache)
-        set_property(TEST test-astc-vulkan-model-cache PROPERTY LABELS astc)
+    add_test(NAME test-astc-vulkan-model-cache
+        COMMAND test-astc-vulkan-model-cache)
+    set_property(TEST test-astc-vulkan-model-cache PROPERTY LABELS astc)
+    add_test(NAME test-astc-vulkan-model-cache-cli
+        COMMAND test-astc-vulkan-model-cache $<TARGET_FILE:astc-vulkan-cache-tool>)
+    set_property(TEST test-astc-vulkan-model-cache-cli PROPERTY LABELS astc)
     endif()
 
     add_executable(test-astc-vulkan-dispatch

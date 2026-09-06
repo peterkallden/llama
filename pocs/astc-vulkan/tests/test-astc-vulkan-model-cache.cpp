@@ -1,6 +1,7 @@
 #include "astc-vulkan-model-cache.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -31,7 +32,82 @@ astc_vulkan_artifact_record make_artifact(const char * id,
 
 } // namespace
 
-int main() {
+static int run_plan_cli_integration(const std::filesystem::path & tool) {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "astc-vulkan-plan-cli-fixture";
+    const fs::path model = root / "model.gguf";
+    const fs::path manifest_path = root / "manifest.astcv.input";
+    const fs::path payload_path = root / "payload.astcpack.input";
+    const fs::path usage_path = root / "usage.txt";
+    const fs::path output_path = root / "plan.out";
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+    fs::create_directories(root);
+
+    {
+        std::ofstream model_file(model, std::ios::binary);
+        model_file << "synthetic-gguf-fixture";
+    }
+    std::vector<uint8_t> payload(32, 0x5a);
+    {
+        std::ofstream payload_file(payload_path, std::ios::binary);
+        payload_file.write(reinterpret_cast<const char *>(payload.data()), payload.size());
+    }
+
+    astc_vulkan_manifest manifest;
+    manifest.version = 4;
+    manifest.model_fingerprint = "plan-cli-fixture";
+    for (int index = 0; index < 2; ++index) {
+        astc_vulkan_artifact_record artifact = make_artifact(
+            index == 0 ? "tensor-a-artifact" : "tensor-b-artifact",
+            index == 0 ? "blk.0.ffn_down.weight" : "blk.1.ffn_down.weight",
+            index == 0 ? 0.10f : 0.20f, true, true);
+        artifact.storage.byte_offset = static_cast<uint64_t>(index) * 16;
+        artifact.storage.payload_hash64 = astc_vulkan_payload_hash64(
+            payload.data() + index * 16, 16);
+        artifact.encoder_profile = "fixture";
+        manifest.artifacts.push_back(std::move(artifact));
+    }
+    std::string error;
+    assert(astc_vulkan_write_manifest(manifest_path.string(), manifest, error));
+    astc_vulkan_cache_paths paths;
+    assert(astc_vulkan_cache_create(
+        model.string(), manifest_path.string(), payload_path.string(), {}, {},
+        (root / "cache").string(), paths, error));
+
+    const std::vector<astc_vulkan_tensor_usage_metrics> usage = {
+        {"blk.0.ffn_down.weight", 10, 10, 1000, 100, 100.0, 20.0, 1.0, 0},
+        {"blk.1.ffn_down.weight", 10, 10, 1000, 100, 20.0, 10.0, 1.0, 1},
+    };
+    assert(astc_vulkan_write_tensor_usage_metrics(usage_path.string(), usage, error));
+
+    auto shell_quote = [](const std::string & value) {
+        std::string result("'");
+        for (const char character : value) {
+            if (character == '\'') result += "'\\''";
+            else result += character;
+        }
+        result += '\'';
+        return result;
+    };
+    const std::string command = shell_quote(tool.string()) + " plan --model " +
+        shell_quote(model.string()) + " --cache " + shell_quote(paths.root) +
+        " --usage " + shell_quote(usage_path.string()) +
+        " --policy balanced --device-budget 16 --page-bytes 16 --require-usage 1 > " +
+        shell_quote(output_path.string());
+    assert(std::system(command.c_str()) == 0);
+    std::ifstream output(output_path);
+    const std::string text((std::istreambuf_iterator<char>(output)),
+                           std::istreambuf_iterator<char>());
+    assert(text.find("entries=2 resident=1 fallback=0 pages=2") != std::string::npos);
+    assert(text.find("plan-entry tensor=blk.0.ffn_down.weight") != std::string::npos);
+    assert(text.find("plan-entry tensor=blk.1.ffn_down.weight") != std::string::npos);
+    fs::remove_all(root, ignored);
+    return 0;
+}
+
+int main(int argc, char ** argv) {
+    if (argc == 2) return run_plan_cli_integration(argv[1]);
     astc_vulkan_manifest manifest;
     manifest.version = 4;
     manifest.model_fingerprint = "model-test";
