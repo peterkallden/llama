@@ -693,6 +693,39 @@ existing standard path. Any other paired artifact (`10x5`, direct-D2, legacy
 cache, missing evidence, or disabled opt-in) falls back cleanly to the normal
 Q4/Q3 route. The adapter never attempts runtime ASTC encoding.
 
+## Usage-aware cache planning
+
+Cache admission and atlas/page planning are offline operations above the D1/D2
+artifact format. A small text metrics file keeps workload/device observations
+out of the immutable manifest:
+
+```text
+# astc-usage-v1
+# tensor invocations tokens native_bytes astc_bytes native_gpu_ns astc_gpu_ns path_probability execution_order
+blk.0.ffn_down.weight 128 128 1048576 327680 4200 3500 1.0 0
+```
+
+The cache tool can then rank already validated artifacts, apply a device/host
+budget, and split compatible storage pages without encoding or inspecting
+weights at runtime:
+
+```bash
+build-astc/bin/astc-vulkan-cache plan \
+  --model /absolute/path/model.gguf \
+  --cache /absolute/path/model.gguf.astc-vulkan \
+  --usage /absolute/path/usage.txt \
+  --policy balanced --device-budget 4294967296 --page-bytes 67108864
+```
+
+`--require-usage 1` makes missing tensor observations fall back to native Q;
+`--require-benefit 1` does the same when measured timing/traffic shows no
+positive ASTC benefit. Pages never mix footprint, D1/D2 semantic decoder,
+normalization, paired layout, or row-scale requirements. The command reports
+the chosen ordering and page sizes; a later Vulkan owner remains responsible
+for image allocation, streaming and atlas addressing. Experimental artifacts
+remain excluded unless `--allow-experimental 1` is explicitly supplied;
+`--allow-unverified 1` is reserved for offline/research replay.
+
 ## Offline GPU encoder seam
 
 The experimental GPU encoder is an offline proposer, not a runtime ASTC

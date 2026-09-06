@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -129,6 +130,11 @@ void print_help(const char * executable) {
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
         "  %s build-model --source-model model.gguf --fragment-dir fragments/\n"
             "            --staging build-state/ [--tensor-list tensors.txt] [--cache path|auto]\n"
+        "  %s plan --model model.gguf --usage usage.txt [--cache path|auto]\n"
+        "            [--policy quality|balanced|size|speed|auto]\n"
+        "            [--device-budget bytes] [--host-budget bytes] [--page-bytes bytes]\n"
+            "            [--require-usage 0|1] [--require-benefit 0|1]\n"
+            "            [--allow-experimental 0|1] [--allow-unverified 0|1]\n"
 #endif
         "\nF16/BF16-cache ovanpå annan GGUF-familj (avancerat, kräver separat model-replay):\n"
         "  %s bind --source-model source-f16.gguf --runtime-model runtime.gguf\n"
@@ -160,9 +166,22 @@ void print_help(const char * executable) {
         "defaults model/vulkan evidence gates to false until replay has passed.\n",
         executable, executable, executable, executable,
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
-        executable,
+        executable, executable,
 #endif
         executable, executable, executable, executable, executable);
+}
+
+bool parse_u64_argument(const std::string & text, uint64_t & result) {
+    if (text.empty()) return false;
+    try {
+        size_t consumed = 0;
+        const unsigned long long parsed = std::stoull(text, &consumed, 10);
+        if (consumed != text.size()) return false;
+        result = static_cast<uint64_t>(parsed);
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 std::string shell_quote(const std::string & value) {
@@ -763,10 +782,12 @@ int main(int argc, char ** argv) {
     std::string fragment_dir, staging_root, tensor_list;
     std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
     std::string runtime_family = "unspecified";
+    std::string usage_path, policy_name = "balanced", device_budget, host_budget, page_bytes;
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
     std::string channel_weights = "balanced-a025", source_alpha = "1", row_scale = "none";
     std::string rows, columns, calibration_samples = "8", validation_samples = "7";
-    bool no_publish = false;
+    bool no_publish = false, require_usage = false, require_benefit = false;
+    bool allow_experimental = false, allow_unverified = false;
     for (int index = 2; index < argc; index += 2) {
         if (index + 1 >= argc) return 2;
         const std::string option = argv[index];
@@ -792,6 +813,15 @@ int main(int argc, char ** argv) {
         else if (option == "--preset") preset = value;
         else if (option == "--source-family") source_family = value;
         else if (option == "--family") runtime_family = value;
+        else if (option == "--usage") usage_path = value;
+        else if (option == "--policy") policy_name = value;
+        else if (option == "--device-budget") device_budget = value;
+        else if (option == "--host-budget") host_budget = value;
+        else if (option == "--page-bytes") page_bytes = value;
+        else if (option == "--require-usage") require_usage = value == "1" || value == "true";
+        else if (option == "--require-benefit") require_benefit = value == "1" || value == "true";
+        else if (option == "--allow-experimental") allow_experimental = value == "1" || value == "true";
+        else if (option == "--allow-unverified") allow_unverified = value == "1" || value == "true";
         else if (option == "--max-rows") max_rows = value;
         else if (option == "--max-columns") max_columns = value;
         else if (option == "--workers") workers = value;
@@ -834,6 +864,93 @@ int main(int argc, char ** argv) {
         }
         std::printf("astc-cache build-model published root=%s\n", paths.root.c_str());
         print_paths(paths);
+        return 0;
+    }
+    if (command == "plan") {
+        if (model.empty() || usage_path.empty()) {
+            std::fprintf(stderr, "astc-cache plan requires --model and --usage\n");
+            return 2;
+        }
+        astc_vulkan_quality_policy policy;
+        if (!astc_vulkan_parse_quality_policy(policy_name, policy)) {
+            std::fprintf(stderr, "astc-cache plan failed: unknown policy '%s'\n", policy_name.c_str());
+            return 2;
+        }
+        astc_vulkan_model_cache_plan_options plan_options;
+        plan_options.policy = policy;
+        plan_options.allow_experimental = allow_experimental;
+        plan_options.allow_unverified = allow_unverified;
+        astc_vulkan_model_cache_catalog catalog;
+        if (!astc_vulkan_model_cache_load_catalog(model, cache, plan_options, catalog, error)) {
+            std::fprintf(stderr, "astc-cache plan failed: %s\n", error.c_str());
+            return 1;
+        }
+        std::vector<astc_vulkan_tensor_usage_metrics> usage;
+        if (!astc_vulkan_read_tensor_usage_metrics(usage_path, usage, error)) {
+            std::fprintf(stderr, "astc-cache plan failed: %s\n", error.c_str());
+            return 1;
+        }
+        astc_vulkan_memory_budget budget;
+        budget.effective_device_limit_bytes = std::numeric_limits<uint64_t>::max();
+        if (!device_budget.empty() && !parse_u64_argument(device_budget,
+                                                            budget.effective_device_limit_bytes)) {
+            std::fprintf(stderr, "astc-cache plan failed: invalid --device-budget\n");
+            return 2;
+        }
+        if (!host_budget.empty() && !parse_u64_argument(host_budget, budget.host_limit_bytes)) {
+            std::fprintf(stderr, "astc-cache plan failed: invalid --host-budget\n");
+            return 2;
+        }
+        astc_vulkan_model_cache_usage_options usage_options;
+        usage_options.require_usage_metrics = require_usage;
+        usage_options.require_positive_benefit = require_benefit;
+        astc_vulkan_model_cache_plan planned;
+        if (!astc_vulkan_model_cache_plan_usage(
+                catalog.plan, usage, usage_options, budget, planned, error)) {
+            std::fprintf(stderr, "astc-cache plan failed: %s\n", error.c_str());
+            return 1;
+        }
+        uint64_t max_page_payload = 0;
+        if (!page_bytes.empty() && !parse_u64_argument(page_bytes, max_page_payload)) {
+            std::fprintf(stderr, "astc-cache plan failed: invalid --page-bytes\n");
+            return 2;
+        }
+        std::vector<astc_vulkan_model_cache_storage_page> pages;
+        if (!astc_vulkan_model_cache_make_storage_pages(
+                planned, max_page_payload, pages, error)) {
+            std::fprintf(stderr, "astc-cache plan failed: %s\n", error.c_str());
+            return 1;
+        }
+        size_t resident_count = planned.residency.resident_items.size();
+        size_t fallback_count = 0;
+        for (const auto & entry : planned.entries) fallback_count += entry.use_native_fallback ? 1 : 0;
+        std::printf("astc-cache plan policy=%s entries=%zu resident=%zu fallback=%zu pages=%zu "
+                    "device-bytes=%llu host-bytes=%llu streaming=%s\n",
+                    astc_vulkan_quality_policy_name(policy), planned.entries.size(), resident_count,
+                    fallback_count, pages.size(),
+                    static_cast<unsigned long long>(planned.residency.device_bytes),
+                    static_cast<unsigned long long>(planned.residency.host_bytes),
+                    planned.residency.requires_streaming ? "true" : "false");
+        for (const auto & entry : planned.entries) {
+            std::printf("astc-cache plan-entry tensor=%s artifact=%s fallback=%s usage=%s heat=%.6g benefit=%.6g "
+                        "time-saved-ns=%.6g\n", entry.tensor_name.c_str(), entry.artifact_id.c_str(),
+                        entry.use_native_fallback ? "true" : "false",
+                        entry.usage_available ? "true" : "false", entry.heat_score,
+                        entry.benefit_score, entry.expected_gpu_time_saved_ns);
+        }
+        for (size_t index = 0; index < pages.size(); ++index) {
+            const auto & page = pages[index];
+            const auto format = astc_vulkan_format(page.key.footprint);
+            std::printf("astc-cache page=%zu ASTC-%ux%u representation=%s semantic=%u normalization=%u "
+                        "row-scales=%s entries=%zu payload-bytes=%llu host-bytes=%llu\n", index,
+                        format.block_width, format.block_height,
+                        representation_name(page.key.representation),
+                        static_cast<unsigned>(page.key.paired_semantic),
+                        static_cast<unsigned>(page.key.normalization),
+                        page.key.has_row_scales ? "true" : "false", page.entry_indices.size(),
+                        static_cast<unsigned long long>(page.payload_bytes),
+                        static_cast<unsigned long long>(page.host_bytes));
+        }
         return 0;
     }
 #endif

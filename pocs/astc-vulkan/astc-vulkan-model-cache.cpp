@@ -1,10 +1,13 @@
 #include "astc-vulkan-model-cache.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -65,6 +68,28 @@ bool same_storage_key(const astc_vulkan_model_cache_storage_key & lhs,
            lhs.paired_semantic == rhs.paired_semantic &&
            lhs.normalization == rhs.normalization &&
            lhs.has_row_scales == rhs.has_row_scales;
+}
+
+bool parse_u64(const std::string & text, uint64_t & result) {
+    try {
+        size_t consumed = 0;
+        const unsigned long long value = std::stoull(text, &consumed, 10);
+        if (consumed != text.size()) return false;
+        result = static_cast<uint64_t>(value);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool parse_double(const std::string & text, double & result) {
+    try {
+        size_t consumed = 0;
+        result = std::stod(text, &consumed);
+        return consumed == text.size() && std::isfinite(result);
+    } catch (...) {
+        return false;
+    }
 }
 
 void add_fallback(const std::string & name,
@@ -332,6 +357,118 @@ bool astc_vulkan_model_cache_make_storage_pages(
         page->entry_indices.push_back(index);
         page->payload_bytes += entry.device_bytes;
         page->host_bytes += entry.host_bytes;
+    }
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_read_tensor_usage_metrics(
+    const std::string & path,
+    std::vector<astc_vulkan_tensor_usage_metrics> & result,
+    std::string & error) {
+    result.clear();
+    std::ifstream input(path);
+    if (!input) {
+        error = "cannot open ASTC usage metrics: " + path;
+        return false;
+    }
+    std::string line;
+    size_t line_number = 0;
+    while (std::getline(input, line)) {
+        ++line_number;
+        std::istringstream fields(line);
+        std::string name;
+        if (!(fields >> name) || name[0] == '#') continue;
+        std::array<std::string, 8> values{};
+        for (auto & value : values) {
+            if (!(fields >> value)) {
+                error = "invalid ASTC usage metrics at line " + std::to_string(line_number);
+                return false;
+            }
+        }
+        std::string extra;
+        if (fields >> extra) {
+            error = "too many ASTC usage metrics fields at line " + std::to_string(line_number);
+            return false;
+        }
+        astc_vulkan_tensor_usage_metrics metric;
+        metric.tensor_name = name;
+        uint64_t execution_order = 0;
+        if (!parse_u64(values[0], metric.invocations) ||
+            !parse_u64(values[1], metric.tokens_seen) ||
+            !parse_u64(values[2], metric.native_bytes_read) ||
+            !parse_u64(values[3], metric.astc_bytes_read) ||
+            !parse_double(values[4], metric.native_gpu_time_ns) ||
+            !parse_double(values[5], metric.astc_gpu_time_ns) ||
+            !parse_double(values[6], metric.path_probability) ||
+            !parse_u64(values[7], execution_order) || execution_order > UINT32_MAX ||
+            metric.path_probability < 0.0 || metric.path_probability > 1.0) {
+            error = "invalid ASTC usage metrics value at line " + std::to_string(line_number);
+            return false;
+        }
+        metric.execution_order = static_cast<uint32_t>(execution_order);
+        if (std::any_of(result.begin(), result.end(), [&](const auto & existing) {
+                return existing.tensor_name == metric.tensor_name;
+            })) {
+            error = "duplicate ASTC usage metrics tensor: " + metric.tensor_name;
+            return false;
+        }
+        result.push_back(std::move(metric));
+    }
+    if (!input.eof() && input.fail()) {
+        error = "cannot read ASTC usage metrics: " + path;
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_write_tensor_usage_metrics(
+    const std::string & path,
+    const std::vector<astc_vulkan_tensor_usage_metrics> & metrics,
+    std::string & error) {
+    std::unordered_set<std::string> names;
+    const std::string partial = path + ".partial";
+    std::ofstream output(partial, std::ios::trunc);
+    if (!output) {
+        error = "cannot open ASTC usage metrics output: " + path;
+        return false;
+    }
+    output << "# astc-usage-v1\n"
+              "# tensor invocations tokens native_bytes astc_bytes native_gpu_ns "
+              "astc_gpu_ns path_probability execution_order\n";
+    output << std::setprecision(17);
+    for (const auto & metric : metrics) {
+        if (metric.tensor_name.empty() || !names.insert(metric.tensor_name).second ||
+            !std::isfinite(metric.native_gpu_time_ns) ||
+            !std::isfinite(metric.astc_gpu_time_ns) ||
+            !std::isfinite(metric.path_probability) ||
+            metric.path_probability < 0.0 || metric.path_probability > 1.0) {
+            output.close();
+            std::error_code cleanup_ec;
+            std::filesystem::remove(partial, cleanup_ec);
+            error = "invalid or duplicate ASTC usage metrics tensor";
+            return false;
+        }
+        output << metric.tensor_name << ' ' << metric.invocations << ' '
+               << metric.tokens_seen << ' ' << metric.native_bytes_read << ' '
+               << metric.astc_bytes_read << ' ' << metric.native_gpu_time_ns << ' '
+               << metric.astc_gpu_time_ns << ' ' << metric.path_probability << ' '
+               << metric.execution_order << '\n';
+    }
+    output.close();
+    if (!output) {
+        std::error_code cleanup_ec;
+        std::filesystem::remove(partial, cleanup_ec);
+        error = "cannot write ASTC usage metrics output: " + path;
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::rename(partial, path, ec);
+    if (ec) {
+        std::filesystem::remove(partial, ec);
+        error = "cannot publish ASTC usage metrics output: " + path;
+        return false;
     }
     error.clear();
     return true;

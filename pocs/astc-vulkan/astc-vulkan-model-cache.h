@@ -71,6 +71,19 @@ struct astc_vulkan_tensor_usage_metrics {
     uint32_t execution_order = 0;
 };
 
+// Simple offline interchange format for usage metrics. One whitespace-
+// separated record per tensor; the first two lines may be comments beginning
+// with '#'. It is intentionally independent from GGUF and the ASTC manifest.
+bool astc_vulkan_read_tensor_usage_metrics(
+    const std::string & path,
+    std::vector<astc_vulkan_tensor_usage_metrics> & result,
+    std::string & error);
+
+bool astc_vulkan_write_tensor_usage_metrics(
+    const std::string & path,
+    const std::vector<astc_vulkan_tensor_usage_metrics> & metrics,
+    std::string & error);
+
 struct astc_vulkan_model_cache_usage_options {
     // If true, an artifact without metrics is converted to native fallback.
     bool require_usage_metrics = false;

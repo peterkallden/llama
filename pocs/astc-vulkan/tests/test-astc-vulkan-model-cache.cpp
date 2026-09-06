@@ -111,6 +111,30 @@ int main() {
     assert(pages.size() == 2);
     assert(pages[0].payload_bytes != 0 && pages[1].payload_bytes != 0);
 
+    const auto usage_path = std::filesystem::temp_directory_path() /
+        "astc-vulkan-usage-metrics-contract.txt";
+    std::filesystem::remove(usage_path);
+    assert(astc_vulkan_write_tensor_usage_metrics(usage_path.string(), usage, error));
+    std::vector<astc_vulkan_tensor_usage_metrics> loaded_usage;
+    assert(astc_vulkan_read_tensor_usage_metrics(usage_path.string(), loaded_usage, error));
+    assert(loaded_usage.size() == usage.size());
+    assert(loaded_usage[0].tensor_name == usage[0].tensor_name);
+    assert(loaded_usage[0].native_gpu_time_ns == usage[0].native_gpu_time_ns);
+    std::filesystem::remove(usage_path);
+
+    const auto malformed_usage_path = std::filesystem::temp_directory_path() /
+        "astc-vulkan-usage-metrics-malformed.txt";
+    {
+        std::ofstream malformed(malformed_usage_path);
+        malformed << "# astc-usage-v1\n"
+                  << "blk.0.ffn_down.weight 1 1 1 1 1 1 1.0 0\n"
+                  << "blk.0.ffn_down.weight 2 2 2 2 2 2 1.0 1\n";
+    }
+    loaded_usage.clear();
+    assert(!astc_vulkan_read_tensor_usage_metrics(
+        malformed_usage_path.string(), loaded_usage, error));
+    std::filesystem::remove(malformed_usage_path);
+
     const auto base = std::filesystem::temp_directory_path() /
         "astc-vulkan-model-cache-contract";
     std::filesystem::remove(base);

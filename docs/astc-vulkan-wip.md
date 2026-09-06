@@ -9594,3 +9594,34 @@ streamable. Cross-tensor atlases should only be added after page-level
 measurements demonstrate a benefit, because ASTC image format and semantic
 dispatch are fixed per resource and temporal GPU-cache locality across
 separate dispatches is not guaranteed.
+
+## Three-hundred-and-seventy-sixth sweep: reproducible usage metrics and planner CLI
+
+The usage-aware planner now has a deliberately small, model-independent text
+interchange format. It records one tensor per line with invocation/traffic,
+optional native/ASTC GPU timings, path probability and execution order. The
+reader rejects malformed, duplicate or non-finite records; the writer uses a
+`.partial` file followed by an atomic rename. Metrics stay outside the
+immutable ASTC manifest so the same artifacts can be planned for different
+devices, prompts and batch sizes.
+
+The cache tool exposes the first user-facing planner command:
+
+```text
+astc-vulkan-cache plan --model model.gguf --cache cache-dir \
+  --usage usage.txt --policy balanced \
+  [--device-budget bytes] [--host-budget bytes] [--page-bytes bytes] \
+  [--allow-experimental 0|1] [--allow-unverified 0|1]
+```
+
+It loads only already validated artifacts, applies usage/benefit admission,
+reuses the ordered residency planner, and reports deterministic entries and
+storage-page totals. `--require-usage` and `--require-benefit` are explicit
+fail-closed switches; without them the planner preserves the existing native-Q
+fallback behavior. No encoder, Vulkan allocation, weight inspection or JIT
+path was added to the command.
+
+Focused model-cache tests cover metrics roundtrip, malformed-contract checks,
+usage ordering/fallback and page grouping. The CLI target and cache-tool help
+also build successfully; the next sweep should add a small fixture-backed
+`plan` integration test once a checked-in model-cache fixture is available.
