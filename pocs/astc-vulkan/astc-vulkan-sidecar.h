@@ -4,11 +4,13 @@
 #include "astc-vulkan-ffn-adapter.h"
 #include "astc-vulkan-budget.h"
 #include "astc-vulkan-paired-dispatch.h"
+#include "astc-vulkan-shared-device.h"
 
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
 #include <string>
+#include <memory>
 #include <vector>
 
 // Opt-in sidecar owner for one ASTC format. It deliberately lives beside
@@ -21,6 +23,9 @@ public:
     astc_vulkan_sidecar & operator=(const astc_vulkan_sidecar &) = delete;
 
     bool init(astc_vulkan_footprint footprint, std::string & error,
+              bool allow_experimental = false);
+    bool init(std::shared_ptr<astc_vulkan_shared_device> shared_device,
+              astc_vulkan_footprint footprint, std::string & error,
               bool allow_experimental = false);
     bool load_manifest(const std::string & path, std::string & error);
     bool set_manifest(const astc_vulkan_manifest & manifest, std::string & error);
@@ -49,7 +54,9 @@ public:
     const std::vector<float> & row_scales() const { return paired_row_scales_; }
 
 private:
-    VkInstance instance_ = VK_NULL_HANDLE;
+    std::shared_ptr<astc_vulkan_shared_device> shared_device_;
+    // Borrowed handles owned by shared_device_. Keeping these cached avoids
+    // changing the tensor/dispatch resource APIs while lifetime stays shared.
     VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;
     VkDevice device_ = VK_NULL_HANDLE;
     VkQueue queue_ = VK_NULL_HANDLE;

@@ -17,9 +17,31 @@ supports the selected ASTC LDR format performs that part in texture hardware.
 The work here decides which legal, standard ASTC blocks to write and how to
 interpret the decoded channels as weights.
 
-This is still an experimental sidecar/scheduler PoC. Cache artifacts can be
-loaded by the scheduler smoke path; ordinary `llama-cli` does not yet expose
-an automatic `--astc-cache` production option.
+Cache artifacts are approved when they are built and recorded in the
+manifest/evidence. At runtime, ordinary selection admits only artifacts that
+passed their model and Vulkan gates; an explicit experimental/research launch
+may additionally admit artifacts whose quality evidence is incomplete. A
+cache miss always falls back to the native GGUF tensor path.
+
+The current llama FFN bridge executes D1 scalar artifacts. The same admission
+policy covers D2 manifests, while paired-D2 dispatch remains a separate
+runtime backend to be wired through the same provider interface.
+
+Example using an existing cache (no cache generation):
+
+```text
+llama-cli -m model-Q4_K_M.gguf -ngl 99 \
+  --astc-cache model-Q4_K_M.gguf.astc-vulkan.d1-6x6-50m \
+  --astc-profile balanced
+```
+
+An explicitly experimental artifact requires the opt-in flag:
+
+```text
+llama-cli -m model-Q4_K_M.gguf -ngl 99 \
+  --astc-cache model-Q4_K_M.gguf.astc-vulkan.d1-6x6-50m \
+  --astc-profile balanced --astc-research
+```
 
 The runtime integration is deliberately split into three layers:
 

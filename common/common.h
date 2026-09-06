@@ -506,6 +506,12 @@ struct common_params {
     std::string logits_file          = ""; // file for saving *all* logits                                  // NOLINT
     std::string path_prompts_log_dir = ""; // directory with logged prompts                                 // NOLINT
 
+    // Experimental ASTC runtime overlay. The cache is optional; an artifact
+    // miss keeps the normal GGUF tensor path intact.
+    std::string astc_cache           = "";
+    std::string astc_profile         = "balanced";
+    bool        astc_research        = false;
+
     // llama-debug specific options
     std::string logits_output_dir = "data"; // directory for saving logits output files                     // NOLINT
     bool        save_logits       = false;  // whether to save logits to files                              // NOLINT

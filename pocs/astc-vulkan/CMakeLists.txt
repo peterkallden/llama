@@ -267,6 +267,14 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-resource PUBLIC Vulkan::Vulkan astc-vulkan-driver)
     target_compile_features(astc-vulkan-resource PUBLIC cxx_std_17)
 
+    add_library(astc-vulkan-shared-device STATIC
+        astc-vulkan-shared-device.cpp)
+    target_include_directories(astc-vulkan-shared-device PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-shared-device PUBLIC
+        astc-vulkan-resource Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-shared-device PUBLIC cxx_std_17)
+
     add_library(astc-vulkan-residency STATIC
         astc-vulkan-residency.cpp)
     target_include_directories(astc-vulkan-residency PUBLIC
@@ -438,7 +446,7 @@ if (TARGET Vulkan::Vulkan)
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_link_libraries(astc-vulkan-sidecar PUBLIC
         astc-vulkan-ffn-adapter astc-vulkan-dispatch astc-vulkan-paired-dispatch
-        astc-vulkan-stream-loader Vulkan::Vulkan)
+        astc-vulkan-stream-loader astc-vulkan-shared-device Vulkan::Vulkan)
     target_compile_features(astc-vulkan-sidecar PUBLIC cxx_std_17)
 
     add_executable(test-astc-vulkan-page-owner-device
@@ -513,6 +521,23 @@ if (TARGET Vulkan::Vulkan)
         target_link_libraries(astc-vulkan-scheduler-adapter PUBLIC
             astc-vulkan-sidecar astc-vulkan-cache)
         target_compile_features(astc-vulkan-scheduler-adapter PUBLIC cxx_std_17)
+
+        # Opt-in runtime bridge: this consumes already-built cache artifacts.
+        # It does not participate in encoding or alter the cache format.
+        add_library(astc-vulkan-llama-provider STATIC
+            astc-vulkan-llama-provider.cpp)
+        target_include_directories(astc-vulkan-llama-provider PUBLIC
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/src
+            ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(astc-vulkan-llama-provider PUBLIC
+            astc-vulkan-runtime-overlay astc-vulkan-scheduler-adapter)
+        target_compile_features(astc-vulkan-llama-provider PUBLIC cxx_std_17)
+        target_compile_definitions(astc-vulkan-llama-provider PRIVATE
+            ASTC_VULKAN_D1_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-ffn-matvec.comp.spv"
+            ASTC_VULKAN_D2_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-paired-matvec.comp.spv")
+        add_dependencies(astc-vulkan-llama-provider
+            astc-vulkan-ffn-e2e-shader astc-vulkan-paired-matvec-shader)
 
         add_executable(test-astc-vulkan-scheduler-adapter
             tests/test-astc-vulkan-scheduler-adapter.cpp)

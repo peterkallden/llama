@@ -2779,6 +2779,30 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_N_GPU_LAYERS"));
     add_opt(common_arg(
+        {"--astc-cache"}, "PATH",
+        "use an experimental ASTC cache overlay (native GGUF fallback on a cache miss)",
+        [](common_params & params, const std::string & value) {
+            params.astc_cache = value;
+        }
+    ).set_env("LLAMA_ARG_ASTC_CACHE"));
+    add_opt(common_arg(
+        {"--astc-profile"}, "{quality,balanced,size,speed}",
+        "ASTC cache policy (default: balanced)",
+        [](common_params & params, const std::string & value) {
+            if (value != "quality" && value != "balanced" && value != "size" && value != "speed") {
+                throw std::invalid_argument("invalid ASTC profile");
+            }
+            params.astc_profile = value;
+        }
+    ).set_env("LLAMA_ARG_ASTC_PROFILE"));
+    add_opt(common_arg(
+        {"--astc-research"},
+        "permit cache artifacts without completed evidence gates (experimental)",
+        [](common_params & params) {
+            params.astc_research = true;
+        }
+    ).set_env("LLAMA_ARG_ASTC_RESEARCH"));
+    add_opt(common_arg(
         {"-sm", "--split-mode"}, "{none,layer,row,tensor}",
         "how to split the model across multiple GPUs, one of:\n"
         "- none: use one GPU only\n"

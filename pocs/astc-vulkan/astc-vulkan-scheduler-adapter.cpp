@@ -114,13 +114,18 @@ bool materialize_artifact(const astc_vulkan_cache_validation & cache,
 // 6x5 and 8x5 are the profiles with current full-shape evidence gates.
 bool is_explicit_d2_candidate(const astc_vulkan_scheduler_artifact & artifact,
                               bool allow_experimental, bool allow_unverified) {
-    return allow_experimental &&
-           artifact.kind == astc_vulkan_scheduler_artifact_kind::kD2 &&
-           (artifact.record.footprint == astc_vulkan_footprint::k6x5 ||
-            artifact.record.footprint == astc_vulkan_footprint::k8x5) &&
-           artifact.paired_semantic == astc_vulkan_paired_semantic::luminance_alpha &&
-           (allow_unverified || (artifact.evidence.model_gate_passed &&
-                                 artifact.evidence.vulkan_gate_passed));
+    const bool supported_shape =
+        artifact.record.footprint == astc_vulkan_footprint::k6x5 ||
+        artifact.record.footprint == astc_vulkan_footprint::k8x5;
+    if (artifact.kind != astc_vulkan_scheduler_artifact_kind::kD2 ||
+        !supported_shape ||
+        artifact.paired_semantic != astc_vulkan_paired_semantic::luminance_alpha) {
+        return false;
+    }
+    const bool evidence_passed = artifact.evidence.model_gate_passed &&
+        artifact.evidence.vulkan_gate_passed;
+    return (evidence_passed || (allow_experimental && allow_unverified)) &&
+           (allow_unverified || evidence_passed);
 }
 }
 
@@ -250,7 +255,8 @@ bool astc_vulkan_scheduler_adapter::prepare(
     }
     tensor_name_ = tensor_name;
     if (!sidecar_.set_manifest(manifest, error) ||
-        !sidecar_.init(footprint, error, allow_experimental)) {
+        !(shared_device_ ? sidecar_.init(shared_device_, footprint, error, allow_experimental) :
+                          sidecar_.init(footprint, error, allow_experimental))) {
         return fallback(error.empty() ? "ASTC Vulkan device is unavailable" : error, false);
     }
     if (!sidecar_.bind_tensor(tensor_name, record->width, record->height, payload_, binding_, error)) {
@@ -370,7 +376,8 @@ bool astc_vulkan_scheduler_adapter::bind_materialized_artifact(
     runtime_manifest.version = 3;
     runtime_manifest.tensors = {artifact.record};
     if (!sidecar_.set_manifest(runtime_manifest, error) ||
-        !sidecar_.init(artifact.record.footprint, error, allow_experimental) ||
+        !(shared_device_ ? sidecar_.init(shared_device_, artifact.record.footprint, error, allow_experimental) :
+                          sidecar_.init(artifact.record.footprint, error, allow_experimental)) ||
         !sidecar_.bind_tensor(tensor_name_, artifact.record.width, artifact.record.height,
                               payload_, binding_, error, layout_, artifact.paired_semantic,
                               artifact.row_scales)) {

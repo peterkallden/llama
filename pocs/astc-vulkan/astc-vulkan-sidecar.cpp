@@ -17,9 +17,7 @@ void astc_vulkan_sidecar::reset() {
     dispatch_.reset();
     stream_tensor_.reset();
     adapter_.reset();
-    if (device_ != VK_NULL_HANDLE) vkDestroyDevice(device_, nullptr);
-    if (instance_ != VK_NULL_HANDLE) vkDestroyInstance(instance_, nullptr);
-    instance_ = VK_NULL_HANDLE;
+    shared_device_.reset();
     physical_device_ = VK_NULL_HANDLE;
     device_ = VK_NULL_HANDLE;
     queue_ = VK_NULL_HANDLE;
@@ -35,7 +33,19 @@ void astc_vulkan_sidecar::reset() {
 
 bool astc_vulkan_sidecar::init(astc_vulkan_footprint footprint, std::string & error,
                                bool allow_experimental) {
+    auto shared_device = std::make_shared<astc_vulkan_shared_device>();
+    if (!shared_device->init(error)) return false;
+    return init(std::move(shared_device), footprint, error, allow_experimental);
+}
+
+bool astc_vulkan_sidecar::init(std::shared_ptr<astc_vulkan_shared_device> shared_device,
+                               astc_vulkan_footprint footprint, std::string & error,
+                               bool allow_experimental) {
     reset();
+    if (!shared_device || !shared_device->ready()) {
+        error = "ASTC Vulkan sidecar requires a ready shared Vulkan device";
+        return false;
+    }
     if (!astc_vulkan_footprint_is_valid(footprint)) {
         error = "invalid ASTC Vulkan footprint";
         return false;
@@ -44,68 +54,16 @@ bool astc_vulkan_sidecar::init(astc_vulkan_footprint footprint, std::string & er
         error = "experimental ASTC Vulkan footprint requires explicit opt-in";
         return false;
     }
-    const VkApplicationInfo app_info{
-        VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "astc-vulkan-sidecar", 1,
-        "llama.cpp ASTC Vulkan sidecar", 1, VK_API_VERSION_1_0};
-    const VkInstanceCreateInfo instance_info{
-        VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, 0, &app_info,
-        0, nullptr, 0, nullptr};
-    if (vkCreateInstance(&instance_info, nullptr, &instance_) != VK_SUCCESS) {
-        error = "failed to create ASTC Vulkan sidecar instance";
-        reset();
+    if (!shared_device->supports(footprint)) {
+        error = "shared Vulkan device does not support requested ASTC sampled format";
         return false;
     }
-    uint32_t device_count = 0;
-    if (vkEnumeratePhysicalDevices(instance_, &device_count, nullptr) != VK_SUCCESS ||
-        device_count == 0) {
-        error = "no Vulkan physical device available for ASTC sidecar";
-        reset();
-        return false;
-    }
-    std::vector<VkPhysicalDevice> devices(device_count);
-    if (vkEnumeratePhysicalDevices(instance_, &device_count, devices.data()) != VK_SUCCESS) {
-        error = "failed to enumerate ASTC Vulkan sidecar devices";
-        reset();
-        return false;
-    }
-    const VkFormat format = astc_vulkan_vk_format(static_cast<uint8_t>(footprint));
-    for (VkPhysicalDevice candidate : devices) {
-        if (!astc_vulkan_supports_sampled_transfer(candidate, format)) continue;
-        uint32_t queue_count = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &queue_count, nullptr);
-        std::vector<VkQueueFamilyProperties> queues(queue_count);
-        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &queue_count, queues.data());
-        for (uint32_t index = 0; index < queue_count; ++index) {
-            if ((queues[index].queueFlags & VK_QUEUE_COMPUTE_BIT) == 0) continue;
-            physical_device_ = candidate;
-            queue_family_ = index;
-            break;
-        }
-        if (physical_device_ != VK_NULL_HANDLE) break;
-    }
-    if (physical_device_ == VK_NULL_HANDLE) {
-        error = "no Vulkan device supports sampled ASTC and compute";
-        reset();
-        return false;
-    }
-    constexpr float queue_priority = 1.0f;
-    const VkDeviceQueueCreateInfo queue_info{
-        VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, nullptr, 0,
-        queue_family_, 1, &queue_priority};
-    const VkDeviceCreateInfo device_info{
-        VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, nullptr, 0, 1, &queue_info,
-        0, nullptr, 0, nullptr, nullptr};
-    if (vkCreateDevice(physical_device_, &device_info, nullptr, &device_) != VK_SUCCESS) {
-        error = "failed to create ASTC Vulkan sidecar device";
-        reset();
-        return false;
-    }
-    vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
-    if (!astc_vulkan_query_memory_budget(physical_device_, ASTC_VULKAN_DEFAULT_MEMORY_FRACTION,
-                                         memory_budget_, error)) {
-        reset();
-        return false;
-    }
+    shared_device_ = std::move(shared_device);
+    physical_device_ = shared_device_->physical_device();
+    device_ = shared_device_->device();
+    queue_ = shared_device_->queue();
+    queue_family_ = shared_device_->queue_family();
+    memory_budget_ = shared_device_->memory_budget();
     footprint_ = footprint;
     error.clear();
     return true;

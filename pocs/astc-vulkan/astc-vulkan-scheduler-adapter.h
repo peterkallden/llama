@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <string>
+#include <memory>
 #include <vector>
 
 // Cache lookup is deliberately independent of execution. A cache hit is a
@@ -40,6 +41,12 @@ struct astc_vulkan_scheduler_artifact {
 // contract and retain normal fallback when prepare() reports not-ready.
 class astc_vulkan_scheduler_adapter {
 public:
+    // The runtime overlay supplies one device owner shared by every tensor.
+    // Calling this before prepare() prevents a sidecar from creating a
+    // tensor-private VkDevice. Passing nullptr restores standalone smoke use.
+    void set_shared_device(std::shared_ptr<astc_vulkan_shared_device> shared_device) {
+        shared_device_ = std::move(shared_device);
+    }
     bool prepare(const std::string & manifest_path, const std::string & payload_blob_path,
                  const std::string & tensor_name, astc_vulkan_footprint footprint,
                  std::string & error, bool allow_experimental = false);
@@ -124,4 +131,5 @@ private:
     std::string tensor_name_;
     std::string payload_path_;
     uint64_t payload_offset_ = 0;
+    std::shared_ptr<astc_vulkan_shared_device> shared_device_;
 };

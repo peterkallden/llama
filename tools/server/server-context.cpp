@@ -17,6 +17,10 @@
 #include "mtmd.h"
 #include "mtmd-helper.h"
 
+#if defined(LLAMA_ASTC_VULKAN_RUNTIME_AVAILABLE)
+#include "astc-vulkan-llama-provider.h"
+#endif
+
 #include <algorithm>
 #include <cstddef>
 #include <cinttypes>
@@ -885,9 +889,16 @@ private:
 
     bool sleeping = false;
 
+#if defined(LLAMA_ASTC_VULKAN_RUNTIME_AVAILABLE)
+    std::unique_ptr<astc_vulkan_llama_provider> astc_provider;
+#endif
+
     int64_t t_last_load_progress_ms = 0;
 
     void destroy() {
+#if defined(LLAMA_ASTC_VULKAN_RUNTIME_AVAILABLE)
+        astc_provider.reset();
+#endif
         spec.reset();
         spec_init.reset();
 
@@ -1117,6 +1128,38 @@ private:
             SRV_ERR("failed to create_context with model '%s'\n", params_base.model.path.c_str());
             return false;
         }
+
+#if defined(LLAMA_ASTC_VULKAN_RUNTIME_AVAILABLE)
+        if (!params_base.astc_cache.empty()) {
+            astc_vulkan_llama_provider::options astc_options;
+            astc_options.model_path = params_base.model.path;
+            astc_options.cache_path = params_base.astc_cache;
+            astc_options.allow_experimental = params_base.astc_research;
+            astc_options.allow_unverified = params_base.astc_research;
+            if (params_base.astc_profile == "quality") {
+                astc_options.policy = astc_vulkan_quality_policy::quality;
+            } else if (params_base.astc_profile == "size") {
+                astc_options.policy = astc_vulkan_quality_policy::size;
+            } else if (params_base.astc_profile == "speed") {
+                astc_options.policy = astc_vulkan_quality_policy::speed;
+            }
+            auto provider = std::make_unique<astc_vulkan_llama_provider>();
+            std::string astc_error;
+            if (provider->prepare(astc_options, astc_error)) {
+                llama_set_ffn_down_runtime_provider(
+                    ctx_tgt,
+                    astc_vulkan_llama_provider::is_ready_callback,
+                    astc_vulkan_llama_provider::run_callback,
+                    provider.get());
+                astc_provider = std::move(provider);
+                SRV_INF("ASTC cache overlay active: %s (%s policy)\\n",
+                        params_base.astc_cache.c_str(), params_base.astc_profile.c_str());
+            } else {
+                SRV_WRN("ASTC cache overlay unavailable (%s); using native GGUF tensors\\n",
+                        astc_error.c_str());
+            }
+        }
+#endif
 
         vocab = llama_model_get_vocab(model_tgt);
 

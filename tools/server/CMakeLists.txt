@@ -32,6 +32,10 @@ endif()
 target_include_directories(${TARGET} PRIVATE ../mtmd)
 target_include_directories(${TARGET} PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(${TARGET} PUBLIC llama-common mtmd ${CMAKE_THREAD_LIBS_INIT})
+if (TARGET astc-vulkan-llama-provider)
+    target_link_libraries(${TARGET} PUBLIC astc-vulkan-llama-provider)
+    target_compile_definitions(${TARGET} PRIVATE LLAMA_ASTC_VULKAN_RUNTIME_AVAILABLE=1)
+endif()
 
 # llama-server-impl: server logic, reusable by app
 
