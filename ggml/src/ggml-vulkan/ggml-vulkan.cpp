@@ -1,4 +1,5 @@
 #include "ggml-vulkan.h"
+#include "astc-binding.h"
 #include <vulkan/vulkan_core.h>
 #if defined(GGML_VULKAN_RUN_TESTS) || defined(GGML_VULKAN_CHECK_RESULTS)
 #include <chrono>
@@ -15803,7 +15804,14 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
 
 static void ggml_vk_compute_forward(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, ggml_tensor * tensor, int tensor_idx, bool almost_ready = false) {
     GGML_UNUSED(cgraph);
-    GGML_UNUSED(tensor);
+
+    // ASTC is an optional native extension point. The binding is deliberately
+    // consulted before ordinary graph execution, but a missing/non-consuming
+    // dispatcher leaves the existing Vulkan path untouched.
+    if (ggml_vk_astc_binding::try_dispatch(ctx, tensor,
+                                           static_cast<uint32_t>(tensor_idx))) {
+        return;
+    }
 
     VK_LOG_DEBUG("ggml_vk_compute_forward(" << tensor << ", name=" << tensor->name << ", op=" << ggml_op_name(tensor->op) << ", type=" << tensor->type << ", ne0=" << tensor->ne[0] << ", ne1=" << tensor->ne[1] << ", ne2=" << tensor->ne[2] << ", ne3=" << tensor->ne[3] << ", nb0=" << tensor->nb[0] << ", nb1=" << tensor->nb[1] << ", nb2=" << tensor->nb[2] << ", nb3=" << tensor->nb[3] << ", view_src=" << tensor->view_src << ", view_offs=" << tensor->view_offs << ")");
 
