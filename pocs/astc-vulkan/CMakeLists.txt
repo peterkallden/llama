@@ -586,10 +586,13 @@ if (TARGET Vulkan::Vulkan)
         astc-vulkan-device-smoke.cpp)
     target_link_libraries(astc-vulkan-device-smoke PRIVATE
         Vulkan::Vulkan astc-vulkan-resource astc-vulkan-stream-loader
-        astc-vulkan-paired-dispatch)
+        astc-vulkan-dispatch astc-vulkan-paired-dispatch)
     target_compile_features(astc-vulkan-device-smoke PRIVATE cxx_std_17)
     target_compile_definitions(astc-vulkan-device-smoke PRIVATE
+        ASTC_VULKAN_D1_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-ffn-matvec.comp.spv"
         ASTC_VULKAN_PAIRED_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-paired-matvec.comp.spv")
+    add_dependencies(astc-vulkan-device-smoke
+        astc-vulkan-ffn-e2e-shader astc-vulkan-paired-matvec-shader)
 
     add_executable(astc-vulkan-gpu-ranking-device-smoke
         astc-vulkan-gpu-ranking-device-smoke.cpp)

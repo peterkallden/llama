@@ -1,6 +1,7 @@
 #include "astc-vulkan-contract.h"
 #include "astc-vulkan-driver.h"
 #include "astc-vulkan-resource.h"
+#include "astc-vulkan-dispatch.h"
 #include "astc-vulkan-paired-dispatch.h"
 #include "astc-vulkan-paired-layout.h"
 
@@ -340,7 +341,7 @@ bool stream_dispatch_d2(VkPhysicalDevice physical_device, VkDevice device, VkQue
     astc_vulkan_tensor_session tensor;
     const astc_vulkan_reconstruction reconstruction{};
     if (!tensor.upload(physical_device, device, queue, queue_family, record,
-                       reconstruction, payload, error)) return false;
+                       reconstruction, payload, error)) { std::fprintf(stderr, "native D2 tensor upload: %s\n", error.c_str()); return false; }
     astc_vulkan_paired_matvec_session dispatch;
     if (!dispatch.init(physical_device, device, queue, queue_family, tensor,
                        std::vector<uint8_t>(reinterpret_cast<uint8_t *>(layout.data()),
@@ -378,6 +379,274 @@ bool stream_dispatch_d2(VkPhysicalDevice physical_device, VkDevice device, VkQue
         if (std::fabs(full_output[i] - streamed[i]) > 1.0e-5f) return false;
     }
     return true;
+}
+
+struct native_host_buffer {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize size = 0;
+};
+
+bool make_native_host_buffer(VkPhysicalDevice physical_device, VkDevice device,
+                             VkDeviceSize size, native_host_buffer & result) {
+    const VkBufferCreateInfo info{
+        VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, size,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_SHARING_MODE_EXCLUSIVE, 0, nullptr,
+    };
+    if (vkCreateBuffer(device, &info, nullptr, &result.buffer) != VK_SUCCESS) {
+        return false;
+    }
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device, result.buffer, &requirements);
+    const uint32_t memory_type = astc_vulkan_find_memory_type(
+        physical_device, requirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (memory_type == UINT32_MAX) {
+        vkDestroyBuffer(device, result.buffer, nullptr);
+        result.buffer = VK_NULL_HANDLE;
+        return false;
+    }
+    const VkMemoryAllocateInfo allocation{
+        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, requirements.size, memory_type,
+    };
+    if (vkAllocateMemory(device, &allocation, nullptr, &result.memory) != VK_SUCCESS ||
+        vkBindBufferMemory(device, result.buffer, result.memory, 0) != VK_SUCCESS) {
+        if (result.memory != VK_NULL_HANDLE) vkFreeMemory(device, result.memory, nullptr);
+        vkDestroyBuffer(device, result.buffer, nullptr);
+        result = {};
+        return false;
+    }
+    result.size = size;
+    return true;
+}
+
+void destroy_native_host_buffer(VkDevice device, native_host_buffer & buffer) {
+    if (buffer.buffer != VK_NULL_HANDLE) vkDestroyBuffer(device, buffer.buffer, nullptr);
+    if (buffer.memory != VK_NULL_HANDLE) vkFreeMemory(device, buffer.memory, nullptr);
+    buffer = {};
+}
+
+bool submit_native_record(VkDevice device, VkQueue queue, uint32_t queue_family,
+                          VkCommandBuffer command_buffer) {
+    if (vkEndCommandBuffer(command_buffer) != VK_SUCCESS) return false;
+    const VkSubmitInfo submit{
+        VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr, 1,
+        &command_buffer, 0, nullptr,
+    };
+    const VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, 0};
+    VkFence fence = VK_NULL_HANDLE;
+    const bool ok = vkCreateFence(device, &fence_info, nullptr, &fence) == VK_SUCCESS &&
+                    vkQueueSubmit(queue, 1, &submit, fence) == VK_SUCCESS &&
+                    vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+    if (fence != VK_NULL_HANDLE) vkDestroyFence(device, fence, nullptr);
+    (void) queue_family;
+    return ok;
+}
+
+bool native_record_d1(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+                      uint32_t queue_family, const char * shader_path) {
+    constexpr uint32_t width = 16;
+    constexpr uint32_t height = 13;
+    constexpr uint32_t samples = 2;
+    const std::vector<uint32_t> spirv = read_spirv(shader_path);
+    if (spirv.empty()) return false;
+    const astc_vulkan_footprint footprint = astc_vulkan_footprint::k8x6;
+    const size_t payload_bytes = static_cast<size_t>(astc_vulkan_image_bytes(footprint, width, height));
+    constexpr uint8_t half_block[16] = {
+        0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x00, 0x80};
+    std::vector<uint8_t> payload(payload_bytes);
+    for (size_t i = 0; i < payload.size(); i += sizeof(half_block)) {
+        std::memcpy(payload.data() + i, half_block, sizeof(half_block));
+    }
+    astc_vulkan_tensor_record record{"native-d1", width, height, footprint, 0,
+                                     static_cast<uint64_t>(payload.size())};
+    astc_vulkan_tensor_session tensor;
+    const astc_vulkan_reconstruction reconstruction{};
+    std::string error;
+    if (!tensor.upload(physical_device, device, queue, queue_family, record,
+                       reconstruction, payload, error)) { std::fprintf(stderr, "native D2 tensor upload: %s\n", error.c_str()); return false; }
+    std::vector<float> activations(static_cast<size_t>(samples) * width);
+    for (size_t i = 0; i < activations.size(); ++i) activations[i] = 0.01f * float(i + 1);
+
+    astc_vulkan_matvec_session reference;
+    if (!reference.init(physical_device, device, queue, queue_family, tensor, spirv,
+                        width, height, samples, error)) return false;
+    std::vector<float> expected;
+    if (!reference.run(activations, reconstruction, expected, error)) return false;
+
+    astc_vulkan_matvec_session native;
+    if (!native.init_native(physical_device, device, queue, queue_family, tensor, spirv,
+                            width, height, samples, error)) return false;
+    native_host_buffer input, output;
+    const VkDeviceSize input_bytes = static_cast<VkDeviceSize>(activations.size() * sizeof(float));
+    const VkDeviceSize output_bytes = static_cast<VkDeviceSize>(samples) * height * sizeof(float);
+    if (!make_native_host_buffer(physical_device, device, input_bytes, input) ||
+        !make_native_host_buffer(physical_device, device, output_bytes, output)) {
+        destroy_native_host_buffer(device, input);
+        destroy_native_host_buffer(device, output);
+        return false;
+    }
+    void * mapped = nullptr;
+    if (vkMapMemory(device, input.memory, 0, input_bytes, 0, &mapped) != VK_SUCCESS) {
+        destroy_native_host_buffer(device, input); destroy_native_host_buffer(device, output); return false;
+    }
+    std::memcpy(mapped, activations.data(), static_cast<size_t>(input_bytes));
+    vkUnmapMemory(device, input.memory);
+    if (vkMapMemory(device, output.memory, 0, output_bytes, 0, &mapped) != VK_SUCCESS) {
+        destroy_native_host_buffer(device, input); destroy_native_host_buffer(device, output); return false;
+    }
+    std::memset(mapped, 0, static_cast<size_t>(output_bytes));
+    vkUnmapMemory(device, output.memory);
+
+    const VkCommandPoolCreateInfo pool_info{
+        VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        queue_family,
+    };
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    bool ok = vkCreateCommandPool(device, &pool_info, nullptr, &pool) == VK_SUCCESS;
+    if (ok) {
+        const VkCommandBufferAllocateInfo allocate{
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, pool,
+            VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1,
+        };
+        ok = vkAllocateCommandBuffers(device, &allocate, &command) == VK_SUCCESS;
+    }
+    if (ok) {
+        const VkCommandBufferBeginInfo begin{
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
+            VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr,
+        };
+        ok = vkBeginCommandBuffer(command, &begin) == VK_SUCCESS &&
+             native.record_external(command, input.buffer, 0, input.size, output.buffer, 0,
+                                    output.size, reconstruction, 0, height, error);
+        const VkBufferMemoryBarrier host_barrier{
+            VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT,
+            VK_ACCESS_HOST_READ_BIT, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+            output.buffer, 0, output.size,
+        };
+        if (ok) vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                     VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1,
+                                     &host_barrier, 0, nullptr);
+    }
+    if (ok) ok = submit_native_record(device, queue, queue_family, command);
+    std::vector<float> actual(expected.size());
+    if (ok && vkMapMemory(device, output.memory, 0, output_bytes, 0, &mapped) == VK_SUCCESS) {
+        std::memcpy(actual.data(), mapped, static_cast<size_t>(output_bytes));
+        vkUnmapMemory(device, output.memory);
+        for (size_t i = 0; i < actual.size(); ++i) {
+            if (!std::isfinite(actual[i]) || std::fabs(actual[i] - expected[i]) > 1.0e-5f) {
+                ok = false; break;
+            }
+        }
+    } else {
+        ok = false;
+    }
+    if (pool != VK_NULL_HANDLE) vkDestroyCommandPool(device, pool, nullptr);
+    destroy_native_host_buffer(device, input);
+    destroy_native_host_buffer(device, output);
+    return ok;
+}
+
+bool native_record_d2(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+                      uint32_t queue_family, const char * shader_path) {
+    constexpr uint32_t width = 16;
+    constexpr uint32_t logical_height = 21;
+    constexpr uint32_t samples = 2;
+    const std::vector<uint32_t> spirv = read_spirv(shader_path);
+    if (spirv.empty()) return false;
+    const astc_vulkan_footprint footprint = astc_vulkan_footprint::k8x5;
+    const uint32_t storage_height = astc_vulkan_paired_storage_height(logical_height);
+    const size_t payload_bytes = static_cast<size_t>(astc_vulkan_image_bytes(footprint, width, storage_height));
+    constexpr uint8_t half_block[16] = {
+        0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x00, 0x80};
+    std::vector<uint8_t> payload(payload_bytes);
+    for (size_t i = 0; i < payload.size(); i += sizeof(half_block)) {
+        std::memcpy(payload.data() + i, half_block, sizeof(half_block));
+    }
+    const size_t layout_bytes = static_cast<size_t>(astc_vulkan_paired_layout_bytes(
+        footprint, width, logical_height));
+    std::vector<uint8_t> layout(layout_bytes, 0);
+    astc_vulkan_tensor_record record{"native-d2", width, logical_height, footprint, 0,
+                                     static_cast<uint64_t>(payload.size())};
+    record.representation = astc_vulkan_representation::kPairedD2;
+    astc_vulkan_tensor_session tensor;
+    const astc_vulkan_reconstruction reconstruction{};
+    std::string error;
+    if (!tensor.upload(physical_device, device, queue, queue_family, record,
+                       reconstruction, payload, error)) { std::fprintf(stderr, "native D2 tensor upload: %s\n", error.c_str()); return false; }
+    std::vector<float> activations(static_cast<size_t>(samples) * width);
+    for (size_t i = 0; i < activations.size(); ++i) activations[i] = 0.01f * float(i + 1);
+    astc_vulkan_paired_matvec_session reference;
+    if (!reference.init(physical_device, device, queue, queue_family, tensor, layout, spirv,
+                        width, logical_height, samples, error,
+                        astc_vulkan_paired_semantic::direct_rgb)) { std::fprintf(stderr, "native D2 reference init: %s\n", error.c_str()); return false; }
+    std::vector<float> expected;
+    if (!reference.run(activations, reconstruction, expected, error)) { std::fprintf(stderr, "native D2 reference run: %s\n", error.c_str()); return false; }
+    astc_vulkan_paired_matvec_session native;
+    if (!native.init_native(physical_device, device, queue, queue_family, tensor, layout, spirv,
+                            width, logical_height, samples, error,
+                            astc_vulkan_paired_semantic::direct_rgb)) { std::fprintf(stderr, "native D2 init: %s\n", error.c_str()); return false; }
+    native_host_buffer input, output;
+    const VkDeviceSize input_bytes = static_cast<VkDeviceSize>(activations.size() * sizeof(float));
+    const VkDeviceSize output_bytes = static_cast<VkDeviceSize>(samples) * logical_height * sizeof(float);
+    if (!make_native_host_buffer(physical_device, device, input_bytes, input) ||
+        !make_native_host_buffer(physical_device, device, output_bytes, output)) {
+        destroy_native_host_buffer(device, input); destroy_native_host_buffer(device, output); return false;
+    }
+    void * mapped = nullptr;
+    if (vkMapMemory(device, input.memory, 0, input_bytes, 0, &mapped) != VK_SUCCESS) {
+        destroy_native_host_buffer(device, input); destroy_native_host_buffer(device, output); return false;
+    }
+    std::memcpy(mapped, activations.data(), static_cast<size_t>(input_bytes)); vkUnmapMemory(device, input.memory);
+    if (vkMapMemory(device, output.memory, 0, output_bytes, 0, &mapped) != VK_SUCCESS) {
+        destroy_native_host_buffer(device, input); destroy_native_host_buffer(device, output); return false;
+    }
+    std::memset(mapped, 0, static_cast<size_t>(output_bytes)); vkUnmapMemory(device, output.memory);
+    const VkCommandPoolCreateInfo pool_info{
+        VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        queue_family,
+    };
+    VkCommandPool pool = VK_NULL_HANDLE; VkCommandBuffer command = VK_NULL_HANDLE;
+    bool ok = vkCreateCommandPool(device, &pool_info, nullptr, &pool) == VK_SUCCESS;
+    if (ok) {
+        const VkCommandBufferAllocateInfo allocate{
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, pool,
+            VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1,
+        };
+        ok = vkAllocateCommandBuffers(device, &allocate, &command) == VK_SUCCESS;
+    }
+    if (ok) {
+        const VkCommandBufferBeginInfo begin{
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
+            VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr,
+        };
+        ok = vkBeginCommandBuffer(command, &begin) == VK_SUCCESS &&
+             native.record_external(command, input.buffer, 0, input.size, output.buffer, 0,
+                                    output.size, reconstruction, 0, logical_height, error);
+        if (!ok) std::fprintf(stderr, "native D2 record: %s\n", error.c_str());
+        const VkBufferMemoryBarrier host_barrier{
+            VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT,
+            VK_ACCESS_HOST_READ_BIT, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+            output.buffer, 0, output.size,
+        };
+        if (ok) vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                     VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1,
+                                     &host_barrier, 0, nullptr);
+    }
+    if (ok) ok = submit_native_record(device, queue, queue_family, command);
+    std::vector<float> actual(expected.size());
+    if (ok && vkMapMemory(device, output.memory, 0, output_bytes, 0, &mapped) == VK_SUCCESS) {
+        std::memcpy(actual.data(), mapped, static_cast<size_t>(output_bytes)); vkUnmapMemory(device, output.memory);
+        for (size_t i = 0; i < actual.size(); ++i) {
+            if (!std::isfinite(actual[i]) || std::fabs(actual[i] - expected[i]) > 1.0e-5f) { ok = false; break; }
+        }
+    } else ok = false;
+    if (pool != VK_NULL_HANDLE) vkDestroyCommandPool(device, pool, nullptr);
+    destroy_native_host_buffer(device, input); destroy_native_host_buffer(device, output);
+    return ok;
 }
 
 } // namespace
@@ -510,16 +779,39 @@ int main() {
         "pocs/astc-vulkan/astc-paired-matvec.comp.spv"
 #endif
     );
+    const bool success_native_d1 =
+#ifdef ASTC_VULKAN_D1_SHADER_PATH
+        native_record_d1(selected_device, device, queue, selected_queue_family,
+                         ASTC_VULKAN_D1_SHADER_PATH);
+#else
+        false;
+#endif
+    const bool success_native_d2 = !supports_8x5 ||
+#ifdef ASTC_VULKAN_PAIRED_SHADER_PATH
+        native_record_d2(selected_device, device, queue, selected_queue_family,
+                         ASTC_VULKAN_PAIRED_SHADER_PATH);
+#else
+        false;
+#endif
+    ;
+    std::fprintf(stderr,
+                 "ASTC device detail: upload=[%d,%d,%d,%d,%d,%d,%d,%d,%d] stream=[%d,%d] dispatch_d2=%d native=[%d,%d]\n",
+                 int(success_4x4), int(success_5x5), int(success_6x6), int(success_6x5),
+                 int(success_8x5), int(success_8x6), int(success_10x6), int(success_8x8),
+                 int(success_10x8), int(success_stream_d1), int(success_stream_d2),
+                 int(success_dispatch_d2), int(success_native_d1), int(success_native_d2));
     vkDeviceWaitIdle(device);
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
-    if (!success_4x4 || !success_5x5 || !success_6x6 || !success_6x5 || !success_8x5 || !success_8x6 || !success_10x6 || !success_8x8 || !success_10x8 || !success_stream_d1 || !success_stream_d2 || !success_dispatch_d2) {
+    if (!success_4x4 || !success_5x5 || !success_6x6 || !success_6x5 || !success_8x5 || !success_8x6 || !success_10x6 || !success_8x8 || !success_10x8 || !success_stream_d1 || !success_stream_d2 || !success_dispatch_d2 || !success_native_d1 || !success_native_d2) {
         std::fprintf(stderr, "ASTC device smoke failed: image upload or layout transition failed\n");
         return 1;
     }
-    std::printf("ASTC 4x4, 5x5, and 6x6 image resource smoke passed; streamed D1=passed, streamed D2=%s, paired D2 dispatch=%s; experimental 6x5=%s, 8x5=%s, 8x6=%s, 10x6=%s, 8x8=%s, 10x8=%s\n",
+    std::printf("ASTC 4x4, 5x5, and 6x6 image resource smoke passed; streamed D1=passed, streamed D2=%s, paired D2 dispatch=%s, native D1=%s, native D2=%s; experimental 6x5=%s, 8x5=%s, 8x6=%s, 10x6=%s, 8x8=%s, 10x8=%s\n",
                 supports_8x5 ? "passed" : "unsupported",
                 supports_8x5 ? "passed" : "unsupported",
+                success_native_d1 ? "passed" : "failed",
+                supports_8x5 ? (success_native_d2 ? "passed" : "failed") : "unsupported",
                 supports_6x5 ? "passed" : "unsupported",
                 supports_8x5 ? "passed" : "unsupported",
                 supports_8x6 ? "passed" : "unsupported",

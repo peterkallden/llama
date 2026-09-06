@@ -88,6 +88,15 @@ deterministic cleanup and the selected Vulkan device is proven to match the
 borrowed device. This keeps a failed native capability on the normal GGUF
 fallback path.
 
+The device smoke now verifies this native-recording contract for both D1 and
+D2 with real external activation/output buffers. It submits the caller-owned
+command buffer, reads the result back, and compares it with the ordinary
+session path. This is a command-recording/device-lifecycle gate only; it does
+not yet enable llama graph-node binding. For paired D2, the smoke deliberately
+uses the physical storage height (the logical height is twice the ASTC image
+height for the five-row layout), keeping that geometry explicit at the test
+boundary.
+
 The model-level cache planner sits above the D1/D2 encoders. It first filters
 already validated tensor artifacts by model/Vulkan evidence, then may apply
 workload usage and measured-benefit metrics, followed by the existing memory
