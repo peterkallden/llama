@@ -79,14 +79,14 @@ destroyed by ASTC; ASTC owns only its images, descriptors, pages and related
 resources. The current provider still uses the verified CPU custom-op bridge
 until native resources can be created on the same ggml-owned device.
 
-The native groundwork now exists for both D1 and D2: their dispatch sessions
-can bind ASTC's sampled image plus ASTC-owned layout metadata, borrow the
+The native path is now available for both D1 and D2: their dispatch sessions
+bind ASTC's sampled image plus ASTC-owned layout metadata, borrow the
 activation/output `VkBuffer` views supplied by ggml, and record compute work
 into an already-open command buffer. These methods never submit, wait or map
-memory. They remain behind the CPU bridge until graph-node binding can provide
-deterministic cleanup and the selected Vulkan device is proven to match the
-borrowed device. This keeps a failed native capability on the normal GGUF
-fallback path.
+memory. Graph binding is still opt-in through the ASTC provider. A generic
+dispatch-time device preflight declines the binding when the actual ggml
+command-buffer device does not match the borrowed device, preserving the
+normal GGUF/custom-op fallback.
 
 The device smoke now verifies this native-recording contract for both D1 and
 D2 with real external activation/output buffers. It submits the caller-owned

@@ -1527,8 +1527,12 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     res              (params.res),
     ctx0             (res->get_ctx()),
     gf               (res->get_gf()) {
-        res->set_params(params);
+    res->set_params(params);
+    if (cparams.ffn_down_runtime_provider.native_generation_begin != nullptr) {
+        cparams.ffn_down_runtime_provider.native_generation_begin(
+            cparams.ffn_down_runtime_provider.user_data);
     }
+}
 
 void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
     if (cb_func) {

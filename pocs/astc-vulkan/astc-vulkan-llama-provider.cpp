@@ -46,11 +46,13 @@ astc_vulkan_llama_provider::~astc_vulkan_llama_provider() {
 }
 
 void astc_vulkan_llama_provider::reset() {
+    ggml_vk_astc_external_op::clear_owner(this);
     if (external_op_installed_) {
         ggml_vk_astc_external_op::uninstall();
         external_op_installed_ = false;
     }
     entries_.clear();
+    native_bindings_.clear();
     d1_spirv_.clear();
     d2_spirv_.clear();
     overlay_.reset();
@@ -219,4 +221,97 @@ bool astc_vulkan_llama_provider::run_callback(
     auto * provider = static_cast<astc_vulkan_llama_provider *>(user_data);
     return provider != nullptr && provider->run(
         layer, input, n_tokens, input_columns, output, output_columns);
+}
+
+bool astc_vulkan_llama_provider::native_bind_callback(
+        void * user_data, ggml_tensor * node, uint32_t layer) {
+    auto * provider = static_cast<astc_vulkan_llama_provider *>(user_data);
+    return provider != nullptr && provider->bind_native_node(node, layer);
+}
+
+void astc_vulkan_llama_provider::native_generation_begin_callback(void * user_data) {
+    auto * provider = static_cast<astc_vulkan_llama_provider *>(user_data);
+    if (provider != nullptr) ggml_vk_astc_external_op::clear_owner(provider);
+}
+
+bool astc_vulkan_llama_provider::native_context_callback(
+        const ggml_vk_external_op_dispatch_context * context, void * user_data) {
+    const auto * binding = static_cast<const native_binding *>(user_data);
+    return binding != nullptr && binding->provider != nullptr &&
+           binding->provider->can_record_native(context);
+}
+
+bool astc_vulkan_llama_provider::native_dispatch_callback(
+        const ggml_vk_external_op_dispatch_context * context, void * user_data) {
+    const auto * binding = static_cast<const native_binding *>(user_data);
+    return binding != nullptr && binding->provider != nullptr &&
+           binding->provider->record_native(binding->layer, context);
+}
+
+bool astc_vulkan_llama_provider::bind_native_node(ggml_tensor * node, uint32_t layer) {
+    if (!ready_ || node == nullptr || entries_.find(layer) == entries_.end()) return false;
+    native_binding * binding = nullptr;
+    for (const auto & candidate : native_bindings_) {
+        if (candidate->layer == layer) {
+            binding = candidate.get();
+            break;
+        }
+    }
+    if (binding == nullptr) {
+        auto created = std::make_unique<native_binding>();
+        created->provider = this;
+        created->layer = layer;
+        binding = created.get();
+        native_bindings_.push_back(std::move(created));
+    }
+    ggml_vk_astc_external_op::bind_node(
+        node, native_dispatch_callback, binding, native_context_callback, this);
+    return true;
+}
+
+bool astc_vulkan_llama_provider::can_record_native(
+        const ggml_vk_external_op_dispatch_context * context) const {
+    if (!ready_ || context == nullptr || shared_device_ == nullptr ||
+        context->native_device == 0 || context->native_command_buffer == 0 ||
+        reinterpret_cast<VkDevice>(context->native_device) != shared_device_->device()) {
+        return false;
+    }
+    return context->node != nullptr && context->node->src[0] != nullptr &&
+           context->get_buffer != nullptr;
+}
+
+bool astc_vulkan_llama_provider::record_native(
+        uint32_t layer, const ggml_vk_external_op_dispatch_context * context) {
+    if (!can_record_native(context)) return false;
+    const auto it = entries_.find(layer);
+    if (it == entries_.end()) return false;
+    ggml_vk_external_op_buffer_view activation{};
+    ggml_vk_external_op_buffer_view output{};
+    if (!context->get_buffer(context->backend_context, context->node->src[0], &activation) ||
+        !context->get_buffer(context->backend_context, context->node, &output) ||
+        activation.native_device != context->native_device ||
+        output.native_device != context->native_device) {
+        return false;
+    }
+    const auto & adapter = it->second->adapter;
+    const auto & spirv = adapter.dispatch_kind() ==
+        astc_vulkan_scheduler_dispatch_kind::kD2Paired ? d2_spirv_ : d1_spirv_;
+    const uint32_t samples = static_cast<uint32_t>(context->node->ne[1]);
+    const uint32_t band_height = static_cast<uint32_t>(adapter.binding().record.height);
+    std::string error;
+    const bool ok = it->second->adapter.record_native(
+        spirv, reinterpret_cast<VkDevice>(context->native_device),
+        reinterpret_cast<VkCommandBuffer>(context->native_command_buffer),
+        reinterpret_cast<VkBuffer>(activation.native_buffer), activation.offset, activation.size,
+        reinterpret_cast<VkBuffer>(output.native_buffer), output.offset, output.size,
+        samples, 0, band_height, error);
+    if (!ok) {
+        ++dispatch_failures_;
+        last_error_ = error.empty() ? "ASTC native graph recording failed" : error;
+    } else {
+        ++dispatch_calls_;
+        dispatch_tokens_ += samples;
+        last_error_.clear();
+    }
+    return ok;
 }

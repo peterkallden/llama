@@ -15290,6 +15290,17 @@ static bool ggml_vk_external_op_can_dispatch(const ggml_tensor * node) {
     return dispatcher.can_dispatch != nullptr && dispatcher.can_dispatch(node, dispatcher.user_data);
 }
 
+static bool ggml_vk_external_op_can_dispatch_context(
+        const ggml_vk_external_op_dispatch_context * context) {
+    ggml_vk_external_op_dispatcher dispatcher;
+    {
+        std::lock_guard<std::mutex> lock(g_external_op_mutex);
+        dispatcher = g_external_op_dispatcher;
+    }
+    return dispatcher.can_dispatch_context == nullptr ||
+           dispatcher.can_dispatch_context(context, dispatcher.user_data);
+}
+
 static bool ggml_vk_external_op_try_dispatch(
         const ggml_vk_external_op_dispatch_context * context) {
     ggml_vk_external_op_dispatcher dispatcher;
@@ -15487,18 +15498,20 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
         external_context.native_command_buffer = compute_ctx && compute_ctx->s && compute_ctx->s->buffer ?
             reinterpret_cast<uint64_t>(static_cast<VkCommandBuffer>(compute_ctx->s->buffer->buf)) : 0;
         external_context.get_buffer = ggml_vk_external_get_buffer_view;
-        if (!ggml_vk_external_op_try_dispatch(&external_context)) {
-            GGML_ABORT("external Vulkan operation failed to consume a bound node");
-        }
+        if (ggml_vk_external_op_can_dispatch_context(&external_context)) {
+            if (!ggml_vk_external_op_try_dispatch(&external_context)) {
+                GGML_ABORT("external Vulkan operation failed to consume a bound node");
+            }
 
-        ctx->tensor_ctxs[node_idx] = compute_ctx;
-        if (submit || last_node) {
-            ggml_vk_ctx_end(compute_ctx);
-            compute_ctx->exit_tensor_idx = last_node ? node_idx_begin : -1;
-            ctx->compute_ctx.reset();
-            ggml_vk_compute_forward(ctx, cgraph, node_begin, node_idx_begin, almost_ready);
+            ctx->tensor_ctxs[node_idx] = compute_ctx;
+            if (submit || last_node) {
+                ggml_vk_ctx_end(compute_ctx);
+                compute_ctx->exit_tensor_idx = last_node ? node_idx_begin : -1;
+                ctx->compute_ctx.reset();
+                ggml_vk_compute_forward(ctx, cgraph, node_begin, node_idx_begin, almost_ready);
+            }
+            return true;
         }
-        return true;
     }
 
     switch (node->op) {

@@ -1151,6 +1151,12 @@ private:
                     astc_vulkan_llama_provider::is_ready_callback,
                     astc_vulkan_llama_provider::run_callback,
                     provider.get());
+                // The provider's context preflight keeps this opt-in path
+                // device-safe; a mismatch falls back to the normal graph op.
+                llama_set_ffn_down_runtime_native_binding(
+                    ctx_tgt, astc_vulkan_llama_provider::native_bind_callback);
+                llama_set_ffn_down_runtime_native_generation_begin(
+                    ctx_tgt, astc_vulkan_llama_provider::native_generation_begin_callback);
                 astc_provider = std::move(provider);
                 SRV_INF("ASTC cache overlay active: %s (%s policy)\\n",
                         params_base.astc_cache.c_str(), params_base.astc_profile.c_str());

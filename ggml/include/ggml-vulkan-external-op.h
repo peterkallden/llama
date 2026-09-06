@@ -59,8 +59,16 @@ typedef bool (*ggml_vk_external_op_can_dispatch_fn)(
         const struct ggml_tensor * node,
         void * user_data);
 
+// Optional dispatch-time preflight. Unlike can_dispatch(), this callback sees
+// the actual backend device and command buffer, so an external owner can
+// decline a node without turning a device mismatch into a hard failure.
+typedef bool (*ggml_vk_external_op_can_dispatch_context_fn)(
+        const struct ggml_vk_external_op_dispatch_context * context,
+        void * user_data);
+
 struct ggml_vk_external_op_dispatcher {
     ggml_vk_external_op_can_dispatch_fn can_dispatch;
+    ggml_vk_external_op_can_dispatch_context_fn can_dispatch_context;
     ggml_vk_external_op_dispatch_fn dispatch;
     void * user_data;
 };

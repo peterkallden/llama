@@ -18,6 +18,9 @@ struct llama_ffn_down_runtime_provider {
     // the generated runtime node to a backend-native dispatch path. A false
     // result preserves the ordinary custom-op/CPU fallback.
     llama_ffn_down_runtime_native_bind_fn native_bind = nullptr;
+    // Called once before a graph generation starts so external owners can
+    // discard bindings for the previous graph generation.
+    llama_ffn_down_runtime_native_generation_begin_fn native_generation_begin = nullptr;
     void * user_data = nullptr;
 };
 

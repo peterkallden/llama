@@ -124,6 +124,8 @@ struct llama_context {
                                        llama_ffn_down_runtime_run_fn run, void * user_data,
                                        llama_ffn_down_runtime_native_bind_fn native_bind = nullptr);
     bool set_ffn_down_runtime_native_binding(llama_ffn_down_runtime_native_bind_fn native_bind);
+    bool set_ffn_down_runtime_native_generation_begin(
+            llama_ffn_down_runtime_native_generation_begin_fn generation_begin);
     void set_nextn_layer_offset(int32_t offset);
     void set_causal_attn(bool value);
     void set_warmup(bool value);

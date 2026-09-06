@@ -15,7 +15,10 @@ bool get_default_device(ggml_vk_external_op_device_context & result, std::string
 
 void bind_node(ggml_tensor * node,
                ggml_vk_external_op_dispatch_fn fn,
-               void * user_data);
+               void * user_data,
+               ggml_vk_external_op_can_dispatch_context_fn can_dispatch_context = nullptr,
+               void * owner = nullptr);
 void unbind_node(ggml_tensor * node);
+void clear_owner(void * owner);
 
 } // namespace ggml_vk_astc_external_op

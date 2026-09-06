@@ -144,6 +144,7 @@ typedef bool (*llama_ffn_down_runtime_run_fn)(
 // dispatcher. Returning false keeps the existing CPU custom-op path.
 typedef bool (*llama_ffn_down_runtime_native_bind_fn)(
         void * user_data, struct ggml_tensor * node, uint32_t lid);
+typedef void (*llama_ffn_down_runtime_native_generation_begin_fn)(void * user_data);
 LLAMA_API bool llama_set_ffn_down_runtime_provider(
         struct llama_context * ctx,
         llama_ffn_down_runtime_is_ready_fn is_ready,
@@ -152,6 +153,9 @@ LLAMA_API bool llama_set_ffn_down_runtime_provider(
 LLAMA_API bool llama_set_ffn_down_runtime_native_binding(
         struct llama_context * ctx,
         llama_ffn_down_runtime_native_bind_fn native_bind);
+LLAMA_API bool llama_set_ffn_down_runtime_native_generation_begin(
+        struct llama_context * ctx,
+        llama_ffn_down_runtime_native_generation_begin_fn generation_begin);
 
 // PoC helper exposing the FFN width needed to interpret the capture above.
 LLAMA_API int32_t llama_model_n_ff(const struct llama_model * model, uint32_t layer);

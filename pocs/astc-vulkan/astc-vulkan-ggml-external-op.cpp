@@ -12,6 +12,8 @@ namespace {
 struct node_binding {
     ggml_vk_external_op_dispatch_fn fn = nullptr;
     void * user_data = nullptr;
+    ggml_vk_external_op_can_dispatch_context_fn can_dispatch_context = nullptr;
+    void * owner = nullptr;
 };
 
 std::mutex g_mutex;
@@ -25,6 +27,19 @@ bool can_dispatch(const ggml_tensor * node, void *) {
     }
     std::lock_guard<std::mutex> lock(g_mutex);
     return g_bindings.find(node) != g_bindings.end();
+}
+
+bool can_dispatch_context(const ggml_vk_external_op_dispatch_context * context, void *) {
+    if (context == nullptr || context->node == nullptr) return false;
+    node_binding binding;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const auto it = g_bindings.find(context->node);
+        if (it == g_bindings.end()) return false;
+        binding = it->second;
+    }
+    return binding.can_dispatch_context == nullptr ||
+           binding.can_dispatch_context(context, binding.user_data);
 }
 
 bool dispatch(const ggml_vk_external_op_dispatch_context * context, void *) {
@@ -72,6 +87,7 @@ bool install(std::string & error) {
 
     const ggml_vk_external_op_dispatcher dispatcher = {
         can_dispatch,
+        can_dispatch_context,
         dispatch,
         nullptr,
     };
@@ -126,12 +142,14 @@ bool get_default_device(ggml_vk_external_op_device_context & result, std::string
 
 void bind_node(ggml_tensor * node,
                ggml_vk_external_op_dispatch_fn fn,
-               void * user_data) {
+               void * user_data,
+               ggml_vk_external_op_can_dispatch_context_fn can_dispatch_context_fn,
+               void * owner) {
     if (node == nullptr || fn == nullptr) {
         return;
     }
     std::lock_guard<std::mutex> lock(g_mutex);
-    g_bindings[node] = { fn, user_data };
+    g_bindings[node] = { fn, user_data, can_dispatch_context_fn, owner };
 }
 
 void unbind_node(ggml_tensor * node) {
@@ -140,6 +158,18 @@ void unbind_node(ggml_tensor * node) {
     }
     std::lock_guard<std::mutex> lock(g_mutex);
     g_bindings.erase(node);
+}
+
+void clear_owner(void * owner) {
+    if (owner == nullptr) return;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (auto it = g_bindings.begin(); it != g_bindings.end();) {
+        if (it->second.owner == owner) {
+            it = g_bindings.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 } // namespace ggml_vk_astc_external_op

@@ -2,6 +2,7 @@
 
 #include "astc-vulkan-runtime-overlay.h"
 #include "astc-vulkan-scheduler-adapter.h"
+#include "ggml-vulkan-external-op.h"
 
 #include "llama-ext.h"
 
@@ -41,11 +42,18 @@ public:
     static bool run_callback(void * user_data, uint32_t layer,
                              const float * input, uint32_t n_tokens, uint32_t input_columns,
                              float * output, uint32_t output_columns);
+    static bool native_bind_callback(void * user_data, struct ggml_tensor * node, uint32_t layer);
+    static void native_generation_begin_callback(void * user_data);
 
 private:
     struct entry {
         uint32_t layer = 0;
         astc_vulkan_scheduler_adapter adapter;
+    };
+
+    struct native_binding {
+        astc_vulkan_llama_provider * provider = nullptr;
+        uint32_t layer = 0;
     };
 
     bool ready_ = false;
@@ -55,8 +63,18 @@ private:
     std::vector<uint32_t> d1_spirv_;
     std::vector<uint32_t> d2_spirv_;
     std::unordered_map<uint32_t, std::unique_ptr<entry>> entries_;
+    std::vector<std::unique_ptr<native_binding>> native_bindings_;
     uint64_t dispatch_calls_ = 0;
     uint64_t dispatch_failures_ = 0;
     uint64_t dispatch_tokens_ = 0;
     bool external_op_installed_ = false;
+
+    bool bind_native_node(ggml_tensor * node, uint32_t layer);
+    bool can_record_native(const ggml_vk_external_op_dispatch_context * context) const;
+    bool record_native(uint32_t layer,
+                       const ggml_vk_external_op_dispatch_context * context);
+    static bool native_dispatch_callback(
+            const ggml_vk_external_op_dispatch_context * context, void * user_data);
+    static bool native_context_callback(
+            const ggml_vk_external_op_dispatch_context * context, void * user_data);
 };
