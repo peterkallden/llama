@@ -9627,3 +9627,30 @@ now invokes the real `astc-vulkan-cache plan` binary and verifies resident
 prefix, fallback count and page splitting under a constrained budget. The
 fixture is generated in the system temporary directory and is removed after
 the test; no model-specific cache is checked in.
+
+## Three-hundred-and-seventy-seventh sweep: static runtime page owner
+
+The first runtime-owner seam now exists in `astc-vulkan-page-owner.*`. It
+consumes the planner's storage pages, checks that every entry belongs to the
+page's complete runtime storage key, and assigns deterministic virtual slot
+coordinates separately for each compatible storage class. No atlas coordinate
+is serialized into the cache and no payload is rewritten.
+
+The owner exposes explicit lifecycle transitions:
+
+```text
+unloaded -> uploading -> resident -> evicting -> unloaded
+```
+
+`set_resident_prefix()` provides the initial static-residency mode, while
+`resolve_tensor()` and `resolve_entry()` return either a resident slot or a
+native-Q fallback. D1 and D2 therefore share the owner, but their footprint,
+semantic decoder, paired layout and row-scale requirements cannot be mixed in
+one storage class. The owner is intentionally Vulkan-resource agnostic; actual
+image creation/upload remains in `astc_vulkan_tensor_session` and the existing
+stream-loader.
+
+The page-owner contract test covers slot assignment, static prefix loading,
+fallback for non-resident/native entries and lifecycle transitions. The next
+sweep should bind the resolve result to a tensor-session upload path and add a
+device smoke with one resident page and one fallback tensor.

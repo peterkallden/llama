@@ -726,6 +726,15 @@ for image allocation, streaming and atlas addressing. Experimental artifacts
 remain excluded unless `--allow-experimental 1` is explicitly supplied;
 `--allow-unverified 1` is reserved for offline/research replay.
 
+The runtime page owner consumes the resulting page list without changing the
+cache format. It validates D1/D2 storage classes, assigns deterministic
+runtime-local slots, and exposes resident/fallback resolution for a tensor.
+Its first mode is static residency: the planner-selected prefix is loaded for
+the model run. Lifecycle states already include upload and eviction so a
+future asynchronous Vulkan owner can be added without changing scheduler or
+manifest contracts. Actual image allocation and upload continue to use the
+existing `astc_vulkan_tensor_session` and stream-loader paths.
+
 ## Offline GPU encoder seam
 
 The experimental GPU encoder is an offline proposer, not a runtime ASTC

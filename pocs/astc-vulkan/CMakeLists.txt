@@ -285,6 +285,29 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-model-cache PUBLIC
         astc-vulkan-cache astc-vulkan-residency)
     target_compile_features(astc-vulkan-model-cache PUBLIC cxx_std_17)
+
+    # Runtime-local page ownership consumes planner output but does not own
+    # Vulkan images yet. Resource/upload ownership remains in the existing
+    # tensor session and sidecar layers.
+    add_library(astc-vulkan-page-owner STATIC
+        astc-vulkan-page-owner.cpp)
+    target_include_directories(astc-vulkan-page-owner PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-page-owner PUBLIC astc-vulkan-model-cache)
+    target_compile_features(astc-vulkan-page-owner PUBLIC cxx_std_17)
+
+    add_executable(test-astc-vulkan-page-owner
+        tests/test-astc-vulkan-page-owner.cpp)
+    target_include_directories(test-astc-vulkan-page-owner PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(test-astc-vulkan-page-owner PRIVATE astc-vulkan-page-owner)
+    target_compile_features(test-astc-vulkan-page-owner PRIVATE cxx_std_17)
+    if (BUILD_TESTING)
+        add_test(NAME test-astc-vulkan-page-owner
+            COMMAND test-astc-vulkan-page-owner)
+        set_property(TEST test-astc-vulkan-page-owner PROPERTY LABELS astc)
+    endif()
+
     if (TARGET astc-vulkan-cache-tool)
         target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-model-cache)
         target_compile_definitions(astc-vulkan-cache-tool PRIVATE
