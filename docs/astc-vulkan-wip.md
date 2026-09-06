@@ -9550,3 +9550,47 @@ astc-vulkan-cache bind \
 
 The command records structural compatibility only. A separate replay must
 publish the model/Vulkan gates before the scheduler may select the overlay.
+
+## Three-hundred-and-seventy-fourth sweep: usage-aware cache planning
+
+The model-cache layer now has a planner-only usage contract above D1/D2. It
+accepts per-tensor invocation/traffic/timing metrics and calculates:
+
+```text
+expected_gpu_time_saved
+heat = invocations * ASTC bytes per use
+benefit_score = benefit / model-loss cost
+```
+
+The planner can keep the existing evidence-only behavior, require usage
+metrics, or demote an artifact with no positive measured/estimated benefit to
+the native GGUF fallback. It then reuses the existing ordered residency
+planner. These metrics are not written into the immutable ASTC manifest,
+because the same cache may be used with different prompts, batch sizes,
+devices, or runtime GGUF families.
+
+This is deliberately a selection/admission layer, not a new encoder. It does
+not inspect weights during inference, trigger JIT encoding, or assume Q4. The
+runtime family remains an opaque admission label, so Q3, Q4, TQ1, TQ2 and
+future GGUF controls use the same planner contract.
+
+## Three-hundred-and-seventy-fifth sweep: storage classes and page planning
+
+Selected entries can now be grouped into storage-page candidates using the
+runtime contract:
+
+```text
+ASTC footprint × semantic decoder × normalization × paired layout × row-scale presence
+```
+
+Encoder profile is intentionally not part of this key; it is provenance, not
+a runtime decode requirement. Page planning never mixes incompatible D1/D2
+semantics and can split a class at a configurable payload limit. It only
+returns entry indices, payload/host byte totals and the storage key. Vulkan
+image allocation, atlas rewriting and resource ownership remain future steps.
+
+The first runtime-safe implementation therefore remains tensor-local and
+streamable. Cross-tensor atlases should only be added after page-level
+measurements demonstrate a benefit, because ASTC image format and semantic
+dispatch are fixed per resource and temporal GPU-cache locality across
+separate dispatches is not guaranteed.

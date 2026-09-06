@@ -29,11 +29,19 @@ struct astc_vulkan_model_cache_entry {
     astc_vulkan_artifact_evidence evidence{};
     astc_vulkan_artifact_variant variant = astc_vulkan_artifact_variant::neutral;
     astc_vulkan_normalization normalization = astc_vulkan_normalization::none;
+    astc_vulkan_paired_semantic paired_semantic = astc_vulkan_paired_semantic::direct_rgb;
+    bool has_row_scales = false;
     bool use_native_fallback = false;
     // Conservative payload-based estimates. A Vulkan owner may replace these
     // with actual image/staging allocation sizes before residency planning.
     uint64_t device_bytes = 0;
     uint64_t host_bytes = 0;
+    // Planner-only diagnostics. These values are never serialized into the
+    // ASTC manifest and do not change the runtime shader ABI.
+    bool usage_available = false;
+    double heat_score = 0.0;
+    double benefit_score = 0.0;
+    double expected_gpu_time_saved_ns = 0.0;
 };
 
 struct astc_vulkan_model_cache_plan {
@@ -46,6 +54,69 @@ struct astc_vulkan_model_cache_catalog {
     astc_vulkan_cache_runtime_base runtime_base;
     astc_vulkan_model_cache_plan plan;
 };
+
+// Runtime-observed or trace-derived tensor use. Values such as bytes and GPU
+// time are per invocation; the planner applies invocations/path probability.
+// Keeping this outside the manifest lets one immutable artifact cache be
+// reused with different workload/device profiles.
+struct astc_vulkan_tensor_usage_metrics {
+    std::string tensor_name;
+    uint64_t invocations = 0;
+    uint64_t tokens_seen = 0;
+    uint64_t native_bytes_read = 0;
+    uint64_t astc_bytes_read = 0;
+    double native_gpu_time_ns = 0.0;
+    double astc_gpu_time_ns = 0.0;
+    double path_probability = 1.0;
+    uint32_t execution_order = 0;
+};
+
+struct astc_vulkan_model_cache_usage_options {
+    // If true, an artifact without metrics is converted to native fallback.
+    bool require_usage_metrics = false;
+    // If true, artifacts with no measured/estimated positive benefit become
+    // native fallback. The default keeps the existing evidence-only behavior.
+    bool require_positive_benefit = false;
+    // Use traffic saved when device timing is not available.
+    bool allow_byte_benefit_fallback = true;
+};
+
+// A runtime-compatible storage class. Encoder profile is intentionally absent:
+// it is provenance, while this key describes the decode/resource contract.
+struct astc_vulkan_model_cache_storage_key {
+    astc_vulkan_footprint footprint = astc_vulkan_footprint::k6x6;
+    astc_vulkan_representation representation = astc_vulkan_representation::kScalar;
+    astc_vulkan_paired_semantic paired_semantic = astc_vulkan_paired_semantic::direct_rgb;
+    astc_vulkan_normalization normalization = astc_vulkan_normalization::none;
+    bool has_row_scales = false;
+};
+
+struct astc_vulkan_model_cache_storage_page {
+    astc_vulkan_model_cache_storage_key key;
+    std::vector<size_t> entry_indices;
+    uint64_t payload_bytes = 0;
+    uint64_t host_bytes = 0;
+};
+
+// Applies usage/benefit admission and deterministic ordering above an existing
+// evidence-selected model plan, then reuses the existing residency planner.
+// Missing metrics are not fatal unless require_usage_metrics is enabled.
+bool astc_vulkan_model_cache_plan_usage(
+    const astc_vulkan_model_cache_plan & base_plan,
+    const std::vector<astc_vulkan_tensor_usage_metrics> & usage,
+    const astc_vulkan_model_cache_usage_options & options,
+    const astc_vulkan_memory_budget & budget,
+    astc_vulkan_model_cache_plan & result,
+    std::string & error);
+
+// Groups the already-selected entries into page/atlas candidates. Entries are
+// never mixed across footprint or semantic decode contracts. This is planning
+// only: no Vulkan image allocation or payload rewrite occurs here.
+bool astc_vulkan_model_cache_make_storage_pages(
+    const astc_vulkan_model_cache_plan & plan,
+    uint64_t max_page_payload_bytes,
+    std::vector<astc_vulkan_model_cache_storage_page> & pages,
+    std::string & error);
 
 // Loads and validates one immutable model-adjacent cache, then builds the
 // tensor-level artifact plan. Compatible Q3/Q4 bases remain an explicit

@@ -77,6 +77,40 @@ int main() {
     assert(resident_plan.residency.resident_items.size() == 1);
     assert(resident_plan.residency.requires_streaming);
 
+    // Usage/benefit planning is a separate, non-serialized layer. It can
+    // reorder validated artifacts and optionally demote zero-benefit entries
+    // to native fallback without changing their manifest records.
+    astc_vulkan_model_cache_usage_options usage_options;
+    std::vector<astc_vulkan_tensor_usage_metrics> usage = {
+        {"blk.0.ffn_down.weight", 10, 10, 1000, 400, 100.0, 60.0, 1.0, 2},
+        {"blk.2.ffn_down.weight", 2, 2, 100, 100, 20.0, 20.0, 1.0, 1},
+    };
+    astc_vulkan_model_cache_plan usage_plan;
+    assert(astc_vulkan_model_cache_plan_usage(
+        experimental_plan, usage, usage_options, budget, usage_plan, error));
+    assert(usage_plan.entries.size() == experimental_plan.entries.size());
+    assert(usage_plan.entries.front().tensor_name == "blk.0.ffn_down.weight");
+    assert(usage_plan.entries.front().usage_available);
+    assert(usage_plan.entries.front().benefit_score > 0.0);
+
+    usage_options.require_positive_benefit = true;
+    astc_vulkan_model_cache_plan gated_plan;
+    assert(astc_vulkan_model_cache_plan_usage(
+        experimental_plan, usage, usage_options, budget, gated_plan, error));
+    bool found_zero_benefit_fallback = false;
+    for (const auto & entry : gated_plan.entries) {
+        if (entry.tensor_name == "blk.2.ffn_down.weight") {
+            found_zero_benefit_fallback = entry.use_native_fallback;
+        }
+    }
+    assert(found_zero_benefit_fallback);
+
+    std::vector<astc_vulkan_model_cache_storage_page> pages;
+    assert(astc_vulkan_model_cache_make_storage_pages(
+        experimental_plan, 0, pages, error));
+    assert(pages.size() == 2);
+    assert(pages[0].payload_bytes != 0 && pages[1].payload_bytes != 0);
+
     const auto base = std::filesystem::temp_directory_path() /
         "astc-vulkan-model-cache-contract";
     std::filesystem::remove(base);

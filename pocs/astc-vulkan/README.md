@@ -21,6 +21,20 @@ This is still an experimental sidecar/scheduler PoC.  Cache artifacts can be
 loaded by the scheduler smoke path; ordinary `llama-cli` does not yet have an
 automatic `--astc-cache` production option.
 
+The model-level cache planner sits above the D1/D2 encoders. It first filters
+already validated tensor artifacts by model/Vulkan evidence, then may apply
+workload usage and measured-benefit metrics, followed by the existing memory
+residency planner. It does not encode at runtime. Runtime GGUF families are
+not hardcoded to Q4: an F16/BF16-derived cache can be admitted for Q4, Q3,
+TQ2, TQ1 or another structurally matching family, but each runtime base still
+requires its own model/Vulkan replay gate.
+
+Storage-page planning is separate from artifact selection. Pages are grouped
+by ASTC footprint, semantic decoder, normalization contract (including paired
+layout and row-scale presence); encoder profile is provenance only. The current runtime
+keeps tensor-local streamable bands. Cross-tensor atlas packing is a later
+storage optimization and does not change the D1/D2 shader ABI.
+
 ## Offline GPU-encoder experiment
 
 `gpu-encoder/` is a separate offline backend. It does not alter the cache

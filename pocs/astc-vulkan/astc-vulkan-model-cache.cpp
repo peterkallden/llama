@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -44,6 +45,26 @@ bool tensor_already_added(const std::vector<astc_vulkan_model_cache_entry> & ent
     return std::any_of(entries.begin(), entries.end(), [&](const auto & entry) {
         return entry.tensor_name == name;
     });
+}
+
+const astc_vulkan_tensor_usage_metrics * find_usage(
+        const std::unordered_map<std::string, const astc_vulkan_tensor_usage_metrics *> & by_name,
+        const std::string & name) {
+    const auto it = by_name.find(name);
+    return it == by_name.end() ? nullptr : it->second;
+}
+
+double finite_nonnegative(double value) {
+    return std::isfinite(value) && value > 0.0 ? value : 0.0;
+}
+
+bool same_storage_key(const astc_vulkan_model_cache_storage_key & lhs,
+                      const astc_vulkan_model_cache_storage_key & rhs) {
+    return lhs.footprint == rhs.footprint &&
+           lhs.representation == rhs.representation &&
+           lhs.paired_semantic == rhs.paired_semantic &&
+           lhs.normalization == rhs.normalization &&
+           lhs.has_row_scales == rhs.has_row_scales;
 }
 
 void add_fallback(const std::string & name,
@@ -141,6 +162,7 @@ bool astc_vulkan_model_cache_make_plan(
             entry.storage = tensor;
             entry.device_bytes = tensor.byte_size;
             entry.host_bytes = tensor.byte_size + tensor.layout_byte_size;
+            entry.paired_semantic = astc_vulkan_paired_semantic::direct_rgb;
             result.entries.push_back(std::move(entry));
         }
         error.clear();
@@ -178,10 +200,138 @@ bool astc_vulkan_model_cache_make_plan(
         entry.evidence = best->evidence;
         entry.variant = best->variant;
         entry.normalization = best->normalization;
+        entry.paired_semantic = best->paired_semantic;
+        entry.has_row_scales = best->row_scale_byte_size != 0;
         entry.device_bytes = best->storage.byte_size;
         entry.host_bytes = best->storage.byte_size + best->storage.layout_byte_size +
             best->row_scale_byte_size;
         result.entries.push_back(std::move(entry));
+    }
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_model_cache_plan_usage(
+    const astc_vulkan_model_cache_plan & base_plan,
+    const std::vector<astc_vulkan_tensor_usage_metrics> & usage,
+    const astc_vulkan_model_cache_usage_options & options,
+    const astc_vulkan_memory_budget & budget,
+    astc_vulkan_model_cache_plan & result,
+    std::string & error) {
+    std::unordered_map<std::string, const astc_vulkan_tensor_usage_metrics *> by_name;
+    by_name.reserve(usage.size());
+    for (const auto & metric : usage) {
+        if (metric.tensor_name.empty()) {
+            error = "tensor usage metrics contain an empty tensor name";
+            return false;
+        }
+        if (!by_name.emplace(metric.tensor_name, &metric).second) {
+            error = "tensor usage metrics contain a duplicate tensor name: " + metric.tensor_name;
+            return false;
+        }
+    }
+
+    result = base_plan;
+    for (auto & entry : result.entries) {
+        entry.usage_available = false;
+        entry.heat_score = 0.0;
+        entry.benefit_score = 0.0;
+        entry.expected_gpu_time_saved_ns = 0.0;
+        if (entry.use_native_fallback) continue;
+
+        const auto * metric = find_usage(by_name, entry.tensor_name);
+        if (metric == nullptr) {
+            if (options.require_usage_metrics) entry.use_native_fallback = true;
+            continue;
+        }
+        entry.usage_available = true;
+        const double invocations = metric->invocations != 0 ?
+            static_cast<double>(metric->invocations) :
+            static_cast<double>(metric->tokens_seen);
+        const double path_probability = std::clamp(
+            finite_nonnegative(metric->path_probability), 0.0, 1.0);
+        const double multiplier = invocations * path_probability;
+        const double time_saved_per_call = std::max(
+            finite_nonnegative(metric->native_gpu_time_ns) -
+            finite_nonnegative(metric->astc_gpu_time_ns), 0.0);
+        const double bytes_saved_per_call = metric->native_bytes_read > metric->astc_bytes_read ?
+            static_cast<double>(metric->native_bytes_read - metric->astc_bytes_read) : 0.0;
+        entry.expected_gpu_time_saved_ns = time_saved_per_call * multiplier;
+        const double byte_benefit = options.allow_byte_benefit_fallback ?
+            bytes_saved_per_call * multiplier : 0.0;
+        const double benefit = entry.expected_gpu_time_saved_ns > 0.0 ?
+            entry.expected_gpu_time_saved_ns : byte_benefit;
+        const double astc_bytes_per_call = metric->astc_bytes_read != 0 ?
+            static_cast<double>(metric->astc_bytes_read) :
+            static_cast<double>(entry.device_bytes);
+        entry.heat_score = astc_bytes_per_call * multiplier;
+        const double quality_cost = finite_nonnegative(entry.evidence.loss_delta);
+        entry.benefit_score = quality_cost > 0.0 ? benefit / quality_cost : benefit;
+        if (options.require_positive_benefit && benefit <= 0.0) {
+            entry.use_native_fallback = true;
+        }
+    }
+
+    std::stable_sort(result.entries.begin(), result.entries.end(),
+        [&](const auto & lhs, const auto & rhs) {
+            if (lhs.use_native_fallback != rhs.use_native_fallback) {
+                return !lhs.use_native_fallback;
+            }
+            if (lhs.benefit_score != rhs.benefit_score) {
+                return lhs.benefit_score > rhs.benefit_score;
+            }
+            if (lhs.heat_score != rhs.heat_score) {
+                return lhs.heat_score > rhs.heat_score;
+            }
+            const auto * left_usage = find_usage(by_name, lhs.tensor_name);
+            const auto * right_usage = find_usage(by_name, rhs.tensor_name);
+            const uint32_t left_order = left_usage == nullptr ? UINT32_MAX : left_usage->execution_order;
+            const uint32_t right_order = right_usage == nullptr ? UINT32_MAX : right_usage->execution_order;
+            if (left_order != right_order) return left_order < right_order;
+            return false;
+        });
+
+    const astc_vulkan_model_cache_plan ordered_plan = result;
+    if (!astc_vulkan_model_cache_plan_residency(ordered_plan, budget, result, error)) {
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_model_cache_make_storage_pages(
+    const astc_vulkan_model_cache_plan & plan,
+    uint64_t max_page_payload_bytes,
+    std::vector<astc_vulkan_model_cache_storage_page> & pages,
+    std::string & error) {
+    pages.clear();
+    for (size_t index = 0; index < plan.entries.size(); ++index) {
+        const auto & entry = plan.entries[index];
+        if (entry.use_native_fallback) continue;
+        astc_vulkan_model_cache_storage_key key;
+        key.footprint = entry.storage.footprint;
+        key.representation = entry.storage.representation;
+        key.paired_semantic = entry.paired_semantic;
+        key.normalization = entry.normalization;
+        key.has_row_scales = entry.has_row_scales;
+
+        astc_vulkan_model_cache_storage_page * page = nullptr;
+        for (auto & candidate : pages) {
+            if (same_storage_key(candidate.key, key) &&
+                (max_page_payload_bytes == 0 ||
+                 candidate.payload_bytes + entry.device_bytes <= max_page_payload_bytes)) {
+                page = &candidate;
+                break;
+            }
+        }
+        if (page == nullptr) {
+            pages.push_back({});
+            page = &pages.back();
+            page->key = key;
+        }
+        page->entry_indices.push_back(index);
+        page->payload_bytes += entry.device_bytes;
+        page->host_bytes += entry.host_bytes;
     }
     error.clear();
     return true;
