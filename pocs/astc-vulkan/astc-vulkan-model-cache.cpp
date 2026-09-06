@@ -196,6 +196,39 @@ bool astc_vulkan_model_cache_load_catalog(
     result = {};
     if (!astc_vulkan_cache_validate(
             model_path, requested_cache_path, result.validation, error)) return false;
+    result.runtime_base = result.validation.runtime_base;
+    if (!astc_vulkan_model_cache_make_plan(
+            result.validation.manifest, options, result.plan, error)) return false;
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_model_cache_load_catalog_for_runtime(
+    const std::string & source_model_path,
+    const std::string & runtime_model_path,
+    const std::string & requested_cache_path,
+    const astc_vulkan_model_cache_plan_options & options,
+    astc_vulkan_model_cache_catalog & result,
+    std::string & error) {
+    result = {};
+    if (source_model_path.empty() || runtime_model_path.empty()) {
+        error = "runtime catalog requires source and runtime GGUF paths";
+        return false;
+    }
+    if (!astc_vulkan_cache_validate(
+            source_model_path, requested_cache_path, result.validation, error)) return false;
+    if (source_model_path == runtime_model_path) {
+        result.runtime_base = result.validation.runtime_base;
+    } else if (!astc_vulkan_cache_validate_runtime_base(
+                   source_model_path, runtime_model_path, requested_cache_path,
+                   result.runtime_base, error)) {
+        return false;
+    }
+    if (!options.allow_unverified &&
+        (!result.runtime_base.model_gate_passed || !result.runtime_base.vulkan_gate_passed)) {
+        error = "runtime GGUF has structural ASTC admission but no model/Vulkan quality gate";
+        return false;
+    }
     if (!astc_vulkan_model_cache_make_plan(
             result.validation.manifest, options, result.plan, error)) return false;
     error.clear();

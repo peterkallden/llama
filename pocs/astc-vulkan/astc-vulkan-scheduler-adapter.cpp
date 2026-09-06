@@ -7,6 +7,7 @@
 #include <limits>
 #include <cstring>
 #include <cmath>
+#include <utility>
 
 namespace {
 bool read_range(const std::string & path, uint64_t offset, uint64_t size,
@@ -280,13 +281,67 @@ bool astc_vulkan_scheduler_adapter::prepare_from_cache(
         error = binding_.fallback_reason;
         return false;
     }
-    // No JIT cache generation belongs here. Cache creation is an explicit
-    // offline tool operation; a missing artifact is always normal fallback.
-    // A v4 index can contain many records with the same tensor name, so bind
-    // a one-record runtime manifest rather than reloading and re-looking up
-    // the full cache manifest.
+    return bind_materialized_artifact(std::move(artifact), error,
+                                      allow_experimental, allow_unverified);
+}
+
+bool astc_vulkan_scheduler_adapter::prepare_artifact_from_cache(
+        const std::string & model_path, const std::string & cache_path,
+        const std::string & tensor_name, const std::string & artifact_id,
+        std::string & error, bool allow_experimental, bool allow_unverified) {
+    reset();
+    astc_vulkan_cache_validation cache;
+    if (!astc_vulkan_cache_validate(model_path, cache_path, cache, error)) {
+        binding_.status = astc_vulkan_binding_status::kFallback;
+        binding_.fallback_reason = error;
+        return false;
+    }
+    if (cache.manifest.version != 4) {
+        error = "exact artifact binding requires a v4 artifact index";
+        binding_.status = astc_vulkan_binding_status::kFallback;
+        binding_.fallback_reason = error;
+        return false;
+    }
+    const astc_vulkan_artifact_record * source =
+        astc_vulkan_find_artifact(cache.manifest, artifact_id);
+    if (source == nullptr || source->storage.name != tensor_name) {
+        error = "ASTC cache has no matching artifact id for tensor";
+        binding_.status = astc_vulkan_binding_status::kFallback;
+        binding_.fallback_reason = error;
+        return false;
+    }
+    astc_vulkan_artifact_candidate candidate;
+    candidate.tensor = &source->storage;
+    candidate.variant = source->variant;
+    candidate.normalization = source->normalization;
+    candidate.evidence = source->evidence;
+    candidate.rate_bpw = rate_bpw(source->storage);
+    const bool metadata_eligible = std::isfinite(candidate.evidence.loss_delta) &&
+        std::isfinite(candidate.evidence.logits_relative_mse) &&
+        std::isfinite(candidate.rate_bpw) && candidate.rate_bpw > 0.0;
+    if ((allow_unverified && !metadata_eligible) ||
+        (!allow_unverified && !astc_vulkan_artifact_is_eligible(candidate, true, true))) {
+        error = "requested ASTC artifact is not evidence-eligible";
+        binding_.status = astc_vulkan_binding_status::kFallback;
+        binding_.fallback_reason = error;
+        return false;
+    }
+    astc_vulkan_scheduler_artifact artifact;
+    if (!materialize_artifact(cache, source, artifact, error)) {
+        binding_.status = astc_vulkan_binding_status::kFallback;
+        binding_.fallback_reason = error;
+        return false;
+    }
+    return bind_materialized_artifact(std::move(artifact), error,
+                                      allow_experimental, allow_unverified);
+}
+
+bool astc_vulkan_scheduler_adapter::bind_materialized_artifact(
+        astc_vulkan_scheduler_artifact artifact, std::string & error,
+        bool allow_experimental, bool allow_unverified) {
+    reset();
     if (artifact.kind == astc_vulkan_scheduler_artifact_kind::kD1 &&
-        (astc_vulkan_footprint_is_experimental(footprint) ||
+        (astc_vulkan_footprint_is_experimental(artifact.record.footprint) ||
          (artifact.record.representation != astc_vulkan_representation::kScalar &&
           artifact.record.representation != astc_vulkan_representation::kGaugeLumaAlpha))) {
         binding_.record = artifact.record;
@@ -306,7 +361,7 @@ bool astc_vulkan_scheduler_adapter::prepare_from_cache(
     }
     payload_ = std::move(artifact.payload);
     layout_ = std::move(artifact.layout);
-    tensor_name_ = tensor_name;
+    tensor_name_ = artifact.record.name;
     payload_path_ = artifact.cache_root.empty() ? std::string() :
         (std::filesystem::path(artifact.cache_root) / "payload.astcpack").string();
     payload_offset_ = artifact.record.byte_offset;
@@ -315,7 +370,7 @@ bool astc_vulkan_scheduler_adapter::prepare_from_cache(
     runtime_manifest.version = 3;
     runtime_manifest.tensors = {artifact.record};
     if (!sidecar_.set_manifest(runtime_manifest, error) ||
-        !sidecar_.init(footprint, error, allow_experimental) ||
+        !sidecar_.init(artifact.record.footprint, error, allow_experimental) ||
         !sidecar_.bind_tensor(tensor_name_, artifact.record.width, artifact.record.height,
                               payload_, binding_, error, layout_, artifact.paired_semantic,
                               artifact.row_scales)) {

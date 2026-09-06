@@ -55,6 +55,16 @@ public:
                             const std::string & tensor_name, astc_vulkan_footprint footprint,
                             std::string & error, bool allow_experimental = false,
                             bool allow_unverified = false);
+    // Binds the exact artifact selected by an offline model catalog. This is
+    // still one tensor at a time, so the caller can reuse a model-level plan
+    // without making the adapter invent a second selection policy.
+    bool prepare_artifact_from_cache(const std::string & model_path,
+                                     const std::string & cache_path,
+                                     const std::string & tensor_name,
+                                     const std::string & artifact_id,
+                                     std::string & error,
+                                     bool allow_experimental = false,
+                                     bool allow_unverified = false);
     // Reads one already-created cache artifact. This is the scheduler's only
     // artifact discovery API; it intentionally never invokes an encoder. D1
     // and D2 share validation, but D2 additionally owns a packed layout map.
@@ -103,6 +113,10 @@ public:
     static constexpr bool jit_cache_build_enabled() { return false; }
 
 private:
+    bool bind_materialized_artifact(astc_vulkan_scheduler_artifact artifact,
+                                    std::string & error,
+                                    bool allow_experimental,
+                                    bool allow_unverified);
     astc_vulkan_sidecar sidecar_;
     astc_vulkan_ffn_binding binding_;
     std::vector<uint8_t> payload_;

@@ -136,21 +136,29 @@ int main() {
     // without weakening the strict source-model validation contract. The
     // binding starts with no model/Vulkan quality evidence.
     const fs::path admit_source("astc-vulkan-cache-admit-source.gguf");
-    const fs::path admit_runtime("astc-vulkan-cache-admit-runtime.gguf");
+    const fs::path admit_runtime("astc-vulkan-cache-admit-runtime-q3.gguf");
+    const fs::path admit_runtime_tq("astc-vulkan-cache-admit-runtime-tq2.gguf");
     const fs::path admit_root("astc-vulkan-cache-admit-test-dir");
     fs::remove_all(admit_root, ignored);
     fs::remove(admit_source, ignored);
     fs::remove(admit_runtime, ignored);
+    fs::remove(admit_runtime_tq, ignored);
     write_schema_fixture_gguf(admit_source.string(), "source-f16");
-    write_schema_fixture_gguf(admit_runtime.string(), "runtime-q4");
+    write_schema_fixture_gguf(admit_runtime.string(), "runtime-q3");
+    write_schema_fixture_gguf(admit_runtime_tq.string(), "runtime-tq2");
     assert(astc_vulkan_cache_create(
         admit_source.string(), manifest_path.string(), payload_path.string(), layout_path.string(), {},
         admit_root.string(), paths, error));
     astc_vulkan_cache_runtime_base binding;
     assert(astc_vulkan_cache_admit_runtime_base(
-        admit_source.string(), admit_runtime.string(), admit_root.string(), "q4_k_m", binding, error));
-    assert(binding.admitted && !binding.model_gate_passed && !binding.vulkan_gate_passed);
+        admit_source.string(), admit_runtime.string(), admit_root.string(), "q3_k_m", binding, error));
+    assert(binding.admitted && binding.family == "q3_k_m" &&
+           !binding.model_gate_passed && !binding.vulkan_gate_passed);
     assert(fs::is_regular_file(fs::path(paths.compatible_bases) / (binding.runtime_sha256 + ".astcbase")));
+    astc_vulkan_cache_runtime_base tq_binding;
+    assert(astc_vulkan_cache_admit_runtime_base(
+        admit_source.string(), admit_runtime_tq.string(), admit_root.string(), "tq2_0", tq_binding, error));
+    assert(tq_binding.admitted && tq_binding.family == "tq2_0");
     // Admission is provenance only: regular runtime validation remains tied to
     // the exact source GGUF until a future evidence-gated runtime path exists.
     assert(!astc_vulkan_cache_validate(admit_runtime.string(), admit_root.string(), validation, error));
@@ -168,6 +176,7 @@ int main() {
     fs::remove_all(admit_root, ignored);
     fs::remove(admit_source, ignored);
     fs::remove(admit_runtime, ignored);
+    fs::remove(admit_runtime_tq, ignored);
     std::puts("ASTC Vulkan cache D1/D2 contract passed");
     return 0;
 }

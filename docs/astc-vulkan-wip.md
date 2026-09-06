@@ -9517,3 +9517,36 @@ first delegates integrity checks to `astc_vulkan_cache_validate()` and then
 builds the tensor plan; it does not treat a structural Q3/Q4 admission as a
 model-quality approval. Compatible-base replay remains a separate explicit
 gate, as required by the existing cache contract.
+
+## Three-hundred-and-seventy-third sweep: generic runtime-base catalog binding
+
+The model catalog now has a second loading path for a cache generated from an
+exact FP16/BF16 source and used with an admitted, logically equivalent runtime
+GGUF. The path validates the source cache, checks the runtime GGUF's admission
+record and requires both runtime-specific model and Vulkan gates before normal
+scheduling. `allow_unverified` is reserved for explicit offline/research
+replay; production code must leave it disabled.
+
+Runtime quantization is deliberately not hardcoded to Q4. The admission
+`family` is an opaque provenance label, so the same contract covers
+`q4_k_m`, `q3_k_m`, `tq2_0`, `tq1_0`, and future GGUF families. The cache is
+still generated once from the chosen source model, while each runtime base
+needs its own replay evidence because surrounding activations can differ.
+
+The scheduler adapter also exposes exact artifact binding from the offline
+model plan. It binds one already-selected artifact at a time and retains the
+ordinary native-Q fallback; it never performs JIT encoding or invents a new
+runtime selection policy. A model-level owner can therefore iterate the
+validated catalog and reuse the existing sidecar/residency path without
+duplicating cache parsing or making Q4-specific assumptions.
+
+The cache-tool help now documents the generic form:
+
+```text
+astc-vulkan-cache bind \
+  --source-model model-f16.gguf --runtime-model model-q3.gguf \
+  --family q3_k_m --cache model-f16.gguf.astc-vulkan
+```
+
+The command records structural compatibility only. A separate replay must
+publish the model/Vulkan gates before the scheduler may select the overlay.
