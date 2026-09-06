@@ -63,11 +63,13 @@ step is to implement the same provider contract inside ggml-vulkan with a
 shared atlas/device owner; the current tensor-local sidecar must not be
 instantiated once per model layer.
 
-The ggml-vulkan seam is now present as an opt-in native node binding. It
-exposes the current Vulkan physical device, logical device, queue, queue
-family, command buffer and tensor buffer views to a provider callback. The
-callback is deliberately optional: until ASTC images, descriptors and
-pipelines are created on that same ggml-owned device, the provider remains on
+The integration seam is a generic, opt-in Vulkan external-operation interface,
+versioned as `ggml.vulkan.external_op.v1`. `ggml-vulkan` knows only how to
+lend the current device, command buffer and tensor-buffer views to a registered
+dispatcher; it has no ASTC-specific types or lifecycle. The ASTC provider owns
+its node registry, ASTC images, descriptors, pages and cache resources, and
+installs its dispatcher only when the opt-in provider is enabled. Until those
+resources are created on the same ggml-owned device, the provider remains on
 the verified CPU custom-op path. A failed or unavailable native capability
 must therefore leave the normal GGUF fallback untouched.
 

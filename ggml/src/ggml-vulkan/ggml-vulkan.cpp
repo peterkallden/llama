@@ -1,5 +1,5 @@
 #include "ggml-vulkan.h"
-#include "astc-binding.h"
+#include "ggml-vulkan-external-op.h"
 #include <vulkan/vulkan_core.h>
 #if defined(GGML_VULKAN_RUN_TESTS) || defined(GGML_VULKAN_CHECK_RESULTS)
 #include <chrono>
@@ -15271,9 +15271,46 @@ static void ggml_vk_preallocate_buffers(ggml_backend_vk_context * ctx, vk_contex
 }
 
 static void ggml_vk_compute_forward(ggml_backend_vk_context* ctx, ggml_cgraph * cgraph, ggml_tensor* tensor, int tensor_idx, bool almost_ready);
-static bool ggml_vk_astc_get_buffer_view(
+
+static std::mutex g_external_op_mutex;
+static ggml_vk_external_op_dispatcher g_external_op_dispatcher{};
+
+extern "C" void ggml_vk_external_op_set_dispatcher(
+        const ggml_vk_external_op_dispatcher * dispatcher) {
+    std::lock_guard<std::mutex> lock(g_external_op_mutex);
+    g_external_op_dispatcher = dispatcher != nullptr ? *dispatcher : ggml_vk_external_op_dispatcher{};
+}
+
+static bool ggml_vk_external_op_can_dispatch(const ggml_tensor * node) {
+    ggml_vk_external_op_dispatcher dispatcher;
+    {
+        std::lock_guard<std::mutex> lock(g_external_op_mutex);
+        dispatcher = g_external_op_dispatcher;
+    }
+    return dispatcher.can_dispatch != nullptr && dispatcher.can_dispatch(node, dispatcher.user_data);
+}
+
+static bool ggml_vk_external_op_try_dispatch(
+        const ggml_vk_external_op_dispatch_context * context) {
+    ggml_vk_external_op_dispatcher dispatcher;
+    {
+        std::lock_guard<std::mutex> lock(g_external_op_mutex);
+        dispatcher = g_external_op_dispatcher;
+    }
+    return dispatcher.dispatch != nullptr && dispatcher.dispatch(context, dispatcher.user_data);
+}
+
+extern "C" const ggml_vk_external_op_api * ggml_vk_external_op_get_api(void) {
+    static const ggml_vk_external_op_api api = {
+        GGML_VULKAN_EXTERNAL_OP_API_VERSION,
+        ggml_vk_external_op_set_dispatcher,
+    };
+    return &api;
+}
+
+static bool ggml_vk_external_get_buffer_view(
         void * backend_context, const ggml_tensor * tensor,
-        ggml_vk_astc_binding::buffer_view * result);
+        ggml_vk_external_op_buffer_view * result);
 
 // Returns true if node has enqueued work into the queue, false otherwise
 // If submit is true the current all operations queued so far are being submitted to Vulkan to overlap cmdlist creation and GPU execution.
@@ -15414,25 +15451,25 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
         }
     }
 
-    // A node bound through the native ASTC seam has no ordinary ggml op body.
-    // Keep the normal context/submission lifecycle, but let the binding record
-    // its own commands into the currently open command buffer.
-    if (ggml_vk_astc_binding::can_dispatch(node)) {
-        ggml_vk_astc_binding::dispatch_context astc_context;
-        astc_context.backend_context = ctx;
-        astc_context.node = node;
-        astc_context.tensor_index = static_cast<uint32_t>(node_idx);
-        astc_context.native_physical_device = reinterpret_cast<uint64_t>(static_cast<VkPhysicalDevice>(ctx->device->physical_device));
-        astc_context.native_device = reinterpret_cast<uint64_t>(static_cast<VkDevice>(ctx->device->device));
-        astc_context.native_queue = compute_ctx && compute_ctx->p && compute_ctx->p->q && compute_ctx->p->q->handle ?
+    // An externally bound node has no ordinary ggml op body. Keep the normal
+    // context/submission lifecycle, but let the owning backend record its
+    // private commands into the currently open command buffer.
+    if (ggml_vk_external_op_can_dispatch(node)) {
+        ggml_vk_external_op_dispatch_context external_context{};
+        external_context.backend_context = ctx;
+        external_context.node = node;
+        external_context.tensor_index = static_cast<uint32_t>(node_idx);
+        external_context.native_physical_device = reinterpret_cast<uint64_t>(static_cast<VkPhysicalDevice>(ctx->device->physical_device));
+        external_context.native_device = reinterpret_cast<uint64_t>(static_cast<VkDevice>(ctx->device->device));
+        external_context.native_queue = compute_ctx && compute_ctx->p && compute_ctx->p->q && compute_ctx->p->q->handle ?
             reinterpret_cast<uint64_t>(static_cast<VkQueue>(compute_ctx->p->q->handle->queue)) : 0;
-        astc_context.native_queue_family = compute_ctx && compute_ctx->p && compute_ctx->p->q ?
+        external_context.native_queue_family = compute_ctx && compute_ctx->p && compute_ctx->p->q ?
             compute_ctx->p->q->queue_family_index : 0;
-        astc_context.native_command_buffer = compute_ctx && compute_ctx->s && compute_ctx->s->buffer ?
+        external_context.native_command_buffer = compute_ctx && compute_ctx->s && compute_ctx->s->buffer ?
             reinterpret_cast<uint64_t>(static_cast<VkCommandBuffer>(compute_ctx->s->buffer->buf)) : 0;
-        astc_context.get_buffer = ggml_vk_astc_get_buffer_view;
-        if (!ggml_vk_astc_binding::try_dispatch(astc_context)) {
-            GGML_ABORT("native ASTC binding failed to consume a bound ggml-vulkan node");
+        external_context.get_buffer = ggml_vk_external_get_buffer_view;
+        if (!ggml_vk_external_op_try_dispatch(&external_context)) {
+            GGML_ABORT("external Vulkan operation failed to consume a bound node");
         }
 
         ctx->tensor_ctxs[node_idx] = compute_ctx;
@@ -15837,9 +15874,9 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
     return true;
 }
 
-static bool ggml_vk_astc_get_buffer_view(
+static bool ggml_vk_external_get_buffer_view(
         void * backend_context, const ggml_tensor * tensor,
-        ggml_vk_astc_binding::buffer_view * result) {
+        ggml_vk_external_op_buffer_view * result) {
     GGML_UNUSED(backend_context);
     if (tensor == nullptr || result == nullptr || tensor->buffer == nullptr ||
         !ggml_backend_buffer_is_vk(tensor->buffer)) {
@@ -18088,9 +18125,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
     const vk_device& device = ggml_vk_get_device(ctx->device);
 
-    // A registered native ASTC node owns its command recording and therefore
-    // does not need to match one of ggml-vulkan's ordinary op cases.
-    if (ggml_vk_astc_binding::can_dispatch(op)) {
+    // An externally bound node owns its command recording and therefore does
+    // not need to match one of ggml-vulkan's ordinary op cases.
+    if (ggml_vk_external_op_can_dispatch(op)) {
         return true;
     }
 
@@ -18885,11 +18922,19 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
     return devices[device];
 }
 
+static void * ggml_backend_vk_reg_get_proc_address(ggml_backend_reg_t reg, const char * name) {
+    UNUSED(reg);
+    if (name != nullptr && strcmp(name, GGML_VULKAN_EXTERNAL_OP_API_NAME) == 0) {
+        return reinterpret_cast<void *>(ggml_vk_external_op_get_api);
+    }
+    return nullptr;
+}
+
 static const struct ggml_backend_reg_i ggml_backend_vk_reg_i = {
     /* .get_name         = */ ggml_backend_vk_reg_get_name,
     /* .get_device_count = */ ggml_backend_vk_reg_get_device_count,
     /* .get_device       = */ ggml_backend_vk_reg_get_device,
-    /* .get_proc_address = */ NULL,
+    /* .get_proc_address = */ ggml_backend_vk_reg_get_proc_address,
 };
 
 ggml_backend_reg_t ggml_backend_vk_reg() {

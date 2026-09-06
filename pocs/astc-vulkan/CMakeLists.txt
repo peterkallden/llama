@@ -533,11 +533,13 @@ if (TARGET Vulkan::Vulkan)
         # Opt-in runtime bridge: this consumes already-built cache artifacts.
         # It does not participate in encoding or alter the cache format.
         add_library(astc-vulkan-llama-provider STATIC
-            astc-vulkan-llama-provider.cpp)
+            astc-vulkan-llama-provider.cpp
+            astc-vulkan-ggml-external-op.cpp)
         target_include_directories(astc-vulkan-llama-provider PUBLIC
             ${ASTC_VULKAN_POC_INCLUDE_DIR}
             ${CMAKE_SOURCE_DIR}/src
-            ${CMAKE_SOURCE_DIR}/include)
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/ggml/include)
         target_link_libraries(astc-vulkan-llama-provider PUBLIC
             astc-vulkan-runtime-overlay astc-vulkan-scheduler-adapter)
         target_compile_features(astc-vulkan-llama-provider PUBLIC cxx_std_17)

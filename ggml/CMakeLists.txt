@@ -336,6 +336,7 @@ set(GGML_PUBLIC_HEADERS
     include/ggml-virtgpu.h
     include/ggml-sycl.h
     include/ggml-vulkan.h
+    include/ggml-vulkan-external-op.h
     include/ggml-webgpu.h
     include/ggml-zendnn.h
     include/ggml-openvino.h

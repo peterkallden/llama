@@ -61,8 +61,6 @@ if (Vulkan_FOUND)
 
     ggml_add_backend_library(ggml-vulkan
                              ggml-vulkan.cpp
-                             astc-binding.cpp
-                             astc-binding.h
                              ../../include/ggml-vulkan.h
                             )
 
