@@ -234,7 +234,15 @@ bool astc_vulkan_paired_matvec_session::init_impl(
         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set_, 4, 0, 1,
          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &row_scale_info, nullptr},
     };
-    vkUpdateDescriptorSets(device_, native_mode_ ? 3 : 5, writes, 0, nullptr);
+    if (native_mode_) {
+        // Activation/output are intentionally left unbound until
+        // record_external() supplies the caller-owned buffer views. Keep the
+        // image, layout map and row-scale metadata descriptors initialized.
+        const VkWriteDescriptorSet native_writes[3] = {writes[0], writes[3], writes[4]};
+        vkUpdateDescriptorSets(device_, 3, native_writes, 0, nullptr);
+    } else {
+        vkUpdateDescriptorSets(device_, 5, writes, 0, nullptr);
+    }
     const VkShaderModuleCreateInfo shader_info{
         VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0,
         spirv.size() * sizeof(uint32_t), spirv.data()};
