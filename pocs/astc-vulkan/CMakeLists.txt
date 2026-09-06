@@ -4,6 +4,11 @@
 
 set(ASTC_VULKAN_POC_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
+# The optional runtime overlay is linked through llama-server's shared
+# library. Keep every ASTC static component PIC-capable, not only the final
+# provider target.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # Keep the optional neural astcenc ABI visible before the shared GPU finisher
 # target is declared; hybrid offline builds must use the same ABI as latent-smoke.
 option(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK
@@ -259,6 +264,9 @@ if (NOT TARGET Vulkan::Vulkan)
     endif()
 endif()
 if (TARGET Vulkan::Vulkan)
+    # These static ASTC components are also linked into llama-server shared
+    # libraries when the runtime overlay is enabled.
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     add_library(astc-vulkan-resource STATIC
         astc-vulkan-resource.cpp
         astc-vulkan-budget.cpp)
@@ -533,6 +541,8 @@ if (TARGET Vulkan::Vulkan)
         target_link_libraries(astc-vulkan-llama-provider PUBLIC
             astc-vulkan-runtime-overlay astc-vulkan-scheduler-adapter)
         target_compile_features(astc-vulkan-llama-provider PUBLIC cxx_std_17)
+        set_target_properties(astc-vulkan-llama-provider PROPERTIES
+            POSITION_INDEPENDENT_CODE ON)
         target_compile_definitions(astc-vulkan-llama-provider PRIVATE
             ASTC_VULKAN_D1_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-ffn-matvec.comp.spv"
             ASTC_VULKAN_D2_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-paired-matvec.comp.spv")

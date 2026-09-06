@@ -32,6 +32,16 @@ bool parse_ffn_down_layer(const std::string & tensor_name, uint32_t & layer) {
 
 } // namespace
 
+astc_vulkan_llama_provider::~astc_vulkan_llama_provider() {
+    if (!ready_) return;
+    std::fprintf(stderr,
+        "ASTC runtime stats: bound_layers=%zu dispatches=%llu dispatch_failures=%llu tokens=%llu\n",
+        entries_.size(),
+        static_cast<unsigned long long>(dispatch_calls_),
+        static_cast<unsigned long long>(dispatch_failures_),
+        static_cast<unsigned long long>(dispatch_tokens_));
+}
+
 void astc_vulkan_llama_provider::reset() {
     entries_.clear();
     d1_spirv_.clear();
@@ -40,6 +50,9 @@ void astc_vulkan_llama_provider::reset() {
     shared_device_.reset();
     last_error_.clear();
     ready_ = false;
+    dispatch_calls_ = 0;
+    dispatch_failures_ = 0;
+    dispatch_tokens_ = 0;
 }
 
 bool astc_vulkan_llama_provider::prepare(const options & options, std::string & error) {
@@ -119,6 +132,13 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
         reset();
         return false;
     }
+    const auto & summary = overlay_.summary();
+    std::fprintf(stderr,
+        "ASTC runtime overlay active: planned=%zu resident=%zu native_fallbacks=%zu pages=%zu resident_pages=%zu device_bytes=%llu host_bytes=%llu\n",
+        summary.planned_artifacts, summary.resident_artifacts, summary.native_fallbacks,
+        summary.pages, summary.resident_pages,
+        static_cast<unsigned long long>(summary.resident_device_bytes),
+        static_cast<unsigned long long>(summary.resident_host_bytes));
     ready_ = true;
     error.clear();
     return true;
@@ -137,9 +157,12 @@ bool astc_vulkan_llama_provider::run(
         float * output, uint32_t output_columns) {
     const auto it = entries_.find(layer);
     if (!is_ready(layer, input_columns, output_columns) || input == nullptr || output == nullptr || n_tokens == 0) {
+        ++dispatch_failures_;
         last_error_ = "ASTC runtime provider was called for an unprepared layer";
         return false;
     }
+    ++dispatch_calls_;
+    dispatch_tokens_ += n_tokens;
     // ggml's CPU custom-op boundary invokes this serially. Keep the vector
     // copies here for the first functional bridge; the in-backend Vulkan path
     // will consume native buffers directly through the same provider policy.
@@ -151,6 +174,7 @@ bool astc_vulkan_llama_provider::run(
         astc_vulkan_scheduler_dispatch_kind::kD2Paired ? d2_spirv_ : d1_spirv_;
     if (!it->second->adapter.run(spirv, activations, result, error) ||
         result.size() != static_cast<size_t>(n_tokens) * output_columns) {
+        ++dispatch_failures_;
         last_error_ = error.empty() ? "ASTC runtime dispatch returned invalid output" : error;
         return false;
     }

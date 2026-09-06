@@ -17,6 +17,8 @@
 // opt-in experimental runtime; a cache miss remains native GGUF execution.
 class astc_vulkan_llama_provider {
 public:
+    ~astc_vulkan_llama_provider();
+
     struct options {
         std::string model_path;
         std::string cache_path = "auto";
@@ -53,4 +55,7 @@ private:
     std::vector<uint32_t> d1_spirv_;
     std::vector<uint32_t> d2_spirv_;
     std::unordered_map<uint32_t, std::unique_ptr<entry>> entries_;
+    uint64_t dispatch_calls_ = 0;
+    uint64_t dispatch_failures_ = 0;
+    uint64_t dispatch_tokens_ = 0;
 };
