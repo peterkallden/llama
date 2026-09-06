@@ -1,4 +1,6 @@
 #pragma once
+#ifndef LLAMA_GRAPH_H_INCLUDED
+#define LLAMA_GRAPH_H_INCLUDED
 
 #include "llama-arch.h"
 #include "llama-batch.h"
@@ -1399,3 +1401,5 @@ struct llm_graph_context {
 
 // TODO: better name
 int32_t llama_relative_position_bucket(llama_pos x, llama_pos y, uint64_t n_buckets, bool bidirectional);
+
+#endif // LLAMA_GRAPH_H_INCLUDED

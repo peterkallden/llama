@@ -26,7 +26,10 @@ struct dispatch_context {
     void * backend_context = nullptr;
     ggml_tensor * node = nullptr;
     uint32_t tensor_index = 0;
+    uint64_t native_physical_device = 0;
     uint64_t native_device = 0;
+    uint64_t native_queue = 0;
+    uint32_t native_queue_family = 0;
     uint64_t native_command_buffer = 0;
     get_buffer_fn get_buffer = nullptr;
 };

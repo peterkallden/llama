@@ -369,7 +369,7 @@ struct vk_queue {
 };
 
 static const char * ggml_backend_vk_buffer_type_name(ggml_backend_buffer_type_t buft);
-static bool ggml_backend_vk_buffer_is_vk(ggml_backend_buffer_t buffer);
+static bool ggml_backend_buffer_is_vk(ggml_backend_buffer_t buffer);
 static ggml_backend_buffer_t ggml_backend_vk_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size);
 static size_t ggml_backend_vk_buffer_type_get_alignment(ggml_backend_buffer_type_t buft);
 static size_t ggml_backend_vk_buffer_type_get_max_size(ggml_backend_buffer_type_t buft);
@@ -15422,7 +15422,12 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
         astc_context.backend_context = ctx;
         astc_context.node = node;
         astc_context.tensor_index = static_cast<uint32_t>(node_idx);
+        astc_context.native_physical_device = reinterpret_cast<uint64_t>(static_cast<VkPhysicalDevice>(ctx->device->physical_device));
         astc_context.native_device = reinterpret_cast<uint64_t>(static_cast<VkDevice>(ctx->device->device));
+        astc_context.native_queue = compute_ctx && compute_ctx->p && compute_ctx->p->q && compute_ctx->p->q->handle ?
+            reinterpret_cast<uint64_t>(static_cast<VkQueue>(compute_ctx->p->q->handle->queue)) : 0;
+        astc_context.native_queue_family = compute_ctx && compute_ctx->p && compute_ctx->p->q ?
+            compute_ctx->p->q->queue_family_index : 0;
         astc_context.native_command_buffer = compute_ctx && compute_ctx->s && compute_ctx->s->buffer ?
             reinterpret_cast<uint64_t>(static_cast<VkCommandBuffer>(compute_ctx->s->buffer->buf)) : 0;
         astc_context.get_buffer = ggml_vk_astc_get_buffer_view;
@@ -15837,7 +15842,7 @@ static bool ggml_vk_astc_get_buffer_view(
         ggml_vk_astc_binding::buffer_view * result) {
     GGML_UNUSED(backend_context);
     if (tensor == nullptr || result == nullptr || tensor->buffer == nullptr ||
-        !ggml_backend_vk_buffer_is_vk(tensor->buffer)) {
+        !ggml_backend_buffer_is_vk(tensor->buffer)) {
         return false;
     }
 

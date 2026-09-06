@@ -63,6 +63,14 @@ step is to implement the same provider contract inside ggml-vulkan with a
 shared atlas/device owner; the current tensor-local sidecar must not be
 instantiated once per model layer.
 
+The ggml-vulkan seam is now present as an opt-in native node binding. It
+exposes the current Vulkan physical device, logical device, queue, queue
+family, command buffer and tensor buffer views to a provider callback. The
+callback is deliberately optional: until ASTC images, descriptors and
+pipelines are created on that same ggml-owned device, the provider remains on
+the verified CPU custom-op path. A failed or unavailable native capability
+must therefore leave the normal GGUF fallback untouched.
+
 The model-level cache planner sits above the D1/D2 encoders. It first filters
 already validated tensor artifacts by model/Vulkan evidence, then may apply
 workload usage and measured-benefit metrics, followed by the existing memory
