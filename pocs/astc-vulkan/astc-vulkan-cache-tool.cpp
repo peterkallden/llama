@@ -139,6 +139,7 @@ void print_help(const char * executable) {
         "            [--min-source-bytes N] [--max-cache-bytes N] [--max-tensors N]\n"
         "  %s build-model --source-model model.gguf --fragment-dir fragments/\n"
             "            --staging build-state/ [--tensor-list tensors.txt] [--cache path|auto]\n"
+            "            [--gpu-proposer-shader shader.spv] [--backend hybrid|cpu]\n"
         "  %s plan --model model.gguf --usage usage.txt [--cache path|auto]\n"
         "            [--profile quality|balanced|compact|speed|auto]\n"
         "            [--policy quality|balanced|size|speed|auto]\n"
@@ -728,6 +729,7 @@ bool build_model_cache(const char * argv0,
                        const std::string & preset,
                        const std::string & source_family,
                        const std::string & workers,
+                       const std::string & shader,
                        astc_vulkan_cache_paths & paths,
                        std::string & error) {
     if (source_model.empty() || fragment_root.empty() || staging_root.empty()) {
@@ -762,6 +764,10 @@ bool build_model_cache(const char * argv0,
                 "--backend", backend, "--preset", preset, "--source-family", source_family,
                 "--no-publish", "1"};
             if (!workers.empty()) { args.push_back("--workers"); args.push_back(workers); }
+            if (!shader.empty()) {
+                args.push_back("--gpu-proposer-shader");
+                args.push_back(shader);
+            }
             if (job.representation == "paired-d2") {
                 args.push_back("--rows"); args.push_back(job.rows);
                 args.push_back("--columns"); args.push_back(job.columns);
@@ -901,7 +907,7 @@ int main(int argc, char ** argv) {
         astc_vulkan_cache_paths paths;
         const std::string build_source = source_model.empty() ? model : source_model;
         if (!build_model_cache(argv[0], build_source, fragment_dir, staging_root, cache,
-                               tensor_list, backend, preset, source_family, workers,
+                               tensor_list, backend, preset, source_family, workers, shader,
                                paths, error)) {
             std::fprintf(stderr, "astc-cache build-model failed: %s\n", error.c_str());
             return 1;
