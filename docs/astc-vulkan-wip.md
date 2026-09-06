@@ -9654,3 +9654,19 @@ The page-owner contract test covers slot assignment, static prefix loading,
 fallback for non-resident/native entries and lifecycle transitions. The next
 sweep should bind the resolve result to a tensor-session upload path and add a
 device smoke with one resident page and one fallback tensor.
+
+## Three-hundred-and-seventy-eighth sweep: resident material loading
+
+The page owner now bridges a resident planner entry to the existing cache
+range contract. `load_entry_material()` reads the exact payload range from the
+validated payload blob and, when present, also reads the paired-D2 layout map
+and per-row scale range. The returned material is intentionally plain data so
+the caller can pass it to the existing `astc_vulkan_tensor_session` or sidecar
+without a second cache reader.
+
+Non-resident entries are not treated as errors: they return an empty material
+with `use_native_fallback=true`. This makes the scheduler decision explicit
+and avoids accidentally uploading a page that the planner did not admit.
+The loader validates catalog/plan identity and row-scale byte geometry, while
+the existing cache validator remains responsible for hashes and manifest
+integrity. No Vulkan allocation or cache-format change was introduced.

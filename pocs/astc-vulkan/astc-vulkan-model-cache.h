@@ -31,6 +31,8 @@ struct astc_vulkan_model_cache_entry {
     astc_vulkan_normalization normalization = astc_vulkan_normalization::none;
     astc_vulkan_paired_semantic paired_semantic = astc_vulkan_paired_semantic::direct_rgb;
     bool has_row_scales = false;
+    uint64_t row_scale_byte_offset = 0;
+    uint64_t row_scale_byte_size = 0;
     bool use_native_fallback = false;
     // Conservative payload-based estimates. A Vulkan owner may replace these
     // with actual image/staging allocation sizes before residency planning.

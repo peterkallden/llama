@@ -734,6 +734,10 @@ the model run. Lifecycle states already include upload and eviction so a
 future asynchronous Vulkan owner can be added without changing scheduler or
 manifest contracts. Actual image allocation and upload continue to use the
 existing `astc_vulkan_tensor_session` and stream-loader paths.
+For a resident entry, the owner can also load one validated material range
+(payload plus optional D2 layout and row-scales) into plain buffers. A
+non-resident entry returns an explicit native fallback, so the scheduler never
+uploads an unadmitted page.
 
 ## Offline GPU encoder seam
 

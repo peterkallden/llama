@@ -42,6 +42,13 @@ struct astc_vulkan_page_resolve {
     bool use_native_fallback = true;
 };
 
+struct astc_vulkan_page_material {
+    astc_vulkan_page_resolve resolve;
+    std::vector<uint8_t> payload;
+    std::vector<uint8_t> paired_layout;
+    std::vector<float> row_scales;
+};
+
 // A thin runtime owner above the offline page planner. It validates the
 // planner output, assigns deterministic per-storage-class slots and answers
 // tensor/entry residency queries. It deliberately does not allocate Vulkan
@@ -66,6 +73,18 @@ public:
     bool resolve_tensor(const std::string & tensor_name,
                         astc_vulkan_page_resolve & result,
                         std::string & error) const;
+    // Reads exactly one resident entry from the validated catalog. The
+    // caller can pass the returned material directly to tensor_session or
+    // sidecar; non-resident/native entries return a successful fallback
+    // result with empty buffers.
+    bool load_entry_material(const astc_vulkan_model_cache_catalog & catalog,
+                             size_t entry_index,
+                             astc_vulkan_page_material & result,
+                             std::string & error) const;
+    bool load_tensor_material(const astc_vulkan_model_cache_catalog & catalog,
+                              const std::string & tensor_name,
+                              astc_vulkan_page_material & result,
+                              std::string & error) const;
 
     void reset();
     bool ready() const { return prepared_; }

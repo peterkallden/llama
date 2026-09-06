@@ -1,6 +1,9 @@
 #include "astc-vulkan-page-owner.h"
 
+#include "astc-vulkan-stream-loader.h"
+
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <unordered_map>
 
@@ -194,6 +197,62 @@ bool astc_vulkan_page_owner::resolve_tensor(
     for (size_t index = 0; index < plan_.entries.size(); ++index) {
         if (plan_.entries[index].tensor_name == tensor_name) {
             return resolve_entry(index, result, error);
+        }
+    }
+    result = {};
+    error = "ASTC tensor is not present in the page plan: " + tensor_name;
+    return false;
+}
+
+bool astc_vulkan_page_owner::load_entry_material(
+        const astc_vulkan_model_cache_catalog & catalog, size_t entry_index,
+        astc_vulkan_page_material & result, std::string & error) const {
+    result = {};
+    if (!resolve_entry(entry_index, result.resolve, error)) return false;
+    if (result.resolve.use_native_fallback) {
+        error.clear();
+        return true;
+    }
+    if (entry_index >= catalog.plan.entries.size() ||
+        catalog.plan.entries[entry_index].tensor_name != plan_.entries[entry_index].tensor_name ||
+        catalog.plan.entries[entry_index].artifact_id != plan_.entries[entry_index].artifact_id) {
+        error = "ASTC page material catalog does not match page plan";
+        return false;
+    }
+    const auto & entry = plan_.entries[entry_index];
+    if (!astc_vulkan_read_file_range(catalog.validation.paths.payload,
+                                     entry.storage.byte_offset, entry.storage.byte_size,
+                                     result.payload, error)) return false;
+    if (entry.storage.layout_byte_size != 0) {
+        if (!astc_vulkan_read_file_range(catalog.validation.paths.layout,
+                                         entry.storage.layout_byte_offset,
+                                         entry.storage.layout_byte_size,
+                                         result.paired_layout, error)) return false;
+    }
+    if (entry.row_scale_byte_size != 0) {
+        if (entry.row_scale_byte_size % sizeof(float) != 0 ||
+            entry.row_scale_byte_size / sizeof(float) != entry.storage.height) {
+            error = "ASTC page row-scale range does not match tensor height";
+            return false;
+        }
+        std::vector<uint8_t> bytes;
+        if (!astc_vulkan_read_file_range(catalog.validation.paths.row_scales,
+                                         entry.row_scale_byte_offset,
+                                         entry.row_scale_byte_size, bytes, error)) return false;
+        result.row_scales.resize(entry.storage.height);
+        std::memcpy(result.row_scales.data(), bytes.data(), bytes.size());
+    }
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_page_owner::load_tensor_material(
+        const astc_vulkan_model_cache_catalog & catalog,
+        const std::string & tensor_name, astc_vulkan_page_material & result,
+        std::string & error) const {
+    for (size_t index = 0; index < plan_.entries.size(); ++index) {
+        if (plan_.entries[index].tensor_name == tensor_name) {
+            return load_entry_material(catalog, index, result, error);
         }
     }
     result = {};

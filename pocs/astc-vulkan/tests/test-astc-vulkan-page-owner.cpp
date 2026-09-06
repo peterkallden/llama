@@ -1,6 +1,8 @@
 #include "astc-vulkan-page-owner.h"
 
 #include <cassert>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -69,6 +71,25 @@ int main() {
     assert(!resolve.resident && resolve.use_native_fallback);
     assert(owner.resolve_tensor("blk.2.ffn_down.weight", resolve, error));
     assert(resolve.use_native_fallback && resolve.page_index == static_cast<size_t>(-1));
+
+    const auto payload_path = std::filesystem::temp_directory_path() /
+        "astc-vulkan-page-owner-payload.bin";
+    {
+        std::ofstream payload(payload_path, std::ios::binary | std::ios::trunc);
+        const std::vector<uint8_t> bytes(32, 0x7b);
+        payload.write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+    }
+    astc_vulkan_model_cache_catalog catalog;
+    catalog.plan = plan;
+    catalog.validation.paths.payload = payload_path.string();
+    astc_vulkan_page_material material;
+    assert(owner.load_entry_material(catalog, 0, material, error));
+    assert(!material.resolve.use_native_fallback && material.payload.size() == 16);
+    assert(material.payload.front() == 0x7b);
+    assert(owner.load_entry_material(catalog, 1, material, error));
+    assert(material.resolve.use_native_fallback && material.payload.empty());
+    std::error_code ignored;
+    std::filesystem::remove(payload_path, ignored);
 
     std::puts("ASTC Vulkan page owner contract passed");
     return 0;

@@ -227,6 +227,8 @@ bool astc_vulkan_model_cache_make_plan(
         entry.normalization = best->normalization;
         entry.paired_semantic = best->paired_semantic;
         entry.has_row_scales = best->row_scale_byte_size != 0;
+        entry.row_scale_byte_offset = best->row_scale_byte_offset;
+        entry.row_scale_byte_size = best->row_scale_byte_size;
         entry.device_bytes = best->storage.byte_size;
         entry.host_bytes = best->storage.byte_size + best->storage.layout_byte_size +
             best->row_scale_byte_size;
