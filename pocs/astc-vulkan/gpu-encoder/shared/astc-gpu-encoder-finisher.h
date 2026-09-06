@@ -37,6 +37,9 @@ enum class astc_gpu_encoder_finish_mode : uint8_t {
 struct astc_gpu_encoder_finish_options {
     float quality = ASTCENC_PRE_MEDIUM;
     astc_gpu_encoder_finish_mode mode = astc_gpu_encoder_finish_mode::reference;
+    // Independent source blocks can be finished concurrently. Each worker
+    // owns one astcenc context; output order remains the proposal order.
+    uint32_t worker_count = 1;
 };
 
 bool astc_gpu_encoder_finish_with_options(

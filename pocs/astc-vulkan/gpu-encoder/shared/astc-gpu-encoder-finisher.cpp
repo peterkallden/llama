@@ -3,7 +3,19 @@
 #include <astcenc.h>
 
 #include <algorithm>
+#include <atomic>
+#include <mutex>
+#include <thread>
 #include <unordered_map>
+
+static bool astc_gpu_encoder_finish_parallel(
+    const astc_gpu_encoder_request & request,
+    const std::vector<astc_gpu_encoder_proposal> & retained_proposals,
+    const astc_gpu_encoder_finish_options & options,
+    const astc_vulkan_format_info & format,
+    const astcenc_config & config,
+    std::vector<astc_gpu_encoder_finished_block> & finished,
+    std::string & error);
 
 bool astc_gpu_encoder_finish_with_options(
     const astc_gpu_encoder_request & request,
@@ -34,6 +46,10 @@ bool astc_gpu_encoder_finish_with_options(
                             static_cast<float>(options.quality), 0, &config) != ASTCENC_SUCCESS) {
         error = "astcenc configuration failed in CPU finisher";
         return false;
+    }
+    if (options.worker_count > 1 && retained_proposals.size() > 1) {
+        return astc_gpu_encoder_finish_parallel(
+            request, retained_proposals, options, format, config, finished, error);
     }
     astcenc_context * context = nullptr;
 #if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
@@ -87,6 +103,111 @@ bool astc_gpu_encoder_finish_with_options(
         finished.push_back(result);
     }
     astcenc_context_free(context);
+    error.clear();
+    return true;
+}
+
+static bool astc_gpu_encoder_finish_parallel(
+    const astc_gpu_encoder_request & request,
+    const std::vector<astc_gpu_encoder_proposal> & retained_proposals,
+    const astc_gpu_encoder_finish_options & options,
+    const astc_vulkan_format_info & format,
+    const astcenc_config & config,
+    std::vector<astc_gpu_encoder_finished_block> & finished,
+    std::string & error) {
+    std::unordered_map<uint32_t, const astc_gpu_encoder_source_block *> source;
+    source.reserve(request.blocks.size());
+    for (const auto & block : request.blocks) {
+        if (!source.emplace(block.source_block_id, &block).second) {
+            error = "duplicate GPU source block id";
+            return false;
+        }
+    }
+    const uint32_t worker_count = std::max(1u, std::min<uint32_t>(
+        options.worker_count, static_cast<uint32_t>(retained_proposals.size())));
+    std::vector<astcenc_context *> contexts(worker_count, nullptr);
+    for (astcenc_context * & context : contexts) {
+#if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+        if (astcenc_context_alloc(&config, 1, &context, nullptr) != ASTCENC_SUCCESS) {
+#else
+        if (astcenc_context_alloc(&config, 1, &context) != ASTCENC_SUCCESS) {
+#endif
+            for (astcenc_context * allocated : contexts) if (allocated) astcenc_context_free(allocated);
+            error = "astcenc context allocation failed in parallel CPU finisher";
+            return false;
+        }
+    }
+
+    finished.assign(retained_proposals.size(), {});
+    const astcenc_swizzle swizzle{ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A};
+    std::atomic<size_t> next_proposal{0};
+    std::atomic<bool> failed{false};
+    std::mutex error_mutex;
+    std::string worker_error;
+    std::vector<std::thread> workers;
+    workers.reserve(worker_count);
+    for (uint32_t worker = 0; worker < worker_count; ++worker) {
+        workers.emplace_back([&, worker]() {
+            astcenc_context * context = contexts[worker];
+            while (!failed.load(std::memory_order_relaxed)) {
+                const size_t proposal_index = next_proposal.fetch_add(1, std::memory_order_relaxed);
+                if (proposal_index >= retained_proposals.size()) break;
+                const auto & proposal = retained_proposals[proposal_index];
+                const auto found = source.find(proposal.source_block_id);
+                if (found == source.end()) {
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    if (worker_error.empty()) worker_error = "GPU proposal references missing source block";
+                    failed.store(true, std::memory_order_relaxed);
+                    break;
+                }
+                std::vector<float> input(size_t(format.block_width) * format.block_height * 4);
+                for (uint32_t texel = 0; texel < format.block_width * format.block_height; ++texel) {
+                    for (uint32_t channel = 0; channel < 4; ++channel) {
+                        input[texel * 4 + channel] = found->second->texels[texel].rgba[channel];
+                    }
+                }
+                void * input_slice = input.data();
+                astcenc_image input_image{format.block_width, format.block_height, 1,
+                                          ASTCENC_TYPE_F32, &input_slice};
+                astc_gpu_encoder_finished_block result;
+                result.source_block_id = proposal.source_block_id;
+                result.footprint = request.footprint;
+                if (astcenc_compress_image(context, &input_image, &swizzle, result.payload.data(),
+                                           result.payload.size(), 0) != ASTCENC_SUCCESS) {
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    if (worker_error.empty()) worker_error = "astcenc CPU finisher compression failed";
+                    failed.store(true, std::memory_order_relaxed);
+                    break;
+                }
+                astcenc_block_info info{};
+                if (astcenc_get_block_info(context, result.payload.data(), &info) != ASTCENC_SUCCESS) {
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    if (worker_error.empty()) worker_error = "CPU finisher emitted illegal ASTC payload";
+                    failed.store(true, std::memory_order_relaxed);
+                    break;
+                }
+                result.decoded_rgba.resize(input.size());
+                void * decoded_slice = result.decoded_rgba.data();
+                astcenc_image decoded_image{format.block_width, format.block_height, 1,
+                                            ASTCENC_TYPE_F32, &decoded_slice};
+                if (astcenc_decompress_image(context, result.payload.data(), result.payload.size(),
+                                             &decoded_image, &swizzle, 0) != ASTCENC_SUCCESS) {
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    if (worker_error.empty()) worker_error = "astcenc CPU finisher exact decode failed";
+                    failed.store(true, std::memory_order_relaxed);
+                    break;
+                }
+                finished[proposal_index] = std::move(result);
+            }
+        });
+    }
+    for (std::thread & worker : workers) worker.join();
+    for (astcenc_context * context : contexts) if (context) astcenc_context_free(context);
+    if (failed.load(std::memory_order_relaxed)) {
+        error = worker_error.empty() ? "parallel CPU ASTC finisher failed" : worker_error;
+        finished.clear();
+        return false;
+    }
     error.clear();
     return true;
 }

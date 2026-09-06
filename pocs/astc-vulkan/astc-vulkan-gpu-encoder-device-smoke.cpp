@@ -63,7 +63,7 @@ int main(int argc, char ** argv) {
     }
     std::vector<astc_gpu_encoder_finished_block> guided_finished;
     const astc_gpu_encoder_finish_options guided_options{
-        static_cast<float>(ASTCENC_PRE_MEDIUM), astc_gpu_encoder_finish_mode::guided};
+        static_cast<float>(ASTCENC_PRE_MEDIUM), astc_gpu_encoder_finish_mode::guided, 2};
     if (!astc_gpu_encoder_finish_with_options(request, actual, guided_options,
                                                guided_finished, error) ||
         guided_finished.size() != finished.size()) return 1;

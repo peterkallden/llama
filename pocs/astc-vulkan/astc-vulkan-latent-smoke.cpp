@@ -77,6 +77,7 @@ std::string g_gpu_proposer_shader;
 std::string g_gpu_proposer_footprint;
 std::string g_effective_backend = "cpu";
 bool g_backend_notice_printed = false;
+uint32_t g_cpu_finisher_workers = 1;
 astc_vulkan_ldlq_order g_block_ldlq_order = astc_vulkan_ldlq_order::forward;
 bool g_directional_shortlists = false;
 uint32_t g_stability_shards = 2;
@@ -1315,6 +1316,7 @@ bool astc_roundtrip_hybrid(const std::vector<float> & source, uint32_t rows,
     astc_gpu_encoder_finish_options options;
     options.quality = g_astc_preset;
     options.mode = astc_gpu_encoder_finish_mode::guided;
+    options.worker_count = g_cpu_finisher_workers;
     std::vector<astc_gpu_encoder_finished_block> finished;
     if (!astc_gpu_encoder_finish_with_options(request, proposals, options, finished, error) ||
         finished.size() != request.blocks.size()) {
@@ -3752,6 +3754,7 @@ int main(int argc, char ** argv) {
         std::printf("latent-workers mode=auto logical-cpus=%u workers=%u\n",
                     logical_cpus, candidate_threads);
     }
+    g_cpu_finisher_workers = candidate_threads;
     if (model_path.empty() != tensor_name.empty()) {
         std::fprintf(stderr, "--model and --tensor must be supplied together\n");
         return 2;
@@ -3850,8 +3853,9 @@ int main(int argc, char ** argv) {
     } else if (g_gpu_proposer_shader.empty() || g_gpu_proposer_footprint.empty()) {
         std::printf("latent-encoder-backend requested=hybrid effective=cpu reason=missing-shader-or-footprint\n");
     } else {
-        std::printf("latent-encoder-backend requested=hybrid proposer=gpu finisher=cpu footprint=%s\n",
-                    g_gpu_proposer_footprint.c_str());
+        std::printf("latent-encoder-backend requested=hybrid proposer=gpu finisher=cpu "
+                    "finisher-workers=%u footprint=%s\n",
+                    g_cpu_finisher_workers, g_gpu_proposer_footprint.c_str());
     }
 #if !defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
     if (neural_rank) {
