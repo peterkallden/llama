@@ -1538,6 +1538,85 @@ private:
     std::vector<std::vector<float>> source_scratch_;
 };
 
+// Export-only scalar encoding has no cross-block selector dependency. Split it
+// into complete ASTC block rows and let each worker own one persistent context.
+// The final payload is assembled at the fixed block-row offset, so worker count
+// cannot change the byte order (or the cache format).
+bool astc_roundtrip_parallel_rows(const std::vector<float> & source, uint32_t rows,
+                                  uint32_t columns,
+                                  const ggml_vk_astc_format_contract & format,
+                                  uint32_t worker_count,
+                                  astc_roundtrip_result & result) {
+    if (rows == 0 || columns == 0 || source.size() != static_cast<size_t>(rows) * columns * 4u) {
+        return false;
+    }
+    const uint32_t block_rows = (rows + format.block_height - 1u) / format.block_height;
+    if (block_rows == 0) return false;
+    worker_count = std::max(1u, std::min(worker_count, block_rows));
+
+    astc_persistent_context_pool contexts;
+    if (!contexts.initialize(format, worker_count)) return false;
+
+    const size_t strip_texels = static_cast<size_t>(format.block_height) * columns * 4u;
+    std::vector<astc_roundtrip_result> strips(block_rows);
+    std::atomic<uint32_t> next_strip{0};
+    std::atomic<bool> failed{false};
+    std::vector<std::thread> workers;
+    workers.reserve(worker_count);
+    for (uint32_t worker = 0; worker < worker_count; ++worker) {
+        workers.emplace_back([&, worker]() {
+            std::vector<float> strip_source(strip_texels, 0.0f);
+            while (!failed.load(std::memory_order_relaxed)) {
+                const uint32_t strip = next_strip.fetch_add(1, std::memory_order_relaxed);
+                if (strip >= block_rows) break;
+                const uint32_t first_row = strip * format.block_height;
+                const uint32_t available_rows = std::min(format.block_height, rows - first_row);
+                for (uint32_t row = 0; row < format.block_height; ++row) {
+                    const uint32_t source_row = first_row + std::min(row, available_rows - 1u);
+                    const float * src = source.data() + static_cast<size_t>(source_row) * columns * 4u;
+                    float * dst = strip_source.data() + static_cast<size_t>(row) * columns * 4u;
+                    std::copy(src, src + static_cast<size_t>(columns) * 4u, dst);
+                }
+                if (!contexts.roundtrip(worker, strip_source, format.block_height, columns,
+                                        format, strips[strip])) {
+                    failed.store(true, std::memory_order_relaxed);
+                    break;
+                }
+            }
+        });
+    }
+    for (std::thread & worker : workers) worker.join();
+    if (failed.load(std::memory_order_relaxed)) return false;
+
+    result = {};
+    result.compressed_bytes = ggml_vk_astc_image_storage_bytes(format, columns, rows);
+    result.compressed.resize(result.compressed_bytes);
+    result.texels.assign(source.size(), 0.0f);
+    const size_t strip_compressed_bytes = ggml_vk_astc_image_storage_bytes(
+        format, columns, format.block_height);
+    for (uint32_t strip = 0; strip < block_rows; ++strip) {
+        const astc_roundtrip_result & current = strips[strip];
+        if (current.compressed.size() != strip_compressed_bytes ||
+            current.texels.size() != strip_texels) return false;
+        const size_t compressed_offset = static_cast<size_t>(strip) * strip_compressed_bytes;
+        if (compressed_offset + strip_compressed_bytes > result.compressed.size()) return false;
+        std::copy(current.compressed.begin(), current.compressed.end(),
+                  result.compressed.begin() + compressed_offset);
+        const uint32_t first_row = strip * format.block_height;
+        const uint32_t copy_rows = std::min(format.block_height, rows - first_row);
+        for (uint32_t row = 0; row < copy_rows; ++row) {
+            const size_t row_values = static_cast<size_t>(columns) * 4u;
+            std::copy_n(current.texels.data() + static_cast<size_t>(row) * row_values,
+                        row_values,
+                        result.texels.data() + static_cast<size_t>(first_row + row) * row_values);
+        }
+        result.block_count += current.block_count;
+        result.dual_plane_blocks += current.dual_plane_blocks;
+        result.alpha_dual_plane_blocks += current.alpha_dual_plane_blocks;
+    }
+    return true;
+}
+
 bool astc_decode(const std::vector<uint8_t> & compressed, uint32_t rows, uint32_t columns,
                  const ggml_vk_astc_format_contract & format, std::vector<float> & texels) {
     astcenc_config config{};
@@ -3458,6 +3537,7 @@ int main(int argc, char ** argv) {
     std::string neutral_metadata_path;
     std::string row_strip_log_path;
     uint32_t candidate_threads = 1;
+    bool candidate_threads_auto = false;
     bool row_strip_select = false;
     bool row_strip_chunked = false;
     bool row_strip_diagnostics = true;
@@ -3607,7 +3687,16 @@ int main(int argc, char ** argv) {
         } else if (option == "--row-strip-log" && index + 1 < argc) {
             row_strip_log_path = argv[++index];
         } else if (option == "--candidate-threads" && index + 1 < argc) {
-            candidate_threads = static_cast<uint32_t>(std::stoul(argv[++index]));
+            const std::string value = argv[++index];
+            if (value == "auto") {
+                candidate_threads_auto = true;
+            } else {
+                candidate_threads = static_cast<uint32_t>(std::stoul(value));
+                if (candidate_threads == 0) {
+                    std::fprintf(stderr, "--candidate-threads must be at least 1 or auto\n");
+                    return 2;
+                }
+            }
         } else if (option == "--row-strip-select") {
             row_strip_select = true;
         } else if (option == "--row-strip-chunked") {
@@ -3651,11 +3740,17 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6|6x5|8x5|8x6|10x6|8x8|10x8] [--d1-prescreen|--d1-prescreen-gpu shader.spv] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--backend hybrid|cpu] [--gpu-proposer-shader path] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N|auto] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--backend hybrid|cpu] [--gpu-proposer-shader path] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--pv-lite-grid-sweep] [--pv-lite-coarse-grid-sweep] [--pv-alternate] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
             return 2;
         }
+    }
+    if (candidate_threads_auto) {
+        const uint32_t logical_cpus = std::thread::hardware_concurrency();
+        candidate_threads = std::max(1u, (logical_cpus == 0 ? 2u : logical_cpus + 1u) / 2u);
+        std::printf("latent-workers mode=auto logical-cpus=%u workers=%u\n",
+                    logical_cpus, candidate_threads);
     }
     if (model_path.empty() != tensor_name.empty()) {
         std::fprintf(stderr, "--model and --tensor must be supplied together\n");
@@ -3947,7 +4042,20 @@ int main(int argc, char ** argv) {
         if (!export_astc_path.empty()) {
             astc_roundtrip_result exported;
             const latent_representation & export_latents = export_mode == "scalar" ? scalar_latents : additive_latents;
-            if (!astc_roundtrip(export_latents.texels, rows, columns, format, nullptr, exported) ||
+            bool export_ok = false;
+            if (export_only && export_mode == "scalar" && candidate_threads > 1) {
+                export_ok = astc_roundtrip_parallel_rows(
+                    export_latents.texels, rows, columns, format, candidate_threads, exported);
+                if (export_ok) {
+                    std::printf("latent-export-workers format=%s workers=%u block-rows=%u mode=strip-parallel\n",
+                                format.name, candidate_threads,
+                                (rows + format.block_height - 1u) / format.block_height);
+                }
+            }
+            if (!export_ok) {
+                export_ok = astc_roundtrip(export_latents.texels, rows, columns, format, nullptr, exported);
+            }
+            if (!export_ok ||
                 !write_binary(export_astc_path, exported.compressed) ||
                 !write_binary(export_reference_path, exported.texels) ||
                 (!export_metadata_path.empty() && !write_export_metadata(
