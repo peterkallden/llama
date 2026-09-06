@@ -1,42 +1,57 @@
 #include "astc-binding.h"
 
-#include <atomic>
+#include <mutex>
+#include <unordered_map>
 
 namespace ggml_vk_astc_binding {
 
 namespace {
 
-std::atomic<dispatch_fn> g_dispatcher{nullptr};
-std::atomic<void *> g_user_data{nullptr};
+struct node_binding {
+    dispatch_fn fn = nullptr;
+    void * user_data = nullptr;
+};
+
+std::mutex g_nodes_mutex;
+std::unordered_map<const ggml_tensor *, node_binding> g_nodes;
 
 } // namespace
 
-void set_dispatcher(dispatch_fn fn, void * user_data) {
-    // Publish the user data before the function pointer so a reader that sees
-    // a dispatcher always sees its matching context.
-    g_user_data.store(user_data, std::memory_order_release);
-    g_dispatcher.store(fn, std::memory_order_release);
-}
-
-void clear_dispatcher(dispatch_fn fn, void * user_data) {
-    dispatch_fn expected = fn;
-    if (g_dispatcher.compare_exchange_strong(expected, nullptr,
-                                              std::memory_order_acq_rel,
-                                              std::memory_order_acquire)) {
-        void * expected_user_data = user_data;
-        g_user_data.compare_exchange_strong(expected_user_data, nullptr,
-                                             std::memory_order_acq_rel,
-                                             std::memory_order_acquire);
+void bind_node(ggml_tensor * node, dispatch_fn fn, void * user_data) {
+    if (node == nullptr || fn == nullptr) {
+        return;
     }
+    std::lock_guard<std::mutex> lock(g_nodes_mutex);
+    g_nodes[node] = { fn, user_data };
 }
 
-bool try_dispatch(void * backend_context, ggml_tensor * node,
-                  uint32_t tensor_index) {
-    const dispatch_fn fn = g_dispatcher.load(std::memory_order_acquire);
-    if (fn == nullptr) return false;
-    void * const user_data = g_user_data.load(std::memory_order_acquire);
-    return fn(backend_context, node, tensor_index, user_data);
+void unbind_node(ggml_tensor * node) {
+    if (node == nullptr) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_nodes_mutex);
+    g_nodes.erase(node);
+}
+
+bool can_dispatch(const ggml_tensor * node) {
+    if (node == nullptr) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(g_nodes_mutex);
+    return g_nodes.find(node) != g_nodes.end();
+}
+
+bool try_dispatch(const dispatch_context & context) {
+    node_binding binding;
+    {
+        std::lock_guard<std::mutex> lock(g_nodes_mutex);
+        const auto it = g_nodes.find(context.node);
+        if (it == g_nodes.end()) {
+            return false;
+        }
+        binding = it->second;
+    }
+    return binding.fn(context, binding.user_data);
 }
 
 } // namespace ggml_vk_astc_binding
-
