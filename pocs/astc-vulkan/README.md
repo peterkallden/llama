@@ -742,6 +742,23 @@ The page-owner contract test covers both scalar D1 and paired-D2 material;
 the device smoke forwards resident D1 material through the existing sidecar
 upload path and reports whether a compatible Vulkan device was available.
 
+Before building artifacts, use the discovery phase to avoid encoding tensors
+that are never used or do not justify their storage cost:
+
+```bash
+build-astc/bin/astc-vulkan-cache discover \
+  --source-model /absolute/path/source-f16.gguf \
+  --usage /absolute/path/usage.txt \
+  --output /absolute/path/discovery.tsv \
+  --footprint 8x5 --representation paired-d2 \
+  --max-cache-bytes 1073741824
+```
+
+This produces a ranked tensor shortlist before any ASTC payload is generated.
+The shortlist is a build hint, not quality evidence: selected entries still
+need artifact generation and model/Vulkan replay. The existing `plan` command
+remains the post-build residency selector; it does not replace discovery.
+
 ## Offline GPU encoder seam
 
 The experimental GPU encoder is an offline proposer, not a runtime ASTC

@@ -286,6 +286,34 @@ if (TARGET Vulkan::Vulkan)
         astc-vulkan-cache astc-vulkan-residency)
     target_compile_features(astc-vulkan-model-cache PUBLIC cxx_std_17)
 
+    # Pre-build discovery is deliberately separate from artifact planning:
+    # it consumes a source-model tensor inventory plus usage metrics before
+    # any ASTC payload exists, and only emits a shortlist for the builder.
+    add_library(astc-vulkan-discovery STATIC
+        astc-vulkan-discovery.cpp)
+    target_include_directories(astc-vulkan-discovery PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-discovery PUBLIC astc-vulkan-model-cache)
+    target_compile_features(astc-vulkan-discovery PUBLIC cxx_std_17)
+
+    if (TARGET astc-vulkan-cache-tool)
+        target_sources(astc-vulkan-cache-tool PRIVATE astc-vulkan-input.cpp)
+        target_link_libraries(astc-vulkan-cache-tool PRIVATE
+            astc-vulkan-discovery ggml-base)
+    endif()
+
+    add_executable(test-astc-vulkan-discovery
+        tests/test-astc-vulkan-discovery.cpp)
+    target_include_directories(test-astc-vulkan-discovery PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(test-astc-vulkan-discovery PRIVATE astc-vulkan-discovery)
+    target_compile_features(test-astc-vulkan-discovery PRIVATE cxx_std_17)
+    if (BUILD_TESTING)
+        add_test(NAME test-astc-vulkan-discovery
+            COMMAND test-astc-vulkan-discovery)
+        set_property(TEST test-astc-vulkan-discovery PROPERTY LABELS astc)
+    endif()
+
     # Runtime-local page ownership consumes planner output but does not own
     # Vulkan images yet. Resource/upload ownership remains in the existing
     # tensor session and sidecar layers.

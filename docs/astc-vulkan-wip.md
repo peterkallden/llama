@@ -9690,3 +9690,39 @@ storage key, and non-resident entries still resolve to native fallback. The
 next implementation gate is an owner that consumes one page at a time and
 binds the same material through the existing stream/tensor session; only after
 that should asynchronous prefetch or cross-tensor atlases be considered.
+
+## Three-hundred-and-eightieth sweep: pre-build discovery before cache creation
+
+The existing usage-aware `plan` command is intentionally post-build: it can
+rank and resident-load already validated artifacts, but it cannot decide which
+source tensors should be encoded in the first place. A separate discovery
+library and cache-tool command now closes that ordering gap:
+
+```text
+GGUF tensor inventory + usage metrics
+              |
+              v
+        astc-vulkan-cache discover
+              |
+              v
+  tensor/page shortlist with estimated bytes and heat
+              |
+              v
+       bounded ASTC artifact build
+```
+
+`discover` reads only the source-model tensor inventory and the existing
+usage-metrics text file. It estimates block-aligned ASTC payload bytes (and the
+D2 layout-map overhead), ranks large/frequently used rank-2 tensors, applies
+optional tensor/count/cache-byte limits, and writes an atomic TSV report. No
+ASTC block, manifest or runtime page is created in this phase. Every selected
+row is explicitly marked `quality_probe=required`; model/Vulkan replay remains
+the admission gate before publication.
+
+The first command is deliberately tensor/page-granular, not per-weight. A
+uniform Vulkan ASTC image cannot omit individual blocks without a separate
+block-mask/fallback ABI. Once the shortlist is consumed by the builder, all
+blocks of an admitted tensor are encoded; sparse macro-tile discovery can be
+added later if measurements justify the extra runtime metadata. Runtime
+residency remains a separate concern: it can only load pages that discovery
+and quality gates caused us to create.

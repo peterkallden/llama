@@ -3,6 +3,8 @@
 #include "astc-vulkan-provenance.h"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
 #include "astc-vulkan-model-cache.h"
+#include "astc-vulkan-discovery.h"
+#include "astc-vulkan-input.h"
 #endif
 
 #include <algorithm>
@@ -16,6 +18,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -128,6 +131,9 @@ void print_help(const char * executable) {
         "  %s inspect --model model.gguf [--cache path|auto]\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
+        "  %s discover --source-model model.gguf --usage usage.txt --output discovery.tsv\n"
+        "            --footprint 6x6 [--representation scalar|gauge-la|paired-d2]\n"
+        "            [--min-source-bytes N] [--max-cache-bytes N] [--max-tensors N]\n"
         "  %s build-model --source-model model.gguf --fragment-dir fragments/\n"
             "            --staging build-state/ [--tensor-list tensors.txt] [--cache path|auto]\n"
         "  %s plan --model model.gguf --usage usage.txt [--cache path|auto]\n"
@@ -166,7 +172,7 @@ void print_help(const char * executable) {
         "defaults model/vulkan evidence gates to false until replay has passed.\n",
         executable, executable, executable, executable,
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
-        executable, executable,
+        executable, executable, executable,
 #endif
         executable, executable, executable, executable, executable);
 }
@@ -183,6 +189,32 @@ bool parse_u64_argument(const std::string & text, uint64_t & result) {
         return false;
     }
 }
+
+#ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
+bool parse_discovery_footprint(const std::string & value,
+                               astc_vulkan_footprint & footprint) {
+    static constexpr std::pair<const char *, astc_vulkan_footprint> kNames[] = {
+        {"4x4", astc_vulkan_footprint::k4x4}, {"5x5", astc_vulkan_footprint::k5x5},
+        {"6x6", astc_vulkan_footprint::k6x6}, {"6x5", astc_vulkan_footprint::k6x5},
+        {"8x5", astc_vulkan_footprint::k8x5}, {"10x5", astc_vulkan_footprint::k10x5},
+        {"8x6", astc_vulkan_footprint::k8x6}, {"10x6", astc_vulkan_footprint::k10x6},
+        {"8x8", astc_vulkan_footprint::k8x8}, {"10x8", astc_vulkan_footprint::k10x8},
+    };
+    for (const auto & name : kNames) {
+        if (value == name.first) { footprint = name.second; return true; }
+    }
+    return false;
+}
+
+bool parse_discovery_representation(const std::string & value,
+                                    astc_vulkan_representation & representation) {
+    if (value == "scalar") representation = astc_vulkan_representation::kScalar;
+    else if (value == "gauge-la") representation = astc_vulkan_representation::kGaugeLumaAlpha;
+    else if (value == "paired-d2") representation = astc_vulkan_representation::kPairedD2;
+    else return false;
+    return true;
+}
+#endif
 
 std::string shell_quote(const std::string & value) {
     std::string quoted("'");
@@ -782,7 +814,8 @@ int main(int argc, char ** argv) {
     std::string fragment_dir, staging_root, tensor_list;
     std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
     std::string runtime_family = "unspecified";
-    std::string usage_path, policy_name = "balanced", device_budget, host_budget, page_bytes;
+    std::string usage_path, discovery_output, policy_name = "balanced", device_budget, host_budget, page_bytes;
+    std::string min_source_bytes, max_cache_bytes, max_tensors;
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
     std::string channel_weights = "balanced-a025", source_alpha = "1", row_scale = "none";
     std::string rows, columns, calibration_samples = "8", validation_samples = "7";
@@ -814,10 +847,14 @@ int main(int argc, char ** argv) {
         else if (option == "--source-family") source_family = value;
         else if (option == "--family") runtime_family = value;
         else if (option == "--usage") usage_path = value;
+        else if (option == "--output") discovery_output = value;
         else if (option == "--policy") policy_name = value;
         else if (option == "--device-budget") device_budget = value;
         else if (option == "--host-budget") host_budget = value;
         else if (option == "--page-bytes") page_bytes = value;
+        else if (option == "--min-source-bytes") min_source_bytes = value;
+        else if (option == "--max-cache-bytes") max_cache_bytes = value;
+        else if (option == "--max-tensors") max_tensors = value;
         else if (option == "--require-usage") require_usage = value == "1" || value == "true";
         else if (option == "--require-benefit") require_benefit = value == "1" || value == "true";
         else if (option == "--allow-experimental") allow_experimental = value == "1" || value == "true";
@@ -864,6 +901,84 @@ int main(int argc, char ** argv) {
         }
         std::printf("astc-cache build-model published root=%s\n", paths.root.c_str());
         print_paths(paths);
+        return 0;
+    }
+    if (command == "discover") {
+        const std::string inventory_model = source_model.empty() ? model : source_model;
+        if (inventory_model.empty() || usage_path.empty() || discovery_output.empty() ||
+            footprint.empty()) {
+            std::fprintf(stderr, "astc-cache discover requires --source-model/--model, --usage, --output and --footprint\n");
+            return 2;
+        }
+        astc_vulkan_footprint selected_footprint;
+        astc_vulkan_representation selected_representation;
+        if (!parse_discovery_footprint(footprint, selected_footprint) ||
+            !parse_discovery_representation(representation, selected_representation)) {
+            std::fprintf(stderr, "astc-cache discover failed: invalid footprint or representation\n");
+            return 2;
+        }
+        std::vector<ggml_vk_astc_tensor_info> inventory;
+        if (!ggml_vk_astc_list_gguf_tensors(inventory_model, inventory, error)) {
+            std::fprintf(stderr, "astc-cache discover failed: %s\n", error.c_str());
+            return 1;
+        }
+        std::vector<astc_vulkan_tensor_usage_metrics> usage;
+        if (!astc_vulkan_read_tensor_usage_metrics(usage_path, usage, error)) {
+            std::fprintf(stderr, "astc-cache discover failed: %s\n", error.c_str());
+            return 1;
+        }
+        astc_vulkan_discovery_options discovery_options;
+        discovery_options.footprint = selected_footprint;
+        discovery_options.representation = selected_representation;
+        if (!min_source_bytes.empty() && !parse_u64_argument(min_source_bytes,
+                                                               discovery_options.min_source_bytes)) {
+            std::fprintf(stderr, "astc-cache discover failed: invalid --min-source-bytes\n");
+            return 2;
+        }
+        if (!max_cache_bytes.empty() && !parse_u64_argument(max_cache_bytes,
+                                                              discovery_options.max_cache_bytes)) {
+            std::fprintf(stderr, "astc-cache discover failed: invalid --max-cache-bytes\n");
+            return 2;
+        }
+        uint64_t max_tensor_count = 0;
+        if (!max_tensors.empty() && (!parse_u64_argument(max_tensors, max_tensor_count) ||
+                                     max_tensor_count > std::numeric_limits<size_t>::max())) {
+            std::fprintf(stderr, "astc-cache discover failed: invalid --max-tensors\n");
+            return 2;
+        }
+        discovery_options.max_tensors = static_cast<size_t>(max_tensor_count);
+        std::vector<astc_vulkan_discovery_tensor_input> inputs;
+        inputs.reserve(inventory.size());
+        for (const auto & tensor_info : inventory) {
+            inputs.push_back({tensor_info.name, tensor_info.columns, tensor_info.rows,
+                              static_cast<uint64_t>(tensor_info.bytes), tensor_info.rank2});
+        }
+        std::vector<astc_vulkan_discovery_entry> entries;
+        if (!astc_vulkan_discover_cache_candidates(inputs, usage, discovery_options,
+                                                   entries, error) ||
+            !astc_vulkan_write_discovery_report(discovery_output, discovery_options,
+                                                entries, error)) {
+            std::fprintf(stderr, "astc-cache discover failed: %s\n", error.c_str());
+            return 1;
+        }
+        size_t selected_count = 0;
+        uint64_t selected_bytes = 0;
+        for (const auto & entry : entries) {
+            if (!entry.selected) continue;
+            ++selected_count;
+            selected_bytes += entry.estimated_astc_bytes + entry.estimated_layout_bytes;
+        }
+        std::printf("astc-cache discover tensors=%zu selected=%zu estimated-cache-bytes=%llu report=%s\n",
+                    entries.size(), selected_count,
+                    static_cast<unsigned long long>(selected_bytes), discovery_output.c_str());
+        for (const auto & entry : entries) {
+            std::printf("astc-cache discover-entry tensor=%s selected=%s priority=%.6g source-bytes=%llu astc-bytes=%llu quality-probe=required\n",
+                        entry.tensor_name.c_str(), entry.selected ? "true" : "false",
+                        entry.priority_score,
+                        static_cast<unsigned long long>(entry.source_bytes),
+                        static_cast<unsigned long long>(entry.estimated_astc_bytes +
+                                                         entry.estimated_layout_bytes));
+        }
         return 0;
     }
     if (command == "plan") {
