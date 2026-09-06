@@ -128,6 +128,23 @@ LLAMA_API float * llama_get_embeddings_ffn_down_out(struct llama_context * ctx, 
 LLAMA_API bool llama_set_ffn_down_output_override(struct llama_context * ctx, uint32_t lid,
                                                   const float * data, uint32_t n_tokens, uint32_t columns);
 
+// Experimental runtime bridge for prepared compressed FFN-down artifacts.
+// `is_ready` is evaluated while a graph is built; false preserves the normal
+// GGUF matmul. `run` receives and returns token-major F32 data for a layer
+// accepted by `is_ready`. The representation and cache policy remain behind
+// this boundary, so D1/D2 do not leak into llama's graph construction.
+typedef bool (*llama_ffn_down_runtime_is_ready_fn)(
+        void * user_data, uint32_t lid, uint32_t input_columns, uint32_t output_columns);
+typedef bool (*llama_ffn_down_runtime_run_fn)(
+        void * user_data, uint32_t lid,
+        const float * input, uint32_t n_tokens, uint32_t input_columns,
+        float * output, uint32_t output_columns);
+LLAMA_API bool llama_set_ffn_down_runtime_provider(
+        struct llama_context * ctx,
+        llama_ffn_down_runtime_is_ready_fn is_ready,
+        llama_ffn_down_runtime_run_fn run,
+        void * user_data);
+
 // PoC helper exposing the FFN width needed to interpret the capture above.
 LLAMA_API int32_t llama_model_n_ff(const struct llama_model * model, uint32_t layer);
 

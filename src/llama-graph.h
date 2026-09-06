@@ -166,6 +166,21 @@ public:
     const llama_ffn_down_output_override override_data;
 };
 
+// Owns the stable callback/layer pair referenced by a MAP_CUSTOM graph node.
+// It has no input payload itself; keeping it in llm_graph_result guarantees
+// that graph reuse never leaves a dangling callback userdata pointer.
+class llm_graph_input_ffn_down_runtime : public llm_graph_input_i {
+public:
+    llm_graph_input_ffn_down_runtime(const llama_ffn_down_runtime_provider & provider, uint32_t lid) :
+        provider(provider), lid(lid) {}
+
+    void set_input(const llama_ubatch * ubatch) override;
+    bool can_reuse(const llm_graph_params & params) override;
+
+    const llama_ffn_down_runtime_provider provider;
+    const uint32_t lid;
+};
+
 class llm_graph_input_pos : public llm_graph_input_i {
 public:
     llm_graph_input_pos(uint32_t n_pos_per_embd) : n_pos_per_embd(n_pos_per_embd) {}
@@ -858,6 +873,14 @@ struct llm_graph_params {
             if (lhs.data != rhs.data || lhs.n_tokens != rhs.n_tokens || lhs.columns != rhs.columns) {
                 return false;
             }
+        }
+
+        const auto & runtime_lhs = cparams.ffn_down_runtime_provider;
+        const auto & runtime_rhs = other.cparams.ffn_down_runtime_provider;
+        if (runtime_lhs.is_ready != runtime_rhs.is_ready ||
+            runtime_lhs.run != runtime_rhs.run ||
+            runtime_lhs.user_data != runtime_rhs.user_data) {
+            return false;
         }
 
         return

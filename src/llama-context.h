@@ -120,6 +120,8 @@ struct llama_context {
     void set_embeddings_ffn_down_inp(uint32_t lid, bool enable);
     void set_embeddings_ffn_down_out(uint32_t lid, bool enable);
     bool set_ffn_down_output_override(uint32_t lid, const float * data, uint32_t n_tokens, uint32_t columns);
+    bool set_ffn_down_runtime_provider(llama_ffn_down_runtime_is_ready_fn is_ready,
+                                       llama_ffn_down_runtime_run_fn run, void * user_data);
     void set_nextn_layer_offset(int32_t offset);
     void set_causal_attn(bool value);
     void set_warmup(bool value);

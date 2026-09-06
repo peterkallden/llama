@@ -1,6 +1,6 @@
 #pragma once
 
-#include "llama.h"
+#include "llama-ext.h"
 
 #include <cstdint>
 #include <vector>
@@ -9,6 +9,12 @@ struct llama_ffn_down_output_override {
     const float * data = nullptr;
     uint32_t n_tokens = 0;
     uint32_t columns = 0;
+};
+
+struct llama_ffn_down_runtime_provider {
+    llama_ffn_down_runtime_is_ready_fn is_ready = nullptr;
+    llama_ffn_down_runtime_run_fn run = nullptr;
+    void * user_data = nullptr;
 };
 
 #define LLAMA_MAX_SEQ 256
@@ -68,6 +74,7 @@ struct llama_cparams {
     std::vector<bool> embeddings_ffn_down_inp;
     std::vector<bool> embeddings_ffn_down_out;
     std::vector<llama_ffn_down_output_override> ffn_down_output_overrides;
+    llama_ffn_down_runtime_provider ffn_down_runtime_provider;
 
     enum llama_context_type ctx_type;
     enum llama_pooling_type pooling_type;

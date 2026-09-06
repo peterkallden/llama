@@ -17,9 +17,29 @@ supports the selected ASTC LDR format performs that part in texture hardware.
 The work here decides which legal, standard ASTC blocks to write and how to
 interpret the decoded channels as weights.
 
-This is still an experimental sidecar/scheduler PoC.  Cache artifacts can be
-loaded by the scheduler smoke path; ordinary `llama-cli` does not yet have an
-automatic `--astc-cache` production option.
+This is still an experimental sidecar/scheduler PoC. Cache artifacts can be
+loaded by the scheduler smoke path; ordinary `llama-cli` does not yet expose
+an automatic `--astc-cache` production option.
+
+The runtime integration is deliberately split into three layers:
+
+```text
+immutable cache + evidence -> runtime overlay -> FFN provider -> backend dispatch
+```
+
+`astc-vulkan-runtime-overlay.*` owns cache validation, artifact policy and
+page residency. The new llama FFN-provider bridge owns the graph substitution:
+it preserves the ordinary GGUF matmul unless a layer reports an already-ready,
+resident artifact. Finally, a backend-specific provider performs D1/D2
+dispatch. This separation prevents a cache miss, a memory-budget denial or an
+unsupported ASTC format from changing model execution: each becomes a normal
+native-GGUF fallback.
+
+The initial provider bridge uses a generic CPU custom-op boundary so it can be
+verified independently. It is not the final performance path. The production
+step is to implement the same provider contract inside ggml-vulkan with a
+shared atlas/device owner; the current tensor-local sidecar must not be
+instantiated once per model layer.
 
 The model-level cache planner sits above the D1/D2 encoders. It first filters
 already validated tensor artifacts by model/Vulkan evidence, then may apply

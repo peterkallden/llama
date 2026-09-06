@@ -324,6 +324,17 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-page-owner PUBLIC astc-vulkan-model-cache)
     target_compile_features(astc-vulkan-page-owner PUBLIC cxx_std_17)
 
+    # Single runtime-facing cache owner. It intentionally stays independent
+    # from llama graph objects and Vulkan command buffers; the latter consume
+    # this validated, residency-aware contract.
+    add_library(astc-vulkan-runtime-overlay STATIC
+        astc-vulkan-runtime-overlay.cpp)
+    target_include_directories(astc-vulkan-runtime-overlay PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-runtime-overlay PUBLIC
+        astc-vulkan-page-owner)
+    target_compile_features(astc-vulkan-runtime-overlay PUBLIC cxx_std_17)
+
     add_executable(test-astc-vulkan-page-owner
         tests/test-astc-vulkan-page-owner.cpp)
     target_include_directories(test-astc-vulkan-page-owner PRIVATE

@@ -1227,6 +1227,18 @@ bool llama_context::set_ffn_down_output_override(uint32_t lid, const float * dat
     return true;
 }
 
+bool llama_context::set_ffn_down_runtime_provider(
+        llama_ffn_down_runtime_is_ready_fn is_ready,
+        llama_ffn_down_runtime_run_fn run,
+        void * user_data) {
+    if ((is_ready == nullptr) != (run == nullptr)) {
+        return false;
+    }
+    cparams.ffn_down_runtime_provider = { is_ready, run, user_data };
+    sched_need_reserve = true;
+    return true;
+}
+
 void llama_context::set_nextn_layer_offset(int32_t offset) {
     cparams.nextn_layer_offset = offset;
 }
@@ -3981,6 +3993,14 @@ float * llama_get_embeddings_ffn_down_out(llama_context * ctx, uint32_t lid) {
 bool llama_set_ffn_down_output_override(llama_context * ctx, uint32_t lid,
                                         const float * data, uint32_t n_tokens, uint32_t columns) {
     return ctx != nullptr && ctx->set_ffn_down_output_override(lid, data, n_tokens, columns);
+}
+
+bool llama_set_ffn_down_runtime_provider(
+        llama_context * ctx,
+        llama_ffn_down_runtime_is_ready_fn is_ready,
+        llama_ffn_down_runtime_run_fn run,
+        void * user_data) {
+    return ctx != nullptr && ctx->set_ffn_down_runtime_provider(is_ready, run, user_data);
 }
 
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {

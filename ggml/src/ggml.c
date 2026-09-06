@@ -5982,6 +5982,30 @@ struct ggml_tensor * ggml_map_custom1(
     return ggml_map_custom1_impl(ctx, a, fun, n_tasks, userdata, false);
 }
 
+struct ggml_tensor * ggml_map_custom1_with_output(
+        struct ggml_context      * ctx,
+        struct ggml_tensor       * a,
+        enum   ggml_type           type,
+        int64_t                    ne0,
+        int64_t                    ne1,
+        const  ggml_custom1_op_t   fun,
+        int                        n_tasks,
+        void                     * userdata) {
+    GGML_ASSERT(n_tasks == GGML_N_TASKS_MAX || n_tasks > 0);
+    GGML_ASSERT(ne0 > 0 && ne1 > 0);
+
+    struct ggml_tensor * result = ggml_new_tensor_2d(ctx, type, ne0, ne1);
+    struct ggml_map_custom1_op_params params = {
+        /*.fun      =*/ fun,
+        /*.n_tasks  =*/ n_tasks,
+        /*.userdata =*/ userdata
+    };
+    ggml_set_op_params(result, &params, sizeof(params));
+    result->op     = GGML_OP_MAP_CUSTOM1;
+    result->src[0] = a;
+    return result;
+}
+
 struct ggml_tensor * ggml_map_custom1_inplace(
         struct ggml_context      * ctx,
         struct ggml_tensor       * a,

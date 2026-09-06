@@ -134,6 +134,31 @@ bool llm_graph_input_ffn_down_override::can_reuse(const llm_graph_params & param
     return params.ubatch.n_tokens == override_data.n_tokens;
 }
 
+void llm_graph_input_ffn_down_runtime::set_input(const llama_ubatch * /*ubatch*/) {
+    // MAP_CUSTOM receives its activation tensor from the graph, not from an
+    // external input buffer.
+}
+
+bool llm_graph_input_ffn_down_runtime::can_reuse(const llm_graph_params & /*params*/) {
+    return true;
+}
+
+namespace {
+void llama_ffn_down_runtime_custom_op(
+        ggml_tensor * dst, const ggml_tensor * src, int ith, int /*nth*/, void * user_data) {
+    if (ith != 0) return;
+    const auto * binding = static_cast<const llm_graph_input_ffn_down_runtime *>(user_data);
+    const uint32_t input_columns = static_cast<uint32_t>(src->ne[0]);
+    const uint32_t output_columns = static_cast<uint32_t>(dst->ne[0]);
+    const uint32_t tokens = static_cast<uint32_t>(src->ne[1]);
+    const bool ok = binding->provider.run(
+        binding->provider.user_data, binding->lid,
+        static_cast<const float *>(src->data), tokens, input_columns,
+        static_cast<float *>(dst->data), output_columns);
+    GGML_ASSERT(ok);
+}
+}
+
 void llm_graph_input_pos::set_input(const llama_ubatch * ubatch) {
     if (ubatch->pos && pos) {
         const int64_t n_tokens = ubatch->n_tokens;
@@ -1902,6 +1927,17 @@ ggml_tensor * llm_graph_context::build_ffn(
             ggml_set_input(input->tensor);
             ggml_set_name(input->tensor, "ffn_down_output_override");
             cur = input->tensor;
+            res->add_input(std::move(input));
+        } else if (const auto & provider = cparams.ffn_down_runtime_provider;
+                   provider.is_ready != nullptr && provider.run != nullptr &&
+                   provider.is_ready(provider.user_data, static_cast<uint32_t>(il),
+                                     static_cast<uint32_t>(cur->ne[0]),
+                                     static_cast<uint32_t>(n_embd))) {
+            auto input = std::make_unique<llm_graph_input_ffn_down_runtime>(provider, static_cast<uint32_t>(il));
+            cur = ggml_cast(ctx0, cur, GGML_TYPE_F32);
+            cur = ggml_map_custom1_with_output(ctx0, cur, GGML_TYPE_F32, n_embd, n_tokens,
+                                                llama_ffn_down_runtime_custom_op, 1, input.get());
+            ggml_set_name(cur, "ffn_down_runtime_provider");
             res->add_input(std::move(input));
         } else {
             cur = build_lora_mm(down, cur);

@@ -2665,6 +2665,19 @@ extern "C" {
             int                     n_tasks,
             void                  * userdata);
 
+    // Like ggml_map_custom1, but lets a bridge operation produce a tensor with
+    // a different shape than its input. Backends that do not implement this
+    // operation use the ordinary CPU custom-op implementation.
+    GGML_API struct ggml_tensor * ggml_map_custom1_with_output(
+            struct ggml_context   * ctx,
+            struct ggml_tensor    * a,
+            enum   ggml_type        type,
+            int64_t                 ne0,
+            int64_t                 ne1,
+            ggml_custom1_op_t       fun,
+            int                     n_tasks,
+            void                  * userdata);
+
     GGML_API struct ggml_tensor * ggml_map_custom1_inplace(
             struct ggml_context   * ctx,
             struct ggml_tensor    * a,
