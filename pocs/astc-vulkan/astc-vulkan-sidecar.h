@@ -41,6 +41,13 @@ public:
                      const std::vector<float> & row_scales = {});
     bool run(const std::vector<uint32_t> & spirv, const std::vector<float> & activations,
              std::vector<float> & output, std::string & error);
+    bool record_native(const std::vector<uint32_t> & spirv, VkDevice native_device,
+                       VkCommandBuffer command_buffer, VkBuffer activation_buffer,
+                       VkDeviceSize activation_offset, VkDeviceSize activation_size,
+                       VkBuffer output_buffer, VkDeviceSize output_offset,
+                       VkDeviceSize output_size, uint32_t samples,
+                       const astc_vulkan_reconstruction & reconstruction,
+                       uint32_t row_base, uint32_t band_height, std::string & error);
     // Offline/replay-only streamed execution. The payload is read in
     // footprint-aligned block-row ranges and only one band image is resident
     // at a time. The resident run() path remains the production fast path.
@@ -78,5 +85,6 @@ private:
     astc_vulkan_paired_semantic paired_semantic_ = astc_vulkan_paired_semantic::direct_rgb;
     std::vector<uint32_t> dispatch_spirv_;
     uint32_t dispatch_samples_ = 0;
+    bool native_mode_ = false;
     astc_vulkan_memory_budget memory_budget_{};
 };

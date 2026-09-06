@@ -88,6 +88,21 @@ public:
                                  std::string & error, bool allow_unverified = false) const;
     bool run(const std::vector<uint32_t> & spirv, const std::vector<float> & activations,
              std::vector<float> & output, std::string & error);
+    bool record_native(const std::vector<uint32_t> & spirv, VkDevice native_device,
+                       VkCommandBuffer command_buffer, VkBuffer activation_buffer,
+                       VkDeviceSize activation_offset, VkDeviceSize activation_size,
+                       VkBuffer output_buffer, VkDeviceSize output_offset,
+                       VkDeviceSize output_size, uint32_t samples,
+                       uint32_t row_base, uint32_t band_height, std::string & error) {
+        if (!ready()) {
+            error = "ASTC scheduler adapter is not ready; use normal fallback";
+            return false;
+        }
+        return sidecar_.record_native(
+            spirv, native_device, command_buffer, activation_buffer, activation_offset,
+            activation_size, output_buffer, output_offset, output_size, samples,
+            binding_.reconstruction, row_base, band_height, error);
+    }
     bool run_streamed(uint64_t max_resident_payload_bytes,
                       const std::vector<uint32_t> & spirv,
                       const std::vector<float> & activations,

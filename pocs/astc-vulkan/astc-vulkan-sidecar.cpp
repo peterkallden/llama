@@ -25,6 +25,7 @@ void astc_vulkan_sidecar::reset() {
     binding_ = {};
     dispatch_spirv_.clear();
     dispatch_samples_ = 0;
+    native_mode_ = false;
     paired_layout_.clear();
     paired_row_scales_.clear();
     paired_semantic_ = astc_vulkan_paired_semantic::direct_rgb;
@@ -212,6 +213,13 @@ bool astc_vulkan_sidecar::run(const std::vector<uint32_t> & spirv,
         error = "ASTC Vulkan sidecar has no ready tensor";
         return false;
     }
+    if (native_mode_) {
+        dispatch_.reset();
+        paired_dispatch_.reset();
+        dispatch_spirv_.clear();
+        dispatch_samples_ = 0;
+        native_mode_ = false;
+    }
     if (activations.empty() || activations.size() % binding_.record.width != 0) {
         error = "ASTC Vulkan sidecar activation count is not divisible by tensor width";
         return false;
@@ -237,6 +245,58 @@ bool astc_vulkan_sidecar::run(const std::vector<uint32_t> & spirv,
         dispatch_samples_ = samples;
     }
     return dispatch_.run(activations, binding_.reconstruction, output, error);
+}
+
+bool astc_vulkan_sidecar::record_native(
+        const std::vector<uint32_t> & spirv, VkDevice native_device,
+        VkCommandBuffer command_buffer, VkBuffer activation_buffer,
+        VkDeviceSize activation_offset, VkDeviceSize activation_size,
+        VkBuffer output_buffer, VkDeviceSize output_offset,
+        VkDeviceSize output_size, uint32_t samples,
+        const astc_vulkan_reconstruction & reconstruction,
+        uint32_t row_base, uint32_t band_height, std::string & error) {
+    if (!ready() || binding_.status != astc_vulkan_binding_status::kReady ||
+        native_device == VK_NULL_HANDLE || native_device != device_ ||
+        command_buffer == VK_NULL_HANDLE || activation_buffer == VK_NULL_HANDLE ||
+        output_buffer == VK_NULL_HANDLE || samples == 0 || spirv.empty()) {
+        error = "ASTC native dispatch device or resource contract mismatch";
+        return false;
+    }
+    if (binding_.record.representation == astc_vulkan_representation::kPairedD2) {
+        if (!paired_dispatch_.ready() || !native_mode_ || dispatch_samples_ != samples ||
+            dispatch_spirv_ != spirv) {
+            paired_dispatch_.reset();
+            if (!paired_dispatch_.init_native(
+                    physical_device_, device_, queue_, queue_family_, paired_tensor_,
+                    paired_layout_, spirv, binding_.record.width, binding_.record.height,
+                    samples, error, paired_semantic_, paired_row_scales_)) {
+                return false;
+            }
+            dispatch_spirv_ = spirv;
+            dispatch_samples_ = samples;
+        }
+        native_mode_ = true;
+        return paired_dispatch_.record_external(
+            command_buffer, activation_buffer, activation_offset, activation_size,
+            output_buffer, output_offset, output_size, reconstruction,
+            row_base, band_height, error);
+    }
+    if (!dispatch_.ready() || !native_mode_ || dispatch_samples_ != samples ||
+        dispatch_spirv_ != spirv) {
+        dispatch_.reset();
+        if (!dispatch_.init_native(
+                physical_device_, device_, queue_, queue_family_, adapter_.session(),
+                spirv, binding_.record.width, binding_.record.height, samples, error)) {
+            return false;
+        }
+        dispatch_spirv_ = spirv;
+        dispatch_samples_ = samples;
+    }
+    native_mode_ = true;
+    return dispatch_.record_external(
+        command_buffer, activation_buffer, activation_offset, activation_size,
+        output_buffer, output_offset, output_size, reconstruction,
+        row_base, band_height, error);
 }
 
 bool astc_vulkan_sidecar::run_streamed(
