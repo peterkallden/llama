@@ -9711,8 +9711,11 @@ GGUF tensor inventory + usage metrics
        bounded ASTC artifact build
 ```
 
-`discover` reads only the source-model tensor inventory and the existing
-usage-metrics text file. It estimates block-aligned ASTC payload bytes (and the
+`discover` reads only the source-model tensor inventory and, when supplied, the
+existing usage-metrics text file. With `--usage auto` it creates a conservative
+static baseline in tensor order (one invocation per rank-2 tensor), which is
+useful for dense models but does not model MoE routing. It estimates
+block-aligned ASTC payload bytes (and the
 D2 layout-map overhead), ranks large/frequently used rank-2 tensors, applies
 optional tensor/count/cache-byte limits, and writes an atomic TSV report. No
 ASTC block, manifest or runtime page is created in this phase. Every selected

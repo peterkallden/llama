@@ -758,6 +758,10 @@ This produces a ranked tensor shortlist before any ASTC payload is generated.
 The shortlist is a build hint, not quality evidence: selected entries still
 need artifact generation and model/Vulkan replay. The existing `plan` command
 remains the post-build residency selector; it does not replace discovery.
+For a dense-model first pass, `--usage auto` synthesizes a conservative
+tensor-order baseline without requiring a pre-existing cache. A real usage
+file is still preferred when routing, batching or tensor heat differs from
+that static assumption.
 
 ## Offline GPU encoder seam
 

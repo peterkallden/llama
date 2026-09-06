@@ -131,7 +131,7 @@ void print_help(const char * executable) {
         "  %s inspect --model model.gguf [--cache path|auto]\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
-        "  %s discover --source-model model.gguf --usage usage.txt --output discovery.tsv\n"
+        "  %s discover --source-model model.gguf --usage usage.txt|auto --output discovery.tsv\n"
         "            --footprint 6x6 [--representation scalar|gauge-la|paired-d2]\n"
         "            [--min-source-bytes N] [--max-cache-bytes N] [--max-tensors N]\n"
         "  %s build-model --source-model model.gguf --fragment-dir fragments/\n"
@@ -923,7 +923,20 @@ int main(int argc, char ** argv) {
             return 1;
         }
         std::vector<astc_vulkan_tensor_usage_metrics> usage;
-        if (!astc_vulkan_read_tensor_usage_metrics(usage_path, usage, error)) {
+        if (usage_path == "auto") {
+            uint32_t order = 0;
+            for (const auto & tensor_info : inventory) {
+                if (!tensor_info.rank2) continue;
+                astc_vulkan_tensor_usage_metrics metric;
+                metric.tensor_name = tensor_info.name;
+                metric.invocations = 1;
+                metric.tokens_seen = 1;
+                metric.native_bytes_read = static_cast<uint64_t>(tensor_info.bytes);
+                metric.path_probability = 1.0;
+                metric.execution_order = order++;
+                usage.push_back(std::move(metric));
+            }
+        } else if (!astc_vulkan_read_tensor_usage_metrics(usage_path, usage, error)) {
             std::fprintf(stderr, "astc-cache discover failed: %s\n", error.c_str());
             return 1;
         }
