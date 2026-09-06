@@ -58,4 +58,5 @@ private:
     uint64_t dispatch_calls_ = 0;
     uint64_t dispatch_failures_ = 0;
     uint64_t dispatch_tokens_ = 0;
+    bool external_op_installed_ = false;
 };

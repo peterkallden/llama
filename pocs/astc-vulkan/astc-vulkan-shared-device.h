@@ -19,6 +19,11 @@ public:
     astc_vulkan_shared_device & operator=(const astc_vulkan_shared_device &) = delete;
 
     bool init(std::string & error);
+    // Attach to a Vulkan device owned by the caller.  The shared-device
+    // object only borrows these handles and will never destroy them.
+    bool init_borrowed(VkPhysicalDevice physical_device, VkDevice device,
+                       VkQueue queue, uint32_t queue_family,
+                       std::string & error);
     bool supports(astc_vulkan_footprint footprint) const;
     void reset();
 
@@ -36,4 +41,6 @@ private:
     VkQueue queue_ = VK_NULL_HANDLE;
     uint32_t queue_family_ = UINT32_MAX;
     astc_vulkan_memory_budget memory_budget_{};
+    bool owns_instance_ = false;
+    bool owns_device_ = false;
 };

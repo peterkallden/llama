@@ -1,4 +1,5 @@
 #include "astc-vulkan-llama-provider.h"
+#include "astc-vulkan-ggml-external-op.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -33,16 +34,22 @@ bool parse_ffn_down_layer(const std::string & tensor_name, uint32_t & layer) {
 } // namespace
 
 astc_vulkan_llama_provider::~astc_vulkan_llama_provider() {
-    if (!ready_) return;
-    std::fprintf(stderr,
-        "ASTC runtime stats: bound_layers=%zu dispatches=%llu dispatch_failures=%llu tokens=%llu\n",
-        entries_.size(),
-        static_cast<unsigned long long>(dispatch_calls_),
-        static_cast<unsigned long long>(dispatch_failures_),
-        static_cast<unsigned long long>(dispatch_tokens_));
+    if (ready_) {
+        std::fprintf(stderr,
+            "ASTC runtime stats: bound_layers=%zu dispatches=%llu dispatch_failures=%llu tokens=%llu\n",
+            entries_.size(),
+            static_cast<unsigned long long>(dispatch_calls_),
+            static_cast<unsigned long long>(dispatch_failures_),
+            static_cast<unsigned long long>(dispatch_tokens_));
+    }
+    reset();
 }
 
 void astc_vulkan_llama_provider::reset() {
+    if (external_op_installed_) {
+        ggml_vk_astc_external_op::uninstall();
+        external_op_installed_ = false;
+    }
     entries_.clear();
     d1_spirv_.clear();
     d2_spirv_.clear();
@@ -131,6 +138,16 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
         error = "ASTC cache contains no resident D1 FFN-down artifacts eligible for runtime";
         reset();
         return false;
+    }
+    // Install only the generic dispatcher registry.  No graph node is bound
+    // yet, so the existing CPU custom-op bridge remains the active path until
+    // the native ASTC callback is supplied by a later device-sharing sweep.
+    std::string external_error;
+    if (ggml_vk_astc_external_op::install(external_error)) {
+        external_op_installed_ = true;
+    } else {
+        std::fprintf(stderr, "ASTC external Vulkan seam unavailable: %s\n",
+                     external_error.c_str());
     }
     const auto & summary = overlay_.summary();
     std::fprintf(stderr,

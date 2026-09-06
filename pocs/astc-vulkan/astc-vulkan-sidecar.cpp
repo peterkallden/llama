@@ -69,6 +69,17 @@ bool astc_vulkan_sidecar::init(std::shared_ptr<astc_vulkan_shared_device> shared
     return true;
 }
 
+bool astc_vulkan_sidecar::init_borrowed(
+        VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+        uint32_t queue_family, astc_vulkan_footprint footprint,
+        std::string & error, bool allow_experimental) {
+    auto shared_device = std::make_shared<astc_vulkan_shared_device>();
+    if (!shared_device->init_borrowed(physical_device, device, queue, queue_family, error)) {
+        return false;
+    }
+    return init(std::move(shared_device), footprint, error, allow_experimental);
+}
+
 bool astc_vulkan_sidecar::load_manifest(const std::string & path, std::string & error) {
     astc_vulkan_manifest loaded;
     if (!astc_vulkan_read_manifest(path, loaded, error)) return false;

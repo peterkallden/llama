@@ -27,6 +27,10 @@ public:
     bool init(std::shared_ptr<astc_vulkan_shared_device> shared_device,
               astc_vulkan_footprint footprint, std::string & error,
               bool allow_experimental = false);
+    bool init_borrowed(VkPhysicalDevice physical_device, VkDevice device,
+                       VkQueue queue, uint32_t queue_family,
+                       astc_vulkan_footprint footprint, std::string & error,
+                       bool allow_experimental = false);
     bool load_manifest(const std::string & path, std::string & error);
     bool set_manifest(const astc_vulkan_manifest & manifest, std::string & error);
     bool bind_tensor(const std::string & tensor_name, uint32_t expected_columns,

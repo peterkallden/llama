@@ -9,14 +9,38 @@ astc_vulkan_shared_device::~astc_vulkan_shared_device() {
 }
 
 void astc_vulkan_shared_device::reset() {
-    if (device_ != VK_NULL_HANDLE) vkDestroyDevice(device_, nullptr);
-    if (instance_ != VK_NULL_HANDLE) vkDestroyInstance(instance_, nullptr);
+    if (owns_device_ && device_ != VK_NULL_HANDLE) vkDestroyDevice(device_, nullptr);
+    if (owns_instance_ && instance_ != VK_NULL_HANDLE) vkDestroyInstance(instance_, nullptr);
     instance_ = VK_NULL_HANDLE;
     physical_device_ = VK_NULL_HANDLE;
     device_ = VK_NULL_HANDLE;
     queue_ = VK_NULL_HANDLE;
     queue_family_ = UINT32_MAX;
     memory_budget_ = {};
+    owns_instance_ = false;
+    owns_device_ = false;
+}
+
+bool astc_vulkan_shared_device::init_borrowed(
+        VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+        uint32_t queue_family, std::string & error) {
+    reset();
+    if (physical_device == VK_NULL_HANDLE || device == VK_NULL_HANDLE ||
+        queue == VK_NULL_HANDLE || queue_family == UINT32_MAX) {
+        error = "invalid borrowed Vulkan device handles";
+        return false;
+    }
+    physical_device_ = physical_device;
+    device_ = device;
+    queue_ = queue;
+    queue_family_ = queue_family;
+    if (!astc_vulkan_query_memory_budget(physical_device_, ASTC_VULKAN_DEFAULT_MEMORY_FRACTION,
+                                         memory_budget_, error)) {
+        reset();
+        return false;
+    }
+    error.clear();
+    return true;
 }
 
 bool astc_vulkan_shared_device::init(std::string & error) {
@@ -32,6 +56,7 @@ bool astc_vulkan_shared_device::init(std::string & error) {
         reset();
         return false;
     }
+    owns_instance_ = true;
     uint32_t device_count = 0;
     if (vkEnumeratePhysicalDevices(instance_, &device_count, nullptr) != VK_SUCCESS || device_count == 0) {
         error = "no Vulkan physical device available for ASTC runtime";
@@ -77,6 +102,7 @@ bool astc_vulkan_shared_device::init(std::string & error) {
         reset();
         return false;
     }
+    owns_device_ = true;
     vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
     if (!astc_vulkan_query_memory_budget(physical_device_, ASTC_VULKAN_DEFAULT_MEMORY_FRACTION,
                                          memory_budget_, error)) {

@@ -1,5 +1,6 @@
 #include "astc-vulkan-page-owner.h"
 #include "astc-vulkan-sidecar.h"
+#include "astc-vulkan-shared-device.h"
 
 #include <cassert>
 #include <cstdio>
@@ -18,6 +19,14 @@ int main() {
         payload.write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
     }
     const std::vector<uint8_t> payload_bytes(16, 0);
+
+    // Borrowed-device setup must reject incomplete handles before it can
+    // acquire any Vulkan ownership. The valid-handle path is exercised by
+    // the device-backed sidecar smoke below when a compatible device exists.
+    astc_vulkan_shared_device borrowed;
+    std::string borrowed_error;
+    assert(!borrowed.init_borrowed(VK_NULL_HANDLE, VK_NULL_HANDLE,
+                                    VK_NULL_HANDLE, UINT32_MAX, borrowed_error));
 
     astc_vulkan_manifest manifest;
     astc_vulkan_tensor_record record;

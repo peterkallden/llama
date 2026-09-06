@@ -73,6 +73,12 @@ resources are created on the same ggml-owned device, the provider remains on
 the verified CPU custom-op path. A failed or unavailable native capability
 must therefore leave the normal GGUF fallback untouched.
 
+The provider installs the dispatcher only while its opt-in lifetime is active.
+Borrowed `VkDevice`, `VkQueue` and `VkPhysicalDevice` handles are never
+destroyed by ASTC; ASTC owns only its images, descriptors, pages and related
+resources. The current provider still uses the verified CPU custom-op bridge
+until native resources can be created on the same ggml-owned device.
+
 The model-level cache planner sits above the D1/D2 encoders. It first filters
 already validated tensor artifacts by model/Vulkan evidence, then may apply
 workload usage and measured-benefit metrics, followed by the existing memory
