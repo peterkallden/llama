@@ -9491,6 +9491,23 @@ per-tensor producer. The intended next step is a thin model builder that
 invokes that producer for a selected tensor list and places each result in the
 fragment directory; the merge/publication path is now ready for it.
 
+That producer seam is now wired through `build-model --tensor-list`. The list
+uses one whitespace-separated entry per line:
+
+```text
+# tensor trace footprint representation [rows columns for paired-d2]
+blk.0.ffn_down.weight traces/blk0.bin 6x6 scalar
+blk.1.ffn_down.weight traces/blk1.bin 8x5 paired-d2 2048 8192
+```
+
+Each job calls the existing per-tensor `build` command with
+`--no-publish 1`, so only a verified fragment is produced; no intermediate
+model-adjacent cache is created. Existing complete fragments are reused, while
+incomplete fragment directories fail closed and must be repaired or removed.
+After all jobs finish, the same deterministic merge and atomic publisher run
+as before. This makes multi-tensor generation resumable without adding a
+second encoder implementation.
+
 The focused cache, model-plan, residency, stream-loader, and cache-tool tests
 all pass after this integration. No production scheduler or Vulkan runtime
 semantics were changed.

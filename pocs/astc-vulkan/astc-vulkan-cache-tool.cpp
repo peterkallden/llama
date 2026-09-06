@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -122,12 +123,12 @@ void print_help(const char * executable) {
         "  %s profiles\n"
         "  %s build --model model.gguf --tensor name --trace activations.bin --footprint 6x6\n"
             "            [--representation scalar|paired-d2] [--cache path|auto]\n"
-            "            [--backend hybrid|cpu] [--workers N]\n"
+            "            [--backend hybrid|cpu] [--workers N] [--no-publish 1]\n"
         "  %s inspect --model model.gguf [--cache path|auto]\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
         "  %s build-model --source-model model.gguf --fragment-dir fragments/\n"
-            "            --staging build-state/ [--cache path|auto]\n"
+            "            --staging build-state/ [--tensor-list tensors.txt] [--cache path|auto]\n"
 #endif
         "\nF16-cache ovanpå Q4/Q3 (avancerat, kräver separat model-replay):\n"
         "  %s bind --source-model source-f16.gguf --runtime-model runtime-q4.gguf\n"
@@ -247,10 +248,15 @@ bool build_d1_cache(const char * argv0, const std::string & model,
                     const std::string & preset, const std::string & artifact_dir,
                     const std::string & source_family, const std::string & max_rows,
                     const std::string & max_columns, const std::string & workers,
+                    bool publish,
                     astc_vulkan_cache_paths & paths,
                     std::string & error) {
     if (model.empty() || tensor.empty() || trace.empty() || footprint.empty()) {
         error = "build requires --model, --tensor, --trace and --footprint";
+        return false;
+    }
+    if (!publish && artifact_dir.empty()) {
+        error = "--no-publish requires --artifact-dir so the fragment is retained";
         return false;
     }
     if (find_profile("d1-" + footprint) == nullptr) {
@@ -352,6 +358,11 @@ bool build_d1_cache(const char * argv0, const std::string & model,
     }
     std::printf("astc-cache build stage=artifact-pack status=done\n");
     std::fflush(stdout);
+    if (!publish) {
+        std::printf("astc-cache build stage=publish status=skipped artifact-dir=%s\n",
+                    output_dir.string().c_str());
+        return true;
+    }
     std::printf("astc-cache build stage=publish status=running (hashing source GGUF)\n");
     std::fflush(stdout);
     if (!astc_vulkan_cache_create_with_row_scales(
@@ -378,11 +389,15 @@ bool build_d2_cache(const char * argv0, const std::string & model,
                     const std::string & rows_text, const std::string & columns_text,
                     const std::string & calibration_samples,
                     const std::string & validation_samples,
-                    const std::string & workers,
+                    const std::string & workers, bool publish,
                     astc_vulkan_cache_paths & paths, std::string & error) {
     if (model.empty() || tensor.empty() || trace.empty() || footprint.empty() ||
         rows_text.empty() || columns_text.empty()) {
         error = "paired-D2 build requires --model, --tensor, --trace, --footprint, --rows and --columns";
+        return false;
+    }
+    if (!publish && artifact_dir.empty()) {
+        error = "--no-publish requires --artifact-dir so the fragment is retained";
         return false;
     }
     if (find_profile("d2-" + footprint) == nullptr) {
@@ -509,6 +524,11 @@ bool build_d2_cache(const char * argv0, const std::string & model,
         cleanup();
         return false;
     }
+    if (!publish) {
+        std::printf("astc-cache build stage=publish status=skipped artifact-dir=%s\n",
+                    output_dir.string().c_str());
+        return true;
+    }
     if (!astc_vulkan_cache_create_with_row_scales(
             model, manifest.string(), payload.string(), layout_payload.string(),
             row_scale == "absmax" ? row_scales_payload.string() : std::string(),
@@ -596,15 +616,104 @@ bool collect_model_fragments(
     return true;
 }
 
-bool build_model_cache(const std::string & source_model,
+struct model_build_job {
+    std::string tensor;
+    std::string trace;
+    std::string footprint;
+    std::string representation = "scalar";
+    std::string rows;
+    std::string columns;
+};
+
+bool read_model_build_jobs(const std::string & path,
+                           std::vector<model_build_job> & jobs,
+                           std::string & error) {
+    jobs.clear();
+    std::ifstream input(path);
+    if (!input) {
+        error = "cannot open --tensor-list";
+        return false;
+    }
+    std::string line;
+    size_t line_number = 0;
+    while (std::getline(input, line)) {
+        ++line_number;
+        const size_t comment = line.find('#');
+        if (comment != std::string::npos) line.resize(comment);
+        std::istringstream tokens(line);
+        model_build_job job;
+        if (!(tokens >> job.tensor >> job.trace >> job.footprint)) continue;
+        tokens >> job.representation;
+        if (job.representation == "paired-d2") {
+            if (!(tokens >> job.rows >> job.columns)) {
+                error = "D2 tensor-list entry needs rows and columns at line " +
+                    std::to_string(line_number);
+                return false;
+            }
+        }
+        jobs.push_back(std::move(job));
+    }
+    if (jobs.empty()) {
+        error = "--tensor-list contains no tensor entries";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool build_model_cache(const char * argv0,
+                       const std::string & source_model,
                        const std::string & fragment_root,
                        const std::string & staging_root,
                        const std::string & cache,
+                       const std::string & tensor_list,
+                       const std::string & backend,
+                       const std::string & preset,
+                       const std::string & source_family,
+                       const std::string & workers,
                        astc_vulkan_cache_paths & paths,
                        std::string & error) {
     if (source_model.empty() || fragment_root.empty() || staging_root.empty()) {
         error = "build-model requires --source-model, --fragment-dir and --staging";
         return false;
+    }
+    if (!tensor_list.empty()) {
+        std::vector<model_build_job> jobs;
+        if (!read_model_build_jobs(tensor_list, jobs, error)) return false;
+        std::error_code ec;
+        if (!std::filesystem::create_directories(fragment_root, ec) && ec) {
+            error = "cannot create --fragment-dir";
+            return false;
+        }
+        for (const auto & job : jobs) {
+            const std::filesystem::path fragment =
+                std::filesystem::path(fragment_root) /
+                (sanitized_tensor_name(job.tensor) + "-" + job.footprint);
+            const auto manifest = fragment / "manifest.astcv";
+            const auto payload = fragment / "payload.astcpack";
+            if (std::filesystem::is_regular_file(manifest, ec) &&
+                std::filesystem::is_regular_file(payload, ec)) continue;
+            if (std::filesystem::exists(fragment, ec)) {
+                error = "incomplete tensor fragment exists; remove or repair: " + fragment.string();
+                return false;
+            }
+            std::vector<std::string> args{
+                "build", "--model", source_model, "--tensor", job.tensor,
+                "--trace", job.trace, "--footprint", job.footprint,
+                "--representation", job.representation, "--artifact-dir", fragment.string(),
+                "--backend", backend, "--preset", preset, "--source-family", source_family,
+                "--no-publish", "1"};
+            if (!workers.empty()) { args.push_back("--workers"); args.push_back(workers); }
+            if (job.representation == "paired-d2") {
+                args.push_back("--rows"); args.push_back(job.rows);
+                args.push_back("--columns"); args.push_back(job.columns);
+                args.push_back("--paired-semantic"); args.push_back("la");
+                args.push_back("--channel-weights"); args.push_back("balanced-a025");
+                args.push_back("--source-derived-alpha"); args.push_back("1");
+            }
+            std::printf("astc-cache build-model tensor=%s status=running\n", job.tensor.c_str());
+            if (!run_tool(sibling_tool(argv0, "astc-vulkan-cache"), args, error)) return false;
+        }
     }
     std::vector<astc_vulkan_model_cache_fragment> fragments;
     std::vector<std::string> tensor_names;
@@ -648,12 +757,13 @@ int main(int argc, char ** argv) {
         return 0;
     }
     std::string model, source_model, manifest, payload, layout, row_scales, provenance, cache = "auto", artifact_dir, profile_name;
-    std::string fragment_dir, staging_root;
+    std::string fragment_dir, staging_root, tensor_list;
     std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
     std::string runtime_family = "unspecified";
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
     std::string channel_weights = "balanced-a025", source_alpha = "1", row_scale = "none";
     std::string rows, columns, calibration_samples = "8", validation_samples = "7";
+    bool no_publish = false;
     for (int index = 2; index < argc; index += 2) {
         if (index + 1 >= argc) return 2;
         const std::string option = argv[index];
@@ -669,6 +779,7 @@ int main(int argc, char ** argv) {
         else if (option == "--artifact-dir") artifact_dir = value;
         else if (option == "--fragment-dir") fragment_dir = value;
         else if (option == "--staging") staging_root = value;
+        else if (option == "--tensor-list") tensor_list = value;
         else if (option == "--profile" || option == "--storage-profile") profile_name = value;
         else if (option == "--tensor") tensor = value;
         else if (option == "--trace") trace = value;
@@ -690,6 +801,7 @@ int main(int argc, char ** argv) {
         else if (option == "--columns") columns = value;
         else if (option == "--calibration-samples") calibration_samples = value;
         else if (option == "--validation-samples") validation_samples = value;
+        else if (option == "--no-publish") no_publish = value == "1" || value == "true";
         else return 2;
     }
     std::string error;
@@ -711,7 +823,9 @@ int main(int argc, char ** argv) {
     if (command == "build-model") {
         astc_vulkan_cache_paths paths;
         const std::string build_source = source_model.empty() ? model : source_model;
-        if (!build_model_cache(build_source, fragment_dir, staging_root, cache, paths, error)) {
+        if (!build_model_cache(argv[0], build_source, fragment_dir, staging_root, cache,
+                               tensor_list, backend, preset, source_family, workers,
+                               paths, error)) {
             std::fprintf(stderr, "astc-cache build-model failed: %s\n", error.c_str());
             return 1;
         }
@@ -744,9 +858,9 @@ int main(int argc, char ** argv) {
         const bool built = d2 ? build_d2_cache(
             argv[0], model, tensor, trace, footprint, cache, artifact_dir, source_family,
             paired_semantic, channel_weights, source_alpha, row_scale, rows, columns,
-            calibration_samples, validation_samples, workers, paths, error) : build_d1_cache(
+            calibration_samples, validation_samples, workers, !no_publish, paths, error) : build_d1_cache(
             argv[0], model, tensor, trace, footprint, cache, backend, shader, preset,
-            artifact_dir, source_family, max_rows, max_columns, workers, paths, error);
+            artifact_dir, source_family, max_rows, max_columns, workers, !no_publish, paths, error);
         if (!built) {
             std::fprintf(stderr, "astc-cache build failed: %s\n", error.c_str());
             return 1;
