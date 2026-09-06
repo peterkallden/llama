@@ -104,6 +104,26 @@ void uninstall() {
     g_installed = false;
 }
 
+bool get_default_device(ggml_vk_external_op_device_context & result, std::string & error) {
+    ggml_backend_reg_t reg = ggml_backend_reg_by_name("Vulkan");
+    if (reg == nullptr) {
+        error = "Vulkan backend registry is unavailable";
+        return false;
+    }
+    void * proc = ggml_backend_reg_get_proc_address(reg, GGML_VULKAN_EXTERNAL_DEVICE_API_NAME);
+    if (proc == nullptr) {
+        error = "Vulkan backend does not expose the generic external-device interface";
+        return false;
+    }
+    const auto get_device = reinterpret_cast<ggml_vk_external_op_get_device_fn>(proc);
+    if (get_device == nullptr || !get_device(&result)) {
+        error = "Vulkan backend could not provide a default device context";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 void bind_node(ggml_tensor * node,
                ggml_vk_external_op_dispatch_fn fn,
                void * user_data) {

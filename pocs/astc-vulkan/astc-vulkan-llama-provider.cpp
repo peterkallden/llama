@@ -68,8 +68,25 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
         error = "ASTC llama provider requires a runtime model path";
         return false;
     }
+    std::string external_error;
+    if (ggml_vk_astc_external_op::install(external_error)) {
+        external_op_installed_ = true;
+    } else {
+        std::fprintf(stderr, "ASTC external Vulkan seam unavailable: %s\n",
+                     external_error.c_str());
+    }
+
     shared_device_ = std::make_shared<astc_vulkan_shared_device>();
-    if (!shared_device_->init(error)) {
+    ggml_vk_external_op_device_context device_context{};
+    std::string device_error;
+    const bool borrowed_device = external_op_installed_ &&
+        ggml_vk_astc_external_op::get_default_device(device_context, device_error) &&
+        shared_device_->init_borrowed(
+            reinterpret_cast<VkPhysicalDevice>(device_context.native_physical_device),
+            reinterpret_cast<VkDevice>(device_context.native_device),
+            reinterpret_cast<VkQueue>(device_context.native_queue),
+            device_context.native_queue_family, device_error);
+    if (!borrowed_device && !shared_device_->init(error)) {
         reset();
         return false;
     }
@@ -138,16 +155,6 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
         error = "ASTC cache contains no resident D1 FFN-down artifacts eligible for runtime";
         reset();
         return false;
-    }
-    // Install only the generic dispatcher registry.  No graph node is bound
-    // yet, so the existing CPU custom-op bridge remains the active path until
-    // the native ASTC callback is supplied by a later device-sharing sweep.
-    std::string external_error;
-    if (ggml_vk_astc_external_op::install(external_error)) {
-        external_op_installed_ = true;
-    } else {
-        std::fprintf(stderr, "ASTC external Vulkan seam unavailable: %s\n",
-                     external_error.c_str());
     }
     const auto & summary = overlay_.summary();
     std::fprintf(stderr,

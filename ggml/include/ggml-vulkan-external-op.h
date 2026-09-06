@@ -10,6 +10,7 @@ extern "C" {
 
 #define GGML_VULKAN_EXTERNAL_OP_API_NAME "ggml.vulkan.external_op.v1"
 #define GGML_VULKAN_EXTERNAL_OP_API_VERSION 1u
+#define GGML_VULKAN_EXTERNAL_DEVICE_API_NAME "ggml.vulkan.external_device.v1"
 
 // Generic Vulkan interop contract. The external owner keeps ownership of its
 // private resources; these views are borrowed only during dispatch.
@@ -37,6 +38,19 @@ struct ggml_vk_external_op_dispatch_context {
     ggml_vk_external_op_get_buffer_fn get_buffer;
 };
 
+// Generic device handles for an opt-in owner that must create resources on
+// the same Vulkan device as ggml. The caller borrows these handles and never
+// destroys them through this interface.
+struct ggml_vk_external_op_device_context {
+    uint64_t native_physical_device;
+    uint64_t native_device;
+    uint64_t native_queue;
+    uint32_t native_queue_family;
+};
+
+typedef bool (*ggml_vk_external_op_get_device_fn)(
+        struct ggml_vk_external_op_device_context * result);
+
 typedef bool (*ggml_vk_external_op_dispatch_fn)(
         const struct ggml_vk_external_op_dispatch_context * context,
         void * user_data);
@@ -62,6 +76,9 @@ GGML_API const struct ggml_vk_external_op_api * ggml_vk_external_op_get_api(void
 
 GGML_API void ggml_vk_external_op_set_dispatcher(
         const struct ggml_vk_external_op_dispatcher * dispatcher);
+
+GGML_API bool ggml_vk_external_op_get_default_device(
+        struct ggml_vk_external_op_device_context * result);
 
 #ifdef __cplusplus
 }

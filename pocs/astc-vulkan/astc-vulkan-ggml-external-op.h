@@ -11,6 +11,7 @@ namespace ggml_vk_astc_external_op {
 // Vulkan runs never install it.
 bool install(std::string & error);
 void uninstall();
+bool get_default_device(ggml_vk_external_op_device_context & result, std::string & error);
 
 void bind_node(ggml_tensor * node,
                ggml_vk_external_op_dispatch_fn fn,

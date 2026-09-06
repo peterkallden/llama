@@ -15308,6 +15308,25 @@ extern "C" const ggml_vk_external_op_api * ggml_vk_external_op_get_api(void) {
     return &api;
 }
 
+extern "C" bool ggml_vk_external_op_get_default_device(
+        ggml_vk_external_op_device_context * result) {
+    if (result == nullptr) return false;
+    try {
+        const vk_device device = ggml_vk_get_device(0);
+        if (!device || !device->compute_queue || !device->compute_queue->handle) return false;
+        result->native_physical_device = reinterpret_cast<uint64_t>(
+            static_cast<VkPhysicalDevice>(device->physical_device));
+        result->native_device = reinterpret_cast<uint64_t>(
+            static_cast<VkDevice>(device->device));
+        result->native_queue = reinterpret_cast<uint64_t>(
+            static_cast<VkQueue>(device->compute_queue->handle->queue));
+        result->native_queue_family = device->compute_queue->queue_family_index;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 static bool ggml_vk_external_get_buffer_view(
         void * backend_context, const ggml_tensor * tensor,
         ggml_vk_external_op_buffer_view * result);
@@ -18926,6 +18945,9 @@ static void * ggml_backend_vk_reg_get_proc_address(ggml_backend_reg_t reg, const
     UNUSED(reg);
     if (name != nullptr && strcmp(name, GGML_VULKAN_EXTERNAL_OP_API_NAME) == 0) {
         return reinterpret_cast<void *>(ggml_vk_external_op_get_api);
+    }
+    if (name != nullptr && strcmp(name, GGML_VULKAN_EXTERNAL_DEVICE_API_NAME) == 0) {
+        return reinterpret_cast<void *>(ggml_vk_external_op_get_default_device);
     }
     return nullptr;
 }
