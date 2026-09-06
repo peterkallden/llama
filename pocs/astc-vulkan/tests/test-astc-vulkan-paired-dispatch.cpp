@@ -16,5 +16,8 @@ int main() {
                          {}, {}, 8, 10, 1, error));
     assert(error == "invalid paired-D2 ASTC matvec session configuration");
     assert(!session.ready());
+    assert(!session.record_external(VK_NULL_HANDLE, VK_NULL_HANDLE, 0, 0,
+                                    VK_NULL_HANDLE, 0, 0, {}, 0, 1, error));
+    assert(error == "invalid paired-D2 external matvec recording inputs");
     return 0;
 }

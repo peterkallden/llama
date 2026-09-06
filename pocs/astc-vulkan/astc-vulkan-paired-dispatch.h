@@ -45,6 +45,13 @@ public:
               astc_vulkan_paired_semantic semantic = astc_vulkan_paired_semantic::direct_rgb,
               const std::vector<float> & row_scales = {},
               uint32_t storage_height = 0, uint32_t texture_row_base = 0);
+    bool init_native(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+                     uint32_t queue_family, const astc_vulkan_tensor_session & tensor,
+                     const std::vector<uint8_t> & layout_map, const std::vector<uint32_t> & spirv,
+                     uint32_t width, uint32_t logical_height, uint32_t samples, std::string & error,
+                     astc_vulkan_paired_semantic semantic = astc_vulkan_paired_semantic::direct_rgb,
+                     const std::vector<float> & row_scales = {},
+                     uint32_t storage_height = 0, uint32_t texture_row_base = 0);
     bool run(const std::vector<float> & activations,
              const astc_vulkan_reconstruction & reconstruction,
              std::vector<float> & output, std::string & error);
@@ -55,6 +62,13 @@ public:
                   const astc_vulkan_reconstruction & reconstruction,
                   uint32_t row_base, uint32_t band_height,
                   std::vector<float> & output, std::string & error);
+    bool record_external(VkCommandBuffer command_buffer, VkBuffer activation_buffer,
+                         VkDeviceSize activation_offset, VkDeviceSize activation_size,
+                         VkBuffer output_buffer, VkDeviceSize output_offset,
+                         VkDeviceSize output_size,
+                         const astc_vulkan_reconstruction & reconstruction,
+                         uint32_t row_base, uint32_t band_height,
+                         std::string & error);
     void reset();
     bool ready() const { return device_ != VK_NULL_HANDLE && pipeline_ != VK_NULL_HANDLE; }
 
@@ -90,4 +104,12 @@ private:
     VkCommandPool command_pool_ = VK_NULL_HANDLE;
     VkCommandBuffer command_buffer_ = VK_NULL_HANDLE;
     VkFence fence_ = VK_NULL_HANDLE;
+    bool native_mode_ = false;
+
+    bool init_impl(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+                   uint32_t queue_family, const astc_vulkan_tensor_session & tensor,
+                   const std::vector<uint8_t> & layout_map, const std::vector<uint32_t> & spirv,
+                   uint32_t width, uint32_t logical_height, uint32_t samples, std::string & error,
+                   astc_vulkan_paired_semantic semantic, const std::vector<float> & row_scales,
+                   uint32_t storage_height, uint32_t texture_row_base, bool native_mode);
 };
