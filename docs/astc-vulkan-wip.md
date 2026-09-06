@@ -9454,3 +9454,43 @@ native fallback, budget-limited residency, and crash-safe build-state replay.
 Existing cache, residency, stream-loader, and manifest contract tests remain
 green. This is the intended boundary before implementing the full multi-tensor
 builder and model catalog loader.
+
+## Three-hundred-and-seventy-second sweep: fragment merge and model build command
+
+The model-level seam now has a disk-facing offline path. `build-model` accepts
+a source GGUF, a directory of already-generated per-tensor artifact packages,
+a staging directory, and the normal cache destination:
+
+```text
+fragment-dir/
+  tensor-a/
+    manifest.astcv
+    payload.astcpack
+    [layout-map.bin]
+    [row-scales.bin]
+  tensor-b/
+    ...
+        |
+        v
+build-model --source-model ... --fragment-dir ... --staging ...
+        |
+        +--> merged manifest/payload/layout/row-scales in staging
+        +--> existing cache validator and atomic publisher
+```
+
+The merge requires v4 fragments, rejects mismatched model fingerprints and
+duplicate artifact IDs, copies each referenced range, rewrites offsets, and
+revalidates payload/layout/row-scale ranges before publication. A deterministic
+fragment order makes the resulting cache reproducible. The build-state journal
+records the discovered tensor set before publication so a failed publish can
+be retried from the same staging directory without re-encoding the fragments.
+
+This command is still offline-only: it does not scan GGUF tensors, run an
+encoder, or perform runtime JIT work. The existing `build` command remains the
+per-tensor producer. The intended next step is a thin model builder that
+invokes that producer for a selected tensor list and places each result in the
+fragment directory; the merge/publication path is now ready for it.
+
+The focused cache, model-plan, residency, stream-loader, and cache-tool tests
+all pass after this integration. No production scheduler or Vulkan runtime
+semantics were changed.

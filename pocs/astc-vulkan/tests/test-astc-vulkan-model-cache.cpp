@@ -2,7 +2,9 @@
 
 #include <cassert>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <vector>
 
 namespace {
 
@@ -91,6 +93,47 @@ int main() {
     assert(loaded.completed_tensors == state.completed_tensors);
     std::filesystem::remove(base);
     std::filesystem::remove(base.string() + ".partial");
+
+    const auto merge_root = std::filesystem::temp_directory_path() /
+        "astc-vulkan-model-cache-merge-contract";
+    std::filesystem::remove_all(merge_root);
+    std::filesystem::create_directories(merge_root);
+    std::vector<astc_vulkan_model_cache_fragment> fragments;
+    for (int index = 0; index < 2; ++index) {
+        const auto fragment_root = merge_root / ("fragment-" + std::to_string(index));
+        std::filesystem::create_directories(fragment_root);
+        const auto payload_path = fragment_root / "payload.astcpack";
+        const auto manifest_path = fragment_root / "manifest.astcv";
+        std::vector<uint8_t> bytes(16, static_cast<uint8_t>(index + 1));
+        {
+            std::ofstream payload(payload_path, std::ios::binary);
+            payload.write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+        }
+        astc_vulkan_artifact_record artifact = make_artifact(
+            index == 0 ? "fragment-a" : "fragment-b",
+            index == 0 ? "blk.0.ffn_down.weight" : "blk.1.ffn_down.weight",
+            0.1f, true, true);
+        artifact.storage.payload_hash64 = astc_vulkan_payload_hash64(bytes.data(), bytes.size());
+        astc_vulkan_manifest fragment_manifest;
+        fragment_manifest.version = 4;
+        fragment_manifest.model_fingerprint = "model-test";
+        fragment_manifest.artifacts.push_back(artifact);
+        assert(astc_vulkan_write_manifest(manifest_path.string(), fragment_manifest, error));
+        fragments.push_back({manifest_path.string(), payload_path.string(), {}, {}});
+    }
+    const auto merged_manifest_path = merge_root / "merged.manifest.astcv";
+    const auto merged_payload_path = merge_root / "merged.payload.astcpack";
+    astc_vulkan_manifest merged;
+    assert(astc_vulkan_model_cache_merge_fragments(
+        fragments, merged_manifest_path.string(), merged_payload_path.string(), {}, {}, merged, error));
+    assert(merged.artifacts.size() == 2);
+    assert(merged.artifacts[0].storage.byte_offset == 0);
+    assert(merged.artifacts[1].storage.byte_offset == 16);
+    assert(std::filesystem::file_size(merged_payload_path) == 32);
+    astc_vulkan_manifest reloaded;
+    assert(astc_vulkan_read_manifest(merged_manifest_path.string(), reloaded, error));
+    assert(reloaded.artifacts.size() == merged.artifacts.size());
+    std::filesystem::remove_all(merge_root);
 
     std::cout << "ASTC Vulkan model cache plan contract passed\n";
     return 0;

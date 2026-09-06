@@ -285,6 +285,11 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-model-cache PUBLIC
         astc-vulkan-cache astc-vulkan-residency)
     target_compile_features(astc-vulkan-model-cache PUBLIC cxx_std_17)
+    if (TARGET astc-vulkan-cache-tool)
+        target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-model-cache)
+        target_compile_definitions(astc-vulkan-cache-tool PRIVATE
+            ASTC_VULKAN_MODEL_CACHE_AVAILABLE=1)
+    endif()
 
     add_library(astc-vulkan-ffn-adapter STATIC
         astc-vulkan-ffn-adapter.cpp)

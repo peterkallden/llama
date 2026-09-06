@@ -1,7 +1,11 @@
 #include "astc-vulkan-cache.h"
 #include "astc-vulkan-format.h"
 #include "astc-vulkan-provenance.h"
+#ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
+#include "astc-vulkan-model-cache.h"
+#endif
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -121,6 +125,10 @@ void print_help(const char * executable) {
             "            [--backend hybrid|cpu] [--workers N]\n"
         "  %s inspect --model model.gguf [--cache path|auto]\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
+#ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
+        "  %s build-model --source-model model.gguf --fragment-dir fragments/\n"
+            "            --staging build-state/ [--cache path|auto]\n"
+#endif
         "\nF16-cache ovanpå Q4/Q3 (avancerat, kräver separat model-replay):\n"
         "  %s bind --source-model source-f16.gguf --runtime-model runtime-q4.gguf\n"
             "            [--family q4_k_m] [--cache source-cache|auto]\n"
@@ -147,7 +155,11 @@ void print_help(const char * executable) {
         "build is a bounded D1 orchestrator: it runs the existing latent exporter, packs a\n"
         "v4 artifact and publishes it atomically. It does not perform JIT encoding and\n"
         "defaults model/vulkan evidence gates to false until replay has passed.\n",
-        executable, executable, executable, executable, executable, executable, executable, executable, executable);
+        executable, executable, executable, executable,
+#ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
+        executable,
+#endif
+        executable, executable, executable, executable, executable);
 }
 
 std::string shell_quote(const std::string & value) {
@@ -529,6 +541,99 @@ bool artifact_directory_paths(const std::string & root, std::string & manifest,
     return true;
 }
 
+#ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
+bool collect_model_fragments(
+    const std::string & fragment_root,
+    std::vector<astc_vulkan_model_cache_fragment> & fragments,
+    std::vector<std::string> & tensor_names,
+    std::string & error) {
+    fragments.clear();
+    tensor_names.clear();
+    std::error_code ec;
+    const std::filesystem::path root(fragment_root);
+    if (!std::filesystem::is_directory(root, ec)) {
+        error = "--fragment-dir is not a directory";
+        return false;
+    }
+    std::vector<std::filesystem::path> directories;
+    for (const auto & entry : std::filesystem::directory_iterator(root, ec)) {
+        if (ec) break;
+        if (entry.is_directory(ec)) directories.push_back(entry.path());
+    }
+    if (ec) {
+        error = "cannot enumerate model cache fragments";
+        return false;
+    }
+    std::sort(directories.begin(), directories.end());
+    for (const auto & directory : directories) {
+        const auto manifest_path = directory / "manifest.astcv";
+        const auto payload_path = directory / "payload.astcpack";
+        if (!std::filesystem::is_regular_file(manifest_path, ec) ||
+            !std::filesystem::is_regular_file(payload_path, ec)) continue;
+        astc_vulkan_manifest manifest;
+        if (!astc_vulkan_read_manifest(manifest_path.string(), manifest, error)) return false;
+        if (manifest.version != 4 || manifest.artifacts.empty()) {
+            error = "model fragment must contain a non-empty v4 manifest: " + directory.string();
+            return false;
+        }
+        for (const auto & artifact : manifest.artifacts) tensor_names.push_back(artifact.storage.name);
+        const auto layout_path = directory / "layout-map.bin";
+        const auto row_scales_path = directory / "row-scales.bin";
+        astc_vulkan_model_cache_fragment fragment;
+        fragment.manifest_path = manifest_path.string();
+        fragment.payload_path = payload_path.string();
+        if (std::filesystem::is_regular_file(layout_path, ec)) fragment.layout_path = layout_path.string();
+        if (std::filesystem::is_regular_file(row_scales_path, ec)) fragment.row_scales_path = row_scales_path.string();
+        fragments.push_back(std::move(fragment));
+    }
+    if (fragments.empty()) {
+        error = "no v4 artifact fragments found under --fragment-dir";
+        return false;
+    }
+    std::sort(tensor_names.begin(), tensor_names.end());
+    tensor_names.erase(std::unique(tensor_names.begin(), tensor_names.end()), tensor_names.end());
+    error.clear();
+    return true;
+}
+
+bool build_model_cache(const std::string & source_model,
+                       const std::string & fragment_root,
+                       const std::string & staging_root,
+                       const std::string & cache,
+                       astc_vulkan_cache_paths & paths,
+                       std::string & error) {
+    if (source_model.empty() || fragment_root.empty() || staging_root.empty()) {
+        error = "build-model requires --source-model, --fragment-dir and --staging";
+        return false;
+    }
+    std::vector<astc_vulkan_model_cache_fragment> fragments;
+    std::vector<std::string> tensor_names;
+    if (!collect_model_fragments(fragment_root, fragments, tensor_names, error)) return false;
+    std::filesystem::create_directories(staging_root);
+    const std::filesystem::path state_path =
+        std::filesystem::path(staging_root) / "build-state.txt";
+    astc_vulkan_model_cache_build_state state;
+    if (std::filesystem::is_regular_file(state_path)) {
+        if (!astc_vulkan_model_cache_read_build_state(state_path.string(), state, error)) return false;
+        if (state.source_model != source_model || state.output_root != staging_root) {
+            error = "model cache build-state belongs to a different source or staging root";
+            return false;
+        }
+        std::printf("astc-cache build-model resume completed=%zu\n", state.completed_tensors.size());
+    } else {
+        state.source_model = source_model;
+        state.output_root = staging_root;
+    }
+    state.completed_tensors = tensor_names;
+    if (!astc_vulkan_model_cache_write_build_state(state_path.string(), state, error)) return false;
+    if (!astc_vulkan_model_cache_publish_fragments(
+            source_model, fragments, staging_root, cache, paths, error)) return false;
+    std::printf("astc-cache build-model tensors=%zu fragments=%zu\n",
+                tensor_names.size(), fragments.size());
+    return true;
+}
+#endif
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -543,6 +648,7 @@ int main(int argc, char ** argv) {
         return 0;
     }
     std::string model, source_model, manifest, payload, layout, row_scales, provenance, cache = "auto", artifact_dir, profile_name;
+    std::string fragment_dir, staging_root;
     std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
     std::string runtime_family = "unspecified";
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
@@ -561,6 +667,8 @@ int main(int argc, char ** argv) {
         else if (option == "--provenance") provenance = value;
         else if (option == "--cache") cache = value;
         else if (option == "--artifact-dir") artifact_dir = value;
+        else if (option == "--fragment-dir") fragment_dir = value;
+        else if (option == "--staging") staging_root = value;
         else if (option == "--profile" || option == "--storage-profile") profile_name = value;
         else if (option == "--tensor") tensor = value;
         else if (option == "--trace") trace = value;
@@ -599,6 +707,19 @@ int main(int argc, char ** argv) {
         std::printf("astc-cache bind note=structural-only; run a runtime-specific replay gate before production scheduling\n");
         return 0;
     }
+#ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
+    if (command == "build-model") {
+        astc_vulkan_cache_paths paths;
+        const std::string build_source = source_model.empty() ? model : source_model;
+        if (!build_model_cache(build_source, fragment_dir, staging_root, cache, paths, error)) {
+            std::fprintf(stderr, "astc-cache build-model failed: %s\n", error.c_str());
+            return 1;
+        }
+        std::printf("astc-cache build-model published root=%s\n", paths.root.c_str());
+        print_paths(paths);
+        return 0;
+    }
+#endif
     if (command == "build") {
         if (representation != "scalar" && representation != "paired-d2") {
             std::fprintf(stderr, "astc-cache build failed: --representation must be scalar or paired-d2\n");

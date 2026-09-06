@@ -1,6 +1,7 @@
 #pragma once
 
 #include "astc-vulkan-artifact-policy.h"
+#include "astc-vulkan-cache.h"
 #include "astc-vulkan-manifest.h"
 #include "astc-vulkan-residency.h"
 
@@ -75,4 +76,39 @@ bool astc_vulkan_model_cache_write_build_state(
 bool astc_vulkan_model_cache_read_build_state(
     const std::string & path,
     astc_vulkan_model_cache_build_state & state,
+    std::string & error);
+
+// One already-generated per-tensor artifact package. The package is normally
+// produced by the existing D1/D2 cache tools; this layer only merges verified
+// packages and never runs an encoder.
+struct astc_vulkan_model_cache_fragment {
+    std::string manifest_path;
+    std::string payload_path;
+    std::string layout_path;
+    std::string row_scales_path;
+};
+
+// Merges v4 artifact fragments into one staging manifest and the three
+// optional binary blobs. Payload/layout/row-scale ranges are copied in
+// fragment order and their manifest offsets are rewritten accordingly.
+// `result` is validated against the produced staging files before returning.
+bool astc_vulkan_model_cache_merge_fragments(
+    const std::vector<astc_vulkan_model_cache_fragment> & fragments,
+    const std::string & output_manifest_path,
+    const std::string & output_payload_path,
+    const std::string & output_layout_path,
+    const std::string & output_row_scales_path,
+    astc_vulkan_manifest & result,
+    std::string & error);
+
+// Convenience wrapper for the normal offline flow: merge fragments into a
+// staging directory, then delegate final validation and atomic publication to
+// the existing cache publisher. The staging directory remains caller-owned so
+// a build journal can resume or inspect it after a failure.
+bool astc_vulkan_model_cache_publish_fragments(
+    const std::string & source_model_path,
+    const std::vector<astc_vulkan_model_cache_fragment> & fragments,
+    const std::string & staging_root,
+    const std::string & requested_cache_path,
+    astc_vulkan_cache_paths & paths,
     std::string & error);
