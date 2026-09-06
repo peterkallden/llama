@@ -688,7 +688,8 @@ bool build_model_cache(const char * argv0,
         for (const auto & job : jobs) {
             const std::filesystem::path fragment =
                 std::filesystem::path(fragment_root) /
-                (sanitized_tensor_name(job.tensor) + "-" + job.footprint);
+                (sanitized_tensor_name(job.tensor) + "-" + job.footprint + "-" +
+                 sanitized_tensor_name(job.representation));
             const auto manifest = fragment / "manifest.astcv";
             const auto payload = fragment / "payload.astcpack";
             if (std::filesystem::is_regular_file(manifest, ec) &&
