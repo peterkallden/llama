@@ -66,7 +66,10 @@ astc_vulkan_matvec_session::~astc_vulkan_matvec_session() {
 
 void astc_vulkan_matvec_session::reset() {
     if (device_ == VK_NULL_HANDLE) return;
-    vkDeviceWaitIdle(device_);
+    // Native sessions borrow the backend device and are reset as part of the
+    // graph/resource owner lifecycle. The owner, not this session, provides
+    // the final device synchronization in that mode.
+    if (!native_mode_) vkDeviceWaitIdle(device_);
     if (fence_ != VK_NULL_HANDLE) vkDestroyFence(device_, fence_, nullptr);
     if (command_pool_ != VK_NULL_HANDLE) vkDestroyCommandPool(device_, command_pool_, nullptr);
     if (pipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipeline_, nullptr);
@@ -83,6 +86,7 @@ void astc_vulkan_matvec_session::reset() {
     width_ = height_ = texture_height_ = samples_ = 0;
     descriptor_set_ = VK_NULL_HANDLE;
     command_buffer_ = VK_NULL_HANDLE;
+    native_mode_ = false;
 }
 
 bool astc_vulkan_matvec_session::init(
@@ -90,6 +94,24 @@ bool astc_vulkan_matvec_session::init(
         uint32_t queue_family, const astc_vulkan_tensor_session & tensor,
         const std::vector<uint32_t> & spirv, uint32_t width, uint32_t height,
         uint32_t samples, std::string & error) {
+    return init_impl(physical_device, device, queue, queue_family, tensor, spirv,
+                     width, height, samples, false, error);
+}
+
+bool astc_vulkan_matvec_session::init_native(
+        VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+        uint32_t queue_family, const astc_vulkan_tensor_session & tensor,
+        const std::vector<uint32_t> & spirv, uint32_t width, uint32_t height,
+        uint32_t samples, std::string & error) {
+    return init_impl(physical_device, device, queue, queue_family, tensor, spirv,
+                     width, height, samples, true, error);
+}
+
+bool astc_vulkan_matvec_session::init_impl(
+        VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+        uint32_t queue_family, const astc_vulkan_tensor_session & tensor,
+        const std::vector<uint32_t> & spirv, uint32_t width, uint32_t height,
+        uint32_t samples, bool native_mode, std::string & error) {
     reset();
     if (physical_device == VK_NULL_HANDLE || device == VK_NULL_HANDLE ||
         queue == VK_NULL_HANDLE || queue_family == UINT32_MAX || spirv.empty() ||
@@ -109,17 +131,20 @@ bool astc_vulkan_matvec_session::init(
     height_ = height;
     texture_height_ = tensor.texture().height();
     samples_ = samples;
+    native_mode_ = native_mode;
     const VkDeviceSize activation_bytes = static_cast<VkDeviceSize>(samples) * width * sizeof(float);
     const VkDeviceSize output_bytes = static_cast<VkDeviceSize>(samples) * height * sizeof(float);
-    if (!create_host_buffer(physical_device_, device_, activation_bytes,
-                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                            activation_buffer_, activation_memory_) ||
-        !create_host_buffer(physical_device_, device_, output_bytes,
-                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                            output_buffer_, output_memory_)) {
-        error = "failed to allocate ASTC matvec buffers";
-        reset();
-        return false;
+    if (!native_mode_) {
+        if (!create_host_buffer(physical_device_, device_, activation_bytes,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                activation_buffer_, activation_memory_) ||
+            !create_host_buffer(physical_device_, device_, output_bytes,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                output_buffer_, output_memory_)) {
+            error = "failed to allocate ASTC matvec buffers";
+            reset();
+            return false;
+        }
     }
 
     const VkDescriptorSetLayoutBinding bindings[3] = {
@@ -171,7 +196,7 @@ bool astc_vulkan_matvec_session::init(
          static_cast<uint32_t>(astc_vulkan_descriptor_binding::kOutput), 0, 1,
          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &output_info, nullptr},
     };
-    vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
+    vkUpdateDescriptorSets(device_, native_mode_ ? 1 : 3, writes, 0, nullptr);
 
     const VkShaderModuleCreateInfo shader_info{
         VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0,
@@ -202,6 +227,10 @@ bool astc_vulkan_matvec_session::init(
         error = "failed to create ASTC matvec pipeline";
         reset();
         return false;
+    }
+    if (native_mode_) {
+        error.clear();
+        return true;
     }
     const VkCommandPoolCreateInfo command_pool_info{
         VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr,
@@ -343,6 +372,77 @@ bool astc_vulkan_matvec_session::run_band(
         error = "failed to invalidate ASTC matvec band output";
         return false;
     }
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_matvec_session::record_external(
+        VkCommandBuffer command_buffer, VkBuffer activation_buffer,
+        VkDeviceSize activation_offset, VkDeviceSize activation_size,
+        VkBuffer output_buffer, VkDeviceSize output_offset,
+        VkDeviceSize output_size, const astc_vulkan_reconstruction & reconstruction,
+        uint32_t row_base, uint32_t band_height, std::string & error) {
+    if (device_ == VK_NULL_HANDLE || pipeline_ == VK_NULL_HANDLE ||
+        descriptor_set_ == VK_NULL_HANDLE || command_buffer == VK_NULL_HANDLE ||
+        activation_buffer == VK_NULL_HANDLE || output_buffer == VK_NULL_HANDLE ||
+        activation_size == 0 || output_size == 0 || band_height == 0 ||
+        row_base > height_ || band_height > height_ - row_base ||
+        texture_height_ < band_height) {
+        error = "invalid ASTC external matvec recording inputs";
+        return false;
+    }
+    if (activation_size < static_cast<VkDeviceSize>(samples_) * width_ * sizeof(float) ||
+        output_size < static_cast<VkDeviceSize>(samples_) * height_ * sizeof(float)) {
+        error = "ASTC external matvec buffers are smaller than the dispatch shape";
+        return false;
+    }
+    const VkDescriptorBufferInfo activation_info{activation_buffer, activation_offset,
+                                                  static_cast<VkDeviceSize>(samples_) * width_ * sizeof(float)};
+    const VkDescriptorBufferInfo output_info{output_buffer, output_offset,
+                                              static_cast<VkDeviceSize>(samples_) * height_ * sizeof(float)};
+    const VkWriteDescriptorSet writes[2] = {
+        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set_,
+         static_cast<uint32_t>(astc_vulkan_descriptor_binding::kActivations), 0, 1,
+         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &activation_info, nullptr},
+        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set_,
+         static_cast<uint32_t>(astc_vulkan_descriptor_binding::kOutput), 0, 1,
+         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &output_info, nullptr},
+    };
+    vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+
+    const VkBufferMemoryBarrier input_barrier{
+        VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr,
+        VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_ACCESS_SHADER_READ_BIT, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+        activation_buffer, activation_offset, activation_info.range};
+    const VkBufferMemoryBarrier output_before{
+        VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr,
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+        output_buffer, output_offset, output_info.range};
+    const VkBufferMemoryBarrier before_barriers[2] = { input_barrier, output_before };
+    vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 2,
+                         before_barriers, 0, nullptr);
+    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
+    vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            pipeline_layout_, 0, 1, &descriptor_set_, 0, nullptr);
+    for (uint32_t sample = 0; sample < samples_; ++sample) {
+        const astc_vulkan_matvec_push_constants constants{
+            width_, band_height, sample, row_base, height_, reconstruction.scale_l,
+            reconstruction.scale_a, reconstruction.offset};
+        vkCmdPushConstants(command_buffer, pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT,
+                           0, sizeof(constants), &constants);
+        vkCmdDispatch(command_buffer, band_height, 1, 1);
+    }
+    const VkBufferMemoryBarrier output_after{
+        VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+        VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+        output_buffer, output_offset, output_info.range};
+    vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 1,
+                         &output_after, 0, nullptr);
     error.clear();
     return true;
 }

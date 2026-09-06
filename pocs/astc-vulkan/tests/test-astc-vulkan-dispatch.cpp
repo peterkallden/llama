@@ -15,6 +15,9 @@ int main() {
     std::vector<float> output;
     assert(!session.run({}, {}, output, error));
     assert(error == "invalid ASTC matvec run inputs");
+    assert(!session.record_external(VK_NULL_HANDLE, VK_NULL_HANDLE, 0, 0,
+                                    VK_NULL_HANDLE, 0, 0, {}, 0, 1, error));
+    assert(error == "invalid ASTC external matvec recording inputs");
 
     session.reset();
     std::puts("ASTC Vulkan dispatch error-path contract passed");

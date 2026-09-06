@@ -54,6 +54,13 @@ public:
               uint32_t queue_family, const astc_vulkan_tensor_session & tensor,
               const std::vector<uint32_t> & spirv, uint32_t width, uint32_t height,
               uint32_t samples, std::string & error);
+    // Native graph integration uses the same pipeline and sampled image but
+    // borrows activation/output buffers and records into the caller's command
+    // buffer. It does not submit, wait or map memory.
+    bool init_native(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+                     uint32_t queue_family, const astc_vulkan_tensor_session & tensor,
+                     const std::vector<uint32_t> & spirv, uint32_t width, uint32_t height,
+                     uint32_t samples, std::string & error);
     bool run(const std::vector<float> & activations,
              const astc_vulkan_reconstruction & reconstruction,
              std::vector<float> & output, std::string & error);
@@ -62,6 +69,13 @@ public:
                   const astc_vulkan_reconstruction & reconstruction,
                   uint32_t row_base, uint32_t band_height,
                   std::vector<float> & output, std::string & error);
+    bool record_external(VkCommandBuffer command_buffer, VkBuffer activation_buffer,
+                         VkDeviceSize activation_offset, VkDeviceSize activation_size,
+                         VkBuffer output_buffer, VkDeviceSize output_offset,
+                         VkDeviceSize output_size,
+                         const astc_vulkan_reconstruction & reconstruction,
+                         uint32_t row_base, uint32_t band_height,
+                         std::string & error);
     void reset();
     bool ready() const { return device_ != VK_NULL_HANDLE && pipeline_ != VK_NULL_HANDLE; }
 
@@ -87,4 +101,10 @@ private:
     VkCommandPool command_pool_ = VK_NULL_HANDLE;
     VkCommandBuffer command_buffer_ = VK_NULL_HANDLE;
     VkFence fence_ = VK_NULL_HANDLE;
+    bool native_mode_ = false;
+
+    bool init_impl(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
+                   uint32_t queue_family, const astc_vulkan_tensor_session & tensor,
+                   const std::vector<uint32_t> & spirv, uint32_t width, uint32_t height,
+                   uint32_t samples, bool native_mode, std::string & error);
 };
