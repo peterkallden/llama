@@ -9414,3 +9414,43 @@ fixed. The few-level margin is now applied only for explicit few-level sources;
 normal scalar export uses the full normalized interval and the true source
 minimum as decoder offset. Earlier pilot runs with the shifted offset are
 discarded for quality comparisons.
+
+## Three-hundred-and-seventy-first sweep: model-level cache orchestration skeleton
+
+The existing cache format already supports multiple immutable artifact records
+per tensor (manifest v4), and the existing scheduler policy already knows how
+to rank evidence-backed candidates. The existing residency planner already
+owns the ordered prefix/budget calculation, while the stream loader already
+owns footprint-aligned bands within one tensor. These pieces are therefore
+reused rather than copied.
+
+The new `astc-vulkan-model-cache` library adds only the missing model-level
+seam:
+
+```text
+manifest v4
+    -> choose one eligible artifact per tensor
+    -> keep native-Q fallback for tensors without a passing artifact
+    -> pass selected payload sizes to existing residency planner
+    -> runtime owner loads resident tensors and streams bands within a tensor
+```
+
+It also adds a small atomic build-state journal (`.partial` then rename) with
+source-model, output-root, and completed-tensor entries. This is a resume
+checkpoint only; it is not runtime-visible and does not replace the existing
+atomic cache publisher.
+
+The skeleton deliberately does **not** encode tensors, scan GGUF data, own
+Vulkan images, merge payload fragments, or perform just-in-time encoding. The
+next offline builder must call the existing per-tensor producers one at a time,
+write verified fragments into a staging directory, and publish one merged
+manifest/payload/layout/row-scale set through the existing cache validation
+path. The runtime integration should then construct one model catalog once and
+use tensor-level artifact selection plus physical row-band streaming; it must
+not swap arbitrary ASTC blocks or create a second residency policy.
+
+The focused model-cache contract test verifies per-tensor artifact selection,
+native fallback, budget-limited residency, and crash-safe build-state replay.
+Existing cache, residency, stream-loader, and manifest contract tests remain
+green. This is the intended boundary before implementing the full multi-tensor
+builder and model catalog loader.

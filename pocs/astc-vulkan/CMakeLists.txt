@@ -274,6 +274,18 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-residency PUBLIC astc-vulkan-resource)
     target_compile_features(astc-vulkan-residency PUBLIC cxx_std_17)
 
+    # Model-level orchestration deliberately reuses the existing manifest,
+    # artifact-policy, cache, and residency contracts. It adds no encoder or
+    # Vulkan-resource ownership and is therefore safe to keep offline/runtime
+    # selection concerns separate from per-tensor loading.
+    add_library(astc-vulkan-model-cache STATIC
+        astc-vulkan-model-cache.cpp)
+    target_include_directories(astc-vulkan-model-cache PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-model-cache PUBLIC
+        astc-vulkan-cache astc-vulkan-residency)
+    target_compile_features(astc-vulkan-model-cache PUBLIC cxx_std_17)
+
     add_library(astc-vulkan-ffn-adapter STATIC
         astc-vulkan-ffn-adapter.cpp)
     target_include_directories(astc-vulkan-ffn-adapter PUBLIC
@@ -382,6 +394,19 @@ if (TARGET Vulkan::Vulkan)
     target_include_directories(test-astc-vulkan-residency PRIVATE
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_compile_features(test-astc-vulkan-residency PRIVATE cxx_std_17)
+
+    add_executable(test-astc-vulkan-model-cache
+        tests/test-astc-vulkan-model-cache.cpp)
+    target_link_libraries(test-astc-vulkan-model-cache PRIVATE
+        astc-vulkan-model-cache)
+    target_include_directories(test-astc-vulkan-model-cache PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_compile_features(test-astc-vulkan-model-cache PRIVATE cxx_std_17)
+    if (BUILD_TESTING)
+        add_test(NAME test-astc-vulkan-model-cache
+            COMMAND test-astc-vulkan-model-cache)
+        set_property(TEST test-astc-vulkan-model-cache PROPERTY LABELS astc)
+    endif()
 
     add_executable(test-astc-vulkan-dispatch
         tests/test-astc-vulkan-dispatch.cpp)
