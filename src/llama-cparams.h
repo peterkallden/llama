@@ -14,6 +14,10 @@ struct llama_ffn_down_output_override {
 struct llama_ffn_down_runtime_provider {
     llama_ffn_down_runtime_is_ready_fn is_ready = nullptr;
     llama_ffn_down_runtime_run_fn run = nullptr;
+    // Optional graph-time hook. When it returns true, the provider has bound
+    // the generated runtime node to a backend-native dispatch path. A false
+    // result preserves the ordinary custom-op/CPU fallback.
+    llama_ffn_down_runtime_native_bind_fn native_bind = nullptr;
     void * user_data = nullptr;
 };
 

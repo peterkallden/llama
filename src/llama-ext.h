@@ -139,11 +139,19 @@ typedef bool (*llama_ffn_down_runtime_run_fn)(
         void * user_data, uint32_t lid,
         const float * input, uint32_t n_tokens, uint32_t input_columns,
         float * output, uint32_t output_columns);
+// Optional graph-time native binding hook. `node` is the generated runtime
+// node for layer `lid`; the callback may register it with a backend-native
+// dispatcher. Returning false keeps the existing CPU custom-op path.
+typedef bool (*llama_ffn_down_runtime_native_bind_fn)(
+        void * user_data, struct ggml_tensor * node, uint32_t lid);
 LLAMA_API bool llama_set_ffn_down_runtime_provider(
         struct llama_context * ctx,
         llama_ffn_down_runtime_is_ready_fn is_ready,
         llama_ffn_down_runtime_run_fn run,
         void * user_data);
+LLAMA_API bool llama_set_ffn_down_runtime_native_binding(
+        struct llama_context * ctx,
+        llama_ffn_down_runtime_native_bind_fn native_bind);
 
 // PoC helper exposing the FFN width needed to interpret the capture above.
 LLAMA_API int32_t llama_model_n_ff(const struct llama_model * model, uint32_t layer);

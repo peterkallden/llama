@@ -1938,6 +1938,9 @@ ggml_tensor * llm_graph_context::build_ffn(
             cur = ggml_map_custom1_with_output(ctx0, cur, GGML_TYPE_F32, n_embd, n_tokens,
                                                 llama_ffn_down_runtime_custom_op, 1, input.get());
             ggml_set_name(cur, "ffn_down_runtime_provider");
+            if (provider.native_bind != nullptr) {
+                provider.native_bind(provider.user_data, cur, static_cast<uint32_t>(il));
+            }
             res->add_input(std::move(input));
         } else {
             cur = build_lora_mm(down, cur);

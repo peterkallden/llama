@@ -879,6 +879,7 @@ struct llm_graph_params {
         const auto & runtime_rhs = other.cparams.ffn_down_runtime_provider;
         if (runtime_lhs.is_ready != runtime_rhs.is_ready ||
             runtime_lhs.run != runtime_rhs.run ||
+            runtime_lhs.native_bind != runtime_rhs.native_bind ||
             runtime_lhs.user_data != runtime_rhs.user_data) {
             return false;
         }

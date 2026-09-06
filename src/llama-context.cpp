@@ -1230,11 +1230,19 @@ bool llama_context::set_ffn_down_output_override(uint32_t lid, const float * dat
 bool llama_context::set_ffn_down_runtime_provider(
         llama_ffn_down_runtime_is_ready_fn is_ready,
         llama_ffn_down_runtime_run_fn run,
-        void * user_data) {
+        void * user_data,
+        llama_ffn_down_runtime_native_bind_fn native_bind) {
     if ((is_ready == nullptr) != (run == nullptr)) {
         return false;
     }
-    cparams.ffn_down_runtime_provider = { is_ready, run, user_data };
+    cparams.ffn_down_runtime_provider = { is_ready, run, native_bind, user_data };
+    sched_need_reserve = true;
+    return true;
+}
+
+bool llama_context::set_ffn_down_runtime_native_binding(
+        llama_ffn_down_runtime_native_bind_fn native_bind) {
+    cparams.ffn_down_runtime_provider.native_bind = native_bind;
     sched_need_reserve = true;
     return true;
 }
@@ -4001,6 +4009,12 @@ bool llama_set_ffn_down_runtime_provider(
         llama_ffn_down_runtime_run_fn run,
         void * user_data) {
     return ctx != nullptr && ctx->set_ffn_down_runtime_provider(is_ready, run, user_data);
+}
+
+bool llama_set_ffn_down_runtime_native_binding(
+        llama_context * ctx,
+        llama_ffn_down_runtime_native_bind_fn native_bind) {
+    return ctx != nullptr && ctx->set_ffn_down_runtime_native_binding(native_bind);
 }
 
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {
