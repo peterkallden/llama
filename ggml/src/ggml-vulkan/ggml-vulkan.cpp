@@ -15805,9 +15805,11 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
 static void ggml_vk_compute_forward(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, ggml_tensor * tensor, int tensor_idx, bool almost_ready = false) {
     GGML_UNUSED(cgraph);
 
-    // ASTC is an optional native extension point. The binding is deliberately
-    // consulted before ordinary graph execution, but a missing/non-consuming
-    // dispatcher leaves the existing Vulkan path untouched.
+    // ASTC is an optional native extension point. The dispatcher is called
+    // before ordinary graph execution so a consuming implementation can
+    // replace this node; a missing/non-consuming dispatcher leaves the
+    // existing Vulkan path untouched. Native implementations own their
+    // dependency submission/synchronization through the opaque context.
     if (ggml_vk_astc_binding::try_dispatch(ctx, tensor,
                                            static_cast<uint32_t>(tensor_idx))) {
         return;
