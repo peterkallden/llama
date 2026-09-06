@@ -17,6 +17,7 @@ struct node_binding {
 std::mutex g_mutex;
 std::unordered_map<const ggml_tensor *, node_binding> g_bindings;
 bool g_installed = false;
+uint32_t g_install_refs = 0;
 
 bool can_dispatch(const ggml_tensor * node, void *) {
     if (node == nullptr) {
@@ -47,6 +48,7 @@ bool dispatch(const ggml_vk_external_op_dispatch_context * context, void *) {
 bool install(std::string & error) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_installed) {
+        ++g_install_refs;
         return true;
     }
 
@@ -75,12 +77,16 @@ bool install(std::string & error) {
     };
     api->set_dispatcher(&dispatcher);
     g_installed = true;
+    g_install_refs = 1;
     return true;
 }
 
 void uninstall() {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (!g_installed) {
+    if (!g_installed || g_install_refs == 0) {
+        return;
+    }
+    if (--g_install_refs != 0) {
         return;
     }
     ggml_backend_reg_t reg = ggml_backend_reg_by_name("Vulkan");
