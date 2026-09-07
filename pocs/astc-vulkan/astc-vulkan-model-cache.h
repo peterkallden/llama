@@ -33,6 +33,9 @@ struct astc_vulkan_model_cache_entry {
     bool has_row_scales = false;
     uint64_t row_scale_byte_offset = 0;
     uint64_t row_scale_byte_size = 0;
+    bool has_pair_map = false;
+    uint64_t pair_map_byte_offset = 0;
+    uint64_t pair_map_byte_size = 0;
     bool use_native_fallback = false;
     // Conservative payload-based estimates. A Vulkan owner may replace these
     // with actual image/staging allocation sizes before residency planning.
@@ -104,6 +107,7 @@ struct astc_vulkan_model_cache_storage_key {
     astc_vulkan_paired_semantic paired_semantic = astc_vulkan_paired_semantic::direct_rgb;
     astc_vulkan_normalization normalization = astc_vulkan_normalization::none;
     bool has_row_scales = false;
+    bool has_pair_map = false;
 };
 
 struct astc_vulkan_model_cache_storage_page {
@@ -201,10 +205,11 @@ struct astc_vulkan_model_cache_fragment {
     std::string payload_path;
     std::string layout_path;
     std::string row_scales_path;
+    std::string pair_map_path;
 };
 
-// Merges v4 artifact fragments into one staging manifest and the three
-// optional binary blobs. Payload/layout/row-scale ranges are copied in
+// Merges v4/v5 artifact fragments into one staging manifest and the optional
+// binary blobs. Payload/layout/row-scale/pair-map ranges are copied in
 // fragment order and their manifest offsets are rewritten accordingly.
 // `result` is validated against the produced staging files before returning.
 bool astc_vulkan_model_cache_merge_fragments(
@@ -213,6 +218,7 @@ bool astc_vulkan_model_cache_merge_fragments(
     const std::string & output_payload_path,
     const std::string & output_layout_path,
     const std::string & output_row_scales_path,
+    const std::string & output_pair_map_path,
     astc_vulkan_manifest & result,
     std::string & error);
 

@@ -67,7 +67,8 @@ bool same_storage_key(const astc_vulkan_model_cache_storage_key & lhs,
            lhs.representation == rhs.representation &&
            lhs.paired_semantic == rhs.paired_semantic &&
            lhs.normalization == rhs.normalization &&
-           lhs.has_row_scales == rhs.has_row_scales;
+           lhs.has_row_scales == rhs.has_row_scales &&
+           lhs.has_pair_map == rhs.has_pair_map;
 }
 
 bool parse_u64(const std::string & text, uint64_t & result) {
@@ -229,9 +230,12 @@ bool astc_vulkan_model_cache_make_plan(
         entry.has_row_scales = best->row_scale_byte_size != 0;
         entry.row_scale_byte_offset = best->row_scale_byte_offset;
         entry.row_scale_byte_size = best->row_scale_byte_size;
+        entry.has_pair_map = best->pair_map_byte_size != 0;
+        entry.pair_map_byte_offset = best->pair_map_byte_offset;
+        entry.pair_map_byte_size = best->pair_map_byte_size;
         entry.device_bytes = best->storage.byte_size;
         entry.host_bytes = best->storage.byte_size + best->storage.layout_byte_size +
-            best->row_scale_byte_size;
+            best->row_scale_byte_size + best->pair_map_byte_size;
         result.entries.push_back(std::move(entry));
     }
     error.clear();
@@ -341,6 +345,7 @@ bool astc_vulkan_model_cache_make_storage_pages(
         key.paired_semantic = entry.paired_semantic;
         key.normalization = entry.normalization;
         key.has_row_scales = entry.has_row_scales;
+        key.has_pair_map = entry.has_pair_map;
 
         astc_vulkan_model_cache_storage_page * page = nullptr;
         for (auto & candidate : pages) {
@@ -593,6 +598,7 @@ bool astc_vulkan_model_cache_merge_fragments(
     const std::string & output_payload_path,
     const std::string & output_layout_path,
     const std::string & output_row_scales_path,
+    const std::string & output_pair_map_path,
     astc_vulkan_manifest & result,
     std::string & error) {
     result = {};
@@ -606,14 +612,16 @@ bool astc_vulkan_model_cache_merge_fragments(
     if (!open_output_blob(output_layout_path, layout, false, error)) return false;
     std::ofstream row_scales;
     if (!open_output_blob(output_row_scales_path, row_scales, false, error)) return false;
+    std::ofstream pair_map;
+    if (!open_output_blob(output_pair_map_path, pair_map, false, error)) return false;
 
-    result.version = 4;
+    result.version = 5;
     std::unordered_set<std::string> artifact_ids;
     for (const auto & fragment : fragments) {
         astc_vulkan_manifest local;
         if (!astc_vulkan_read_manifest(fragment.manifest_path, local, error)) return false;
-        if (local.version != 4 || local.artifacts.empty()) {
-            error = "model cache fragments must contain v4 artifacts";
+        if (local.version < 4 || local.version > 5 || local.artifacts.empty()) {
+            error = "model cache fragments must contain v4/v5 artifacts";
             return false;
         }
         if (result.model_fingerprint.empty()) result.model_fingerprint = local.model_fingerprint;
@@ -653,12 +661,23 @@ bool astc_vulkan_model_cache_merge_fragments(
                                   merged_offset, error)) return false;
                 artifact.row_scale_byte_offset = merged_offset;
             }
+            if (artifact.pair_map_byte_size != 0) {
+                if (fragment.pair_map_path.empty() || output_pair_map_path.empty()) {
+                    error = "pair-optimized fragment is missing a pair-map blob";
+                    return false;
+                }
+                if (!append_range(fragment.pair_map_path, artifact.pair_map_byte_offset,
+                                  artifact.pair_map_byte_size, pair_map,
+                                  merged_offset, error)) return false;
+                artifact.pair_map_byte_offset = merged_offset;
+            }
             result.artifacts.push_back(std::move(artifact));
         }
     }
     payload.close();
     layout.close();
     row_scales.close();
+    pair_map.close();
     if (!astc_vulkan_validate_manifest(result, error)) return false;
 
     std::error_code ec;
@@ -666,9 +685,11 @@ bool astc_vulkan_model_cache_merge_fragments(
     if (ec || !astc_vulkan_validate_payload_blob(result, payload_size, error)) return false;
     bool has_layout = false;
     bool has_row_scales = false;
+    bool has_pair_map = false;
     for (const auto & artifact : result.artifacts) {
         has_layout |= artifact.storage.representation == astc_vulkan_representation::kPairedD2;
         has_row_scales |= artifact.normalization == astc_vulkan_normalization::per_row_absmax;
+        has_pair_map |= artifact.pair_map_byte_size != 0;
     }
     if (has_layout) {
         const uint64_t layout_size = fs::file_size(output_layout_path, ec);
@@ -685,6 +706,21 @@ bool astc_vulkan_model_cache_merge_fragments(
                 (artifact.row_scale_byte_offset > row_scale_size ||
                  artifact.row_scale_byte_size > row_scale_size - artifact.row_scale_byte_offset)) {
                 error = "merged row-scale range exceeds blob";
+                return false;
+            }
+        }
+    }
+    if (has_pair_map) {
+        const uint64_t pair_map_size = fs::file_size(output_pair_map_path, ec);
+        if (ec) {
+            error = "cannot stat merged pair-map blob";
+            return false;
+        }
+        for (const auto & artifact : result.artifacts) {
+            if (artifact.pair_map_byte_size != 0 &&
+                (artifact.pair_map_byte_offset > pair_map_size ||
+                 artifact.pair_map_byte_size > pair_map_size - artifact.pair_map_byte_offset)) {
+                error = "merged pair-map range exceeds blob";
                 return false;
             }
         }
@@ -715,16 +751,19 @@ bool astc_vulkan_model_cache_publish_fragments(
     const std::string payload = (root / "payload.astcpack").string();
     const std::string layout = (root / "layout-map.bin").string();
     const std::string row_scales = (root / "row-scales.bin").string();
+    const std::string pair_map = (root / "pair-map.bin").string();
     astc_vulkan_manifest merged;
     if (!astc_vulkan_model_cache_merge_fragments(
-            fragments, manifest, payload, layout, row_scales, merged, error)) return false;
+            fragments, manifest, payload, layout, row_scales, pair_map, merged, error)) return false;
     std::string layout_input;
     std::string row_scales_input;
+    std::string pair_map_input;
     for (const auto & artifact : merged.artifacts) {
         if (artifact.storage.representation == astc_vulkan_representation::kPairedD2) layout_input = layout;
         if (artifact.normalization == astc_vulkan_normalization::per_row_absmax) row_scales_input = row_scales;
+        if (artifact.pair_map_byte_size != 0) pair_map_input = pair_map;
     }
-    return astc_vulkan_cache_create_with_row_scales(
-        source_model_path, manifest, payload, layout_input, row_scales_input,
+    return astc_vulkan_cache_create_with_metadata(
+        source_model_path, manifest, payload, layout_input, row_scales_input, pair_map_input,
         {}, requested_cache_path, paths, error);
 }
