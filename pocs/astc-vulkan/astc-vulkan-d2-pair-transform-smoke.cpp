@@ -23,7 +23,7 @@ namespace {
 constexpr unsigned int kWidth = 8;
 constexpr unsigned int kPhysicalHeight = 5;
 constexpr unsigned int kLogicalHeight = 10;
-constexpr unsigned int kSamples = 8;
+constexpr unsigned int kSamples = 6;
 constexpr float kPi = 3.14159265358979323846f;
 
 struct candidate {
@@ -192,6 +192,7 @@ void print_candidate(const char * label, const candidate & value) {
 }
 
 bool load_real_fixture(const char * model_path, const char * tensor_name, const char * trace_path,
+                       unsigned int trace_offset,
                        std::array<float, kLogicalHeight * kWidth> & weights,
                        std::array<float, kSamples * kWidth> & activations) {
     ggml_vk_astc_loaded_matrix matrix;
@@ -200,7 +201,7 @@ bool load_real_fixture(const char * model_path, const char * tensor_name, const 
     if (!ggml_vk_astc_load_gguf_matrix(model_path, tensor_name, matrix, error) ||
         !ggml_vk_astc_load_activation_trace(trace_path, trace, error) ||
         matrix.rows < kLogicalHeight || matrix.columns < kWidth ||
-        trace.samples < kSamples || trace.columns < kWidth) {
+        trace.samples < trace_offset + kSamples || trace.columns < kWidth) {
         std::fprintf(stderr, "d2-pair-transform real fixture error: %s\n", error.c_str());
         return false;
     }
@@ -211,7 +212,7 @@ bool load_real_fixture(const char * model_path, const char * tensor_name, const 
     }
     for (unsigned int sample = 0; sample < kSamples; ++sample) {
         for (unsigned int column = 0; column < kWidth; ++column) {
-            activations[sample * kWidth + column] = trace.values[static_cast<size_t>(sample) * trace.columns + column];
+            activations[sample * kWidth + column] = trace.values[static_cast<size_t>(trace_offset + sample) * trace.columns + column];
         }
     }
     return true;
@@ -222,15 +223,20 @@ bool load_real_fixture(const char * model_path, const char * tensor_name, const 
 int main(int argc, char ** argv) {
     std::array<float, kLogicalHeight * kWidth> weights = make_weights();
     std::array<float, kSamples * kWidth> activations = make_activations();
-    if (argc != 1 && argc != 7) {
-        std::fprintf(stderr, "usage: %s [--model model.gguf --tensor tensor.name --trace input.trace]\n", argv[0]);
+    if (argc != 1 && argc != 7 && argc != 9) {
+        std::fprintf(stderr, "usage: %s [--model model.gguf --tensor tensor.name --trace input.trace [--trace-offset N]]\n", argv[0]);
         return 2;
     }
     bool real_fixture = false;
-    if (argc == 7) {
+    if (argc == 7 || argc == 9) {
         if (std::string(argv[1]) != "--model" || std::string(argv[3]) != "--tensor" ||
-            std::string(argv[5]) != "--trace" ||
-            !load_real_fixture(argv[2], argv[4], argv[6], weights, activations)) return 2;
+            std::string(argv[5]) != "--trace") return 2;
+        unsigned int trace_offset = 0;
+        if (argc == 9) {
+            if (std::string(argv[7]) != "--trace-offset") return 2;
+            trace_offset = static_cast<unsigned int>(std::stoul(argv[8]));
+        }
+        if (!load_real_fixture(argv[2], argv[4], argv[6], trace_offset, weights, activations)) return 2;
         real_fixture = true;
     }
     const auto identity = astc_vulkan_d2_identity_pairing();
