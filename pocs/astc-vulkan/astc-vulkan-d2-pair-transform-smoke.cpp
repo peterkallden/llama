@@ -126,7 +126,7 @@ bool exact_candidate(const std::array<float, kLogicalHeight * kWidth> & weights,
 
     astcenc_config config{};
     if (astcenc_config_init(ASTCENC_PRF_LDR, kWidth, kPhysicalHeight, 1,
-                            ASTCENC_PRE_FAST, 0, &config) != ASTCENC_SUCCESS) return false;
+                            ASTCENC_PRE_THOROUGH, 0, &config) != ASTCENC_SUCCESS) return false;
     config.cw_r_weight = 1.0f / 3.0f;
     config.cw_g_weight = 1.0f / 3.0f;
     config.cw_b_weight = 1.0f / 3.0f;
