@@ -25,6 +25,7 @@ add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-block-ldlq.cpp
     astc-vulkan-d1-prescreen.cpp
     astc-vulkan-d2-prescreen.cpp
+    astc-vulkan-d2-pair-transform.cpp
     astc-vulkan-d2-row-scale.cpp
     astc-vulkan-format.cpp
     astc-vulkan-gauge.cpp
@@ -102,6 +103,16 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-d2-prescreen
         COMMAND test-astc-vulkan-d2-prescreen)
     set_property(TEST test-astc-vulkan-d2-prescreen PROPERTY LABELS astc)
+endif()
+
+add_executable(test-astc-vulkan-d2-pair-transform
+    tests/test-astc-vulkan-d2-pair-transform.cpp)
+target_link_libraries(test-astc-vulkan-d2-pair-transform PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-d2-pair-transform PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-d2-pair-transform
+        COMMAND test-astc-vulkan-d2-pair-transform)
+    set_property(TEST test-astc-vulkan-d2-pair-transform PROPERTY LABELS astc)
 endif()
 
 add_executable(test-astc-vulkan-d2-row-scale
@@ -796,6 +807,16 @@ if (TARGET astcenc::astcenc-static)
     target_link_libraries(astc-vulkan-paired-smoke PRIVATE
         astcenc::astcenc-static astc-vulkan-algorithms)
     target_compile_features(astc-vulkan-paired-smoke PRIVATE cxx_std_17)
+
+    # Offline-only D2 research smoke. It does not serialize pairing or
+    # transform metadata, and therefore cannot affect the runtime ABI.
+    add_executable(astc-vulkan-d2-pair-transform-smoke
+        astc-vulkan-d2-pair-transform-smoke.cpp)
+    target_include_directories(astc-vulkan-d2-pair-transform-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-d2-pair-transform-smoke PRIVATE
+        astcenc::astcenc-static astc-vulkan-algorithms)
+    target_compile_features(astc-vulkan-d2-pair-transform-smoke PRIVATE cxx_std_17)
 
     if (TARGET ggml-base)
         add_executable(astc-vulkan-paired-model-smoke
@@ -1739,6 +1760,9 @@ if (BUILD_TESTING)
     endif()
 
     if (TARGET astc-vulkan-astcenc-smoke)
+        add_test(NAME astc-vulkan-d2-pair-transform-smoke
+            COMMAND astc-vulkan-d2-pair-transform-smoke)
+        set_property(TEST astc-vulkan-d2-pair-transform-smoke PROPERTY LABELS astc)
         add_test(NAME astc-vulkan-paired-smoke
             COMMAND astc-vulkan-paired-smoke)
         set_property(TEST astc-vulkan-paired-smoke PROPERTY LABELS astc)

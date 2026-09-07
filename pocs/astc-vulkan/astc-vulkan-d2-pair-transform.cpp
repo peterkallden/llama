@@ -11,6 +11,10 @@ void enumerate_from_remaining(std::array<uint8_t, astc_vulkan_d2_pair_group_rows
         result.push_back({order});
         return;
     }
+    // Every recursive step writes a complete pair. This guard is also useful
+    // to static analysis: a malformed remaining mask must never write past
+    // the ten-row matching storage.
+    if (write_index + 1 >= order.size()) return;
     uint8_t first = 0;
     while ((remaining & (uint16_t{1} << first)) == 0) ++first;
     const uint16_t without_first = static_cast<uint16_t>(remaining & ~(uint16_t{1} << first));
@@ -73,4 +77,3 @@ void astc_vulkan_d2_pair_inverse(float u, float v,
     w0 = c * u - s * v;
     w1 = s * u + c * v;
 }
-
