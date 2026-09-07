@@ -132,6 +132,31 @@ int main() {
     assert(validation.manifest.version == 4 && validation.manifest.artifacts.size() == 2);
     assert(validation.has_paired_d2 && validation.has_row_scales);
 
+    // v5 makes an optimized ten-row D2 pairing an independently verified
+    // artifact resource. The direct slot->logical-row encoding deliberately
+    // avoids coupling this fixture to any matching-enumerator order.
+    const fs::path v5_root("astc-vulkan-cache-v5-test-dir");
+    const fs::path v5_manifest_path("astc-vulkan-cache-v5-manifest.astcv");
+    const fs::path v5_pair_map_path("astc-vulkan-cache-v5-pair-map.bin");
+    fs::remove_all(v5_root, ignored);
+    fs::remove(v5_manifest_path, ignored);
+    fs::remove(v5_pair_map_path, ignored);
+    const std::array<uint8_t, 10> pair_map = {0, 2, 1, 3, 4, 5, 6, 7, 8, 9};
+    write_bytes(v5_pair_map_path.string(),
+                std::vector<uint8_t>(pair_map.begin(), pair_map.end()));
+    astc_vulkan_manifest v5 = v4;
+    v5.version = 5;
+    v5.model_fingerprint = "fixture-v5-pair-map";
+    v5.artifacts[0].pair_map_byte_size = pair_map.size();
+    v5.artifacts[0].pair_map_hash64 = astc_vulkan_payload_hash64(pair_map.data(), pair_map.size());
+    assert(astc_vulkan_write_manifest(v5_manifest_path.string(), v5, error));
+    assert(astc_vulkan_cache_create_with_metadata(
+        model.string(), v5_manifest_path.string(), v4_payload_path.string(), v4_layout_path.string(),
+        v4_scales_path.string(), v5_pair_map_path.string(), {}, v5_root.string(), paths, error));
+    assert(astc_vulkan_cache_validate(model.string(), v5_root.string(), validation, error));
+    assert(validation.manifest.version == 5 && validation.has_pair_map);
+    assert(validation.manifest.artifacts[0].pair_map_byte_size == pair_map.size());
+
     // A cache may record a structurally compatible quantized runtime base
     // without weakening the strict source-model validation contract. The
     // binding starts with no model/Vulkan quality evidence.

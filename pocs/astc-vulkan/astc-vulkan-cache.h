@@ -10,7 +10,8 @@
 //
 // Layout (for `model.gguf`):
 //   model.gguf.astc-vulkan/
-//     manifest.astcv, payload.astcpack, [layout-map.bin], [row-scales.bin]
+//     manifest.astcv, payload.astcpack, [layout-map.bin], [row-scales.bin],
+//     [pair-map.bin]
 //     [provenance.txt], source.gguf.sha256, manifest.sha256, payload.sha256,
 //     [layout-map.sha256], [row-scales.sha256]
 //     compatible-bases/<runtime-gguf-sha256>.astcbase
@@ -25,12 +26,14 @@ struct astc_vulkan_cache_paths {
     std::string payload;
     std::string layout;
     std::string row_scales;
+    std::string pair_map;
     std::string provenance;
     std::string source_sha256;
     std::string manifest_sha256;
     std::string payload_sha256;
     std::string layout_sha256;
     std::string row_scales_sha256;
+    std::string pair_map_sha256;
     std::string compatible_bases;
 };
 
@@ -55,6 +58,7 @@ struct astc_vulkan_cache_validation {
     astc_vulkan_manifest manifest;
     bool has_paired_d2 = false;
     bool has_row_scales = false;
+    bool has_pair_map = false;
     astc_vulkan_cache_runtime_base runtime_base;
 };
 
@@ -116,3 +120,16 @@ bool astc_vulkan_cache_create_with_row_scales(const std::string & model_path,
                                               const std::string & requested_cache_path,
                                               astc_vulkan_cache_paths & paths,
                                               std::string & error);
+
+// v5 extension for D2 artifacts with an explicit 10-row pair permutation.
+// Pairing is offline-selected metadata; it never changes standard ASTC bytes.
+bool astc_vulkan_cache_create_with_metadata(const std::string & model_path,
+                                            const std::string & manifest_input,
+                                            const std::string & payload_input,
+                                            const std::string & layout_input,
+                                            const std::string & row_scales_input,
+                                            const std::string & pair_map_input,
+                                            const std::string & provenance_input,
+                                            const std::string & requested_cache_path,
+                                            astc_vulkan_cache_paths & paths,
+                                            std::string & error);

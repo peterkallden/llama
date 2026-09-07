@@ -299,9 +299,9 @@ Common/difference transforms, explicit semantic dual-plane search, mixed
 footprints, and full PV tuning remain research tracks rather than cache/runtime
 defaults.  An optional offline row-pairing sweep is available for D2 8x5
 chunked selection (`--row-pairing optimized`).  It chooses one pairing for
-each ten-logical-row stripe from calibration/validation projections, keeps the
-adjacent pairing as the control, and does not export a cache until the pair-map
-  metadata contract is versioned.  The optional `--row-transform givens` bank
+each ten-logical-row stripe from calibration only, keeps the adjacent pairing
+as the control, and exports its direct slot-to-logical-row permutation as a
+hash-verified v5 `pair-map.bin` resource. The optional `--row-transform givens` bank
   adds a bounded 2x2 rotation sweep on top of pairing; it is research-only and
   remains disabled by default.  `--row-transform givens-row` is the more
   deployable prototype: one bounded angle is shared by the row pairs in a
@@ -314,8 +314,9 @@ adjacent pairing as the control, and does not export a cache until the pair-map
   improvement on both `blk.0` and `blk.1`, while the tested row-Givens angles
   regressed both.  Pairing is therefore the primary follow-up candidate;
   Givens remains paused until larger, disjoint traces demonstrate a stable
-  validation-to-holdout gain.  Neither variant can affect exported caches
-  until its pair/transform-map artifact is versioned and replayed.
+  validation-to-holdout gain. Pairing can now enter the artifact/replay path;
+  Givens cannot affect exported caches until a separate transform-map contract
+  is versioned and replayed.
 
 ### D2-LA and artifact variants
 

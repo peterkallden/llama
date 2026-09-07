@@ -61,6 +61,13 @@ struct astc_vulkan_artifact_record {
     uint64_t row_scale_byte_offset = 0;
     uint64_t row_scale_byte_size = 0;
     uint64_t row_scale_hash64 = 0;
+    // v5 D2 row-pair permutation. Each 10-logical-row group occupies ten
+    // bytes: physical pair/member slot -> original local logical row.  A
+    // direct map is deliberately used instead of a 10-bit matching index so
+    // its meaning never depends on an enumerator order.
+    uint64_t pair_map_byte_offset = 0;
+    uint64_t pair_map_byte_size = 0;
+    uint64_t pair_map_hash64 = 0;
 };
 
 struct astc_vulkan_manifest {
@@ -100,6 +107,9 @@ bool astc_vulkan_validate_layout_blob(const astc_vulkan_manifest & manifest,
 bool astc_vulkan_validate_layout_map(const astc_vulkan_tensor_record & tensor,
                                      const uint8_t * data, size_t size,
                                      std::string & error);
+bool astc_vulkan_validate_pair_map(const astc_vulkan_artifact_record & artifact,
+                                   const uint8_t * data, size_t size,
+                                   std::string & error);
 
 bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
                                    std::string & error);

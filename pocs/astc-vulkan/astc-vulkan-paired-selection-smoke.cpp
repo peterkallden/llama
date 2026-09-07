@@ -98,6 +98,7 @@ struct params {
     std::string export_neutral_payload;
     std::string export_neutral_layout;
     std::string export_row_scales;
+    std::string export_pair_map;
     bool export_neutral = false;
     bool row_scale_absmax = false;
     bool structure_bank = false;
@@ -266,6 +267,7 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--export-neutral-layout") result.export_neutral_layout = value;
         else if (option == "--export-neutral") result.export_neutral = value == "1" || value == "true";
         else if (option == "--export-row-scales") result.export_row_scales = value;
+        else if (option == "--export-pair-map") result.export_pair_map = value;
         else if (option == "--row-scale") {
             if (value == "none") result.row_scale_absmax = false;
             else if (value == "absmax") result.row_scale_absmax = true;
@@ -1338,6 +1340,16 @@ bool run_row_strip_chunked(const params & options,
         layout.write(reinterpret_cast<const char *>(layout_words.data()), static_cast<std::streamsize>(layout_words.size() * sizeof(uint32_t)));
         if (!payload.good() || !layout.good()) return false;
     }
+    if (!options.export_pair_map.empty()) {
+        if (!options.optimized_pairing || options.export_payload.empty()) return false;
+        std::ofstream pair_map_file(options.export_pair_map, std::ios::binary | std::ios::trunc);
+        if (!pair_map_file) return false;
+        for (const auto & pairing : pairing_map) {
+            pair_map_file.write(reinterpret_cast<const char *>(pairing.row_order.data()),
+                                static_cast<std::streamsize>(pairing.row_order.size()));
+        }
+        if (!pair_map_file.good()) return false;
+    }
     if (!options.export_neutral_payload.empty()) {
         std::ofstream payload(options.export_neutral_payload, std::ios::binary | std::ios::trunc);
         std::ofstream layout(options.export_neutral_layout, std::ios::binary | std::ios::trunc);
@@ -1439,7 +1451,8 @@ int main(int argc, char ** argv) {
                              "[--paired-semantic direct|la] "
                              "[--objective activation|yaqa --output-trace output.trace] "
                              "[--export-payload path --export-layout path [--export-neutral 1] "
-                             "[--export-neutral-payload path --export-neutral-layout path]]\n", argv[0]);
+                             "[--export-neutral-payload path --export-neutral-layout path] "
+                             "[--export-pair-map path]]\n", argv[0]);
         return 2;
     }
     if ((!options.export_payload.empty()) != (!options.export_layout.empty())) {
@@ -1463,9 +1476,14 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "D2-LA supports only the direct paired basis\n");
         return 2;
     }
+    if (!options.export_pair_map.empty() &&
+        (!options.optimized_pairing || options.export_payload.empty())) {
+        std::fprintf(stderr, "--export-pair-map requires --row-pairing optimized and a primary artifact export\n");
+        return 2;
+    }
     if (options.optimized_pairing && (!options.export_payload.empty() ||
-                                      !options.export_neutral_payload.empty())) {
-        std::fprintf(stderr, "optimized row pairing requires a versioned pair-map artifact; export is disabled\n");
+                                      !options.export_neutral_payload.empty()) && options.export_pair_map.empty()) {
+        std::fprintf(stderr, "optimized row pairing export requires --export-pair-map\n");
         return 2;
     }
     if (options.givens_transform && (!options.export_payload.empty() ||

@@ -1,6 +1,7 @@
 #include "astc-vulkan-manifest.h"
 #include "astc-vulkan-hash.h"
 #include "astc-vulkan-paired-layout.h"
+#include "astc-vulkan-d2-pair-transform.h"
 
 #include "astc-vulkan-format.h"
 
@@ -16,7 +17,9 @@ constexpr std::array<char, 8> kMagic = {'K', 'A', 'S', 'T', 'C', 'V', 'M', '1'};
 constexpr uint32_t kLegacyManifestVersion = 1;
 constexpr uint32_t kAffineManifestVersion = 2;
 constexpr uint32_t kPairedLayoutManifestVersion = 3;
-constexpr uint32_t kCurrentManifestVersion = 4;
+constexpr uint32_t kArtifactManifestVersion = 4;
+constexpr uint32_t kPairMapManifestVersion = 5;
+constexpr uint32_t kCurrentManifestVersion = kPairMapManifestVersion;
 constexpr uint32_t kMaxStringBytes = 1u << 20;
 constexpr uint32_t kMaxTensorRecords = 1u << 20;
 
@@ -159,6 +162,21 @@ bool validate_artifact_record(const astc_vulkan_artifact_record & artifact,
         error = "invalid ASTC Vulkan artifact row-scale metadata";
         return false;
     }
+    const uint64_t expected_pair_map_bytes =
+        artifact.storage.representation == astc_vulkan_representation::kPairedD2 &&
+        artifact.pair_map_byte_size != 0
+            ? static_cast<uint64_t>((artifact.storage.height + astc_vulkan_d2_pair_group_rows - 1) /
+                                    astc_vulkan_d2_pair_group_rows) *
+                  astc_vulkan_d2_pair_group_rows
+            : 0;
+    if (artifact.pair_map_byte_size != expected_pair_map_bytes ||
+        (expected_pair_map_bytes == 0 &&
+         (artifact.pair_map_byte_offset != 0 || artifact.pair_map_hash64 != 0)) ||
+        (expected_pair_map_bytes != 0 &&
+         artifact.pair_map_byte_size > std::numeric_limits<uint64_t>::max() - artifact.pair_map_byte_offset)) {
+        error = "invalid ASTC Vulkan artifact pair-map metadata";
+        return false;
+    }
     error.clear();
     return true;
 }
@@ -208,7 +226,8 @@ bool read_tensor_record(std::ifstream & file, astc_vulkan_tensor_record & tensor
             read_scalar(file, tensor.layout_hash64));
 }
 
-bool write_artifact_record(std::ofstream & file, const astc_vulkan_artifact_record & artifact) {
+bool write_artifact_record(std::ofstream & file, const astc_vulkan_artifact_record & artifact,
+                           uint32_t version) {
     const auto & evidence = artifact.evidence;
     return write_string(file, artifact.id) &&
            write_tensor_record(file, artifact.storage, kCurrentManifestVersion) &&
@@ -226,10 +245,15 @@ bool write_artifact_record(std::ofstream & file, const astc_vulkan_artifact_reco
            write_string(file, evidence.replay_corpus_hash) &&
            write_scalar(file, artifact.row_scale_byte_offset) &&
            write_scalar(file, artifact.row_scale_byte_size) &&
-           write_scalar(file, artifact.row_scale_hash64);
+           write_scalar(file, artifact.row_scale_hash64) &&
+           (version < kPairMapManifestVersion ||
+            (write_scalar(file, artifact.pair_map_byte_offset) &&
+             write_scalar(file, artifact.pair_map_byte_size) &&
+             write_scalar(file, artifact.pair_map_hash64)));
 }
 
-bool read_artifact_record(std::ifstream & file, astc_vulkan_artifact_record & artifact) {
+bool read_artifact_record(std::ifstream & file, astc_vulkan_artifact_record & artifact,
+                          uint32_t version) {
     uint8_t variant = 0;
     uint8_t normalization = 0;
     uint8_t semantic = 0;
@@ -248,7 +272,11 @@ bool read_artifact_record(std::ifstream & file, astc_vulkan_artifact_record & ar
         !read_string(file, evidence.replay_corpus_hash) ||
         !read_scalar(file, artifact.row_scale_byte_offset) ||
         !read_scalar(file, artifact.row_scale_byte_size) ||
-        !read_scalar(file, artifact.row_scale_hash64)) {
+        !read_scalar(file, artifact.row_scale_hash64) ||
+        (version >= kPairMapManifestVersion &&
+         (!read_scalar(file, artifact.pair_map_byte_offset) ||
+          !read_scalar(file, artifact.pair_map_byte_size) ||
+          !read_scalar(file, artifact.pair_map_hash64)))) {
         return false;
     }
     artifact.variant = static_cast<astc_vulkan_artifact_variant>(variant);
@@ -261,7 +289,7 @@ bool read_artifact_record(std::ifstream & file, astc_vulkan_artifact_record & ar
 
 template<typename Callback>
 bool for_each_storage_record(const astc_vulkan_manifest & manifest, Callback callback) {
-    if (manifest.version == kCurrentManifestVersion) {
+    if (manifest.version >= kArtifactManifestVersion) {
         for (const auto & artifact : manifest.artifacts) {
             if (!callback(artifact.storage)) return false;
         }
@@ -312,6 +340,44 @@ bool astc_vulkan_validate_layout_map(const astc_vulkan_tensor_record & tensor,
     return true;
 }
 
+bool astc_vulkan_validate_pair_map(const astc_vulkan_artifact_record & artifact,
+                                   const uint8_t * data, size_t size,
+                                   std::string & error) {
+    if (artifact.pair_map_byte_size == 0) {
+        if (size != 0) {
+            error = "ASTC Vulkan artifact unexpectedly has pair-map bytes";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+    const uint64_t groups = (artifact.storage.height + astc_vulkan_d2_pair_group_rows - 1) /
+                            astc_vulkan_d2_pair_group_rows;
+    const uint64_t expected = groups * astc_vulkan_d2_pair_group_rows;
+    if (artifact.storage.representation != astc_vulkan_representation::kPairedD2 ||
+        artifact.pair_map_byte_size != expected || size != expected || data == nullptr) {
+        error = "ASTC Vulkan pair-map size does not match its artifact";
+        return false;
+    }
+    if (artifact.pair_map_hash64 != 0 &&
+        astc_vulkan_payload_hash64(data, size) != artifact.pair_map_hash64) {
+        error = "ASTC Vulkan pair-map checksum mismatch";
+        return false;
+    }
+    for (uint64_t group = 0; group < groups; ++group) {
+        astc_vulkan_d2_pairing pairing{};
+        for (uint32_t index = 0; index < astc_vulkan_d2_pair_group_rows; ++index) {
+            pairing.row_order[index] = data[group * astc_vulkan_d2_pair_group_rows + index];
+        }
+        if (!astc_vulkan_d2_pairing_is_valid(pairing)) {
+            error = "ASTC Vulkan pair-map contains an invalid row permutation";
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
 bool astc_vulkan_validate_payload_blob(const astc_vulkan_manifest & manifest,
                                        uint64_t blob_size, std::string & error) {
     if (!astc_vulkan_validate_manifest(manifest, error)) return false;
@@ -350,6 +416,7 @@ bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
     if (manifest.version != kLegacyManifestVersion &&
         manifest.version != kAffineManifestVersion &&
         manifest.version != kPairedLayoutManifestVersion &&
+        manifest.version != kArtifactManifestVersion &&
         manifest.version != kCurrentManifestVersion) {
         error = "unsupported ASTC Vulkan manifest version";
         return false;
@@ -358,11 +425,11 @@ bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
         error = "too many ASTC Vulkan tensor records";
         return false;
     }
-    if (manifest.version == kCurrentManifestVersion && manifest.artifacts.empty()) {
-        error = "ASTC Vulkan v4 manifest has no artifact records";
+    if (manifest.version >= kArtifactManifestVersion && manifest.artifacts.empty()) {
+        error = "ASTC Vulkan artifact manifest has no artifact records";
         return false;
     }
-    if (manifest.version != kCurrentManifestVersion && !manifest.artifacts.empty()) {
+    if (manifest.version < kArtifactManifestVersion && !manifest.artifacts.empty()) {
         error = "pre-v4 ASTC Vulkan manifest cannot contain artifact records";
         return false;
     }
@@ -425,7 +492,7 @@ bool astc_vulkan_write_manifest(const std::string & path,
     const bool ok = file.good() && write_scalar(file, manifest.version) &&
                     write_string(file, manifest.model_fingerprint) &&
                     write_scalar(file, static_cast<uint32_t>(manifest.tensors.size())) &&
-                    (manifest.version < kCurrentManifestVersion ||
+                    (manifest.version < kArtifactManifestVersion ||
                      write_scalar(file, static_cast<uint32_t>(manifest.artifacts.size())));
     if (!ok) { error = "cannot write ASTC Vulkan manifest header"; return false; }
     for (const astc_vulkan_tensor_record & tensor : manifest.tensors) {
@@ -434,9 +501,9 @@ bool astc_vulkan_write_manifest(const std::string & path,
             return false;
         }
     }
-    if (manifest.version == kCurrentManifestVersion) {
+    if (manifest.version >= kArtifactManifestVersion) {
         for (const auto & artifact : manifest.artifacts) {
-            if (!write_artifact_record(file, artifact)) {
+            if (!write_artifact_record(file, artifact, manifest.version)) {
                 error = "cannot write ASTC Vulkan artifact record";
                 return false;
             }
@@ -463,7 +530,7 @@ bool astc_vulkan_read_manifest(const std::string & path,
         return false;
     }
     manifest.version = version;
-    if (version == kCurrentManifestVersion &&
+    if (version >= kArtifactManifestVersion &&
         (!read_scalar(file, artifact_count) || artifact_count > kMaxTensorRecords)) {
         error = "invalid ASTC Vulkan artifact manifest header";
         return false;
@@ -482,7 +549,7 @@ bool astc_vulkan_read_manifest(const std::string & path,
     manifest.artifacts.reserve(artifact_count);
     for (uint32_t index = 0; index < artifact_count; ++index) {
         astc_vulkan_artifact_record artifact;
-        if (!read_artifact_record(file, artifact)) {
+        if (!read_artifact_record(file, artifact, version)) {
             error = "truncated ASTC Vulkan artifact record";
             return false;
         }
