@@ -23,9 +23,9 @@ passed their model and Vulkan gates; an explicit experimental/research launch
 may additionally admit artifacts whose quality evidence is incomplete. A
 cache miss always falls back to the native GGUF tensor path.
 
-The current llama FFN bridge executes D1 scalar artifacts. The same admission
-policy covers D2 manifests, while paired-D2 dispatch remains a separate
-runtime backend to be wired through the same provider interface.
+The current llama FFN bridge can execute both D1 and paired-D2 artifacts through
+the same opt-in provider interface.  Admission, artifact evidence and the
+semantic decoder still remain representation-specific.
 
 Example using an existing cache (no cache generation):
 

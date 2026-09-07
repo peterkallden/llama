@@ -9749,3 +9749,65 @@ eligibility still requires the normal model-replay, Vulkan, integrity and
 memory gates. The profile resolver is covered by the artifact-policy test and
 the compact discovery path was exercised against the local Qwen fixture with
 `--usage auto`.
+
+## Three-hundred-and-eighty-second sweep: runtime-performance pivot
+
+The first native runtime comparisons change the performance hypothesis, but
+not the correctness or storage work already completed.  The relevant native
+baseline for a `Q4_K_M` GGUF is not a naive decode-to-FP16 implementation.  In
+the ordinary Vulkan token-generation path, `mul_mat_vec_q4_k.comp` unpacks the
+Q4_K packed scales and 4-bit values inside the matvec loop, accumulates the
+dot product with FMAs, and reduces the partial sums in the same dispatch.  The
+batch/prompt path may choose a different `mul_mm`/MMQ-family shader, but it is
+likewise a specialised quantized-tensor path.  Native Q4 therefore already
+benefits from compact weight loads, register arithmetic, subgroup/shared-memory
+reduction and hardware caches.
+
+ASTC must consequently be compared with this fused quantized-kernel baseline:
+
+```text
+native Q4_K: packed buffer load -> unpack/scale in shader -> FMA/reduce
+ASTC:        sampled image -> fixed-function decode/texture cache -> FMA/reduce
+```
+
+Fixed-function ASTC decode removes explicit bit unpacking, but it is not free:
+it consumes sampler/texture-cache bandwidth and the present sidecar path adds
+an ASTC-native dispatch boundary.  Raw payload rate alone is therefore not a
+speed predictor.
+
+The current partial-overlay measurements support this cautious interpretation.
+On the Intel UHD 620, the Qwen `Q4_K_M` pilot with eight resident D1 6x6 FFN
+artifacts ran at 3.29 predicted tokens/s versus 3.50 tokens/s for ordinary
+Vulkan (about 6% slower); the Phi Q4 pilot with four resident D1 6x6 artifacts
+ran at 1.54 versus 1.60 predicted tokens/s (about 3% slower).  Both runs had
+zero native-dispatch failures, so these are performance observations rather
+than fallback failures.  They are not whole-model ASTC conclusions: coverage
+was partial, cache creation/upload time was excluded from steady-state token
+throughput, and the original GGUF remains resident.
+
+This changes the priority order:
+
+1. Keep D1 4x4/5x5/6x6 as the correctness, cache, quality and memory research
+   ladder.  Do not promote D1 6x6 as a Q4 speed replacement from bitrate alone.
+2. Make paired D2 the primary *runtime-speed* hypothesis after its independent
+   full-shape/model gates.  D2 may reduce sampled texels per two logical output
+   rows, so it has a structural opportunity beyond merely replacing shader
+   unpacking.  This is a hypothesis to measure, not a performance claim.
+3. Profile the exact competing paths before changing the encoder again.  The
+   minimum report is native-Q4 and ASTC GPU dispatch time, prompt versus token
+   generation time, ASTC coverage, dispatch/fallback counts, resident bytes and
+   cache load time.  Hardware counters for DRAM traffic, cache hit rate,
+   sampler throughput and occupancy are optional/device-specific; they must not
+   be inferred on Mesa devices where portable counter access is unavailable.
+4. Only after an isolated D2-versus-Q4 measurement shows a plausible benefit,
+   investigate reducing ASTC dispatch overhead or fusing adjacent work through
+   the existing generic external-operation seam.  No ASTC-specific ownership is
+   to be moved into the normal ggml-vulkan backend for this experiment.
+
+The next benchmark gate is therefore deliberately narrow: use one matched
+tensor and activation shape to compare the native Q4_K shader actually selected
+by ggml Vulkan against D1 6x6 and D2 8x5 native recording.  Record Vulkan
+timestamp queries around the ASTC recording and use the backend's own timing
+for the native path.  A later full-model run may be called a performance result
+only when coverage, model-quality evidence, warm-state policy and device
+selection are identical across both sides.
