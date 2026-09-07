@@ -9811,3 +9811,45 @@ timestamp queries around the ASTC recording and use the backend's own timing
 for the native path.  A later full-model run may be called a performance result
 only when coverage, model-quality evidence, warm-state policy and device
 selection are identical across both sides.
+
+## Three-hundred-and-eighty-third sweep: paired-D2 timing smoke
+
+The generic D1 timing utility cannot be reused for D2: paired-D2 has five
+descriptor bindings (ASTC image, activations, output, layout map and row
+scales), a physical half-height image, and a different push-constant contract.
+A dedicated `astc-vulkan-paired-timing-smoke` now exercises the same
+`astc_vulkan_paired_matvec_session` used by the runtime overlay.  It accepts a
+real `8x5` payload and layout map, keeps the Vulkan device/session alive across
+repeats, and validates the expected 8192x2048 logical geometry before dispatch.
+
+The first matched smoke used:
+
+```text
+payload:    /tmp/pythia-v3-d2-8x5.astc
+layout map: /tmp/pythia-v3-d2-8x5-cache/layout-map.bin
+logical:    8192 x 2048
+samples:    1
+repeats:    8 (after one warm-up)
+```
+
+It passed on the Intel UHD 620 with:
+
+```text
+D2 8x5 paired host-submit-to-readback: 11.268 ms/dispatch
+dispatch failures: 0
+geometry/layout validation: pass
+```
+
+The paired session did not return usable Vulkan timestamp-query results on
+this Mesa run (`0/8 timed`), so `11.268 ms` includes host-visible activation
+mapping, queue submit/wait and output readback.  It must not be compared as a
+GPU-kernel number with the D1 timestamp smoke.  The dedicated tool still
+provides the correct lifecycle/descriptor/geometry gate and gives us the
+right place to add a queue-family timestamp query or external command-buffer
+timestamps later.
+
+This result does not yet establish a D2 speed advantage.  The next performance
+gate is to make D2 and D1 use the same timestamp source (or the same external
+command-buffer timing scope), then compare D2 8x5, D1 8x6/6x6 and the native
+Q4_K path on matched coverage.  Until that gate passes, D2 remains a runtime
+speed hypothesis and D1 remains a correctness/cache reference.

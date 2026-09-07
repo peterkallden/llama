@@ -69,6 +69,7 @@ void astc_vulkan_paired_matvec_session::reset() {
     if (device_ != VK_NULL_HANDLE) {
         if (!native_mode_) vkDeviceWaitIdle(device_);
         if (fence_ != VK_NULL_HANDLE) vkDestroyFence(device_, fence_, nullptr);
+        if (timestamp_query_pool_ != VK_NULL_HANDLE) vkDestroyQueryPool(device_, timestamp_query_pool_, nullptr);
         if (command_pool_ != VK_NULL_HANDLE) vkDestroyCommandPool(device_, command_pool_, nullptr);
         if (pipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipeline_, nullptr);
         if (shader_module_ != VK_NULL_HANDLE) vkDestroyShaderModule(device_, shader_module_, nullptr);
@@ -89,6 +90,9 @@ void astc_vulkan_paired_matvec_session::reset() {
     paired_semantic_ = row_scale_count_ = 0;
     descriptor_set_ = VK_NULL_HANDLE;
     command_buffer_ = VK_NULL_HANDLE;
+    timestamp_query_pool_ = VK_NULL_HANDLE;
+    timestamp_period_ns_ = 0.0;
+    last_gpu_time_ns_ = 0.0;
     native_mode_ = false;
 }
 
@@ -161,6 +165,17 @@ bool astc_vulkan_paired_matvec_session::init_impl(
     row_scale_count_ = logical_height;
     samples_ = samples;
     native_mode_ = native_mode;
+    VkPhysicalDeviceProperties device_properties{};
+    vkGetPhysicalDeviceProperties(physical_device_, &device_properties);
+    timestamp_period_ns_ = device_properties.limits.timestampPeriod;
+    if (device_properties.limits.timestampPeriod > 0.0f) {
+        const VkQueryPoolCreateInfo query_info{
+            VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, nullptr, 0,
+            VK_QUERY_TYPE_TIMESTAMP, 2, 0};
+        if (vkCreateQueryPool(device_, &query_info, nullptr, &timestamp_query_pool_) != VK_SUCCESS) {
+            timestamp_query_pool_ = VK_NULL_HANDLE;
+        }
+    }
     const VkDeviceSize activation_bytes = static_cast<VkDeviceSize>(samples) * width * sizeof(float);
     const VkDeviceSize output_bytes = static_cast<VkDeviceSize>(samples) * logical_height * sizeof(float);
     const VkDeviceSize layout_bytes = static_cast<VkDeviceSize>(layout_map.size());
@@ -366,6 +381,11 @@ bool astc_vulkan_paired_matvec_session::run_band(
         error = "failed to begin paired-D2 command buffer";
         return false;
     }
+    if (timestamp_query_pool_ != VK_NULL_HANDLE) {
+        vkCmdResetQueryPool(command_buffer_, timestamp_query_pool_, 0, 2);
+        vkCmdWriteTimestamp(command_buffer_, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            timestamp_query_pool_, 0);
+    }
     vkCmdBindPipeline(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE,
                             pipeline_layout_, 0, 1, &descriptor_set_, 0, nullptr);
@@ -377,6 +397,10 @@ bool astc_vulkan_paired_matvec_session::run_band(
         vkCmdPushConstants(command_buffer_, pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT,
                            0, sizeof(constants), &constants);
         vkCmdDispatch(command_buffer_, band_height, 1, 1);
+    }
+    if (timestamp_query_pool_ != VK_NULL_HANDLE) {
+        vkCmdWriteTimestamp(command_buffer_, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            timestamp_query_pool_, 1);
     }
     const VkBufferMemoryBarrier output_barrier{
         VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT,
@@ -394,6 +418,16 @@ bool astc_vulkan_paired_matvec_session::run_band(
         vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
         error = "failed to submit paired-D2 ASTC dispatch";
         return false;
+    }
+    last_gpu_time_ns_ = 0.0;
+    if (timestamp_query_pool_ != VK_NULL_HANDLE) {
+        uint64_t timestamps[2] = {};
+        if (vkGetQueryPoolResults(device_, timestamp_query_pool_, 0, 2,
+                                  sizeof(timestamps), timestamps, sizeof(uint64_t) * 2,
+                                  VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS &&
+            timestamps[1] >= timestamps[0]) {
+            last_gpu_time_ns_ = static_cast<double>(timestamps[1] - timestamps[0]) * timestamp_period_ns_;
+        }
     }
     void * mapped = nullptr;
     if (vkMapMemory(device_, output_memory_, 0, output_bytes, 0, &mapped) != VK_SUCCESS) {

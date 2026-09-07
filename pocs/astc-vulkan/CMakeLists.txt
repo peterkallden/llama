@@ -594,6 +594,17 @@ if (TARGET Vulkan::Vulkan)
     add_dependencies(astc-vulkan-device-smoke
         astc-vulkan-ffn-e2e-shader astc-vulkan-paired-matvec-shader)
 
+    add_executable(astc-vulkan-paired-timing-smoke
+        astc-vulkan-paired-timing-smoke.cpp)
+    target_include_directories(astc-vulkan-paired-timing-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-paired-timing-smoke PRIVATE
+        Vulkan::Vulkan astc-vulkan-resource astc-vulkan-stream-loader
+        astc-vulkan-paired-dispatch astc-vulkan-shared-device)
+    target_compile_features(astc-vulkan-paired-timing-smoke PRIVATE cxx_std_17)
+    add_dependencies(astc-vulkan-paired-timing-smoke
+        astc-vulkan-paired-matvec-shader)
+
     add_executable(astc-vulkan-gpu-ranking-device-smoke
         astc-vulkan-gpu-ranking-device-smoke.cpp)
     target_link_libraries(astc-vulkan-gpu-ranking-device-smoke PRIVATE

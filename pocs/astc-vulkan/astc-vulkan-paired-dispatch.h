@@ -71,6 +71,9 @@ public:
                          std::string & error);
     void reset();
     bool ready() const { return device_ != VK_NULL_HANDLE && pipeline_ != VK_NULL_HANDLE; }
+    // GPU-only duration of the most recent run_band()/run() dispatch, when the
+    // selected queue exposes timestamp queries.  Zero means unavailable.
+    double last_gpu_time_ns() const { return last_gpu_time_ns_; }
 
 private:
     VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;
@@ -104,6 +107,9 @@ private:
     VkCommandPool command_pool_ = VK_NULL_HANDLE;
     VkCommandBuffer command_buffer_ = VK_NULL_HANDLE;
     VkFence fence_ = VK_NULL_HANDLE;
+    VkQueryPool timestamp_query_pool_ = VK_NULL_HANDLE;
+    double timestamp_period_ns_ = 0.0;
+    double last_gpu_time_ns_ = 0.0;
     bool native_mode_ = false;
 
     bool init_impl(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
