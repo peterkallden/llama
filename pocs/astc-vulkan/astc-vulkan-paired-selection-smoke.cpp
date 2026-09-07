@@ -2,6 +2,7 @@
 
 #include "astc-vulkan-input.h"
 #include "astc-vulkan-d2-row-scale.h"
+#include "astc-vulkan-d2-pair-transform.h"
 #include "astc-vulkan-objective.h"
 #include "astc-vulkan-paired.h"
 #include "astc-vulkan-paired-layout.h"
@@ -102,6 +103,7 @@ struct params {
     bool structure_bank = false;
     bool pv_alternate = false;
     bool row_strip_chunked = false;
+    bool optimized_pairing = false;
     d2_channel_weight_profile channel_weights = d2_channel_weight_profile::legacy;
     bool source_derived_alpha = false;
     d2_basis_selection paired_basis = d2_basis_selection::direct;
@@ -254,6 +256,11 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--structure-bank") result.structure_bank = value == "1" || value == "true";
         else if (option == "--pv-alternate") result.pv_alternate = value == "1" || value == "true";
         else if (option == "--row-strip-chunked") result.row_strip_chunked = value == "1" || value == "true";
+        else if (option == "--row-pairing") {
+            if (value == "adjacent") result.optimized_pairing = false;
+            else if (value == "optimized") result.optimized_pairing = true;
+            else return false;
+        }
         else if (option == "--channel-weights") {
             if (!parse_channel_weight_profile(value, result.channel_weights)) return false;
         }
@@ -476,21 +483,31 @@ void fill_source_block_with_steering(std::vector<float> & source,
                        astc_vulkan_paired_layout layout,
                        astc_vulkan_paired_basis basis,
                        astc_vulkan_paired_semantic semantic,
-                       const std::function<float(float, float, float, float)> & steering_value) {
+                       const std::function<float(float, float, float, float)> & steering_value,
+                       const astc_vulkan_d2_pairing * pairing = nullptr) {
     if (source.size() != kBlockWidth * kPhysicalBlockHeight * 4) {
         source.resize(kBlockWidth * kPhysicalBlockHeight * 4);
     }
     for (uint32_t y = 0; y < kPhysicalBlockHeight; ++y) {
         for (uint32_t x_index = 0; x_index < kBlockWidth; ++x_index) {
-            const uint32_t logical_row0 =
+            const uint32_t slot_row0 =
 #if defined(ASTC_VULKAN_PAIRED_D2_TRANSPOSED)
-                row0 + 2 * x_index;
+                2 * x_index;
             const uint32_t column = column0 + y;
 #else
-                row0 + 2 * y;
+                2 * y;
             const uint32_t column = column0 + x_index;
 #endif
-            const uint32_t logical_row1 = logical_row0 + 1;
+            const uint32_t pair_index =
+#if defined(ASTC_VULKAN_PAIRED_D2_TRANSPOSED)
+                x_index;
+#else
+                y;
+#endif
+            const uint32_t local_row0 = pairing == nullptr ? slot_row0 : pairing->row_order[2 * pair_index];
+            const uint32_t local_row1 = pairing == nullptr ? slot_row0 + 1 : pairing->row_order[2 * pair_index + 1];
+            const uint32_t logical_row0 = row0 + local_row0;
+            const uint32_t logical_row1 = row0 + local_row1;
             const float x = 2.0f * static_cast<float>(x_index) / (kBlockWidth - 1) - 1.0f;
             const float y_value = 2.0f * static_cast<float>(y) / (kPhysicalBlockHeight - 1) - 1.0f;
             const float q0 = logical_row0 < rows && column < columns ?
@@ -512,11 +529,12 @@ void fill_source_block(std::vector<float> & source, const ggml_vk_astc_loaded_ma
                        uint32_t row0, uint32_t column0, uint32_t rows, uint32_t columns,
                        float minimum, float range, astc_vulkan_paired_layout layout,
                        astc_vulkan_paired_basis basis, astc_vulkan_paired_semantic semantic,
-                       const d2_source_candidate & candidate) {
+                       const d2_source_candidate & candidate,
+                       const astc_vulkan_d2_pairing * pairing = nullptr) {
     fill_source_block_with_steering(source, matrix, row0, column0, rows, columns, minimum, range,
         layout, basis, semantic, [&candidate](float q0, float q1, float x, float y) {
             return source_alpha_value(candidate, q0, q1, x, y);
-        });
+        }, pairing);
 }
 
 void write_block(std::vector<float> & target, const decoded_block & block, uint32_t block_row,
@@ -827,6 +845,56 @@ bool select_yaqa_candidates(const std::vector<double> & initial_calibration,
     return true;
 }
 
+// Select one pairing for a complete ten-row D2 stripe. This is intentionally a
+// cheap pre-screen: exact ASTC encode/decode and the existing conflict-aware
+// selector still make the artifact decision. Only calibration/validation
+// projections are used, so holdout samples cannot influence the pairing map.
+astc_vulkan_d2_pairing choose_stripe_pairing(const ggml_vk_astc_loaded_matrix & matrix,
+                                             const ggml_vk_astc_activation_trace & trace,
+                                             uint32_t row0, uint32_t strip_rows,
+                                             uint32_t columns, uint32_t scored_samples) {
+    const auto identity = astc_vulkan_d2_identity_pairing();
+    if (strip_rows < astc_vulkan_d2_pair_group_rows || scored_samples == 0) return identity;
+    std::array<std::vector<double>, astc_vulkan_d2_pair_group_rows> projections;
+    for (auto & values : projections) values.assign(scored_samples, 0.0);
+    for (uint32_t local_row = 0; local_row < astc_vulkan_d2_pair_group_rows; ++local_row) {
+        const uint32_t row = row0 + local_row;
+        for (uint32_t sample = 0; sample < scored_samples; ++sample) {
+            double projected = 0.0;
+            for (uint32_t column = 0; column < columns; ++column) {
+                projected += matrix.values[static_cast<size_t>(row) * matrix.columns + column] *
+                             trace.values[static_cast<size_t>(sample) * trace.columns + column];
+            }
+            projections[local_row][sample] = projected;
+        }
+    }
+    auto pair_score = [&](uint32_t first, uint32_t second) {
+        double numerator = 0.0, first_norm = 0.0, second_norm = 0.0;
+        for (uint32_t sample = 0; sample < scored_samples; ++sample) {
+            const double lhs = projections[first][sample];
+            const double rhs = projections[second][sample];
+            numerator += lhs * rhs;
+            first_norm += lhs * lhs;
+            second_norm += rhs * rhs;
+        }
+        return std::fabs(numerator) / (std::sqrt(first_norm * second_norm) + 1e-12);
+    };
+    auto pairings = astc_vulkan_d2_enumerate_pairings();
+    double best_score = -1.0;
+    astc_vulkan_d2_pairing best = identity;
+    for (const auto & pairing : pairings) {
+        double score = 0.0;
+        for (uint32_t pair = 0; pair < astc_vulkan_d2_pair_group_pairs; ++pair) {
+            score += pair_score(pairing.row_order[2 * pair], pairing.row_order[2 * pair + 1]);
+        }
+        if (score > best_score) {
+            best_score = score;
+            best = pairing;
+        }
+    }
+    return best;
+}
+
 // // select one strip at a time, keeping the candidate working set proportional
 // to the strip width instead of the full tensor.  Validation stopping is
 // applied independently per strip; this is the exact separable objective and
@@ -857,6 +925,8 @@ bool run_row_strip_chunked(const params & options,
     uint64_t unique_candidates = 0, raw_candidates = 0;
     uint64_t accepted = 0, peak_candidates = 0;
     uint64_t selected_dual_planes = 0, selected_semantic_dual_planes = 0, selected_alpha_dual_planes = 0;
+    std::vector<astc_vulkan_d2_pairing> pairing_map;
+    pairing_map.reserve(blocks_y);
     const uint32_t worker_count = std::min(std::max(1u, options.worker_count),
                                            std::max(1u, blocks_x));
     std::vector<std::unique_ptr<block_codec>> worker_rg_b;
@@ -880,6 +950,11 @@ bool run_row_strip_chunked(const params & options,
     for (uint32_t strip = 0; strip < blocks_y; ++strip) {
         const uint32_t row0 = strip * kLogicalBlockHeight;
         const uint32_t strip_rows = std::min(kLogicalBlockHeight, options.rows - row0);
+        const astc_vulkan_d2_pairing pairing = options.optimized_pairing ?
+            choose_stripe_pairing(matrix, trace, row0, strip_rows, options.columns,
+                                  options.calibration_samples + options.validation_samples) :
+            astc_vulkan_d2_identity_pairing();
+        pairing_map.push_back(pairing);
         std::vector<std::vector<generated_candidate>> generated(blocks_x);
         std::vector<float> strip_neutral(static_cast<size_t>(strip_rows) * options.columns, 0.0f);
         std::atomic<uint32_t> next_block{0};
@@ -903,7 +978,8 @@ bool run_row_strip_chunked(const params & options,
                             candidate.basis = basis;
                             fill_source_block(source_scratch, matrix, row0, block_x * kLogicalBlockWidth,
                                 options.rows, options.columns, minimum, range, layout, basis,
-                                options.paired_semantic, steering);
+                                options.paired_semantic, steering,
+                                options.optimized_pairing ? &pairing : nullptr);
                             if (!codec.roundtrip(source_scratch, candidate.block, basis)) { generation_failed.store(true); return; }
                             candidate.delta.payload = candidate.block.payload;
                             ++strip_raw;
@@ -923,10 +999,11 @@ bool run_row_strip_chunked(const params & options,
                 if (neutral_it == candidates.end()) { generation_failed.store(true); return; }
                 std::iter_swap(candidates.begin(), neutral_it);
                 const decoded_block & block = candidates.front().block;
-                for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
+                for (uint32_t slot_row = 0; slot_row < strip_rows; ++slot_row) for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
+                    const uint32_t local_row = options.optimized_pairing ? pairing.row_order[slot_row] : slot_row;
                     const uint32_t column = block_x * kLogicalBlockWidth + x;
                     if (column < options.columns) strip_neutral[static_cast<size_t>(local_row) * options.columns + column] =
-                        block.logical_weights[local_row * kLogicalBlockWidth + x];
+                        block.logical_weights[slot_row * kLogicalBlockWidth + x];
                 }
                 strip_unique += candidates.size();
             }
@@ -956,9 +1033,10 @@ bool run_row_strip_chunked(const params & options,
             const uint32_t sample_offset = sample < options.calibration_samples ? 0 : validation_offset;
             const uint32_t local_sample = sample < options.calibration_samples ? sample : sample - options.calibration_samples;
             auto & output = sample < options.calibration_samples ? initial_cal : initial_val;
-            for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) {
-                double value = 0.0;
-                for (uint32_t column = 0; column < options.columns; ++column) {
+                    for (uint32_t slot_row = 0; slot_row < strip_rows; ++slot_row) {
+                        const uint32_t local_row = options.optimized_pairing ? pairing.row_order[slot_row] : slot_row;
+                        double value = 0.0;
+                        for (uint32_t column = 0; column < options.columns; ++column) {
                     const float source = normalized_weight(matrix, row0 + local_row, column, minimum, range);
                     const float decoded = strip_neutral[static_cast<size_t>(local_row) * options.columns + column];
                     const float scale = row_scales == nullptr ? 1.0f : (*row_scales)[row0 + local_row].value;
@@ -978,14 +1056,15 @@ bool run_row_strip_chunked(const params & options,
                     const uint32_t sample_offset = sample < options.calibration_samples ? 0 : validation_offset;
                     const uint32_t local_sample = sample < options.calibration_samples ? sample : sample - options.calibration_samples;
                     auto & output = sample < options.calibration_samples ? candidate.delta.calibration_delta : candidate.delta.validation_delta;
-                    for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) {
+                    for (uint32_t slot_row = 0; slot_row < strip_rows; ++slot_row) {
+                        const uint32_t local_row = options.optimized_pairing ? pairing.row_order[slot_row] : slot_row;
                         double value = 0.0;
                         for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
                             const uint32_t column = block_x * kLogicalBlockWidth + x;
                             if (column >= options.columns) continue;
                             const float scale = row_scales == nullptr ? 1.0f : (*row_scales)[row0 + local_row].value;
-                            value += (candidate.block.logical_weights[local_row * kLogicalBlockWidth + x] -
-                                      base.logical_weights[local_row * kLogicalBlockWidth + x]) * range * scale *
+                            value += (candidate.block.logical_weights[slot_row * kLogicalBlockWidth + x] -
+                                      base.logical_weights[slot_row * kLogicalBlockWidth + x]) * range * scale *
                                      trace.values[static_cast<size_t>(sample_offset + local_sample) * trace.columns + column];
                         }
                         output[static_cast<size_t>(local_sample) * strip_rows + local_row] = value;
@@ -1010,11 +1089,12 @@ bool run_row_strip_chunked(const params & options,
                     block.info.dual_plane_component == semantic_singleton) ++selected_semantic_dual_planes;
                 if (block.info.dual_plane_component == 3u) ++selected_alpha_dual_planes;
             }
-            for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
+            for (uint32_t slot_row = 0; slot_row < strip_rows; ++slot_row) for (uint32_t x = 0; x < kLogicalBlockWidth; ++x) {
+                const uint32_t local_row = options.optimized_pairing ? pairing.row_order[slot_row] : slot_row;
                 const uint32_t column = block_x * kLogicalBlockWidth + x;
                 if (column >= options.columns) continue;
-                neutral[static_cast<size_t>(row0 + local_row) * options.columns + column] = base.logical_weights[local_row * kLogicalBlockWidth + x];
-                selected[static_cast<size_t>(row0 + local_row) * options.columns + column] = block.logical_weights[local_row * kLogicalBlockWidth + x];
+                neutral[static_cast<size_t>(row0 + local_row) * options.columns + column] = base.logical_weights[slot_row * kLogicalBlockWidth + x];
+                selected[static_cast<size_t>(row0 + local_row) * options.columns + column] = block.logical_weights[slot_row * kLogicalBlockWidth + x];
             }
             const size_t block_index = static_cast<size_t>(strip) * blocks_x + block_x;
             std::copy(block.payload.begin(), block.payload.end(), selected_payload.begin() + block_index * 16u);
@@ -1075,9 +1155,10 @@ bool run_row_strip_chunked(const params & options,
         for (const auto & scale : *row_scales) scales.write(reinterpret_cast<const char *>(&scale.value), sizeof(scale.value));
         if (!scales.good()) return false;
     }
-    std::printf("paired-select chunked D2_%s mapping=%s semantic=%s rows=%u columns=%u channel-weights=%s source-alpha=%s basis=%s blocks=%zu raw=%llu unique=%llu peak-candidates=%llu accepted=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu neutral-holdout=%.8g selected-holdout=%.8g\n",
-                kFootprintName, kMappingName, astc_vulkan_paired_semantic_name(options.paired_semantic),
-                options.rows, options.columns,
+    std::printf("paired-select chunked D2_%s mapping=%s pairing=%s semantic=%s rows=%u columns=%u channel-weights=%s source-alpha=%s basis=%s blocks=%zu raw=%llu unique=%llu peak-candidates=%llu accepted=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu neutral-holdout=%.8g selected-holdout=%.8g\n",
+                kFootprintName, kMappingName,
+                options.optimized_pairing ? "optimized" : "adjacent",
+                astc_vulkan_paired_semantic_name(options.paired_semantic), options.rows, options.columns,
                 channel_weight_profile_name(options.channel_weights),
                 options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1",
                 paired_basis_selection_name(options.paired_basis), block_count,
@@ -1092,6 +1173,7 @@ bool run_row_strip_chunked(const params & options,
         report << "backend=" << (neural_backend ? "neural-d2" : "standard") << '\n'
                << "footprint=" << kFootprintName << '\n'
                << "mapping=" << kMappingName << '\n'
+               << "pairing=" << (options.optimized_pairing ? "optimized" : "adjacent") << '\n'
                << "rows=" << options.rows << '\n'
                << "columns=" << options.columns << '\n'
                << "channel_weights=" << channel_weight_profile_name(options.channel_weights) << '\n'
@@ -1104,6 +1186,12 @@ bool run_row_strip_chunked(const params & options,
                << "offset=" << minimum << '\n'
                << "blocks=" << block_count << '\n'
                << "selection_scope=row-strip-independent\n"
+               << "pairing_map_row_order=";
+        for (size_t index = 0; index < pairing_map.size(); ++index) {
+            if (index != 0) report << ';';
+            for (uint8_t row : pairing_map[index].row_order) report << static_cast<unsigned int>(row) << ',';
+        }
+        report << '\n'
                << "raw_candidates=" << raw_candidates << '\n'
                << "unique_candidates=" << unique_candidates << '\n'
                << "peak_candidates=" << peak_candidates << '\n'
@@ -1131,6 +1219,7 @@ int main(int argc, char ** argv) {
                              "[--rows N --columns N --calibration-samples N --validation-samples N --workers N "
                              "--progress-every-blocks N --report path [--structure-bank 1] "
                              "[--pv-alternate 1] [--row-strip-chunked 1] "
+                             "[--row-pairing adjacent|optimized] "
                              "[--channel-weights legacy|balanced-a025|balanced-a050] "
                              "[--source-derived-alpha 1] "
                              "[--paired-basis direct|common-difference] "
@@ -1159,6 +1248,15 @@ int main(int argc, char ** argv) {
     if (options.paired_semantic == astc_vulkan_paired_semantic::luminance_alpha &&
         options.paired_basis != d2_basis_selection::direct) {
         std::fprintf(stderr, "D2-LA supports only the direct paired basis\n");
+        return 2;
+    }
+    if (options.optimized_pairing && (!options.export_payload.empty() ||
+                                      !options.export_neutral_payload.empty())) {
+        std::fprintf(stderr, "optimized row pairing requires a versioned pair-map artifact; export is disabled\n");
+        return 2;
+    }
+    if (options.optimized_pairing && !options.row_strip_chunked) {
+        std::fprintf(stderr, "optimized row pairing requires --row-strip-chunked 1\n");
         return 2;
     }
 #if defined(ASTC_VULKAN_PAIRED_D2_TRANSPOSED)
