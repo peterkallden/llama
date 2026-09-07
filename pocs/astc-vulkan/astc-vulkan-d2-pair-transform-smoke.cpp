@@ -5,6 +5,7 @@
 // useful legal ASTC 8x5 candidate than adjacent direct D2-LA pairing?
 
 #include "astc-vulkan-d2-pair-transform.h"
+#include "astc-vulkan-input.h"
 #include "astc-vulkan-paired.h"
 
 #include <astcenc.h>
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace {
@@ -189,11 +191,48 @@ void print_candidate(const char * label, const candidate & value) {
     std::printf("\n");
 }
 
+bool load_real_fixture(const char * model_path, const char * tensor_name, const char * trace_path,
+                       std::array<float, kLogicalHeight * kWidth> & weights,
+                       std::array<float, kSamples * kWidth> & activations) {
+    ggml_vk_astc_loaded_matrix matrix;
+    ggml_vk_astc_activation_trace trace;
+    std::string error;
+    if (!ggml_vk_astc_load_gguf_matrix(model_path, tensor_name, matrix, error) ||
+        !ggml_vk_astc_load_activation_trace(trace_path, trace, error) ||
+        matrix.rows < kLogicalHeight || matrix.columns < kWidth ||
+        trace.samples < kSamples || trace.columns < kWidth) {
+        std::fprintf(stderr, "d2-pair-transform real fixture error: %s\n", error.c_str());
+        return false;
+    }
+    for (unsigned int row = 0; row < kLogicalHeight; ++row) {
+        for (unsigned int column = 0; column < kWidth; ++column) {
+            weights[row * kWidth + column] = matrix.values[static_cast<size_t>(row) * matrix.columns + column];
+        }
+    }
+    for (unsigned int sample = 0; sample < kSamples; ++sample) {
+        for (unsigned int column = 0; column < kWidth; ++column) {
+            activations[sample * kWidth + column] = trace.values[static_cast<size_t>(sample) * trace.columns + column];
+        }
+    }
+    return true;
+}
+
 } // namespace
 
-int main() {
-    const auto weights = make_weights();
-    const auto activations = make_activations();
+int main(int argc, char ** argv) {
+    std::array<float, kLogicalHeight * kWidth> weights = make_weights();
+    std::array<float, kSamples * kWidth> activations = make_activations();
+    if (argc != 1 && argc != 7) {
+        std::fprintf(stderr, "usage: %s [--model model.gguf --tensor tensor.name --trace input.trace]\n", argv[0]);
+        return 2;
+    }
+    bool real_fixture = false;
+    if (argc == 7) {
+        if (std::string(argv[1]) != "--model" || std::string(argv[3]) != "--tensor" ||
+            std::string(argv[5]) != "--trace" ||
+            !load_real_fixture(argv[2], argv[4], argv[6], weights, activations)) return 2;
+        real_fixture = true;
+    }
     const auto identity = astc_vulkan_d2_identity_pairing();
     auto pairings = astc_vulkan_d2_enumerate_pairings();
     if (pairings.size() != 945 || !astc_vulkan_d2_pairing_is_valid(identity)) return 1;
@@ -225,7 +264,8 @@ int main() {
             if (transformed.activation_mse < givens_best.activation_mse) givens_best = transformed;
         }
     }
-    std::printf("d2-pair-transform matchings=%zu shortlist=%zu exact-candidates=%u\n", pairings.size(), screened.size(), exact_count);
+    std::printf("d2-pair-transform fixture=%s matchings=%zu shortlist=%zu exact-candidates=%u\n",
+                real_fixture ? "real" : "synthetic", pairings.size(), screened.size(), exact_count);
     print_candidate("baseline-adjacent", baseline);
     print_candidate("fixed-common-difference", common_difference);
     print_candidate("pairing-only", pairing_best);

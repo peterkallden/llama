@@ -811,11 +811,13 @@ if (TARGET astcenc::astcenc-static)
     # Offline-only D2 research smoke. It does not serialize pairing or
     # transform metadata, and therefore cannot affect the runtime ABI.
     add_executable(astc-vulkan-d2-pair-transform-smoke
-        astc-vulkan-d2-pair-transform-smoke.cpp)
+        astc-vulkan-d2-pair-transform-smoke.cpp
+        astc-vulkan-input.cpp)
     target_include_directories(astc-vulkan-d2-pair-transform-smoke PRIVATE
-        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/ggml/include)
     target_link_libraries(astc-vulkan-d2-pair-transform-smoke PRIVATE
-        astcenc::astcenc-static astc-vulkan-algorithms)
+        astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
     target_compile_features(astc-vulkan-d2-pair-transform-smoke PRIVATE cxx_std_17)
 
     if (TARGET ggml-base)
