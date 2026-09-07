@@ -111,7 +111,8 @@ int main(int argc, char ** argv) {
                 commit_order_hash, padding_contract, footprint_name = "6x6",
                 representation_name = "scalar", artifact_id, encoder_profile,
                 paired_semantic_name = "direct", variant_name = "neutral",
-                normalization_name = "none", row_scales_input, row_scales_payload;
+                normalization_name = "none", row_scales_input, row_scales_payload,
+                pair_map_input, pair_map_payload;
     bool model_gate = false, vulkan_gate = false;
     bool have_scale_l = false, have_scale_a = false, have_offset = false;
     float activation_mse = 0.0f, logits_mse = 0.0f, loss_delta = 0.0f, top1 = 0.0f;
@@ -148,6 +149,8 @@ int main(int argc, char ** argv) {
         else if (option == "--normalization") normalization_name = value;
         else if (option == "--row-scales-input") row_scales_input = value;
         else if (option == "--row-scales-payload") row_scales_payload = value;
+        else if (option == "--pair-map-input") pair_map_input = value;
+        else if (option == "--pair-map-payload") pair_map_payload = value;
         else if (option == "--model-gate") { if (!parse_bool(value, model_gate)) return 2; }
         else if (option == "--vulkan-gate") { if (!parse_bool(value, vulkan_gate)) return 2; }
         else if (option == "--activation-mse") activation_mse = std::stof(value);
@@ -164,6 +167,7 @@ int main(int argc, char ** argv) {
     const std::vector<uint8_t> bytes = read_bytes(input);
     const std::vector<uint8_t> layout_bytes = read_bytes(layout_input);
     const std::vector<uint8_t> row_scale_bytes = read_bytes(row_scales_input);
+    const std::vector<uint8_t> pair_map_bytes = read_bytes(pair_map_input);
     astc_vulkan_paired_semantic paired_semantic;
     astc_vulkan_artifact_variant variant;
     astc_vulkan_normalization normalization;
@@ -179,15 +183,19 @@ int main(int argc, char ** argv) {
     const bool paired_d2 = representation == astc_vulkan_representation::kPairedD2;
     if ((paired_d2 && (layout_input.empty() || layout_payload_path.empty() || layout_bytes.empty())) ||
         (!paired_d2 && (!layout_input.empty() || !layout_payload_path.empty()))) return 2;
-    const bool v4 = !artifact_id.empty();
-    if (!v4 && (!row_scales_input.empty() || !row_scales_payload.empty() ||
+    const bool artifact_manifest = !artifact_id.empty();
+    if (!artifact_manifest && (!row_scales_input.empty() || !row_scales_payload.empty() ||
+                !pair_map_input.empty() || !pair_map_payload.empty() ||
                 paired_semantic != astc_vulkan_paired_semantic::direct_rgb ||
                 normalization != astc_vulkan_normalization::none)) return 2;
     if (normalization == astc_vulkan_normalization::per_row_absmax &&
         (row_scales_input.empty() || row_scales_payload.empty() ||
          row_scale_bytes.size() != static_cast<size_t>(height) * sizeof(float))) return 2;
+    if ((!pair_map_input.empty() || !pair_map_payload.empty()) &&
+        (!paired_d2 || pair_map_input.empty() || pair_map_payload.empty() ||
+         pair_map_bytes.size() != static_cast<size_t>((height + 9u) / 10u) * 10u)) return 2;
     astc_vulkan_manifest manifest;
-    if (v4) manifest.version = 4;
+    if (artifact_manifest) manifest.version = pair_map_bytes.empty() ? 4 : 5;
     manifest.model_fingerprint = fingerprint;
     astc_vulkan_tensor_record record;
     record.name = tensor_name;
@@ -204,7 +212,7 @@ int main(int argc, char ** argv) {
         record.layout_byte_size = layout_bytes.size();
         record.layout_hash64 = astc_vulkan_payload_hash64(layout_bytes.data(), layout_bytes.size());
     }
-    if (v4) {
+    if (artifact_manifest) {
         astc_vulkan_artifact_record artifact;
         artifact.id = artifact_id;
         artifact.storage = record;
@@ -217,6 +225,12 @@ int main(int argc, char ** argv) {
         if (normalization == astc_vulkan_normalization::per_row_absmax) {
             artifact.row_scale_byte_size = row_scale_bytes.size();
             artifact.row_scale_hash64 = astc_vulkan_payload_hash64(row_scale_bytes.data(), row_scale_bytes.size());
+        }
+        if (!pair_map_bytes.empty()) {
+            artifact.pair_map_byte_size = pair_map_bytes.size();
+            artifact.pair_map_hash64 = astc_vulkan_payload_hash64(pair_map_bytes.data(), pair_map_bytes.size());
+            std::string pair_error;
+            if (!astc_vulkan_validate_pair_map(artifact, pair_map_bytes.data(), pair_map_bytes.size(), pair_error)) return 2;
         }
         manifest.artifacts.push_back(std::move(artifact));
     } else {
@@ -238,6 +252,11 @@ int main(int argc, char ** argv) {
         std::ofstream row_scale_payload(row_scales_payload, std::ios::binary);
         row_scale_payload.write(reinterpret_cast<const char *>(row_scale_bytes.data()), row_scale_bytes.size());
         if (!row_scale_payload.good()) return 1;
+    }
+    if (!pair_map_bytes.empty()) {
+        std::ofstream pair_map_payload_file(pair_map_payload, std::ios::binary);
+        pair_map_payload_file.write(reinterpret_cast<const char *>(pair_map_bytes.data()), pair_map_bytes.size());
+        if (!pair_map_payload_file.good()) return 1;
     }
     if (!provenance_path.empty()) {
         const std::string manifest_bytes = read_text(manifest_path);
