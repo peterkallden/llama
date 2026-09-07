@@ -304,17 +304,18 @@ adjacent pairing as the control, and does not export a cache until the pair-map
   metadata contract is versioned.  The optional `--row-transform givens` bank
   adds a bounded 2x2 rotation sweep on top of pairing; it is research-only and
   remains disabled by default.  `--row-transform givens-row` is the more
-  deployable prototype: one bounded angle and affine range are shared by each
-  logical row pair across the complete reduction width.  On the current Qwen
-  crop, adjacent, pairing-only, block-Givens, and row-pair-Givens (+30 deg)
-  reached 0.00094672, 0.00077082, 0.00067761, and 0.00070411 holdout MSE
-  respectively.  These are promising smoke results, but both pairing and
-  transforms still need model replay and a versioned pair/transform-map
-  artifact before they can affect exported caches.  The row-Givens angle is
-  not universal: in the current Pythia cross-tensor sweep pairing-only gave a
-  small improvement on both `blk.0` and `blk.1`, while the tested row-Givens
-  angles regressed both.  Row-Givens therefore remains tensor-/trace-gated
-  research, whereas pairing is the primary follow-up candidate.
+  deployable prototype: one bounded angle is shared by the row pairs in a
+  stripe, while each pair uses a zero-preserving symmetric scale over the full
+  reduction width.  This avoids a pair-specific output offset at runtime.
+  The transform remains research-only: on the current Qwen crop its
+  validation-best angle (+7.5 deg) reached 0.00095900 validation MSE but
+  0.00087845 holdout MSE, worse than pairing-only at 0.00077082.  The current
+  Pythia cross-tensor sweep likewise found that pairing-only gave a small
+  improvement on both `blk.0` and `blk.1`, while the tested row-Givens angles
+  regressed both.  Pairing is therefore the primary follow-up candidate;
+  Givens remains paused until larger, disjoint traces demonstrate a stable
+  validation-to-holdout gain.  Neither variant can affect exported caches
+  until its pair/transform-map artifact is versioned and replayed.
 
 ### D2-LA and artifact variants
 

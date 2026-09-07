@@ -135,13 +135,12 @@ struct generated_candidate {
 };
 
 // A row-pair transform is shared by every physical block covering one
-// logical output-row pair.  Keeping its affine bounds at this granularity
-// makes the inverse transform possible after the reduction, without storing
-// two extra scale values in every ASTC block.
+// logical output-row pair.  The transform is centered around 0.5 and uses a
+// symmetric scale, so the runtime needs only one scale per pair and can apply
+// the inverse after the reduction without a pair-specific offset term.
 struct row_pair_transform_state {
     astc_vulkan_d2_givens_transform transform{};
-    float minimum = 0.0f;
-    float range = 1.0f;
+    float scale = 1.0f;
 };
 
 using row_pair_transform_map = std::array<row_pair_transform_state,
@@ -542,11 +541,12 @@ void fill_source_block_with_steering(std::vector<float> & source,
                     normalized_weight(matrix, row0 + local_row0, column, minimum, range) : 0.5f;
                 const float q1 = row0 + local_row1 < rows && column < columns ?
                     normalized_weight(matrix, row0 + local_row1, column, minimum, range) : 0.5f;
-                float u = q0, v = q1;
-                astc_vulkan_d2_pair_forward(q0, q1, state.transform, u, v);
+                float u = q0 - 0.5f, v = q1 - 0.5f;
+                astc_vulkan_d2_pair_forward(u, v, state.transform, u, v);
                 const size_t index = (static_cast<size_t>(y) * kBlockWidth + x_index) * 2;
-                transformed[index] = (u - state.minimum) / std::max(1e-6f, state.range);
-                transformed[index + 1] = (v - state.minimum) / std::max(1e-6f, state.range);
+                const float safe_scale = std::max(1e-6f, state.scale);
+                transformed[index] = 0.5f + 0.5f * u / safe_scale;
+                transformed[index + 1] = 0.5f + 0.5f * v / safe_scale;
             }
         }
     } else if (transform != nullptr) {
@@ -664,14 +664,16 @@ void restore_givens_row_block(decoded_block & block,
     for (uint32_t y = 0; y < kPhysicalBlockHeight; ++y) {
         const auto & state = transforms[y];
         if (std::fabs(state.transform.radians) < 1e-7f) continue;
-        const float safe_range = std::max(1e-6f, state.range);
+        const float safe_scale = std::max(1e-6f, state.scale);
         for (uint32_t x = 0; x < kBlockWidth; ++x) {
             const size_t first = static_cast<size_t>(2 * y) * kLogicalBlockWidth + x;
             const size_t second = static_cast<size_t>(2 * y + 1) * kLogicalBlockWidth + x;
-            const float u = state.minimum + safe_range * block.logical_weights[first];
-            const float v = state.minimum + safe_range * block.logical_weights[second];
+            const float u = 2.0f * safe_scale * (block.logical_weights[first] - 0.5f);
+            const float v = 2.0f * safe_scale * (block.logical_weights[second] - 0.5f);
             astc_vulkan_d2_pair_inverse(u, v, state.transform,
                                         block.logical_weights[first], block.logical_weights[second]);
+            block.logical_weights[first] += 0.5f;
+            block.logical_weights[second] += 0.5f;
         }
     }
 }
@@ -1043,8 +1045,7 @@ row_pair_transform_map make_row_pair_transform_map(
     for (uint32_t pair = 0; pair < astc_vulkan_d2_pair_group_pairs; ++pair) {
         auto & state = result[pair];
         state.transform.radians = radians;
-        state.minimum = std::numeric_limits<float>::infinity();
-        float maximum = -std::numeric_limits<float>::infinity();
+        state.scale = 0.0f;
         const uint32_t local_row0 = pairing.row_order[2 * pair];
         const uint32_t local_row1 = pairing.row_order[2 * pair + 1];
         for (uint32_t column = 0; column < columns; ++column) {
@@ -1054,19 +1055,16 @@ row_pair_transform_map make_row_pair_transform_map(
                 normalized_weight(matrix, row0 + local_row0, column, minimum, range) : 0.5f;
             const float q1 = valid1 ?
                 normalized_weight(matrix, row0 + local_row1, column, minimum, range) : 0.5f;
-            float u = q0, v = q1;
-            astc_vulkan_d2_pair_forward(q0, q1, state.transform, u, v);
+            float u = q0 - 0.5f, v = q1 - 0.5f;
+            astc_vulkan_d2_pair_forward(u, v, state.transform, u, v);
             if (valid0) {
-                state.minimum = std::min(state.minimum, u);
-                maximum = std::max(maximum, u);
+                state.scale = std::max(state.scale, std::fabs(u));
             }
             if (valid1) {
-                state.minimum = std::min(state.minimum, v);
-                maximum = std::max(maximum, v);
+                state.scale = std::max(state.scale, std::fabs(v));
             }
         }
-        if (!std::isfinite(state.minimum)) state.minimum = 0.0f;
-        state.range = std::max(1e-6f, maximum - state.minimum);
+        state.scale = std::max(1e-6f, state.scale);
     }
     return result;
 }
@@ -1102,6 +1100,7 @@ bool run_row_strip_chunked(const params & options,
     uint64_t unique_candidates = 0, raw_candidates = 0;
     uint64_t accepted = 0, peak_candidates = 0;
     uint64_t selected_dual_planes = 0, selected_semantic_dual_planes = 0, selected_alpha_dual_planes = 0;
+    double neutral_validation_loss = 0.0, selected_validation_loss = 0.0;
     std::vector<astc_vulkan_d2_pairing> pairing_map;
     pairing_map.reserve(blocks_y);
     const uint32_t worker_count = std::min(std::max(1u, options.worker_count),
@@ -1273,6 +1272,8 @@ bool run_row_strip_chunked(const params & options,
         astc_vulkan_paired_selection_result selection;
         const astc_vulkan_paired_selector_config config{strip_rows, options.calibration_samples, options.validation_samples};
         if (!astc_vulkan_select_paired_candidates(config, initial_cal, initial_val, selector_candidates, selection)) return false;
+        neutral_validation_loss += squared_norm(initial_val);
+        selected_validation_loss += selection.validation_residual_loss;
         accepted += selection.commits.size();
         for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
             const auto & base = generated[block_x].front().block;
@@ -1352,11 +1353,15 @@ bool run_row_strip_chunked(const params & options,
         for (const auto & scale : *row_scales) scales.write(reinterpret_cast<const char *>(&scale.value), sizeof(scale.value));
         if (!scales.good()) return false;
     }
+    const double validation_norm = static_cast<double>(std::max(1u, options.rows)) *
+        std::max(1u, options.validation_samples);
+    const double neutral_validation_mse = neutral_validation_loss / validation_norm;
+    const double selected_validation_mse = selected_validation_loss / validation_norm;
     const char * transform_name = options.row_givens_transform ? "givens-row" :
         (options.givens_transform ? "givens-bank" : "identity");
     const char * source_alpha_name = options.paired_semantic == astc_vulkan_paired_semantic::luminance_alpha ?
         "not-applicable" : (options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1");
-    std::printf("paired-select chunked D2_%s mapping=%s pairing=%s transform=%s angle-deg=%.3f semantic=%s rows=%u columns=%u channel-weights=%s source-alpha=%s basis=%s blocks=%zu raw=%llu unique=%llu peak-candidates=%llu accepted=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu neutral-holdout=%.8g selected-holdout=%.8g\n",
+    std::printf("paired-select chunked D2_%s mapping=%s pairing=%s transform=%s angle-deg=%.3f semantic=%s rows=%u columns=%u channel-weights=%s source-alpha=%s basis=%s blocks=%zu raw=%llu unique=%llu peak-candidates=%llu accepted=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu neutral-validation=%.8g selected-validation=%.8g neutral-holdout=%.8g selected-holdout=%.8g\n",
                 kFootprintName, kMappingName,
                 options.optimized_pairing ? "optimized" : "adjacent",
                 transform_name, options.row_transform_angle_degrees,
@@ -1368,7 +1373,8 @@ bool run_row_strip_chunked(const params & options,
                 static_cast<unsigned long long>(peak_candidates), static_cast<unsigned long long>(accepted),
                 static_cast<unsigned long long>(selected_dual_planes),
                 static_cast<unsigned long long>(selected_semantic_dual_planes),
-                static_cast<unsigned long long>(selected_alpha_dual_planes), neutral_holdout, selected_holdout);
+                static_cast<unsigned long long>(selected_alpha_dual_planes), neutral_validation_mse,
+                selected_validation_mse, neutral_holdout, selected_holdout);
     if (!options.report.empty()) {
         std::ofstream report(options.report);
         if (!report) return false;
@@ -1406,6 +1412,8 @@ bool run_row_strip_chunked(const params & options,
                << "exported_stream=" << (options.export_payload.empty() ? "none" :
                    (options.export_neutral ? "neutral" : "validation-selected")) << '\n'
                << "secondary_neutral_export=" << (!options.export_neutral_payload.empty() ? 1 : 0) << '\n'
+               << "neutral_validation_mse=" << neutral_validation_mse << '\n'
+               << "selected_validation_mse=" << selected_validation_mse << '\n'
                << "neutral_holdout_mse=" << neutral_holdout << '\n'
 
 
