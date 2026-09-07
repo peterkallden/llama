@@ -90,6 +90,7 @@ struct params {
     uint32_t validation_samples = 2;
     uint32_t worker_count = 4;
     uint32_t progress_every_blocks = 0;
+    float astc_preset = ASTCENC_PRE_THOROUGH;
     std::string report;
     std::string export_payload;
     std::string export_layout;
@@ -230,6 +231,13 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--calibration-samples") result.calibration_samples = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--validation-samples") result.validation_samples = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--workers") result.worker_count = static_cast<uint32_t>(std::stoul(value));
+        else if (option == "--preset") {
+            if (value == "fastest") result.astc_preset = ASTCENC_PRE_FASTEST;
+            else if (value == "fast") result.astc_preset = ASTCENC_PRE_FAST;
+            else if (value == "medium") result.astc_preset = ASTCENC_PRE_MEDIUM;
+            else if (value == "thorough") result.astc_preset = ASTCENC_PRE_THOROUGH;
+            else return false;
+        }
         else if (option == "--progress-every-blocks") result.progress_every_blocks = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--report") result.report = value;
         else if (option == "--export-payload") result.export_payload = value;
@@ -278,12 +286,13 @@ public:
 
     block_codec(bool neural_backend, astc_vulkan_paired_layout layout,
                 astc_vulkan_paired_semantic semantic, d2_channel_weight_profile channel_weights,
-                const block_codec * shared_parent = nullptr, bool structure_bank = false) : layout_(layout),
+                const block_codec * shared_parent = nullptr, bool structure_bank = false,
+                float astc_preset = ASTCENC_PRE_THOROUGH) : layout_(layout),
                                                                semantic_(semantic),
                                                                decoded_scratch_(kBlockWidth * kPhysicalBlockHeight * 4) {
         astcenc_config config{};
         if (astcenc_config_init(ASTCENC_PRF_LDR, kBlockWidth, kPhysicalBlockHeight, 1,
-                                ASTCENC_PRE_THOROUGH, 0, &config) == ASTCENC_SUCCESS) {
+                                astc_preset, 0, &config) == ASTCENC_SUCCESS) {
             apply_channel_weights(config, layout, semantic, channel_weights);
 #if defined(ASTC_VULKAN_PAIRED_NEURAL_ENCODER)
             if (neural_backend) {
@@ -852,11 +861,17 @@ bool run_row_strip_chunked(const params & options,
                                            std::max(1u, blocks_x));
     std::vector<std::unique_ptr<block_codec>> worker_rg_b;
     std::vector<std::unique_ptr<block_codec>> worker_r_gb;
+    // ASTC's search tables are immutable for a given configuration. Keep one
+    // owner per semantic layout and let the remaining worker contexts share
+    // those tables; this avoids repeating the very expensive thorough setup
+    // for every worker while preserving one context per concurrent encoder.
     for (uint32_t worker = 0; worker < worker_count; ++worker) {
+        const block_codec * rg_b_parent = worker_rg_b.empty() ? nullptr : worker_rg_b.front().get();
+        const block_codec * r_gb_parent = worker_r_gb.empty() ? nullptr : worker_r_gb.front().get();
         worker_rg_b.emplace_back(std::make_unique<block_codec>(neural_backend, astc_vulkan_paired_layout::rg_b,
-            options.paired_semantic, options.channel_weights));
+            options.paired_semantic, options.channel_weights, rg_b_parent, false, options.astc_preset));
         worker_r_gb.emplace_back(std::make_unique<block_codec>(neural_backend, astc_vulkan_paired_layout::r_gb,
-            options.paired_semantic, options.channel_weights));
+            options.paired_semantic, options.channel_weights, r_gb_parent, false, options.astc_preset));
     }
     for (const auto & codec : worker_rg_b) if (!codec->ready()) return false;
     for (const auto & codec : worker_r_gb) if (!codec->ready()) return false;

@@ -326,15 +326,15 @@ re-runs an encoder or guesses a codec configuration during inference.
 
 ### Lightweight scheduler profiles
 
-The artifact policy accepts `quality`, `balanced`, `size` (`compact` is a
-backward-compatible alias), `speed`, and `auto`. These names only rank
+The artifact policy accepts `quality`, `balanced`, `compact`, `speed`, and
+`auto`. The older spelling `size` remains a backward-compatible alias. These names only rank
 already validated cache artifacts:
 
 | Profile | Ranking rule in this PoC |
 |---|---|
 | `quality` | Lowest model loss delta, then logits error |
 | `balanced` | Evidence-first quality ordering |
-| `size`/`compact` | Lowest bits/weight, then model loss |
+| `compact` | Lowest bits/weight, then model loss |
 | `speed` | Deterministic quality ordering until device timings are recorded |
 | `auto` | Deterministic quality ordering until a combined policy exists |
 
@@ -358,6 +358,7 @@ used or available in this directory.
 | Conflict-aware selection | Accepts candidate changes against the current activation residual | Main selector; avoids summing locally-good but correlated corrections |
 | Validation-prefix stopping | Chooses the export prefix using validation traces, leaving holdout untouched | Required artifact-selection contract |
 | D1 GPU prescreen | Filters/provisions promising D1 blocks before expensive CPU ASTC search | Optional offline acceleration |
+| D2 GPU prescreen | Shortlists paired-D2 representation profiles with calibration-only activation energy before CPU ASTC search | Optional offline acceleration; preserves semantic/scale/Alpha family coverage |
 | YAQA score/replay | Provides a lightweight two-sided/sensitivity-aware candidate score | Optional offline ranking input; D2 can use it by configuration |
 | PV-lite codebook | Small, structured steering family | Optional; preferred over expensive full PV as the normal experiment |
 | Full PV alternation | More exhaustive codec-aware optimization | Optional research-only path; deliberately not a default |
@@ -689,6 +690,29 @@ build-astc-neural/bin/astc-vulkan-cache build \
 block generation (default: 4); selection and commit ordering remain
 deterministic after the worker phase. Use a value near the available physical
 cores and leave headroom for the rest of the system.
+
+Before spending CPU time on several exact D2 builds, the cache tool can screen
+a small *profile bank* using only the calibration prefix of the trace. It is a
+bounded, non-oracle planning phase: it preserves direct/L+A, unscaled/scaled,
+and steering alternatives, then reports the profiles that should be sent to
+the existing exact CPU finisher. It never changes a cache artifact by itself.
+
+```bash
+build-astc-neural/bin/astc-vulkan-cache d2-prescreen \
+  --model /absolute/path/model.gguf \
+  --tensor blk.0.ffn_down.weight \
+  --trace /absolute/path/calibration.trace \
+  --footprint 8x5 --rows 2048 --columns 8192 \
+  --d2-prescreen gpu --d2-prescreen-top-k 3
+```
+
+`--d2-prescreen cpu` is the deterministic reference. `gpu` mirrors its cheap
+proxy on a generic Vulkan compute device, checks the result against the CPU
+calculation, and falls back to CPU if that check cannot pass. Exact `astcenc`
+encode/decode, validation-prefix selection, and model replay remain mandatory
+after the screen; this command merely avoids launching every expensive profile
+blindly.
+
 This D2 producer currently records model/Vulkan gates as false; its cache is
 therefore suitable for replay and inspection but remains ineligible for
 automatic production scheduling until those gates are established.
@@ -889,7 +913,7 @@ driver implementation.
 | Artifact/container | `astc-vulkan-manifest.*`, `astc-vulkan-provenance.*`, `astc-vulkan-artifact-pack.cpp`, `astc-vulkan-artifact-decode.cpp` | Pack, decode, validate and document byte-identical artifacts |
 | Cache | `astc-vulkan-cache.*`, `astc-vulkan-cache-tool.cpp` | Hash validation, atomic cache publish, profile admission, inspection |
 | Offline algorithms | `astc-vulkan-gauge.*`, `astc-vulkan-paired.*`, `astc-vulkan-paired-layout.*`, `astc-vulkan-paired-selector.*`, `astc-vulkan-objective.*`, `astc-vulkan-yaqa.*`, `astc-vulkan-pv.*`, `astc-vulkan-block-ldlq.*` | D1/D2 representations and ranking experiments |
-| Offline GPU support | `astc-vulkan-d1-prescreen*`, `astc-vulkan-gpu-ranking*`, `astc-vulkan-yaqa-*-device-smoke.cpp` | Optional GPU prescreening, proposal scoring, YAQA batching; never ASTC hardware encoding |
+| Offline GPU support | `astc-vulkan-d1-prescreen*`, `astc-vulkan-d2-prescreen*`, `astc-vulkan-gpu-ranking*`, `astc-vulkan-yaqa-*-device-smoke.cpp` | Optional GPU prescreening, proposal scoring, YAQA batching; never ASTC hardware encoding |
 | Vulkan resource/dispatch | `astc-vulkan-resource.*`, `astc-vulkan-dispatch.*`, `astc-vulkan-paired-dispatch.*`, `astc-vulkan-sidecar.*` | Image/buffer lifetime, upload, D1 dispatch and D2 paired dispatch |
 | Scheduler boundary | `astc-vulkan-scheduler-adapter.*`, `astc-vulkan-ffn-adapter.*` | Cache admission, format/representation routing, fallback contract |
 | Shaders | `shaders/astc-ffn-matvec.comp`, `shaders/astc-paired-matvec.comp` | D1 and D2 semantic reconstruction after fixed-function texture fetch |

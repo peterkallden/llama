@@ -24,6 +24,7 @@ add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-artifact-policy.cpp
     astc-vulkan-block-ldlq.cpp
     astc-vulkan-d1-prescreen.cpp
+    astc-vulkan-d2-prescreen.cpp
     astc-vulkan-d2-row-scale.cpp
     astc-vulkan-format.cpp
     astc-vulkan-gauge.cpp
@@ -92,6 +93,16 @@ add_executable(test-astc-vulkan-d1-prescreen
     tests/test-astc-vulkan-d1-prescreen.cpp)
 target_link_libraries(test-astc-vulkan-d1-prescreen PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-d1-prescreen PRIVATE cxx_std_17)
+
+add_executable(test-astc-vulkan-d2-prescreen
+    tests/test-astc-vulkan-d2-prescreen.cpp)
+target_link_libraries(test-astc-vulkan-d2-prescreen PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-d2-prescreen PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-d2-prescreen
+        COMMAND test-astc-vulkan-d2-prescreen)
+    set_property(TEST test-astc-vulkan-d2-prescreen PROPERTY LABELS astc)
+endif()
 
 add_executable(test-astc-vulkan-d2-row-scale
     tests/test-astc-vulkan-d2-row-scale.cpp)
@@ -434,6 +445,29 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-d1-prescreen-dispatch PUBLIC
         astc-vulkan-resource astc-vulkan-algorithms Vulkan::Vulkan)
     target_compile_features(astc-vulkan-d1-prescreen-dispatch PUBLIC cxx_std_17)
+
+    add_library(astc-vulkan-d2-prescreen-dispatch STATIC
+        astc-vulkan-d2-prescreen-dispatch.cpp)
+    target_include_directories(astc-vulkan-d2-prescreen-dispatch PUBLIC
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-d2-prescreen-dispatch PUBLIC
+        astc-vulkan-resource astc-vulkan-algorithms Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-d2-prescreen-dispatch PUBLIC cxx_std_17)
+    # The cache tool consumes the same bounded D2 profile screen before an
+    # optional exact CPU build. Keep this offline-only dependency out of the
+    # runtime/cache ABI.
+    if (TARGET astc-vulkan-cache-tool)
+        target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-d2-prescreen-dispatch)
+        target_compile_definitions(astc-vulkan-cache-tool PRIVATE
+            ASTC_VULKAN_D2_PRESCREEN_AVAILABLE=1)
+    endif()
+    add_executable(astc-vulkan-d2-prescreen-device-smoke
+        astc-vulkan-d2-prescreen-device-smoke.cpp)
+    target_include_directories(astc-vulkan-d2-prescreen-device-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR})
+    target_link_libraries(astc-vulkan-d2-prescreen-device-smoke PRIVATE
+        astc-vulkan-d2-prescreen-dispatch)
+    target_compile_features(astc-vulkan-d2-prescreen-device-smoke PRIVATE cxx_std_17)
 
     # Experimental offline physical ASTC proposer. It is linked into the
     # latent/cache producer only through the opt-in hybrid backend; scheduler
@@ -1134,6 +1168,8 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-ffn-matvec.comp.spv)
     set(ASTC_VULKAN_D1_PRESCREEN_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/d1-prescreen.comp.spv)
+    set(ASTC_VULKAN_D2_PRESCREEN_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/d2-prescreen.comp.spv)
     set(ASTC_VULKAN_GPU_D1_PROPOSER_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-d1-proposer.comp.spv)
     set(ASTC_VULKAN_GPU_D1_PROPOSER_6X6_SHADER_OUTPUT
@@ -1337,6 +1373,22 @@ if (ASTC_VULKAN_GLSLC)
     add_custom_target(astc-vulkan-d1-prescreen-shader
         DEPENDS ${ASTC_VULKAN_D1_PRESCREEN_SHADER_OUTPUT})
     add_custom_command(
+        OUTPUT ${ASTC_VULKAN_D2_PRESCREEN_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/d2-prescreen.comp
+            -o ${ASTC_VULKAN_D2_PRESCREEN_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/d2-prescreen.comp
+        COMMENT "Compiling D2 GPU pre-screen shader")
+    add_custom_target(astc-vulkan-d2-prescreen-shader
+        DEPENDS ${ASTC_VULKAN_D2_PRESCREEN_SHADER_OUTPUT})
+    if (TARGET astc-vulkan-cache-tool)
+        add_dependencies(astc-vulkan-cache-tool astc-vulkan-d2-prescreen-shader)
+        target_compile_definitions(astc-vulkan-cache-tool PRIVATE
+            ASTC_VULKAN_D2_PRESCREEN_SHADER_PATH="${ASTC_VULKAN_D2_PRESCREEN_SHADER_OUTPUT}")
+    endif()
+    add_custom_command(
         OUTPUT ${ASTC_VULKAN_GPU_D1_PROPOSER_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
             --target-env=vulkan1.1
@@ -1491,6 +1543,14 @@ if (ASTC_VULKAN_GLSLC)
                 ${ASTC_VULKAN_D1_PRESCREEN_SHADER_OUTPUT})
         set_property(TEST astc-vulkan-d1-prescreen-device-smoke PROPERTY LABELS astc)
         set_property(TEST astc-vulkan-d1-prescreen-device-smoke PROPERTY SKIP_RETURN_CODE 77)
+    endif()
+    if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-d2-prescreen-device-smoke)
+        add_dependencies(astc-vulkan-d2-prescreen-device-smoke astc-vulkan-d2-prescreen-shader)
+        add_test(NAME astc-vulkan-d2-prescreen-device-smoke
+            COMMAND astc-vulkan-d2-prescreen-device-smoke
+                ${ASTC_VULKAN_D2_PRESCREEN_SHADER_OUTPUT})
+        set_property(TEST astc-vulkan-d2-prescreen-device-smoke PROPERTY LABELS astc)
+        set_property(TEST astc-vulkan-d2-prescreen-device-smoke PROPERTY SKIP_RETURN_CODE 77)
     endif()
     if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-gpu-encoder-device-smoke)
         add_dependencies(astc-vulkan-gpu-encoder-device-smoke

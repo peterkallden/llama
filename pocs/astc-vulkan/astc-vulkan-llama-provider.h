@@ -6,6 +6,7 @@
 
 #include "llama-ext.h"
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -64,13 +65,35 @@ private:
     std::vector<uint32_t> d2_spirv_;
     std::unordered_map<uint32_t, std::unique_ptr<entry>> entries_;
     std::vector<std::unique_ptr<native_binding>> native_bindings_;
-    uint64_t dispatch_calls_ = 0;
-    uint64_t dispatch_failures_ = 0;
-    uint64_t dispatch_tokens_ = 0;
+    // Retained only to materialize the same verified cache artifacts on the
+    // actual ggml graph device if prepare() initially observed a different
+    // default Vulkan device.
+    options prepared_options_;
+    // These counters deliberately describe the runtime seam, rather than
+    // quality or cache residency. They make it possible to distinguish a
+    // native Vulkan dispatch from the temporary CPU custom-op fallback.
+    std::atomic<uint64_t> dispatch_calls_{0};
+    std::atomic<uint64_t> dispatch_failures_{0};
+    std::atomic<uint64_t> dispatch_tokens_{0};
+    std::atomic<uint64_t> cpu_fallback_calls_{0};
+    std::atomic<uint64_t> native_bind_calls_{0};
+    std::atomic<uint64_t> native_context_checks_{0};
+    std::atomic<uint64_t> native_context_accepts_{0};
+    // A graph device that rejects the artifact format cannot become usable
+    // later in the same provider lifetime. Remember it so every bound layer
+    // does not repeat a failed materialization attempt.
+    uint64_t rejected_graph_device_ = 0;
+    std::string rejected_graph_device_error_;
     bool external_op_installed_ = false;
 
     bool bind_native_node(ggml_tensor * node, uint32_t layer);
-    bool can_record_native(const ggml_vk_external_op_dispatch_context * context) const;
+    bool materialize_entries(const std::shared_ptr<astc_vulkan_shared_device> & device,
+                             std::unordered_map<uint32_t, std::unique_ptr<entry>> & entries,
+                             std::string & error) const;
+    bool rebind_to_graph_device(const ggml_vk_external_op_dispatch_context * context,
+                                std::string & error);
+    bool can_record_native(uint32_t layer,
+                           const ggml_vk_external_op_dispatch_context * context);
     bool record_native(uint32_t layer,
                        const ggml_vk_external_op_dispatch_context * context);
     static bool native_dispatch_callback(

@@ -6,7 +6,7 @@ bool astc_vulkan_parse_quality_policy(const std::string & name,
                                       astc_vulkan_quality_policy & policy) {
     if (name == "quality") policy = astc_vulkan_quality_policy::quality;
     else if (name == "balanced") policy = astc_vulkan_quality_policy::balanced;
-    else if (name == "size" || name == "compact") policy = astc_vulkan_quality_policy::size;
+    else if (name == "compact" || name == "size") policy = astc_vulkan_quality_policy::size;
     else if (name == "speed") policy = astc_vulkan_quality_policy::speed;
     else if (name == "auto") policy = astc_vulkan_quality_policy::automatic;
     else return false;
@@ -17,7 +17,7 @@ const char * astc_vulkan_quality_policy_name(astc_vulkan_quality_policy policy) 
     switch (policy) {
         case astc_vulkan_quality_policy::quality: return "quality";
         case astc_vulkan_quality_policy::balanced: return "balanced";
-        case astc_vulkan_quality_policy::size: return "size";
+        case astc_vulkan_quality_policy::size: return "compact";
         case astc_vulkan_quality_policy::speed: return "speed";
         case astc_vulkan_quality_policy::automatic: return "auto";
     }

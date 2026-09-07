@@ -7,10 +7,14 @@
 #include "astc-vulkan-discovery.h"
 #include "astc-vulkan-input.h"
 #endif
+#ifdef ASTC_VULKAN_D2_PRESCREEN_AVAILABLE
+#include "astc-vulkan-d2-prescreen-dispatch.h"
+#endif
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -129,6 +133,11 @@ void print_help(const char * executable) {
         "  %s build --model model.gguf --tensor name --trace activations.bin --footprint 6x6\n"
             "            [--representation scalar|paired-d2] [--cache path|auto]\n"
             "            [--backend hybrid|cpu] [--workers N] [--no-publish 1]\n"
+#ifdef ASTC_VULKAN_D2_PRESCREEN_AVAILABLE
+        "  %s d2-prescreen --model model.gguf --tensor name --trace activations.bin\n"
+            "            --footprint 6x5|8x5|10x5 --rows N --columns N\n"
+            "            [--d2-prescreen cpu|gpu] [--d2-prescreen-top-k N]\n"
+#endif
         "  %s inspect --model model.gguf [--cache path|auto]\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
@@ -142,7 +151,7 @@ void print_help(const char * executable) {
             "            [--gpu-proposer-shader shader.spv] [--backend hybrid|cpu]\n"
         "  %s plan --model model.gguf --usage usage.txt [--cache path|auto]\n"
         "            [--profile quality|balanced|compact|speed|auto]\n"
-        "            [--policy quality|balanced|size|speed|auto]\n"
+        "            [--policy quality|balanced|compact|speed|auto]\n"
         "            [--device-budget bytes] [--host-budget bytes] [--page-bytes bytes]\n"
             "            [--require-usage 0|1] [--require-benefit 0|1]\n"
             "            [--allow-experimental 0|1] [--allow-unverified 0|1]\n"
@@ -158,7 +167,7 @@ void print_help(const char * executable) {
         "  --rows N --columns N (D2-shape; alias för crop-gränser i D1)\n"
         "            [--paired-semantic direct|la] [--channel-weights legacy|balanced-a025]\n"
         "            [--source-derived-alpha 0|1] [--row-scale none|absmax]\n"
-        "            [--workers N]\n"
+        "            [--workers N] [--d2-prescreen cpu|gpu] [--d2-prescreen-top-k N]\n"
         "\nAvancerat/artifact-packning (för reproducerbara scripts):\n"
         "  %s publish --model model.gguf --artifact-dir artifact-dir [--storage-profile name] [--cache path|auto]\n"
         "  %s install --model model.gguf --artifact-dir artifact-dir [--profile name] [--cache path|auto]\n"
@@ -175,7 +184,11 @@ void print_help(const char * executable) {
         "build is a bounded D1 orchestrator: it runs the existing latent exporter, packs a\n"
         "v4 artifact and publishes it atomically. It does not perform JIT encoding and\n"
         "defaults model/vulkan evidence gates to false until replay has passed.\n",
-        executable, executable, executable, executable,
+        executable, executable,
+#ifdef ASTC_VULKAN_D2_PRESCREEN_AVAILABLE
+        executable,
+#endif
+        executable, executable,
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
         executable, executable, executable,
 #endif
@@ -194,6 +207,132 @@ bool parse_u64_argument(const std::string & text, uint64_t & result) {
         return false;
     }
 }
+
+#if defined(ASTC_VULKAN_MODEL_CACHE_AVAILABLE) && defined(ASTC_VULKAN_D2_PRESCREEN_AVAILABLE)
+const char * d2_prescreen_semantic_name(astc_vulkan_d2_prescreen_semantic value) {
+    return value == astc_vulkan_d2_prescreen_semantic::luminance_alpha ? "la" : "direct";
+}
+
+const char * d2_prescreen_normalization_name(astc_vulkan_d2_prescreen_normalization value) {
+    return value == astc_vulkan_d2_prescreen_normalization::row_absmax ? "absmax" : "none";
+}
+
+bool parse_d2_prescreen_footprint(const std::string & value, astc_vulkan_footprint & footprint) {
+    if (value == "6x5") footprint = astc_vulkan_footprint::k6x5;
+    else if (value == "8x5") footprint = astc_vulkan_footprint::k8x5;
+    else if (value == "10x5") footprint = astc_vulkan_footprint::k10x5;
+    else return false;
+    return true;
+}
+
+bool run_d2_prescreen(const std::string & model, const std::string & tensor,
+                      const std::string & trace_path, const std::string & footprint_text,
+                      const std::string & rows_text, const std::string & columns_text,
+                      const std::string & backend, const std::string & top_k_text,
+                      std::string & error) {
+    if (model.empty() || tensor.empty() || trace_path.empty() || rows_text.empty() || columns_text.empty()) {
+        error = "d2-prescreen requires --model, --tensor, --trace, --rows and --columns";
+        return false;
+    }
+    if (backend != "cpu" && backend != "gpu") {
+        error = "--d2-prescreen must be cpu or gpu";
+        return false;
+    }
+    astc_vulkan_footprint footprint;
+    if (!parse_d2_prescreen_footprint(footprint_text, footprint)) {
+        error = "d2-prescreen supports only 6x5, 8x5 and 10x5";
+        return false;
+    }
+    uint32_t rows = 0, columns = 0, top_k = 3;
+    try {
+        rows = static_cast<uint32_t>(std::stoul(rows_text));
+        columns = static_cast<uint32_t>(std::stoul(columns_text));
+        if (!top_k_text.empty()) top_k = static_cast<uint32_t>(std::stoul(top_k_text));
+    } catch (...) {
+        error = "D2 prescreen dimensions and top-k must be unsigned integers";
+        return false;
+    }
+    if (rows == 0 || columns == 0 || (rows & 1u) != 0 || top_k == 0) {
+        error = "D2 prescreen requires non-zero even rows, non-zero columns and top-k";
+        return false;
+    }
+
+    ggml_vk_astc_loaded_matrix source;
+    ggml_vk_astc_activation_trace trace;
+    if (!ggml_vk_astc_load_gguf_matrix(model, tensor, source, error) ||
+        !ggml_vk_astc_load_activation_trace(trace_path, trace, error)) return false;
+    if (rows > source.rows || columns > source.columns || columns > trace.columns || trace.samples == 0) {
+        error = "D2 prescreen crop exceeds the source tensor or trace dimensions";
+        return false;
+    }
+    std::vector<float> weights(static_cast<size_t>(rows) * columns);
+    for (uint32_t row = 0; row < rows; ++row) {
+        std::copy_n(source.values.begin() + static_cast<size_t>(row) * source.columns,
+                    columns, weights.begin() + static_cast<size_t>(row) * columns);
+    }
+    std::vector<float> trace_crop(static_cast<size_t>(trace.samples) * columns);
+    for (uint32_t sample = 0; sample < trace.samples; ++sample) {
+        std::copy_n(trace.values.begin() + static_cast<size_t>(sample) * trace.columns,
+                    columns, trace_crop.begin() + static_cast<size_t>(sample) * columns);
+    }
+    // The profile bank deliberately spans representation and normalization.
+    // Exact ASTC construction remains the later oracle, so this screen must
+    // not collapse the bank to a single image-space proxy winner.
+    const std::vector<astc_vulkan_d2_prescreen_candidate> candidates{
+        {footprint, astc_vulkan_d2_prescreen_semantic::luminance_alpha,
+         astc_vulkan_d2_prescreen_normalization::none, false, 16},
+        {footprint, astc_vulkan_d2_prescreen_semantic::luminance_alpha,
+         astc_vulkan_d2_prescreen_normalization::none, true, 16},
+        {footprint, astc_vulkan_d2_prescreen_semantic::luminance_alpha,
+         astc_vulkan_d2_prescreen_normalization::row_absmax, true, 16},
+        {footprint, astc_vulkan_d2_prescreen_semantic::direct,
+         astc_vulkan_d2_prescreen_normalization::none, false, 16},
+    };
+    std::vector<float> energy;
+    const uint32_t calibration_samples = std::max(1u, std::min(8u, trace.samples));
+    if (!astc_vulkan_d2_prescreen_calibration_energy(trace_crop, trace.samples, columns,
+                                                     calibration_samples, energy)) {
+        error = "cannot construct the calibration-only D2 sensitivity proxy";
+        return false;
+    }
+    std::vector<astc_vulkan_d2_prescreen_score> scores;
+    bool gpu_used = false;
+    if (backend == "gpu") {
+#ifdef ASTC_VULKAN_D2_PRESCREEN_SHADER_PATH
+        gpu_used = astc_vulkan_score_d2_prescreen_gpu_default(
+            ASTC_VULKAN_D2_PRESCREEN_SHADER_PATH, weights, rows, columns, energy, candidates,
+            scores, error);
+        if (!gpu_used) {
+            std::printf("astc-cache d2-prescreen gpu-status=fallback-cpu reason=%s\n", error.c_str());
+            error.clear();
+        }
+#endif
+    }
+    if (!gpu_used && !astc_vulkan_score_d2_prescreen_cpu(
+                         weights, rows, columns, energy, candidates, scores)) {
+        error = "D2 CPU prescreen failed";
+        return false;
+    }
+    std::vector<astc_vulkan_d2_prescreen_score> shortlist;
+    if (!astc_vulkan_select_d2_prescreen_shortlist(scores, std::min<uint32_t>(top_k, scores.size()),
+                                                   0.0, shortlist)) {
+        error = "D2 prescreen shortlist failed";
+        return false;
+    }
+    std::printf("astc-cache d2-prescreen backend=%s candidates=%zu shortlist=%zu calibration-samples=%u\n",
+                gpu_used ? "gpu" : "cpu", scores.size(), shortlist.size(), calibration_samples);
+    for (size_t index = 0; index < shortlist.size(); ++index) {
+        const auto & score = shortlist[index];
+        std::printf("astc-cache d2-prescreen-choice rank=%zu footprint=%s semantic=%s normalization=%s "
+                    "source-alpha=%s proxy-error=%.9g rate=%.6g\n", index + 1,
+                    footprint_text.c_str(), d2_prescreen_semantic_name(score.candidate.semantic),
+                    d2_prescreen_normalization_name(score.candidate.normalization),
+                    score.candidate.source_derived_alpha ? "true" : "false",
+                    score.normalized_error, score.bits_per_weight);
+    }
+    return true;
+}
+#endif
 
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
 bool parse_discovery_footprint(const std::string & value,
@@ -442,6 +581,7 @@ bool build_d2_cache(const char * argv0, const std::string & model,
                     const std::string & tensor, const std::string & trace,
                     const std::string & footprint, const std::string & cache,
                     const std::string & artifact_dir, const std::string & source_family,
+                    const std::string & backend, const std::string & preset,
                     const std::string & paired_semantic, const std::string & channel_weights,
                     const std::string & source_alpha, const std::string & row_scale,
                     const std::string & rows_text, const std::string & columns_text,
@@ -526,7 +666,12 @@ bool build_d2_cache(const char * argv0, const std::string & model,
     const std::filesystem::path generated_layout = output_dir / "generated.layout.bin";
     const std::filesystem::path generated_scales = output_dir / "generated.row-scales.bin";
     const std::filesystem::path report = output_dir / "generated.report.txt";
-    std::string executable_name = "astc-vulkan-paired-selection-smoke-neural";
+    // CPU is the portable/reference paired-D2 finisher. Hybrid keeps the
+    // neural proposer path; selecting this explicitly makes large pilot
+    // caches usable without paying neural table-init cost.
+    std::string executable_name = backend == "cpu"
+        ? "astc-vulkan-paired-selection-smoke"
+        : "astc-vulkan-paired-selection-smoke-neural";
     if (footprint == "6x5") executable_name += "-6x5";
     else if (footprint == "10x5") executable_name += "-10x5";
     std::vector<std::string> generator_args{
@@ -535,6 +680,7 @@ bool build_d2_cache(const char * argv0, const std::string & model,
         "--calibration-samples", std::to_string(calibration),
         "--validation-samples", std::to_string(validation), "--report", report.string(),
         "--export-payload", generated_payload.string(), "--export-layout", generated_layout.string(),
+        "--preset", preset,
         "--channel-weights", channel_weights, "--source-derived-alpha", source_alpha,
         "--paired-semantic", paired_semantic, "--paired-basis", "direct",
         "--row-strip-chunked", "1"};
@@ -730,6 +876,8 @@ bool build_model_cache(const char * argv0,
                        const std::string & source_family,
                        const std::string & workers,
                        const std::string & shader,
+                       const std::string & calibration_samples,
+                       const std::string & validation_samples,
                        astc_vulkan_cache_paths & paths,
                        std::string & error) {
     if (source_model.empty() || fragment_root.empty() || staging_root.empty()) {
@@ -763,6 +911,12 @@ bool build_model_cache(const char * argv0,
                 "--representation", job.representation, "--artifact-dir", fragment.string(),
                 "--backend", backend, "--preset", preset, "--source-family", source_family,
                 "--no-publish", "1"};
+            if (!calibration_samples.empty()) {
+                args.push_back("--calibration-samples"); args.push_back(calibration_samples);
+            }
+            if (!validation_samples.empty()) {
+                args.push_back("--validation-samples"); args.push_back(validation_samples);
+            }
             if (!workers.empty()) { args.push_back("--workers"); args.push_back(workers); }
             if (!shader.empty()) {
                 args.push_back("--gpu-proposer-shader");
@@ -830,6 +984,7 @@ int main(int argc, char ** argv) {
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
     std::string channel_weights = "balanced-a025", source_alpha = "1", row_scale = "none";
     std::string rows, columns, calibration_samples = "8", validation_samples = "7";
+    std::string d2_prescreen_backend = "cpu", d2_prescreen_top_k = "3";
     bool no_publish = false, require_usage = false, require_benefit = false;
     bool representation_explicit = false, policy_explicit = false;
     bool allow_experimental = false, allow_unverified = false;
@@ -884,6 +1039,8 @@ int main(int argc, char ** argv) {
         else if (option == "--columns") columns = value;
         else if (option == "--calibration-samples") calibration_samples = value;
         else if (option == "--validation-samples") validation_samples = value;
+        else if (option == "--d2-prescreen") d2_prescreen_backend = value;
+        else if (option == "--d2-prescreen-top-k") d2_prescreen_top_k = value;
         else if (option == "--no-publish") no_publish = value == "1" || value == "true";
         else return 2;
     }
@@ -903,11 +1060,25 @@ int main(int argc, char ** argv) {
         return 0;
     }
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
+    if (command == "d2-prescreen") {
+#ifdef ASTC_VULKAN_D2_PRESCREEN_AVAILABLE
+        if (!run_d2_prescreen(model, tensor, trace, footprint, rows, columns,
+                              d2_prescreen_backend, d2_prescreen_top_k, error)) {
+            std::fprintf(stderr, "astc-cache d2-prescreen failed: %s\n", error.c_str());
+            return 1;
+        }
+        return 0;
+#else
+        std::fprintf(stderr, "astc-cache d2-prescreen unavailable: this build has no Vulkan D2 prescreen backend\n");
+        return 1;
+#endif
+    }
     if (command == "build-model") {
         astc_vulkan_cache_paths paths;
         const std::string build_source = source_model.empty() ? model : source_model;
         if (!build_model_cache(argv[0], build_source, fragment_dir, staging_root, cache,
                                tensor_list, backend, preset, source_family, workers, shader,
+                               calibration_samples, validation_samples,
                                paths, error)) {
             std::fprintf(stderr, "astc-cache build-model failed: %s\n", error.c_str());
             return 1;
@@ -1143,6 +1314,7 @@ int main(int argc, char ** argv) {
         }
         const bool built = d2 ? build_d2_cache(
             argv[0], model, tensor, trace, footprint, cache, artifact_dir, source_family,
+            backend, preset,
             paired_semantic, channel_weights, source_alpha, row_scale, rows, columns,
             calibration_samples, validation_samples, workers, !no_publish, paths, error) : build_d1_cache(
             argv[0], model, tensor, trace, footprint, cache, backend, shader, preset,

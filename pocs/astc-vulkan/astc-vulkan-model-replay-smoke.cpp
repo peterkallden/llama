@@ -423,7 +423,13 @@ int main(int argc, char ** argv) {
         else if (option == "--height") height = static_cast<uint32_t>(std::stoul(argv[++i]));
         else { std::fprintf(stderr, "unknown option: %s\n", option.c_str()); return 2; }
     }
-    const bool gpu_requested = !oracle_streamed &&
+    // A baseline replay is intentionally independent of the ASTC adapter.  In
+    // particular, callers often keep --cache/--gpu-shader on the command line
+    // so that the baseline and cache runs are comparable.  Do not let those
+    // options accidentally turn baseline-only into a GPU/cache replay: that
+    // both defeats the baseline and can make a failure in the adapter look like
+    // a model failure.
+    const bool gpu_requested = !baseline_only && !oracle_streamed &&
         (!gpu_shader_path.empty() || !cache_path.empty() || !tensor_name.empty());
 #if !defined(ASTC_VULKAN_MODEL_REPLAY_GPU)
     if (gpu_requested || oracle_streamed) {
@@ -534,7 +540,7 @@ int main(int argc, char ** argv) {
         return 2;
     }
 #if defined(ASTC_VULKAN_MODEL_REPLAY_GPU)
-    if (oracle_streamed) {
+    if (!baseline_only && oracle_streamed) {
         astc_vulkan_scheduler_adapter oracle_resolver;
         std::string oracle_error;
         if (!oracle_resolver.resolve_from_cache(cache_validation_model, cache_path, tensor_name,
@@ -564,7 +570,12 @@ int main(int argc, char ** argv) {
     llama_backend_init();
     llama_model_params model_params = llama_model_default_params();
     ggml_backend_dev_t cpu_devices[2] = { nullptr, nullptr };
-    if (cpu_only || gpu_requested) {
+    // The replay hook currently owns the FFN-down execution on the CPU.  Keep
+    // baseline-only on the same model-device setup as the cache replay; letting
+    // it silently fall back to the ordinary Vulkan graph makes a baseline
+    // comparison depend on an unrelated full-model Vulkan path (and, on some
+    // devices, crash before the replay is even entered).
+    if (cpu_only || gpu_requested || baseline_only) {
         model_params.n_gpu_layers = 0;
         cpu_devices[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
         if (cpu_devices[0] == nullptr) {
@@ -642,7 +653,7 @@ int main(int argc, char ** argv) {
             llama_backend_free();
             return 1;
         }
-    } else if (gpu_requested) {
+    } else if (!baseline_only && gpu_requested) {
         std::vector<float> gpu_activations(static_cast<size_t>(tokens.size()) * width);
         for (size_t sample = 0; sample < tokens.size(); ++sample) {
             std::copy_n(activations.values.begin() + sample * activations.columns, width,
@@ -660,8 +671,9 @@ int main(int argc, char ** argv) {
             llama_backend_free();
             return 1;
         }
-    } else
+    }
 #endif
+    if (!baseline_only && !gpu_requested && !oracle_streamed)
     for (size_t sample = 0; sample < tokens.size(); ++sample) {
         for (uint32_t row = 0; row < height; ++row) {
             float value = 0.0f;

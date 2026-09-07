@@ -2,12 +2,33 @@
 #include "astc-vulkan-ggml-external-op.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <limits>
 
 namespace {
+
+bool native_trace_enabled() {
+    const char * value = std::getenv("ASTC_VULKAN_NATIVE_TRACE");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+void trace_native_context_reject(const char * reason,
+                                 const ggml_vk_external_op_dispatch_context * context,
+                                 VkDevice expected_device) {
+    if (!native_trace_enabled()) return;
+    std::fprintf(stderr,
+                 "ASTC native context rejected: %s (ctx-device=%p expected-device=%p cmd=%p node=%p get-buffer=%p)\n",
+                 reason,
+                 context == nullptr ? nullptr : reinterpret_cast<void *>(context->native_device),
+                 reinterpret_cast<void *>(expected_device),
+                 context == nullptr ? nullptr : reinterpret_cast<void *>(context->native_command_buffer),
+                 context == nullptr ? nullptr : static_cast<void *>(context->node),
+                 context == nullptr ? nullptr : reinterpret_cast<void *>(context->get_buffer));
+}
 
 bool read_spirv(const std::string & path, std::vector<uint32_t> & result) {
     result.clear();
@@ -36,11 +57,17 @@ bool parse_ffn_down_layer(const std::string & tensor_name, uint32_t & layer) {
 astc_vulkan_llama_provider::~astc_vulkan_llama_provider() {
     if (ready_) {
         std::fprintf(stderr,
-            "ASTC runtime stats: bound_layers=%zu dispatches=%llu dispatch_failures=%llu tokens=%llu\n",
+            "ASTC runtime stats: bound_layers=%zu native-dispatches=%llu dispatch-failures=%llu "
+            "native-tokens=%llu cpu-fallbacks=%llu native-binds=%llu context-checks=%llu "
+            "context-accepts=%llu\n",
             entries_.size(),
-            static_cast<unsigned long long>(dispatch_calls_),
-            static_cast<unsigned long long>(dispatch_failures_),
-            static_cast<unsigned long long>(dispatch_tokens_));
+            static_cast<unsigned long long>(dispatch_calls_.load()),
+            static_cast<unsigned long long>(dispatch_failures_.load()),
+            static_cast<unsigned long long>(dispatch_tokens_.load()),
+            static_cast<unsigned long long>(cpu_fallback_calls_.load()),
+            static_cast<unsigned long long>(native_bind_calls_.load()),
+            static_cast<unsigned long long>(native_context_checks_.load()),
+            static_cast<unsigned long long>(native_context_accepts_.load()));
     }
     reset();
 }
@@ -62,14 +89,23 @@ void astc_vulkan_llama_provider::reset() {
     dispatch_calls_ = 0;
     dispatch_failures_ = 0;
     dispatch_tokens_ = 0;
+    cpu_fallback_calls_ = 0;
+    native_bind_calls_ = 0;
+    native_context_checks_ = 0;
+    native_context_accepts_ = 0;
+    rejected_graph_device_ = 0;
+    rejected_graph_device_error_.clear();
+    prepared_options_ = {};
 }
 
 bool astc_vulkan_llama_provider::prepare(const options & options, std::string & error) {
+    const auto prepare_begin = std::chrono::steady_clock::now();
     reset();
     if (options.model_path.empty()) {
         error = "ASTC llama provider requires a runtime model path";
         return false;
     }
+    prepared_options_ = options;
     std::string external_error;
     if (ggml_vk_astc_external_op::install(external_error)) {
         external_op_installed_ = true;
@@ -105,6 +141,10 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
         reset();
         return false;
     }
+    if (native_trace_enabled()) {
+        const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - prepare_begin).count();
+        std::fprintf(stderr, "ASTC prepare: overlay catalog/residency ready after %.3f s\n", elapsed);
+    }
 
 #ifndef ASTC_VULKAN_D1_SHADER_PATH
     error = "ASTC runtime provider was built without the D1 shader path";
@@ -129,32 +169,17 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
     }
 #endif
 
-    for (const auto & plan_entry : overlay_.catalog().plan.entries) {
-        if (plan_entry.use_native_fallback) {
-            continue;
-        }
-        uint32_t layer = 0;
-        if (!parse_ffn_down_layer(plan_entry.tensor_name, layer)) continue;
-        astc_vulkan_page_material material;
-        if (!overlay_.resolve_tensor(plan_entry.tensor_name, material, error)) {
-            reset();
-            return false;
-        }
-        if (material.resolve.use_native_fallback) continue;
-        auto prepared = std::make_unique<entry>();
-        prepared->layer = layer;
-        prepared->adapter.set_shared_device(shared_device_);
-        if (!prepared->adapter.prepare_artifact_from_cache(
-                options.model_path, options.cache_path, plan_entry.tensor_name,
-                plan_entry.artifact_id, error, options.allow_experimental,
-                options.allow_unverified) || !prepared->adapter.ready()) {
-            reset();
-            return false;
-        }
-        entries_.emplace(layer, std::move(prepared));
+    if (!materialize_entries(shared_device_, entries_, error)) {
+        reset();
+        return false;
+    }
+    if (native_trace_enabled()) {
+        const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - prepare_begin).count();
+        std::fprintf(stderr, "ASTC prepare: %zu artifact bindings materialized after %.3f s\n",
+                     entries_.size(), elapsed);
     }
     if (entries_.empty()) {
-        error = "ASTC cache contains no resident D1 FFN-down artifacts eligible for runtime";
+        error = "ASTC cache contains no resident D1/D2 FFN-down artifacts eligible for runtime";
         reset();
         return false;
     }
@@ -170,6 +195,74 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
     return true;
 }
 
+bool astc_vulkan_llama_provider::materialize_entries(
+        const std::shared_ptr<astc_vulkan_shared_device> & device,
+        std::unordered_map<uint32_t, std::unique_ptr<entry>> & entries,
+        std::string & error) const {
+    if (device == nullptr || !device->ready()) {
+        error = "ASTC runtime provider has no Vulkan device for artifact materialization";
+        return false;
+    }
+    std::unordered_map<uint32_t, std::unique_ptr<entry>> prepared_entries;
+    for (const auto & plan_entry : overlay_.catalog().plan.entries) {
+        if (plan_entry.use_native_fallback) {
+            continue;
+        }
+        uint32_t layer = 0;
+        if (!parse_ffn_down_layer(plan_entry.tensor_name, layer)) continue;
+        astc_vulkan_page_material material;
+        if (!overlay_.resolve_tensor(plan_entry.tensor_name, material, error)) {
+            return false;
+        }
+        if (material.resolve.use_native_fallback) continue;
+        const auto entry_begin = std::chrono::steady_clock::now();
+        if (native_trace_enabled()) {
+            std::fprintf(stderr, "ASTC materialize begin: tensor=%s artifact=%s\n",
+                         plan_entry.tensor_name.c_str(), plan_entry.artifact_id.c_str());
+        }
+        // `overlay_` validated the complete GGUF/cache contract exactly once
+        // before this loop. Reuse its selected bytes rather than asking every
+        // tensor adapter to rehash the same multi-gigabyte GGUF and payload.
+        astc_vulkan_scheduler_artifact artifact;
+        artifact.record = plan_entry.storage;
+        artifact.artifact_id = plan_entry.artifact_id;
+        artifact.variant = plan_entry.variant;
+        artifact.normalization = plan_entry.normalization;
+        artifact.paired_semantic = plan_entry.paired_semantic;
+        artifact.evidence = plan_entry.evidence;
+        artifact.cache_root = overlay_.catalog().validation.paths.root;
+        artifact.payload = std::move(material.payload);
+        artifact.layout = std::move(material.paired_layout);
+        artifact.row_scales = std::move(material.row_scales);
+        if (artifact.record.representation == astc_vulkan_representation::kPairedD2) {
+            artifact.kind = astc_vulkan_scheduler_artifact_kind::kD2;
+        } else if (artifact.record.representation == astc_vulkan_representation::kScalar ||
+                   artifact.record.representation == astc_vulkan_representation::kGaugeLumaAlpha) {
+            artifact.kind = astc_vulkan_scheduler_artifact_kind::kD1;
+        } else {
+            error = "ASTC model cache contains an unsupported runtime representation";
+            return false;
+        }
+        auto prepared = std::make_unique<entry>();
+        prepared->layer = layer;
+        prepared->adapter.set_shared_device(device);
+        if (!prepared->adapter.prepare_validated_artifact(
+                std::move(artifact), error, prepared_options_.allow_experimental,
+                prepared_options_.allow_unverified) || !prepared->adapter.ready()) {
+            return false;
+        }
+        prepared_entries.emplace(layer, std::move(prepared));
+        if (native_trace_enabled()) {
+            const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - entry_begin).count();
+            std::fprintf(stderr, "ASTC materialize done: tensor=%s elapsed=%.3f s\n",
+                         plan_entry.tensor_name.c_str(), elapsed);
+        }
+    }
+    entries = std::move(prepared_entries);
+    error.clear();
+    return true;
+}
+
 bool astc_vulkan_llama_provider::is_ready(
         uint32_t layer, uint32_t input_columns, uint32_t output_columns) const {
     const auto it = entries_.find(layer);
@@ -181,6 +274,12 @@ bool astc_vulkan_llama_provider::is_ready(
 bool astc_vulkan_llama_provider::run(
         uint32_t layer, const float * input, uint32_t n_tokens, uint32_t input_columns,
         float * output, uint32_t output_columns) {
+    const uint64_t fallback_index = cpu_fallback_calls_.fetch_add(1) + 1;
+    if (native_trace_enabled() && fallback_index <= 8) {
+        std::fprintf(stderr,
+                     "ASTC CPU custom-op fallback: layer=%u tokens=%u input=%u output=%u\n",
+                     layer, n_tokens, input_columns, output_columns);
+    }
     const auto it = entries_.find(layer);
     if (!is_ready(layer, input_columns, output_columns) || input == nullptr || output == nullptr || n_tokens == 0) {
         ++dispatch_failures_;
@@ -237,8 +336,18 @@ void astc_vulkan_llama_provider::native_generation_begin_callback(void * user_da
 bool astc_vulkan_llama_provider::native_context_callback(
         const ggml_vk_external_op_dispatch_context * context, void * user_data) {
     const auto * binding = static_cast<const native_binding *>(user_data);
-    return binding != nullptr && binding->provider != nullptr &&
-           binding->provider->can_record_native(context);
+    if (binding == nullptr || binding->provider == nullptr) return false;
+    const bool accepted = binding->provider->can_record_native(binding->layer, context);
+    if (accepted) {
+        binding->provider->native_context_accepts_.fetch_add(1);
+    }
+    if (native_trace_enabled()) {
+        std::fprintf(stderr, "ASTC native context %s: layer=%u node=%p cmd=%p\n",
+                     accepted ? "accepted" : "rejected", binding->layer,
+                     context == nullptr ? nullptr : static_cast<void *>(context->node),
+                     context == nullptr ? nullptr : reinterpret_cast<void *>(context->native_command_buffer));
+    }
+    return accepted;
 }
 
 bool astc_vulkan_llama_provider::native_dispatch_callback(
@@ -250,6 +359,10 @@ bool astc_vulkan_llama_provider::native_dispatch_callback(
 
 bool astc_vulkan_llama_provider::bind_native_node(ggml_tensor * node, uint32_t layer) {
     if (!ready_ || node == nullptr || entries_.find(layer) == entries_.end()) return false;
+    native_bind_calls_.fetch_add(1);
+    if (native_trace_enabled()) {
+        std::fprintf(stderr, "ASTC native bind: layer=%u node=%p\n", layer, static_cast<void *>(node));
+    }
     native_binding * binding = nullptr;
     for (const auto & candidate : native_bindings_) {
         if (candidate->layer == layer) {
@@ -269,25 +382,124 @@ bool astc_vulkan_llama_provider::bind_native_node(ggml_tensor * node, uint32_t l
     return true;
 }
 
-bool astc_vulkan_llama_provider::can_record_native(
-        const ggml_vk_external_op_dispatch_context * context) const {
-    if (!ready_ || context == nullptr || shared_device_ == nullptr ||
-        context->native_device == 0 || context->native_command_buffer == 0 ||
-        reinterpret_cast<VkDevice>(context->native_device) != shared_device_->device()) {
+bool astc_vulkan_llama_provider::rebind_to_graph_device(
+        const ggml_vk_external_op_dispatch_context * context, std::string & error) {
+    if (context == nullptr || context->native_physical_device == 0 || context->native_device == 0 ||
+        context->native_queue == 0 || context->native_queue_family == UINT32_MAX) {
+        error = "ASTC native graph context has incomplete Vulkan device handles";
         return false;
     }
-    return context->node != nullptr && context->node->src[0] != nullptr &&
-           context->get_buffer != nullptr;
+    auto rebound_device = std::make_shared<astc_vulkan_shared_device>();
+    if (!rebound_device->init_borrowed(
+            reinterpret_cast<VkPhysicalDevice>(context->native_physical_device),
+            reinterpret_cast<VkDevice>(context->native_device),
+            reinterpret_cast<VkQueue>(context->native_queue),
+            context->native_queue_family, error)) {
+        return false;
+    }
+    std::unordered_map<uint32_t, std::unique_ptr<entry>> rebound_entries;
+    if (!materialize_entries(rebound_device, rebound_entries, error)) return false;
+    if (rebound_entries.empty()) {
+        error = "ASTC graph-device rebind produced no eligible artifacts";
+        return false;
+    }
+    entries_ = std::move(rebound_entries);
+    shared_device_ = std::move(rebound_device);
+    std::fprintf(stderr, "ASTC native resources rebound to active ggml Vulkan device\n");
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_llama_provider::can_record_native(
+        uint32_t layer, const ggml_vk_external_op_dispatch_context * context) {
+    native_context_checks_.fetch_add(1);
+    if (!ready_) {
+        trace_native_context_reject("provider is not ready", context, VK_NULL_HANDLE);
+        return false;
+    }
+    if (context == nullptr) {
+        trace_native_context_reject("missing external context", context, shared_device_ == nullptr ? VK_NULL_HANDLE : shared_device_->device());
+        return false;
+    }
+    if (shared_device_ == nullptr) {
+        trace_native_context_reject("missing shared device", context, VK_NULL_HANDLE);
+        return false;
+    }
+    if (context->native_device == 0) {
+        trace_native_context_reject("missing Vulkan device", context, shared_device_->device());
+        return false;
+    }
+    if (context->native_command_buffer == 0) {
+        trace_native_context_reject("missing command buffer", context, shared_device_->device());
+        return false;
+    }
+    const auto entry_it = entries_.find(layer);
+    if (entry_it == entries_.end() || context->node == nullptr) {
+        trace_native_context_reject("missing artifact or graph node", context, shared_device_->device());
+        return false;
+    }
+    const auto & record = entry_it->second->adapter.binding().record;
+    // The native path binds the ordinary MUL_MAT node, whose activation is
+    // normally src[1]. The legacy CPU bridge used src[0]. Accept either only
+    // when it has the expected input width and current token extent.
+    const auto matches_activation = [&](const ggml_tensor * candidate) {
+        return candidate != nullptr && candidate->ne[0] == record.width &&
+               candidate->ne[1] == context->node->ne[1];
+    };
+    if (!matches_activation(context->node->src[0]) &&
+        !matches_activation(context->node->src[1])) {
+        trace_native_context_reject("native node has no matching activation source", context,
+                                    shared_device_->device());
+        return false;
+    }
+    if (reinterpret_cast<VkDevice>(context->native_device) != shared_device_->device()) {
+        if (rejected_graph_device_ == context->native_device) {
+            trace_native_context_reject(rejected_graph_device_error_.c_str(), context,
+                                        shared_device_->device());
+            return false;
+        }
+        std::string error;
+        if (!rebind_to_graph_device(context, error)) {
+            last_error_ = error.empty() ? "ASTC graph-device rebind failed" : error;
+            rejected_graph_device_ = context->native_device;
+            rejected_graph_device_error_ = last_error_;
+            trace_native_context_reject(last_error_.c_str(), context, shared_device_->device());
+            return false;
+        }
+        rejected_graph_device_ = 0;
+        rejected_graph_device_error_.clear();
+    }
+    if (context->node == nullptr || context->node->src[0] == nullptr) {
+        trace_native_context_reject("missing node or activation source", context, shared_device_->device());
+        return false;
+    }
+    if (context->get_buffer == nullptr) {
+        trace_native_context_reject("missing buffer-view callback", context, shared_device_->device());
+        return false;
+    }
+    return true;
 }
 
 bool astc_vulkan_llama_provider::record_native(
         uint32_t layer, const ggml_vk_external_op_dispatch_context * context) {
-    if (!can_record_native(context)) return false;
+    if (!can_record_native(layer, context)) return false;
     const auto it = entries_.find(layer);
     if (it == entries_.end()) return false;
+    const auto & record = it->second->adapter.binding().record;
+    const ggml_tensor * activation_tensor = nullptr;
+    const auto matches_activation = [&](const ggml_tensor * candidate) {
+        return candidate != nullptr && candidate->ne[0] == record.width &&
+               candidate->ne[1] == context->node->ne[1];
+    };
+    if (matches_activation(context->node->src[1])) {
+        activation_tensor = context->node->src[1];
+    } else if (matches_activation(context->node->src[0])) {
+        activation_tensor = context->node->src[0];
+    }
+    if (activation_tensor == nullptr) return false;
     ggml_vk_external_op_buffer_view activation{};
     ggml_vk_external_op_buffer_view output{};
-    if (!context->get_buffer(context->backend_context, context->node->src[0], &activation) ||
+    if (!context->get_buffer(context->backend_context, activation_tensor, &activation) ||
         !context->get_buffer(context->backend_context, context->node, &output) ||
         activation.native_device != context->native_device ||
         output.native_device != context->native_device) {
@@ -309,8 +521,12 @@ bool astc_vulkan_llama_provider::record_native(
         ++dispatch_failures_;
         last_error_ = error.empty() ? "ASTC native graph recording failed" : error;
     } else {
-        ++dispatch_calls_;
-        dispatch_tokens_ += samples;
+        dispatch_calls_.fetch_add(1);
+        dispatch_tokens_.fetch_add(samples);
+        if (native_trace_enabled()) {
+            std::fprintf(stderr, "ASTC native dispatch: layer=%u tokens=%u rows=%u\n",
+                         layer, samples, band_height);
+        }
         last_error_.clear();
     }
     return ok;

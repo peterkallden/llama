@@ -1138,7 +1138,8 @@ private:
             astc_options.allow_unverified = params_base.astc_research;
             if (params_base.astc_profile == "quality") {
                 astc_options.policy = astc_vulkan_quality_policy::quality;
-            } else if (params_base.astc_profile == "size") {
+            } else if (params_base.astc_profile == "compact" ||
+                       params_base.astc_profile == "size") {
                 astc_options.policy = astc_vulkan_quality_policy::size;
             } else if (params_base.astc_profile == "speed") {
                 astc_options.policy = astc_vulkan_quality_policy::speed;

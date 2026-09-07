@@ -2786,13 +2786,17 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_ASTC_CACHE"));
     add_opt(common_arg(
-        {"--astc-profile"}, "{quality,balanced,size,speed}",
+        {"--astc-profile"}, "{quality,balanced,compact,speed}",
         "ASTC cache policy (default: balanced)",
         [](common_params & params, const std::string & value) {
-            if (value != "quality" && value != "balanced" && value != "size" && value != "speed") {
+            // `compact` is the canonical user-facing spelling. Keep `size`
+            // as a compatibility alias for scripts created before the
+            // profile names were aligned across the cache tool and llama-cli.
+            if (value != "quality" && value != "balanced" && value != "compact" &&
+                value != "size" && value != "speed") {
                 throw std::invalid_argument("invalid ASTC profile");
             }
-            params.astc_profile = value;
+            params.astc_profile = value == "size" ? "compact" : value;
         }
     ).set_env("LLAMA_ARG_ASTC_PROFILE"));
     add_opt(common_arg(

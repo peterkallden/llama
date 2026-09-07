@@ -1937,15 +1937,24 @@ ggml_tensor * llm_graph_context::build_ffn(
                    provider.is_ready(provider.user_data, static_cast<uint32_t>(il),
                                      static_cast<uint32_t>(cur->ne[0]),
                                      static_cast<uint32_t>(n_embd))) {
-            auto input = std::make_unique<llm_graph_input_ffn_down_runtime>(provider, static_cast<uint32_t>(il));
-            cur = ggml_cast(ctx0, cur, GGML_TYPE_F32);
-            cur = ggml_map_custom1_with_output(ctx0, cur, GGML_TYPE_F32, n_embd, n_tokens,
-                                                llama_ffn_down_runtime_custom_op, 1, input.get());
-            ggml_set_name(cur, "ffn_down_runtime_provider");
             if (provider.native_bind != nullptr) {
+                // Keep the ordinary graph op intact. The Vulkan external-op seam may
+                // replace it only after it has seen the active command buffer and
+                // confirmed that the selected device supports the artifact format.
+                // This makes a device/capability mismatch a true native GGUF fallback,
+                // rather than routing the graph through the CPU MAP_CUSTOM bridge.
+                cur = build_lora_mm(down, cur);
+                ggml_set_name(cur, "ffn_down_runtime_native_candidate");
                 provider.native_bind(provider.user_data, cur, static_cast<uint32_t>(il));
+            } else {
+                // Non-native providers retain the existing CPU custom-op contract.
+                auto input = std::make_unique<llm_graph_input_ffn_down_runtime>(provider, static_cast<uint32_t>(il));
+                cur = ggml_cast(ctx0, cur, GGML_TYPE_F32);
+                cur = ggml_map_custom1_with_output(ctx0, cur, GGML_TYPE_F32, n_embd, n_tokens,
+                                                    llama_ffn_down_runtime_custom_op, 1, input.get());
+                ggml_set_name(cur, "ffn_down_runtime_provider");
+                res->add_input(std::move(input));
             }
-            res->add_input(std::move(input));
         } else {
             cur = build_lora_mm(down, cur);
         }

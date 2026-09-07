@@ -1,0 +1,66 @@
+#version 450
+
+// D2 pre-ASTC proxy screen. One invocation scores one representation
+// candidate. The exact ASTC encoder/decode and neural selector remain CPU/GPU
+// later stages; this kernel only mirrors the deterministic CPU proxy.
+layout(local_size_x = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Weights { float values[]; } weights;
+layout(std430, set = 0, binding = 1) readonly buffer ColumnEnergy { float values[]; } energy;
+layout(std430, set = 0, binding = 2) readonly buffer Candidates { uvec4 values[]; } candidates;
+layout(std430, set = 0, binding = 3) writeonly buffer Scores { float values[]; } scores;
+
+layout(push_constant) uniform Push {
+    uint rows;
+    uint columns;
+    uint candidate_count;
+} params;
+
+float absmax_row(uint row) {
+    float scale = 0.0;
+    for (uint x = 0u; x < params.columns; ++x)
+        scale = max(scale, abs(weights.values[row * params.columns + x]));
+    return scale > 0.0 ? scale : 1.0;
+}
+
+void main() {
+    uint candidate_id = gl_GlobalInvocationID.x;
+    if (candidate_id >= params.candidate_count) return;
+    uint block_width = candidates.values[candidate_id].x;
+    uint block_height = candidates.values[candidate_id].y;
+    uint levels = candidates.values[candidate_id].z;
+    bool scaled = candidates.values[candidate_id].w != 0u;
+    float total = 0.0;
+    for (uint y0 = 0u; y0 < params.rows; y0 += block_height * 2u) {
+        for (uint x0 = 0u; x0 < params.columns; x0 += block_width) {
+            float low0 = 3.402823466e+38;
+            float low1 = 3.402823466e+38;
+            float high0 = -3.402823466e+38;
+            float high1 = -3.402823466e+38;
+            for (uint y = y0; y < min(params.rows, y0 + block_height * 2u); ++y) {
+                float scale = scaled ? absmax_row(y) : 1.0;
+                for (uint x = x0; x < min(params.columns, x0 + block_width); ++x) {
+                    float value = weights.values[y * params.columns + x] / scale;
+                    if ((y & 1u) == 0u) { low0 = min(low0, value); high0 = max(high0, value); }
+                    else { low1 = min(low1, value); high1 = max(high1, value); }
+                }
+            }
+            float step0 = (high0 - low0) / float(levels - 1u);
+            float step1 = (high1 - low1) / float(levels - 1u);
+            for (uint y = y0; y < min(params.rows, y0 + block_height * 2u); ++y) {
+                float scale = scaled ? absmax_row(y) : 1.0;
+                bool lane1 = (y & 1u) != 0u;
+                float low = lane1 ? low1 : low0;
+                float step = lane1 ? step1 : step0;
+                for (uint x = x0; x < min(params.columns, x0 + block_width); ++x) {
+                    float original = weights.values[y * params.columns + x];
+                    float value = original / scale;
+                    float quantized = step > 0.0 ? low + round((value - low) / step) * step : low;
+                    float difference = original - quantized * scale;
+                    total += difference * difference * max(0.0, energy.values[x]);
+                }
+            }
+        }
+    }
+    scores.values[candidate_id] = total;
+}

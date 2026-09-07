@@ -342,6 +342,13 @@ bool astc_vulkan_scheduler_adapter::prepare_artifact_from_cache(
                                       allow_experimental, allow_unverified);
 }
 
+bool astc_vulkan_scheduler_adapter::prepare_validated_artifact(
+        astc_vulkan_scheduler_artifact artifact, std::string & error,
+        bool allow_experimental, bool allow_unverified) {
+    return bind_materialized_artifact(std::move(artifact), error,
+                                      allow_experimental, allow_unverified);
+}
+
 bool astc_vulkan_scheduler_adapter::bind_materialized_artifact(
         astc_vulkan_scheduler_artifact artifact, std::string & error,
         bool allow_experimental, bool allow_unverified) {

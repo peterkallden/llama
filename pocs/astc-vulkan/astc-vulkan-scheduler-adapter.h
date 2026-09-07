@@ -72,6 +72,14 @@ public:
                                      std::string & error,
                                      bool allow_experimental = false,
                                      bool allow_unverified = false);
+    // Binds one artifact whose bytes and provenance were already verified by
+    // a model-level cache catalog. This avoids re-hashing the same GGUF and
+    // cache files once per tensor during runtime overlay startup. Callers
+    // must obtain the artifact from that immutable validated catalog.
+    bool prepare_validated_artifact(astc_vulkan_scheduler_artifact artifact,
+                                    std::string & error,
+                                    bool allow_experimental = false,
+                                    bool allow_unverified = false);
     // Reads one already-created cache artifact. This is the scheduler's only
     // artifact discovery API; it intentionally never invokes an encoder. D1
     // and D2 share validation, but D2 additionally owns a packed layout map.
