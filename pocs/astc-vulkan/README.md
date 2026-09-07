@@ -295,9 +295,19 @@ The current D2 main path combines:
 - an activation/sensitivity-aware selection objective.  YAQA-style diagonal
   output sensitivity can weight the two paired rows differently.
 
-Common/difference transforms, row pairing, explicit semantic dual-plane
-search, mixed footprints, and full PV tuning remain research tracks rather
-than cache/runtime defaults.
+Common/difference transforms, explicit semantic dual-plane search, mixed
+footprints, and full PV tuning remain research tracks rather than cache/runtime
+defaults.  An optional offline row-pairing sweep is available for D2 8x5
+chunked selection (`--row-pairing optimized`).  It chooses one pairing for
+each ten-logical-row stripe from calibration/validation projections, keeps the
+adjacent pairing as the control, and does not export a cache until the pair-map
+  metadata contract is versioned.  The optional `--row-transform givens` bank
+  adds a bounded 2x2 rotation sweep on top of pairing; it is research-only and
+  remains disabled by default.  With calibration-only pairing selection on the
+  current Qwen crop, adjacent, pairing-only, and pairing+Givens reached
+  0.00094672, 0.00077082, and 0.00067761 holdout MSE respectively.  This is a
+  promising result, but it still needs model replay and a versioned pair/
+  transform-map artifact before it can affect exported caches.
 
 ### D2-LA and artifact variants
 

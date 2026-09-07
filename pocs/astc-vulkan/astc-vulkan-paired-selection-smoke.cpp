@@ -104,6 +104,7 @@ struct params {
     bool pv_alternate = false;
     bool row_strip_chunked = false;
     bool optimized_pairing = false;
+    bool givens_transform = false;
     d2_channel_weight_profile channel_weights = d2_channel_weight_profile::legacy;
     bool source_derived_alpha = false;
     d2_basis_selection paired_basis = d2_basis_selection::direct;
@@ -124,6 +125,9 @@ struct generated_candidate {
     astc_vulkan_paired_steering_factor steering{};
     d2_alpha_source_kind alpha_source = d2_alpha_source_kind::geometric;
     astc_vulkan_paired_basis basis = astc_vulkan_paired_basis::direct;
+    astc_vulkan_d2_givens_transform transform{};
+    float transform_min = 0.0f;
+    float transform_range = 1.0f;
     astc_vulkan_paired_candidate_delta delta;
     bool pv_generated = false;
 };
@@ -259,6 +263,11 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--row-pairing") {
             if (value == "adjacent") result.optimized_pairing = false;
             else if (value == "optimized") result.optimized_pairing = true;
+            else return false;
+        }
+        else if (option == "--row-transform") {
+            if (value == "identity") result.givens_transform = false;
+            else if (value == "givens") result.givens_transform = true;
             else return false;
         }
         else if (option == "--channel-weights") {
@@ -484,9 +493,45 @@ void fill_source_block_with_steering(std::vector<float> & source,
                        astc_vulkan_paired_basis basis,
                        astc_vulkan_paired_semantic semantic,
                        const std::function<float(float, float, float, float)> & steering_value,
-                       const astc_vulkan_d2_pairing * pairing = nullptr) {
+                       const astc_vulkan_d2_pairing * pairing = nullptr,
+                       const astc_vulkan_d2_givens_transform * transform = nullptr,
+                       float * transform_minimum = nullptr,
+                       float * transform_range = nullptr) {
     if (source.size() != kBlockWidth * kPhysicalBlockHeight * 4) {
         source.resize(kBlockWidth * kPhysicalBlockHeight * 4);
+    }
+    std::array<float, kBlockWidth * kPhysicalBlockHeight * 2> transformed{};
+    float encoded_minimum = 0.0f;
+    float encoded_maximum = 1.0f;
+    if (transform != nullptr) {
+        encoded_minimum = std::numeric_limits<float>::infinity();
+        encoded_maximum = -std::numeric_limits<float>::infinity();
+        for (uint32_t y = 0; y < kPhysicalBlockHeight; ++y) {
+            for (uint32_t x_index = 0; x_index < kBlockWidth; ++x_index) {
+                const uint32_t pair_index = y;
+                const uint32_t local_row0 = pairing == nullptr ? 2 * y : pairing->row_order[2 * pair_index];
+                const uint32_t local_row1 = pairing == nullptr ? 2 * y + 1 : pairing->row_order[2 * pair_index + 1];
+                const uint32_t column = column0 + x_index;
+                const float q0 = row0 + local_row0 < rows && column < columns ?
+                    normalized_weight(matrix, row0 + local_row0, column, minimum, range) : 0.5f;
+                const float q1 = row0 + local_row1 < rows && column < columns ?
+                    normalized_weight(matrix, row0 + local_row1, column, minimum, range) : 0.5f;
+                float u = q0, v = q1;
+                astc_vulkan_d2_pair_forward(q0, q1, *transform, u, v);
+                const size_t index = (static_cast<size_t>(y) * kBlockWidth + x_index) * 2;
+                transformed[index] = u;
+                transformed[index + 1] = v;
+                encoded_minimum = std::min(encoded_minimum, std::min(u, v));
+                encoded_maximum = std::max(encoded_maximum, std::max(u, v));
+            }
+        }
+        const float safe_range = std::max(1e-6f, encoded_maximum - encoded_minimum);
+        if (transform_minimum != nullptr) *transform_minimum = encoded_minimum;
+        if (transform_range != nullptr) *transform_range = safe_range;
+        encoded_maximum = encoded_minimum + safe_range;
+    } else {
+        if (transform_minimum != nullptr) *transform_minimum = 0.0f;
+        if (transform_range != nullptr) *transform_range = 1.0f;
     }
     for (uint32_t y = 0; y < kPhysicalBlockHeight; ++y) {
         for (uint32_t x_index = 0; x_index < kBlockWidth; ++x_index) {
@@ -515,7 +560,10 @@ void fill_source_block_with_steering(std::vector<float> & source,
             const float q1 = logical_row1 < rows && column < columns ?
                 normalized_weight(matrix, logical_row1, column, minimum, range) : 0.5f;
             const float alpha = std::clamp(steering_value(q0, q1, x, y_value), 0.0f, 1.0f);
-            const auto texel = astc_vulkan_make_paired_texel(q0, q1, alpha, layout, basis, semantic);
+            const size_t transformed_index = (static_cast<size_t>(y) * kBlockWidth + x_index) * 2;
+            const float encoded_q0 = transform == nullptr ? q0 : (transformed[transformed_index] - encoded_minimum) / (encoded_maximum - encoded_minimum);
+            const float encoded_q1 = transform == nullptr ? q1 : (transformed[transformed_index + 1] - encoded_minimum) / (encoded_maximum - encoded_minimum);
+            const auto texel = astc_vulkan_make_paired_texel(encoded_q0, encoded_q1, alpha, layout, basis, semantic);
             const size_t offset = (static_cast<size_t>(y) * kBlockWidth + x_index) * 4;
             source[offset] = texel.r;
             source[offset + 1] = texel.g;
@@ -530,11 +578,31 @@ void fill_source_block(std::vector<float> & source, const ggml_vk_astc_loaded_ma
                        float minimum, float range, astc_vulkan_paired_layout layout,
                        astc_vulkan_paired_basis basis, astc_vulkan_paired_semantic semantic,
                        const d2_source_candidate & candidate,
-                       const astc_vulkan_d2_pairing * pairing = nullptr) {
+                       const astc_vulkan_d2_pairing * pairing = nullptr,
+                       const astc_vulkan_d2_givens_transform * transform = nullptr,
+                       float * transform_minimum = nullptr,
+                       float * transform_range = nullptr) {
     fill_source_block_with_steering(source, matrix, row0, column0, rows, columns, minimum, range,
         layout, basis, semantic, [&candidate](float q0, float q1, float x, float y) {
             return source_alpha_value(candidate, q0, q1, x, y);
-        }, pairing);
+        }, pairing, transform, transform_minimum, transform_range);
+}
+
+void restore_givens_block(decoded_block & block,
+                          const astc_vulkan_d2_givens_transform & transform,
+                          float transform_minimum, float transform_range) {
+    if (std::fabs(transform.radians) < 1e-7f) return;
+    const float safe_range = std::max(1e-6f, transform_range);
+    for (uint32_t y = 0; y < kPhysicalBlockHeight; ++y) {
+        for (uint32_t x = 0; x < kBlockWidth; ++x) {
+            const size_t first = static_cast<size_t>(2 * y) * kLogicalBlockWidth + x;
+            const size_t second = static_cast<size_t>(2 * y + 1) * kLogicalBlockWidth + x;
+            const float u = transform_minimum + safe_range * block.logical_weights[first];
+            const float v = transform_minimum + safe_range * block.logical_weights[second];
+            astc_vulkan_d2_pair_inverse(u, v, transform,
+                                        block.logical_weights[first], block.logical_weights[second]);
+        }
+    }
 }
 
 void write_block(std::vector<float> & target, const decoded_block & block, uint32_t block_row,
@@ -847,8 +915,8 @@ bool select_yaqa_candidates(const std::vector<double> & initial_calibration,
 
 // Select one pairing for a complete ten-row D2 stripe. This is intentionally a
 // cheap pre-screen: exact ASTC encode/decode and the existing conflict-aware
-// selector still make the artifact decision. Only calibration/validation
-// projections are used, so holdout samples cannot influence the pairing map.
+// selector still make the artifact decision. Only calibration projections are
+// used, so validation and holdout samples cannot influence the pairing map.
 astc_vulkan_d2_pairing choose_stripe_pairing(const ggml_vk_astc_loaded_matrix & matrix,
                                              const ggml_vk_astc_activation_trace & trace,
                                              uint32_t row0, uint32_t strip_rows,
@@ -910,6 +978,7 @@ bool run_row_strip_chunked(const params & options,
     const uint32_t holdout_offset = validation_offset + options.validation_samples;
     const uint32_t holdout_samples = trace.samples - holdout_offset;
     const auto codebook = make_source_candidates(options.source_derived_alpha, options.paired_semantic);
+    const std::array<float, 7> givens_angles = {-45.0f, -30.0f, -15.0f, 0.0f, 15.0f, 30.0f, 45.0f};
     std::vector<float> neutral(static_cast<size_t>(options.rows) * options.columns, 0.0f);
     std::vector<float> selected(neutral.size(), 0.0f);
     const size_t block_count = static_cast<size_t>(blocks_x) * blocks_y;
@@ -952,7 +1021,7 @@ bool run_row_strip_chunked(const params & options,
         const uint32_t strip_rows = std::min(kLogicalBlockHeight, options.rows - row0);
         const astc_vulkan_d2_pairing pairing = options.optimized_pairing ?
             choose_stripe_pairing(matrix, trace, row0, strip_rows, options.columns,
-                                  options.calibration_samples + options.validation_samples) :
+                                  options.calibration_samples) :
             astc_vulkan_d2_identity_pairing();
         pairing_map.push_back(pairing);
         std::vector<std::vector<generated_candidate>> generated(blocks_x);
@@ -970,22 +1039,32 @@ bool run_row_strip_chunked(const params & options,
                     block_codec & codec = layout == astc_vulkan_paired_layout::rg_b ? *worker_rg_b[worker_index] : *worker_r_gb[worker_index];
                     for (const auto basis : selected_paired_bases(options.paired_basis)) {
                         codec.begin_block();
-                        for (const auto & steering : codebook) {
+                        const size_t angle_count = options.givens_transform ? givens_angles.size() : 1;
+                        for (size_t angle_index = 0; angle_index < angle_count; ++angle_index) {
+                            const float angle = options.givens_transform ? givens_angles[angle_index] : 0.0f;
+                            const astc_vulkan_d2_givens_transform transform{angle * 3.14159265358979323846f / 180.0f};
+                            const astc_vulkan_d2_givens_transform * transform_ptr = std::fabs(angle) < 1e-7f ? nullptr : &transform;
+                            for (const auto & steering : codebook) {
                             generated_candidate candidate;
                             candidate.layout = layout;
                             candidate.steering = steering.steering;
                             candidate.alpha_source = steering.alpha_source;
                             candidate.basis = basis;
+                            candidate.transform = transform;
                             fill_source_block(source_scratch, matrix, row0, block_x * kLogicalBlockWidth,
                                 options.rows, options.columns, minimum, range, layout, basis,
                                 options.paired_semantic, steering,
-                                options.optimized_pairing ? &pairing : nullptr);
+                                options.optimized_pairing ? &pairing : nullptr,
+                                transform_ptr, &candidate.transform_min, &candidate.transform_range);
                             if (!codec.roundtrip(source_scratch, candidate.block, basis)) { generation_failed.store(true); return; }
+                            restore_givens_block(candidate.block, candidate.transform,
+                                                 candidate.transform_min, candidate.transform_range);
                             candidate.delta.payload = candidate.block.payload;
                             ++strip_raw;
                             bool duplicate = false;
                             for (const auto & existing : candidates) duplicate = duplicate || same_candidate(existing, candidate);
                             if (!duplicate) candidates.push_back(std::move(candidate));
+                            }
                         }
                     }
                 }
@@ -994,7 +1073,8 @@ bool run_row_strip_chunked(const params & options,
                            candidate.basis == astc_vulkan_paired_basis::direct &&
                            candidate.alpha_source == d2_alpha_source_kind::geometric &&
                            candidate.steering.basis == astc_vulkan_paired_steering_basis::neutral &&
-                           candidate.steering.amplitude == 0.0f;
+                           candidate.steering.amplitude == 0.0f &&
+                           std::fabs(candidate.transform.radians) < 1e-7f;
                 });
                 if (neutral_it == candidates.end()) { generation_failed.store(true); return; }
                 std::iter_swap(candidates.begin(), neutral_it);
@@ -1155,9 +1235,10 @@ bool run_row_strip_chunked(const params & options,
         for (const auto & scale : *row_scales) scales.write(reinterpret_cast<const char *>(&scale.value), sizeof(scale.value));
         if (!scales.good()) return false;
     }
-    std::printf("paired-select chunked D2_%s mapping=%s pairing=%s semantic=%s rows=%u columns=%u channel-weights=%s source-alpha=%s basis=%s blocks=%zu raw=%llu unique=%llu peak-candidates=%llu accepted=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu neutral-holdout=%.8g selected-holdout=%.8g\n",
+    std::printf("paired-select chunked D2_%s mapping=%s pairing=%s transform=%s semantic=%s rows=%u columns=%u channel-weights=%s source-alpha=%s basis=%s blocks=%zu raw=%llu unique=%llu peak-candidates=%llu accepted=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu neutral-holdout=%.8g selected-holdout=%.8g\n",
                 kFootprintName, kMappingName,
                 options.optimized_pairing ? "optimized" : "adjacent",
+                options.givens_transform ? "givens-bank" : "identity",
                 astc_vulkan_paired_semantic_name(options.paired_semantic), options.rows, options.columns,
                 channel_weight_profile_name(options.channel_weights),
                 options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1",
@@ -1174,6 +1255,7 @@ bool run_row_strip_chunked(const params & options,
                << "footprint=" << kFootprintName << '\n'
                << "mapping=" << kMappingName << '\n'
                << "pairing=" << (options.optimized_pairing ? "optimized" : "adjacent") << '\n'
+               << "transform=" << (options.givens_transform ? "givens-bank" : "identity") << '\n'
                << "rows=" << options.rows << '\n'
                << "columns=" << options.columns << '\n'
                << "channel_weights=" << channel_weight_profile_name(options.channel_weights) << '\n'
@@ -1220,6 +1302,7 @@ int main(int argc, char ** argv) {
                              "--progress-every-blocks N --report path [--structure-bank 1] "
                              "[--pv-alternate 1] [--row-strip-chunked 1] "
                              "[--row-pairing adjacent|optimized] "
+                             "[--row-transform identity|givens] "
                              "[--channel-weights legacy|balanced-a025|balanced-a050] "
                              "[--source-derived-alpha 1] "
                              "[--paired-basis direct|common-difference] "
@@ -1255,8 +1338,17 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "optimized row pairing requires a versioned pair-map artifact; export is disabled\n");
         return 2;
     }
+    if (options.givens_transform && (!options.export_payload.empty() ||
+                                     !options.export_neutral_payload.empty())) {
+        std::fprintf(stderr, "Givens transform requires a versioned transform-map artifact; export is disabled\n");
+        return 2;
+    }
     if (options.optimized_pairing && !options.row_strip_chunked) {
         std::fprintf(stderr, "optimized row pairing requires --row-strip-chunked 1\n");
+        return 2;
+    }
+    if (options.givens_transform && !options.row_strip_chunked) {
+        std::fprintf(stderr, "Givens transform requires --row-strip-chunked 1\n");
         return 2;
     }
 #if defined(ASTC_VULKAN_PAIRED_D2_TRANSPOSED)
