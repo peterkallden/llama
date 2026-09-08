@@ -414,7 +414,7 @@ if (TARGET Vulkan::Vulkan)
     target_include_directories(astc-vulkan-paired-dispatch PUBLIC
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
     target_link_libraries(astc-vulkan-paired-dispatch PUBLIC
-        astc-vulkan-resource astc-vulkan-driver Vulkan::Vulkan)
+        astc-vulkan-resource astc-vulkan-driver astc-vulkan-algorithms Vulkan::Vulkan)
     target_compile_features(astc-vulkan-paired-dispatch PUBLIC cxx_std_17)
 
     add_executable(test-astc-vulkan-paired-dispatch

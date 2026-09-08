@@ -361,7 +361,7 @@ bool reconstruct_streamed_cpu_oracle(
                     float latent = 0.0f;
                     if (paired_d2) {
                         const uint64_t block_x = column / geometry.block_width;
-                        const uint64_t block_y = (row / 2u) / geometry.block_height;
+                        const uint64_t block_y = texel_y / geometry.block_height;
                         astc_vulkan_paired_layout layout;
                         if (!astc_vulkan_paired_layout_get(layout_map,
                                 block_y * physical_blocks_x + block_x, layout)) {
@@ -716,18 +716,9 @@ int main(int argc, char ** argv) {
                 float latent = 0.0f;
                 if (paired_d2) {
                     const uint64_t block_x = column / paired_block_width;
-                    const uint64_t block_y = (row / 2u) / 5u;
-                    astc_vulkan_paired_layout layout;
                     const uint64_t physical_blocks_x =
                         (static_cast<uint64_t>(width) + paired_block_width - 1u) /
                         paired_block_width;
-                    if (!astc_vulkan_paired_layout_get(layout_map,
-                            block_y * physical_blocks_x + block_x, layout)) {
-                        std::fprintf(stderr, "paired-d2 layout-map lookup failed\n");
-                        llama_model_free(model);
-                        llama_backend_free();
-                        return 2;
-                    }
                     uint32_t texel_y = row / 2u;
                     uint32_t pair_member = row & 1u;
                     if (!pair_map.empty()) {
@@ -748,6 +739,15 @@ int main(int argc, char ** argv) {
                         }
                         texel_y = group * 5u + slot / 2u;
                         pair_member = slot & 1u;
+                    }
+                    const uint64_t block_y = texel_y / 5u;
+                    astc_vulkan_paired_layout layout;
+                    if (!astc_vulkan_paired_layout_get(layout_map,
+                            block_y * physical_blocks_x + block_x, layout)) {
+                        std::fprintf(stderr, "paired-d2 layout-map lookup failed\n");
+                        llama_model_free(model);
+                        llama_backend_free();
+                        return 2;
                     }
                     index = (static_cast<size_t>(texel_y) * physical_width + column) * 4;
                     const astc_vulkan_rgba_texel texel{rgba[index], rgba[index + 1], rgba[index + 2], rgba[index + 3]};

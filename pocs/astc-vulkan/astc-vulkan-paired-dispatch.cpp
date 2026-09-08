@@ -1,5 +1,6 @@
 #include "astc-vulkan-paired-dispatch.h"
 
+#include "astc-vulkan-d2-pair-transform.h"
 #include "astc-vulkan-paired-layout.h"
 
 #include <cstring>
@@ -40,6 +41,38 @@ bool create_host_buffer(VkPhysicalDevice physical_device, VkDevice device,
         return false;
     }
     return true;
+}
+
+// A pair map is physical-slot -> logical-row. Validate it at this low-level
+// boundary as well as in the cache reader: callers of this session can supply
+// metadata without going through a cache manifest.
+bool valid_pair_map(const std::vector<uint8_t> & pair_map, uint32_t logical_height) {
+    if (pair_map.empty()) return true;
+    const size_t expected = static_cast<size_t>((logical_height + 9u) / 10u) * 10u;
+    if (pair_map.size() != expected) return false;
+    for (size_t offset = 0; offset < pair_map.size(); offset += 10u) {
+        astc_vulkan_d2_pairing pairing{};
+        std::memcpy(pairing.row_order.data(), pair_map.data() + offset,
+                    astc_vulkan_d2_pair_group_rows);
+        if (!astc_vulkan_d2_pairing_is_valid(pairing)) return false;
+    }
+    return true;
+}
+
+// A streamed image only contains a contiguous physical band. With a pair map,
+// that band must begin at a complete 10-logical-row pairing group; otherwise a
+// logical row can map outside the uploaded image even when its old adjacent-row
+// coordinate would have been in range. The final band may be partial.
+bool valid_pair_map_stream_band(uint32_t pair_map_bytes, uint32_t storage_height,
+                                uint32_t full_storage_height, uint32_t row_base,
+                                uint32_t band_height, uint32_t logical_height,
+                                uint32_t texture_row_base) {
+    if (pair_map_bytes == 0 || storage_height == full_storage_height) return true;
+    if (row_base % astc_vulkan_d2_pair_group_rows != 0 ||
+        texture_row_base % astc_vulkan_d2_pair_group_pairs != 0 ||
+        texture_row_base != row_base / 2u) return false;
+    const bool final_band = row_base + band_height == logical_height;
+    return final_band || band_height % astc_vulkan_d2_pair_group_rows == 0;
 }
 
 void destroy_buffer(VkDevice device, VkBuffer & buffer, VkDeviceMemory & memory) {
@@ -150,9 +183,8 @@ bool astc_vulkan_paired_matvec_session::init_impl(
         error = "invalid paired-D2 ASTC matvec session configuration";
         return false;
     }
-    const size_t expected_pair_map = static_cast<size_t>((logical_height + 9u) / 10u) * 10u;
-    if (!pair_map.empty() && pair_map.size() != expected_pair_map) {
-        error = "paired-D2 pair-map size does not match logical height";
+    if (!valid_pair_map(pair_map, logical_height)) {
+        error = "paired-D2 pair-map is not a valid logical-row permutation";
         return false;
     }
     physical_device_ = physical_device;
@@ -391,7 +423,9 @@ bool astc_vulkan_paired_matvec_session::run_band(
         band_height == 0 || row_base > logical_height_ ||
         band_height > logical_height_ - row_base ||
         storage_height_ < required_storage_height ||
-        texture_row_base_ > expected_storage_height - required_storage_height) {
+        texture_row_base_ > expected_storage_height - required_storage_height ||
+        !valid_pair_map_stream_band(pair_map_bytes_, storage_height_, expected_storage_height,
+                                    row_base, band_height, logical_height_, texture_row_base_)) {
         error = "invalid paired-D2 ASTC matvec band run inputs";
         return false;
     }
@@ -497,7 +531,9 @@ bool astc_vulkan_paired_matvec_session::record_external(
         output_size < static_cast<VkDeviceSize>(samples_) * logical_height_ * sizeof(float) ||
         band_height == 0 || row_base > logical_height_ ||
         band_height > logical_height_ - row_base || storage_height_ < required_storage_height ||
-        texture_row_base_ > expected_storage_height - required_storage_height) {
+        texture_row_base_ > expected_storage_height - required_storage_height ||
+        !valid_pair_map_stream_band(pair_map_bytes_, storage_height_, expected_storage_height,
+                                    row_base, band_height, logical_height_, texture_row_base_)) {
         error = "invalid paired-D2 external matvec recording inputs";
         return false;
     }
