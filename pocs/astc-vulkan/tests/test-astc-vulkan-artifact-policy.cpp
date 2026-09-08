@@ -19,6 +19,10 @@ int main() {
     assert(defaults.policy == astc_vulkan_quality_policy::quality &&
            defaults.footprint == astc_vulkan_footprint::k4x4 &&
            defaults.representation == astc_vulkan_representation::kScalar);
+    assert(astc_vulkan_resolve_user_profile("balanced", defaults));
+    assert(defaults.policy == astc_vulkan_quality_policy::balanced &&
+           defaults.footprint == astc_vulkan_footprint::k6x6 &&
+           defaults.representation == astc_vulkan_representation::kScalar);
     assert(astc_vulkan_resolve_user_profile("compact", defaults));
     assert(defaults.policy == astc_vulkan_quality_policy::size &&
            defaults.footprint == astc_vulkan_footprint::k8x5 &&

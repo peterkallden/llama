@@ -194,7 +194,8 @@ logical neural weight, before the tiny D2 layout map and cache manifest.
 |---|---|---:|---:|---|---|
 | `d1-4x4` | D1 scalar | 4x4 | 8.000 b/w | standard | High-fidelity comparison point |
 | `d1-5x5` | D1 scalar | 5x5 | 5.120 b/w | standard | Balanced D1 point |
-| `d1-6x6` | D1 scalar or gauge-L+A | 6x6 | 3.556 b/w | standard | Main D1 operating point |
+| `d1-6x6` | D1 scalar | 6x6 | 3.556 b/w | standard | Main D1 operating point |
+| `d1-6x6-gauge` | D1 gauge-L+A | 6x6 | 3.556 b/w | experimental | Explicit scalar-anchored codec-steering experiment |
 | `d1-8x6` | D1 gauge-L+A | 8x6 | 2.667 b/w | experimental | Low-rate D1, six-row family |
 | `d1-10x6` | D1 gauge-L+A | 10x6 | 2.133 b/w | experimental | Lower-rate six-row family |
 | `d1-8x8` | D1 gauge-L+A | 8x8 | 2.000 b/w | experimental | Extreme-rate D1 |
@@ -221,8 +222,8 @@ and compare the exported ASTC artifact against Q4/Q3/TQ controls.
 | Goal / starting model | Recommended first choice | Why | Important caveat |
 |---|---|---|---|
 | Establish an ASTC quality ceiling from FP16/BF16 | `d1-4x4` scalar, then gauge-L+A | 8 b/w gives ASTC the most local freedom and is the cleanest decoder/device correctness control | It saves little versus ordinary low-bit GGUF formats; use it for quality evidence, not maximum compression |
-| FP16/BF16 with a balanced ASTC trial | `d1-5x5` scalar/gauge | 5.12 b/w is the intermediate rate-quality point | Still needs the same artifact replay and model validation as every other profile |
-| FP16/BF16 with the main practical ASTC experiment | `d1-6x6` scalar-anchored gauge, with scalar fallback | 3.556 b/w is the established D1 operating point and sits between Q3 and Q4 density | This is the recommended first ASTC cache to build, but it is not yet a drop-in quality replacement for Q4_K_M |
+| FP16/BF16 with a balanced ASTC trial | `d1-5x5` scalar | 5.12 b/w is the intermediate rate-quality point | Still needs the same artifact replay and model validation as every other profile |
+| FP16/BF16 with the main practical ASTC experiment | `d1-6x6` scalar | 3.556 b/w is the established D1 operating point and sits between Q3 and Q4 density | This is the recommended first ASTC cache to build, but it is not yet a drop-in quality replacement for Q4_K_M |
 | Existing `Q4_K_M` model | Keep native Q4_K_M as the normal inference baseline; evaluate `d1-6x6` from the matching FP16 source | Q4_K_M is the current practical baseline and hard fallback; 6x6 is the fair main ASTC comparison | Avoid presenting a cache encoded only from Q4_K_M as FP16-equivalent; it is useful for source-robustness experiments, not the primary quality oracle |
 | Existing `Q3_K_M` model | Compare `d1-6x6`; optionally screen `d1-8x6` | Q3_K_M is the closest conventional low-bit control for the 3.56 and 2.67 b/w D1 rungs | `d1-8x6` is experimental and must pass validation-stopped artifact/model replay first |
 | Ternary/few-level source (`TQ1_0`, `TQ2_0`, or a true few-level projection) | `d1-8x6` first, then `d1-8x8` only as a research rung | These rates are meaningful low-bit controls and gauge can search legal ASTC reconstructions above the source field | TQ1/TQ2 behavior must be verified per real tensor; a bounded crop is not a model-quality claim |
@@ -232,10 +233,14 @@ and compare the exported ASTC artifact against Q4/Q3/TQ controls.
 | Below 2 b/w without D2 | `d1-8x8` or `d1-10x8` only for controlled research | Provides a standard-ASTC low-rate ladder | These profiles are intentionally opt-in until full-tensor/model evidence demonstrates an acceptable frontier |
 
 In short: for a normal **Q4_K_M** model, keep Q4_K_M as the reliable path and
-start an ASTC investigation with an FP16-derived `d1-6x6` artifact.  Use
+start an ASTC investigation with an FP16-derived `d1-6x6` scalar artifact. Use
 `d1-4x4` if the immediate question is decoder fidelity, `d1-5x5` when a
 middle point is useful, and lower-rate D1/D2 profiles only after the same
 tensor has a validation-selected artifact and model-level comparison.
+
+`d1-6x6-gauge` is deliberately a separate experimental storage profile. It
+uses the same physical rate, but carries the L+A null-space steering family;
+it is never implied by `d1-6x6`, `balanced`, `speed`, or `auto`.
 
 ### D1: one logical weight per texel
 

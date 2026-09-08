@@ -43,10 +43,11 @@ struct profile {
     const char * purpose;
 };
 
-constexpr std::array<profile, 10> kProfiles = {{
+constexpr std::array<profile, 11> kProfiles = {{
     {"d1-4x4",  astc_vulkan_footprint::k4x4,  astc_vulkan_representation::kScalar,       false, "high-fidelity D1"},
     {"d1-5x5",  astc_vulkan_footprint::k5x5,  astc_vulkan_representation::kScalar,       false, "balanced D1"},
-    {"d1-6x6",  astc_vulkan_footprint::k6x6,  astc_vulkan_representation::kGaugeLumaAlpha, false, "main D1 gauge"},
+    {"d1-6x6",  astc_vulkan_footprint::k6x6,  astc_vulkan_representation::kScalar,       false, "main D1 scalar"},
+    {"d1-6x6-gauge", astc_vulkan_footprint::k6x6, astc_vulkan_representation::kGaugeLumaAlpha, true, "D1 L+A gauge research"},
     {"d1-8x6",  astc_vulkan_footprint::k8x6,  astc_vulkan_representation::kGaugeLumaAlpha, true,  "low-rate D1"},
     {"d1-10x6", astc_vulkan_footprint::k10x6, astc_vulkan_representation::kGaugeLumaAlpha, true,  "low-rate D1"},
     {"d1-8x8",  astc_vulkan_footprint::k8x8,  astc_vulkan_representation::kGaugeLumaAlpha, true,  "extreme-rate D1"},
@@ -148,7 +149,8 @@ void print_help(const char * executable) {
         "            [--min-source-bytes N] [--max-cache-bytes N] [--max-tensors N]\n"
         "  %s build-model --source-model model.gguf --fragment-dir fragments/\n"
             "            --staging build-state/ [--tensor-list tensors.txt] [--cache path|auto]\n"
-            "            [--gpu-proposer-shader shader.spv] [--backend hybrid|cpu]\n"
+        "            [--gpu-proposer-shader shader.spv] [--backend hybrid|cpu]\n"
+        "            [--row-pairing adjacent|optimized] [--row-transform identity]\n"
         "  %s plan --model model.gguf --usage usage.txt [--cache path|auto]\n"
         "            [--profile quality|balanced|compact|speed|auto]\n"
         "            [--policy quality|balanced|compact|speed|auto]\n"
@@ -167,6 +169,7 @@ void print_help(const char * executable) {
         "  --rows N --columns N (D2-shape; alias för crop-gränser i D1)\n"
         "            [--paired-semantic direct|la] [--channel-weights legacy|balanced-a025]\n"
         "            [--source-derived-alpha 0|1] [--row-scale none|absmax]\n"
+        "            [--row-pairing adjacent|optimized] [--row-transform identity]\n"
         "            [--workers N] [--d2-prescreen cpu|gpu] [--d2-prescreen-top-k N]\n"
         "\nAvancerat/artifact-packning (för reproducerbara scripts):\n"
         "  %s publish --model model.gguf --artifact-dir artifact-dir [--storage-profile name] [--cache path|auto]\n"
@@ -584,6 +587,7 @@ bool build_d2_cache(const char * argv0, const std::string & model,
                     const std::string & backend, const std::string & preset,
                     const std::string & paired_semantic, const std::string & channel_weights,
                     const std::string & source_alpha, const std::string & row_scale,
+                    const std::string & row_pairing, const std::string & row_transform,
                     const std::string & rows_text, const std::string & columns_text,
                     const std::string & calibration_samples,
                     const std::string & validation_samples,
@@ -612,6 +616,14 @@ bool build_d2_cache(const char * argv0, const std::string & model,
     }
     if (row_scale != "none" && row_scale != "absmax") {
         error = "--row-scale must be none or absmax";
+        return false;
+    }
+    if (row_pairing != "adjacent" && row_pairing != "optimized") {
+        error = "--row-pairing must be adjacent or optimized";
+        return false;
+    }
+    if (row_transform != "identity") {
+        error = "D2 Givens export requires a versioned transform-map artifact; use the pairing smoke until that runtime contract is available";
         return false;
     }
     uint32_t rows = 0, columns = 0, calibration = 0, validation = 0;
@@ -665,6 +677,7 @@ bool build_d2_cache(const char * argv0, const std::string & model,
     const std::filesystem::path generated_payload = output_dir / "generated.astcpack";
     const std::filesystem::path generated_layout = output_dir / "generated.layout.bin";
     const std::filesystem::path generated_scales = output_dir / "generated.row-scales.bin";
+    const std::filesystem::path generated_pair_map = output_dir / "generated.pair-map.bin";
     const std::filesystem::path report = output_dir / "generated.report.txt";
     // CPU is the portable/reference paired-D2 finisher. Hybrid keeps the
     // neural proposer path; selecting this explicitly makes large pilot
@@ -683,7 +696,8 @@ bool build_d2_cache(const char * argv0, const std::string & model,
         "--preset", preset,
         "--channel-weights", channel_weights, "--source-derived-alpha", source_alpha,
         "--paired-semantic", paired_semantic, "--paired-basis", "direct",
-        "--row-strip-chunked", "1"};
+        "--row-strip-chunked", "1", "--row-pairing", row_pairing,
+        "--row-transform", row_transform};
     if (!workers.empty()) {
         generator_args.push_back("--workers");
         generator_args.push_back(workers);
@@ -693,6 +707,10 @@ bool build_d2_cache(const char * argv0, const std::string & model,
         generator_args.push_back("absmax");
         generator_args.push_back("--export-row-scales");
         generator_args.push_back(generated_scales.string());
+    }
+    if (row_pairing == "optimized") {
+        generator_args.push_back("--export-pair-map");
+        generator_args.push_back(generated_pair_map.string());
     }
     if (!run_tool(sibling_tool(argv0, executable_name.c_str()), generator_args, error)) {
         cleanup();
@@ -723,6 +741,12 @@ bool build_d2_cache(const char * argv0, const std::string & model,
         pack_args.push_back(generated_scales.string());
         pack_args.push_back("--row-scales-payload");
         pack_args.push_back(row_scales_payload.string());
+    }
+    if (row_pairing == "optimized") {
+        pack_args.push_back("--pair-map-input");
+        pack_args.push_back(generated_pair_map.string());
+        pack_args.push_back("--pair-map-payload");
+        pack_args.push_back((output_dir / "pair-map.bin").string());
     }
     if (!run_tool(sibling_tool(argv0, "astc-vulkan-artifact-pack"), pack_args, error)) {
         cleanup();
@@ -800,18 +824,20 @@ bool collect_model_fragments(
             !std::filesystem::is_regular_file(payload_path, ec)) continue;
         astc_vulkan_manifest manifest;
         if (!astc_vulkan_read_manifest(manifest_path.string(), manifest, error)) return false;
-        if (manifest.version != 4 || manifest.artifacts.empty()) {
-            error = "model fragment must contain a non-empty v4 manifest: " + directory.string();
+        if ((manifest.version != 4 && manifest.version != 5) || manifest.artifacts.empty()) {
+            error = "model fragment must contain a non-empty v4/v5 manifest: " + directory.string();
             return false;
         }
         for (const auto & artifact : manifest.artifacts) tensor_names.push_back(artifact.storage.name);
         const auto layout_path = directory / "layout-map.bin";
         const auto row_scales_path = directory / "row-scales.bin";
+        const auto pair_map_path = directory / "pair-map.bin";
         astc_vulkan_model_cache_fragment fragment;
         fragment.manifest_path = manifest_path.string();
         fragment.payload_path = payload_path.string();
         if (std::filesystem::is_regular_file(layout_path, ec)) fragment.layout_path = layout_path.string();
         if (std::filesystem::is_regular_file(row_scales_path, ec)) fragment.row_scales_path = row_scales_path.string();
+        if (std::filesystem::is_regular_file(pair_map_path, ec)) fragment.pair_map_path = pair_map_path.string();
         fragments.push_back(std::move(fragment));
     }
     if (fragments.empty()) {
@@ -880,6 +906,8 @@ bool build_model_cache(const char * argv0,
                        const std::string & source_family,
                        const std::string & workers,
                        const std::string & shader,
+                       const std::string & row_pairing,
+                       const std::string & row_transform,
                        const std::string & calibration_samples,
                        const std::string & validation_samples,
                        astc_vulkan_cache_paths & paths,
@@ -932,6 +960,8 @@ bool build_model_cache(const char * argv0,
                 args.push_back("--paired-semantic"); args.push_back("la");
                 args.push_back("--channel-weights"); args.push_back("balanced-a025");
                 args.push_back("--source-derived-alpha"); args.push_back("1");
+                args.push_back("--row-pairing"); args.push_back(row_pairing);
+                args.push_back("--row-transform"); args.push_back(row_transform);
             }
             std::printf("astc-cache build-model tensor=%s status=running\n", job.tensor.c_str());
             if (!run_tool(sibling_tool(argv0, "astc-vulkan-cache"), args, error)) return false;
@@ -987,6 +1017,7 @@ int main(int argc, char ** argv) {
     std::string min_source_bytes, max_cache_bytes, max_tensors;
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
     std::string channel_weights = "balanced-a025", source_alpha = "1", row_scale = "none";
+    std::string row_pairing = "adjacent", row_transform = "identity";
     std::string rows, columns, calibration_samples = "8", validation_samples = "7";
     std::string d2_prescreen_backend = "cpu", d2_prescreen_top_k = "3";
     bool no_publish = false, require_usage = false, require_benefit = false;
@@ -1040,6 +1071,8 @@ int main(int argc, char ** argv) {
         else if (option == "--channel-weights") channel_weights = value;
         else if (option == "--source-derived-alpha") source_alpha = value;
         else if (option == "--row-scale") row_scale = value;
+        else if (option == "--row-pairing") row_pairing = value;
+        else if (option == "--row-transform") row_transform = value;
         else if (option == "--rows") rows = value;
         else if (option == "--columns") columns = value;
         else if (option == "--calibration-samples") calibration_samples = value;
@@ -1083,6 +1116,7 @@ int main(int argc, char ** argv) {
         const std::string build_source = source_model.empty() ? model : source_model;
         if (!build_model_cache(argv[0], build_source, fragment_dir, staging_root, cache,
                                tensor_list, backend, preset, source_family, workers, shader,
+                               row_pairing, row_transform,
                                calibration_samples, validation_samples,
                                paths, error)) {
             std::fprintf(stderr, "astc-cache build-model failed: %s\n", error.c_str());
@@ -1320,7 +1354,7 @@ int main(int argc, char ** argv) {
         const bool built = d2 ? build_d2_cache(
             argv[0], model, tensor, trace, footprint, cache, artifact_dir, source_family,
             backend, preset,
-            paired_semantic, channel_weights, source_alpha, row_scale, rows, columns,
+            paired_semantic, channel_weights, source_alpha, row_scale, row_pairing, row_transform, rows, columns,
             calibration_samples, validation_samples, workers, !no_publish, paths, error) : build_d1_cache(
             argv[0], model, tensor, trace, footprint, cache, backend, shader, preset,
             artifact_dir, source_family, max_rows, max_columns, workers, !no_publish, paths, error);
