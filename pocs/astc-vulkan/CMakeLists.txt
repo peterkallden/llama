@@ -1240,6 +1240,18 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling experimental paired-D2 ASTC Vulkan matvec shader")
     add_custom_target(astc-vulkan-paired-matvec-shader
         DEPENDS ${ASTC_VULKAN_PAIRED_MATVEC_SHADER_OUTPUT})
+
+    # Both replay entry points load the paired-D2 SPIR-V at runtime. Keep the
+    # executable target dependent on it so a source change cannot leave a
+    # stale shader beside an otherwise freshly rebuilt replay binary.
+    if (TARGET astc-vulkan-model-replay-smoke)
+        add_dependencies(astc-vulkan-model-replay-smoke
+            astc-vulkan-paired-matvec-shader)
+    endif()
+    if (TARGET llama-astc-replay)
+        add_dependencies(llama-astc-replay
+            astc-vulkan-paired-matvec-shader)
+    endif()
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
