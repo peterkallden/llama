@@ -105,6 +105,8 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
         error = "ASTC llama provider requires a runtime model path";
         return false;
     }
+    const std::string source_model_path = options.source_model_path.empty() ?
+        options.model_path : options.source_model_path;
     prepared_options_ = options;
     std::string external_error;
     if (ggml_vk_astc_external_op::install(external_error)) {
@@ -130,7 +132,7 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
     }
 
     astc_vulkan_runtime_overlay_options overlay_options;
-    overlay_options.source_model_path = options.model_path;
+    overlay_options.source_model_path = source_model_path;
     overlay_options.runtime_model_path = options.model_path;
     overlay_options.cache_path = options.cache_path;
     overlay_options.policy.policy = options.policy;
@@ -233,6 +235,7 @@ bool astc_vulkan_llama_provider::materialize_entries(
         artifact.cache_root = overlay_.catalog().validation.paths.root;
         artifact.payload = std::move(material.payload);
         artifact.layout = std::move(material.paired_layout);
+        artifact.pair_map = std::move(material.pair_map);
         artifact.row_scales = std::move(material.row_scales);
         if (artifact.record.representation == astc_vulkan_representation::kPairedD2) {
             artifact.kind = astc_vulkan_scheduler_artifact_kind::kD2;

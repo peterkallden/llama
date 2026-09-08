@@ -22,7 +22,11 @@ public:
     ~astc_vulkan_llama_provider();
 
     struct options {
+        // `model_path` is the runtime GGUF for backwards compatibility.
         std::string model_path;
+        // Optional exact source GGUF used to build the cache. When omitted,
+        // the runtime model is also treated as the cache source.
+        std::string source_model_path;
         std::string cache_path = "auto";
         astc_vulkan_quality_policy policy = astc_vulkan_quality_policy::balanced;
         bool allow_experimental = false;

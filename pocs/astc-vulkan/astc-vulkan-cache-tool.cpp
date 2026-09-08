@@ -151,7 +151,8 @@ void print_help(const char * executable) {
             "            --staging build-state/ [--tensor-list tensors.txt] [--cache path|auto]\n"
         "            [--gpu-proposer-shader shader.spv] [--backend hybrid|cpu]\n"
         "            [--row-pairing optimized|adjacent] [--row-transform identity]\n"
-        "  %s plan --model model.gguf --usage usage.txt [--cache path|auto]\n"
+        "  %s plan --model runtime.gguf --usage usage.txt [--source-model source-f16.gguf]\n"
+        "            [--cache path|auto]\n"
         "            [--profile quality|balanced|compact|speed|auto]\n"
         "            [--policy quality|balanced|compact|speed|auto]\n"
         "            [--device-budget bytes] [--host-budget bytes] [--page-bytes bytes]\n"
@@ -1260,7 +1261,12 @@ int main(int argc, char ** argv) {
         plan_options.allow_experimental = allow_experimental;
         plan_options.allow_unverified = allow_unverified;
         astc_vulkan_model_cache_catalog catalog;
-        if (!astc_vulkan_model_cache_load_catalog(model, cache, plan_options, catalog, error)) {
+        const bool has_distinct_source = !source_model.empty() && source_model != model;
+        const bool loaded = has_distinct_source ?
+            astc_vulkan_model_cache_load_catalog_for_runtime(
+                source_model, model, cache, plan_options, catalog, error) :
+            astc_vulkan_model_cache_load_catalog(model, cache, plan_options, catalog, error);
+        if (!loaded) {
             std::fprintf(stderr, "astc-cache plan failed: %s\n", error.c_str());
             return 1;
         }

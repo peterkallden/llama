@@ -46,6 +46,10 @@ struct astc_vulkan_page_material {
     astc_vulkan_page_resolve resolve;
     std::vector<uint8_t> payload;
     std::vector<uint8_t> paired_layout;
+    // Optimized D2 row pairing is part of the runtime semantic contract,
+    // not just an offline diagnostic. Keep it with page material so the
+    // provider cannot silently fall back to adjacent pairing.
+    std::vector<uint8_t> pair_map;
     std::vector<float> row_scales;
 };
 

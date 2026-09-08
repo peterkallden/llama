@@ -15,7 +15,8 @@ bool same_key(const astc_vulkan_model_cache_storage_key & lhs,
            lhs.representation == rhs.representation &&
            lhs.paired_semantic == rhs.paired_semantic &&
            lhs.normalization == rhs.normalization &&
-           lhs.has_row_scales == rhs.has_row_scales;
+           lhs.has_row_scales == rhs.has_row_scales &&
+           lhs.has_pair_map == rhs.has_pair_map;
 }
 
 bool entry_key(const astc_vulkan_model_cache_entry & entry,
@@ -26,6 +27,7 @@ bool entry_key(const astc_vulkan_model_cache_entry & entry,
     key.paired_semantic = entry.paired_semantic;
     key.normalization = entry.normalization;
     key.has_row_scales = entry.has_row_scales;
+    key.has_pair_map = entry.has_pair_map;
     return true;
 }
 
@@ -241,6 +243,17 @@ bool astc_vulkan_page_owner::load_entry_material(
                                          entry.row_scale_byte_size, bytes, error)) return false;
         result.row_scales.resize(entry.storage.height);
         std::memcpy(result.row_scales.data(), bytes.data(), bytes.size());
+    }
+    if (entry.pair_map_byte_size != 0) {
+        if (entry.pair_map_byte_size !=
+                static_cast<uint64_t>((entry.storage.height + 9u) / 10u) * 10u) {
+            error = "ASTC page pair-map range does not match tensor height";
+            return false;
+        }
+        if (!astc_vulkan_read_file_range(catalog.validation.paths.pair_map,
+                                         entry.pair_map_byte_offset,
+                                         entry.pair_map_byte_size,
+                                         result.pair_map, error)) return false;
     }
     error.clear();
     return true;

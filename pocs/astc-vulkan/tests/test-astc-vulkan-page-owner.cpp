@@ -1,5 +1,6 @@
 #include "astc-vulkan-page-owner.h"
 
+#include <array>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -100,6 +101,9 @@ int main() {
     d2.has_row_scales = true;
     d2.row_scale_byte_offset = 0;
     d2.row_scale_byte_size = 6 * sizeof(float);
+    d2.has_pair_map = true;
+    d2.pair_map_byte_offset = 0;
+    d2.pair_map_byte_size = 10;
     astc_vulkan_model_cache_plan d2_plan;
     d2_plan.entries.push_back(d2);
     astc_vulkan_model_cache_storage_page d2_page;
@@ -107,6 +111,7 @@ int main() {
     d2_page.key.representation = d2.storage.representation;
     d2_page.key.paired_semantic = d2.paired_semantic;
     d2_page.key.has_row_scales = true;
+    d2_page.key.has_pair_map = true;
     d2_page.entry_indices = {0};
     d2_page.payload_bytes = d2.storage.byte_size;
     d2_page.host_bytes = d2.host_bytes;
@@ -118,6 +123,8 @@ int main() {
         "astc-vulkan-page-owner-layout.bin";
     const auto scales_path = std::filesystem::temp_directory_path() /
         "astc-vulkan-page-owner-scales.bin";
+    const auto pair_map_path = std::filesystem::temp_directory_path() /
+        "astc-vulkan-page-owner-pair-map.bin";
     {
         std::ofstream layout(layout_path, std::ios::binary | std::ios::trunc);
         const uint32_t layout_word = 0x01020304u;
@@ -126,19 +133,26 @@ int main() {
         const std::vector<float> values(6, 1.0f);
         scales.write(reinterpret_cast<const char *>(values.data()),
                      static_cast<std::streamsize>(values.size() * sizeof(float)));
+        std::ofstream pair_map(pair_map_path, std::ios::binary | std::ios::trunc);
+        const std::array<uint8_t, 10> values_pair_map = {0, 2, 1, 3, 4, 5, 6, 7, 8, 9};
+        pair_map.write(reinterpret_cast<const char *>(values_pair_map.data()),
+                       static_cast<std::streamsize>(values_pair_map.size()));
     }
     astc_vulkan_model_cache_catalog d2_catalog;
     d2_catalog.plan = d2_plan;
     d2_catalog.validation.paths.payload = payload_path.string();
     d2_catalog.validation.paths.layout = layout_path.string();
     d2_catalog.validation.paths.row_scales = scales_path.string();
+    d2_catalog.validation.paths.pair_map = pair_map_path.string();
     assert(d2_owner.load_entry_material(d2_catalog, 0, material, error));
     assert(material.resolve.resident && material.payload.size() == 16);
     assert(material.paired_layout.size() == sizeof(uint32_t));
     assert(material.row_scales.size() == 6 && material.row_scales[0] == 1.0f);
+    assert(material.pair_map.size() == 10 && material.pair_map[1] == 2);
     std::filesystem::remove(payload_path, ignored);
     std::filesystem::remove(layout_path, ignored);
     std::filesystem::remove(scales_path, ignored);
+    std::filesystem::remove(pair_map_path, ignored);
 
     std::puts("ASTC Vulkan page owner contract passed");
     return 0;
