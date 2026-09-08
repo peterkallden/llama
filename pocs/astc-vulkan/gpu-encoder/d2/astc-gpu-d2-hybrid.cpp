@@ -4,6 +4,16 @@
 
 namespace {
 
+std::vector<uint32_t> direct_neutral_reference_ids(const astc_gpu_d2_candidate_bank & bank) {
+    std::vector<uint32_t> ids;
+    for (const auto & record : bank.records) {
+        if (record.family == astc_gpu_d2_candidate_family::direct_neutral) {
+            ids.push_back(record.candidate_source_block_id);
+        }
+    }
+    return ids;
+}
+
 bool decoded_weight_for_row(const astc_gpu_d2_candidate_record & record,
                             const astc_gpu_encoder_finished_block & block,
                             uint32_t width, uint32_t local_row, uint32_t x,
@@ -93,9 +103,17 @@ bool astc_gpu_d2_finish_and_rank(
         error = "D2 hybrid request construction failed";
         return false;
     }
-    if (!astc_gpu_encoder_finish(
-            request, result.retained_proposals, options.astcenc_quality,
-            result.finished_blocks, error)) return false;
+    if (options.profile == astc_gpu_encoder_candidate_profile::neural_quality) {
+        if (!astc_gpu_encoder_finish_neural_hybrid(
+                request, result.retained_proposals, direct_neutral_reference_ids(bank),
+                {options.reference_astcenc_quality, options.astcenc_quality,
+                 options.worker_count},
+                result.finished_blocks, error)) return false;
+    } else if (!astc_gpu_encoder_finish_with_options(
+                   request, result.retained_proposals,
+                   {options.astcenc_quality, astc_gpu_encoder_finish_mode::guided,
+                    options.worker_count},
+                   result.finished_blocks, error)) return false;
 
     if (!astc_gpu_d2_rank_finished_candidates_activation(
             bank, result.finished_blocks, rank_request,

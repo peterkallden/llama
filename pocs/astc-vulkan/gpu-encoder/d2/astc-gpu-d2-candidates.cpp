@@ -58,7 +58,8 @@ bool astc_gpu_d2_build_candidate_bank(
     const std::vector<astc_vulkan_paired_layout> & direct_neutral_layouts,
     const std::vector<astc_gpu_d2_candidate_family_sources> & alternatives,
     astc_gpu_d2_candidate_bank & bank,
-    const std::vector<astc_vulkan_d2_pairing> & pairings) {
+    const std::vector<astc_vulkan_d2_pairing> & pairings,
+    astc_vulkan_paired_semantic direct_neutral_semantic) {
     bank = {};
     if (direct_neutral_blocks.empty() ||
         !compatible_blocks(footprint, direct_neutral_blocks, direct_neutral_blocks.size()) ||
@@ -96,7 +97,7 @@ bool astc_gpu_d2_build_candidate_bank(
             ++next_id;
         };
         append(direct_neutral_blocks[logical], astc_gpu_d2_candidate_family::direct_neutral,
-               direct_neutral_layouts[logical], astc_vulkan_paired_semantic::direct_rgb, 0, {});
+               direct_neutral_layouts[logical], direct_neutral_semantic, 0, {});
         for (uint32_t index = 0; index < alternatives.size(); ++index) {
             const auto & alternative = alternatives[index];
             append(alternative.blocks[logical], alternative.family, alternative.layouts[logical],

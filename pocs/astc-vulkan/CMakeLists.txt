@@ -50,12 +50,15 @@ target_compile_features(astc-vulkan-algorithms PUBLIC cxx_std_17)
 # inference runtime dispatch.
 add_library(astc-vulkan-gpu-encoder STATIC
     gpu-encoder/shared/astc-gpu-encoder.cpp
+    gpu-encoder/shared/astc-gpu-encoder-subset.cpp
     gpu-encoder/shared/astc-gpu-selector-adapter.cpp
+    gpu-encoder/d1/astc-gpu-d1-exact-subset.cpp
     gpu-encoder/d1/astc-gpu-d1-hybrid.cpp
     gpu-encoder/d1/astc-gpu-d1-candidates.cpp
     gpu-encoder/d1/astc-gpu-d1-neural-rank.cpp
     gpu-encoder/d1/astc-gpu-d1-source.cpp
     gpu-encoder/d2/astc-gpu-d2-candidates.cpp
+    gpu-encoder/d2/astc-gpu-d2-exact-subset.cpp
     gpu-encoder/d2/astc-gpu-d2-neural-rank.cpp
     gpu-encoder/d2/astc-gpu-d2-source.cpp)
 target_include_directories(astc-vulkan-gpu-encoder PUBLIC
@@ -498,7 +501,8 @@ if (TARGET Vulkan::Vulkan)
     # latent/cache producer only through the opt-in hybrid backend; scheduler
     # selection and inference runtime dispatch remain unchanged.
     add_library(astc-vulkan-gpu-encoder-dispatch STATIC
-        gpu-encoder/shared/astc-gpu-encoder-dispatch.cpp)
+        gpu-encoder/shared/astc-gpu-encoder-dispatch.cpp
+        gpu-encoder/shared/astc-gpu-encoder-exact-dispatch.cpp)
     target_include_directories(astc-vulkan-gpu-encoder-dispatch PUBLIC
         ${ASTC_VULKAN_POC_INCLUDE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared
@@ -707,6 +711,44 @@ if (TARGET Vulkan::Vulkan)
     target_link_libraries(astc-vulkan-gpu-encoder-device-smoke PRIVATE
         astc-vulkan-gpu-encoder-dispatch)
     target_compile_features(astc-vulkan-gpu-encoder-device-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-gpu-exact-subset-device-smoke
+        astc-vulkan-gpu-exact-subset-device-smoke.cpp)
+    target_include_directories(astc-vulkan-gpu-exact-subset-device-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/d1)
+    target_link_libraries(astc-vulkan-gpu-exact-subset-device-smoke PRIVATE
+        astc-vulkan-gpu-encoder-dispatch astc-vulkan-gpu-encoder-finisher)
+    target_compile_features(astc-vulkan-gpu-exact-subset-device-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-gpu-exact-d2-8x5-device-smoke
+        astc-vulkan-gpu-exact-d2-8x5-device-smoke.cpp)
+    target_include_directories(astc-vulkan-gpu-exact-d2-8x5-device-smoke PRIVATE
+        ${ASTC_VULKAN_POC_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/d2)
+    target_link_libraries(astc-vulkan-gpu-exact-d2-8x5-device-smoke PRIVATE
+        astc-vulkan-gpu-encoder-dispatch astc-vulkan-gpu-encoder-finisher)
+    target_compile_features(astc-vulkan-gpu-exact-d2-8x5-device-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-gpu-d2-exact-bank-fixture-smoke
+        astc-vulkan-gpu-d2-exact-bank-fixture-smoke.cpp)
+    target_include_directories(astc-vulkan-gpu-d2-exact-bank-fixture-smoke PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/d2)
+    target_link_libraries(astc-vulkan-gpu-d2-exact-bank-fixture-smoke PRIVATE
+        astc-vulkan-gpu-encoder-dispatch astc-vulkan-gpu-encoder-finisher)
+    target_compile_features(astc-vulkan-gpu-d2-exact-bank-fixture-smoke PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-gpu-d1-refined-fixture-smoke
+        astc-vulkan-gpu-d1-refined-fixture-smoke.cpp)
+    target_include_directories(astc-vulkan-gpu-d1-refined-fixture-smoke PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/d1)
+    target_link_libraries(astc-vulkan-gpu-d1-refined-fixture-smoke PRIVATE
+        astc-vulkan-gpu-encoder-dispatch astc-vulkan-gpu-encoder-finisher)
+    target_compile_features(astc-vulkan-gpu-d1-refined-fixture-smoke PRIVATE cxx_std_17)
 endif()
 
 find_package(astcenc CONFIG QUIET)
@@ -771,6 +813,14 @@ if (TARGET astcenc::astcenc-static)
         target_compile_features(astc-vulkan-gpu-encoder-verify PUBLIC cxx_std_17)
         if (TARGET astc-vulkan-gpu-encoder-device-smoke)
             target_link_libraries(astc-vulkan-gpu-encoder-device-smoke PRIVATE
+                astc-vulkan-gpu-encoder-verify)
+        endif()
+        if (TARGET astc-vulkan-gpu-exact-subset-device-smoke)
+            target_link_libraries(astc-vulkan-gpu-exact-subset-device-smoke PRIVATE
+                astc-vulkan-gpu-encoder-verify)
+        endif()
+        if (TARGET astc-vulkan-gpu-exact-d2-8x5-device-smoke)
+            target_link_libraries(astc-vulkan-gpu-exact-d2-8x5-device-smoke PRIVATE
                 astc-vulkan-gpu-encoder-verify)
         endif()
     endif()
@@ -1226,6 +1276,34 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-d2-proposer-10x5.comp.spv)
     set(ASTC_VULKAN_GPU_D1_PROPOSER_5X5_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-d1-proposer-5x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_VOID_EXTENT_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-void-extent.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_6X6_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-d1-luminance-binary-6x6.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_REFINED_6X6_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-d1-luminance-refined-6x6.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_MEAN_REFINED_6X6_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-d1-luminance-mean-refined-6x6.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_QUANTILE_REFINED_6X6_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-d1-luminance-quantile-refined-6x6.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_5X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-d1-luminance-binary-5x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_QUANT4_4X4_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-d1-luminance-quant4-4x4.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_LA_BINARY_8X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-binary-8x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_LA_LUMINANCE_8X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-luminance-8x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_LA_ALPHA_8X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-alpha-8x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_LA_REFINED_8X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-refined-8x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_LA_MEAN_REFINED_8X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-mean-refined-8x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_LA_QUANTILE_REFINED_8X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-quantile-refined-8x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_8X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-dual-binary-8x5.comp.spv)
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -1465,6 +1543,143 @@ if (ASTC_VULKAN_GLSLC)
     add_custom_target(astc-vulkan-gpu-d1-proposer-6x6-shader
         DEPENDS ${ASTC_VULKAN_GPU_D1_PROPOSER_6X6_SHADER_OUTPUT})
     add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_EXACT_VOID_EXTENT_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-void-extent.comp
+            -o ${ASTC_VULKAN_GPU_EXACT_VOID_EXTENT_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-void-extent.comp
+        COMMENT "Compiling offline exact ASTC void-extent shader")
+    add_custom_target(astc-vulkan-gpu-exact-void-extent-shader
+        DEPENDS ${ASTC_VULKAN_GPU_EXACT_VOID_EXTENT_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_6X6_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-binary-6x6.comp
+            -o ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_6X6_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-binary-6x6.comp
+        COMMENT "Compiling exact D1 6x6 luminance ASTC subset shader")
+    add_custom_target(astc-vulkan-gpu-exact-d1-luminance-binary-6x6-shader
+        DEPENDS ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_6X6_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_REFINED_6X6_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-refined-6x6.comp
+            -o ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_REFINED_6X6_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-refined-6x6.comp
+        COMMENT "Compiling refined exact D1 6x6 luminance ASTC subset shader")
+    add_custom_target(astc-vulkan-gpu-exact-d1-luminance-refined-6x6-shader
+        DEPENDS ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_REFINED_6X6_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_MEAN_REFINED_6X6_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-mean-refined-6x6.comp
+            -o ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_MEAN_REFINED_6X6_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-mean-refined-6x6.comp
+        COMMENT "Compiling mean-refined exact D1 6x6 luminance ASTC subset shader")
+    add_custom_target(astc-vulkan-gpu-exact-d1-luminance-mean-refined-6x6-shader
+        DEPENDS ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_MEAN_REFINED_6X6_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_QUANTILE_REFINED_6X6_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-quantile-refined-6x6.comp
+            -o ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_QUANTILE_REFINED_6X6_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-quantile-refined-6x6.comp
+        COMMENT "Compiling quantile-refined exact D1 6x6 luminance ASTC subset shader")
+    add_custom_target(astc-vulkan-gpu-exact-d1-luminance-quantile-refined-6x6-shader
+        DEPENDS ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_QUANTILE_REFINED_6X6_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_5X5_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-binary-5x5.comp
+            -o ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_5X5_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-binary-5x5.comp
+        COMMENT "Compiling exact D1 5x5 luminance ASTC subset shader")
+    add_custom_target(astc-vulkan-gpu-exact-d1-luminance-binary-5x5-shader
+        DEPENDS ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_5X5_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_QUANT4_4X4_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-quant4-4x4.comp
+            -o ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_QUANT4_4X4_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-quant4-4x4.comp
+        COMMENT "Compiling exact D1 4x4 luminance ASTC subset shader")
+    add_custom_target(astc-vulkan-gpu-exact-d1-luminance-quant4-4x4-shader
+        DEPENDS ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_QUANT4_4X4_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_EXACT_LA_BINARY_8X5_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-binary-8x5.comp
+            -o ${ASTC_VULKAN_GPU_EXACT_LA_BINARY_8X5_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-binary-8x5.comp
+        COMMENT "Compiling exact L+A 8x5 ASTC subset shader")
+    add_custom_target(astc-vulkan-gpu-exact-la-binary-8x5-shader
+        DEPENDS ${ASTC_VULKAN_GPU_EXACT_LA_BINARY_8X5_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_EXACT_LA_LUMINANCE_8X5_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-luminance-8x5.comp
+            -o ${ASTC_VULKAN_GPU_EXACT_LA_LUMINANCE_8X5_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-luminance-8x5.comp
+        COMMENT "Compiling luminance-guided L+A 8x5 ASTC subset shader")
+    add_custom_target(astc-vulkan-gpu-exact-la-luminance-8x5-shader
+        DEPENDS ${ASTC_VULKAN_GPU_EXACT_LA_LUMINANCE_8X5_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_EXACT_LA_ALPHA_8X5_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-alpha-8x5.comp
+            -o ${ASTC_VULKAN_GPU_EXACT_LA_ALPHA_8X5_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-alpha-8x5.comp
+        COMMENT "Compiling Alpha-guided L+A 8x5 ASTC subset shader")
+    add_custom_target(astc-vulkan-gpu-exact-la-alpha-8x5-shader
+        DEPENDS ${ASTC_VULKAN_GPU_EXACT_LA_ALPHA_8X5_SHADER_OUTPUT})
+    foreach(ASTC_VULKAN_D2_REFINED_VARIANT IN ITEMS refined mean-refined quantile-refined)
+        string(REPLACE "-" "_" ASTC_VULKAN_D2_REFINED_VARIANT_ID ${ASTC_VULKAN_D2_REFINED_VARIANT})
+        string(TOUPPER ${ASTC_VULKAN_D2_REFINED_VARIANT_ID} ASTC_VULKAN_D2_REFINED_VARIANT_UPPER)
+        set(ASTC_VULKAN_D2_REFINED_OUTPUT ${ASTC_VULKAN_GPU_EXACT_LA_${ASTC_VULKAN_D2_REFINED_VARIANT_UPPER}_8X5_SHADER_OUTPUT})
+        add_custom_command(
+            OUTPUT ${ASTC_VULKAN_D2_REFINED_OUTPUT}
+            COMMAND ${ASTC_VULKAN_GLSLC}
+                --target-env=vulkan1.1
+                -fshader-stage=compute
+                ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-${ASTC_VULKAN_D2_REFINED_VARIANT}-8x5.comp
+                -o ${ASTC_VULKAN_D2_REFINED_OUTPUT}
+            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-${ASTC_VULKAN_D2_REFINED_VARIANT}-8x5.comp
+            COMMENT "Compiling ${ASTC_VULKAN_D2_REFINED_VARIANT} L+A 8x5 ASTC subset shader")
+        add_custom_target(astc-vulkan-gpu-exact-la-${ASTC_VULKAN_D2_REFINED_VARIANT}-8x5-shader
+            DEPENDS ${ASTC_VULKAN_D2_REFINED_OUTPUT})
+    endforeach()
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_8X5_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-dual-binary-8x5.comp
+            -o ${ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_8X5_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-dual-binary-8x5.comp
+        COMMENT "Compiling exact dual-plane L+A 8x5 ASTC subset shader")
+    add_custom_target(astc-vulkan-gpu-exact-la-dual-binary-8x5-shader
+        DEPENDS ${ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_8X5_SHADER_OUTPUT})
+    add_custom_command(
         OUTPUT ${ASTC_VULKAN_GPU_D1_PROPOSER_8X6_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
             --target-env=vulkan1.1
@@ -1628,6 +1843,54 @@ if (ASTC_VULKAN_GLSLC)
                 ${ASTC_VULKAN_GPU_D2_PROPOSER_10X5_SHADER_OUTPUT})
         set_property(TEST astc-vulkan-gpu-encoder-device-smoke PROPERTY LABELS astc)
         set_property(TEST astc-vulkan-gpu-encoder-device-smoke PROPERTY SKIP_RETURN_CODE 77)
+    endif()
+    if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-gpu-exact-subset-device-smoke)
+        add_dependencies(astc-vulkan-gpu-exact-subset-device-smoke
+            astc-vulkan-gpu-exact-void-extent-shader
+            astc-vulkan-gpu-exact-d1-luminance-binary-6x6-shader
+            astc-vulkan-gpu-exact-d1-luminance-refined-6x6-shader
+            astc-vulkan-gpu-exact-d1-luminance-mean-refined-6x6-shader
+            astc-vulkan-gpu-exact-d1-luminance-quantile-refined-6x6-shader
+            astc-vulkan-gpu-exact-d1-luminance-binary-5x5-shader
+            astc-vulkan-gpu-exact-d1-luminance-quant4-4x4-shader
+            astc-vulkan-shader-smoke)
+        add_test(NAME astc-vulkan-gpu-exact-subset-device-smoke
+            COMMAND astc-vulkan-gpu-exact-subset-device-smoke
+                ${ASTC_VULKAN_GPU_EXACT_VOID_EXTENT_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_6X6_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_5X5_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_QUANT4_4X4_SHADER_OUTPUT}
+                ${ASTC_VULKAN_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_REFINED_6X6_SHADER_OUTPUT})
+        set_property(TEST astc-vulkan-gpu-exact-subset-device-smoke PROPERTY LABELS astc)
+        set_property(TEST astc-vulkan-gpu-exact-subset-device-smoke PROPERTY SKIP_RETURN_CODE 77)
+    endif()
+    if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-gpu-d1-refined-fixture-smoke)
+        add_dependencies(astc-vulkan-gpu-d1-refined-fixture-smoke
+            astc-vulkan-gpu-exact-d1-luminance-refined-6x6-shader
+            astc-vulkan-gpu-exact-d1-luminance-mean-refined-6x6-shader
+            astc-vulkan-gpu-exact-d1-luminance-quantile-refined-6x6-shader)
+    endif()
+    if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-gpu-exact-d2-8x5-device-smoke)
+        add_dependencies(astc-vulkan-gpu-exact-d2-8x5-device-smoke
+            astc-vulkan-gpu-exact-la-binary-8x5-shader
+            astc-vulkan-gpu-exact-la-luminance-8x5-shader
+            astc-vulkan-gpu-exact-la-alpha-8x5-shader
+            astc-vulkan-gpu-exact-la-refined-8x5-shader
+            astc-vulkan-gpu-exact-la-mean-refined-8x5-shader
+            astc-vulkan-gpu-exact-la-quantile-refined-8x5-shader
+            astc-vulkan-gpu-exact-la-dual-binary-8x5-shader
+            astc-vulkan-shader-smoke)
+        add_test(NAME astc-vulkan-gpu-exact-d2-8x5-device-smoke
+            COMMAND astc-vulkan-gpu-exact-d2-8x5-device-smoke
+                ${ASTC_VULKAN_GPU_EXACT_LA_BINARY_8X5_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_EXACT_LA_LUMINANCE_8X5_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_EXACT_LA_ALPHA_8X5_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_EXACT_LA_REFINED_8X5_SHADER_OUTPUT}
+                ${ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_8X5_SHADER_OUTPUT}
+                ${ASTC_VULKAN_SHADER_OUTPUT})
+        set_property(TEST astc-vulkan-gpu-exact-d2-8x5-device-smoke PROPERTY LABELS astc)
+        set_property(TEST astc-vulkan-gpu-exact-d2-8x5-device-smoke PROPERTY SKIP_RETURN_CODE 77)
     endif()
     if (TARGET ggml-base AND TARGET astc-vulkan-ffn-adapter)
         add_executable(astc-vulkan-ffn-e2e-smoke

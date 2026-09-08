@@ -26,6 +26,34 @@ enum class astc_gpu_encode_mode : uint8_t {
     exact_subset,
 };
 
+// The exact encoder deliberately exposes only a small audited ASTC subset.
+// New modes are added only after CPU block-info and Vulkan replay gates pass.
+enum class astc_gpu_exact_subset_kind : uint8_t {
+    void_extent_unorm16 = 0,
+    d1_luminance_binary_6x6,
+    // Same legal 6x6 binary mode, but endpoint/weight symbols are refined by
+    // a bounded quantization-aware alternating solve before packing.
+    d1_luminance_binary_refined_6x6,
+    // Alternative deterministic local solves in the same legal 6x6 binary
+    // mode. Different initialization can cross a discrete endpoint/weight
+    // boundary, giving the neural selector useful legal diversity.
+    d1_luminance_binary_mean_refined_6x6,
+    d1_luminance_binary_quantile_refined_6x6,
+    d1_luminance_binary_5x5,
+    d1_luminance_quant4_4x4,
+    // One-plane D2-LA 8x5 candidates. All use the same legal physical mode
+    // but differ in which semantic lane guides the shared binary weights.
+    luminance_alpha_binary_8x5,
+    luminance_alpha_binary_luminance_weights_8x5,
+    luminance_alpha_binary_alpha_weights_8x5,
+    // Same legal one-plane L+A mode, but a bounded two-channel alternating
+    // endpoint/weight fit starts from different deterministic seeds.
+    luminance_alpha_binary_refined_8x5,
+    luminance_alpha_binary_mean_refined_8x5,
+    luminance_alpha_binary_quantile_refined_8x5,
+    luminance_alpha_dual_binary_8x5,
+};
+
 struct astc_gpu_encoder_texel {
     std::array<float, 4> rgba{};
 };
@@ -62,6 +90,7 @@ struct astc_gpu_encoder_candidate_identity {
 struct astc_gpu_encoder_request {
     astc_gpu_encode_mode mode = astc_gpu_encode_mode::propose;
     astc_vulkan_footprint footprint = astc_vulkan_footprint::k4x4;
+    astc_gpu_exact_subset_kind exact_subset = astc_gpu_exact_subset_kind::void_extent_unorm16;
     // Batch size is a host scheduling choice. A backend must process the
     // complete batch in one dispatch/readback cycle, never callback per block.
     uint32_t max_blocks_per_batch = 256;

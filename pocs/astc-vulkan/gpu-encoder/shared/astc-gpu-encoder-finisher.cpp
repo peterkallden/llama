@@ -7,6 +7,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 static bool astc_gpu_encoder_finish_parallel(
     const astc_gpu_encoder_request & request,
@@ -103,6 +104,63 @@ bool astc_gpu_encoder_finish_with_options(
         finished.push_back(result);
     }
     astcenc_context_free(context);
+    error.clear();
+    return true;
+}
+
+bool astc_gpu_encoder_finish_neural_hybrid(
+    const astc_gpu_encoder_request & request,
+    const std::vector<astc_gpu_encoder_proposal> & retained_proposals,
+    const std::vector<uint32_t> & mandatory_reference_source_ids,
+    const astc_gpu_encoder_neural_hybrid_finish_options & options,
+    std::vector<astc_gpu_encoder_finished_block> & finished,
+    std::string & error) {
+    finished.clear();
+    if (mandatory_reference_source_ids.empty()) {
+        error = "neural hybrid requires a mandatory reference per logical block";
+        return false;
+    }
+
+    std::unordered_set<uint32_t> reference_ids;
+    reference_ids.reserve(mandatory_reference_source_ids.size());
+    std::vector<astc_gpu_encoder_proposal> references;
+    references.reserve(mandatory_reference_source_ids.size());
+    for (uint32_t source_block_id : mandatory_reference_source_ids) {
+        if (!reference_ids.emplace(source_block_id).second) {
+            error = "neural hybrid received duplicate mandatory reference id";
+            return false;
+        }
+        astc_gpu_encoder_proposal reference;
+        reference.source_block_id = source_block_id;
+        references.push_back(reference);
+    }
+
+    std::vector<astc_gpu_encoder_finished_block> reference_finished;
+    if (!astc_gpu_encoder_finish_with_options(
+            request, references,
+            {options.reference_quality, astc_gpu_encoder_finish_mode::reference,
+             options.worker_count},
+            reference_finished, error)) return false;
+
+    // A reference source can also have survived proposal retention. Do not
+    // encode it twice: the reference payload is intentionally authoritative.
+    std::unordered_set<uint32_t> seen = reference_ids;
+    std::vector<astc_gpu_encoder_proposal> exploration;
+    exploration.reserve(retained_proposals.size());
+    for (const auto & proposal : retained_proposals) {
+        if (seen.emplace(proposal.source_block_id).second) exploration.push_back(proposal);
+    }
+
+    std::vector<astc_gpu_encoder_finished_block> exploration_finished;
+    if (!exploration.empty() && !astc_gpu_encoder_finish_with_options(
+            request, exploration,
+            {options.exploration_quality, astc_gpu_encoder_finish_mode::guided,
+             options.worker_count},
+            exploration_finished, error)) return false;
+
+    finished.reserve(reference_finished.size() + exploration_finished.size());
+    finished.insert(finished.end(), reference_finished.begin(), reference_finished.end());
+    finished.insert(finished.end(), exploration_finished.begin(), exploration_finished.end());
     error.clear();
     return true;
 }
@@ -244,4 +302,62 @@ bool astc_gpu_encoder_finish_d1_scalar_4x4(
         return false;
     }
     return astc_gpu_encoder_finish(request, retained_proposals, quality, finished, error);
+}
+
+bool astc_gpu_exact_subset_finish_payloads(
+    astc_vulkan_footprint footprint,
+    const std::vector<astc_gpu_exact_subset_block> & payloads,
+    std::vector<astc_gpu_encoder_finished_block> & finished,
+    std::string & error) {
+    finished.clear();
+    const auto format = astc_vulkan_format(footprint);
+    if (payloads.empty() || format.block_width == 0 || format.block_height == 0) {
+        error = "exact-subset decode requires non-empty supported payloads";
+        return false;
+    }
+    astcenc_config config{};
+    if (astcenc_config_init(ASTCENC_PRF_LDR, format.block_width, format.block_height,
+                            1, ASTCENC_PRE_FAST, 0, &config) != ASTCENC_SUCCESS) {
+        error = "exact-subset decode configuration failed";
+        return false;
+    }
+    astcenc_context * context = nullptr;
+#if defined(GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
+    if (astcenc_context_alloc(&config, 1, &context, nullptr) != ASTCENC_SUCCESS) {
+#else
+    if (astcenc_context_alloc(&config, 1, &context) != ASTCENC_SUCCESS) {
+#endif
+        error = "exact-subset decode context allocation failed";
+        return false;
+    }
+    const astcenc_swizzle swizzle{ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A};
+    finished.reserve(payloads.size());
+    for (const auto & payload : payloads) {
+        astcenc_block_info info{};
+        if (astcenc_get_block_info(context, payload.payload.data(), &info) != ASTCENC_SUCCESS ||
+            info.is_error_block) {
+            astcenc_context_free(context);
+            finished.clear();
+            error = "exact-subset payload is not legal LDR ASTC";
+            return false;
+        }
+        astc_gpu_encoder_finished_block result;
+        result.source_block_id = payload.source_block_id;
+        result.footprint = footprint;
+        result.payload = payload.payload;
+        result.decoded_rgba.resize(size_t(format.block_width) * format.block_height * 4);
+        void * decoded = result.decoded_rgba.data();
+        astcenc_image image{format.block_width, format.block_height, 1, ASTCENC_TYPE_F32, &decoded};
+        if (astcenc_decompress_image(context, result.payload.data(), result.payload.size(),
+                                     &image, &swizzle, 0) != ASTCENC_SUCCESS) {
+            astcenc_context_free(context);
+            finished.clear();
+            error = "exact-subset payload CPU decode failed";
+            return false;
+        }
+        finished.push_back(std::move(result));
+    }
+    astcenc_context_free(context);
+    error.clear();
+    return true;
 }

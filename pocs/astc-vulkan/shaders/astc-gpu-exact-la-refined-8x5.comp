@@ -1,0 +1,26 @@
+#version 450
+
+// Legal 8x5 one-plane L+A block. A three-step, quantization-aware two-lane
+// alternating solve gives D2 a second legal fit in the same runtime format.
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) readonly buffer Source { vec4 texels[]; } source;
+layout(std430, set = 0, binding = 1) writeonly buffer Payloads { uvec4 values[]; } payloads;
+layout(push_constant) uniform Push { uint block_count; uint texels_per_block; } params;
+shared vec2 values[64];
+uint bit_reverse8(uint v) { v=((v&0x55u)<<1u)|((v>>1u)&0x55u); v=((v&0x33u)<<2u)|((v>>2u)&0x33u); return ((v&0x0fu)<<4u)|((v>>4u)&0x0fu); }
+void bit(inout uvec4 w,uint p,uint v) { uint i=p>>5u,s=p&31u; if(v!=0u)w[i]|=1u<<s;else w[i]&=~(1u<<s); }
+void bits(inout uvec4 w,uint v,uint n,uint p) { for(uint i=0u;i<n;++i)bit(w,p+i,(v>>i)&1u); }
+uint q8(float x) { return uint(floor(clamp(x,0.0,1.0)*255.0+0.5)); }
+void main() {
+  uint b=gl_WorkGroupID.x,l=gl_LocalInvocationID.x; if(b>=params.block_count||params.texels_per_block!=40u)return;
+  values[l]=l<40u?vec2(source.texels[b*40u+l].r,source.texels[b*40u+l].a):vec2(0); barrier();
+  if(l!=0u)return;
+  vec2 lo=values[0],hi=values[0]; for(uint i=1u;i<40u;++i){lo=min(lo,values[i]);hi=max(hi,values[i]);}
+  uint lc=0u,hc=0u,la=0u,ha=0u; uint wb[16]=uint[16](0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u);
+  for(uint it=0u;it<3u;++it){lc=q8(lo.x);hc=q8(hi.x);la=q8(lo.y);ha=q8(hi.y);uvec2 sl=uvec2(0),sh=uvec2(0);uint nl=0u,nh=0u;
+    for(uint i=0u;i<40u;++i){int vl=int(q8(values[i].x)),va=int(q8(values[i].y));int d0=(vl-int(lc))*(vl-int(lc))+(va-int(la))*(va-int(la)),d1=(vl-int(hc))*(vl-int(hc))+(va-int(ha))*(va-int(ha));if(d1<=d0){sh+=uvec2(vl,va);++nh;}else{sl+=uvec2(vl,va);++nl;}}
+    if(nl!=0u)lo=vec2((sl.x+nl/2u)/nl,(sl.y+nl/2u)/nl)/255.0;if(nh!=0u)hi=vec2((sh.x+nh/2u)/nh,(sh.y+nh/2u)/nh)/255.0; }
+  lc=q8(lo.x);hc=q8(hi.x);la=q8(lo.y);ha=q8(hi.y);
+  for(uint i=0u;i<40u;++i){int vl=int(q8(values[i].x)),va=int(q8(values[i].y));int d0=(vl-int(lc))*(vl-int(lc))+(va-int(la))*(va-int(la)),d1=(vl-int(hc))*(vl-int(hc))+(va-int(ha))*(va-int(ha));if(d1<=d0)wb[i>>3u]|=1u<<(i&7u);}
+  uvec4 p=uvec4(0);for(uint i=0u;i<16u;++i)bits(p,bit_reverse8(wb[i]),8u,(15u-i)*8u);bits(p,0x065u,11u,0u);bits(p,4u,4u,13u);bits(p,lc,8u,17u);bits(p,hc,8u,25u);bits(p,la,8u,33u);bits(p,ha,8u,41u);payloads.values[b]=p;
+}

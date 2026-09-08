@@ -21,7 +21,9 @@ bool valid_block(const astc_gpu_encoder_source_block & block,
 bool astc_gpu_encoder_plan_batches(const astc_gpu_encoder_request & request,
                                    std::vector<astc_gpu_encoder_batch> & batches) {
     batches.clear();
-    if (request.mode != astc_gpu_encode_mode::propose || request.max_blocks_per_batch == 0) return false;
+    if ((request.mode != astc_gpu_encode_mode::propose &&
+         request.mode != astc_gpu_encode_mode::exact_subset) ||
+        request.max_blocks_per_batch == 0) return false;
     if (!request.candidate_metadata.empty() &&
         request.candidate_metadata.size() != request.blocks.size()) return false;
     std::unordered_set<uint32_t> source_ids;

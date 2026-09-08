@@ -68,7 +68,9 @@ bool astc_gpu_d2_build_candidate_bank(
     const std::vector<astc_vulkan_paired_layout> & direct_neutral_layouts,
     const std::vector<astc_gpu_d2_candidate_family_sources> & alternatives,
     astc_gpu_d2_candidate_bank & bank,
-    const std::vector<astc_vulkan_d2_pairing> & pairings = {});
+    const std::vector<astc_vulkan_d2_pairing> & pairings = {},
+    astc_vulkan_paired_semantic direct_neutral_semantic =
+        astc_vulkan_paired_semantic::direct_rgb);
 
 bool astc_gpu_d2_candidate_bank_request(
     const astc_gpu_d2_candidate_bank & bank, uint32_t max_blocks_per_batch,

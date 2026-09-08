@@ -1,0 +1,34 @@
+#version 450
+
+// Legal normal ASTC 4x4 subset: direct luminance and raw QUANT_4 weights.
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) readonly buffer Source { vec4 texels[]; } source;
+layout(std430, set = 0, binding = 1) writeonly buffer Payloads { uvec4 values[]; } payloads;
+layout(push_constant) uniform Push { uint block_count; uint texels_per_block; } params;
+shared float values[64];
+uint bit_reverse8(uint value) { value = ((value & 0x55u) << 1u) | ((value >> 1u) & 0x55u); value = ((value & 0x33u) << 2u) | ((value >> 2u) & 0x33u); return ((value & 0x0Fu) << 4u) | ((value >> 4u) & 0x0Fu); }
+void payload_bit(inout uvec4 words, uint bit, uint value) { uint word = bit >> 5u; uint shift = bit & 31u; if (value != 0u) words[word] |= 1u << shift; else words[word] &= ~(1u << shift); }
+void payload_bits(inout uvec4 words, uint value, uint bits, uint offset) { for (uint bit = 0u; bit < bits; ++bit) payload_bit(words, offset + bit, (value >> bit) & 1u); }
+void main() {
+    uint block = gl_WorkGroupID.x;
+    if (block >= params.block_count || params.texels_per_block != 16u) return;
+    uint lane = gl_LocalInvocationID.x;
+    values[lane] = lane < 16u ? source.texels[block * 16u + lane].r : 0.0;
+    barrier();
+    if (lane == 0u) {
+        float low = values[0]; float high = values[0];
+        for (uint index = 1u; index < 16u; ++index) { low = min(low, values[index]); high = max(high, values[index]); }
+        float range = high - low;
+        uint bytes[16] = uint[16](0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);
+        for (uint index = 0u; index < 16u; ++index) {
+            uint weight = uint(round(clamp(range > 0.0 ? (values[index] - low) / range : 0.0, 0.0, 1.0) * 3.0));
+            uint offset = index * 2u; bytes[offset >> 3u] |= weight << (offset & 7u);
+        }
+        uvec4 payload = uvec4(0u);
+        for (uint index = 0u; index < 16u; ++index) payload_bits(payload, bit_reverse8(bytes[index]), 8u, (15u - index) * 8u);
+        payload_bits(payload, 0x042u, 11u, 0u);
+        payload_bits(payload, uint(round(clamp(low, 0.0, 1.0) * 255.0)), 8u, 17u);
+        payload_bits(payload, uint(round(clamp(high, 0.0, 1.0) * 255.0)), 8u, 25u);
+        payloads.values[block] = payload;
+    }
+}

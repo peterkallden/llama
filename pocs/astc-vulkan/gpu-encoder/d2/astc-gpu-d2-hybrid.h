@@ -23,6 +23,11 @@ struct astc_gpu_d2_hybrid_options {
     // selector. It may be smaller than the finisher budget, never larger.
     uint32_t max_ranked_candidates_per_logical = 2;
     float astcenc_quality = ASTCENC_PRE_FAST;
+    // In neural-quality mode the semantic direct-neutral source is finished
+    // separately at reference quality for every logical D2 block.
+    astc_gpu_encoder_candidate_profile profile = astc_gpu_encoder_candidate_profile::speed;
+    float reference_astcenc_quality = ASTCENC_PRE_THOROUGH;
+    uint32_t worker_count = 1;
 };
 
 struct astc_gpu_d2_hybrid_result {
@@ -35,9 +40,10 @@ struct astc_gpu_d2_hybrid_result {
 using astc_gpu_d2_selector_delta_request = astc_gpu_selector_delta_request;
 
 // Runs the representation-specific CPU half of the hybrid path over proposals
-// from either the Vulkan proposer or the deterministic CPU proposer. The same
-// function is deliberately used for both sources, making proposal backend a
-// performance choice rather than a semantic difference.
+// from either the Vulkan proposer or the deterministic CPU proposer. In
+// neural_quality profile direct-neutral is independently finished at reference
+// quality. The same function is deliberately used for both sources, making
+// proposal backend a performance choice rather than a semantic difference.
 bool astc_gpu_d2_finish_and_rank(
     const astc_gpu_d2_candidate_bank & bank,
     const std::vector<astc_gpu_encoder_proposal> & proposals,

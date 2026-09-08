@@ -156,6 +156,41 @@ conflict-aware selection.
 `astcenc` remains both the legal payload reference and the fallback throughout
 v1; no custom ASTC runtime decoder is planned.
 
+### Exact GPU subset (engineering gate)
+
+The exact GPU path is separate from the normal hybrid finisher and is not a
+cache-generation default yet. It currently emits a deliberately small bank of
+ordinary ASTC blocks without calling `astcenc_compress_image()`:
+
+| D1 footprint | Physical ASTC subset | Weight coding |
+|---|---|---|
+| 4x4 | single partition, LDR luminance | 4x4 QUANT_4 grid |
+| 5x5 | single partition, LDR luminance | 5x5 QUANT_2 grid |
+| 6x6 | single partition, LDR luminance | 6x6 QUANT_2 grid |
+| any | void-extent UNORM16 control | constant RGBA |
+
+These modes are intentionally quality-limited. Their role is to prove GPU
+endpoint fitting, weight quantization and physical 128-bit packing against
+three independent gates: `astcenc_get_block_info`, CPU reference decode, and
+Vulkan fixed-function decode. GPU and CPU subset packers must emit identical
+bytes for the deterministic smoke fixtures. Future modes can be added when
+they pass the same gates; the normal CPU `astcenc` finisher remains the
+quality oracle and fallback while this subset grows.
+
+The first D2 exact entry is likewise intentionally narrow: `8x5` L+A can
+emit either a one-plane `8x5` binary-weight control or a `5x4` binary
+dual-plane candidate with the second plane assigned to Alpha. In D2-LA Alpha
+is the second logical weight, so the latter is a semantic dual-plane use. The
+D2 frontend owns pair maps, transforms and reconstruction; the shared codec
+layer only packs the physical L+A signals.
+
+The device smoke builds the relevant shaders and exercises all four entries:
+
+```bash
+cmake --build build-astc-neural-rank --target astc-vulkan-gpu-exact-subset-device-smoke -j4
+ctest --test-dir build-astc-neural-rank -R astc-vulkan-gpu-exact-subset-device-smoke --output-on-failure
+```
+
 The latent generator accepts `--backend hybrid|cpu` (the default is
 `hybrid`) and `--gpu-proposer-shader path`. Hybrid means GPU proposal
 generation followed by the exact CPU `astcenc` finisher; `--backend cpu`

@@ -40,12 +40,54 @@ output deltas relative to the neutral decoded block, preserving the selected
 16-byte payload. This keeps validation-prefix export and global conflict
 ordering identical between CPU and hybrid proposal backends.
 
+## Offline encode profiles
+
+The GPU encoder now distinguishes an **offline candidate policy** from a D2
+runtime representation. It has two policies:
+
+```text
+speed
+  bounded GPU/source proposal bank
+  -> CPU finish at the requested lightweight preset
+
+neural-quality
+  separately encode direct-neutral with astcenc thorough
+  + finish retained exploratory candidates at their bounded preset
+  -> exact decoded activation ranking and the unchanged selector
+```
+
+`neural-quality` is deliberately conservative: the direct-neutral thorough
+payload is materialized first for every logical D2 block and wins any source-id
+overlap. GPU candidates can therefore add useful legal alternatives but can
+never remove the reference floor. This is an encoder-time policy only; the
+runtime still sees ordinary D2 artifacts and does not choose ASTC modes.
+
+The same shared finisher contract is used by D1, whose mandatory reference is
+the scalar source. This is the starting point for a later GPU neural-search
+bank: broaden proposals, retain activation-direction-diverse exact candidates,
+and let the existing conflict-aware selector decide. It is not yet a claim
+that the current GPU exact subset matches astcenc thorough quality.
+
 This is **not** a D2 quality claim or a cache/runtime change. The implemented
 five-row profiles are direct D2 6x5 (2.13 bpw), 8x5 (1.60 bpw), and 10x5
 (1.28 bpw). Alpha-steered direct-D2 and D2-LA now use this exact local ranking
 contract, but still require the global selection, artifact, model, and Vulkan
 quality gates before admission. D2 8x8/10x10 remain a separate eight/ten-row
 geometry milestone.
+
+`astc-gpu-d2-exact-subset.*` is the parallel GPU-exact entry for D2-LA 8x5.
+It emits five bounded physical requests for the same normalized L+A source:
+balanced one-plane binary L+A, luminance-guided one-plane binary L+A,
+Alpha-guided one-plane binary L+A, a quantization-aware joint-L/A refined
+one-plane fit, and a semantic-Alpha dual-plane binary alternative. The refined
+fit stays in the same legal 8x5 mode and runtime decoder; it only broadens the
+offline candidate set. Its companion semantic-bank builder assigns globally unique
+candidate IDs while retaining D2 layout and pair-map metadata. The shared
+decode-only oracle then consumes the emitted payload bytes directly, so the
+existing D2 pair-map/Givens restore and selector score the GPU candidate
+itself rather than a regenerated astcenc encode. This is still offline
+engineering infrastructure: it does not publish a cache artifact or alter
+runtime admission.
 
 The device smoke exercises all three implemented five-row footprints and the
 full hybrid hand-off. Its 8x5 path additionally crosses the GPU proposer seam

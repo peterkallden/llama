@@ -1,0 +1,36 @@
+#version 450
+
+// Legal normal ASTC 8x5 L+A control mode. The one-plane binary grid follows
+// luminance only; D2 later compares it with the balanced and Alpha-guided
+// candidates in semantic activation space.
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) readonly buffer Source { vec4 texels[]; } source;
+layout(std430, set = 0, binding = 1) writeonly buffer Payloads { uvec4 values[]; } payloads;
+layout(push_constant) uniform Push { uint block_count; uint texels_per_block; } params;
+shared vec2 values[64];
+uint bit_reverse8(uint value) { value=((value&0x55u)<<1u)|((value>>1u)&0x55u); value=((value&0x33u)<<2u)|((value>>2u)&0x33u); return ((value&0x0Fu)<<4u)|((value>>4u)&0x0Fu); }
+void payload_bit(inout uvec4 words, uint bit, uint value) { uint word=bit>>5u; uint shift=bit&31u; if(value!=0u) words[word]|=1u<<shift; else words[word]&=~(1u<<shift); }
+void payload_bits(inout uvec4 words, uint value, uint bits, uint offset) { for(uint bit=0u;bit<bits;++bit) payload_bit(words,offset+bit,(value>>bit)&1u); }
+void main() {
+    uint block=gl_WorkGroupID.x; if(block>=params.block_count||params.texels_per_block!=40u) return;
+    uint lane=gl_LocalInvocationID.x;
+    values[lane]=lane<40u?vec2(source.texels[block*40u+lane].r,source.texels[block*40u+lane].a):vec2(0.0);
+    barrier();
+    if(lane==0u) {
+        vec2 low=values[0]; vec2 high=values[0];
+        for(uint index=1u;index<40u;++index){low=min(low,values[index]);high=max(high,values[index]);}
+        vec2 range=high-low; uint bytes[16]=uint[16](0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u);
+        for(uint index=0u;index<40u;++index) {
+            float normalized=range.x>0.0?(values[index].x-low.x)/range.x:0.0;
+            if(normalized>=0.5) bytes[index>>3u]|=1u<<(index&7u);
+        }
+        uvec4 payload=uvec4(0u);
+        for(uint index=0u;index<16u;++index) payload_bits(payload,bit_reverse8(bytes[index]),8u,(15u-index)*8u);
+        payload_bits(payload,0x065u,11u,0u); payload_bits(payload,4u,4u,13u);
+        payload_bits(payload,uint(round(clamp(low.x,0.0,1.0)*255.0)),8u,17u);
+        payload_bits(payload,uint(round(clamp(high.x,0.0,1.0)*255.0)),8u,25u);
+        payload_bits(payload,uint(round(clamp(low.y,0.0,1.0)*255.0)),8u,33u);
+        payload_bits(payload,uint(round(clamp(high.y,0.0,1.0)*255.0)),8u,41u);
+        payloads.values[block]=payload;
+    }
+}

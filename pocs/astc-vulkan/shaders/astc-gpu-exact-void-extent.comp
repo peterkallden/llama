@@ -1,0 +1,42 @@
+#version 450
+
+// First exact ASTC subset. One workgroup emits one legal void-extent block.
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Source { vec4 texels[]; } source;
+layout(std430, set = 0, binding = 1) writeonly buffer Payloads { uvec4 values[]; } payloads;
+layout(push_constant) uniform Push { uint block_count; uint texels_per_block; } params;
+
+shared vec4 sums[64];
+
+uint unorm16(float value) {
+    return uint(clamp(round(value * 65535.0), 0.0, 65535.0));
+}
+
+void main() {
+    uint block = gl_WorkGroupID.x;
+    if (block >= params.block_count) return;
+    uint lane = gl_LocalInvocationID.x;
+    vec4 total = vec4(0.0);
+    for (uint texel = lane; texel < params.texels_per_block; texel += 64u) {
+        total += source.texels[block * params.texels_per_block + texel];
+    }
+    sums[lane] = total;
+    barrier();
+    for (uint count = 64u; count > 1u; count = (count + 1u) / 2u) {
+        uint next = (count + 1u) / 2u;
+        if (lane < next && lane + next < count) sums[lane] += sums[lane + next];
+        barrier();
+    }
+    if (lane == 0u) {
+        uvec4 color = uvec4(unorm16(sums[0].r / float(params.texels_per_block)),
+                            unorm16(sums[0].g / float(params.texels_per_block)),
+                            unorm16(sums[0].b / float(params.texels_per_block)),
+                            unorm16(sums[0].a / float(params.texels_per_block)));
+        // Little-endian words: FC FD FF FF FF FF FF FF, then RGBA UNORM16.
+        payloads.values[block] = uvec4(0xFFFFFDFCu,
+                                       0xFFFFFFFFu,
+                                       color.r | (color.g << 16u),
+                                       color.b | (color.a << 16u));
+    }
+}

@@ -4,6 +4,16 @@
 
 namespace {
 
+std::vector<uint32_t> scalar_reference_ids(const astc_gpu_d1_candidate_bank & bank) {
+    std::vector<uint32_t> ids;
+    for (const auto & record : bank.records) {
+        if (record.family == astc_gpu_d1_candidate_family::scalar) {
+            ids.push_back(record.candidate_source_block_id);
+        }
+    }
+    return ids;
+}
+
 float decoded_weight(astc_gpu_d1_candidate_family family,
                      const astc_gpu_encoder_finished_block & block,
                      uint32_t texel) {
@@ -68,9 +78,17 @@ bool astc_gpu_d1_finish_candidate_bank(
         error = "D1 hybrid request construction failed";
         return false;
     }
-    if (!astc_gpu_encoder_finish(
-            request, result.retained_proposals, options.astcenc_quality,
-            result.finished_blocks, error)) {
+    if (options.profile == astc_gpu_encoder_candidate_profile::neural_quality) {
+        if (!astc_gpu_encoder_finish_neural_hybrid(
+                request, result.retained_proposals, scalar_reference_ids(bank),
+                {options.reference_astcenc_quality, options.astcenc_quality,
+                 options.worker_count},
+                result.finished_blocks, error)) return false;
+    } else if (!astc_gpu_encoder_finish_with_options(
+                   request, result.retained_proposals,
+                   {options.astcenc_quality, astc_gpu_encoder_finish_mode::guided,
+                    options.worker_count},
+                   result.finished_blocks, error)) {
         return false;
     }
     return true;

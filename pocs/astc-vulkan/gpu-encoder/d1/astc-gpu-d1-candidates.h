@@ -16,6 +16,13 @@
 enum class astc_gpu_d1_candidate_family : uint8_t {
     scalar = 0,
     gauge_la = 1,
+    // Same scalar runtime semantic as candidate zero, but produced through a
+    // different legal physical ASTC fitting path. This lets the selector
+    // compare a refined exact-subset payload without weakening scalar's role
+    // as the mandatory baseline.
+    scalar_refined = 2,
+    scalar_mean_refined = 3,
+    scalar_quantile_refined = 4,
 };
 
 struct astc_gpu_d1_candidate_family_sources {

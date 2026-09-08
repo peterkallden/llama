@@ -23,6 +23,11 @@ struct astc_gpu_d1_hybrid_options {
     // selector. It may be smaller than the finisher budget.
     uint32_t max_ranked_candidates_per_logical = 2;
     float astcenc_quality = ASTCENC_PRE_FAST;
+    // Quality mode always retains a separately encoded scalar thorough
+    // reference; speed mode retains the historical bounded CPU finish path.
+    astc_gpu_encoder_candidate_profile profile = astc_gpu_encoder_candidate_profile::speed;
+    float reference_astcenc_quality = ASTCENC_PRE_THOROUGH;
+    uint32_t worker_count = 1;
 };
 
 struct astc_gpu_d1_hybrid_result {
@@ -32,9 +37,10 @@ struct astc_gpu_d1_hybrid_result {
     std::vector<astc_gpu_d1_finished_candidate_score> activation_scores;
 };
 
-// Retains a bounded number of proposals per logical D1 block and sends only
-// that retained subset through the exact CPU/libastc finisher.  This is the
-// reusable proposer -> finisher seam; no neural ranking is implied here.
+// Retains a bounded number of proposals per logical D1 block and sends them
+// through the exact CPU/libastc finisher. In neural_quality profile, scalar
+// is separately encoded at reference quality as a mandatory candidate. This
+// is the reusable proposer -> finisher seam; no global selection is implied.
 bool astc_gpu_d1_finish_candidate_bank(
     const astc_gpu_d1_candidate_bank & bank,
     const std::vector<astc_gpu_encoder_proposal> & proposals,

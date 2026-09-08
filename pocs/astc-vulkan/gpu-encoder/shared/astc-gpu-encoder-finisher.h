@@ -8,6 +8,7 @@
 // only payload-producing implementation in GPU-encoder v1.
 
 #include "astc-gpu-encoder.h"
+#include "astc-gpu-encoder-subset.h"
 
 #include <astcenc.h>
 
@@ -42,10 +43,44 @@ struct astc_gpu_encoder_finish_options {
     uint32_t worker_count = 1;
 };
 
+// Offline encoder policy, not a runtime representation choice. The speed
+// policy preserves the existing bounded proposer -> CPU finish behavior. The
+// neural-quality policy adds an independently encoded astcenc reference for
+// every logical block, so broader GPU/source candidates can never remove the
+// reference floor from a selector bank.
+enum class astc_gpu_encoder_candidate_profile : uint8_t {
+    speed,
+    neural_quality,
+};
+
+struct astc_gpu_encoder_neural_hybrid_finish_options {
+    // Candidate zero/reference is deliberately encoded independently from the
+    // exploratory bank. This is normally ASTCENC_PRE_THOROUGH.
+    float reference_quality = ASTCENC_PRE_THOROUGH;
+    // GPU proposals may be numerous, so their CPU exact finish can use a
+    // lower preset while the reference remains mandatory.
+    float exploration_quality = ASTCENC_PRE_MEDIUM;
+    uint32_t worker_count = 1;
+};
+
 bool astc_gpu_encoder_finish_with_options(
     const astc_gpu_encoder_request & request,
     const std::vector<astc_gpu_encoder_proposal> & retained_proposals,
     const astc_gpu_encoder_finish_options & options,
+    std::vector<astc_gpu_encoder_finished_block> & finished,
+    std::string & error);
+
+// Quality-profile seam shared by D1 and D2. mandatory_reference_source_ids
+// identifies one semantically neutral/reference physical source per logical
+// block. Those blocks are encoded at reference_quality; retained exploratory
+// candidates are encoded separately at exploration_quality. Output contains
+// each source id once, with reference payloads taking precedence on overlap.
+// It performs no neural ranking or selection.
+bool astc_gpu_encoder_finish_neural_hybrid(
+    const astc_gpu_encoder_request & request,
+    const std::vector<astc_gpu_encoder_proposal> & retained_proposals,
+    const std::vector<uint32_t> & mandatory_reference_source_ids,
+    const astc_gpu_encoder_neural_hybrid_finish_options & options,
     std::vector<astc_gpu_encoder_finished_block> & finished,
     std::string & error);
 
@@ -74,5 +109,14 @@ bool astc_gpu_encoder_finish_d1_scalar_4x4(
     const astc_gpu_encoder_request & request,
     const std::vector<astc_gpu_encoder_proposal> & retained_proposals,
     float quality,
+    std::vector<astc_gpu_encoder_finished_block> & finished,
+    std::string & error);
+
+// Exact decode-only bridge for payloads emitted by the audited GPU subset.
+// It deliberately does not invoke astcenc compression: the supplied 16-byte
+// payload remains the candidate that D1/D2 rank and later verify in Vulkan.
+bool astc_gpu_exact_subset_finish_payloads(
+    astc_vulkan_footprint footprint,
+    const std::vector<astc_gpu_exact_subset_block> & payloads,
     std::vector<astc_gpu_encoder_finished_block> & finished,
     std::string & error);

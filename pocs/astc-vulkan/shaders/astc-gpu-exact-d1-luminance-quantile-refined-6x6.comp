@@ -1,0 +1,77 @@
+#version 450
+
+// Same legal 6x6 QUANT_2 luminance mode as the baseline. Quartile seeding
+// exposes another deterministic local two-level solution to the selector.
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Source { vec4 texels[]; } source;
+layout(std430, set = 0, binding = 1) writeonly buffer Payloads { uvec4 values[]; } payloads;
+layout(push_constant) uniform Push { uint block_count; uint texels_per_block; } params;
+
+shared float values[64];
+
+uint bit_reverse8(uint value) {
+    value = ((value & 0x55u) << 1u) | ((value >> 1u) & 0x55u);
+    value = ((value & 0x33u) << 2u) | ((value >> 2u) & 0x33u);
+    return ((value & 0x0Fu) << 4u) | ((value >> 4u) & 0x0Fu);
+}
+
+void payload_bit(inout uvec4 words, uint bit, uint value) {
+    uint word = bit >> 5u;
+    uint shift = bit & 31u;
+    if (value != 0u) words[word] |= 1u << shift;
+    else words[word] &= ~(1u << shift);
+}
+
+void payload_bits(inout uvec4 words, uint value, uint bits, uint offset) {
+    for (uint bit = 0u; bit < bits; ++bit) payload_bit(words, offset + bit, (value >> bit) & 1u);
+}
+
+uint quantize_unorm8(float value) {
+    return uint(floor(clamp(value, 0.0, 1.0) * 255.0 + 0.5));
+}
+
+void main() {
+    uint block = gl_WorkGroupID.x;
+    if (block >= params.block_count || params.texels_per_block != 36u) return;
+    uint lane = gl_LocalInvocationID.x;
+    values[lane] = lane < 36u ? source.texels[block * 36u + lane].r : 0.0;
+    barrier();
+    if (lane != 0u) return;
+
+    float sorted[36];
+    for (uint index = 0u; index < 36u; ++index) sorted[index] = values[index];
+    for (uint left = 0u; left < 35u; ++left) for (uint right = left + 1u; right < 36u; ++right) {
+        if (sorted[right] < sorted[left]) {
+            float temporary = sorted[left]; sorted[left] = sorted[right]; sorted[right] = temporary;
+        }
+    }
+    float low = sorted[9];
+    float high = sorted[27];
+    uint low_code = 0u, high_code = 0u;
+    for (uint iteration = 0u; iteration < 3u; ++iteration) {
+        low_code = quantize_unorm8(low);
+        high_code = quantize_unorm8(high);
+        float threshold = 0.5 * (float(low_code) + float(high_code)) / 255.0;
+        float low_sum = 0.0, high_sum = 0.0;
+        uint low_count = 0u, high_count = 0u;
+        for (uint index = 0u; index < 36u; ++index) {
+            if (values[index] >= threshold) { high_sum += values[index]; ++high_count; }
+            else { low_sum += values[index]; ++low_count; }
+        }
+        if (low_count != 0u) low = low_sum / float(low_count);
+        if (high_count != 0u) high = high_sum / float(high_count);
+    }
+    low_code = quantize_unorm8(low);
+    high_code = quantize_unorm8(high);
+    float threshold = 0.5 * (float(low_code) + float(high_code)) / 255.0;
+    uint bytes[16] = uint[16](0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+                              0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);
+    for (uint index = 0u; index < 36u; ++index) if (values[index] >= threshold) bytes[index >> 3u] |= 1u << (index & 7u);
+    uvec4 payload = uvec4(0u);
+    for (uint index = 0u; index < 16u; ++index) payload_bits(payload, bit_reverse8(bytes[index]), 8u, (15u - index) * 8u);
+    payload_bits(payload, 0x104u, 11u, 0u);
+    payload_bits(payload, low_code, 8u, 17u);
+    payload_bits(payload, high_code, 8u, 25u);
+    payloads.values[block] = payload;
+}
