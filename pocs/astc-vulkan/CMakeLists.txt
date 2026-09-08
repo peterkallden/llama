@@ -22,6 +22,7 @@ set(GGML_VK_ASTC_NEURAL_RANK_INCLUDE_DIR "" CACHE PATH
 # They carry no Vulkan or ggml dependency.
 add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-artifact-policy.cpp
+    astc-vulkan-composition-gate.cpp
     astc-vulkan-block-ldlq.cpp
     astc-vulkan-d1-prescreen.cpp
     astc-vulkan-d2-prescreen.cpp
@@ -84,6 +85,19 @@ add_executable(test-astc-vulkan-artifact-policy
     tests/test-astc-vulkan-artifact-policy.cpp)
 target_link_libraries(test-astc-vulkan-artifact-policy PRIVATE astc-vulkan-algorithms)
 target_compile_features(test-astc-vulkan-artifact-policy PRIVATE cxx_std_17)
+
+# Offline-only composition admission: inputs are precomputed, sequential
+# full-model replay observations. This target deliberately does not make a
+# runtime scheduling or model-execution dependency.
+add_executable(test-astc-vulkan-composition-gate
+    tests/test-astc-vulkan-composition-gate.cpp)
+target_link_libraries(test-astc-vulkan-composition-gate PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-composition-gate PRIVATE cxx_std_17)
+
+add_executable(astc-vulkan-composition-gate-smoke
+    astc-vulkan-composition-gate-smoke.cpp)
+target_link_libraries(astc-vulkan-composition-gate-smoke PRIVATE astc-vulkan-algorithms)
+target_compile_features(astc-vulkan-composition-gate-smoke PRIVATE cxx_std_17)
 
 add_executable(test-astc-vulkan-gauge
     tests/test-astc-vulkan-gauge.cpp)
@@ -1639,6 +1653,9 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-artifact-policy
         COMMAND test-astc-vulkan-artifact-policy)
     set_property(TEST test-astc-vulkan-artifact-policy PROPERTY LABELS astc)
+    add_test(NAME test-astc-vulkan-composition-gate
+        COMMAND test-astc-vulkan-composition-gate)
+    set_property(TEST test-astc-vulkan-composition-gate PROPERTY LABELS astc)
     add_test(NAME test-astc-vulkan-hash
         COMMAND test-astc-vulkan-hash)
     set_property(TEST test-astc-vulkan-hash PROPERTY LABELS astc)
