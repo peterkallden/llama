@@ -20,7 +20,8 @@ constexpr uint32_t kAffineManifestVersion = 2;
 constexpr uint32_t kPairedLayoutManifestVersion = 3;
 constexpr uint32_t kArtifactManifestVersion = 4;
 constexpr uint32_t kPairMapManifestVersion = 5;
-constexpr uint32_t kCurrentManifestVersion = kPairMapManifestVersion;
+constexpr uint32_t kRobustEvidenceManifestVersion = 6;
+constexpr uint32_t kCurrentManifestVersion = kRobustEvidenceManifestVersion;
 constexpr uint32_t kMaxStringBytes = 1u << 20;
 constexpr uint32_t kMaxTensorRecords = 1u << 20;
 
@@ -148,6 +149,15 @@ bool validate_artifact_record(const astc_vulkan_artifact_record & artifact,
         if (error.empty()) error = "invalid ASTC Vulkan artifact record";
         return false;
     }
+    const auto & evidence = artifact.evidence;
+    if (evidence.replay_case_count > 1 &&
+        (!std::isfinite(evidence.median_loss_delta) ||
+         !std::isfinite(evidence.worst_loss_delta) ||
+         !std::isfinite(evidence.worst_top1_agreement) ||
+         evidence.worst_top1_agreement < 0.0f || evidence.worst_top1_agreement > 1.0f)) {
+        error = "invalid ASTC Vulkan robust replay evidence";
+        return false;
+    }
     if (artifact.paired_semantic == astc_vulkan_paired_semantic::luminance_alpha &&
         !is_paired_d2(artifact.storage)) {
         error = "luminance-alpha semantic requires paired-D2 storage";
@@ -244,6 +254,11 @@ bool write_artifact_record(std::ofstream & file, const astc_vulkan_artifact_reco
            write_scalar(file, evidence.top1_agreement) &&
            write_string(file, evidence.calibration_validation_hash) &&
            write_string(file, evidence.replay_corpus_hash) &&
+           (version < kRobustEvidenceManifestVersion ||
+            (write_scalar(file, evidence.replay_case_count) &&
+             write_scalar(file, evidence.median_loss_delta) &&
+             write_scalar(file, evidence.worst_loss_delta) &&
+             write_scalar(file, evidence.worst_top1_agreement))) &&
            write_scalar(file, artifact.row_scale_byte_offset) &&
            write_scalar(file, artifact.row_scale_byte_size) &&
            write_scalar(file, artifact.row_scale_hash64) &&
@@ -271,6 +286,11 @@ bool read_artifact_record(std::ifstream & file, astc_vulkan_artifact_record & ar
         !read_scalar(file, evidence.loss_delta) || !read_scalar(file, evidence.top1_agreement) ||
         !read_string(file, evidence.calibration_validation_hash) ||
         !read_string(file, evidence.replay_corpus_hash) ||
+        (version >= kRobustEvidenceManifestVersion &&
+         (!read_scalar(file, evidence.replay_case_count) ||
+          !read_scalar(file, evidence.median_loss_delta) ||
+          !read_scalar(file, evidence.worst_loss_delta) ||
+          !read_scalar(file, evidence.worst_top1_agreement))) ||
         !read_scalar(file, artifact.row_scale_byte_offset) ||
         !read_scalar(file, artifact.row_scale_byte_size) ||
         !read_scalar(file, artifact.row_scale_hash64) ||
@@ -422,6 +442,7 @@ bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
         manifest.version != kAffineManifestVersion &&
         manifest.version != kPairedLayoutManifestVersion &&
         manifest.version != kArtifactManifestVersion &&
+        manifest.version != kPairMapManifestVersion &&
         manifest.version != kCurrentManifestVersion) {
         error = "unsupported ASTC Vulkan manifest version";
         return false;

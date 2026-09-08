@@ -18,6 +18,9 @@
 
 struct astc_vulkan_model_cache_plan_options {
     astc_vulkan_quality_policy policy = astc_vulkan_quality_policy::balanced;
+    // Per-tensor, offline evidence gate. This is evaluated before profile
+    // ranking; native fallback remains explicit when no artifact survives.
+    astc_vulkan_artifact_selection_rules selection_rules{};
     bool allow_experimental = false;
     bool allow_unverified = false;
 };

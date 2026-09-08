@@ -3,6 +3,7 @@
 #include "astc-vulkan-artifact.h"
 #include "astc-vulkan-manifest.h"
 
+#include <limits>
 #include <string>
 
 // Offline evidence and runtime policy contract for one concrete ASTC artifact.
@@ -49,8 +50,36 @@ struct astc_vulkan_artifact_candidate {
     double rate_bpw = 0.0;
 };
 
+// Offline-only selection rules. They deliberately describe evidence, not
+// codec mechanics: runtime receives one already-approved artifact and never
+// guesses neutral/selected or a normalization from model weights.
+struct astc_vulkan_artifact_selection_rules {
+    // Disabled by default. Set these when an artifact carries multi-prompt
+    // replay evidence and a caller has a concrete quality budget.
+    float max_worst_loss_delta = std::numeric_limits<float>::infinity();
+    float min_worst_top1_agreement = 0.0f;
+
+    // Prefer the less trace-dependent artifact when robust loss is within
+    // this tolerance. This means unscaled before absmax, and neutral before
+    // validation-selected. It is intentionally small and can be set to zero
+    // for strict numerical ranking.
+    float simplicity_loss_epsilon = 0.001f;
+};
+
+bool astc_vulkan_artifact_has_robust_replay_evidence(
+    const astc_vulkan_artifact_evidence & evidence);
+float astc_vulkan_artifact_median_loss_delta(
+    const astc_vulkan_artifact_evidence & evidence);
+float astc_vulkan_artifact_worst_loss_delta(
+    const astc_vulkan_artifact_evidence & evidence);
+float astc_vulkan_artifact_worst_top1_agreement(
+    const astc_vulkan_artifact_evidence & evidence);
+
 bool astc_vulkan_artifact_is_eligible(const astc_vulkan_artifact_candidate & candidate,
                                       bool device_supports_format, bool fits_memory_budget);
+bool astc_vulkan_artifact_is_eligible(const astc_vulkan_artifact_candidate & candidate,
+                                      bool device_supports_format, bool fits_memory_budget,
+                                      const astc_vulkan_artifact_selection_rules & rules);
 
 // Returns true if `left` ranks ahead of `right` after eligibility filtering.
 // Loss is primary for quality/balanced/speed/automatic. Size (and the
@@ -61,3 +90,7 @@ bool astc_vulkan_artifact_is_eligible(const astc_vulkan_artifact_candidate & can
 bool astc_vulkan_artifact_policy_precedes(const astc_vulkan_artifact_candidate & left,
                                           const astc_vulkan_artifact_candidate & right,
                                           astc_vulkan_quality_policy policy);
+bool astc_vulkan_artifact_policy_precedes(const astc_vulkan_artifact_candidate & left,
+                                          const astc_vulkan_artifact_candidate & right,
+                                          astc_vulkan_quality_policy policy,
+                                          const astc_vulkan_artifact_selection_rules & rules);

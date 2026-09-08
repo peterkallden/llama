@@ -97,13 +97,24 @@ uses the physical storage height (the logical height is twice the ASTC image
 height for the five-row layout), keeping that geometry explicit at the test
 boundary.
 
-The model-level cache planner sits above the D1/D2 encoders. It first filters
-already validated tensor artifacts by model/Vulkan evidence, then may apply
-workload usage and measured-benefit metrics, followed by the existing memory
-residency planner. It does not encode at runtime. Runtime GGUF families are
+The model-level cache planner sits above the D1/D2 encoders. It first selects
+one artifact per tensor from already validated candidates. Multi-prompt replay
+evidence can gate on worst-case loss/top-1 and rank survivors by median loss;
+near ties prefer an unscaled neutral artifact to avoid rewarding a marginal,
+trace-specific selection gain. It may then apply workload usage and measured-
+benefit metrics, followed by the existing memory residency planner. It does
+not encode at runtime. Runtime GGUF families are
 not hardcoded to Q4: an F16/BF16-derived cache can be admitted for Q4, Q3,
 TQ2, TQ1 or another structurally matching family, but each runtime base still
 requires its own model/Vulkan replay gate.
+
+Per-tensor selection is deliberately not the final model-quality claim.
+After each tensor has an offline winner, a separate global composition replay
+adds candidates in benefit order and accepts each only if the model-wide
+quality budget remains satisfied. This catches activation-distribution
+interactions between individually acceptable tensor overlays. The scheduler
+consumes only the resulting approved catalog; it never performs either choice
+at runtime.
 
 Storage-page planning is separate from artifact selection. Pages are grouped
 by ASTC footprint, semantic decoder, normalization contract (including paired
@@ -342,7 +353,7 @@ still experimental. In particular, whether `neutral` or
 `validation-selected` is better is tensor-specific, and absmax-normalized
 artifacts are eligible only after their own model/Vulkan replay.
 
-Manifest v4 allows a cache to retain these alternatives simultaneously. Each
+Manifest v4+ allows a cache to retain these alternatives simultaneously. Each
 artifact has an immutable payload/layout range plus its semantic,
 normalization, variant, provenance, and evidence. `row-scales.bin` is optional
 and independently hash-verified; the current research implementation stores
@@ -358,8 +369,8 @@ already validated cache artifacts:
 
 | Profile | Ranking rule in this PoC |
 |---|---|
-| `quality` | Lowest model loss delta, then logits error |
-| `balanced` | Evidence-first quality ordering |
+| `quality` | Robust model evidence: worst-case gate, median loss, then logits error |
+| `balanced` | Same evidence-first quality ordering, then usage/benefit planning |
 | `compact` | Lowest bits/weight, then model loss |
 | `speed` | Deterministic quality ordering until device timings are recorded |
 | `auto` | Deterministic quality ordering until a combined policy exists |

@@ -157,6 +157,24 @@ int main() {
     assert(validation.manifest.version == 5 && validation.has_paired_d2 && validation.has_pair_map);
     assert(validation.manifest.artifacts[0].pair_map_byte_size == pair_map.size());
 
+    // v6 persists robust multi-prompt replay evidence while remaining able to
+    // read the earlier v4/v5 artifact formats above.
+    const fs::path v6_manifest_path("astc-vulkan-cache-v6-manifest.astcv");
+    fs::remove(v6_manifest_path, ignored);
+    astc_vulkan_manifest v6 = v5;
+    v6.version = 6;
+    v6.model_fingerprint = "fixture-v6-robust-evidence";
+    v6.artifacts[0].evidence.replay_case_count = 3;
+    v6.artifacts[0].evidence.median_loss_delta = 0.02f;
+    v6.artifacts[0].evidence.worst_loss_delta = 0.05f;
+    v6.artifacts[0].evidence.worst_top1_agreement = 0.9f;
+    assert(astc_vulkan_write_manifest(v6_manifest_path.string(), v6, error));
+    astc_vulkan_manifest v6_read;
+    assert(astc_vulkan_read_manifest(v6_manifest_path.string(), v6_read, error));
+    assert(v6_read.version == 6 && v6_read.artifacts.size() == 2);
+    assert(v6_read.artifacts[0].evidence.replay_case_count == 3);
+    assert(v6_read.artifacts[0].evidence.worst_loss_delta == 0.05f);
+
     // A cache may record a structurally compatible quantized runtime base
     // without weakening the strict source-model validation contract. The
     // binding starts with no model/Vulkan quality evidence.
@@ -198,6 +216,7 @@ int main() {
     fs::remove(v4_payload_path, ignored);
     fs::remove(v4_layout_path, ignored);
     fs::remove(v4_scales_path, ignored);
+    fs::remove(v6_manifest_path, ignored);
     fs::remove_all(admit_root, ignored);
     fs::remove(admit_source, ignored);
     fs::remove(admit_runtime, ignored);

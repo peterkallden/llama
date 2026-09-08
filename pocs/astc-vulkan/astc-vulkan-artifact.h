@@ -32,5 +32,14 @@ struct astc_vulkan_artifact_evidence {
     float top1_agreement = 0.0f;
     std::string calibration_validation_hash;
     std::string replay_corpus_hash;
-};
 
+    // v6 robust model-replay summary. Legacy v4/v5 artifacts leave
+    // replay_case_count at zero and use loss_delta/top1_agreement exactly as
+    // before.  Once several disjoint prompts/traces have been replayed, the
+    // offline selector gates on the tail and ranks by the median instead of
+    // allowing one favourable average to hide a bad prompt.
+    uint32_t replay_case_count = 0;
+    float median_loss_delta = 0.0f;
+    float worst_loss_delta = 0.0f;
+    float worst_top1_agreement = 0.0f;
+};

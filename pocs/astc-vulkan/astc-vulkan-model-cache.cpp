@@ -24,7 +24,8 @@ double rate_bpw(const astc_vulkan_tensor_record & record) {
 
 bool metadata_eligible(const astc_vulkan_artifact_record & artifact,
                        bool allow_unverified,
-                       bool allow_experimental) {
+                       bool allow_experimental,
+                       const astc_vulkan_artifact_selection_rules & selection_rules) {
     if (!allow_experimental && astc_vulkan_footprint_is_experimental(
             artifact.storage.footprint)) {
         return false;
@@ -40,7 +41,7 @@ bool metadata_eligible(const astc_vulkan_artifact_record & artifact,
     candidate.normalization = artifact.normalization;
     candidate.evidence = artifact.evidence;
     candidate.rate_bpw = rate_bpw(artifact.storage);
-    return astc_vulkan_artifact_is_eligible(candidate, true, true);
+    return astc_vulkan_artifact_is_eligible(candidate, true, true, selection_rules);
 }
 
 bool tensor_already_added(const std::vector<astc_vulkan_model_cache_entry> & entries,
@@ -202,7 +203,8 @@ bool astc_vulkan_model_cache_make_plan(
         for (const auto & candidate_artifact : manifest.artifacts) {
             if (candidate_artifact.storage.name != artifact.storage.name ||
                 !metadata_eligible(candidate_artifact, options.allow_unverified,
-                                   options.allow_experimental)) continue;
+                                   options.allow_experimental,
+                                   options.selection_rules)) continue;
             astc_vulkan_artifact_candidate candidate;
             candidate.tensor = &candidate_artifact.storage;
             candidate.variant = candidate_artifact.variant;
@@ -210,7 +212,7 @@ bool astc_vulkan_model_cache_make_plan(
             candidate.evidence = candidate_artifact.evidence;
             candidate.rate_bpw = rate_bpw(candidate_artifact.storage);
             if (best == nullptr || astc_vulkan_artifact_policy_precedes(
-                    candidate, best_candidate, options.policy)) {
+                    candidate, best_candidate, options.policy, options.selection_rules)) {
                 best = &candidate_artifact;
                 best_candidate = candidate;
             }
@@ -615,13 +617,13 @@ bool astc_vulkan_model_cache_merge_fragments(
     std::ofstream pair_map;
     if (!open_output_blob(output_pair_map_path, pair_map, false, error)) return false;
 
-    result.version = 5;
+    result.version = 6;
     std::unordered_set<std::string> artifact_ids;
     for (const auto & fragment : fragments) {
         astc_vulkan_manifest local;
         if (!astc_vulkan_read_manifest(fragment.manifest_path, local, error)) return false;
-        if (local.version < 4 || local.version > 5 || local.artifacts.empty()) {
-            error = "model cache fragments must contain v4/v5 artifacts";
+        if (local.version < 4 || local.version > 6 || local.artifacts.empty()) {
+            error = "model cache fragments must contain v4/v5/v6 artifacts";
             return false;
         }
         if (result.model_fingerprint.empty()) result.model_fingerprint = local.model_fingerprint;

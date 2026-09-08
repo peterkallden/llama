@@ -45,5 +45,41 @@ int main() {
     assert(astc_vulkan_artifact_policy_precedes(scaled, unscaled, astc_vulkan_quality_policy::compact));
     scaled.evidence.model_gate_passed = false;
     assert(!astc_vulkan_artifact_is_eligible(scaled, true, true));
+
+    // Near-equal model evidence should prefer the simpler artifact. This
+    // prevents a tiny selected/absmax proxy win from becoming a global
+    // runtime rule without a meaningful model-level margin.
+    astc_vulkan_artifact_candidate neutral = unscaled;
+    neutral.variant = astc_vulkan_artifact_variant::neutral;
+    neutral.evidence.loss_delta = 0.0200f;
+    astc_vulkan_artifact_candidate selected = neutral;
+    selected.variant = astc_vulkan_artifact_variant::validation_selected;
+    selected.evidence.loss_delta = 0.0195f;
+    assert(astc_vulkan_artifact_policy_precedes(
+        neutral, selected, astc_vulkan_quality_policy::quality));
+    astc_vulkan_artifact_candidate absmax = selected;
+    absmax.normalization = astc_vulkan_normalization::per_row_absmax;
+    absmax.evidence.loss_delta = 0.0192f;
+    assert(astc_vulkan_artifact_policy_precedes(
+        neutral, absmax, astc_vulkan_quality_policy::quality));
+
+    // Multi-prompt evidence gates on the bad tail and ranks by median loss.
+    astc_vulkan_artifact_selection_rules robust_rules;
+    robust_rules.max_worst_loss_delta = 0.05f;
+    robust_rules.min_worst_top1_agreement = 0.90f;
+    selected.evidence.model_gate_passed = true;
+    selected.evidence.replay_case_count = 3;
+    selected.evidence.median_loss_delta = 0.010f;
+    selected.evidence.worst_loss_delta = 0.080f;
+    selected.evidence.worst_top1_agreement = 0.95f;
+    assert(!astc_vulkan_artifact_is_eligible(selected, true, true, robust_rules));
+    selected.evidence.worst_loss_delta = 0.030f;
+    assert(astc_vulkan_artifact_is_eligible(selected, true, true, robust_rules));
+    neutral.evidence.replay_case_count = 3;
+    neutral.evidence.median_loss_delta = 0.012f;
+    neutral.evidence.worst_loss_delta = 0.020f;
+    neutral.evidence.worst_top1_agreement = 1.0f;
+    assert(astc_vulkan_artifact_policy_precedes(
+        selected, neutral, astc_vulkan_quality_policy::quality, robust_rules));
     return 0;
 }

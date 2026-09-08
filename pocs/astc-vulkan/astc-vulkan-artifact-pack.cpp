@@ -116,6 +116,8 @@ int main(int argc, char ** argv) {
     bool model_gate = false, vulkan_gate = false;
     bool have_scale_l = false, have_scale_a = false, have_offset = false;
     float activation_mse = 0.0f, logits_mse = 0.0f, loss_delta = 0.0f, top1 = 0.0f;
+    float median_loss_delta = 0.0f, worst_loss_delta = 0.0f, worst_top1 = 0.0f;
+    uint32_t replay_cases = 0;
     float scale_l = 1.0f, scale_a = 0.0f, offset = 0.0f;
     uint32_t width = 0, height = 0;
     for (int i = 1; i + 1 < argc; i += 2) {
@@ -157,6 +159,10 @@ int main(int argc, char ** argv) {
         else if (option == "--logits-mse") logits_mse = std::stof(value);
         else if (option == "--loss-delta") loss_delta = std::stof(value);
         else if (option == "--top1") top1 = std::stof(value);
+        else if (option == "--replay-cases") replay_cases = static_cast<uint32_t>(std::stoul(value));
+        else if (option == "--median-loss-delta") median_loss_delta = std::stof(value);
+        else if (option == "--worst-loss-delta") worst_loss_delta = std::stof(value);
+        else if (option == "--worst-top1") worst_top1 = std::stof(value);
         else if (option == "--scale-l") { scale_l = std::stof(value); have_scale_l = true; }
         else if (option == "--scale-a") { scale_a = std::stof(value); have_scale_a = true; }
         else if (option == "--offset") { offset = std::stof(value); have_offset = true; }
@@ -195,7 +201,9 @@ int main(int argc, char ** argv) {
         (!paired_d2 || pair_map_input.empty() || pair_map_payload.empty() ||
          pair_map_bytes.size() != static_cast<size_t>((height + 9u) / 10u) * 10u)) return 2;
     astc_vulkan_manifest manifest;
-    if (artifact_manifest) manifest.version = pair_map_bytes.empty() ? 4 : 5;
+    if (artifact_manifest) {
+        manifest.version = replay_cases > 1 ? 6 : (pair_map_bytes.empty() ? 4 : 5);
+    }
     manifest.model_fingerprint = fingerprint;
     astc_vulkan_tensor_record record;
     record.name = tensor_name;
@@ -222,6 +230,10 @@ int main(int argc, char ** argv) {
         artifact.encoder_profile = encoder_profile;
         artifact.evidence = {model_gate, vulkan_gate, activation_mse, logits_mse, loss_delta,
                              top1, calibration_hash + ":" + validation_hash, holdout_hash};
+        artifact.evidence.replay_case_count = replay_cases;
+        artifact.evidence.median_loss_delta = median_loss_delta;
+        artifact.evidence.worst_loss_delta = worst_loss_delta;
+        artifact.evidence.worst_top1_agreement = worst_top1;
         if (normalization == astc_vulkan_normalization::per_row_absmax) {
             artifact.row_scale_byte_size = row_scale_bytes.size();
             artifact.row_scale_hash64 = astc_vulkan_payload_hash64(row_scale_bytes.data(), row_scale_bytes.size());
