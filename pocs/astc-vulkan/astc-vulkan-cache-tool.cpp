@@ -150,7 +150,7 @@ void print_help(const char * executable) {
         "  %s build-model --source-model model.gguf --fragment-dir fragments/\n"
             "            --staging build-state/ [--tensor-list tensors.txt] [--cache path|auto]\n"
         "            [--gpu-proposer-shader shader.spv] [--backend hybrid|cpu]\n"
-        "            [--row-pairing adjacent|optimized] [--row-transform identity]\n"
+        "            [--row-pairing optimized|adjacent] [--row-transform identity]\n"
         "  %s plan --model model.gguf --usage usage.txt [--cache path|auto]\n"
         "            [--profile quality|balanced|compact|speed|auto]\n"
         "            [--policy quality|balanced|compact|speed|auto]\n"
@@ -169,7 +169,7 @@ void print_help(const char * executable) {
         "  --rows N --columns N (D2-shape; alias för crop-gränser i D1)\n"
         "            [--paired-semantic direct|la] [--channel-weights legacy|balanced-a025]\n"
         "            [--source-derived-alpha 0|1] [--row-scale none|absmax]\n"
-        "            [--row-pairing adjacent|optimized] [--row-transform identity]\n"
+        "            [--row-pairing optimized|adjacent] [--row-transform identity]\n"
         "            [--workers N] [--d2-prescreen cpu|gpu] [--d2-prescreen-top-k N]\n"
         "\nAvancerat/artifact-packning (för reproducerbara scripts):\n"
         "  %s publish --model model.gguf --artifact-dir artifact-dir [--storage-profile name] [--cache path|auto]\n"
@@ -1017,7 +1017,9 @@ int main(int argc, char ** argv) {
     std::string min_source_bytes, max_cache_bytes, max_tensors;
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
     std::string channel_weights = "balanced-a025", source_alpha = "1", row_scale = "none";
-    std::string row_pairing = "adjacent", row_transform = "identity";
+    // D2's calibration-selected 10-row pairing is the normal cache path.
+    // Adjacent pairing remains available as an explicit regression control.
+    std::string row_pairing = "optimized", row_transform = "identity";
     std::string rows, columns, calibration_samples = "8", validation_samples = "7";
     std::string d2_prescreen_backend = "cpu", d2_prescreen_top_k = "3";
     bool no_publish = false, require_usage = false, require_benefit = false;

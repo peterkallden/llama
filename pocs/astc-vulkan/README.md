@@ -297,15 +297,17 @@ The current D2 main path combines:
 - source-derived alpha steering, where alpha changes encoder decisions but is
   not a runtime semantic weight;
 - the D2 layout map;
+- optimized row pairing by default: one calibration-selected pairing per
+  ten-logical-row stripe, stored as a hash-verified `pair-map.bin` resource;
 - an activation/sensitivity-aware selection objective.  YAQA-style diagonal
   output sensitivity can weight the two paired rows differently.
 
 Common/difference transforms, explicit semantic dual-plane search, mixed
 footprints, and full PV tuning remain research tracks rather than cache/runtime
-defaults.  An optional offline row-pairing sweep is available for D2 8x5
-chunked selection (`--row-pairing optimized`).  It chooses one pairing for
-each ten-logical-row stripe from calibration only, keeps the adjacent pairing
-as the control, and exports its direct slot-to-logical-row permutation as a
+defaults.  D2 8x5 cache builds use offline row pairing by default
+(`--row-pairing optimized`). It chooses one pairing for each ten-logical-row
+stripe from calibration only and exports its direct slot-to-logical-row
+permutation as a
 hash-verified v5 `pair-map.bin` resource. The optional `--row-transform givens` bank
   adds a bounded 2x2 rotation sweep on top of pairing; it is research-only and
   remains disabled by default.  `--row-transform givens-row` is the more
