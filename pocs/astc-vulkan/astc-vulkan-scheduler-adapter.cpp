@@ -58,6 +58,25 @@ bool read_row_scales(const astc_vulkan_cache_validation & cache,
     return true;
 }
 
+bool read_pair_map(const astc_vulkan_cache_validation & cache,
+                   const astc_vulkan_artifact_record & source,
+                   astc_vulkan_scheduler_artifact & artifact,
+                   std::string & error) {
+    if (source.pair_map_byte_size == 0) return true;
+    uint64_t file_size = 0;
+    if (!get_file_size(cache.paths.pair_map, file_size) ||
+        source.pair_map_byte_offset > file_size ||
+        source.pair_map_byte_size > file_size - source.pair_map_byte_offset ||
+        !read_range(cache.paths.pair_map, source.pair_map_byte_offset,
+                    source.pair_map_byte_size, artifact.pair_map) ||
+        !astc_vulkan_validate_pair_map(source, artifact.pair_map.data(),
+                                       artifact.pair_map.size(), error)) {
+        if (error.empty()) error = "ASTC scheduler adapter cannot stream artifact pair map";
+        return false;
+    }
+    return true;
+}
+
 bool materialize_artifact(const astc_vulkan_cache_validation & cache,
                           const astc_vulkan_artifact_record * source,
                           astc_vulkan_scheduler_artifact & artifact,
@@ -83,6 +102,10 @@ bool materialize_artifact(const astc_vulkan_cache_validation & cache,
     artifact.evidence = source->evidence;
     artifact.cache_root = cache.paths.root;
     if (!read_row_scales(cache, *source, artifact, error)) {
+        artifact = {};
+        return false;
+    }
+    if (!read_pair_map(cache, *source, artifact, error)) {
         artifact = {};
         return false;
     }
@@ -353,6 +376,17 @@ bool astc_vulkan_scheduler_adapter::bind_materialized_artifact(
         astc_vulkan_scheduler_artifact artifact, std::string & error,
         bool allow_experimental, bool allow_unverified) {
     reset();
+    if (!artifact.pair_map.empty()) {
+        // The CPU replay path can already consume v5 pairing metadata. Keep
+        // the Vulkan path fail-closed until paired-dispatch receives the same
+        // map buffer; silently ignoring it would compute the wrong rows.
+        binding_.record = artifact.record;
+        binding_.status = astc_vulkan_binding_status::kFallback;
+        binding_.fallback_reason =
+            "D2 pair-map artifact awaits paired-dispatch map binding; use CPU replay or adjacent D2 fallback";
+        error = binding_.fallback_reason;
+        return true;
+    }
     if (artifact.kind == astc_vulkan_scheduler_artifact_kind::kD1 &&
         (astc_vulkan_footprint_is_experimental(artifact.record.footprint) ||
          (artifact.record.representation != astc_vulkan_representation::kScalar &&
@@ -374,6 +408,7 @@ bool astc_vulkan_scheduler_adapter::bind_materialized_artifact(
     }
     payload_ = std::move(artifact.payload);
     layout_ = std::move(artifact.layout);
+    pair_map_ = std::move(artifact.pair_map);
     tensor_name_ = artifact.record.name;
     payload_path_ = artifact.cache_root.empty() ? std::string() :
         (std::filesystem::path(artifact.cache_root) / "payload.astcpack").string();

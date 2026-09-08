@@ -292,6 +292,14 @@ bool reconstruct_streamed_cpu_oracle(
         error = "streamed row-scale sidecar does not match tensor height";
         return false;
     }
+    if (!artifact.pair_map.empty()) {
+        const size_t expected_pair_map = static_cast<size_t>((height + 9u) / 10u) * 10u;
+        if (artifact.pair_map.size() != expected_pair_map) {
+            astcenc_context_free(context);
+            error = "streamed D2 pair map does not match tensor height";
+            return false;
+        }
+    }
     const bool has_row_scales = !artifact.row_scales.empty();
     output.assign(sample_count * static_cast<size_t>(height), 0.0f);
     std::vector<uint8_t> compressed;
@@ -319,7 +327,26 @@ bool reconstruct_streamed_cpu_oracle(
         for (size_t sample = 0; sample < sample_count; ++sample) {
             const float * activation_row = activations.values.data() + sample * activations.columns;
             for (uint32_t row = band.logical_row_base; row < logical_end; ++row) {
-                const uint32_t texel_y = paired_d2 ? row / 2u : row;
+                uint32_t texel_y = paired_d2 ? row / 2u : row;
+                uint32_t pair_member = row & 1u;
+                if (paired_d2 && !artifact.pair_map.empty()) {
+                    const uint32_t group = row / 10u;
+                    const uint32_t local_row = row % 10u;
+                    uint32_t slot = 10u;
+                    for (uint32_t candidate = 0; candidate < 10u; ++candidate) {
+                        if (artifact.pair_map[group * 10u + candidate] == local_row) {
+                            slot = candidate;
+                            break;
+                        }
+                    }
+                    if (slot >= 10u) {
+                        astcenc_context_free(context);
+                        error = "streamed D2 pair map does not contain logical row";
+                        return false;
+                    }
+                    texel_y = group * 5u + slot / 2u;
+                    pair_member = slot & 1u;
+                }
                 if (texel_y < band.physical_y || texel_y >= band.physical_y + band.physical_height) {
                     astcenc_context_free(context);
                     error = "streamed ASTC band does not cover logical row";
@@ -342,7 +369,7 @@ bool reconstruct_streamed_cpu_oracle(
                             error = "streamed paired-D2 layout lookup failed";
                             return false;
                         }
-                        latent = astc_vulkan_paired_weight(texel, row & 1u, layout,
+                        latent = astc_vulkan_paired_weight(texel, pair_member, layout,
                                                            astc_vulkan_paired_basis::direct,
                                                            paired_semantic);
                     } else {
@@ -369,7 +396,7 @@ bool reconstruct_streamed_cpu_oracle(
 
 int main(int argc, char ** argv) {
     std::string model_path, source_model_path, rgba_path, weights_path, activation_path, metadata_path, prompt, prompt_file, evidence_path;
-    std::string layout_map_path, row_scales_path, representation = "d1", footprint_name = "8x5";
+    std::string layout_map_path, row_scales_path, pair_map_path, representation = "d1", footprint_name = "8x5";
     std::string gpu_shader_path, cache_path, tensor_name;
     uint32_t layer = 0, width = 0, height = 0;
     uint64_t stream_band_bytes = 0;
@@ -409,6 +436,7 @@ int main(int argc, char ** argv) {
         else if (option == "--metadata") metadata_path = argv[++i];
         else if (option == "--layout-map") layout_map_path = argv[++i];
         else if (option == "--row-scales") row_scales_path = argv[++i];
+        else if (option == "--pair-map") pair_map_path = argv[++i];
         else if (option == "--gpu-shader") gpu_shader_path = argv[++i];
         else if (option == "--cache") cache_path = argv[++i];
         else if (option == "--tensor") tensor_name = argv[++i];
@@ -483,9 +511,15 @@ int main(int argc, char ** argv) {
     const std::vector<float> rgba = (gpu_requested || oracle_streamed) ? std::vector<float>() : read_binary<float>(rgba_path);
     const std::vector<float> weights = (gpu_requested || oracle_streamed) ? std::vector<float>() : read_binary<float>(weights_path);
     std::vector<uint32_t> layout_map;
+    std::vector<uint8_t> pair_map;
     std::vector<float> row_scales;
     if (!gpu_requested && !oracle_streamed && paired_d2) layout_map = read_binary<uint32_t>(layout_map_path);
     if (!gpu_requested && !oracle_streamed && !row_scales_path.empty()) row_scales = read_binary<float>(row_scales_path);
+    if (!gpu_requested && !oracle_streamed && !pair_map_path.empty()) pair_map = read_binary<uint8_t>(pair_map_path);
+    if (!pair_map.empty() && pair_map.size() != static_cast<size_t>((height + 9u) / 10u) * 10u) {
+        std::fprintf(stderr, "paired-d2 pair-map size does not match logical tensor height\n");
+        return 2;
+    }
     ggml_vk_astc_activation_trace activations;
     std::string trace_error;
     if (!baseline_only && !ggml_vk_astc_load_activation_trace(activation_path, activations, trace_error)) {
@@ -694,10 +728,30 @@ int main(int argc, char ** argv) {
                         llama_backend_free();
                         return 2;
                     }
-                    const uint32_t texel_y = row / 2u;
+                    uint32_t texel_y = row / 2u;
+                    uint32_t pair_member = row & 1u;
+                    if (!pair_map.empty()) {
+                        const uint32_t group = row / 10u;
+                        const uint32_t local_row = row % 10u;
+                        uint32_t slot = 10u;
+                        for (uint32_t candidate = 0; candidate < 10u; ++candidate) {
+                            if (pair_map[group * 10u + candidate] == local_row) {
+                                slot = candidate;
+                                break;
+                            }
+                        }
+                        if (slot >= 10u) {
+                            std::fprintf(stderr, "paired-d2 pair-map lookup failed\n");
+                            llama_model_free(model);
+                            llama_backend_free();
+                            return 2;
+                        }
+                        texel_y = group * 5u + slot / 2u;
+                        pair_member = slot & 1u;
+                    }
                     index = (static_cast<size_t>(texel_y) * physical_width + column) * 4;
                     const astc_vulkan_rgba_texel texel{rgba[index], rgba[index + 1], rgba[index + 2], rgba[index + 3]};
-                    latent = astc_vulkan_paired_weight(texel, row & 1u, layout,
+                    latent = astc_vulkan_paired_weight(texel, pair_member, layout,
                                                         astc_vulkan_paired_basis::direct,
                                                         paired_semantic);
                 } else {

@@ -33,6 +33,9 @@ struct astc_vulkan_scheduler_artifact {
     std::string cache_root;
     std::vector<uint8_t> payload;
     std::vector<uint8_t> layout;
+    // Optional v5 D2 pairing map: ten bytes per logical ten-row stripe,
+    // physical slot/member -> original local logical row.
+    std::vector<uint8_t> pair_map;
     std::vector<float> row_scales;
 };
 
@@ -120,6 +123,7 @@ public:
     // not trigger encoding, cache generation, or additional uploads.
     const std::vector<uint8_t> & payload() const { return payload_; }
     const std::vector<uint8_t> & layout() const { return layout_; }
+    const std::vector<uint8_t> & pair_map() const { return pair_map_; }
     astc_vulkan_paired_semantic paired_semantic() const {
         return sidecar_.paired_semantic();
     }
@@ -129,6 +133,7 @@ public:
         binding_ = {};
         payload_.clear();
         layout_.clear();
+        pair_map_.clear();
         tensor_name_.clear();
         payload_path_.clear();
         payload_offset_ = 0;
@@ -151,6 +156,7 @@ private:
     astc_vulkan_ffn_binding binding_;
     std::vector<uint8_t> payload_;
     std::vector<uint8_t> layout_;
+    std::vector<uint8_t> pair_map_;
     std::string tensor_name_;
     std::string payload_path_;
     uint64_t payload_offset_ = 0;
