@@ -33,6 +33,8 @@ add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-gpu-d1-ranking.cpp
     astc-vulkan-gpu-ranking.cpp
     astc-vulkan-hash.cpp
+    astc-vulkan-ise.cpp
+    astc-vulkan-bit-budget.cpp
     astc-vulkan-objective.cpp
     astc-vulkan-paired.cpp
     astc-vulkan-paired-layout.cpp
@@ -77,6 +79,15 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-gpu-encoder
         COMMAND test-astc-vulkan-gpu-encoder)
     set_property(TEST test-astc-vulkan-gpu-encoder PROPERTY LABELS astc)
+endif()
+
+add_executable(test-astc-vulkan-ise
+    tests/test-astc-vulkan-ise.cpp)
+target_link_libraries(test-astc-vulkan-ise PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-ise PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-ise COMMAND test-astc-vulkan-ise)
+    set_property(TEST test-astc-vulkan-ise PROPERTY LABELS astc)
 endif()
 
 add_executable(test-astc-vulkan-hash
