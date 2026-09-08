@@ -757,9 +757,10 @@ bool build_d2_cache(const char * argv0, const std::string & model,
                     output_dir.string().c_str());
         return true;
     }
-    if (!astc_vulkan_cache_create_with_row_scales(
+    if (!astc_vulkan_cache_create_with_metadata(
             model, manifest.string(), payload.string(), layout_payload.string(),
             row_scale == "absmax" ? row_scales_payload.string() : std::string(),
+            row_pairing == "optimized" ? (output_dir / "pair-map.bin").string() : std::string(),
             provenance.string(), cache, paths, error)) {
         cleanup();
         return false;
