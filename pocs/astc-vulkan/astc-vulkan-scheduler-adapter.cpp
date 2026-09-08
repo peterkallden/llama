@@ -165,6 +165,15 @@ bool astc_vulkan_scheduler_adapter::resolve_from_cache(
                                        astc_vulkan_quality_policy::balanced, artifact, error,
                                        allow_unverified);
     }
+    if (cache.manifest.version >= 5) {
+        for (const auto & source : cache.manifest.artifacts) {
+            if (source.storage.name == tensor_name && source.storage.footprint == footprint) {
+                return materialize_artifact(cache, &source, artifact, error);
+            }
+        }
+        error = "ASTC cache has no matching tensor artifact";
+        return false;
+    }
     const astc_vulkan_tensor_record * record = astc_vulkan_find_tensor(cache.manifest, tensor_name);
     if (record == nullptr || record->footprint != footprint) {
         error = "ASTC cache has no matching tensor artifact";
