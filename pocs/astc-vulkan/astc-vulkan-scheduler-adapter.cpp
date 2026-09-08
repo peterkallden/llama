@@ -376,17 +376,6 @@ bool astc_vulkan_scheduler_adapter::bind_materialized_artifact(
         astc_vulkan_scheduler_artifact artifact, std::string & error,
         bool allow_experimental, bool allow_unverified) {
     reset();
-    if (!artifact.pair_map.empty()) {
-        // The CPU replay path can already consume v5 pairing metadata. Keep
-        // the Vulkan path fail-closed until paired-dispatch receives the same
-        // map buffer; silently ignoring it would compute the wrong rows.
-        binding_.record = artifact.record;
-        binding_.status = astc_vulkan_binding_status::kFallback;
-        binding_.fallback_reason =
-            "D2 pair-map artifact awaits paired-dispatch map binding; use CPU replay or adjacent D2 fallback";
-        error = binding_.fallback_reason;
-        return true;
-    }
     if (artifact.kind == astc_vulkan_scheduler_artifact_kind::kD1 &&
         (astc_vulkan_footprint_is_experimental(artifact.record.footprint) ||
          (artifact.record.representation != astc_vulkan_representation::kScalar &&
@@ -422,7 +411,7 @@ bool astc_vulkan_scheduler_adapter::bind_materialized_artifact(
                           sidecar_.init(artifact.record.footprint, error, allow_experimental)) ||
         !sidecar_.bind_tensor(tensor_name_, artifact.record.width, artifact.record.height,
                               payload_, binding_, error, layout_, artifact.paired_semantic,
-                              artifact.row_scales)) {
+                              artifact.row_scales, pair_map_)) {
         binding_.status = astc_vulkan_binding_status::kFallback;
         binding_.fallback_reason = error.empty() ? "ASTC scheduler binding failed" : error;
         error = binding_.fallback_reason;

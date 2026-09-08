@@ -21,6 +21,7 @@ struct astc_vulkan_paired_matvec_push_constants {
     uint32_t layout_map_words = 0;
     uint32_t paired_semantic = 0;
     uint32_t row_scale_count = 0;
+    uint32_t pair_map_bytes = 0;
     uint32_t dispatch_height = 0;
     uint32_t row_base = 0;
     uint32_t texture_row_base = 0;
@@ -28,7 +29,7 @@ struct astc_vulkan_paired_matvec_push_constants {
     float offset = 0.0f;
 };
 
-static_assert(sizeof(astc_vulkan_paired_matvec_push_constants) == 52,
+static_assert(sizeof(astc_vulkan_paired_matvec_push_constants) == 56,
               "paired-D2 push constants must match the GLSL block");
 
 class astc_vulkan_paired_matvec_session {
@@ -44,6 +45,7 @@ public:
               uint32_t width, uint32_t logical_height, uint32_t samples, std::string & error,
               astc_vulkan_paired_semantic semantic = astc_vulkan_paired_semantic::direct_rgb,
               const std::vector<float> & row_scales = {},
+              const std::vector<uint8_t> & pair_map = {},
               uint32_t storage_height = 0, uint32_t texture_row_base = 0);
     bool init_native(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue,
                      uint32_t queue_family, const astc_vulkan_tensor_session & tensor,
@@ -51,6 +53,7 @@ public:
                      uint32_t width, uint32_t logical_height, uint32_t samples, std::string & error,
                      astc_vulkan_paired_semantic semantic = astc_vulkan_paired_semantic::direct_rgb,
                      const std::vector<float> & row_scales = {},
+                     const std::vector<uint8_t> & pair_map = {},
                      uint32_t storage_height = 0, uint32_t texture_row_base = 0);
     bool run(const std::vector<float> & activations,
              const astc_vulkan_reconstruction & reconstruction,
@@ -89,6 +92,7 @@ private:
     uint32_t layout_map_words_ = 0;
     uint32_t paired_semantic_ = 0;
     uint32_t row_scale_count_ = 0;
+    uint32_t pair_map_bytes_ = 0;
     uint32_t samples_ = 0;
     VkBuffer activation_buffer_ = VK_NULL_HANDLE;
     VkDeviceMemory activation_memory_ = VK_NULL_HANDLE;
@@ -98,6 +102,8 @@ private:
     VkDeviceMemory layout_memory_ = VK_NULL_HANDLE;
     VkBuffer row_scale_buffer_ = VK_NULL_HANDLE;
     VkDeviceMemory row_scale_memory_ = VK_NULL_HANDLE;
+    VkBuffer pair_map_buffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory pair_map_memory_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptor_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
     VkDescriptorSet descriptor_set_ = VK_NULL_HANDLE;
@@ -117,5 +123,6 @@ private:
                    const std::vector<uint8_t> & layout_map, const std::vector<uint32_t> & spirv,
                    uint32_t width, uint32_t logical_height, uint32_t samples, std::string & error,
                    astc_vulkan_paired_semantic semantic, const std::vector<float> & row_scales,
-                   uint32_t storage_height, uint32_t texture_row_base, bool native_mode);
+                   const std::vector<uint8_t> & pair_map, uint32_t storage_height,
+                   uint32_t texture_row_base, bool native_mode);
 };

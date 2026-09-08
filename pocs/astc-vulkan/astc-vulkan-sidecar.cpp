@@ -28,6 +28,7 @@ void astc_vulkan_sidecar::reset() {
     native_mode_ = false;
     paired_layout_.clear();
     paired_row_scales_.clear();
+    paired_pair_map_.clear();
     paired_semantic_ = astc_vulkan_paired_semantic::direct_rgb;
     memory_budget_ = {};
 }
@@ -107,7 +108,8 @@ bool astc_vulkan_sidecar::bind_tensor(
         const std::string & tensor_name, uint32_t expected_columns, uint32_t expected_rows,
         const std::vector<uint8_t> & payload, astc_vulkan_ffn_binding & binding,
         std::string & error, const std::vector<uint8_t> & paired_layout,
-        astc_vulkan_paired_semantic paired_semantic, const std::vector<float> & row_scales) {
+        astc_vulkan_paired_semantic paired_semantic, const std::vector<float> & row_scales,
+        const std::vector<uint8_t> & pair_map) {
     if (!ready()) {
         error = "ASTC Vulkan sidecar is not initialized";
         return false;
@@ -117,6 +119,7 @@ bool astc_vulkan_sidecar::bind_tensor(
     paired_tensor_.reset();
     paired_layout_.clear();
     paired_row_scales_.clear();
+    paired_pair_map_.clear();
     paired_semantic_ = astc_vulkan_paired_semantic::direct_rgb;
     adapter_.reset();
     binding_ = {};
@@ -136,6 +139,10 @@ bool astc_vulkan_sidecar::bind_tensor(
         }
         if (!row_scales.empty() && row_scales.size() != record->height) {
             error = "paired-D2 row-scale count does not match tensor height";
+            return false;
+        }
+        if (!pair_map.empty() && pair_map.size() != static_cast<size_t>((record->height + 9u) / 10u) * 10u) {
+            error = "paired-D2 pair-map size does not match tensor height";
             return false;
         }
         const uint32_t storage_height = astc_vulkan_paired_storage_height(record->height);
@@ -168,6 +175,7 @@ bool astc_vulkan_sidecar::bind_tensor(
         binding.reconstruction = reconstruction;
         paired_layout_ = paired_layout;
         paired_row_scales_ = row_scales;
+        paired_pair_map_ = pair_map;
         paired_semantic_ = paired_semantic;
         binding_ = binding;
         error.clear();
@@ -269,7 +277,7 @@ bool astc_vulkan_sidecar::record_native(
             if (!paired_dispatch_.init_native(
                     physical_device_, device_, queue_, queue_family_, paired_tensor_,
                     paired_layout_, spirv, binding_.record.width, binding_.record.height,
-                    samples, error, paired_semantic_, paired_row_scales_)) {
+                    samples, error, paired_semantic_, paired_row_scales_, paired_pair_map_)) {
                 return false;
             }
             dispatch_spirv_ = spirv;
@@ -345,7 +353,7 @@ bool astc_vulkan_sidecar::run_streamed(
                 if (!paired_dispatch_.init(physical_device_, device_, queue_, queue_family_,
                                            paired_tensor_, paired_layout_, spirv,
                                            binding_.record.width, binding_.record.height, samples,
-                                           error, paired_semantic_, paired_row_scales_,
+                                           error, paired_semantic_, paired_row_scales_, paired_pair_map_,
                                            band.physical_height, band.physical_y)) return false;
             } else if (!paired_dispatch_.rebind_texture(paired_tensor_, band.physical_height,
                                                         band.physical_y, error)) {

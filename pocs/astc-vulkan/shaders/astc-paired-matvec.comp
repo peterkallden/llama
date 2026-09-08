@@ -13,6 +13,7 @@ layout(std430, set = 0, binding = 1) readonly buffer Activations { float values[
 layout(std430, set = 0, binding = 2) buffer MatvecOutput { float values[]; } output_values;
 layout(std430, set = 0, binding = 3) readonly buffer PairedLayoutMap { uint words[]; } paired_layout_map;
 layout(std430, set = 0, binding = 4) readonly buffer RowScales { float values[]; } row_scales;
+layout(std430, set = 0, binding = 5) readonly buffer PairMap { uint words[]; } pair_map;
 
 layout(push_constant) uniform PushConstants {
     uint width;
@@ -23,12 +24,33 @@ layout(push_constant) uniform PushConstants {
     uint layout_map_words;
     uint paired_semantic;
     uint row_scale_count;
+    uint pair_map_bytes;
     uint dispatch_height;
     uint row_base;
     uint texture_row_base;
     float scale;
     float offset;
 } params;
+
+uint pair_map_byte(uint index) {
+    if (index >= params.pair_map_bytes) return 255u;
+    return (pair_map.words[index >> 2u] >> ((index & 3u) * 8u)) & 255u;
+}
+
+void pair_slot_for_row(uint row, out uint texture_row, out uint member) {
+    texture_row = row / 2u;
+    member = row & 1u;
+    if (params.pair_map_bytes == 0u) return;
+    const uint group = row / 10u;
+    const uint local_row = row % 10u;
+    for (uint slot = 0u; slot < 10u; ++slot) {
+        if (pair_map_byte(group * 10u + slot) == local_row) {
+            texture_row = group * 5u + (slot >> 1u);
+            member = slot & 1u;
+            return;
+        }
+    }
+}
 
 uint paired_layout_for_texel(uint column, uint texture_row) {
     const uint blocks_x = (params.width + params.block_width - 1u) / params.block_width;
@@ -59,13 +81,16 @@ void main() {
     const uint local_row = gl_WorkGroupID.x;
     if (local_row >= params.dispatch_height) return;
     const uint row = params.row_base + local_row;
-    const uint texture_row = local_row >> 1u;
     const uint member = row & 1u;
+    uint texture_row = 0u;
+    uint mapped_member = member;
+    pair_slot_for_row(row, texture_row, mapped_member);
+    texture_row -= params.texture_row_base;
     float sum = 0.0;
     for (uint column = gl_LocalInvocationID.x; column < params.width; column += 64u) {
         const vec4 texel = texelFetch(astc_weights, ivec2(column, texture_row), 0);
         const uint layout_id = paired_layout_for_texel(column, texture_row);
-        const float affine_weight = params.scale * paired_weight(texel, member, layout_id) + params.offset;
+        const float affine_weight = params.scale * paired_weight(texel, mapped_member, layout_id) + params.offset;
         const float row_scale = row < params.row_scale_count ? row_scales.values[row] : 1.0;
         const float weight = row_scale * affine_weight;
         sum += weight * activations.values[params.sample_index * params.width + column];

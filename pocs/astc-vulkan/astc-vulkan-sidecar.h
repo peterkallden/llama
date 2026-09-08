@@ -38,7 +38,8 @@ public:
                      astc_vulkan_ffn_binding & binding, std::string & error,
                      const std::vector<uint8_t> & paired_layout = {},
                      astc_vulkan_paired_semantic paired_semantic = astc_vulkan_paired_semantic::direct_rgb,
-                     const std::vector<float> & row_scales = {});
+                     const std::vector<float> & row_scales = {},
+                     const std::vector<uint8_t> & pair_map = {});
     bool run(const std::vector<uint32_t> & spirv, const std::vector<float> & activations,
              std::vector<float> & output, std::string & error);
     bool record_native(const std::vector<uint32_t> & spirv, VkDevice native_device,
@@ -63,6 +64,7 @@ public:
     const astc_vulkan_memory_budget & memory_budget() const { return memory_budget_; }
     astc_vulkan_paired_semantic paired_semantic() const { return paired_semantic_; }
     const std::vector<float> & row_scales() const { return paired_row_scales_; }
+    const std::vector<uint8_t> & pair_map() const { return paired_pair_map_; }
 
 private:
     std::shared_ptr<astc_vulkan_shared_device> shared_device_;
@@ -82,6 +84,7 @@ private:
     astc_vulkan_paired_matvec_session paired_dispatch_;
     std::vector<uint8_t> paired_layout_;
     std::vector<float> paired_row_scales_;
+    std::vector<uint8_t> paired_pair_map_;
     astc_vulkan_paired_semantic paired_semantic_ = astc_vulkan_paired_semantic::direct_rgb;
     std::vector<uint32_t> dispatch_spirv_;
     uint32_t dispatch_samples_ = 0;

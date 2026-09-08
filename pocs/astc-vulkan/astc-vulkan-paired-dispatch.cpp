@@ -3,6 +3,7 @@
 #include "astc-vulkan-paired-layout.h"
 
 #include <cstring>
+#include <algorithm>
 #include <limits>
 
 namespace {
@@ -77,6 +78,7 @@ void astc_vulkan_paired_matvec_session::reset() {
         if (descriptor_pool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, descriptor_pool_, nullptr);
         if (descriptor_layout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, descriptor_layout_, nullptr);
         destroy_buffer(device_, row_scale_buffer_, row_scale_memory_);
+        destroy_buffer(device_, pair_map_buffer_, pair_map_memory_);
         destroy_buffer(device_, layout_buffer_, layout_memory_);
         destroy_buffer(device_, output_buffer_, output_memory_);
         destroy_buffer(device_, activation_buffer_, activation_memory_);
@@ -87,7 +89,7 @@ void astc_vulkan_paired_matvec_session::reset() {
     queue_family_ = UINT32_MAX;
     width_ = logical_height_ = block_width_ = block_height_ = storage_height_ =
         texture_row_base_ = layout_map_words_ = samples_ = 0;
-    paired_semantic_ = row_scale_count_ = 0;
+    paired_semantic_ = row_scale_count_ = pair_map_bytes_ = 0;
     descriptor_set_ = VK_NULL_HANDLE;
     command_buffer_ = VK_NULL_HANDLE;
     timestamp_query_pool_ = VK_NULL_HANDLE;
@@ -102,9 +104,10 @@ bool astc_vulkan_paired_matvec_session::init(
         const std::vector<uint8_t> & layout_map, const std::vector<uint32_t> & spirv,
         uint32_t width, uint32_t logical_height, uint32_t samples, std::string & error,
         astc_vulkan_paired_semantic semantic, const std::vector<float> & row_scales,
+        const std::vector<uint8_t> & pair_map,
         uint32_t storage_height, uint32_t texture_row_base) {
     return init_impl(physical_device, device, queue, queue_family, tensor, layout_map, spirv,
-                     width, logical_height, samples, error, semantic, row_scales,
+                     width, logical_height, samples, error, semantic, row_scales, pair_map,
                      storage_height, texture_row_base, false);
 }
 
@@ -114,9 +117,10 @@ bool astc_vulkan_paired_matvec_session::init_native(
         const std::vector<uint8_t> & layout_map, const std::vector<uint32_t> & spirv,
         uint32_t width, uint32_t logical_height, uint32_t samples, std::string & error,
         astc_vulkan_paired_semantic semantic, const std::vector<float> & row_scales,
+        const std::vector<uint8_t> & pair_map,
         uint32_t storage_height, uint32_t texture_row_base) {
     return init_impl(physical_device, device, queue, queue_family, tensor, layout_map, spirv,
-                     width, logical_height, samples, error, semantic, row_scales,
+                     width, logical_height, samples, error, semantic, row_scales, pair_map,
                      storage_height, texture_row_base, true);
 }
 
@@ -126,7 +130,8 @@ bool astc_vulkan_paired_matvec_session::init_impl(
         const std::vector<uint8_t> & layout_map, const std::vector<uint32_t> & spirv,
         uint32_t width, uint32_t logical_height, uint32_t samples, std::string & error,
         astc_vulkan_paired_semantic semantic, const std::vector<float> & row_scales,
-        uint32_t storage_height, uint32_t texture_row_base, bool native_mode) {
+        const std::vector<uint8_t> & pair_map, uint32_t storage_height,
+        uint32_t texture_row_base, bool native_mode) {
     reset();
     const astc_vulkan_tensor_record & record = tensor.record();
     const astc_vulkan_format_info format = astc_vulkan_format(record.footprint);
@@ -143,6 +148,11 @@ bool astc_vulkan_paired_matvec_session::init_impl(
         texture_row_base > expected_storage_height - storage_height ||
         tensor.texture().height() != storage_height) {
         error = "invalid paired-D2 ASTC matvec session configuration";
+        return false;
+    }
+    const size_t expected_pair_map = static_cast<size_t>((logical_height + 9u) / 10u) * 10u;
+    if (!pair_map.empty() && pair_map.size() != expected_pair_map) {
+        error = "paired-D2 pair-map size does not match logical height";
         return false;
     }
     physical_device_ = physical_device;
@@ -182,6 +192,10 @@ bool astc_vulkan_paired_matvec_session::init_impl(
     std::vector<float> effective_scales = row_scales;
     if (effective_scales.empty()) effective_scales.assign(logical_height, 1.0f);
     const VkDeviceSize row_scale_bytes = static_cast<VkDeviceSize>(effective_scales.size() * sizeof(float));
+    const std::vector<uint8_t> effective_pair_map = pair_map;
+    pair_map_bytes_ = static_cast<uint32_t>(effective_pair_map.size());
+    const VkDeviceSize pair_map_bytes = static_cast<VkDeviceSize>(
+        std::max<size_t>(4, effective_pair_map.size()));
     if ((!native_mode_ &&
          (!create_host_buffer(physical_device_, device_, activation_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                               activation_buffer_, activation_memory_) ||
@@ -191,6 +205,8 @@ bool astc_vulkan_paired_matvec_session::init_impl(
                             layout_buffer_, layout_memory_) ||
         !create_host_buffer(physical_device_, device_, row_scale_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                             row_scale_buffer_, row_scale_memory_) ||
+        !create_host_buffer(physical_device_, device_, pair_map_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                            pair_map_buffer_, pair_map_memory_) ||
         !map_write(device_, layout_memory_, layout_map.data(), layout_bytes)) {
         error = "failed to allocate paired-D2 ASTC matvec buffers";
         reset();
@@ -201,22 +217,30 @@ bool astc_vulkan_paired_matvec_session::init_impl(
         reset();
         return false;
     }
-    const VkDescriptorSetLayoutBinding bindings[5] = {
+    std::vector<uint8_t> pair_map_storage(static_cast<size_t>(pair_map_bytes), 0);
+    if (!effective_pair_map.empty()) std::memcpy(pair_map_storage.data(), effective_pair_map.data(), effective_pair_map.size());
+    if (!map_write(device_, pair_map_memory_, pair_map_storage.data(), pair_map_bytes)) {
+        error = "failed to upload paired-D2 pair map";
+        reset();
+        return false;
+    }
+    const VkDescriptorSetLayoutBinding bindings[6] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
     };
     const VkDescriptorSetLayoutCreateInfo layout_info{
-        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 5, bindings};
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 6, bindings};
     if (vkCreateDescriptorSetLayout(device_, &layout_info, nullptr, &descriptor_layout_) != VK_SUCCESS) {
         error = "failed to create paired-D2 ASTC descriptor layout";
         reset();
         return false;
     }
     const VkDescriptorPoolSize pool_sizes[2] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}};
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5}};
     const VkDescriptorPoolCreateInfo pool_info{
         VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 2, pool_sizes};
     if (vkCreateDescriptorPool(device_, &pool_info, nullptr, &descriptor_pool_) != VK_SUCCESS) {
@@ -237,7 +261,8 @@ bool astc_vulkan_paired_matvec_session::init_impl(
     const VkDescriptorBufferInfo output_info{output_buffer_, 0, output_bytes};
     const VkDescriptorBufferInfo paired_layout_info{layout_buffer_, 0, layout_bytes};
     const VkDescriptorBufferInfo row_scale_info{row_scale_buffer_, 0, row_scale_bytes};
-    const VkWriteDescriptorSet writes[5] = {
+    const VkDescriptorBufferInfo pair_map_info{pair_map_buffer_, 0, pair_map_bytes};
+    const VkWriteDescriptorSet writes[6] = {
         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set_, 0, 0, 1,
          VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &image_info, nullptr, nullptr},
         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set_, 1, 0, 1,
@@ -248,15 +273,17 @@ bool astc_vulkan_paired_matvec_session::init_impl(
          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &paired_layout_info, nullptr},
         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set_, 4, 0, 1,
          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &row_scale_info, nullptr},
+        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptor_set_, 5, 0, 1,
+         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &pair_map_info, nullptr},
     };
     if (native_mode_) {
         // Activation/output are intentionally left unbound until
         // record_external() supplies the caller-owned buffer views. Keep the
         // image, layout map and row-scale metadata descriptors initialized.
-        const VkWriteDescriptorSet native_writes[3] = {writes[0], writes[3], writes[4]};
-        vkUpdateDescriptorSets(device_, 3, native_writes, 0, nullptr);
+        const VkWriteDescriptorSet native_writes[4] = {writes[0], writes[3], writes[4], writes[5]};
+        vkUpdateDescriptorSets(device_, 4, native_writes, 0, nullptr);
     } else {
-        vkUpdateDescriptorSets(device_, 5, writes, 0, nullptr);
+        vkUpdateDescriptorSets(device_, 6, writes, 0, nullptr);
     }
     const VkShaderModuleCreateInfo shader_info{
         VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0,
@@ -392,7 +419,7 @@ bool astc_vulkan_paired_matvec_session::run_band(
     for (uint32_t sample = 0; sample < samples_; ++sample) {
         const astc_vulkan_paired_matvec_push_constants constants{
             width_, logical_height_, sample, block_width_, block_height_, layout_map_words_,
-            paired_semantic_, row_scale_count_, band_height, row_base, texture_row_base_,
+            paired_semantic_, row_scale_count_, pair_map_bytes_, band_height, row_base, texture_row_base_,
             reconstruction.scale_l, reconstruction.offset};
         vkCmdPushConstants(command_buffer_, pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT,
                            0, sizeof(constants), &constants);
@@ -507,7 +534,7 @@ bool astc_vulkan_paired_matvec_session::record_external(
     for (uint32_t sample = 0; sample < samples_; ++sample) {
         const astc_vulkan_paired_matvec_push_constants constants{
             width_, logical_height_, sample, block_width_, block_height_, layout_map_words_,
-            paired_semantic_, row_scale_count_, band_height, row_base, texture_row_base_,
+            paired_semantic_, row_scale_count_, pair_map_bytes_, band_height, row_base, texture_row_base_,
             reconstruction.scale_l, reconstruction.offset};
         vkCmdPushConstants(command_buffer, pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT,
                            0, sizeof(constants), &constants);
