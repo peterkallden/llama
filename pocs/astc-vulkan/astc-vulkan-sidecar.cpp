@@ -239,7 +239,7 @@ bool astc_vulkan_sidecar::run(const std::vector<uint32_t> & spirv,
             if (!paired_dispatch_.init(physical_device_, device_, queue_, queue_family_, paired_tensor_,
                                       paired_layout_, spirv, binding_.record.width,
                                       binding_.record.height, samples, error, paired_semantic_,
-                                      paired_row_scales_)) return false;
+                                      paired_row_scales_, paired_pair_map_)) return false;
             dispatch_spirv_ = spirv;
             dispatch_samples_ = samples;
         }
