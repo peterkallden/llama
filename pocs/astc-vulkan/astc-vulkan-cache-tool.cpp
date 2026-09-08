@@ -965,8 +965,8 @@ bool collect_model_fragments(
             !std::filesystem::is_regular_file(payload_path, ec)) continue;
         astc_vulkan_manifest manifest;
         if (!astc_vulkan_read_manifest(manifest_path.string(), manifest, error)) return false;
-        if ((manifest.version != 4 && manifest.version != 5 && manifest.version != 6) || manifest.artifacts.empty()) {
-            error = "model fragment must contain a non-empty v4/v5/v6 manifest: " + directory.string();
+        if ((manifest.version < 4 || manifest.version > 7) || manifest.artifacts.empty()) {
+            error = "model fragment must contain a non-empty v4-v7 manifest: " + directory.string();
             return false;
         }
         for (const auto & artifact : manifest.artifacts) tensor_names.push_back(artifact.storage.name);

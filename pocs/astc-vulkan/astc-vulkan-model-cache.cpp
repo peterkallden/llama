@@ -619,13 +619,16 @@ bool astc_vulkan_model_cache_merge_fragments(
     std::ofstream pair_map;
     if (!open_output_blob(output_pair_map_path, pair_map, false, error)) return false;
 
-    result.version = 6;
+    // Merged model caches carry the current split-evidence schema.  Fragments
+    // may be older (v4-v7), but publishing as v6 loses the v7 evidence fields
+    // and is rejected by the central manifest validator.
+    result.version = 7;
     std::unordered_set<std::string> artifact_ids;
     for (const auto & fragment : fragments) {
         astc_vulkan_manifest local;
         if (!astc_vulkan_read_manifest(fragment.manifest_path, local, error)) return false;
-        if (local.version < 4 || local.version > 6 || local.artifacts.empty()) {
-            error = "model cache fragments must contain v4/v5/v6 artifacts";
+        if (local.version < 4 || local.version > 7 || local.artifacts.empty()) {
+            error = "model cache fragments must contain v4-v7 artifacts";
             return false;
         }
         if (result.model_fingerprint.empty()) result.model_fingerprint = local.model_fingerprint;
