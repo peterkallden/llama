@@ -5,6 +5,7 @@
 
 #include <limits>
 #include <string>
+#include <vector>
 
 // Offline evidence and runtime policy contract for one concrete ASTC artifact.
 // The scheduler selects only already validated artifacts; it never runs an
@@ -48,6 +49,9 @@ struct astc_vulkan_artifact_candidate {
     astc_vulkan_normalization normalization = astc_vulkan_normalization::none;
     astc_vulkan_artifact_evidence evidence{};
     double rate_bpw = 0.0;
+    // Empty for legacy call sites; populated by artifact shortlists and
+    // composition planning so runner-up identity survives offline ranking.
+    std::string artifact_id;
 };
 
 // Offline-only selection rules. They deliberately describe evidence, not
@@ -57,7 +61,12 @@ struct astc_vulkan_artifact_selection_rules {
     // Disabled by default. Set these when an artifact carries multi-prompt
     // replay evidence and a caller has a concrete quality budget.
     float max_worst_loss_delta = std::numeric_limits<float>::infinity();
+    float max_p90_loss_delta = std::numeric_limits<float>::infinity();
     float min_worst_top1_agreement = 0.0f;
+
+    // Rank robust artifacts by median + lambda * P90. Set to zero to rank on
+    // median alone for controlled reproduction of an older experiment.
+    float p90_loss_weight = 0.25f;
 
     // Prefer the less trace-dependent artifact when robust loss is within
     // this tolerance. This means unscaled before absmax, and neutral before
@@ -72,6 +81,16 @@ float astc_vulkan_artifact_median_loss_delta(
     const astc_vulkan_artifact_evidence & evidence);
 float astc_vulkan_artifact_worst_loss_delta(
     const astc_vulkan_artifact_evidence & evidence);
+float astc_vulkan_artifact_p90_loss_delta(
+    const astc_vulkan_artifact_evidence & evidence);
+float astc_vulkan_artifact_robust_loss_score(
+    const astc_vulkan_artifact_evidence & evidence,
+    const astc_vulkan_artifact_selection_rules & rules);
+
+// Actual persisted rate, including D2 layout/pair metadata and optional row
+// scales. This is the value used after quality gating for size/compact policy;
+// the nominal ASTC payload rate alone would unfairly hide absmax overhead.
+double astc_vulkan_artifact_storage_bpw(const astc_vulkan_artifact_record & artifact);
 float astc_vulkan_artifact_worst_top1_agreement(
     const astc_vulkan_artifact_evidence & evidence);
 
@@ -94,3 +113,15 @@ bool astc_vulkan_artifact_policy_precedes(const astc_vulkan_artifact_candidate &
                                           const astc_vulkan_artifact_candidate & right,
                                           astc_vulkan_quality_policy policy,
                                           const astc_vulkan_artifact_selection_rules & rules);
+
+// Offline tensor-level shortlist. It is deliberately representation-neutral:
+// D1, D2 and any future representation compete only through evidence. Native
+// GGUF is intentionally not an entry; it remains the fallback when no ASTC
+// candidate passes this gate.
+bool astc_vulkan_rank_tensor_artifact_shortlist(
+    const std::vector<astc_vulkan_artifact_candidate> & candidates,
+    astc_vulkan_quality_policy policy,
+    const astc_vulkan_artifact_selection_rules & rules,
+    size_t max_entries,
+    std::vector<astc_vulkan_artifact_candidate> & shortlist,
+    std::string & error);

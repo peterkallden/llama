@@ -8,7 +8,7 @@ the D1 frontend.
 The initial implemented seam is deliberately narrow:
 
 ```text
-normalized logical row pairs + per-block layout map
+normalized logical row pairs + pair-map + optional Givens transform + per-block layout map
   -> D2 6x5, 8x5, or 10x5 RGBA physical source blocks
   -> generic Vulkan physical proposer
   -> generic CPU astcenc legal-payload finisher
@@ -16,7 +16,11 @@ normalized logical row pairs + per-block layout map
   -> CPU/Vulkan fixed-function decode oracle
 ```
 
-`astc-gpu-d2-source.*` owns the paired geometry and deterministic padding.
+`astc-gpu-d2-source.*` owns the paired geometry, deterministic padding,
+cache-format pair-map expansion, and the fixed-bound centered Givens source
+map. The paired ranker and selector adapter restore each candidate to original
+logical row order before activation scoring. This makes an alternate RGB
+layout or transformed candidate comparable with the direct-neutral baseline.
 `astc-gpu-d2-candidates.*` owns the mandatory direct-neutral baseline and
 records each alternative's layout and semantic decoder. The shared finisher
 does not know whether the physical texels came from D1 or D2.
@@ -44,8 +48,10 @@ quality gates before admission. D2 8x8/10x10 remain a separate eight/ten-row
 geometry milestone.
 
 The device smoke exercises all three implemented five-row footprints and the
-full hybrid hand-off. It is a correctness gate only; full model replay and
-cache publication remain later gates.
+full hybrid hand-off. Its 8x5 path additionally crosses the GPU proposer seam
+with a non-adjacent pair map and a Givens candidate. The CPU regression checks
+the corresponding exact rank and selector deltas. These are correctness gates
+only; full model replay and cache publication remain later gates.
 
 The first full-shape GPU model replay has now passed for the existing evidence-
 approved D2-LA 8x5 artifact (`blk.1.ffn_down.weight`, 2048x8192). Resident and

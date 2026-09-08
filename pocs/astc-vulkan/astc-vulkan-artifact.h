@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <string>
 
 // Artifact identity is deliberately separate from storage identity. An
@@ -40,6 +41,19 @@ struct astc_vulkan_artifact_evidence {
     // allowing one favourable average to hide a bad prompt.
     uint32_t replay_case_count = 0;
     float median_loss_delta = 0.0f;
+    // P90 is the normal robustness term used for ranking. The maximum stays
+    // separate as a catastrophe detector; it must not dominate a small replay
+    // corpus by itself. NaN means that a legacy artifact has no percentile.
+    float p90_loss_delta = std::numeric_limits<float>::quiet_NaN();
     float worst_loss_delta = 0.0f;
     float worst_top1_agreement = 0.0f;
+
+    // Split provenance is deliberately separate. In particular, a pair map
+    // and a validation-selected commit prefix must not be promoted using the
+    // same evidence split that generated them. Legacy artifacts retain the
+    // combined calibration_validation_hash and replay_corpus_hash above.
+    std::string calibration_hash;
+    std::string validation_hash;
+    std::string artifact_holdout_hash;
+    std::string final_model_holdout_hash;
 };

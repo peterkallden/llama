@@ -4,42 +4,54 @@
 
 namespace {
 
-float paired_member(const astc_gpu_d2_candidate_record & record,
-                    const astc_gpu_encoder_finished_block & block,
-                    uint32_t texel, unsigned int member) {
-    const auto * rgba = block.decoded_rgba.data() + texel * 4;
-    return astc_vulkan_paired_weight(
-        {rgba[0], rgba[1], rgba[2], rgba[3]}, member, record.layout,
-        astc_vulkan_paired_basis::direct, record.semantic);
+bool decoded_weight_for_row(const astc_gpu_d2_candidate_record & record,
+                            const astc_gpu_encoder_finished_block & block,
+                            uint32_t width, uint32_t local_row, uint32_t x,
+                            float & value) {
+    uint32_t pair_slot = 0;
+    unsigned int member = 0;
+    if (!astc_gpu_d2_record_slot_for_row(record, local_row, pair_slot, member)) return false;
+    const auto * rgba = block.decoded_rgba.data() + (size_t(pair_slot) * width + x) * 4;
+    float first = 0.0f, second = 0.0f;
+    astc_gpu_d2_record_restore_pair(record, {rgba[0], rgba[1], rgba[2], rgba[3]}, first, second);
+    value = member == 0 ? first : second;
+    return true;
 }
 
-std::vector<double> make_delta(
+bool make_delta(
     const astc_gpu_d2_candidate_record & candidate_record,
     const astc_gpu_encoder_finished_block & candidate,
     const astc_gpu_d2_candidate_record & baseline_record,
     const astc_gpu_encoder_finished_block & baseline,
     const std::vector<double> & activations,
     uint32_t width, uint32_t height, uint32_t source_blocks_x,
-    uint32_t block_width, uint32_t block_height) {
+    uint32_t block_width, uint32_t block_height,
+    std::vector<double> & delta) {
     const uint32_t samples = static_cast<uint32_t>(activations.size() / width);
-    std::vector<double> delta(size_t(samples) * height, 0.0);
+    delta.assign(size_t(samples) * height, 0.0);
     const uint32_t logical_block = candidate_record.logical_source_block_id;
     const uint32_t block_x = logical_block % source_blocks_x;
     const uint32_t block_y = logical_block / source_blocks_x;
     for (uint32_t sample = 0; sample < samples; ++sample) {
         for (uint32_t y = 0; y < block_height; ++y) {
-            const uint32_t texture_row = block_y * block_height + y;
-            for (unsigned int member = 0; member < 2; ++member) {
-                const uint32_t row = texture_row * 2u + member;
+            for (uint32_t member = 0; member < 2; ++member) {
+                const uint32_t local_row = 2u * y + member;
+                const uint32_t row = block_y * block_height * 2u + local_row;
                 if (row >= height) continue;
                 double output_delta = 0.0;
                 for (uint32_t x = 0; x < block_width; ++x) {
                     const uint32_t column = block_x * block_width + x;
                     if (column >= width) continue;
-                    const uint32_t texel = y * block_width + x;
-                    const double weight_delta =
-                        paired_member(candidate_record, candidate, texel, member) -
-                        paired_member(baseline_record, baseline, texel, member);
+                    float candidate_weight = 0.0f;
+                    float baseline_weight = 0.0f;
+                    if (!decoded_weight_for_row(candidate_record, candidate, block_width,
+                                                local_row, x, candidate_weight) ||
+                        !decoded_weight_for_row(baseline_record, baseline, block_width,
+                                                local_row, x, baseline_weight)) {
+                        delta.clear();
+                        return false;
+                    }
+                    const double weight_delta = candidate_weight - baseline_weight;
                     output_delta += weight_delta * activations[
                         size_t(sample) * width + column];
                 }
@@ -47,7 +59,7 @@ std::vector<double> make_delta(
             }
         }
     }
-    return delta;
+    return true;
 }
 
 } // namespace
@@ -108,7 +120,8 @@ bool astc_gpu_d2_make_selector_candidates(
         return false;
     }
     const auto format = astc_vulkan_format(bank.footprint);
-    if (format.block_width == 0 || format.block_height == 0) {
+    if (format.block_width == 0 || format.block_height == 0 ||
+        format.block_height * 2u != astc_vulkan_d2_pair_group_rows) {
         error = "unsupported D2 selector footprint";
         return false;
     }
@@ -144,16 +157,24 @@ bool astc_gpu_d2_make_selector_candidates(
                 if (!request.validation_activations.empty())
                     delta.validation_delta = astc_gpu_zero_selector_delta(request, true);
             } else {
-                delta.calibration_delta = make_delta(
+                if (!make_delta(
                     record, *block->second, baseline_record, *baseline->second,
                     request.calibration_activations, request.tensor_width,
                     request.tensor_height, request.source_blocks_x,
-                    format.block_width, format.block_height);
-                if (!request.validation_activations.empty()) delta.validation_delta = make_delta(
+                    format.block_width, format.block_height,
+                    delta.calibration_delta)) {
+                    error = "D2 selector candidate has invalid paired-row mapping";
+                    return false;
+                }
+                if (!request.validation_activations.empty() && !make_delta(
                     record, *block->second, baseline_record, *baseline->second,
                     request.validation_activations, request.tensor_width,
                     request.tensor_height, request.source_blocks_x,
-                    format.block_width, format.block_height);
+                    format.block_width, format.block_height,
+                    delta.validation_delta)) {
+                    error = "D2 validation candidate has invalid paired-row mapping";
+                    return false;
+                }
             }
             group.push_back(std::move(delta));
         }

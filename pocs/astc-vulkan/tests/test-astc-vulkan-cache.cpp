@@ -175,6 +175,26 @@ int main() {
     assert(v6_read.artifacts[0].evidence.replay_case_count == 3);
     assert(v6_read.artifacts[0].evidence.worst_loss_delta == 0.05f);
 
+    // v7 records the nested calibration/validation/artifact-holdout/model-
+    // holdout provenance separately, and persists P90 independently from a
+    // catastrophe-oriented maximum.
+    const fs::path v7_manifest_path("astc-vulkan-cache-v7-manifest.astcv");
+    fs::remove(v7_manifest_path, ignored);
+    astc_vulkan_manifest v7 = v6;
+    v7.version = 7;
+    v7.model_fingerprint = "fixture-v7-split-evidence";
+    v7.artifacts[0].evidence.p90_loss_delta = 0.03f;
+    v7.artifacts[0].evidence.calibration_hash = "calibration";
+    v7.artifacts[0].evidence.validation_hash = "validation";
+    v7.artifacts[0].evidence.artifact_holdout_hash = "artifact-holdout";
+    v7.artifacts[0].evidence.final_model_holdout_hash = "model-holdout";
+    assert(astc_vulkan_write_manifest(v7_manifest_path.string(), v7, error));
+    astc_vulkan_manifest v7_read;
+    assert(astc_vulkan_read_manifest(v7_manifest_path.string(), v7_read, error));
+    assert(v7_read.version == 7);
+    assert(v7_read.artifacts[0].evidence.p90_loss_delta == 0.03f);
+    assert(v7_read.artifacts[0].evidence.validation_hash == "validation");
+
     // A cache may record a structurally compatible quantized runtime base
     // without weakening the strict source-model validation contract. The
     // binding starts with no model/Vulkan quality evidence.

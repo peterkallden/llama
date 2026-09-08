@@ -6,6 +6,8 @@
 #include "astc-vulkan-model-cache.h"
 #include "astc-vulkan-discovery.h"
 #include "astc-vulkan-input.h"
+#include "astc-vulkan-d1-prescreen.h"
+#include "astc-vulkan-d2-prescreen.h"
 #endif
 #ifdef ASTC_VULKAN_D2_PRESCREEN_AVAILABLE
 #include "astc-vulkan-d2-prescreen-dispatch.h"
@@ -23,6 +25,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -82,6 +85,13 @@ const profile * find_profile(const std::string & name) {
     return nullptr;
 }
 
+std::string footprint_name(astc_vulkan_footprint footprint) {
+    const auto format = astc_vulkan_format(footprint);
+    if (format.block_width == 0 || format.block_height == 0) return {};
+    return std::to_string(format.block_width) + "x" +
+           std::to_string(format.block_height);
+}
+
 bool profile_accepts_manifest(const profile & selected, const std::string & manifest_path,
                               std::string & error) {
     astc_vulkan_manifest manifest;
@@ -131,8 +141,8 @@ void print_help(const char * executable) {
     std::printf(
         "Vanligt flöde (offline-cache; ingen JIT-encoding):\n"
         "  %s profiles\n"
-        "  %s build --model model.gguf --tensor name --trace activations.bin --footprint 6x6\n"
-            "            [--representation scalar|paired-d2] [--cache path|auto]\n"
+        "  %s build --model model.gguf --tensor name --trace activations.bin [--profile quality|balanced|compact|speed|auto]\n"
+            "            [--footprint 4x4|5x5|6x6|6x5|8x5|10x5 ...] [--representation scalar|paired-d2] [--cache path|auto]\n"
             "            [--backend hybrid|cpu] [--workers N] [--no-publish 1]\n"
 #ifdef ASTC_VULKAN_D2_PRESCREEN_AVAILABLE
         "  %s d2-prescreen --model model.gguf --tensor name --trace activations.bin\n"
@@ -142,11 +152,16 @@ void print_help(const char * executable) {
         "  %s inspect --model model.gguf [--cache path|auto]\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
+        "  %s rank --model model.gguf [--cache path|auto] [--policy quality|balanced|compact|speed|auto]\n"
+        "            [--shortlist N] [--max-p90-loss X] [--max-worst-loss X] [--p90-weight X]\n"
+#endif
+#ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
         "  %s discover --source-model model.gguf --usage usage.txt|auto --output discovery.tsv\n"
         "            [--profile quality|balanced|compact|speed|auto]\n"
         "            [--footprint 4x4|5x5|6x6|8x5|10x5 ...]\n"
         "            [--representation scalar|gauge-la|paired-d2]\n"
         "            [--min-source-bytes N] [--max-cache-bytes N] [--max-tensors N]\n"
+        "            [--quality-trace-map tensor-traces.tsv] [--candidate-plan plan.tsv]\n"
         "  %s build-model --source-model model.gguf --fragment-dir fragments/\n"
             "            --staging build-state/ [--tensor-list tensors.txt] [--cache path|auto]\n"
         "            [--gpu-proposer-shader shader.spv] [--backend hybrid|cpu]\n"
@@ -183,9 +198,13 @@ void print_help(const char * executable) {
         "automatic scheduling. publish expects manifest.astcv, payload.astcpack, optional layout-map.bin/row-scales.bin, and optional\n"
         "provenance.txt in artifact-dir. It publishes only already-generated offline artifacts;\n"
         "it never performs just-in-time encoding during model loading. Profiles marked experimental\n"
-        "require an explicit experimental runtime selection. `install` and `--profile` remain\n"
-        "compatibility aliases; use `publish` and `--storage-profile` for new scripts.\n"
-        "build is a bounded D1 orchestrator: it runs the existing latent exporter, packs a\n"
+        "require an explicit experimental runtime selection. For publish/install, use\n"
+        "`--storage-profile`; their legacy `--profile d1-...|d2-...` spelling remains accepted.\n"
+        "For `build`, --profile selects the default footprint/representation: quality=D1 4x4,\n"
+        "balanced/auto/speed=D1 6x6, compact=D2 8x5. Explicit --footprint and\n"
+        "--representation override that default. `build-model` remains intentionally explicit\n"
+        "per tensor through its tensor-list.\n"
+        "build is a bounded D1/D2 orchestrator: it runs the existing latent exporter, packs a\n"
         "v4 artifact and publishes it atomically. It does not perform JIT encoding and\n"
         "defaults model/vulkan evidence gates to false until replay has passed.\n",
         executable, executable,
@@ -194,7 +213,7 @@ void print_help(const char * executable) {
 #endif
         executable, executable,
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
-        executable, executable, executable,
+        executable, executable, executable, executable,
 #endif
         executable, executable, executable, executable, executable);
 }
@@ -206,6 +225,18 @@ bool parse_u64_argument(const std::string & text, uint64_t & result) {
         const unsigned long long parsed = std::stoull(text, &consumed, 10);
         if (consumed != text.size()) return false;
         result = static_cast<uint64_t>(parsed);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool parse_finite_float_argument(const std::string & text, float & result) {
+    try {
+        size_t consumed = 0;
+        const float value = std::stof(text, &consumed);
+        if (consumed != text.size() || !std::isfinite(value)) return false;
+        result = value;
         return true;
     } catch (...) {
         return false;
@@ -360,6 +391,114 @@ bool parse_discovery_representation(const std::string & value,
     else if (value == "gauge-la") representation = astc_vulkan_representation::kGaugeLumaAlpha;
     else if (value == "paired-d2") representation = astc_vulkan_representation::kPairedD2;
     else return false;
+    return true;
+}
+
+bool read_quality_trace_map(const std::string & path,
+                            std::unordered_map<std::string, std::string> & result,
+                            std::string & error) {
+    result.clear();
+    if (path.empty()) return true;
+    std::ifstream input(path);
+    if (!input) {
+        error = "cannot open discovery quality-trace map: " + path;
+        return false;
+    }
+    std::string line;
+    uint32_t line_number = 0;
+    while (std::getline(input, line)) {
+        ++line_number;
+        if (line.empty() || line[0] == '#') continue;
+        const size_t separator = line.find('\t');
+        if (separator == std::string::npos || separator == 0 || separator + 1 == line.size()) {
+            error = "quality-trace map requires <tensor><tab><trace> at line " +
+                std::to_string(line_number);
+            return false;
+        }
+        const std::string tensor = line.substr(0, separator);
+        const std::string trace = line.substr(separator + 1);
+        if (!result.emplace(tensor, trace).second) {
+            error = "quality-trace map has duplicate tensor: " + tensor;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool make_quality_probe(const std::string & model,
+                        const astc_vulkan_discovery_entry & entry,
+                        const std::string & trace_path,
+                        uint32_t calibration_samples,
+                        astc_vulkan_discovery_quality_probe & result,
+                        std::string & error) {
+    result = {};
+    result.tensor_name = entry.tensor_name;
+    ggml_vk_astc_loaded_matrix matrix;
+    ggml_vk_astc_activation_trace trace;
+    if (!ggml_vk_astc_load_gguf_matrix(model, entry.tensor_name, matrix, error) ||
+        !ggml_vk_astc_load_activation_trace(trace_path, trace, error)) return false;
+    if (matrix.rows < entry.rows || matrix.columns < entry.columns ||
+        trace.samples == 0 || trace.columns < entry.columns) {
+        error = "quality trace or source dimensions are incompatible with tensor " + entry.tensor_name;
+        return false;
+    }
+    const uint32_t rows = entry.rows & ~1u; // D2 requires full logical row pairs.
+    if (rows == 0) {
+        error = "paired-D2 quality probe requires at least two tensor rows";
+        return false;
+    }
+    std::vector<float> weights(static_cast<size_t>(rows) * entry.columns);
+    for (uint32_t row = 0; row < rows; ++row) {
+        std::copy_n(matrix.values.begin() + static_cast<size_t>(row) * matrix.columns,
+                    entry.columns, weights.begin() + static_cast<size_t>(row) * entry.columns);
+    }
+    std::vector<float> trace_crop(static_cast<size_t>(trace.samples) * entry.columns);
+    for (uint32_t sample = 0; sample < trace.samples; ++sample) {
+        std::copy_n(trace.values.begin() + static_cast<size_t>(sample) * trace.columns,
+                    entry.columns, trace_crop.begin() + static_cast<size_t>(sample) * entry.columns);
+    }
+    std::vector<float> energy;
+    const uint32_t samples = std::min(std::max(1u, calibration_samples), trace.samples);
+    if (!astc_vulkan_d2_prescreen_calibration_energy(trace_crop, trace.samples, entry.columns,
+                                                     samples, energy)) {
+        error = "cannot construct calibration energy for " + entry.tensor_name;
+        return false;
+    }
+    std::vector<float> row_absmax(rows, 0.0f);
+    for (uint32_t row = 0; row < rows; ++row) {
+        for (uint32_t column = 0; column < entry.columns; ++column) {
+            row_absmax[row] = std::max(row_absmax[row],
+                std::abs(weights[static_cast<size_t>(row) * entry.columns + column]));
+        }
+    }
+    std::sort(row_absmax.begin(), row_absmax.end());
+    const size_t p10 = row_absmax.size() <= 1 ? 0 : (row_absmax.size() - 1) / 10;
+    const size_t p90 = row_absmax.size() <= 1 ? 0 : (row_absmax.size() - 1) * 9 / 10;
+    result.row_absmax_spread = static_cast<double>(row_absmax[p90]) /
+        std::max(1e-12, static_cast<double>(row_absmax[p10]));
+
+    std::vector<astc_vulkan_d1_prescreen_score> d1_scores;
+    std::vector<astc_vulkan_d2_prescreen_score> d2_scores;
+    const std::vector<astc_vulkan_d1_prescreen_candidate> d1_candidates{
+        {astc_vulkan_footprint::k10x8, 16},
+    };
+    const std::vector<astc_vulkan_d2_prescreen_candidate> d2_candidates{
+        {astc_vulkan_footprint::k8x5, astc_vulkan_d2_prescreen_semantic::luminance_alpha,
+         astc_vulkan_d2_prescreen_normalization::none, false, 16},
+    };
+    if (!astc_vulkan_score_d1_prescreen_cpu(weights, rows, entry.columns, energy,
+                                            d1_candidates, d1_scores) ||
+        !astc_vulkan_score_d2_prescreen_cpu(weights, rows, entry.columns, energy,
+                                            d2_candidates, d2_scores) ||
+        d1_scores.empty() || d2_scores.empty()) {
+        error = "cannot score discovery quality probe for " + entry.tensor_name;
+        return false;
+    }
+    result.available = true;
+    result.d1_proxy_error = d1_scores.front().normalized_error;
+    result.d2_proxy_error = d2_scores.front().normalized_error;
+    result.calibration_trace_hash = std::to_string(astc_vulkan_payload_hash64(
+        reinterpret_cast<const uint8_t *>(trace_crop.data()), trace_crop.size() * sizeof(float)));
     return true;
 }
 #endif
@@ -1015,8 +1154,10 @@ int main(int argc, char ** argv) {
     std::string fragment_dir, staging_root, tensor_list;
     std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
     std::string runtime_family = "unspecified";
-    std::string usage_path, discovery_output, policy_name = "balanced", device_budget, host_budget, page_bytes;
+    std::string usage_path, discovery_output, candidate_plan_output, quality_trace_map_path,
+                policy_name = "balanced", device_budget, host_budget, page_bytes;
     std::string min_source_bytes, max_cache_bytes, max_tensors;
+    std::string shortlist_count = "2", max_p90_loss, max_worst_loss, p90_weight;
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
     std::string channel_weights = "balanced-a025", source_alpha = "1", row_scale = "none";
     // D2's calibration-selected 10-row pairing is the normal cache path.
@@ -1025,7 +1166,7 @@ int main(int argc, char ** argv) {
     std::string rows, columns, calibration_samples = "8", validation_samples = "7";
     std::string d2_prescreen_backend = "cpu", d2_prescreen_top_k = "3";
     bool no_publish = false, require_usage = false, require_benefit = false;
-    bool representation_explicit = false, policy_explicit = false;
+    bool representation_explicit = false, footprint_explicit = false, policy_explicit = false;
     bool allow_experimental = false, allow_unverified = false;
     for (int index = 2; index < argc; index += 2) {
         if (index + 1 >= argc) return 2;
@@ -1048,7 +1189,7 @@ int main(int argc, char ** argv) {
         else if (option == "--storage-profile") profile_name = value;
         else if (option == "--tensor") tensor = value;
         else if (option == "--trace") trace = value;
-        else if (option == "--footprint") footprint = value;
+        else if (option == "--footprint") { footprint = value; footprint_explicit = true; }
         else if (option == "--backend") backend = value;
         else if (option == "--gpu-proposer-shader") shader = value;
         else if (option == "--preset") preset = value;
@@ -1056,6 +1197,8 @@ int main(int argc, char ** argv) {
         else if (option == "--family") runtime_family = value;
         else if (option == "--usage") usage_path = value;
         else if (option == "--output") discovery_output = value;
+        else if (option == "--candidate-plan") candidate_plan_output = value;
+        else if (option == "--quality-trace-map") quality_trace_map_path = value;
         else if (option == "--policy") { policy_name = value; policy_explicit = true; }
         else if (option == "--device-budget") device_budget = value;
         else if (option == "--host-budget") host_budget = value;
@@ -1063,6 +1206,10 @@ int main(int argc, char ** argv) {
         else if (option == "--min-source-bytes") min_source_bytes = value;
         else if (option == "--max-cache-bytes") max_cache_bytes = value;
         else if (option == "--max-tensors") max_tensors = value;
+        else if (option == "--shortlist") shortlist_count = value;
+        else if (option == "--max-p90-loss") max_p90_loss = value;
+        else if (option == "--max-worst-loss") max_worst_loss = value;
+        else if (option == "--p90-weight") p90_weight = value;
         else if (option == "--require-usage") require_usage = value == "1" || value == "true";
         else if (option == "--require-benefit") require_benefit = value == "1" || value == "true";
         else if (option == "--allow-experimental") allow_experimental = value == "1" || value == "true";
@@ -1087,6 +1234,20 @@ int main(int argc, char ** argv) {
         else return 2;
     }
     std::string error;
+    // `--profile` is a user-facing build shortcut. It deliberately chooses a
+    // physical baseline only; explicit representation/footprint flags remain
+    // authoritative for reproducible research commands. The later planner
+    // still selects among evidence-backed artifacts per tensor.
+    if (command == "build" && !user_profile_name.empty()) {
+        astc_vulkan_user_profile_defaults profile_defaults;
+        if (!astc_vulkan_resolve_user_profile(user_profile_name, profile_defaults)) {
+            std::fprintf(stderr, "astc-cache %s failed: unknown profile '%s'\n",
+                         command.c_str(), user_profile_name.c_str());
+            return 2;
+        }
+        if (!footprint_explicit) footprint = footprint_name(profile_defaults.footprint);
+        if (!representation_explicit) representation = representation_name(profile_defaults.representation);
+    }
     if (command == "bind" || command == "admit-base") {
         astc_vulkan_cache_runtime_base binding;
         if (source_model.empty() || model.empty() ||
@@ -1214,6 +1375,57 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "astc-cache discover failed: %s\n", error.c_str());
             return 1;
         }
+        // For D2 8x5, discovery also emits the bounded pre-build bank. Trace
+        // entries are optional but tensor-specific: only a matching map entry
+        // enables a calibration-only proxy; absence remains explicit in the
+        // plan and can never masquerade as a quality pass.
+        std::vector<astc_vulkan_discovery_candidate_plan_entry> candidate_plan;
+        std::string published_candidate_plan;
+        if (selected_representation == astc_vulkan_representation::kPairedD2 &&
+            selected_footprint == astc_vulkan_footprint::k8x5) {
+            std::unordered_map<std::string, std::string> trace_map;
+            if (!read_quality_trace_map(quality_trace_map_path, trace_map, error)) {
+                std::fprintf(stderr, "astc-cache discover failed: %s\n", error.c_str());
+                return 1;
+            }
+            uint64_t requested_calibration = 0;
+            if (!parse_u64_argument(calibration_samples, requested_calibration) ||
+                requested_calibration == 0 || requested_calibration > UINT32_MAX) {
+                std::fprintf(stderr, "astc-cache discover failed: invalid --calibration-samples\n");
+                return 2;
+            }
+            std::vector<astc_vulkan_discovery_quality_probe> probes;
+            for (const auto & entry : entries) {
+                if (!entry.selected) continue;
+                const auto found = trace_map.find(entry.tensor_name);
+                if (found == trace_map.end()) {
+                    probes.push_back({entry.tensor_name});
+                    continue;
+                }
+                astc_vulkan_discovery_quality_probe probe;
+                if (!make_quality_probe(inventory_model, entry, found->second,
+                                        static_cast<uint32_t>(requested_calibration), probe, error)) {
+                    std::fprintf(stderr, "astc-cache discover failed: %s\n", error.c_str());
+                    return 1;
+                }
+                probes.push_back(std::move(probe));
+            }
+            if (!astc_vulkan_make_discovery_candidate_plan(
+                    entries, probes, discovery_options, {}, candidate_plan, error)) {
+                std::fprintf(stderr, "astc-cache discover failed: %s\n", error.c_str());
+                return 1;
+            }
+            published_candidate_plan = candidate_plan_output.empty() ?
+                discovery_output + ".candidates.tsv" : candidate_plan_output;
+            if (!astc_vulkan_write_discovery_candidate_plan(
+                    published_candidate_plan, candidate_plan, error)) {
+                std::fprintf(stderr, "astc-cache discover failed: %s\n", error.c_str());
+                return 1;
+            }
+        } else if (!candidate_plan_output.empty() || !quality_trace_map_path.empty()) {
+            std::fprintf(stderr, "astc-cache discover failed: quality candidate-plan v1 requires paired-d2 8x5\n");
+            return 2;
+        }
         size_t selected_count = 0;
         uint64_t selected_bytes = 0;
         for (const auto & entry : entries) {
@@ -1227,6 +1439,11 @@ int main(int argc, char ** argv) {
                     selected_format.block_height, representation_name(selected_representation),
                     entries.size(), selected_count,
                     static_cast<unsigned long long>(selected_bytes), discovery_output.c_str());
+        if (!published_candidate_plan.empty()) {
+            std::printf("astc-cache discover candidate-plan=%s candidates=%zu trace-probes=%s\n",
+                        published_candidate_plan.c_str(), candidate_plan.size(),
+                        quality_trace_map_path.empty() ? "none" : "mapped");
+        }
         for (const auto & entry : entries) {
             std::printf("astc-cache discover-entry tensor=%s selected=%s priority=%.6g source-bytes=%llu astc-bytes=%llu quality-probe=required\n",
                         entry.tensor_name.c_str(), entry.selected ? "true" : "false",
@@ -1234,6 +1451,96 @@ int main(int argc, char ** argv) {
                         static_cast<unsigned long long>(entry.source_bytes),
                         static_cast<unsigned long long>(entry.estimated_astc_bytes +
                                                          entry.estimated_layout_bytes));
+        }
+        return 0;
+    }
+    if (command == "rank") {
+        if (model.empty()) {
+            std::fprintf(stderr, "astc-cache rank requires --model\n");
+            return 2;
+        }
+        if (!policy_explicit && !user_profile_name.empty()) {
+            astc_vulkan_user_profile_defaults profile_defaults;
+            if (!astc_vulkan_resolve_user_profile(user_profile_name, profile_defaults)) {
+                std::fprintf(stderr, "astc-cache rank failed: unknown profile '%s'\n",
+                             user_profile_name.c_str());
+                return 2;
+            }
+            policy_name = astc_vulkan_quality_policy_name(profile_defaults.policy);
+        }
+        astc_vulkan_quality_policy policy;
+        if (!astc_vulkan_parse_quality_policy(policy_name, policy)) {
+            std::fprintf(stderr, "astc-cache rank failed: unknown policy '%s'\n", policy_name.c_str());
+            return 2;
+        }
+        uint64_t requested_count = 0;
+        if (!parse_u64_argument(shortlist_count, requested_count) || requested_count == 0 ||
+            requested_count > std::numeric_limits<size_t>::max()) {
+            std::fprintf(stderr, "astc-cache rank failed: invalid --shortlist\n");
+            return 2;
+        }
+        astc_vulkan_artifact_selection_rules rules;
+        if ((!max_p90_loss.empty() && !parse_finite_float_argument(max_p90_loss, rules.max_p90_loss_delta)) ||
+            (!max_worst_loss.empty() && !parse_finite_float_argument(max_worst_loss, rules.max_worst_loss_delta)) ||
+            (!p90_weight.empty() && !parse_finite_float_argument(p90_weight, rules.p90_loss_weight)) ||
+            rules.max_p90_loss_delta < 0.0f || rules.max_worst_loss_delta < 0.0f ||
+            rules.p90_loss_weight < 0.0f) {
+            std::fprintf(stderr, "astc-cache rank failed: invalid robust-loss option\n");
+            return 2;
+        }
+        astc_vulkan_cache_validation validation;
+        if (!astc_vulkan_cache_validate(model, cache, validation, error)) {
+            std::fprintf(stderr, "astc-cache rank failed: %s\n", error.c_str());
+            return 1;
+        }
+        if (validation.manifest.version < 4) {
+            std::fprintf(stderr, "astc-cache rank failed: legacy cache has no multi-artifact candidates\n");
+            return 1;
+        }
+        std::unordered_map<std::string, std::vector<astc_vulkan_artifact_candidate>> by_tensor;
+        for (const auto & artifact : validation.manifest.artifacts) {
+            astc_vulkan_artifact_candidate candidate;
+            candidate.tensor = &artifact.storage;
+            candidate.variant = artifact.variant;
+            candidate.normalization = artifact.normalization;
+            candidate.evidence = artifact.evidence;
+            candidate.rate_bpw = astc_vulkan_artifact_storage_bpw(artifact);
+            candidate.artifact_id = artifact.id;
+            by_tensor[artifact.storage.name].push_back(std::move(candidate));
+        }
+        std::vector<std::string> names;
+        names.reserve(by_tensor.size());
+        for (const auto & item : by_tensor) names.push_back(item.first);
+        std::sort(names.begin(), names.end());
+        std::printf("astc-cache rank policy=%s tensors=%zu shortlist=%llu p90-weight=%.6g\n",
+                    astc_vulkan_quality_policy_name(policy), names.size(),
+                    static_cast<unsigned long long>(requested_count), rules.p90_loss_weight);
+        for (const auto & name : names) {
+            std::vector<astc_vulkan_artifact_candidate> shortlist;
+            if (!astc_vulkan_rank_tensor_artifact_shortlist(
+                    by_tensor[name], policy, rules, static_cast<size_t>(requested_count),
+                    shortlist, error)) {
+                std::fprintf(stderr, "astc-cache rank failed for %s: %s\n", name.c_str(), error.c_str());
+                return 1;
+            }
+            if (shortlist.empty()) {
+                std::printf("astc-cache rank-entry tensor=%s native-fallback=true reason=no-evidence-backed-artifact\n",
+                            name.c_str());
+                continue;
+            }
+            for (size_t index = 0; index < shortlist.size(); ++index) {
+                const auto & entry = shortlist[index];
+                std::printf("astc-cache rank-entry tensor=%s rank=%zu artifact=%s bpw=%.6g "
+                            "median-loss=%.6g p90-loss=%.6g worst-loss=%.6g top1-worst=%.6g "
+                            "variant=%u normalization=%u\n",
+                            name.c_str(), index + 1, entry.artifact_id.c_str(), entry.rate_bpw,
+                            astc_vulkan_artifact_median_loss_delta(entry.evidence),
+                            astc_vulkan_artifact_p90_loss_delta(entry.evidence),
+                            astc_vulkan_artifact_worst_loss_delta(entry.evidence),
+                            astc_vulkan_artifact_worst_top1_agreement(entry.evidence),
+                            static_cast<unsigned>(entry.variant),
+                            static_cast<unsigned>(entry.normalization));
+            }
         }
         return 0;
     }

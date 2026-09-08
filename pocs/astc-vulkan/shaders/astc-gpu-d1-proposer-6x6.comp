@@ -1,8 +1,6 @@
 #version 450
 
-// D1 scalar 6x6 proposal kernel. This deliberately has its own workgroup ABI
-// instead of reusing the 4x4 kernel. v1 prioritizes an exact source-stride and
-// result contract; a parallel tree reduction is a later performance pass.
+// D1 scalar 6x6 proposal kernel with one texel per lane.
 layout(local_size_x = 36) in;
 
 layout(std430, set = 0, binding = 0) readonly buffer Source { vec4 texels[]; } source;
@@ -18,30 +16,22 @@ struct Proposal {
 layout(std430, set = 0, binding = 1) writeonly buffer Proposals { Proposal values[]; } proposals;
 layout(std430, set = 0, binding = 2) readonly buffer SourceIds { uint values[]; } source_ids;
 layout(push_constant) uniform Push { uint block_count; } params;
+shared vec4 lows[36]; shared vec4 highs[36]; shared vec4 sums[36]; shared float errors[36];
 
 void main() {
     uint block = gl_WorkGroupID.x;
-    if (block >= params.block_count || gl_LocalInvocationID.x != 0u) return;
-    vec4 low = vec4(3.402823466e+38);
-    vec4 high = vec4(-3.402823466e+38);
-    vec4 mean = vec4(0.0);
-    for (uint i = 0u; i < 36u; ++i) {
-        vec4 value = source.texels[block * 36u + i];
-        low = min(low, value);
-        high = max(high, value);
-        mean += value;
+    if (block >= params.block_count) return;
+    uint lane = gl_LocalInvocationID.x;
+    vec4 value = source.texels[block * 36u + lane];
+    lows[lane] = value; highs[lane] = value; sums[lane] = value;
+    barrier();
+    for (uint count = 36u; count > 1u; count = (count + 1u) / 2u) {
+        uint next = (count + 1u) / 2u;
+        if (lane < next && lane + next < count) { lows[lane] = min(lows[lane], lows[lane + next]); highs[lane] = max(highs[lane], highs[lane + next]); sums[lane] += sums[lane + next]; }
+        barrier();
     }
-    mean *= 1.0 / 36.0;
-    float error = 0.0;
-    for (uint i = 0u; i < 36u; ++i) {
-        vec4 d = source.texels[block * 36u + i] - mean;
-        error += dot(d, d);
-    }
-    proposals.values[block].endpoint_low = low;
-    proposals.values[block].endpoint_high = high;
-    proposals.values[block].approximate_error = error / 36.0;
-    proposals.values[block].source_block_id = source_ids.values[block];
-    proposals.values[block].weight_grid_x = 6u;
-    proposals.values[block].weight_grid_y = 6u;
-    proposals.values[block].mode_family = 0u;
+    vec4 mean = sums[0] * (1.0 / 36.0); vec4 d = value - mean; errors[lane] = dot(d, d);
+    barrier();
+    for (uint count = 36u; count > 1u; count = (count + 1u) / 2u) { uint next = (count + 1u) / 2u; if (lane < next && lane + next < count) errors[lane] += errors[lane + next]; barrier(); }
+    if (lane == 0u) { proposals.values[block].endpoint_low = lows[0]; proposals.values[block].endpoint_high = highs[0]; proposals.values[block].approximate_error = errors[0] / 36.0; proposals.values[block].source_block_id = source_ids.values[block]; proposals.values[block].weight_grid_x = 6u; proposals.values[block].weight_grid_y = 6u; proposals.values[block].mode_family = 0u; }
 }

@@ -751,6 +751,11 @@ if (TARGET astcenc::astcenc-static)
         astc-vulkan-gpu-encoder-finisher)
     target_compile_features(astc-vulkan-gpu-encoder-d2-hybrid PUBLIC cxx_std_17)
 
+    if (TARGET test-astc-vulkan-gpu-encoder)
+        target_link_libraries(test-astc-vulkan-gpu-encoder PRIVATE
+            astc-vulkan-gpu-encoder-d2-hybrid)
+    endif()
+
     if (TARGET astc-vulkan-gpu-encoder-device-smoke)
         target_link_libraries(astc-vulkan-gpu-encoder-device-smoke PRIVATE
             astc-vulkan-gpu-encoder-finisher astc-vulkan-gpu-encoder-d2-hybrid)

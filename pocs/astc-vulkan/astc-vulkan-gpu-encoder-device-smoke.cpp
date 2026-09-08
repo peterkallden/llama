@@ -440,6 +440,75 @@ int main(int argc, char ** argv) {
                 selector_candidates, selection) ||
             selection.validation_prefix != selection.commits.size() ||
             selection.calibration_selected_candidates.size() != 1) return false;
+
+        // H5 is the deployed paired D2 geometry. Exercise the complete GPU
+        // proposer -> CPU finisher -> exact rank/selector seam with a real
+        // serialized non-adjacent pair map and an inverse-restored Givens
+        // alternative. The proposer itself only sees physical RGBA, which is
+        // exactly why this test has to cross the D2 frontend boundary.
+        if (footprint == astc_vulkan_footprint::k8x5) {
+            std::vector<float> transformed_weights(10 * 8);
+            for (uint32_t row = 0; row < 10; ++row) {
+                for (uint32_t column = 0; column < 8; ++column) {
+                    transformed_weights[row * 8 + column] =
+                        0.05f + 0.9f * float((row * 3 + column * 5) % 17) / 16.0f;
+                }
+            }
+            const std::vector<uint8_t> pair_map{1, 0, 3, 2, 5, 4, 7, 6, 9, 8};
+            std::vector<astc_vulkan_d2_pairing> pairings;
+            std::vector<astc_vulkan_paired_layout> transformed_layouts;
+            if (!astc_gpu_d2_expand_pair_map(footprint, 10, 8, pair_map, pairings) ||
+                pairings.size() != 1 ||
+                !astc_gpu_d2_make_uniform_layout_map(
+                    footprint, 10, 8, astc_vulkan_paired_layout::rg_b,
+                    transformed_layouts)) return false;
+            std::vector<astc_gpu_encoder_source_block> neutral_blocks;
+            std::vector<astc_gpu_encoder_source_block> rotated_blocks;
+            const astc_vulkan_d2_givens_transform givens{0.35f};
+            if (!astc_gpu_d2_build_paired_source_blocks(
+                    footprint, transformed_weights, 10, 8, transformed_layouts, {},
+                    astc_vulkan_paired_semantic::direct_rgb, neutral_blocks, pairings) ||
+                !astc_gpu_d2_build_paired_source_blocks(
+                    footprint, transformed_weights, 10, 8, transformed_layouts, {},
+                    astc_vulkan_paired_semantic::direct_rgb, rotated_blocks, pairings, givens)) return false;
+            astc_gpu_d2_candidate_bank transformed_bank;
+            if (!astc_gpu_d2_build_candidate_bank(
+                    footprint, neutral_blocks, transformed_layouts,
+                    {{astc_gpu_d2_candidate_family::direct_steered,
+                      astc_vulkan_paired_semantic::direct_rgb, rotated_blocks,
+                      transformed_layouts, givens}}, transformed_bank, pairings)) return false;
+            astc_gpu_encoder_request transformed_request;
+            std::vector<astc_gpu_encoder_proposal> transformed_gpu;
+            if (!astc_gpu_d2_candidate_bank_request(transformed_bank, 2, transformed_request) ||
+                !astc_gpu_encoder_propose_gpu_for_footprint_default(
+                    shader, footprint, transformed_request, transformed_gpu, error) ||
+                transformed_gpu.size() != 2) return false;
+            astc_gpu_d2_activation_rank_request transformed_rank;
+            transformed_rank.tensor_width = 8;
+            transformed_rank.tensor_height = 10;
+            transformed_rank.source_blocks_x = 1;
+            transformed_rank.activations.resize(16);
+            for (size_t index = 0; index < transformed_rank.activations.size(); ++index)
+                transformed_rank.activations[index] = 0.25f + 0.125f * float(index % 7);
+            astc_gpu_d2_hybrid_result transformed_hybrid;
+            if (!astc_gpu_d2_finish_and_rank(
+                    transformed_bank, transformed_gpu, transformed_rank,
+                    {2, 2, ASTCENC_PRE_FAST}, transformed_hybrid, error) ||
+                transformed_hybrid.ranked_blocks.size() != 2 ||
+                transformed_hybrid.activation_scores.size() != 2) return false;
+            astc_gpu_d2_selector_delta_request transformed_selector;
+            transformed_selector.tensor_width = 8;
+            transformed_selector.tensor_height = 10;
+            transformed_selector.source_blocks_x = 1;
+            transformed_selector.calibration_activations.assign(
+                transformed_rank.activations.begin(), transformed_rank.activations.end());
+            std::vector<std::vector<astc_vulkan_paired_candidate_delta>> transformed_candidates;
+            if (!astc_gpu_d2_make_selector_candidates(
+                    transformed_bank, transformed_hybrid.finished_blocks,
+                    transformed_selector, transformed_candidates, error) ||
+                transformed_candidates.size() != 1 ||
+                transformed_candidates[0].size() != 2) return false;
+        }
         return true;
     };
     if (!run_d2(astc_vulkan_footprint::k8x5, argv[6], 8, 5) ||

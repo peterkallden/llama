@@ -33,14 +33,15 @@ bool metadata_eligible(const astc_vulkan_artifact_record & artifact,
     if (allow_unverified) {
         return std::isfinite(artifact.evidence.loss_delta) &&
                std::isfinite(artifact.evidence.logits_relative_mse) &&
-               rate_bpw(artifact.storage) > 0.0;
+               astc_vulkan_artifact_storage_bpw(artifact) > 0.0;
     }
     astc_vulkan_artifact_candidate candidate;
     candidate.tensor = &artifact.storage;
     candidate.variant = artifact.variant;
     candidate.normalization = artifact.normalization;
     candidate.evidence = artifact.evidence;
-    candidate.rate_bpw = rate_bpw(artifact.storage);
+    candidate.rate_bpw = astc_vulkan_artifact_storage_bpw(artifact);
+    candidate.artifact_id = artifact.id;
     return astc_vulkan_artifact_is_eligible(candidate, true, true, selection_rules);
 }
 
@@ -210,7 +211,8 @@ bool astc_vulkan_model_cache_make_plan(
             candidate.variant = candidate_artifact.variant;
             candidate.normalization = candidate_artifact.normalization;
             candidate.evidence = candidate_artifact.evidence;
-            candidate.rate_bpw = rate_bpw(candidate_artifact.storage);
+            candidate.rate_bpw = astc_vulkan_artifact_storage_bpw(candidate_artifact);
+            candidate.artifact_id = candidate_artifact.id;
             if (best == nullptr || astc_vulkan_artifact_policy_precedes(
                     candidate, best_candidate, options.policy, options.selection_rules)) {
                 best = &candidate_artifact;

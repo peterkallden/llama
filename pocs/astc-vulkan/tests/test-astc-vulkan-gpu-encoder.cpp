@@ -4,6 +4,8 @@
 #include "astc-gpu-d1-hybrid.h"
 #include "astc-gpu-d2-source.h"
 #include "astc-gpu-d2-candidates.h"
+#include "astc-gpu-d2-neural-rank.h"
+#include "astc-gpu-d2-hybrid.h"
 
 #include <algorithm>
 #include <cmath>
@@ -202,6 +204,76 @@ int main() {
             astc_gpu_d2_select_candidate_bank_proposals(paired_bank, paired_proposals, 2, paired_selected));
     require(paired_selected.size() == 2 && paired_bank.records[paired_selected[0].source_block_id].family ==
             astc_gpu_d2_candidate_family::direct_neutral);
+
+    // Pair-map and Givens alternatives must rank in original logical-row
+    // space. In particular, a candidate may use a different RGB layout than
+    // the neutral source without changing the exact source target.
+    std::vector<float> transformed_weights(10u * 8u);
+    for (size_t index = 0; index < transformed_weights.size(); ++index) {
+        transformed_weights[index] = 0.05f + 0.9f * static_cast<float>(index % 17u) / 16.0f;
+    }
+    const std::vector<uint8_t> pair_map{1, 0, 3, 2, 5, 4, 7, 6, 9, 8};
+    std::vector<astc_vulkan_d2_pairing> transformed_pairings;
+    require(astc_gpu_d2_expand_pair_map(astc_vulkan_footprint::k8x5, 10, 8,
+                                         pair_map, transformed_pairings));
+    require(transformed_pairings.size() == 1);
+    std::vector<astc_vulkan_paired_layout> transformed_layouts;
+    require(astc_gpu_d2_make_uniform_layout_map(astc_vulkan_footprint::k8x5,
+                                                 10, 8,
+                                                 astc_vulkan_paired_layout::rg_b,
+                                                 transformed_layouts));
+    std::vector<astc_gpu_encoder_source_block> transformed_neutral;
+    require(astc_gpu_d2_build_paired_source_blocks(
+        astc_vulkan_footprint::k8x5, transformed_weights, 10, 8,
+        transformed_layouts, {}, astc_vulkan_paired_semantic::direct_rgb,
+        transformed_neutral, transformed_pairings));
+    std::vector<astc_vulkan_paired_layout> transformed_alternative_layouts = transformed_layouts;
+    transformed_alternative_layouts[0] = astc_vulkan_paired_layout::r_gb;
+    std::vector<astc_gpu_encoder_source_block> transformed_alternative;
+    const astc_vulkan_d2_givens_transform givens{0.35f};
+    require(astc_gpu_d2_build_paired_source_blocks(
+        astc_vulkan_footprint::k8x5, transformed_weights, 10, 8,
+        transformed_alternative_layouts, {}, astc_vulkan_paired_semantic::direct_rgb,
+        transformed_alternative, transformed_pairings, givens));
+    astc_gpu_d2_candidate_bank transformed_bank;
+    require(astc_gpu_d2_build_candidate_bank(
+        astc_vulkan_footprint::k8x5, transformed_neutral, transformed_layouts,
+        {{astc_gpu_d2_candidate_family::direct_steered,
+          astc_vulkan_paired_semantic::direct_rgb, transformed_alternative,
+          transformed_alternative_layouts, givens}}, transformed_bank, transformed_pairings));
+    std::vector<astc_gpu_encoder_finished_block> transformed_finished;
+    for (size_t index = 0; index < transformed_bank.records.size(); ++index) {
+        astc_gpu_encoder_finished_block block;
+        block.source_block_id = transformed_bank.records[index].candidate_source_block_id;
+        block.footprint = astc_vulkan_footprint::k8x5;
+        block.payload[0] = static_cast<uint8_t>(index + 1u);
+        for (const auto & texel : transformed_bank.candidate_blocks[index].texels) {
+            block.decoded_rgba.insert(block.decoded_rgba.end(), texel.rgba.begin(), texel.rgba.end());
+        }
+        transformed_finished.push_back(std::move(block));
+    }
+    const astc_gpu_d2_activation_rank_request transformed_rank{8, 10, 1,
+                                                                 std::vector<float>(8, 1.0f)};
+    std::vector<astc_gpu_encoder_finished_block> transformed_ranked;
+    std::vector<astc_gpu_d2_finished_candidate_score> transformed_scores;
+    require(astc_gpu_d2_rank_finished_candidates_activation(
+        transformed_bank, transformed_finished, transformed_rank, 2,
+        transformed_ranked, transformed_scores));
+    require(transformed_ranked.size() == 2 && transformed_scores.size() == 2);
+    for (const auto & score : transformed_scores) require(score.activation_error < 1e-9);
+    astc_gpu_d2_selector_delta_request transformed_selector_request;
+    transformed_selector_request.tensor_width = 8;
+    transformed_selector_request.tensor_height = 10;
+    transformed_selector_request.source_blocks_x = 1;
+    transformed_selector_request.calibration_activations.assign(8, 1.0);
+    std::vector<std::vector<astc_vulkan_paired_candidate_delta>> transformed_selector;
+    require(astc_gpu_d2_make_selector_candidates(
+        transformed_bank, transformed_finished, transformed_selector_request,
+        transformed_selector, selector_error));
+    require(transformed_selector.size() == 1 && transformed_selector[0].size() == 2);
+    for (const double delta : transformed_selector[0][1].calibration_delta) {
+        require(std::fabs(delta) < 1e-6);
+    }
 
     astc_gpu_encoder_request request;
     request.footprint = astc_vulkan_footprint::k4x4;

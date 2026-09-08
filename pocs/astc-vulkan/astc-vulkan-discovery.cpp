@@ -32,6 +32,23 @@ uint64_t layout_bytes(astc_vulkan_representation representation,
 
 } // namespace
 
+const char * astc_vulkan_discovery_candidate_name(
+        astc_vulkan_discovery_candidate_kind kind) {
+    switch (kind) {
+        case astc_vulkan_discovery_candidate_kind::d1_10x8:
+            return "d1-10x8";
+        case astc_vulkan_discovery_candidate_kind::d2_la_pairing_neutral:
+            return "d2-la-pairing-neutral";
+        case astc_vulkan_discovery_candidate_kind::d2_la_pairing_selected:
+            return "d2-la-pairing-selected";
+        case astc_vulkan_discovery_candidate_kind::d2_la_pairing_absmax_neutral:
+            return "d2-la-pairing-absmax-neutral";
+        case astc_vulkan_discovery_candidate_kind::d2_la_pairing_absmax_selected:
+            return "d2-la-pairing-absmax-selected";
+    }
+    return "unknown";
+}
+
 bool astc_vulkan_discover_cache_candidates(
         const std::vector<astc_vulkan_discovery_tensor_input> & tensors,
         const std::vector<astc_vulkan_tensor_usage_metrics> & usage,
@@ -173,6 +190,108 @@ bool astc_vulkan_write_discovery_report(
     if (ec) {
         std::filesystem::remove(partial);
         error = "cannot publish discovery report: " + path;
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_make_discovery_candidate_plan(
+        const std::vector<astc_vulkan_discovery_entry> & entries,
+        const std::vector<astc_vulkan_discovery_quality_probe> & probes,
+        const astc_vulkan_discovery_options & discovery_options,
+        const astc_vulkan_discovery_candidate_plan_options & options,
+        std::vector<astc_vulkan_discovery_candidate_plan_entry> & result,
+        std::string & error) {
+    result.clear();
+    if (!std::isfinite(options.absmax_spread_threshold) ||
+        options.absmax_spread_threshold < 1.0) {
+        error = "candidate-plan absmax spread threshold must be finite and at least one";
+        return false;
+    }
+    if (discovery_options.representation != astc_vulkan_representation::kPairedD2 ||
+        discovery_options.footprint != astc_vulkan_footprint::k8x5) {
+        error = "candidate-plan v1 currently targets paired-D2 ASTC 8x5";
+        return false;
+    }
+    std::unordered_map<std::string, const astc_vulkan_discovery_quality_probe *> by_tensor;
+    for (const auto & probe : probes) {
+        if (probe.tensor_name.empty() || !by_tensor.emplace(probe.tensor_name, &probe).second ||
+            !std::isfinite(probe.row_absmax_spread) ||
+            !std::isfinite(probe.d1_proxy_error) || !std::isfinite(probe.d2_proxy_error)) {
+            error = "candidate-plan probes contain an invalid or duplicate entry";
+            return false;
+        }
+    }
+    for (const auto & entry : entries) {
+        if (!entry.selected) continue;
+        const auto found = by_tensor.find(entry.tensor_name);
+        const auto * probe = found == by_tensor.end() ? nullptr : found->second;
+        const bool available = probe != nullptr && probe->available;
+        const auto append = [&](astc_vulkan_discovery_candidate_kind kind, bool conditional) {
+            astc_vulkan_discovery_candidate_plan_entry plan;
+            plan.tensor_name = entry.tensor_name;
+            plan.kind = kind;
+            plan.conditional = conditional;
+            plan.quality_probe_available = available;
+            if (available) {
+                plan.row_absmax_spread = probe->row_absmax_spread;
+                plan.d1_proxy_error = probe->d1_proxy_error;
+                plan.d2_proxy_error = probe->d2_proxy_error;
+            }
+            result.push_back(std::move(plan));
+        };
+        append(astc_vulkan_discovery_candidate_kind::d2_la_pairing_neutral, false);
+        append(astc_vulkan_discovery_candidate_kind::d2_la_pairing_selected, false);
+        if (available && probe->row_absmax_spread >= options.absmax_spread_threshold) {
+            append(astc_vulkan_discovery_candidate_kind::d2_la_pairing_absmax_neutral, true);
+            append(astc_vulkan_discovery_candidate_kind::d2_la_pairing_absmax_selected, true);
+        }
+        if (options.include_d1_iso_rate_control) {
+            append(astc_vulkan_discovery_candidate_kind::d1_10x8, false);
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_write_discovery_candidate_plan(
+        const std::string & path,
+        const std::vector<astc_vulkan_discovery_candidate_plan_entry> & entries,
+        std::string & error) {
+    if (path.empty()) {
+        error = "candidate plan path is empty";
+        return false;
+    }
+    const std::filesystem::path output_path(path);
+    const std::filesystem::path partial = output_path.string() + ".partial";
+    std::ofstream output(partial, std::ios::trunc);
+    if (!output) {
+        error = "cannot open candidate plan: " + path;
+        return false;
+    }
+    output << "# astc-discovery-candidate-plan-v1\n"
+           << "# tensor candidate conditional probe row_absmax_spread d1_proxy d2_proxy\n"
+           << std::setprecision(17);
+    for (const auto & entry : entries) {
+        output << entry.tensor_name << '\t'
+               << astc_vulkan_discovery_candidate_name(entry.kind) << '\t'
+               << (entry.conditional ? 1 : 0) << '\t'
+               << (entry.quality_probe_available ? 1 : 0) << '\t'
+               << entry.row_absmax_spread << '\t'
+               << entry.d1_proxy_error << '\t'
+               << entry.d2_proxy_error << '\n';
+    }
+    output.close();
+    if (!output) {
+        error = "cannot write candidate plan: " + path;
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::rename(partial, output_path, ec);
+    if (ec) {
+        std::filesystem::remove(partial);
+        error = "cannot publish candidate plan: " + path;
         return false;
     }
     error.clear();

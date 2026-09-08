@@ -6,22 +6,32 @@
 
 namespace {
 
-float decoded_member(const astc_gpu_d2_candidate_record & record,
-                     const astc_gpu_encoder_finished_block & block,
-                     uint32_t texel, unsigned int member) {
-    const auto * rgba = block.decoded_rgba.data() + texel * 4;
-    return astc_vulkan_paired_weight(
-        {rgba[0], rgba[1], rgba[2], rgba[3]}, member, record.layout,
-        astc_vulkan_paired_basis::direct, record.semantic);
+bool source_weight_for_row(const astc_gpu_d2_candidate_record & record,
+                           const astc_gpu_encoder_source_block & block,
+                           uint32_t width, uint32_t local_row, uint32_t x,
+                           float & value) {
+    uint32_t pair_slot = 0;
+    unsigned int member = 0;
+    if (!astc_gpu_d2_record_slot_for_row(record, local_row, pair_slot, member)) return false;
+    const auto & rgba = block.texels[size_t(pair_slot) * width + x].rgba;
+    float first = 0.0f, second = 0.0f;
+    astc_gpu_d2_record_restore_pair(record, {rgba[0], rgba[1], rgba[2], rgba[3]}, first, second);
+    value = member == 0 ? first : second;
+    return true;
 }
 
-float source_member(const astc_gpu_d2_candidate_record & record,
-                    const astc_gpu_encoder_source_block & block,
-                    uint32_t texel, unsigned int member) {
-    const auto & rgba = block.texels[texel].rgba;
-    return astc_vulkan_paired_weight(
-        {rgba[0], rgba[1], rgba[2], rgba[3]}, member, record.layout,
-        astc_vulkan_paired_basis::direct, astc_vulkan_paired_semantic::direct_rgb);
+bool decoded_weight_for_row(const astc_gpu_d2_candidate_record & record,
+                            const astc_gpu_encoder_finished_block & block,
+                            uint32_t width, uint32_t local_row, uint32_t x,
+                            float & value) {
+    uint32_t pair_slot = 0;
+    unsigned int member = 0;
+    if (!astc_gpu_d2_record_slot_for_row(record, local_row, pair_slot, member)) return false;
+    const auto * rgba = block.decoded_rgba.data() + (size_t(pair_slot) * width + x) * 4;
+    float first = 0.0f, second = 0.0f;
+    astc_gpu_d2_record_restore_pair(record, {rgba[0], rgba[1], rgba[2], rgba[3]}, first, second);
+    value = member == 0 ? first : second;
+    return true;
 }
 
 } // namespace
@@ -41,15 +51,19 @@ bool astc_gpu_d2_rank_finished_candidates_activation(
         request.activations.size() % request.tensor_width != 0 ||
         bank.records.empty()) return false;
     const auto format = astc_vulkan_format(bank.footprint);
-    if (format.block_width == 0 || format.block_height == 0) return false;
+    if (format.block_width == 0 || format.block_height == 0 ||
+        format.block_height * 2u != astc_vulkan_d2_pair_group_rows) return false;
 
     std::unordered_map<uint32_t, astc_gpu_d2_candidate_record> records;
     std::unordered_map<uint32_t, const astc_gpu_encoder_source_block *> source;
+    std::unordered_map<uint32_t, astc_gpu_d2_candidate_record> source_records;
     for (size_t index = 0; index < bank.records.size(); ++index) {
         const auto & record = bank.records[index];
         records.emplace(record.candidate_source_block_id, record);
-        if (record.family == astc_gpu_d2_candidate_family::direct_neutral)
+        if (record.family == astc_gpu_d2_candidate_family::direct_neutral) {
             source.emplace(record.logical_source_block_id, &bank.candidate_blocks[index]);
+            source_records.emplace(record.logical_source_block_id, record);
+        }
     }
     std::unordered_map<uint32_t, const astc_gpu_encoder_finished_block *> decoded;
     for (const auto & block : finished) {
@@ -61,24 +75,28 @@ bool astc_gpu_d2_rank_finished_candidates_activation(
     for (const auto & block : finished) {
         const auto & record = records.at(block.source_block_id);
         const auto original = source.find(record.logical_source_block_id);
-        if (original == source.end()) return false;
+        const auto original_record = source_records.find(record.logical_source_block_id);
+        if (original == source.end() || original_record == source_records.end()) return false;
         const uint32_t block_x = record.logical_source_block_id % request.source_blocks_x;
         const uint32_t block_y = record.logical_source_block_id / request.source_blocks_x;
         double error = 0.0;
         for (uint32_t sample = 0; sample < samples; ++sample) {
             for (uint32_t y = 0; y < format.block_height; ++y) {
-                const uint32_t texture_row = block_y * format.block_height + y;
-                for (unsigned int member = 0; member < 2; ++member) {
-                    const uint32_t row = texture_row * 2u + member;
+                for (uint32_t local_row = 0; local_row < 2u; ++local_row) {
+                    const uint32_t pair_row = 2u * y + local_row;
+                    const uint32_t row = block_y * format.block_height * 2u + pair_row;
                     if (row >= request.tensor_height) continue;
                     double output_error = 0.0;
                     for (uint32_t x = 0; x < format.block_width; ++x) {
                         const uint32_t column = block_x * format.block_width + x;
                         if (column >= request.tensor_width) continue;
-                        const uint32_t texel = y * format.block_width + x;
-                        const float delta = source_member(
-                            record, *original->second, texel, member) -
-                            decoded_member(record, block, texel, member);
+                        float original_weight = 0.0f;
+                        float decoded_weight = 0.0f;
+                        if (!source_weight_for_row(original_record->second, *original->second,
+                                                   format.block_width, pair_row, x, original_weight) ||
+                            !decoded_weight_for_row(record, block, format.block_width,
+                                                    pair_row, x, decoded_weight)) return false;
+                        const float delta = original_weight - decoded_weight;
                         output_error += delta * request.activations[
                             size_t(sample) * request.tensor_width + column];
                     }

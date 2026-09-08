@@ -30,12 +30,6 @@ bool get_file_size(const std::string & path, uint64_t & size) {
     return !ec;
 }
 
-double rate_bpw(const astc_vulkan_tensor_record & record) {
-    const uint64_t logical_weights = static_cast<uint64_t>(record.width) * record.height;
-    return logical_weights == 0 ? 0.0 : static_cast<double>(record.byte_size) * 8.0 /
-        static_cast<double>(logical_weights);
-}
-
 bool read_row_scales(const astc_vulkan_cache_validation & cache,
                      const astc_vulkan_artifact_record & source,
                      astc_vulkan_scheduler_artifact & artifact,
@@ -220,7 +214,7 @@ bool astc_vulkan_scheduler_adapter::resolve_best_from_cache(
     artifact = {};
     astc_vulkan_cache_validation cache;
     if (!astc_vulkan_cache_validate(model_path, cache_path, cache, error)) return false;
-    if (cache.manifest.version != 4) {
+    if (cache.manifest.version < 4) {
         error = "ASTC cache does not provide an evidence-aware artifact index";
         return false;
     }
@@ -233,7 +227,8 @@ bool astc_vulkan_scheduler_adapter::resolve_best_from_cache(
         candidate.variant = source.variant;
         candidate.normalization = source.normalization;
         candidate.evidence = source.evidence;
-        candidate.rate_bpw = rate_bpw(source.storage);
+        candidate.rate_bpw = astc_vulkan_artifact_storage_bpw(source);
+        candidate.artifact_id = source.id;
         const bool metadata_eligible = candidate.tensor != nullptr &&
             std::isfinite(candidate.evidence.loss_delta) &&
             std::isfinite(candidate.evidence.logits_relative_mse) &&
@@ -334,8 +329,8 @@ bool astc_vulkan_scheduler_adapter::prepare_artifact_from_cache(
         binding_.fallback_reason = error;
         return false;
     }
-    if (cache.manifest.version != 4) {
-        error = "exact artifact binding requires a v4 artifact index";
+    if (cache.manifest.version < 4) {
+        error = "exact artifact binding requires a v4-or-newer artifact index";
         binding_.status = astc_vulkan_binding_status::kFallback;
         binding_.fallback_reason = error;
         return false;
@@ -353,7 +348,8 @@ bool astc_vulkan_scheduler_adapter::prepare_artifact_from_cache(
     candidate.variant = source->variant;
     candidate.normalization = source->normalization;
     candidate.evidence = source->evidence;
-    candidate.rate_bpw = rate_bpw(source->storage);
+    candidate.rate_bpw = astc_vulkan_artifact_storage_bpw(*source);
+    candidate.artifact_id = source->id;
     const bool metadata_eligible = std::isfinite(candidate.evidence.loss_delta) &&
         std::isfinite(candidate.evidence.logits_relative_mse) &&
         std::isfinite(candidate.rate_bpw) && candidate.rate_bpw > 0.0;

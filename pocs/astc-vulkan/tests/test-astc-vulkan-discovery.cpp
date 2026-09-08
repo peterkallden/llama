@@ -31,5 +31,25 @@ int main() {
     std::ifstream input(report);
     assert(input.good());
     std::filesystem::remove(report);
+
+    // Discovery proposes a bounded representation-neutral bank. The high
+    // range spread makes absmax conditional candidates worthwhile to test,
+    // while D1 10x8 remains the iso-rate control rather than an afterthought.
+    const std::vector<astc_vulkan_discovery_quality_probe> probes = {
+        {"hot", true, "calibration-a", 3.0, .02, .01},
+    };
+    std::vector<astc_vulkan_discovery_candidate_plan_entry> plan;
+    assert(astc_vulkan_make_discovery_candidate_plan(result, probes, options, {}, plan, error));
+    assert(plan.size() == 5);
+    assert(plan[0].kind == astc_vulkan_discovery_candidate_kind::d2_la_pairing_neutral);
+    assert(plan[1].kind == astc_vulkan_discovery_candidate_kind::d2_la_pairing_selected);
+    assert(plan[2].conditional && plan[3].conditional);
+    assert(plan[4].kind == astc_vulkan_discovery_candidate_kind::d1_10x8);
+    const auto candidate_plan = std::filesystem::temp_directory_path() / "astc-discovery-plan-test.tsv";
+    assert(astc_vulkan_write_discovery_candidate_plan(candidate_plan.string(), plan, error));
+    input.open(candidate_plan);
+    assert(input.good());
+    input.close();
+    std::filesystem::remove(candidate_plan);
     return 0;
 }

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -112,11 +113,12 @@ int main(int argc, char ** argv) {
                 representation_name = "scalar", artifact_id, encoder_profile,
                 paired_semantic_name = "direct", variant_name = "neutral",
                 normalization_name = "none", row_scales_input, row_scales_payload,
-                pair_map_input, pair_map_payload;
+                pair_map_input, pair_map_payload, final_model_holdout_hash;
     bool model_gate = false, vulkan_gate = false;
     bool have_scale_l = false, have_scale_a = false, have_offset = false;
     float activation_mse = 0.0f, logits_mse = 0.0f, loss_delta = 0.0f, top1 = 0.0f;
-    float median_loss_delta = 0.0f, worst_loss_delta = 0.0f, worst_top1 = 0.0f;
+    float median_loss_delta = 0.0f, p90_loss_delta = std::numeric_limits<float>::quiet_NaN(),
+          worst_loss_delta = 0.0f, worst_top1 = 0.0f;
     uint32_t replay_cases = 0;
     float scale_l = 1.0f, scale_a = 0.0f, offset = 0.0f;
     uint32_t width = 0, height = 0;
@@ -136,6 +138,7 @@ int main(int argc, char ** argv) {
         else if (option == "--calibration-hash") calibration_hash = value;
         else if (option == "--validation-hash") validation_hash = value;
         else if (option == "--holdout-hash") holdout_hash = value;
+        else if (option == "--final-model-holdout-hash") final_model_holdout_hash = value;
         else if (option == "--selector-config") selector_config = value;
         else if (option == "--validation-prefix") validation_prefix = value;
         else if (option == "--commit-order-hash") commit_order_hash = value;
@@ -161,6 +164,7 @@ int main(int argc, char ** argv) {
         else if (option == "--top1") top1 = std::stof(value);
         else if (option == "--replay-cases") replay_cases = static_cast<uint32_t>(std::stoul(value));
         else if (option == "--median-loss-delta") median_loss_delta = std::stof(value);
+        else if (option == "--p90-loss-delta") p90_loss_delta = std::stof(value);
         else if (option == "--worst-loss-delta") worst_loss_delta = std::stof(value);
         else if (option == "--worst-top1") worst_top1 = std::stof(value);
         else if (option == "--scale-l") { scale_l = std::stof(value); have_scale_l = true; }
@@ -202,7 +206,10 @@ int main(int argc, char ** argv) {
          pair_map_bytes.size() != static_cast<size_t>((height + 9u) / 10u) * 10u)) return 2;
     astc_vulkan_manifest manifest;
     if (artifact_manifest) {
-        manifest.version = replay_cases > 1 ? 6 : (pair_map_bytes.empty() ? 4 : 5);
+        // Artifact manifests are v7 so independent evidence splits and an
+        // optional P90 survive pack/install unchanged. The reader remains
+        // compatible with v4-v6 caches.
+        manifest.version = 7;
     }
     manifest.model_fingerprint = fingerprint;
     astc_vulkan_tensor_record record;
@@ -234,6 +241,11 @@ int main(int argc, char ** argv) {
         artifact.evidence.median_loss_delta = median_loss_delta;
         artifact.evidence.worst_loss_delta = worst_loss_delta;
         artifact.evidence.worst_top1_agreement = worst_top1;
+        artifact.evidence.p90_loss_delta = p90_loss_delta;
+        artifact.evidence.calibration_hash = calibration_hash;
+        artifact.evidence.validation_hash = validation_hash;
+        artifact.evidence.artifact_holdout_hash = holdout_hash;
+        artifact.evidence.final_model_holdout_hash = final_model_holdout_hash;
         if (normalization == astc_vulkan_normalization::per_row_absmax) {
             artifact.row_scale_byte_size = row_scale_bytes.size();
             artifact.row_scale_hash64 = astc_vulkan_payload_hash64(row_scale_bytes.data(), row_scale_bytes.size());

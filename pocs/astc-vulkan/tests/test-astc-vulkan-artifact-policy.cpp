@@ -74,12 +74,44 @@ int main() {
     selected.evidence.worst_top1_agreement = 0.95f;
     assert(!astc_vulkan_artifact_is_eligible(selected, true, true, robust_rules));
     selected.evidence.worst_loss_delta = 0.030f;
+    selected.evidence.p90_loss_delta = 0.020f;
     assert(astc_vulkan_artifact_is_eligible(selected, true, true, robust_rules));
     neutral.evidence.replay_case_count = 3;
     neutral.evidence.median_loss_delta = 0.012f;
+    neutral.evidence.p90_loss_delta = 0.015f;
     neutral.evidence.worst_loss_delta = 0.020f;
     neutral.evidence.worst_top1_agreement = 1.0f;
     assert(astc_vulkan_artifact_policy_precedes(
         selected, neutral, astc_vulkan_quality_policy::quality, robust_rules));
+
+    // P90 ranks ordinary prompt-tail behaviour; max remains a separate hard
+    // catastrophe gate. A slightly better median is not enough when its P90
+    // is materially worse.
+    astc_vulkan_artifact_candidate p90_safe = neutral;
+    p90_safe.artifact_id = "d2-la-neutral";
+    p90_safe.evidence.median_loss_delta = .011f;
+    p90_safe.evidence.p90_loss_delta = .014f;
+    astc_vulkan_artifact_candidate p90_risky = selected;
+    p90_risky.artifact_id = "d2-la-selected";
+    p90_risky.evidence.median_loss_delta = .009f;
+    p90_risky.evidence.p90_loss_delta = .030f;
+    assert(astc_vulkan_artifact_policy_precedes(
+        p90_safe, p90_risky, astc_vulkan_quality_policy::quality, robust_rules));
+
+    // The per-tensor bank is representation-neutral. It keeps the two best
+    // evidence-backed ASTC alternatives; native remains an implicit fallback.
+    astc_vulkan_artifact_candidate d1 = p90_safe;
+    d1.artifact_id = "d1-10x8";
+    d1.rate_bpw = 1.6;
+    d1.evidence.median_loss_delta = .013f;
+    d1.evidence.p90_loss_delta = .016f;
+    std::vector<astc_vulkan_artifact_candidate> shortlist;
+    std::string error;
+    assert(astc_vulkan_rank_tensor_artifact_shortlist(
+        {p90_risky, d1, p90_safe}, astc_vulkan_quality_policy::quality,
+        robust_rules, 2, shortlist, error));
+    assert(shortlist.size() == 2);
+    assert(shortlist[0].artifact_id == "d2-la-neutral");
+    assert(shortlist[1].artifact_id == "d1-10x8");
     return 0;
 }

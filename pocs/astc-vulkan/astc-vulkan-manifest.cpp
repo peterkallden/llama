@@ -21,7 +21,8 @@ constexpr uint32_t kPairedLayoutManifestVersion = 3;
 constexpr uint32_t kArtifactManifestVersion = 4;
 constexpr uint32_t kPairMapManifestVersion = 5;
 constexpr uint32_t kRobustEvidenceManifestVersion = 6;
-constexpr uint32_t kCurrentManifestVersion = kRobustEvidenceManifestVersion;
+constexpr uint32_t kSplitEvidenceManifestVersion = 7;
+constexpr uint32_t kCurrentManifestVersion = kSplitEvidenceManifestVersion;
 constexpr uint32_t kMaxStringBytes = 1u << 20;
 constexpr uint32_t kMaxTensorRecords = 1u << 20;
 
@@ -138,6 +139,10 @@ bool validate_artifact_record(const astc_vulkan_artifact_record & artifact,
         artifact.encoder_profile.size() > kMaxStringBytes ||
         artifact.evidence.calibration_validation_hash.size() > kMaxStringBytes ||
         artifact.evidence.replay_corpus_hash.size() > kMaxStringBytes ||
+        artifact.evidence.calibration_hash.size() > kMaxStringBytes ||
+        artifact.evidence.validation_hash.size() > kMaxStringBytes ||
+        artifact.evidence.artifact_holdout_hash.size() > kMaxStringBytes ||
+        artifact.evidence.final_model_holdout_hash.size() > kMaxStringBytes ||
         !valid_artifact_variant(artifact.variant) ||
         !valid_normalization(artifact.normalization) ||
         !valid_paired_semantic(artifact.paired_semantic) ||
@@ -156,6 +161,12 @@ bool validate_artifact_record(const astc_vulkan_artifact_record & artifact,
          !std::isfinite(evidence.worst_top1_agreement) ||
          evidence.worst_top1_agreement < 0.0f || evidence.worst_top1_agreement > 1.0f)) {
         error = "invalid ASTC Vulkan robust replay evidence";
+        return false;
+    }
+    if (std::isfinite(evidence.p90_loss_delta) &&
+        (!std::isfinite(evidence.median_loss_delta) ||
+         evidence.replay_case_count < 2)) {
+        error = "P90 replay evidence requires multi-case replay evidence";
         return false;
     }
     if (artifact.paired_semantic == astc_vulkan_paired_semantic::luminance_alpha &&
@@ -259,6 +270,12 @@ bool write_artifact_record(std::ofstream & file, const astc_vulkan_artifact_reco
              write_scalar(file, evidence.median_loss_delta) &&
              write_scalar(file, evidence.worst_loss_delta) &&
              write_scalar(file, evidence.worst_top1_agreement))) &&
+           (version < kSplitEvidenceManifestVersion ||
+            (write_scalar(file, evidence.p90_loss_delta) &&
+             write_string(file, evidence.calibration_hash) &&
+             write_string(file, evidence.validation_hash) &&
+             write_string(file, evidence.artifact_holdout_hash) &&
+             write_string(file, evidence.final_model_holdout_hash))) &&
            write_scalar(file, artifact.row_scale_byte_offset) &&
            write_scalar(file, artifact.row_scale_byte_size) &&
            write_scalar(file, artifact.row_scale_hash64) &&
@@ -291,6 +308,12 @@ bool read_artifact_record(std::ifstream & file, astc_vulkan_artifact_record & ar
           !read_scalar(file, evidence.median_loss_delta) ||
           !read_scalar(file, evidence.worst_loss_delta) ||
           !read_scalar(file, evidence.worst_top1_agreement))) ||
+        (version >= kSplitEvidenceManifestVersion &&
+         (!read_scalar(file, evidence.p90_loss_delta) ||
+          !read_string(file, evidence.calibration_hash) ||
+          !read_string(file, evidence.validation_hash) ||
+          !read_string(file, evidence.artifact_holdout_hash) ||
+          !read_string(file, evidence.final_model_holdout_hash))) ||
         !read_scalar(file, artifact.row_scale_byte_offset) ||
         !read_scalar(file, artifact.row_scale_byte_size) ||
         !read_scalar(file, artifact.row_scale_hash64) ||
