@@ -154,7 +154,7 @@ int main() {
         model.string(), v5_manifest_path.string(), v4_payload_path.string(), v4_layout_path.string(),
         v4_scales_path.string(), v5_pair_map_path.string(), {}, v5_root.string(), paths, error));
     assert(astc_vulkan_cache_validate(model.string(), v5_root.string(), validation, error));
-    assert(validation.manifest.version == 5 && validation.has_pair_map);
+    assert(validation.manifest.version == 5 && validation.has_paired_d2 && validation.has_pair_map);
     assert(validation.manifest.artifacts[0].pair_map_byte_size == pair_map.size());
 
     // A cache may record a structurally compatible quantized runtime base

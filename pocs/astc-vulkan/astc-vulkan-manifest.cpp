@@ -9,6 +9,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <sstream>
 #include <unordered_set>
 
 namespace {
@@ -329,7 +330,11 @@ bool astc_vulkan_validate_layout_map(const astc_vulkan_tensor_record & tensor,
                                      std::string & error) {
     const uint64_t expected = expected_layout_bytes(tensor);
     if (expected == 0 || tensor.layout_byte_size != expected || size != expected || data == nullptr) {
-        error = "ASTC Vulkan paired layout map size does not match its record";
+        std::ostringstream detail;
+        detail << "ASTC Vulkan paired layout map size does not match its record"
+               << " (expected=" << expected << ", record=" << tensor.layout_byte_size
+               << ", actual=" << size << ")";
+        error = detail.str();
         return false;
     }
     if (tensor.layout_hash64 != 0 && astc_vulkan_payload_hash64(data, size) != tensor.layout_hash64) {

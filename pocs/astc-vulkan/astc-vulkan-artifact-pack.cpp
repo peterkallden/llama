@@ -238,8 +238,15 @@ int main(int argc, char ** argv) {
     }
     std::string error;
     if (paired_d2 && !astc_vulkan_validate_layout_map(record, layout_bytes.data(),
-                                                       layout_bytes.size(), error)) return 1;
-    if (!astc_vulkan_write_manifest(manifest_path, manifest, error)) return 1;
+                                                       layout_bytes.size(), error)) {
+        std::fprintf(stderr, "cannot validate ASTC Vulkan layout map: %s (footprint=%u width=%u height=%u)\n",
+                     error.c_str(), static_cast<unsigned>(record.footprint), record.width, record.height);
+        return 1;
+    }
+    if (!astc_vulkan_write_manifest(manifest_path, manifest, error)) {
+        std::fprintf(stderr, "cannot write ASTC Vulkan manifest: %s\n", error.c_str());
+        return 1;
+    }
     std::ofstream payload(payload_path, std::ios::binary);
     payload.write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
     if (!payload.good()) return 1;

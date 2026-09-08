@@ -172,7 +172,7 @@ void print_help(const char * executable) {
         "  %s publish --model model.gguf --artifact-dir artifact-dir [--storage-profile name] [--cache path|auto]\n"
         "  %s install --model model.gguf --artifact-dir artifact-dir [--profile name] [--cache path|auto]\n"
         "  %s create --model model.gguf --manifest artifact.manifest --payload payload.bin\n"
-        "            [--layout layout.bin --row-scales scales.bin --provenance provenance.txt --storage-profile name --cache path|auto]\n"
+        "            [--layout layout.bin --row-scales scales.bin --pair-map pair-map.bin --provenance provenance.txt --storage-profile name --cache path|auto]\n"
         "\n"
         "The runtime family is a provenance label, not a hardcoded Q4-only switch; any validated GGUF\n"
         "family (for example Q4_K_M, Q3_K_M, TQ2_0 or TQ1_0) still needs its own replay gates before\n"
@@ -748,18 +748,22 @@ bool build_d2_cache(const char * argv0, const std::string & model,
 
 bool artifact_directory_paths(const std::string & root, std::string & manifest,
                               std::string & payload, std::string & layout,
-                              std::string & row_scales, std::string & provenance) {
+                              std::string & row_scales, std::string & pair_map,
+                              std::string & provenance) {
     if (root.empty()) return false;
     const std::filesystem::path directory(root);
     manifest = (directory / "manifest.astcv").string();
     payload = (directory / "payload.astcpack").string();
     layout = (directory / "layout-map.bin").string();
     row_scales = (directory / "row-scales.bin").string();
+    pair_map = (directory / "pair-map.bin").string();
     provenance = (directory / "provenance.txt").string();
     std::error_code ec;
     if (!std::filesystem::is_regular_file(layout, ec)) layout.clear();
     ec.clear();
     if (!std::filesystem::is_regular_file(row_scales, ec)) row_scales.clear();
+    ec.clear();
+    if (!std::filesystem::is_regular_file(pair_map, ec)) pair_map.clear();
     ec.clear();
     if (!std::filesystem::is_regular_file(provenance, ec)) provenance.clear();
     return true;
@@ -974,7 +978,7 @@ int main(int argc, char ** argv) {
         print_profiles();
         return 0;
     }
-    std::string model, source_model, manifest, payload, layout, row_scales, provenance, cache = "auto", artifact_dir, profile_name;
+    std::string model, source_model, manifest, payload, layout, row_scales, pair_map, provenance, cache = "auto", artifact_dir, profile_name;
     std::string user_profile_name;
     std::string fragment_dir, staging_root, tensor_list;
     std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
@@ -998,6 +1002,7 @@ int main(int argc, char ** argv) {
         else if (option == "--payload") payload = value;
         else if (option == "--layout") layout = value;
         else if (option == "--row-scales") row_scales = value;
+        else if (option == "--pair-map") pair_map = value;
         else if (option == "--provenance") provenance = value;
         else if (option == "--cache") cache = value;
         else if (option == "--artifact-dir") artifact_dir = value;
@@ -1334,14 +1339,15 @@ int main(int argc, char ** argv) {
             return 1;
         }
         if (command == "verify") {
-            const size_t records = validation.manifest.version == 4 ? validation.manifest.artifacts.size() :
+            const size_t records = validation.manifest.version >= 4 ? validation.manifest.artifacts.size() :
                 validation.manifest.tensors.size();
-            std::printf("astc-cache verify ok records=%zu paired-d2=%s row-scales=%s\n",
+            std::printf("astc-cache verify ok records=%zu paired-d2=%s row-scales=%s pair-map=%s\n",
                         records, validation.has_paired_d2 ? "true" : "false",
-                        validation.has_row_scales ? "true" : "false");
+                        validation.has_row_scales ? "true" : "false",
+                        validation.has_pair_map ? "true" : "false");
             return 0;
         }
-        const size_t records = validation.manifest.version == 4 ? validation.manifest.artifacts.size() :
+        const size_t records = validation.manifest.version >= 4 ? validation.manifest.artifacts.size() :
             validation.manifest.tensors.size();
         std::printf("astc-cache hit records=%zu paired-d2=%s row-scales=%s\n", records,
                     validation.has_paired_d2 ? "true" : "false",
@@ -1370,7 +1376,7 @@ int main(int argc, char ** argv) {
         return 0;
     }
     if (command == "install" || command == "publish") {
-        if (!artifact_directory_paths(artifact_dir, manifest, payload, layout, row_scales, provenance)) return 2;
+        if (!artifact_directory_paths(artifact_dir, manifest, payload, layout, row_scales, pair_map, provenance)) return 2;
     } else if (command != "create") {
         std::fprintf(stderr, "unknown astc-cache command: %s\n", command.c_str());
         return 2;
@@ -1386,8 +1392,8 @@ int main(int argc, char ** argv) {
     if (command == "create" || command == "install" || command == "publish") {
         astc_vulkan_cache_paths paths;
         if (model.empty() || manifest.empty() || payload.empty() ||
-            !astc_vulkan_cache_create_with_row_scales(model, manifest, payload, layout, row_scales,
-                                                      provenance, cache, paths, error)) {
+            !astc_vulkan_cache_create_with_metadata(model, manifest, payload, layout, row_scales, pair_map,
+                                                    provenance, cache, paths, error)) {
             std::fprintf(stderr, "astc-cache %s failed: %s\n", command.c_str(), error.c_str());
             return 1;
         }

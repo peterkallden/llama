@@ -184,7 +184,7 @@ bool gguf_schema_matches(const std::string & source_path, const std::string & ru
 }
 
 bool has_paired_d2(const astc_vulkan_manifest & manifest) {
-    if (manifest.version == 4) {
+    if (manifest.version >= 4) {
         for (const auto & artifact : manifest.artifacts) {
             if (artifact.storage.representation == astc_vulkan_representation::kPairedD2) return true;
         }
@@ -272,7 +272,17 @@ bool validate_tensor_payloads(const astc_vulkan_manifest & manifest,
         uint64_t layout_hash = 0;
         if (!range_hash64(layout_path, tensor.layout_byte_offset, tensor.layout_byte_size, layout_hash, buffer) ||
             (tensor.layout_hash64 != 0 && layout_hash != tensor.layout_hash64)) {
-            error = "ASTC cache paired layout checksum mismatch";
+            std::error_code layout_ec;
+            const bool layout_exists = fs::is_regular_file(layout_path, layout_ec);
+            const uint64_t layout_actual_size = layout_exists ? fs::file_size(layout_path, layout_ec) : 0;
+            error = "ASTC cache paired layout checksum mismatch (path=" + layout_path +
+                    ", offset=" +
+                    std::to_string(tensor.layout_byte_offset) + ", size=" +
+                    std::to_string(tensor.layout_byte_size) + ", expected=" +
+                    std::to_string(tensor.layout_hash64) + ", actual=" +
+                    std::to_string(layout_hash) + ", exists=" +
+                    (layout_exists ? "1" : "0") + ", file_size=" +
+                    std::to_string(layout_actual_size) + ")";
             return false;
         }
         return true;
