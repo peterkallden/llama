@@ -295,6 +295,28 @@ target_link_libraries(astc-vulkan-catalog-loader PUBLIC
     astc-vulkan-cache astc-vulkan-compiled-catalog)
 target_compile_features(astc-vulkan-catalog-loader PUBLIC cxx_std_17)
 
+# Self-contained hybrid model container.  This remains entirely inside the
+# ASTC POC: GGUF bytes, native fallback tensors and ASTC sidecar sections are
+# owned by one portable file, without introducing an ASTC ggml type.
+add_library(astc-vulkan-compiled-model STATIC
+    astc-vulkan-compiled-model.cpp)
+target_include_directories(astc-vulkan-compiled-model PUBLIC
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_link_libraries(astc-vulkan-compiled-model PUBLIC
+    astc-vulkan-cache astc-vulkan-compiled-catalog)
+target_compile_features(astc-vulkan-compiled-model PUBLIC cxx_std_17)
+
+add_executable(test-astc-vulkan-compiled-model
+    tests/test-astc-vulkan-compiled-model.cpp)
+target_link_libraries(test-astc-vulkan-compiled-model PRIVATE
+    astc-vulkan-compiled-model)
+target_compile_features(test-astc-vulkan-compiled-model PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-compiled-model
+        COMMAND test-astc-vulkan-compiled-model)
+    set_property(TEST test-astc-vulkan-compiled-model PROPERTY LABELS astc)
+endif()
+
 # Shared physical row-band/range contract for D1 and D2. It is deliberately
 # independent of Vulkan resources so geometry and cache-range tests stay fast.
 add_library(astc-vulkan-stream-loader STATIC
@@ -334,6 +356,7 @@ add_executable(astc-vulkan-cache-tool
 set_target_properties(astc-vulkan-cache-tool PROPERTIES OUTPUT_NAME astc-vulkan-cache)
 target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-cache)
 target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-catalog-loader)
+target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-compiled-model)
 target_include_directories(astc-vulkan-cache-tool PRIVATE
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(astc-vulkan-cache-tool PRIVATE cxx_std_17)

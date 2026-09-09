@@ -968,6 +968,33 @@ missing or stale.  The manifest, payload and their checksums remain the single
 source of truth for runtime storage and integrity.  The catalog is never used
 to select policy, redirect a tensor, or replace payload validation.
 
+### Self-contained compiled model (experimental)
+
+`catalog.astcc` is only an index. When the original GGUF and sidecar must be
+distributed as one unit, create an experimental hybrid container:
+
+```bash
+build-astc/bin/astc-vulkan-cache compiled-pack \
+  --model /absolute/path/model.gguf --cache auto \
+  --output /absolute/path/model.astccm
+build-astc/bin/astc-vulkan-cache compiled-inspect \
+  --compiled-model /absolute/path/model.astccm \
+  [--extract-gguf /tmp/model.gguf]
+```
+
+The `ASTCM001` container stores the source GGUF byte-for-byte together with
+the validated manifest, ASTC payload and optional layout/scales/pair-map,
+provenance and catalog sections. Each section has a bounded length and a
+checksum; the embedded manifest is parsed again on read. It is therefore
+self-contained for transport while preserving GGUF metadata/tokenizer and
+native fallback tensors exactly.
+
+This is not yet a `llama-cli` model-loader format: the ordinary loader still
+opens GGUF and the ASTC provider remains an overlay. The next integration gate
+is a separate compiled-model storage adapter that exposes the embedded GGUF
+through the existing loader contract and resolves ASTC/native tensors by the
+catalog. No private `ggml_type` and no `ggml-vulkan` changes are required.
+
 ## Runtime use today
 
 The isolated scheduler adapter can resolve a matching cache and bind its

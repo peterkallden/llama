@@ -2,6 +2,7 @@
 #include "astc-vulkan-artifact-policy.h"
 #include "astc-vulkan-format.h"
 #include "astc-vulkan-compiled-catalog.h"
+#include "astc-vulkan-compiled-model.h"
 #include "astc-vulkan-provenance.h"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
 #include "astc-vulkan-model-cache.h"
@@ -158,6 +159,10 @@ void print_help(const char * executable) {
         "            (write a metadata-only compiled tensor catalog; runtime remains unchanged)\n"
         "  %s catalog-inspect --catalog model.astcc [--manifest manifest.astcv]\n"
         "            (read back the catalog; --manifest also checks record identity)\n"
+        "  %s compiled-pack --model model.gguf --cache path|auto --output model.astccm\n"
+        "            (pack GGUF and validated ASTC resources into one self-contained container)\n"
+        "  %s compiled-inspect --compiled-model model.astccm [--extract-gguf path]\n"
+        "            (validate a compiled model and optionally extract its embedded GGUF)\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
         "  %s rank --model model.gguf [--cache path|auto] [--policy quality|balanced|compact|speed|auto]\n"
@@ -220,7 +225,7 @@ void print_help(const char * executable) {
 #ifdef ASTC_VULKAN_D2_PRESCREEN_AVAILABLE
         executable,
 #endif
-        executable, executable, executable, executable,
+        executable, executable, executable, executable, executable, executable,
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
         executable, executable, executable, executable,
 #endif
@@ -1198,7 +1203,7 @@ int main(int argc, char ** argv) {
     std::string runtime_family = "unspecified";
     std::string usage_path, discovery_output, candidate_plan_output, quality_trace_map_path,
                 policy_name = "balanced", device_budget, host_budget, page_bytes;
-    std::string compiled_catalog_input, compiled_catalog_output;
+    std::string compiled_catalog_input, compiled_catalog_output, compiled_model_input, extract_gguf;
     std::string min_source_bytes, max_cache_bytes, max_tensors;
     std::string shortlist_count = "2", max_p90_loss, max_worst_loss, p90_weight;
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
@@ -1244,6 +1249,8 @@ int main(int argc, char ** argv) {
         else if (option == "--output") discovery_output = value;
         else if (option == "--catalog-output") compiled_catalog_output = value;
         else if (option == "--catalog") compiled_catalog_input = value;
+        else if (option == "--compiled-model") compiled_model_input = value;
+        else if (option == "--extract-gguf") extract_gguf = value;
         else if (option == "--candidate-plan") candidate_plan_output = value;
         else if (option == "--quality-trace-map") quality_trace_map_path = value;
         else if (option == "--policy") { policy_name = value; policy_explicit = true; }
@@ -1373,6 +1380,52 @@ int main(int argc, char ** argv) {
                         static_cast<unsigned long long>(entry.row_scale_size),
                         static_cast<unsigned long long>(entry.pair_map_offset),
                         static_cast<unsigned long long>(entry.pair_map_size));
+        }
+        return 0;
+    }
+    if (command == "compiled-pack" || command == "compile") {
+        if (model.empty() || cache.empty() || discovery_output.empty()) {
+            std::fprintf(stderr, "astc-cache compiled-pack requires --model, --cache and --output\n");
+            return 2;
+        }
+        if (!astc_vulkan_compiled_model_pack(model, cache, discovery_output, error)) {
+            std::fprintf(stderr, "astc-cache compiled-pack failed: %s\n", error.c_str());
+            return 1;
+        }
+        astc_vulkan_compiled_model compiled;
+        if (!astc_vulkan_compiled_model_read(discovery_output, compiled, error)) {
+            std::fprintf(stderr, "astc-cache compiled-pack verification failed: %s\n", error.c_str());
+            return 1;
+        }
+        std::printf("astc-cache compiled-pack output=%s gguf-bytes=%zu payload-bytes=%zu manifest-bytes=%zu\n",
+                    discovery_output.c_str(), compiled.gguf.size(), compiled.payload.size(),
+                    compiled.manifest.size());
+        return 0;
+    }
+    if (command == "compiled-inspect" || command == "compile-inspect") {
+        if (compiled_model_input.empty()) {
+            std::fprintf(stderr, "astc-cache compiled-inspect requires --compiled-model\n");
+            return 2;
+        }
+        astc_vulkan_compiled_model compiled;
+        if (!astc_vulkan_compiled_model_read(compiled_model_input, compiled, error)) {
+            std::fprintf(stderr, "astc-cache compiled-inspect failed: %s\n", error.c_str());
+            return 1;
+        }
+        std::printf("astc-cache compiled-inspect path=%s version=%u fingerprint=%s gguf-bytes=%zu "
+                    "manifest-bytes=%zu payload-bytes=%zu layout-bytes=%zu row-scales-bytes=%zu "
+                    "pair-map-bytes=%zu catalog-bytes=%zu\n",
+                    compiled_model_input.c_str(), compiled.version,
+                    compiled.source_model_fingerprint.c_str(), compiled.gguf.size(),
+                    compiled.manifest.size(), compiled.payload.size(), compiled.layout.size(),
+                    compiled.row_scales.size(), compiled.pair_map.size(), compiled.catalog.size());
+        if (!extract_gguf.empty() &&
+            !astc_vulkan_compiled_model_extract_gguf(compiled, extract_gguf, error)) {
+            std::fprintf(stderr, "astc-cache compiled-inspect extraction failed: %s\n", error.c_str());
+            return 1;
+        }
+        if (!extract_gguf.empty()) {
+            std::printf("astc-cache compiled-inspect extracted-gguf=%s\n", extract_gguf.c_str());
         }
         return 0;
     }
