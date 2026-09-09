@@ -241,6 +241,26 @@ target_include_directories(astc-vulkan-driver PUBLIC
 target_link_libraries(astc-vulkan-driver PUBLIC astc-vulkan-algorithms)
 target_compile_features(astc-vulkan-driver PUBLIC cxx_std_17)
 
+# Metadata-only first step toward a compiled/bootstrap model container. It
+# reuses the manifest contract and deliberately owns no Vulkan or ggml state.
+add_library(astc-vulkan-compiled-catalog STATIC
+    astc-vulkan-compiled-catalog.cpp)
+target_include_directories(astc-vulkan-compiled-catalog PUBLIC
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_link_libraries(astc-vulkan-compiled-catalog PUBLIC astc-vulkan-driver)
+target_compile_features(astc-vulkan-compiled-catalog PUBLIC cxx_std_17)
+
+add_executable(test-astc-vulkan-compiled-catalog
+    tests/test-astc-vulkan-compiled-catalog.cpp)
+target_link_libraries(test-astc-vulkan-compiled-catalog PRIVATE
+    astc-vulkan-compiled-catalog)
+target_compile_features(test-astc-vulkan-compiled-catalog PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-compiled-catalog
+        COMMAND test-astc-vulkan-compiled-catalog)
+    set_property(TEST test-astc-vulkan-compiled-catalog PROPERTY LABELS astc)
+endif()
+
 add_library(astc-vulkan-provenance STATIC
     astc-vulkan-provenance.cpp)
 target_include_directories(astc-vulkan-provenance PUBLIC
@@ -294,6 +314,7 @@ add_executable(astc-vulkan-cache-tool
     astc-vulkan-cache-tool.cpp)
 set_target_properties(astc-vulkan-cache-tool PROPERTIES OUTPUT_NAME astc-vulkan-cache)
 target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-cache)
+target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-compiled-catalog)
 target_include_directories(astc-vulkan-cache-tool PRIVATE
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(astc-vulkan-cache-tool PRIVATE cxx_std_17)

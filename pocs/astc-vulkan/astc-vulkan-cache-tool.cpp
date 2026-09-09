@@ -1,6 +1,7 @@
 #include "astc-vulkan-cache.h"
 #include "astc-vulkan-artifact-policy.h"
 #include "astc-vulkan-format.h"
+#include "astc-vulkan-compiled-catalog.h"
 #include "astc-vulkan-provenance.h"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
 #include "astc-vulkan-model-cache.h"
@@ -152,6 +153,8 @@ void print_help(const char * executable) {
 #endif
         "  %s inspect --model model.gguf [--cache path|auto]\n"
         "            [--tree 1]  (show source tensor names grouped with semantic paths)\n"
+        "  %s catalog --model model.gguf [--cache path|auto] --catalog-output model.astcc\n"
+        "            (write a metadata-only compiled tensor catalog; runtime remains unchanged)\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
         "  %s rank --model model.gguf [--cache path|auto] [--policy quality|balanced|compact|speed|auto]\n"
@@ -214,7 +217,7 @@ void print_help(const char * executable) {
 #ifdef ASTC_VULKAN_D2_PRESCREEN_AVAILABLE
         executable,
 #endif
-        executable, executable,
+        executable, executable, executable,
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
         executable, executable, executable, executable,
 #endif
@@ -1192,6 +1195,7 @@ int main(int argc, char ** argv) {
     std::string runtime_family = "unspecified";
     std::string usage_path, discovery_output, candidate_plan_output, quality_trace_map_path,
                 policy_name = "balanced", device_budget, host_budget, page_bytes;
+    std::string compiled_catalog_output;
     std::string min_source_bytes, max_cache_bytes, max_tensors;
     std::string shortlist_count = "2", max_p90_loss, max_worst_loss, p90_weight;
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
@@ -1235,6 +1239,7 @@ int main(int argc, char ** argv) {
         else if (option == "--family") runtime_family = value;
         else if (option == "--usage") usage_path = value;
         else if (option == "--output") discovery_output = value;
+        else if (option == "--catalog-output") compiled_catalog_output = value;
         else if (option == "--candidate-plan") candidate_plan_output = value;
         else if (option == "--quality-trace-map") quality_trace_map_path = value;
         else if (option == "--policy") { policy_name = value; policy_explicit = true; }
@@ -1299,6 +1304,33 @@ int main(int argc, char ** argv) {
                     source_model.c_str(), model.c_str(), binding.family.c_str(),
                     binding.schema_sha256.c_str());
         std::printf("astc-cache bind note=structural-only; run a runtime-specific replay gate before production scheduling\n");
+        return 0;
+    }
+    if (command == "catalog") {
+        if (model.empty() || compiled_catalog_output.empty()) {
+            std::fprintf(stderr, "astc-cache catalog requires --model, --cache and --catalog-output\n");
+            return 2;
+        }
+        astc_vulkan_cache_validation validation;
+        if (!astc_vulkan_cache_validate(model, cache, validation, error)) {
+            std::fprintf(stderr, "astc-cache catalog failed: %s\n", error.c_str());
+            return 1;
+        }
+        astc_vulkan_compiled_catalog catalog;
+        if (!astc_vulkan_compiled_catalog_from_manifest(validation.manifest, catalog, error) ||
+            !astc_vulkan_write_compiled_catalog(compiled_catalog_output, catalog, error)) {
+            std::fprintf(stderr, "astc-cache catalog failed: %s\n", error.c_str());
+            return 1;
+        }
+        std::printf("astc-cache catalog output=%s tensors=%zu model=%s\n",
+                    compiled_catalog_output.c_str(), catalog.tensors.size(),
+                    catalog.logical_model_id.c_str());
+        for (const auto & entry : catalog.tensors) {
+            std::printf("astc-cache catalog-entry tensor=%s role=%s path=%s class=%s artifact=%s\n",
+                        entry.logical_name.c_str(), entry.semantic_role.c_str(),
+                        entry.canonical_path.c_str(), entry.storage_class.c_str(),
+                        entry.artifact_id.c_str());
+        }
         return 0;
     }
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE

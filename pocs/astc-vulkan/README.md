@@ -880,6 +880,22 @@ share an atlas or page without losing their origin.  `inspect --tree 1` prints
 the source names together with these labels.  Artifact replay must consume the
 recorded payload bytes directly; it must not regenerate ASTC payloads.
 
+The first compiled/bootstrap catalog is deliberately metadata-only.  It can be
+generated from a validated sidecar without changing GGUF or the runtime ABI:
+
+```bash
+build-astc/bin/astc-vulkan-cache \
+  catalog --model /absolute/path/model.gguf --cache auto \
+  --catalog-output /absolute/path/model.astcc
+```
+
+`model.astcc` is an `ASTCC001` index containing the exact logical tensor name,
+derived role/path, storage class, artifact id and payload/metadata ranges.  It
+does not own or copy `payload.astcpack`, does not contain tokenizer/model
+weights, and is not loaded by llama yet.  The purpose of this first step is to
+give a stable source-name-aware contract for a future single-file/bootstrap
+container while keeping the existing sidecar and runtime path unchanged.
+
 ## Runtime use today
 
 The isolated scheduler adapter can resolve a matching cache and bind its
