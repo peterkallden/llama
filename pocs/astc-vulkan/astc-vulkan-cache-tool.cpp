@@ -143,7 +143,8 @@ void print_help(const char * executable) {
         "  %s profiles\n"
         "  %s build --model model.gguf --tensor name --trace activations.bin [--profile quality|balanced|compact|speed|auto]\n"
             "            [--footprint 4x4|5x5|6x6|6x5|8x5|10x5 ...] [--representation scalar|paired-d2] [--cache path|auto]\n"
-            "            [--backend hybrid|cpu] [--workers N] [--no-publish 1]\n"
+            "            [--backend hybrid|gpu-exact|cpu] [--workers N] [--no-publish 1]\n"
+            "            [--gpu-proposer-shader path] [--gpu-exact-shader path]\n"
 #ifdef ASTC_VULKAN_D2_PRESCREEN_AVAILABLE
         "  %s d2-prescreen --model model.gguf --tensor name --trace activations.bin\n"
             "            --footprint 6x5|8x5|10x5 --rows N --columns N\n"
@@ -585,6 +586,7 @@ bool build_d1_cache(const char * argv0, const std::string & model,
                     const std::string & tensor, const std::string & trace,
                     const std::string & footprint, const std::string & cache,
                     const std::string & backend, const std::string & shader,
+                    const std::string & exact_shader,
                     const std::string & preset, const std::string & artifact_dir,
                     const std::string & source_family, const std::string & max_rows,
                     const std::string & max_columns, const std::string & workers,
@@ -650,6 +652,14 @@ bool build_d1_cache(const char * argv0, const std::string & model,
     if (!workers.empty()) { generator_args.push_back("--candidate-threads"); generator_args.push_back(workers); }
     if (backend == "cpu") {
         generator_args.push_back("--backend"); generator_args.push_back("cpu");
+    } else if (backend == "gpu-exact") {
+        if (exact_shader.empty()) {
+            error = "--backend gpu-exact requires --gpu-exact-shader";
+            cleanup();
+            return false;
+        }
+        generator_args.push_back("--backend"); generator_args.push_back("gpu-exact");
+        generator_args.push_back("--gpu-exact-shader"); generator_args.push_back(exact_shader);
     } else {
         generator_args.push_back("--backend"); generator_args.push_back("hybrid");
         if (!shader.empty()) {
@@ -675,8 +685,8 @@ bool build_d1_cache(const char * argv0, const std::string & model,
     const std::filesystem::path manifest = output_dir / "manifest.astcv";
     const std::filesystem::path payload = output_dir / "payload.astcpack";
     const std::filesystem::path provenance = output_dir / "provenance.txt";
-    const std::string encoder_profile = backend == "cpu" || shader.empty() ?
-        "cpu-astcenc" : "gpu-proposer-cpu-finisher";
+    const std::string encoder_profile = backend == "gpu-exact" ? "gpu-exact-subset" :
+        (backend == "cpu" || shader.empty() ? "cpu-astcenc" : "gpu-proposer-cpu-finisher");
     const std::vector<std::string> pack_args{
         "--input", exported_astc.string(), "--metadata", exported_metadata.string(),
         "--manifest", manifest.string(), "--payload", payload.string(),
@@ -744,6 +754,10 @@ bool build_d2_cache(const char * argv0, const std::string & model,
     }
     if (find_profile("d2-" + footprint) == nullptr) {
         error = "paired-D2 build supports only 6x5, 8x5 and 10x5 footprints";
+        return false;
+    }
+    if (backend == "gpu-exact") {
+        error = "GPU exact cache export is currently D1-only; D2 continues to use the paired candidate selector";
         return false;
     }
     if (paired_semantic != "direct" && paired_semantic != "la") {
@@ -1047,6 +1061,7 @@ bool build_model_cache(const char * argv0,
                        const std::string & source_family,
                        const std::string & workers,
                        const std::string & shader,
+                       const std::string & exact_shader,
                        const std::string & row_pairing,
                        const std::string & row_transform,
                        const std::string & calibration_samples,
@@ -1094,6 +1109,10 @@ bool build_model_cache(const char * argv0,
             if (!shader.empty()) {
                 args.push_back("--gpu-proposer-shader");
                 args.push_back(shader);
+            }
+            if (!exact_shader.empty()) {
+                args.push_back("--gpu-exact-shader");
+                args.push_back(exact_shader);
             }
             if (job.representation == "paired-d2") {
                 args.push_back("--rows"); args.push_back(job.rows);
@@ -1152,7 +1171,8 @@ int main(int argc, char ** argv) {
     std::string model, source_model, manifest, payload, layout, row_scales, pair_map, provenance, cache = "auto", artifact_dir, profile_name;
     std::string user_profile_name;
     std::string fragment_dir, staging_root, tensor_list;
-    std::string tensor, trace, footprint, backend = "hybrid", shader, preset = "thorough", source_family = "fp16";
+    std::string tensor, trace, footprint, backend = "hybrid", shader, exact_shader,
+        preset = "thorough", source_family = "fp16";
     std::string runtime_family = "unspecified";
     std::string usage_path, discovery_output, candidate_plan_output, quality_trace_map_path,
                 policy_name = "balanced", device_budget, host_budget, page_bytes;
@@ -1192,6 +1212,7 @@ int main(int argc, char ** argv) {
         else if (option == "--footprint") { footprint = value; footprint_explicit = true; }
         else if (option == "--backend") backend = value;
         else if (option == "--gpu-proposer-shader") shader = value;
+        else if (option == "--gpu-exact-shader") exact_shader = value;
         else if (option == "--preset") preset = value;
         else if (option == "--source-family") source_family = value;
         else if (option == "--family") runtime_family = value;
@@ -1280,7 +1301,7 @@ int main(int argc, char ** argv) {
         astc_vulkan_cache_paths paths;
         const std::string build_source = source_model.empty() ? model : source_model;
         if (!build_model_cache(argv[0], build_source, fragment_dir, staging_root, cache,
-                               tensor_list, backend, preset, source_family, workers, shader,
+                               tensor_list, backend, preset, source_family, workers, shader, exact_shader,
                                row_pairing, row_transform,
                                calibration_samples, validation_samples,
                                paths, error)) {
@@ -1651,8 +1672,8 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "astc-cache build failed: --representation must be scalar or paired-d2\n");
             return 2;
         }
-        if (backend != "hybrid" && backend != "cpu") {
-            std::fprintf(stderr, "astc-cache build failed: --backend must be hybrid or cpu\n");
+        if (backend != "hybrid" && backend != "gpu-exact" && backend != "cpu") {
+            std::fprintf(stderr, "astc-cache build failed: --backend must be hybrid, gpu-exact or cpu\n");
             return 2;
         }
         if (preset != "thorough" && preset != "medium" && preset != "fast") {
@@ -1672,7 +1693,7 @@ int main(int argc, char ** argv) {
             backend, preset,
             paired_semantic, channel_weights, source_alpha, row_scale, row_pairing, row_transform, rows, columns,
             calibration_samples, validation_samples, workers, !no_publish, paths, error) : build_d1_cache(
-            argv[0], model, tensor, trace, footprint, cache, backend, shader, preset,
+            argv[0], model, tensor, trace, footprint, cache, backend, shader, exact_shader, preset,
             artifact_dir, source_family, max_rows, max_columns, workers, !no_publish, paths, error);
         if (!built) {
             std::fprintf(stderr, "astc-cache build failed: %s\n", error.c_str());

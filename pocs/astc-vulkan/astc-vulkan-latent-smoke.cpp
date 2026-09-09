@@ -11,6 +11,7 @@
 #endif
 #if defined(ASTC_VULKAN_GPU_ENCODER_BACKEND)
 #include "astc-gpu-encoder-dispatch.h"
+#include "astc-gpu-encoder-exact-dispatch.h"
 #include "astc-gpu-encoder-finisher.h"
 #endif
 #include "astc-vulkan-input.h"
@@ -71,9 +72,12 @@ std::string vector_hash(const std::vector<T> & values) {
 enum class encoder_search_mode { standard, neural };
 // Offline encode backend. Hybrid is deliberately only a proposer offload:
 // GPU proposal generation is followed by the exact CPU astcenc finisher.
-enum class encoder_backend { hybrid, cpu };
+// Exact is opt-in: it emits only the audited GPU mode subset and is therefore
+// useful as an additional candidate source, not an astcenc replacement.
+enum class encoder_backend { hybrid, exact, cpu };
 encoder_backend g_encoder_backend = encoder_backend::hybrid;
 std::string g_gpu_proposer_shader;
+std::string g_gpu_exact_shader;
 std::string g_gpu_proposer_footprint;
 std::string g_effective_backend = "cpu";
 bool g_backend_notice_printed = false;
@@ -1257,23 +1261,20 @@ bool format_to_gpu_footprint(const ggml_vk_astc_format_contract & format,
     return false;
 }
 
-// Hybrid physical full-image path. The GPU only produces one proposal per
-// source block; the existing CPU finisher remains authoritative for legal
-// ASTC packing and exact decode. This keeps the cache artifact contract
-// unchanged and makes an unavailable GPU path a safe CPU fallback.
-bool astc_roundtrip_hybrid(const std::vector<float> & source, uint32_t rows,
-                           uint32_t columns, const ggml_vk_astc_format_contract & format,
-                           astc_roundtrip_result & result, std::string & error) {
-    astc_vulkan_footprint footprint{};
-    if (!format_to_gpu_footprint(format, footprint)) {
-        error = "unsupported ASTC format for GPU proposer";
+bool build_gpu_source_request(const std::vector<float> & source, uint32_t rows,
+                              uint32_t columns, astc_vulkan_footprint footprint,
+                              astc_gpu_encode_mode mode, astc_gpu_encoder_request & request,
+                              std::string & error) {
+    const auto info = astc_vulkan_format(footprint);
+    if (info.block_width == 0 || info.block_height == 0 ||
+        source.size() != static_cast<size_t>(rows) * columns * 4u) {
+        error = "invalid GPU encoder source geometry";
         return false;
     }
-    const auto info = astc_vulkan_format(footprint);
     const uint32_t blocks_x = (columns + info.block_width - 1u) / info.block_width;
     const uint32_t blocks_y = (rows + info.block_height - 1u) / info.block_height;
-    astc_gpu_encoder_request request;
-    request.mode = astc_gpu_encode_mode::propose;
+    request = {};
+    request.mode = mode;
     request.footprint = footprint;
     request.max_blocks_per_batch = 256;
     request.blocks.reserve(static_cast<size_t>(blocks_x) * blocks_y);
@@ -1287,14 +1288,13 @@ bool astc_roundtrip_hybrid(const std::vector<float> & source, uint32_t rows,
                 for (uint32_t x = 0; x < info.block_width; ++x) {
                     const uint32_t row = by * info.block_height + y;
                     const uint32_t column = bx * info.block_width + x;
-                    const size_t source_index = (static_cast<size_t>(row) * columns + column) * 4u;
                     auto & destination = block.texels[static_cast<size_t>(y) * info.block_width + x].rgba;
                     for (uint32_t channel = 0; channel < 4; ++channel) {
-                        const float value = (row < rows && column < columns)
-                            ? source[source_index + channel]
+                        const float value = row < rows && column < columns
+                            ? source[(static_cast<size_t>(row) * columns + column) * 4u + channel]
                             : (channel == 3 ? 1.0f : 0.0f);
                         if (!std::isfinite(value)) {
-                            error = "non-finite source texel in GPU proposer input";
+                            error = "non-finite source texel in GPU encoder input";
                             return false;
                         }
                         destination[channel] = value;
@@ -1304,6 +1304,63 @@ bool astc_roundtrip_hybrid(const std::vector<float> & source, uint32_t rows,
             request.blocks.push_back(std::move(block));
         }
     }
+    return true;
+}
+
+bool assemble_gpu_finished_roundtrip(const std::vector<float> & source, uint32_t rows,
+                                     uint32_t columns, const ggml_vk_astc_format_contract & format,
+                                     const std::vector<astc_gpu_encoder_finished_block> & finished,
+                                     astc_roundtrip_result & result, std::string & error) {
+    const uint32_t blocks_x = (columns + format.block_width - 1u) / format.block_width;
+    result = {};
+    result.compressed_bytes = ggml_vk_astc_image_storage_bytes(format, columns, rows);
+    result.compressed.resize(result.compressed_bytes);
+    result.texels.assign(source.size(), 0.0f);
+    for (const auto & block : finished) {
+        const uint32_t block_index = block.source_block_id;
+        if (static_cast<size_t>(block_index + 1u) * 16u > result.compressed.size() ||
+            block.decoded_rgba.size() != static_cast<size_t>(format.block_width) * format.block_height * 4u) {
+            error = "GPU encoder returned malformed block data";
+            return false;
+        }
+        std::copy(block.payload.begin(), block.payload.end(),
+                  result.compressed.begin() + static_cast<size_t>(block_index) * 16u);
+        const uint32_t bx = block_index % blocks_x;
+        const uint32_t by = block_index / blocks_x;
+        for (uint32_t y = 0; y < format.block_height; ++y) {
+            const uint32_t row = by * format.block_height + y;
+            if (row >= rows) continue;
+            for (uint32_t x = 0; x < format.block_width; ++x) {
+                const uint32_t column = bx * format.block_width + x;
+                if (column >= columns) continue;
+                const size_t dst = (static_cast<size_t>(row) * columns + column) * 4u;
+                const size_t src = (static_cast<size_t>(y) * format.block_width + x) * 4u;
+                std::copy_n(block.decoded_rgba.data() + src, 4, result.texels.data() + dst);
+            }
+        }
+    }
+    result.block_count = static_cast<uint32_t>(finished.size());
+    error.clear();
+    return true;
+}
+
+// Hybrid physical full-image path. The GPU only produces one proposal per
+// source block; the existing CPU finisher remains authoritative for legal
+// ASTC packing and exact decode. This keeps the cache artifact contract
+// unchanged and makes an unavailable GPU path a safe CPU fallback.
+bool astc_roundtrip_hybrid(const std::vector<float> & source, uint32_t rows,
+                           uint32_t columns, const ggml_vk_astc_format_contract & format,
+                           astc_roundtrip_result & result, std::string & error) {
+    astc_vulkan_footprint footprint{};
+    if (!format_to_gpu_footprint(format, footprint)) {
+        error = "unsupported ASTC format for GPU proposer";
+        return false;
+    }
+    astc_gpu_encoder_request request;
+    if (!build_gpu_source_request(source, rows, columns, footprint,
+                                  astc_gpu_encode_mode::propose, request, error)) return false;
+    const auto info = astc_vulkan_format(footprint);
+    const uint32_t blocks_x = (columns + info.block_width - 1u) / info.block_width;
     std::vector<astc_gpu_encoder_proposal> proposals;
     if (!astc_gpu_encoder_propose_gpu_for_footprint_default(
             g_gpu_proposer_shader, footprint, request, proposals, error)) {
@@ -1358,6 +1415,46 @@ bool astc_roundtrip_hybrid(const std::vector<float> & source, uint32_t rows,
     error.clear();
     return true;
 }
+
+bool exact_subset_kind_for_d1(astc_vulkan_footprint footprint,
+                              astc_gpu_exact_subset_kind & kind) {
+    switch (footprint) {
+    case astc_vulkan_footprint::k4x4:
+        kind = astc_gpu_exact_subset_kind::d1_luminance_quant4_4x4;
+        return true;
+    case astc_vulkan_footprint::k5x5:
+        kind = astc_gpu_exact_subset_kind::d1_luminance_binary_5x5;
+        return true;
+    case astc_vulkan_footprint::k6x6:
+        kind = astc_gpu_exact_subset_kind::d1_luminance_binary_refined_6x6;
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Exact-subset mode intentionally exposes a small audited physical bank. The
+// CPU finisher decodes and validates GPU-produced payloads; it never encodes.
+bool astc_roundtrip_gpu_exact(const std::vector<float> & source, uint32_t rows,
+                              uint32_t columns, const ggml_vk_astc_format_contract & format,
+                              astc_roundtrip_result & result, std::string & error) {
+    astc_vulkan_footprint footprint{};
+    astc_gpu_exact_subset_kind kind{};
+    if (!format_to_gpu_footprint(format, footprint) ||
+        !exact_subset_kind_for_d1(footprint, kind)) {
+        error = "GPU exact subset supports D1 scalar 4x4, 5x5 and 6x6 only";
+        return false;
+    }
+    astc_gpu_encoder_request request;
+    if (!build_gpu_source_request(source, rows, columns, footprint,
+                                  astc_gpu_encode_mode::exact_subset, request, error)) return false;
+    request.exact_subset = kind;
+    std::vector<astc_gpu_exact_subset_block> payloads;
+    if (!astc_gpu_exact_subset_encode_gpu_default(g_gpu_exact_shader, request, payloads, error)) return false;
+    std::vector<astc_gpu_encoder_finished_block> finished;
+    if (!astc_gpu_exact_subset_finish_payloads(footprint, payloads, finished, error)) return false;
+    return assemble_gpu_finished_roundtrip(source, rows, columns, format, finished, result, error);
+}
 #endif
 
 bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t columns,
@@ -1370,6 +1467,27 @@ bool astc_roundtrip(const std::vector<float> & source, uint32_t rows, uint32_t c
     // Per-block candidate experiments and neural semantic ranking remain on
     // CPU. The explicit footprint gate prevents one fixed shader from being
     // accidentally reused for another ASTC geometry.
+    if (g_encoder_backend == encoder_backend::exact && ranking_decoder == nullptr &&
+        candidate_limit == 0 && candidate_capture == nullptr && !g_gpu_exact_shader.empty()) {
+        astc_roundtrip_result exact;
+        std::string exact_error;
+        if (astc_roundtrip_gpu_exact(source, rows, columns, format, exact, exact_error)) {
+            g_effective_backend = "gpu-exact";
+            if (!g_backend_notice_printed) {
+                std::printf("latent-encoder-backend requested=gpu-exact effective=gpu-exact footprint=%ux%u\n",
+                            format.block_width, format.block_height);
+                g_backend_notice_printed = true;
+            }
+            result = std::move(exact);
+            return true;
+        }
+        g_effective_backend = "cpu";
+        if (!g_backend_notice_printed) {
+            std::fprintf(stderr, "latent-encoder-backend gpu-exact unavailable (%s); falling back to cpu\n",
+                         exact_error.c_str());
+            g_backend_notice_printed = true;
+        }
+    }
     if (g_encoder_backend == encoder_backend::hybrid && ranking_decoder == nullptr &&
         candidate_limit == 0 && candidate_capture == nullptr &&
         !g_gpu_proposer_shader.empty() && !g_gpu_proposer_footprint.empty() &&
@@ -3719,14 +3837,17 @@ int main(int argc, char ** argv) {
         } else if ((option == "--backend" || option == "-backend") && index + 1 < argc) {
             const std::string backend = argv[++index];
             if (backend == "hybrid") g_encoder_backend = encoder_backend::hybrid;
+            else if (backend == "gpu-exact") g_encoder_backend = encoder_backend::exact;
             else if (backend == "cpu") g_encoder_backend = encoder_backend::cpu;
             else {
-                std::fprintf(stderr, "unsupported --backend value: %s (expected hybrid|cpu)\n",
+                std::fprintf(stderr, "unsupported --backend value: %s (expected hybrid|gpu-exact|cpu)\n",
                              backend.c_str());
                 return 2;
             }
         } else if (option == "--gpu-proposer-shader" && index + 1 < argc) {
             g_gpu_proposer_shader = argv[++index];
+        } else if (option == "--gpu-exact-shader" && index + 1 < argc) {
+            g_gpu_exact_shader = argv[++index];
         } else if (option == "--neural-candidate-limit" && index + 1 < argc) {
             neural_candidate_limit = std::max(1u, static_cast<uint32_t>(std::stoul(argv[++index])));
         } else if ((option == "--model" || option == "--tensor" || option == "--trace" ||
@@ -3742,7 +3863,7 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr,
                          "usage: %s [--search-levels] [--neural-rank] [--coordinate-select] [--coordinate-only] [--coordinate-fast-candidate] [--coordinate-diverse] [--coordinate-regularized] [--selector-compare] [--candidate-sweep] [--candidate-angular] [--stability-shards N] "
                          "[--footprint 4x4|5x5|6x6|6x5|8x5|8x6|10x6|8x8|10x8] [--d1-prescreen|--d1-prescreen-gpu shader.spv] [--preset thorough|medium|fast] [--model path --tensor name] "
-                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N|auto] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--backend hybrid|cpu] [--gpu-proposer-shader path] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
+                         "[--trace path] [--calibration-trace path] [--validation-trace path] [--decode-loop-log path] [--decode-loop-payloads path] [--decode-loop-reference path] [--validation-payload path --validation-reference path --validation-metadata path] [--neutral-payload path --neutral-reference path --neutral-metadata path] [--row-strip-log path] [--candidate-threads N|auto] [--row-strip-select] [--row-strip-chunked] [--row-strip-light-diagnostics] [--persistent-worker-contexts] [--encoder-search standard|neural] [--backend hybrid|gpu-exact|cpu] [--gpu-proposer-shader path] [--gpu-exact-shader path] [--neural-candidate-limit N] [--max-samples N] [--max-calibration-samples N] [--ldlq-damping R] [--ldlq-order forward|reverse|pivot] [--max-rows N] [--max-columns N] "
                          "[--export-astc path --export-reference path --export-weights path --export-metadata path --export-mode scalar|additive] [--export-only] [--residual-basis constant|row|column|plane] [--activation-alpha-sweep] [--decode-loop-alpha-sweep] [--scalar-anchored-gauge-sweep] [--weight-grid-gauge-sweep] [--few-level-weight-grid-gauge-sweep] [--pv-lite-grid-sweep] [--pv-lite-coarse-grid-sweep] [--pv-alternate] [--scalar-anchored-c-delta-sweep]\n",
                          argv[0]);
             return 2;
@@ -3850,6 +3971,13 @@ int main(int argc, char ** argv) {
     g_gpu_proposer_footprint = footprint;
     if (g_encoder_backend == encoder_backend::cpu) {
         std::printf("latent-encoder-backend requested=cpu effective=cpu\n");
+    } else if (g_encoder_backend == encoder_backend::exact) {
+        if (g_gpu_exact_shader.empty()) {
+            std::printf("latent-encoder-backend requested=gpu-exact effective=cpu reason=missing-exact-shader\n");
+        } else {
+            std::printf("latent-encoder-backend requested=gpu-exact encoder=gpu decoder=cpu footprint=%s\n",
+                        g_gpu_proposer_footprint.c_str());
+        }
     } else if (g_gpu_proposer_shader.empty() || g_gpu_proposer_footprint.empty()) {
         std::printf("latent-encoder-backend requested=hybrid effective=cpu reason=missing-shader-or-footprint\n");
     } else {

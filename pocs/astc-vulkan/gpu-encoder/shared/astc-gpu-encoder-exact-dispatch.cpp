@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -69,6 +70,24 @@ bool map_write(VkDevice device, VkDeviceMemory memory, const void * values, VkDe
     return true;
 }
 
+bool initialize_exact_results(const astc_gpu_encoder_request & request,
+                              std::vector<astc_gpu_exact_subset_block> & blocks) {
+    blocks.clear();
+    blocks.reserve(request.blocks.size());
+    for (const auto & source : request.blocks) {
+        for (const auto & texel : source.texels) {
+            for (const float value : texel.rgba) {
+                if (!std::isfinite(value) || value < 0.0f || value > 1.0f) return false;
+            }
+        }
+        astc_gpu_exact_subset_block block;
+        block.source_block_id = source.source_block_id;
+        block.mode = request.exact_subset;
+        blocks.push_back(block);
+    }
+    return true;
+}
+
 } // namespace
 
 bool astc_gpu_exact_subset_encode_gpu_default(
@@ -89,8 +108,7 @@ bool astc_gpu_exact_subset_encode_gpu_default(
         error = "GPU exact subset requires valid source batches";
         return false;
     }
-    std::vector<astc_gpu_exact_subset_block> cpu_check;
-    if (!astc_gpu_exact_subset_encode_cpu(request, cpu_check)) {
+    if (!initialize_exact_results(request, blocks)) {
         error = "GPU exact subset requires finite UNORM source texels";
         return false;
     }
@@ -255,7 +273,6 @@ bool astc_gpu_exact_subset_encode_gpu_default(
         std::memcpy(raw.data() + size_t(batch.first_block) * 16u, mapped, batch.block_count * 16u);
         vkUnmapMemory(device, payload_memory);
     }
-    blocks = std::move(cpu_check);
     for (size_t index = 0; index < blocks.size(); ++index) {
         std::memcpy(blocks[index].payload.data(), raw.data() + index * 16u, 16u);
     }

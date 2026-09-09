@@ -191,12 +191,29 @@ cmake --build build-astc-neural-rank --target astc-vulkan-gpu-exact-subset-devic
 ctest --test-dir build-astc-neural-rank -R astc-vulkan-gpu-exact-subset-device-smoke --output-on-failure
 ```
 
-The latent generator accepts `--backend hybrid|cpu` (the default is
-`hybrid`) and `--gpu-proposer-shader path`. Hybrid means GPU proposal
-generation followed by the exact CPU `astcenc` finisher; `--backend cpu`
-forces the reference path. A shader and an explicit matching `--footprint` are
-required before hybrid is enabled. Missing Vulkan support, an unsupported
-shape, or a proposer failure falls back to CPU with an informational message.
+The latent generator accepts `--backend hybrid|gpu-exact|cpu` (the default is
+`hybrid`). Hybrid means GPU proposal generation followed by the exact CPU
+`astcenc` finisher; `--backend gpu-exact --gpu-exact-shader path` instead
+emits the audited D1 subset directly on GPU for 4x4, 5x5, or 6x6. The exact
+backend still uses CPU only to validate and decode the already-produced
+payloads; it never calls `astcenc_compress_image()`. `--backend cpu` forces
+the reference path. A shader and an explicit matching `--footprint` are
+required before a GPU backend is enabled. Missing Vulkan support, an
+unsupported shape, or a GPU failure falls back to CPU with an informational
+message.
+
+The cache tool forwards the same explicit D1 backend choice:
+
+```bash
+astc-vulkan-cache build ... --backend gpu-exact \
+  --gpu-exact-shader path/to/astc-gpu-exact-d1-luminance-refined-6x6.comp.spv
+```
+
+`gpu-exact` is intentionally not accepted for paired D2 cache exports yet:
+D2 must first merge its GPU-generated L+A payload bank into the existing
+paired candidate selector, where pair maps, layout metadata, and validation
+selection are preserved. This prevents a narrow GPU control mode from being
+mistaken for a replacement of the D2 quality path.
 The D2 frontend now has its own representation-specific hybrid seam:
 `direct-neutral`, `direct-steered`, and D2-LA candidates are finished by the
 same CPU oracle and ranked only after exact paired decode. This remains an
