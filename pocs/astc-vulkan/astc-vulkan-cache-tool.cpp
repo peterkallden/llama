@@ -1484,8 +1484,10 @@ int main(int argc, char ** argv) {
                         quality_trace_map_path.empty() ? "none" : "mapped");
         }
         for (const auto & entry : entries) {
-            std::printf("astc-cache discover-entry tensor=%s selected=%s priority=%.6g source-bytes=%llu astc-bytes=%llu quality-probe=required\n",
-                        entry.tensor_name.c_str(), entry.selected ? "true" : "false",
+            std::printf("astc-cache discover-entry tensor=%s role=%s path=%s selected=%s priority=%.6g source-bytes=%llu astc-bytes=%llu quality-probe=required\n",
+                        entry.tensor_name.c_str(), astc_vulkan_tensor_semantic_role(entry.tensor_name).c_str(),
+                        astc_vulkan_tensor_canonical_path(entry.tensor_name).c_str(),
+                        entry.selected ? "true" : "false",
                         entry.priority_score,
                         static_cast<unsigned long long>(entry.source_bytes),
                         static_cast<unsigned long long>(entry.estimated_astc_bytes +
@@ -1569,10 +1571,12 @@ int main(int argc, char ** argv) {
             }
             for (size_t index = 0; index < shortlist.size(); ++index) {
                 const auto & entry = shortlist[index];
-                std::printf("astc-cache rank-entry tensor=%s rank=%zu artifact=%s bpw=%.6g "
+                std::printf("astc-cache rank-entry tensor=%s role=%s path=%s rank=%zu artifact=%s bpw=%.6g "
                             "median-loss=%.6g p90-loss=%.6g worst-loss=%.6g top1-worst=%.6g "
                             "variant=%u normalization=%u\n",
-                            name.c_str(), index + 1, entry.artifact_id.c_str(), entry.rate_bpw,
+                            name.c_str(), astc_vulkan_tensor_semantic_role(name).c_str(),
+                            astc_vulkan_tensor_canonical_path(name).c_str(), index + 1,
+                            entry.artifact_id.c_str(), entry.rate_bpw,
                             astc_vulkan_artifact_median_loss_delta(entry.evidence),
                             astc_vulkan_artifact_p90_loss_delta(entry.evidence),
                             astc_vulkan_artifact_worst_loss_delta(entry.evidence),
@@ -1663,8 +1667,11 @@ int main(int argc, char ** argv) {
                     static_cast<unsigned long long>(planned.residency.host_bytes),
                     planned.residency.requires_streaming ? "true" : "false");
         for (const auto & entry : planned.entries) {
-            std::printf("astc-cache plan-entry tensor=%s artifact=%s fallback=%s usage=%s heat=%.6g benefit=%.6g "
-                        "time-saved-ns=%.6g\n", entry.tensor_name.c_str(), entry.artifact_id.c_str(),
+            std::printf("astc-cache plan-entry tensor=%s role=%s path=%s artifact=%s fallback=%s usage=%s heat=%.6g benefit=%.6g "
+                        "time-saved-ns=%.6g\n", entry.tensor_name.c_str(),
+                        astc_vulkan_tensor_semantic_role(entry.tensor_name).c_str(),
+                        astc_vulkan_tensor_canonical_path(entry.tensor_name).c_str(),
+                        entry.artifact_id.c_str(),
                         entry.use_native_fallback ? "true" : "false",
                         entry.usage_available ? "true" : "false", entry.heat_score,
                         entry.benefit_score, entry.expected_gpu_time_saved_ns);
