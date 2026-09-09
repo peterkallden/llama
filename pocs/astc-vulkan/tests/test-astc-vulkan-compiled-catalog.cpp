@@ -59,6 +59,10 @@ int main() {
     assert(record.pair_map_size == 10);
     assert(catalog.tensors[1].storage_class == "astc.d1.la.6x6");
     assert(catalog.tensors[1].storage_kind == astc_vulkan_compiled_storage_kind::astc_d1);
+    assert(astc_vulkan_compiled_catalog_matches_manifest(catalog, manifest, error));
+    astc_vulkan_manifest changed = manifest;
+    changed.artifacts[0].id += ".stale";
+    assert(!astc_vulkan_compiled_catalog_matches_manifest(catalog, changed, error));
 
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() / "astc-vulkan-compiled-catalog-test.astcc";

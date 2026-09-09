@@ -155,8 +155,8 @@ void print_help(const char * executable) {
         "            [--tree 1]  (show source tensor names grouped with semantic paths)\n"
         "  %s catalog --model model.gguf [--cache path|auto] --catalog-output model.astcc\n"
         "            (write a metadata-only compiled tensor catalog; runtime remains unchanged)\n"
-        "  %s catalog-inspect --catalog model.astcc\n"
-        "            (read back the metadata-only catalog without loading GGUF or payloads)\n"
+        "  %s catalog-inspect --catalog model.astcc [--manifest manifest.astcv]\n"
+        "            (read back the catalog; --manifest also checks record identity)\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
         "  %s rank --model model.gguf [--cache path|auto] [--policy quality|balanced|compact|speed|auto]\n"
@@ -1345,6 +1345,15 @@ int main(int argc, char ** argv) {
         if (!astc_vulkan_read_compiled_catalog(compiled_catalog_input, catalog, error)) {
             std::fprintf(stderr, "astc-cache catalog-inspect failed: %s\n", error.c_str());
             return 1;
+        }
+        if (!manifest.empty()) {
+            astc_vulkan_manifest source_manifest;
+            if (!astc_vulkan_read_manifest(manifest, source_manifest, error) ||
+                !astc_vulkan_compiled_catalog_matches_manifest(catalog, source_manifest, error)) {
+                std::fprintf(stderr, "astc-cache catalog-inspect failed: %s\n", error.c_str());
+                return 1;
+            }
+            std::printf("astc-cache catalog-manifest-match=true manifest=%s\n", manifest.c_str());
         }
         std::printf("astc-cache catalog-inspect path=%s tensors=%zu model=%s source=%s\n",
                     compiled_catalog_input.c_str(), catalog.tensors.size(),

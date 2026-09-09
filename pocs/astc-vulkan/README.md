@@ -901,12 +901,15 @@ packaged:
 
 ```bash
 build-astc/bin/astc-vulkan-cache \
-  catalog-inspect --catalog /absolute/path/model.astcc
+  catalog-inspect --catalog /absolute/path/model.astcc \
+  [--manifest /absolute/path/manifest.astcv]
 ```
 
 This verifies the `ASTCC001` header and record ranges, but intentionally does
-not open the GGUF or payload blobs.  Cache/payload integrity remains the job of
-the normal `verify` command.
+not open the GGUF or payload blobs.  When `--manifest` is supplied it also
+checks that every catalog record still names and addresses the same manifest
+record.  Cache/payload integrity remains the job of the normal `verify`
+command.
 
 ## Runtime use today
 

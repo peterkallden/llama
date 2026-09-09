@@ -60,6 +60,14 @@ bool astc_vulkan_validate_compiled_catalog(
     const astc_vulkan_compiled_catalog & catalog,
     std::string & error);
 
+// Verify that a catalog describes exactly the records in a manifest. This is
+// intentionally a metadata-only check: payload SHA-256 and blob integrity
+// remain owned by astc_vulkan_cache_validate().
+bool astc_vulkan_compiled_catalog_matches_manifest(
+    const astc_vulkan_compiled_catalog & catalog,
+    const astc_vulkan_manifest & manifest,
+    std::string & error);
+
 bool astc_vulkan_write_compiled_catalog(
     const std::string & path,
     const astc_vulkan_compiled_catalog & catalog,

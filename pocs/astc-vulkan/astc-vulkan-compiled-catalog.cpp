@@ -169,6 +169,47 @@ bool astc_vulkan_validate_compiled_catalog(
     return true;
 }
 
+bool astc_vulkan_compiled_catalog_matches_manifest(
+    const astc_vulkan_compiled_catalog & catalog,
+    const astc_vulkan_manifest & manifest,
+    std::string & error) {
+    astc_vulkan_compiled_catalog expected;
+    if (!astc_vulkan_compiled_catalog_from_manifest(manifest, expected, error)) return false;
+    if (catalog.version != expected.version ||
+        catalog.logical_model_id != expected.logical_model_id ||
+        catalog.source_model_fingerprint != expected.source_model_fingerprint ||
+        catalog.tensors.size() != expected.tensors.size()) {
+        error = "compiled ASTC catalog does not match manifest header or record count";
+        return false;
+    }
+    for (size_t index = 0; index < expected.tensors.size(); ++index) {
+        const auto & actual = catalog.tensors[index];
+        const auto & want = expected.tensors[index];
+        if (actual.logical_name != want.logical_name ||
+            actual.semantic_role != want.semantic_role ||
+            actual.canonical_path != want.canonical_path ||
+            actual.storage_class != want.storage_class ||
+            actual.artifact_id != want.artifact_id ||
+            actual.native_type != want.native_type ||
+            actual.storage_kind != want.storage_kind ||
+            actual.width != want.width || actual.height != want.height ||
+            actual.payload_offset != want.payload_offset ||
+            actual.payload_size != want.payload_size ||
+            actual.layout_offset != want.layout_offset ||
+            actual.layout_size != want.layout_size ||
+            actual.row_scale_offset != want.row_scale_offset ||
+            actual.row_scale_size != want.row_scale_size ||
+            actual.pair_map_offset != want.pair_map_offset ||
+            actual.pair_map_size != want.pair_map_size) {
+            error = "compiled ASTC catalog record does not match manifest record " +
+                std::to_string(index);
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
 bool astc_vulkan_write_compiled_catalog(
     const std::string & path,
     const astc_vulkan_compiled_catalog & catalog,
