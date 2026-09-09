@@ -7,6 +7,7 @@
 
 #include "astc-vulkan-artifact.h"
 #include "astc-vulkan-format.h"
+#include "astc-vulkan-tensor-catalog.h"
 
 // The representation is an offline encoding choice. Runtime code must treat
 // the payload as ordinary standard ASTC and use the recorded affine decode.
@@ -87,11 +88,6 @@ struct astc_vulkan_manifest {
     std::vector<astc_vulkan_tensor_record> tensors;
     std::vector<astc_vulkan_artifact_record> artifacts;
 };
-
-// Stable, source-name-derived labels for cache inspection and planning.
-// They intentionally do not alter the exact GGUF tensor identity in `name`.
-std::string astc_vulkan_tensor_semantic_role(const std::string & name);
-std::string astc_vulkan_tensor_canonical_path(const std::string & name);
 
 // Plain data shared by manifest loading, CPU reference code, and the shader
 // push-constant contract. Keep the field order stable and 16-byte aligned.
