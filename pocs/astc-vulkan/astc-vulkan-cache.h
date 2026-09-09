@@ -34,6 +34,10 @@ struct astc_vulkan_cache_paths {
     std::string layout_sha256;
     std::string row_scales_sha256;
     std::string pair_map_sha256;
+    // Optional metadata-only compiled catalog. New caches publish both the
+    // catalog and its hash; older caches remain valid without either file.
+    std::string catalog;
+    std::string catalog_sha256;
     std::string compatible_bases;
 };
 

@@ -37,6 +37,7 @@ void print_paths(const astc_vulkan_cache_paths & paths) {
     std::printf("astc-cache manifest=%s\n", paths.manifest.c_str());
     std::printf("astc-cache payload=%s\n", paths.payload.c_str());
     if (!paths.row_scales.empty()) std::printf("astc-cache row-scales=%s\n", paths.row_scales.c_str());
+    if (!paths.catalog.empty()) std::printf("astc-cache catalog=%s\n", paths.catalog.c_str());
 }
 
 struct profile {

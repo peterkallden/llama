@@ -16,28 +16,65 @@ constexpr uint32_t kVersion = 1;
 constexpr uint32_t kMaxStringBytes = 1u << 20;
 constexpr uint32_t kMaxTensorRecords = 1u << 20;
 
-template<typename T>
-bool write_scalar(std::ofstream & file, T value) {
-    file.write(reinterpret_cast<const char *>(&value), sizeof(value));
+// ASTCC001 has a fixed little-endian wire representation. Do not serialize
+// host structs directly: catalogs are cache artifacts and must be portable
+// across CPU architectures and reproducible byte-for-byte.
+bool write_u8(std::ofstream & file, uint8_t value) {
+    file.put(static_cast<char>(value));
     return file.good();
 }
 
-template<typename T>
-bool read_scalar(std::ifstream & file, T & value) {
-    file.read(reinterpret_cast<char *>(&value), sizeof(value));
+bool write_u32(std::ofstream & file, uint32_t value) {
+    for (unsigned shift = 0; shift < 32; shift += 8) {
+        file.put(static_cast<char>((value >> shift) & 0xffu));
+    }
     return file.good();
+}
+
+bool write_u64(std::ofstream & file, uint64_t value) {
+    for (unsigned shift = 0; shift < 64; shift += 8) {
+        file.put(static_cast<char>((value >> shift) & 0xffu));
+    }
+    return file.good();
+}
+
+bool read_u8(std::ifstream & file, uint8_t & value) {
+    char byte = 0;
+    if (!file.get(byte)) return false;
+    value = static_cast<uint8_t>(static_cast<unsigned char>(byte));
+    return true;
+}
+
+bool read_u32(std::ifstream & file, uint32_t & value) {
+    value = 0;
+    for (unsigned shift = 0; shift < 32; shift += 8) {
+        uint8_t byte = 0;
+        if (!read_u8(file, byte)) return false;
+        value |= static_cast<uint32_t>(byte) << shift;
+    }
+    return true;
+}
+
+bool read_u64(std::ifstream & file, uint64_t & value) {
+    value = 0;
+    for (unsigned shift = 0; shift < 64; shift += 8) {
+        uint8_t byte = 0;
+        if (!read_u8(file, byte)) return false;
+        value |= static_cast<uint64_t>(byte) << shift;
+    }
+    return true;
 }
 
 bool write_string(std::ofstream & file, const std::string & value) {
     if (value.size() > kMaxStringBytes) return false;
     const uint32_t size = static_cast<uint32_t>(value.size());
-    return write_scalar(file, size) &&
+    return write_u32(file, size) &&
         (size == 0 || (file.write(value.data(), size), file.good()));
 }
 
 bool read_string(std::ifstream & file, std::string & value) {
     uint32_t size = 0;
-    if (!read_scalar(file, size) || size > kMaxStringBytes) return false;
+    if (!read_u32(file, size) || size > kMaxStringBytes) return false;
     value.resize(size);
     return size == 0 || (file.read(value.data(), size), file.good());
 }
@@ -146,7 +183,8 @@ bool astc_vulkan_validate_compiled_catalog(
             tensor.payload_size > std::numeric_limits<uint64_t>::max() - tensor.payload_offset ||
             tensor.layout_size > std::numeric_limits<uint64_t>::max() - tensor.layout_offset ||
             tensor.row_scale_size > std::numeric_limits<uint64_t>::max() - tensor.row_scale_offset ||
-            tensor.pair_map_size > std::numeric_limits<uint64_t>::max() - tensor.pair_map_offset) {
+            tensor.pair_map_size > std::numeric_limits<uint64_t>::max() - tensor.pair_map_offset ||
+            tensor.artifact_id.empty()) {
             error = "invalid compiled ASTC catalog tensor record";
             return false;
         }
@@ -218,11 +256,11 @@ bool astc_vulkan_write_compiled_catalog(
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) { error = "cannot open compiled ASTC catalog for writing"; return false; }
     file.write(kMagic.data(), kMagic.size());
-    if (!file.good() || !write_scalar(file, catalog.version) ||
+    if (!file.good() || !write_u32(file, catalog.version) ||
         !write_string(file, catalog.logical_model_id) ||
         !write_string(file, catalog.source_model_fingerprint) ||
         !write_string(file, catalog.tokenizer_fingerprint) ||
-        !write_scalar(file, static_cast<uint32_t>(catalog.tensors.size()))) {
+        !write_u32(file, static_cast<uint32_t>(catalog.tensors.size()))) {
         error = "cannot write compiled ASTC catalog header";
         return false;
     }
@@ -233,12 +271,12 @@ bool astc_vulkan_write_compiled_catalog(
             !write_string(file, tensor.storage_class) ||
             !write_string(file, tensor.artifact_id) ||
             !write_string(file, tensor.native_type) ||
-            !write_scalar(file, static_cast<uint8_t>(tensor.storage_kind)) ||
-            !write_scalar(file, tensor.width) || !write_scalar(file, tensor.height) ||
-            !write_scalar(file, tensor.payload_offset) || !write_scalar(file, tensor.payload_size) ||
-            !write_scalar(file, tensor.layout_offset) || !write_scalar(file, tensor.layout_size) ||
-            !write_scalar(file, tensor.row_scale_offset) || !write_scalar(file, tensor.row_scale_size) ||
-            !write_scalar(file, tensor.pair_map_offset) || !write_scalar(file, tensor.pair_map_size)) {
+            !write_u8(file, static_cast<uint8_t>(tensor.storage_kind)) ||
+            !write_u32(file, tensor.width) || !write_u32(file, tensor.height) ||
+            !write_u64(file, tensor.payload_offset) || !write_u64(file, tensor.payload_size) ||
+            !write_u64(file, tensor.layout_offset) || !write_u64(file, tensor.layout_size) ||
+            !write_u64(file, tensor.row_scale_offset) || !write_u64(file, tensor.row_scale_size) ||
+            !write_u64(file, tensor.pair_map_offset) || !write_u64(file, tensor.pair_map_size)) {
             error = "cannot write compiled ASTC catalog tensor record";
             return false;
         }
@@ -256,11 +294,11 @@ bool astc_vulkan_read_compiled_catalog(
     std::array<char, 8> magic{};
     uint32_t count = 0;
     if (!file.read(magic.data(), magic.size()) || magic != kMagic ||
-        !read_scalar(file, catalog.version) ||
+        !read_u32(file, catalog.version) ||
         !read_string(file, catalog.logical_model_id) ||
         !read_string(file, catalog.source_model_fingerprint) ||
         !read_string(file, catalog.tokenizer_fingerprint) ||
-        !read_scalar(file, count) || count > kMaxTensorRecords) {
+        !read_u32(file, count) || count > kMaxTensorRecords) {
         error = "invalid compiled ASTC catalog header";
         return false;
     }
@@ -275,17 +313,21 @@ bool astc_vulkan_read_compiled_catalog(
             !read_string(file, tensor.storage_class) ||
             !read_string(file, tensor.artifact_id) ||
             !read_string(file, tensor.native_type) ||
-            !read_scalar(file, kind) || !read_scalar(file, tensor.width) ||
-            !read_scalar(file, tensor.height) ||
-            !read_scalar(file, tensor.payload_offset) || !read_scalar(file, tensor.payload_size) ||
-            !read_scalar(file, tensor.layout_offset) || !read_scalar(file, tensor.layout_size) ||
-            !read_scalar(file, tensor.row_scale_offset) || !read_scalar(file, tensor.row_scale_size) ||
-            !read_scalar(file, tensor.pair_map_offset) || !read_scalar(file, tensor.pair_map_size)) {
+            !read_u8(file, kind) || !read_u32(file, tensor.width) ||
+            !read_u32(file, tensor.height) ||
+            !read_u64(file, tensor.payload_offset) || !read_u64(file, tensor.payload_size) ||
+            !read_u64(file, tensor.layout_offset) || !read_u64(file, tensor.layout_size) ||
+            !read_u64(file, tensor.row_scale_offset) || !read_u64(file, tensor.row_scale_size) ||
+            !read_u64(file, tensor.pair_map_offset) || !read_u64(file, tensor.pair_map_size)) {
             error = "truncated compiled ASTC catalog tensor record";
             return false;
         }
         tensor.storage_kind = static_cast<astc_vulkan_compiled_storage_kind>(kind);
         catalog.tensors.push_back(std::move(tensor));
+    }
+    if (file.peek() != std::ifstream::traits_type::eof()) {
+        error = "compiled ASTC catalog has trailing bytes";
+        return false;
     }
     return astc_vulkan_validate_compiled_catalog(catalog, error);
 }

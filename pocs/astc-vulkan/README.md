@@ -851,6 +851,7 @@ For a GGUF named `model.gguf`, the automatic cache root is conceptually:
 model.gguf.astc-vulkan/
   manifest.astcv       binary KASTCVM1 v7/v8 tensor contract
   catalog.astcc        optional ASTCC001 source-aware tensor index
+  catalog.sha256       checksum for catalog.astcc when present
   payload.astcpack     concatenated standard 16-byte ASTC blocks
   layout-map.bin       D2 only: direct RG/B versus R/GB map
   provenance.txt       optional encoder/objective/trace provenance
@@ -916,6 +917,13 @@ The reusable `astc-vulkan-catalog-loader` performs the complete metadata
 bootstrap check for a cache: normal cache validation first, then catalog read,
 then exact manifest matching.  It returns only metadata; page ownership,
 payload reads and Vulkan resource creation remain in their existing owners.
+
+Newly created caches publish `catalog.astcc` and `catalog.sha256` atomically.
+Older caches may omit both files and remain valid for the ordinary sidecar
+runtime; a compiled-catalog consumer fails closed when its requested catalog is
+missing or stale.  The manifest, payload and their checksums remain the single
+source of truth for runtime storage and integrity.  The catalog is never used
+to select policy, redirect a tensor, or replace payload validation.
 
 ## Runtime use today
 

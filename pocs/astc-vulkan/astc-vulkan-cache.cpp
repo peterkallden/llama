@@ -2,6 +2,7 @@
 
 #include "astc-vulkan-hash.h"
 #include "astc-vulkan-provenance.h"
+#include "astc-vulkan-compiled-catalog.h"
 
 #include "gguf.h"
 
@@ -29,6 +30,8 @@ constexpr const char * kPayloadHashFile = "payload.sha256";
 constexpr const char * kLayoutHashFile = "layout-map.sha256";
 constexpr const char * kRowScalesHashFile = "row-scales.sha256";
 constexpr const char * kPairMapHashFile = "pair-map.sha256";
+constexpr const char * kCatalogFile = "catalog.astcc";
+constexpr const char * kCatalogHashFile = "catalog.sha256";
 constexpr const char * kCompatibleBasesDirectory = "compatible-bases";
 constexpr const char * kRuntimeBaseExtension = ".astcbase";
 
@@ -387,6 +390,8 @@ bool astc_vulkan_cache_resolve(const std::string & model_path,
     paths.layout_sha256 = (root / kLayoutHashFile).string();
     paths.row_scales_sha256 = (root / kRowScalesHashFile).string();
     paths.pair_map_sha256 = (root / kPairMapHashFile).string();
+    paths.catalog = (root / kCatalogFile).string();
+    paths.catalog_sha256 = (root / kCatalogHashFile).string();
     paths.compatible_bases = (root / kCompatibleBasesDirectory).string();
     error.clear();
     return true;
@@ -449,6 +454,13 @@ bool astc_vulkan_cache_validate(const std::string & model_path,
             if (error.empty()) error = "cannot determine ASTC cache pair-map size";
             return false;
         }
+    }
+    // The compiled catalog is optional for backward compatibility and is
+    // metadata only. If present, protect it with its own checksum, while the
+    // manifest and payload remain the authoritative cache contract.
+    if (fs::is_regular_file(result.paths.catalog, ec)) {
+        if (!verify_hash(result.paths.catalog, result.paths.catalog_sha256,
+                         "compiled catalog", error)) return false;
     }
     if (payload_size == 0 || (result.has_paired_d2 && layout_size == 0) ||
         (result.has_row_scales && row_scale_size == 0) || (result.has_pair_map && pair_map_size == 0) ||
@@ -673,6 +685,19 @@ bool astc_vulkan_cache_create_with_metadata(const std::string & model_path,
         (scaled && !write_hash(staging.row_scales_sha256, row_scale_hash)) ||
         (paired_rows && !write_hash(staging.pair_map_sha256, pair_map_hash))) {
         return fail(error.empty() ? "cannot write ASTC cache staging files" : error);
+    }
+    // Publish a deterministic, metadata-only catalog alongside every newly
+    // created cache. It is derived from the already validated manifest and
+    // never replaces manifest/payload validation as the source of truth.
+    astc_vulkan_compiled_catalog compiled_catalog;
+    if (!astc_vulkan_compiled_catalog_from_manifest(manifest, compiled_catalog, error) ||
+        !astc_vulkan_write_compiled_catalog(staging.catalog, compiled_catalog, error)) {
+        return fail(error.empty() ? "cannot write compiled ASTC catalog" : error);
+    }
+    std::string catalog_hash;
+    if (!astc_vulkan_sha256_file_hex(staging.catalog, catalog_hash, error) ||
+        !write_hash(staging.catalog_sha256, catalog_hash)) {
+        return fail(error.empty() ? "cannot write compiled ASTC catalog checksum" : error);
     }
     astc_vulkan_cache_validation validation;
     if (!astc_vulkan_cache_validate(model_path, partial.string(), validation, error)) return fail(error);

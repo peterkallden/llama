@@ -53,6 +53,8 @@ int main() {
     const fs::path cache_root = root / "cache";
     REQUIRE(astc_vulkan_cache_create(model.string(), manifest.string(), payload.string(), {}, {},
                                      cache_root.string(), paths, error));
+    REQUIRE(fs::is_regular_file(paths.catalog));
+    REQUIRE(fs::is_regular_file(paths.catalog_sha256));
     astc_vulkan_compiled_catalog catalog;
     REQUIRE(astc_vulkan_compiled_catalog_from_manifest(source, catalog, error));
     const fs::path catalog_path = fs::path(paths.root) / "catalog.astcc";

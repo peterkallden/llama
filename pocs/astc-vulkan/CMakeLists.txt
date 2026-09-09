@@ -284,7 +284,7 @@ add_library(astc-vulkan-cache STATIC
 target_include_directories(astc-vulkan-cache PUBLIC
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_link_libraries(astc-vulkan-cache PUBLIC
-    astc-vulkan-driver astc-vulkan-provenance ggml-base)
+    astc-vulkan-driver astc-vulkan-provenance astc-vulkan-compiled-catalog ggml-base)
 target_compile_features(astc-vulkan-cache PUBLIC cxx_std_17)
 
 add_library(astc-vulkan-catalog-loader STATIC
