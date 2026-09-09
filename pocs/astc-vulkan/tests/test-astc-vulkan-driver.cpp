@@ -1,5 +1,6 @@
 #include "astc-vulkan-driver.h"
 #include "astc-vulkan-paired-layout.h"
+#include "astc-vulkan-tensor-catalog.h"
 
 #include <cassert>
 #include <array>
@@ -76,6 +77,19 @@ int main() {
     assert(!astc_vulkan_validate_payload(actual.tensors[0], bad_payload.data(), bad_payload.size(), error));
     assert(astc_vulkan_find_tensor(actual, "blk.0.attn_q.weight") != nullptr);
     assert(astc_vulkan_find_tensor(actual, "missing") == nullptr);
+
+    const auto down_cap = astc_vulkan_tensor_role_capability_for_name("blk.0.ffn_down.weight");
+    assert(down_cap.matrix_candidate && down_cap.native_binding_ready && down_cap.source_builder_ready);
+    for (const char * name : {
+            "blk.0.ffn_up.weight", "blk.0.ffn_gate.weight",
+            "blk.0.attn_q.weight", "blk.0.attn_k.weight", "blk.0.attn_v.weight",
+            "blk.0.attn_output.weight", "output.weight"}) {
+        const auto capability = astc_vulkan_tensor_role_capability_for_name(name);
+        assert(capability.matrix_candidate && capability.native_binding_ready);
+        assert(!capability.source_builder_ready);
+    }
+    const auto norm_cap = astc_vulkan_tensor_role_capability_for_name("blk.0.attn_norm.weight");
+    assert(!norm_cap.matrix_candidate && !norm_cap.native_binding_ready);
 
     astc_vulkan_manifest invalid = expected;
     invalid.tensors[1].byte_offset = 1;

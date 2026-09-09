@@ -74,3 +74,28 @@ std::string astc_vulkan_tensor_canonical_path(const std::string & name) {
     }
     return result;
 }
+
+astc_vulkan_tensor_role_capability astc_vulkan_tensor_role_capability_for_name(
+        const std::string & name) {
+    astc_vulkan_tensor_role_capability result;
+    result.semantic_role = astc_vulkan_tensor_semantic_role(name);
+    if (result.semantic_role == "ffn.down") {
+        result.matrix_candidate = true;
+        result.native_binding_ready = true;
+        result.source_builder_ready = true;
+        return result;
+    }
+
+    // These roles are deliberately prepared for tensor-name binding and
+    // scheduler/catalog discovery, but their source builders remain planned.
+    result.matrix_candidate =
+        result.semantic_role == "ffn.up" ||
+        result.semantic_role == "ffn.gate" ||
+        result.semantic_role == "attention.query" ||
+        result.semantic_role == "attention.key" ||
+        result.semantic_role == "attention.value" ||
+        result.semantic_role == "attention.output" ||
+        result.semantic_role == "output";
+    result.native_binding_ready = result.matrix_candidate;
+    return result;
+}

@@ -1,5 +1,6 @@
 #include "astc-vulkan-llama-provider.h"
 #include "astc-vulkan-ggml-external-op.h"
+#include "astc-vulkan-tensor-catalog.h"
 
 #include <algorithm>
 #include <chrono>
@@ -50,23 +51,6 @@ bool parse_ffn_down_layer(const std::string & tensor_name, uint32_t & layer) {
     }
     layer = parsed;
     return true;
-}
-
-bool runtime_matrix_candidate(const std::string & tensor_name) {
-    if (tensor_name == "output.weight") return true;
-    if (tensor_name.rfind("blk.", 0) != 0) return false;
-    static constexpr const char * kSuffixes[] = {
-        ".ffn_up.weight", ".ffn_gate.weight", ".attn_q.weight",
-        ".attn_k.weight", ".attn_v.weight", ".attn_output.weight",
-    };
-    for (const char * suffix : kSuffixes) {
-        const size_t suffix_size = std::strlen(suffix);
-        if (tensor_name.size() >= suffix_size &&
-            tensor_name.compare(tensor_name.size() - suffix_size, suffix_size, suffix) == 0) {
-            return true;
-        }
-    }
-    return false;
 }
 
 } // namespace
@@ -229,7 +213,10 @@ bool astc_vulkan_llama_provider::materialize_entries(
         }
         uint32_t layer = 0;
         const bool is_ffn_down = parse_ffn_down_layer(plan_entry.tensor_name, layer);
-        if (!is_ffn_down && !runtime_matrix_candidate(plan_entry.tensor_name)) continue;
+        if (!is_ffn_down &&
+            !astc_vulkan_tensor_role_capability_for_name(plan_entry.tensor_name).native_binding_ready) {
+            continue;
+        }
         astc_vulkan_page_material material;
         if (!overlay_.resolve_tensor(plan_entry.tensor_name, material, error)) {
             return false;
