@@ -1564,6 +1564,27 @@ ggml_tensor * llm_graph_context::build_lora_mm(
           ggml_tensor * w_s) const {
     ggml_tensor * res = ggml_mul_mat(ctx0, w, cur);
 
+    // The ASTC provider historically bound only the explicit FFN-down node
+    // below. Let the same native seam discover other ordinary matrix weights
+    // by their authoritative GGUF tensor name, while preserving the normal
+    // graph whenever a post-matmul scale or LoRA residual would make a direct
+    // replacement semantically unsafe.
+    if (w != nullptr && w_s == nullptr && w->name[0] != '\0' &&
+        std::strstr(w->name, ".ffn_down.weight") == nullptr &&
+        cparams.ffn_down_runtime_provider.native_bind != nullptr) {
+        bool has_lora = false;
+        for (const auto & lora : *loras) {
+            if (lora.first->get_weight(w) != nullptr) {
+                has_lora = true;
+                break;
+            }
+        }
+        if (!has_lora) {
+            cparams.ffn_down_runtime_provider.native_bind(
+                cparams.ffn_down_runtime_provider.user_data, res, UINT32_MAX);
+        }
+    }
+
     if (w_s) {
         res = ggml_mul(ctx0, res, w_s);
     }

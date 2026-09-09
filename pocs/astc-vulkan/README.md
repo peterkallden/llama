@@ -27,6 +27,16 @@ The current llama FFN bridge can execute both D1 and paired-D2 artifacts through
 the same opt-in provider interface.  Admission, artifact evidence and the
 semantic decoder still remain representation-specific.
 
+Native graph binding is keyed by the authoritative GGUF tensor name, not only
+by a layer number.  The current wiring accepts validated matrix artifacts for
+`blk.*.ffn_down.weight`, `blk.*.ffn_up.weight`, `blk.*.ffn_gate.weight`,
+`blk.*.attn_q.weight`, `blk.*.attn_k.weight`, `blk.*.attn_v.weight`,
+`blk.*.attn_output.weight` and `output.weight`.  This is an integration seam,
+not a quality approval for every role: a missing artifact, an unsupported
+shape, a LoRA/scale-sensitive graph form, or a failed device preflight leaves
+the ordinary GGUF operation intact.  The legacy layer-number callback remains
+only for the FFN-down CPU bridge.
+
 Example using an existing cache (no cache generation):
 
 ```text

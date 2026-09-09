@@ -52,12 +52,14 @@ public:
 
 private:
     struct entry {
+        std::string tensor_name;
         uint32_t layer = 0;
         astc_vulkan_scheduler_adapter adapter;
     };
 
     struct native_binding {
         astc_vulkan_llama_provider * provider = nullptr;
+        std::string tensor_name;
         uint32_t layer = 0;
     };
 
@@ -67,7 +69,9 @@ private:
     astc_vulkan_runtime_overlay overlay_;
     std::vector<uint32_t> d1_spirv_;
     std::vector<uint32_t> d2_spirv_;
-    std::unordered_map<uint32_t, std::unique_ptr<entry>> entries_;
+    // Tensor name is the authoritative runtime key. `layer` remains populated
+    // for legacy FFN-down callbacks, but is not sufficient for other matrices.
+    std::unordered_map<std::string, std::unique_ptr<entry>> entries_;
     std::vector<std::unique_ptr<native_binding>> native_bindings_;
     // Retained only to materialize the same verified cache artifacts on the
     // actual ggml graph device if prepare() initially observed a different
@@ -92,13 +96,13 @@ private:
 
     bool bind_native_node(ggml_tensor * node, uint32_t layer);
     bool materialize_entries(const std::shared_ptr<astc_vulkan_shared_device> & device,
-                             std::unordered_map<uint32_t, std::unique_ptr<entry>> & entries,
+                             std::unordered_map<std::string, std::unique_ptr<entry>> & entries,
                              std::string & error) const;
     bool rebind_to_graph_device(const ggml_vk_external_op_dispatch_context * context,
                                 std::string & error);
-    bool can_record_native(uint32_t layer,
+    bool can_record_native(const std::string & tensor_name,
                            const ggml_vk_external_op_dispatch_context * context);
-    bool record_native(uint32_t layer,
+    bool record_native(const std::string & tensor_name,
                        const ggml_vk_external_op_dispatch_context * context);
     static bool native_dispatch_callback(
             const ggml_vk_external_op_dispatch_context * context, void * user_data);

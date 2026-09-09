@@ -52,12 +52,29 @@ bool parse_ffn_down_layer(const std::string & tensor_name, uint32_t & layer) {
     return true;
 }
 
+bool runtime_matrix_candidate(const std::string & tensor_name) {
+    if (tensor_name == "output.weight") return true;
+    if (tensor_name.rfind("blk.", 0) != 0) return false;
+    static constexpr const char * kSuffixes[] = {
+        ".ffn_up.weight", ".ffn_gate.weight", ".attn_q.weight",
+        ".attn_k.weight", ".attn_v.weight", ".attn_output.weight",
+    };
+    for (const char * suffix : kSuffixes) {
+        const size_t suffix_size = std::strlen(suffix);
+        if (tensor_name.size() >= suffix_size &&
+            tensor_name.compare(tensor_name.size() - suffix_size, suffix_size, suffix) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 astc_vulkan_llama_provider::~astc_vulkan_llama_provider() {
     if (ready_) {
         std::fprintf(stderr,
-            "ASTC runtime stats: bound_layers=%zu native-dispatches=%llu dispatch-failures=%llu "
+            "ASTC runtime stats: bound_tensors=%zu native-dispatches=%llu dispatch-failures=%llu "
             "native-tokens=%llu cpu-fallbacks=%llu native-binds=%llu context-checks=%llu "
             "context-accepts=%llu\n",
             entries_.size(),
@@ -181,7 +198,7 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
                      entries_.size(), elapsed);
     }
     if (entries_.empty()) {
-        error = "ASTC cache contains no resident D1/D2 FFN-down artifacts eligible for runtime";
+        error = "ASTC cache contains no resident D1/D2 matrix artifacts eligible for runtime";
         reset();
         return false;
     }
@@ -199,19 +216,20 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
 
 bool astc_vulkan_llama_provider::materialize_entries(
         const std::shared_ptr<astc_vulkan_shared_device> & device,
-        std::unordered_map<uint32_t, std::unique_ptr<entry>> & entries,
+        std::unordered_map<std::string, std::unique_ptr<entry>> & entries,
         std::string & error) const {
     if (device == nullptr || !device->ready()) {
         error = "ASTC runtime provider has no Vulkan device for artifact materialization";
         return false;
     }
-    std::unordered_map<uint32_t, std::unique_ptr<entry>> prepared_entries;
+    std::unordered_map<std::string, std::unique_ptr<entry>> prepared_entries;
     for (const auto & plan_entry : overlay_.catalog().plan.entries) {
         if (plan_entry.use_native_fallback) {
             continue;
         }
         uint32_t layer = 0;
-        if (!parse_ffn_down_layer(plan_entry.tensor_name, layer)) continue;
+        const bool is_ffn_down = parse_ffn_down_layer(plan_entry.tensor_name, layer);
+        if (!is_ffn_down && !runtime_matrix_candidate(plan_entry.tensor_name)) continue;
         astc_vulkan_page_material material;
         if (!overlay_.resolve_tensor(plan_entry.tensor_name, material, error)) {
             return false;
@@ -247,6 +265,7 @@ bool astc_vulkan_llama_provider::materialize_entries(
             return false;
         }
         auto prepared = std::make_unique<entry>();
+        prepared->tensor_name = plan_entry.tensor_name;
         prepared->layer = layer;
         prepared->adapter.set_shared_device(device);
         if (!prepared->adapter.prepare_validated_artifact(
@@ -254,7 +273,7 @@ bool astc_vulkan_llama_provider::materialize_entries(
                 prepared_options_.allow_unverified) || !prepared->adapter.ready()) {
             return false;
         }
-        prepared_entries.emplace(layer, std::move(prepared));
+        prepared_entries.emplace(plan_entry.tensor_name, std::move(prepared));
         if (native_trace_enabled()) {
             const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - entry_begin).count();
             std::fprintf(stderr, "ASTC materialize done: tensor=%s elapsed=%.3f s\n",
@@ -268,9 +287,19 @@ bool astc_vulkan_llama_provider::materialize_entries(
 
 bool astc_vulkan_llama_provider::is_ready(
         uint32_t layer, uint32_t input_columns, uint32_t output_columns) const {
-    const auto it = entries_.find(layer);
-    if (!ready_ || it == entries_.end()) return false;
-    const auto & record = it->second->adapter.binding().record;
+    if (!ready_) return false;
+    const entry * matched = nullptr;
+    for (const auto & candidate : entries_) {
+        uint32_t legacy_layer = 0;
+        if (candidate.second != nullptr &&
+            parse_ffn_down_layer(candidate.second->tensor_name, legacy_layer) &&
+            legacy_layer == layer) {
+            matched = candidate.second.get();
+            break;
+        }
+    }
+    if (matched == nullptr) return false;
+    const auto & record = matched->adapter.binding().record;
     return record.width == input_columns && record.height == output_columns;
 }
 
@@ -283,12 +312,22 @@ bool astc_vulkan_llama_provider::run(
                      "ASTC CPU custom-op fallback: layer=%u tokens=%u input=%u output=%u\n",
                      layer, n_tokens, input_columns, output_columns);
     }
-    const auto it = entries_.find(layer);
     if (!is_ready(layer, input_columns, output_columns) || input == nullptr || output == nullptr || n_tokens == 0) {
         ++dispatch_failures_;
         last_error_ = "ASTC runtime provider was called for an unprepared layer";
         return false;
     }
+    entry * matched = nullptr;
+    for (const auto & candidate : entries_) {
+        uint32_t legacy_layer = 0;
+        if (candidate.second != nullptr &&
+            parse_ffn_down_layer(candidate.second->tensor_name, legacy_layer) &&
+            legacy_layer == layer) {
+            matched = candidate.second.get();
+            break;
+        }
+    }
+    if (matched == nullptr) return false;
     ++dispatch_calls_;
     dispatch_tokens_ += n_tokens;
     // ggml's CPU custom-op boundary invokes this serially. Keep the vector
@@ -298,9 +337,9 @@ bool astc_vulkan_llama_provider::run(
     std::vector<float> activations(input, input + input_count);
     std::vector<float> result;
     std::string error;
-    const auto & spirv = it->second->adapter.dispatch_kind() ==
+    const auto & spirv = matched->adapter.dispatch_kind() ==
         astc_vulkan_scheduler_dispatch_kind::kD2Paired ? d2_spirv_ : d1_spirv_;
-    if (!it->second->adapter.run(spirv, activations, result, error) ||
+    if (!matched->adapter.run(spirv, activations, result, error) ||
         result.size() != static_cast<size_t>(n_tokens) * output_columns) {
         ++dispatch_failures_;
         last_error_ = error.empty() ? "ASTC runtime dispatch returned invalid output" : error;
@@ -340,13 +379,13 @@ bool astc_vulkan_llama_provider::native_context_callback(
         const ggml_vk_external_op_dispatch_context * context, void * user_data) {
     const auto * binding = static_cast<const native_binding *>(user_data);
     if (binding == nullptr || binding->provider == nullptr) return false;
-    const bool accepted = binding->provider->can_record_native(binding->layer, context);
+    const bool accepted = binding->provider->can_record_native(binding->tensor_name, context);
     if (accepted) {
         binding->provider->native_context_accepts_.fetch_add(1);
     }
     if (native_trace_enabled()) {
-        std::fprintf(stderr, "ASTC native context %s: layer=%u node=%p cmd=%p\n",
-                     accepted ? "accepted" : "rejected", binding->layer,
+        std::fprintf(stderr, "ASTC native context %s: tensor=%s layer=%u node=%p cmd=%p\n",
+                     accepted ? "accepted" : "rejected", binding->tensor_name.c_str(), binding->layer,
                      context == nullptr ? nullptr : static_cast<void *>(context->node),
                      context == nullptr ? nullptr : reinterpret_cast<void *>(context->native_command_buffer));
     }
@@ -357,18 +396,37 @@ bool astc_vulkan_llama_provider::native_dispatch_callback(
         const ggml_vk_external_op_dispatch_context * context, void * user_data) {
     const auto * binding = static_cast<const native_binding *>(user_data);
     return binding != nullptr && binding->provider != nullptr &&
-           binding->provider->record_native(binding->layer, context);
+           binding->provider->record_native(binding->tensor_name, context);
 }
 
 bool astc_vulkan_llama_provider::bind_native_node(ggml_tensor * node, uint32_t layer) {
-    if (!ready_ || node == nullptr || entries_.find(layer) == entries_.end()) return false;
+    if (!ready_ || node == nullptr) return false;
+    std::string tensor_name;
+    if (node->src[0] != nullptr && node->src[0]->name[0] != '\0') {
+        tensor_name = node->src[0]->name;
+    }
+    auto entry_it = entries_.find(tensor_name);
+    if (entry_it == entries_.end()) {
+        for (const auto & candidate : entries_) {
+            uint32_t legacy_layer = 0;
+            if (candidate.second != nullptr &&
+                parse_ffn_down_layer(candidate.second->tensor_name, legacy_layer) &&
+                legacy_layer == layer) {
+                entry_it = entries_.find(candidate.first);
+                tensor_name = candidate.first;
+                break;
+            }
+        }
+    }
+    if (entry_it == entries_.end()) return false;
     native_bind_calls_.fetch_add(1);
     if (native_trace_enabled()) {
-        std::fprintf(stderr, "ASTC native bind: layer=%u node=%p\n", layer, static_cast<void *>(node));
+        std::fprintf(stderr, "ASTC native bind: tensor=%s layer=%u node=%p\n",
+                     tensor_name.c_str(), layer, static_cast<void *>(node));
     }
     native_binding * binding = nullptr;
     for (const auto & candidate : native_bindings_) {
-        if (candidate->layer == layer) {
+        if (candidate->tensor_name == tensor_name) {
             binding = candidate.get();
             break;
         }
@@ -376,6 +434,7 @@ bool astc_vulkan_llama_provider::bind_native_node(ggml_tensor * node, uint32_t l
     if (binding == nullptr) {
         auto created = std::make_unique<native_binding>();
         created->provider = this;
+        created->tensor_name = tensor_name;
         created->layer = layer;
         binding = created.get();
         native_bindings_.push_back(std::move(created));
@@ -400,7 +459,7 @@ bool astc_vulkan_llama_provider::rebind_to_graph_device(
             context->native_queue_family, error)) {
         return false;
     }
-    std::unordered_map<uint32_t, std::unique_ptr<entry>> rebound_entries;
+    std::unordered_map<std::string, std::unique_ptr<entry>> rebound_entries;
     if (!materialize_entries(rebound_device, rebound_entries, error)) return false;
     if (rebound_entries.empty()) {
         error = "ASTC graph-device rebind produced no eligible artifacts";
@@ -414,7 +473,7 @@ bool astc_vulkan_llama_provider::rebind_to_graph_device(
 }
 
 bool astc_vulkan_llama_provider::can_record_native(
-        uint32_t layer, const ggml_vk_external_op_dispatch_context * context) {
+        const std::string & tensor_name, const ggml_vk_external_op_dispatch_context * context) {
     native_context_checks_.fetch_add(1);
     if (!ready_) {
         trace_native_context_reject("provider is not ready", context, VK_NULL_HANDLE);
@@ -436,7 +495,7 @@ bool astc_vulkan_llama_provider::can_record_native(
         trace_native_context_reject("missing command buffer", context, shared_device_->device());
         return false;
     }
-    const auto entry_it = entries_.find(layer);
+    const auto entry_it = entries_.find(tensor_name);
     if (entry_it == entries_.end() || context->node == nullptr) {
         trace_native_context_reject("missing artifact or graph node", context, shared_device_->device());
         return false;
@@ -484,9 +543,9 @@ bool astc_vulkan_llama_provider::can_record_native(
 }
 
 bool astc_vulkan_llama_provider::record_native(
-        uint32_t layer, const ggml_vk_external_op_dispatch_context * context) {
-    if (!can_record_native(layer, context)) return false;
-    const auto it = entries_.find(layer);
+        const std::string & tensor_name, const ggml_vk_external_op_dispatch_context * context) {
+    if (!can_record_native(tensor_name, context)) return false;
+    const auto it = entries_.find(tensor_name);
     if (it == entries_.end()) return false;
     const auto & record = it->second->adapter.binding().record;
     const ggml_tensor * activation_tensor = nullptr;
@@ -527,8 +586,8 @@ bool astc_vulkan_llama_provider::record_native(
         dispatch_calls_.fetch_add(1);
         dispatch_tokens_.fetch_add(samples);
         if (native_trace_enabled()) {
-            std::fprintf(stderr, "ASTC native dispatch: layer=%u tokens=%u rows=%u\n",
-                         layer, samples, band_height);
+            std::fprintf(stderr, "ASTC native dispatch: tensor=%s tokens=%u rows=%u\n",
+                         tensor_name.c_str(), samples, band_height);
         }
         last_error_.clear();
     }
