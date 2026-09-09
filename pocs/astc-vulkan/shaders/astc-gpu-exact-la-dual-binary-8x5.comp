@@ -1,5 +1,7 @@
 #version 450
 
+#include "astc-gpu-exact-pack.glsl"
+
 // Legal D2-LA 8x5 dual-plane subset. The 5x4 binary grid supplies separate
 // luminance and alpha weights; alpha is the second semantic D2 value.
 layout(local_size_x = 64) in;
@@ -7,9 +9,6 @@ layout(std430, set = 0, binding = 0) readonly buffer Source { vec4 texels[]; } s
 layout(std430, set = 0, binding = 1) writeonly buffer Payloads { uvec4 values[]; } payloads;
 layout(push_constant) uniform Push { uint block_count; uint texels_per_block; } params;
 shared vec2 values[64];
-uint bit_reverse8(uint value) { value = ((value & 0x55u) << 1u) | ((value >> 1u) & 0x55u); value = ((value & 0x33u) << 2u) | ((value >> 2u) & 0x33u); return ((value & 0x0Fu) << 4u) | ((value >> 4u) & 0x0Fu); }
-void payload_bit(inout uvec4 words, uint bit, uint value) { uint word = bit >> 5u; uint shift = bit & 31u; if (value != 0u) words[word] |= 1u << shift; else words[word] &= ~(1u << shift); }
-void payload_bits(inout uvec4 words, uint value, uint bits, uint offset) { for (uint bit = 0u; bit < bits; ++bit) payload_bit(words, offset + bit, (value >> bit) & 1u); }
 void main() {
     uint block = gl_WorkGroupID.x;
     if (block >= params.block_count || params.texels_per_block != 40u) return;
@@ -28,18 +27,20 @@ void main() {
             vec2 normalized = vec2(range.x > 0.0 ? (sample_value.x - low.x) / range.x : 0.0,
                                    range.y > 0.0 ? (sample_value.y - low.y) / range.y : 0.0);
             uint grid_index = y * 5u + x;
-            if (normalized.x >= 0.5) bytes[(2u * grid_index) >> 3u] |= 1u << ((2u * grid_index) & 7u);
-            if (normalized.y >= 0.5) bytes[(2u * grid_index + 1u) >> 3u] |= 1u << ((2u * grid_index + 1u) & 7u);
+            astc_gpu_binary_ise_store(bytes, 2u * grid_index,
+                                      normalized.x >= 0.5 ? 1u : 0u, 1u);
+            astc_gpu_binary_ise_store(bytes, 2u * grid_index + 1u,
+                                      normalized.y >= 0.5 ? 1u : 0u, 1u);
         }
         uvec4 payload = uvec4(0u);
-        for (uint index = 0u; index < 16u; ++index) payload_bits(payload, bit_reverse8(bytes[index]), 8u, (15u - index) * 8u);
-        payload_bits(payload, 0x4c1u, 11u, 0u);
-        payload_bits(payload, 4u, 4u, 13u);
-        payload_bits(payload, uint(round(clamp(low.x, 0.0, 1.0) * 255.0)), 8u, 17u);
-        payload_bits(payload, uint(round(clamp(high.x, 0.0, 1.0) * 255.0)), 8u, 25u);
-        payload_bits(payload, uint(round(clamp(low.y, 0.0, 1.0) * 255.0)), 8u, 33u);
-        payload_bits(payload, uint(round(clamp(high.y, 0.0, 1.0) * 255.0)), 8u, 41u);
-        payload_bits(payload, 3u, 2u, 86u);
+        astc_gpu_emit_binary_ise_stream(payload, bytes);
+        astc_gpu_write_normal_header(payload,
+                                     astc_gpu_mode_d2_luminance_alpha_dual_binary_8x5,
+                                     astc_gpu_endpoint_format_luminance_alpha);
+        astc_gpu_write_direct_luminance_alpha_endpoints(
+            payload, uvec2(astc_gpu_unorm8(low.x), astc_gpu_unorm8(low.y)),
+            uvec2(astc_gpu_unorm8(high.x), astc_gpu_unorm8(high.y)));
+        astc_gpu_payload_bits(payload, 3u, 2u, 86u);
         payloads.values[block] = payload;
     }
 }

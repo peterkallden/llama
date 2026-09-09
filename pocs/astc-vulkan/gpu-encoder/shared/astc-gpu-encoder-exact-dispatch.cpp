@@ -80,6 +80,10 @@ bool astc_gpu_exact_subset_encode_gpu_default(
         error = "GPU exact subset requires non-empty exact-subset input";
         return false;
     }
+    if (!astc_gpu_exact_subset_matches_audited_mode(request)) {
+        error = "GPU exact subset request does not match an audited ASTC mode";
+        return false;
+    }
     std::vector<astc_gpu_encoder_batch> batches;
     if (!astc_gpu_encoder_plan_batches(request, batches)) {
         error = "GPU exact subset requires valid source batches";

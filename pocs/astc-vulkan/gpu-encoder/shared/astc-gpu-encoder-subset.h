@@ -1,12 +1,14 @@
 #pragma once
 
-// Small legal ASTC subset shared by CPU tests and future GPU kernels.
+// Small legal ASTC subset shared by CPU tests and GPU exact kernels.
 //
-// This first mode is a standard void-extent UNORM16 block. It is intentionally
-// limited to a constant RGBA reconstruction. It proves the physical payload
-// path before endpoint grids, weight quantization, and BISE are added.
+// The normal-block entries intentionally cover only direct endpoints and
+// power-of-two (binary ISE) weight alphabets. Their physical mode/footprint
+// accounting is centralized in astc-vulkan-astc-mode; broader trit/quint ISE
+// modes remain a later, separately verified extension.
 
 #include "astc-gpu-encoder.h"
+#include "astc-vulkan-astc-mode.h"
 
 #include <array>
 #include <cstdint>
@@ -18,6 +20,19 @@ struct astc_gpu_exact_subset_block {
     std::array<uint16_t, 4> unorm16_rgba{};
     std::array<uint8_t, 16> payload{};
 };
+
+// Maps every normal-block exact-subset kind to the CPU-audited physical mode
+// descriptor. Refinement variants intentionally map to the same descriptor:
+// they change fitting, not the ASTC runtime mode. Void-extent has no normal
+// block-mode descriptor and therefore returns nullptr.
+const astc_vulkan_astc_mode_descriptor * astc_gpu_exact_subset_audited_mode(
+    astc_gpu_exact_subset_kind kind);
+
+// Ensures a GPU request does not accidentally pair a legal mode with the
+// wrong physical footprint before dispatch. This remains representation-free;
+// D1/D2 semantics live in their own frontends.
+bool astc_gpu_exact_subset_matches_audited_mode(
+    const astc_gpu_encoder_request & request);
 
 // Encodes a constant-color, void-extent ASTC payload from a UNORM16 RGBA
 // value. The result is independent of the ASTC footprint.

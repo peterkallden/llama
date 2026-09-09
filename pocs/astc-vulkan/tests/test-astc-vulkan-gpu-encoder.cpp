@@ -19,6 +19,24 @@ int main() {
     const auto require = [](bool condition) {
         if (!condition) std::abort();
     };
+    // Exact-subset variants must be pinned to the same audited physical mode
+    // on CPU and GPU. Refinement changes candidate fitting only.
+    const auto * d1_mode = astc_gpu_exact_subset_audited_mode(
+        astc_gpu_exact_subset_kind::d1_luminance_binary_refined_6x6);
+    const auto * d2_mode = astc_gpu_exact_subset_audited_mode(
+        astc_gpu_exact_subset_kind::luminance_alpha_dual_binary_8x5);
+    require(d1_mode != nullptr && d1_mode->block_mode == 0x104u &&
+            d1_mode->footprint == astc_vulkan_footprint::k6x6);
+    require(d2_mode != nullptr && d2_mode->block_mode == 0x4c1u &&
+            d2_mode->dual_plane && d2_mode->dual_plane_component == 3u);
+    astc_gpu_encoder_request audited_request;
+    audited_request.mode = astc_gpu_encode_mode::exact_subset;
+    audited_request.exact_subset = astc_gpu_exact_subset_kind::d1_luminance_binary_6x6;
+    audited_request.footprint = astc_vulkan_footprint::k6x6;
+    require(astc_gpu_exact_subset_matches_audited_mode(audited_request));
+    audited_request.footprint = astc_vulkan_footprint::k5x5;
+    require(!astc_gpu_exact_subset_matches_audited_mode(audited_request));
+
     const std::vector<float> weights{
         -1.0f, -0.5f, 0.0f, 0.5f, 1.0f,
          0.2f,  0.3f, 0.4f, 0.5f, 0.6f,

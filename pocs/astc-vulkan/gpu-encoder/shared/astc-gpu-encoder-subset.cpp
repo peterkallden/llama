@@ -212,6 +212,45 @@ std::array<uint8_t, 16> pack_luminance_raw_weights(
 
 } // namespace
 
+const astc_vulkan_astc_mode_descriptor * astc_gpu_exact_subset_audited_mode(
+    astc_gpu_exact_subset_kind kind) {
+    using gpu_kind = astc_gpu_exact_subset_kind;
+    using audited = astc_vulkan_audited_mode;
+    switch (kind) {
+        case gpu_kind::d1_luminance_binary_6x6:
+        case gpu_kind::d1_luminance_binary_refined_6x6:
+        case gpu_kind::d1_luminance_binary_mean_refined_6x6:
+        case gpu_kind::d1_luminance_binary_quantile_refined_6x6:
+            return astc_vulkan_find_audited_mode(audited::d1_luminance_binary_6x6);
+        case gpu_kind::d1_luminance_binary_5x5:
+            return astc_vulkan_find_audited_mode(audited::d1_luminance_binary_5x5);
+        case gpu_kind::d1_luminance_quant4_4x4:
+            return astc_vulkan_find_audited_mode(audited::d1_luminance_quant4_4x4);
+        case gpu_kind::luminance_alpha_binary_8x5:
+        case gpu_kind::luminance_alpha_binary_luminance_weights_8x5:
+        case gpu_kind::luminance_alpha_binary_alpha_weights_8x5:
+        case gpu_kind::luminance_alpha_binary_refined_8x5:
+        case gpu_kind::luminance_alpha_binary_mean_refined_8x5:
+        case gpu_kind::luminance_alpha_binary_quantile_refined_8x5:
+            return astc_vulkan_find_audited_mode(audited::d2_luminance_alpha_binary_8x5);
+        case gpu_kind::luminance_alpha_dual_binary_8x5:
+            return astc_vulkan_find_audited_mode(audited::d2_luminance_alpha_dual_binary_8x5);
+        case gpu_kind::void_extent_unorm16:
+            return nullptr;
+    }
+    return nullptr;
+}
+
+bool astc_gpu_exact_subset_matches_audited_mode(
+    const astc_gpu_encoder_request & request) {
+    if (request.exact_subset == astc_gpu_exact_subset_kind::void_extent_unorm16) {
+        return astc_vulkan_footprint_is_valid(request.footprint);
+    }
+    const auto * descriptor = astc_gpu_exact_subset_audited_mode(request.exact_subset);
+    return descriptor != nullptr && descriptor->footprint == request.footprint &&
+        astc_vulkan_audit_mode_budget(*descriptor).legal;
+}
+
 std::array<uint8_t, 16> astc_gpu_exact_subset_pack_void_extent_unorm16(
     const std::array<uint16_t, 4> & rgba) {
     // ASTC void-extent UNORM16 header, followed by four little-endian values.
@@ -272,7 +311,8 @@ bool astc_gpu_exact_subset_encode_cpu(
     const astc_gpu_encoder_request & request,
     std::vector<astc_gpu_exact_subset_block> & blocks) {
     std::vector<astc_gpu_encoder_batch> batches;
-    if (!astc_gpu_encoder_plan_batches(request, batches)) return false;
+    if (!astc_gpu_exact_subset_matches_audited_mode(request) ||
+        !astc_gpu_encoder_plan_batches(request, batches)) return false;
 
     const bool void_extent = request.exact_subset == astc_gpu_exact_subset_kind::void_extent_unorm16;
     const bool binary_6x6 = request.exact_subset == astc_gpu_exact_subset_kind::d1_luminance_binary_6x6 &&

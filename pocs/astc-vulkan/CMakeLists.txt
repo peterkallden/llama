@@ -1325,6 +1325,8 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-quantile-refined-8x5.comp.spv)
     set(ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_8X5_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-dual-binary-8x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_PACK_INCLUDE
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-pack.glsl)
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -1582,6 +1584,7 @@ if (ASTC_VULKAN_GLSLC)
             ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-binary-6x6.comp
             -o ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_6X6_SHADER_OUTPUT}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-binary-6x6.comp
+            ${ASTC_VULKAN_GPU_EXACT_PACK_INCLUDE}
         COMMENT "Compiling exact D1 6x6 luminance ASTC subset shader")
     add_custom_target(astc-vulkan-gpu-exact-d1-luminance-binary-6x6-shader
         DEPENDS ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_6X6_SHADER_OUTPUT})
@@ -1626,6 +1629,7 @@ if (ASTC_VULKAN_GLSLC)
             ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-binary-5x5.comp
             -o ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_5X5_SHADER_OUTPUT}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-binary-5x5.comp
+            ${ASTC_VULKAN_GPU_EXACT_PACK_INCLUDE}
         COMMENT "Compiling exact D1 5x5 luminance ASTC subset shader")
     add_custom_target(astc-vulkan-gpu-exact-d1-luminance-binary-5x5-shader
         DEPENDS ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_BINARY_5X5_SHADER_OUTPUT})
@@ -1637,6 +1641,7 @@ if (ASTC_VULKAN_GLSLC)
             ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-quant4-4x4.comp
             -o ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_QUANT4_4X4_SHADER_OUTPUT}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-d1-luminance-quant4-4x4.comp
+            ${ASTC_VULKAN_GPU_EXACT_PACK_INCLUDE}
         COMMENT "Compiling exact D1 4x4 luminance ASTC subset shader")
     add_custom_target(astc-vulkan-gpu-exact-d1-luminance-quant4-4x4-shader
         DEPENDS ${ASTC_VULKAN_GPU_EXACT_D1_LUMINANCE_QUANT4_4X4_SHADER_OUTPUT})
@@ -1648,6 +1653,7 @@ if (ASTC_VULKAN_GLSLC)
             ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-binary-8x5.comp
             -o ${ASTC_VULKAN_GPU_EXACT_LA_BINARY_8X5_SHADER_OUTPUT}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-binary-8x5.comp
+            ${ASTC_VULKAN_GPU_EXACT_PACK_INCLUDE}
         COMMENT "Compiling exact L+A 8x5 ASTC subset shader")
     add_custom_target(astc-vulkan-gpu-exact-la-binary-8x5-shader
         DEPENDS ${ASTC_VULKAN_GPU_EXACT_LA_BINARY_8X5_SHADER_OUTPUT})
@@ -1659,6 +1665,7 @@ if (ASTC_VULKAN_GLSLC)
             ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-luminance-8x5.comp
             -o ${ASTC_VULKAN_GPU_EXACT_LA_LUMINANCE_8X5_SHADER_OUTPUT}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-luminance-8x5.comp
+            ${ASTC_VULKAN_GPU_EXACT_PACK_INCLUDE}
         COMMENT "Compiling luminance-guided L+A 8x5 ASTC subset shader")
     add_custom_target(astc-vulkan-gpu-exact-la-luminance-8x5-shader
         DEPENDS ${ASTC_VULKAN_GPU_EXACT_LA_LUMINANCE_8X5_SHADER_OUTPUT})
@@ -1670,6 +1677,7 @@ if (ASTC_VULKAN_GLSLC)
             ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-alpha-8x5.comp
             -o ${ASTC_VULKAN_GPU_EXACT_LA_ALPHA_8X5_SHADER_OUTPUT}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-alpha-8x5.comp
+            ${ASTC_VULKAN_GPU_EXACT_PACK_INCLUDE}
         COMMENT "Compiling Alpha-guided L+A 8x5 ASTC subset shader")
     add_custom_target(astc-vulkan-gpu-exact-la-alpha-8x5-shader
         DEPENDS ${ASTC_VULKAN_GPU_EXACT_LA_ALPHA_8X5_SHADER_OUTPUT})
@@ -1697,6 +1705,7 @@ if (ASTC_VULKAN_GLSLC)
             ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-dual-binary-8x5.comp
             -o ${ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_8X5_SHADER_OUTPUT}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-dual-binary-8x5.comp
+            ${ASTC_VULKAN_GPU_EXACT_PACK_INCLUDE}
         COMMENT "Compiling exact dual-plane L+A 8x5 ASTC subset shader")
     add_custom_target(astc-vulkan-gpu-exact-la-dual-binary-8x5-shader
         DEPENDS ${ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_8X5_SHADER_OUTPUT})
