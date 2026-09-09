@@ -896,6 +896,18 @@ weights, and is not loaded by llama yet.  The purpose of this first step is to
 give a stable source-name-aware contract for a future single-file/bootstrap
 container while keeping the existing sidecar and runtime path unchanged.
 
+The catalog can be inspected independently after it has been copied or
+packaged:
+
+```bash
+build-astc/bin/astc-vulkan-cache \
+  catalog-inspect --catalog /absolute/path/model.astcc
+```
+
+This verifies the `ASTCC001` header and record ranges, but intentionally does
+not open the GGUF or payload blobs.  Cache/payload integrity remains the job of
+the normal `verify` command.
+
 ## Runtime use today
 
 The isolated scheduler adapter can resolve a matching cache and bind its
