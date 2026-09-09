@@ -151,6 +151,7 @@ void print_help(const char * executable) {
             "            [--d2-prescreen cpu|gpu] [--d2-prescreen-top-k N]\n"
 #endif
         "  %s inspect --model model.gguf [--cache path|auto]\n"
+        "            [--tree 1]  (show source tensor names grouped with semantic paths)\n"
         "  %s verify --model model.gguf [--cache path|auto]\n"
 #ifdef ASTC_VULKAN_MODEL_CACHE_AVAILABLE
         "  %s rank --model model.gguf [--cache path|auto] [--policy quality|balanced|compact|speed|auto]\n"
@@ -1201,6 +1202,7 @@ int main(int argc, char ** argv) {
     std::string rows, columns, calibration_samples = "8", validation_samples = "7";
     std::string d2_prescreen_backend = "cpu", d2_prescreen_top_k = "3";
     bool no_publish = false, require_usage = false, require_benefit = false;
+    bool inspect_tree = false;
     bool representation_explicit = false, footprint_explicit = false, policy_explicit = false;
     bool allow_experimental = false, allow_unverified = false;
     for (int index = 2; index < argc; index += 2) {
@@ -1250,6 +1252,7 @@ int main(int argc, char ** argv) {
         else if (option == "--require-benefit") require_benefit = value == "1" || value == "true";
         else if (option == "--allow-experimental") allow_experimental = value == "1" || value == "true";
         else if (option == "--allow-unverified") allow_unverified = value == "1" || value == "true";
+        else if (option == "--tree") inspect_tree = value == "1" || value == "true";
         else if (option == "--max-rows") max_rows = value;
         else if (option == "--max-columns") max_columns = value;
         else if (option == "--workers") workers = value;
@@ -1746,8 +1749,9 @@ int main(int argc, char ** argv) {
             const astc_vulkan_format_info format = astc_vulkan_format(tensor.footprint);
             const bool experimental = astc_vulkan_footprint_is_experimental(tensor.footprint) ||
                                       tensor.representation == astc_vulkan_representation::kPairedD2;
-            std::printf("astc-cache tensor=%s ASTC-%ux%u representation=%s nominal-bpw=%.3f status=%s\n",
-                        tensor.name.c_str(), format.block_width, format.block_height,
+            std::printf("astc-cache tensor=%s role=%s path=%s ASTC-%ux%u representation=%s nominal-bpw=%.3f status=%s\n",
+                        tensor.name.c_str(), tensor.semantic_role.c_str(), tensor.canonical_path.c_str(),
+                        format.block_width, format.block_height,
                         representation_name(tensor.representation),
                         bits_per_weight(tensor.footprint, tensor.representation),
                         experimental ? "experimental" : "standard");
@@ -1755,12 +1759,29 @@ int main(int argc, char ** argv) {
         for (const auto & entry : validation.manifest.artifacts) {
             const auto & tensor = entry.storage;
             const astc_vulkan_format_info format = astc_vulkan_format(tensor.footprint);
-            std::printf("astc-cache artifact=%s tensor=%s ASTC-%ux%u representation=%s semantic=%u normalization=%u variant=%u loss=%.6g gates=%s/%s\n",
-                        entry.id.c_str(), tensor.name.c_str(), format.block_width, format.block_height,
+            std::printf("astc-cache artifact=%s tensor=%s role=%s path=%s ASTC-%ux%u representation=%s semantic=%u normalization=%u variant=%u loss=%.6g gates=%s/%s\n",
+                        entry.id.c_str(), tensor.name.c_str(), tensor.semantic_role.c_str(),
+                        tensor.canonical_path.c_str(), format.block_width, format.block_height,
                         representation_name(tensor.representation), static_cast<unsigned>(entry.paired_semantic),
                         static_cast<unsigned>(entry.normalization), static_cast<unsigned>(entry.variant),
                         entry.evidence.loss_delta, entry.evidence.model_gate_passed ? "model" : "no-model",
                         entry.evidence.vulkan_gate_passed ? "vulkan" : "no-vulkan");
+        }
+        if (inspect_tree) {
+            std::printf("astc-cache tree:\n");
+            if (validation.manifest.version < 4) {
+                for (const auto & tensor : validation.manifest.tensors) {
+                    std::printf("  %s  role=%s  path=%s\n", tensor.name.c_str(),
+                                tensor.semantic_role.c_str(), tensor.canonical_path.c_str());
+                }
+            } else {
+                for (const auto & entry : validation.manifest.artifacts) {
+                    const auto & tensor = entry.storage;
+                    std::printf("  %s  artifact=%s  role=%s  path=%s\n", tensor.name.c_str(),
+                                entry.id.c_str(), tensor.semantic_role.c_str(),
+                                tensor.canonical_path.c_str());
+                }
+            }
         }
         print_paths(validation.paths);
         return 0;

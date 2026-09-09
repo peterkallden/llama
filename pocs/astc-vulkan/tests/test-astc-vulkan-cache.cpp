@@ -77,6 +77,11 @@ int main() {
     astc_vulkan_cache_validation validation;
     assert(astc_vulkan_cache_validate(model.string(), root.string(), validation, error));
     assert(validation.has_paired_d2 && validation.manifest.tensors.size() == 1);
+    assert(validation.manifest.tensors[0].name == "blk.0.ffn_down.weight");
+    // Legacy manifests are populated with the same derived labels on read,
+    // even though their wire format remains unchanged.
+    assert(validation.manifest.tensors[0].semantic_role == "ffn.down");
+    assert(validation.manifest.tensors[0].canonical_path == "layers/0/ffn/down/weight");
     assert(astc_vulkan_cache_validate(model.string(), paths.manifest, validation, error));
 
     write_bytes(model.string(), {0x47, 0x47, 0x55, 0x46, 9, 9, 9, 9});
@@ -194,6 +199,32 @@ int main() {
     assert(v7_read.version == 7);
     assert(v7_read.artifacts[0].evidence.p90_loss_delta == 0.03f);
     assert(v7_read.artifacts[0].evidence.validation_hash == "validation");
+    // Label fields are derived on read for pre-v8 manifests, so old caches
+    // remain inspectable without changing their serialized bytes.
+    assert(v7_read.artifacts[0].storage.semantic_role == "ffn.down");
+    assert(v7_read.artifacts[0].storage.canonical_path == "layers/0/ffn/down/weight");
+
+    // v8 persists the labels explicitly for compiled/catalog producers.
+    const fs::path v8_manifest_path("astc-vulkan-cache-v8-manifest.astcv");
+    fs::remove(v8_manifest_path, ignored);
+    astc_vulkan_manifest v8 = v7;
+    v8.version = 8;
+    v8.model_fingerprint = "fixture-v8-catalog-labels";
+    v8.artifacts[0].storage.semantic_role = "ffn.down";
+    v8.artifacts[0].storage.canonical_path = "layers/0/ffn/down/weight";
+    assert(astc_vulkan_write_manifest(v8_manifest_path.string(), v8, error));
+    astc_vulkan_manifest v8_read;
+    assert(astc_vulkan_read_manifest(v8_manifest_path.string(), v8_read, error));
+    assert(v8_read.version == 8);
+    assert(v8_read.artifacts[0].storage.semantic_role == "ffn.down");
+    assert(v8_read.artifacts[0].storage.canonical_path == "layers/0/ffn/down/weight");
+
+    assert(astc_vulkan_tensor_semantic_role("blk.12.attn_q.weight") == "attention.query");
+    assert(astc_vulkan_tensor_canonical_path("blk.12.attn_q.weight") ==
+           "layers/12/attn/q/weight");
+    assert(astc_vulkan_tensor_semantic_role("token_embd.weight") == "embedding.token");
+    assert(astc_vulkan_tensor_canonical_path("token_embd.weight") ==
+           "global/token/embd/weight");
 
     // A cache may record a structurally compatible quantized runtime base
     // without weakening the strict source-model validation contract. The

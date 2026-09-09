@@ -849,7 +849,7 @@ For a GGUF named `model.gguf`, the automatic cache root is conceptually:
 
 ```text
 model.gguf.astc-vulkan/
-  manifest.astcv       binary KASTCVM1 v3 tensor contract
+  manifest.astcv       binary KASTCVM1 v7/v8 tensor contract
   payload.astcpack     concatenated standard 16-byte ASTC blocks
   layout-map.bin       D2 only: direct RG/B versus R/GB map
   provenance.txt       optional encoder/objective/trace provenance
@@ -860,10 +860,25 @@ model.gguf.astc-vulkan/
   compatible-bases/    optional structural Q3/Q4 runtime-base records
 ```
 
-The manifest records tensor name, dimensions, ASTC footprint, representation,
-payload byte ranges, decoder constants, validation-selected commit count, and
-the deterministic edge/padding contract.  Artifact replay must consume these
-bytes directly; it must not regenerate ASTC payloads.
+The current artifact writer records the exact source tensor name, dimensions, ASTC footprint,
+representation, payload byte ranges, decoder constants, validation-selected
+commit count, and the deterministic edge/padding contract.  From the source
+name it also stores two catalog labels:
+
+```text
+name            = blk.12.ffn_down.weight       # authoritative GGUF identity
+semantic_role   = ffn.down                     # derived inspection/planner label
+canonical_path  = layers/12/ffn/down/weight   # human-readable catalog path
+```
+
+`name` is always the lookup key used by runtime binding.  `semantic_role` and
+`canonical_path` are derived labels for inspection, discovery and future
+compiled-container catalogs; changing them must never redirect a tensor.  The
+physical ASTC storage class (for example `astc.d2-la.8x5`) remains a separate
+artifact/storage field, so several tensors with recognizable source names can
+share an atlas or page without losing their origin.  `inspect --tree 1` prints
+the source names together with these labels.  Artifact replay must consume the
+recorded payload bytes directly; it must not regenerate ASTC payloads.
 
 ## Runtime use today
 

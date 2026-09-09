@@ -43,6 +43,12 @@ struct astc_vulkan_tensor_record {
     uint64_t layout_byte_offset = 0;
     uint64_t layout_byte_size = 0;
     uint64_t layout_hash64 = 0;
+
+    // v8 catalog labels. `name` remains the authoritative GGUF tensor
+    // identity. These fields are derived from that name for human-readable
+    // inspection/planning and must never be used to resolve a runtime tensor.
+    std::string semantic_role;
+    std::string canonical_path;
 };
 
 // v4 multi-artifact cache entry. Storage ranges remain independently
@@ -71,13 +77,21 @@ struct astc_vulkan_artifact_record {
 };
 
 struct astc_vulkan_manifest {
+    // Keep the default legacy single-tensor format. Producers that emit the
+    // v8 catalog labels opt in explicitly; this avoids changing existing
+    // runtime-created manifests and their artifact-table assumptions.
     uint32_t version = 3;
     std::string model_fingerprint;
-    // v1-v3 legacy single-artifact tensor table. v4 writers use artifacts;
+    // v1-v3 legacy single-artifact tensor table. v4+ writers use artifacts;
     // keeping this table preserves read compatibility and low-level tools.
     std::vector<astc_vulkan_tensor_record> tensors;
     std::vector<astc_vulkan_artifact_record> artifacts;
 };
+
+// Stable, source-name-derived labels for cache inspection and planning.
+// They intentionally do not alter the exact GGUF tensor identity in `name`.
+std::string astc_vulkan_tensor_semantic_role(const std::string & name);
+std::string astc_vulkan_tensor_canonical_path(const std::string & name);
 
 // Plain data shared by manifest loading, CPU reference code, and the shader
 // push-constant contract. Keep the field order stable and 16-byte aligned.

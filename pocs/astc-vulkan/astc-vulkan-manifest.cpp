@@ -6,6 +6,7 @@
 #include "astc-vulkan-format.h"
 
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -22,7 +23,13 @@ constexpr uint32_t kArtifactManifestVersion = 4;
 constexpr uint32_t kPairMapManifestVersion = 5;
 constexpr uint32_t kRobustEvidenceManifestVersion = 6;
 constexpr uint32_t kSplitEvidenceManifestVersion = 7;
-constexpr uint32_t kCurrentManifestVersion = kSplitEvidenceManifestVersion;
+constexpr uint32_t kCatalogLabelsManifestVersion = 8;
+constexpr uint32_t kCurrentManifestVersion = kCatalogLabelsManifestVersion;
+// Artifact records in v4-v7 historically serialized their nested tensor
+// storage with the then-current tensor layout (v7), independent of the outer
+// artifact/evidence version. Keep that wire detail readable when opening old
+// caches; v8 is the first artifact format that follows the outer version.
+constexpr uint32_t kHistoricalArtifactStorageVersion = kSplitEvidenceManifestVersion;
 constexpr uint32_t kMaxStringBytes = 1u << 20;
 constexpr uint32_t kMaxTensorRecords = 1u << 20;
 
@@ -50,6 +57,49 @@ bool read_string(std::ifstream & file, std::string & value) {
     if (!read_scalar(file, size) || size > kMaxStringBytes) return false;
     value.resize(size);
     return size == 0 || (file.read(value.data(), size), file.good());
+}
+
+std::vector<std::string> split_name(const std::string & name) {
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (start <= name.size()) {
+        const size_t end = name.find('.', start);
+        parts.push_back(name.substr(start, end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return parts;
+}
+
+std::string replace_underscores(std::string value) {
+    for (char & ch : value) if (ch == '_') ch = '/';
+    return value;
+}
+
+std::string role_for_component(const std::string & component) {
+    if (component == "ffn_down") return "ffn.down";
+    if (component == "ffn_up") return "ffn.up";
+    if (component == "ffn_gate") return "ffn.gate";
+    if (component == "attn_q") return "attention.query";
+    if (component == "attn_k") return "attention.key";
+    if (component == "attn_v") return "attention.value";
+    if (component == "attn_output") return "attention.output";
+    if (component == "attn_norm") return "normalization.attention";
+    if (component == "ffn_norm") return "normalization.ffn";
+    if (component == "post_attention_norm") return "normalization.post_attention";
+    if (component == "token_embd") return "embedding.token";
+    if (component == "output_norm") return "normalization.output";
+    if (component == "output") return "output";
+    return component.empty() ? "unknown" : replace_underscores(component);
+}
+
+void fill_catalog_labels(astc_vulkan_tensor_record & tensor) {
+    if (tensor.semantic_role.empty()) {
+        tensor.semantic_role = astc_vulkan_tensor_semantic_role(tensor.name);
+    }
+    if (tensor.canonical_path.empty()) {
+        tensor.canonical_path = astc_vulkan_tensor_canonical_path(tensor.name);
+    }
 }
 
 bool valid_representation(astc_vulkan_representation representation) {
@@ -107,7 +157,9 @@ bool validate_tensor_record(const astc_vulkan_tensor_record & tensor, uint32_t v
         astc_vulkan_format(tensor.footprint).block_width == 0 ||
         !valid_representation(tensor.representation) ||
         !std::isfinite(tensor.scale_l) || !std::isfinite(tensor.scale_a) ||
-        !std::isfinite(tensor.offset)) {
+        !std::isfinite(tensor.offset) ||
+        tensor.semantic_role.size() > kMaxStringBytes ||
+        tensor.canonical_path.size() > kMaxStringBytes) {
         error = "invalid ASTC Vulkan tensor record";
         return false;
     }
@@ -217,10 +269,20 @@ bool write_tensor_record(std::ofstream & file, const astc_vulkan_tensor_record &
          !write_scalar(file, tensor.offset) || !write_scalar(file, tensor.payload_hash64))) {
         return false;
     }
-    return version < kPairedLayoutManifestVersion ||
-           (write_scalar(file, tensor.layout_byte_offset) &&
-            write_scalar(file, tensor.layout_byte_size) &&
-            write_scalar(file, tensor.layout_hash64));
+    if (version >= kPairedLayoutManifestVersion &&
+        (!write_scalar(file, tensor.layout_byte_offset) ||
+         !write_scalar(file, tensor.layout_byte_size) ||
+         !write_scalar(file, tensor.layout_hash64))) {
+        return false;
+    }
+    if (version >= kCatalogLabelsManifestVersion) {
+        const std::string semantic_role = tensor.semantic_role.empty() ?
+            astc_vulkan_tensor_semantic_role(tensor.name) : tensor.semantic_role;
+        const std::string canonical_path = tensor.canonical_path.empty() ?
+            astc_vulkan_tensor_canonical_path(tensor.name) : tensor.canonical_path;
+        return write_string(file, semantic_role) && write_string(file, canonical_path);
+    }
+    return true;
 }
 
 bool read_tensor_record(std::ifstream & file, astc_vulkan_tensor_record & tensor,
@@ -242,17 +304,28 @@ bool read_tensor_record(std::ifstream & file, astc_vulkan_tensor_record & tensor
     if (version >= kAffineManifestVersion) {
         tensor.representation = static_cast<astc_vulkan_representation>(representation);
     }
-    return version < kPairedLayoutManifestVersion ||
-           (read_scalar(file, tensor.layout_byte_offset) &&
-            read_scalar(file, tensor.layout_byte_size) &&
-            read_scalar(file, tensor.layout_hash64));
+    if (version >= kPairedLayoutManifestVersion &&
+        (!read_scalar(file, tensor.layout_byte_offset) ||
+         !read_scalar(file, tensor.layout_byte_size) ||
+         !read_scalar(file, tensor.layout_hash64))) {
+        return false;
+    }
+    if (version >= kCatalogLabelsManifestVersion &&
+        (!read_string(file, tensor.semantic_role) ||
+         !read_string(file, tensor.canonical_path))) {
+        return false;
+    }
+    fill_catalog_labels(tensor);
+    return true;
 }
 
 bool write_artifact_record(std::ofstream & file, const astc_vulkan_artifact_record & artifact,
                            uint32_t version) {
     const auto & evidence = artifact.evidence;
+    const uint32_t storage_version = version >= kCatalogLabelsManifestVersion ?
+        version : kHistoricalArtifactStorageVersion;
     return write_string(file, artifact.id) &&
-           write_tensor_record(file, artifact.storage, kCurrentManifestVersion) &&
+           write_tensor_record(file, artifact.storage, storage_version) &&
            write_scalar(file, static_cast<uint8_t>(artifact.variant)) &&
            write_scalar(file, static_cast<uint8_t>(artifact.normalization)) &&
            write_scalar(file, static_cast<uint8_t>(artifact.paired_semantic)) &&
@@ -293,8 +366,10 @@ bool read_artifact_record(std::ifstream & file, astc_vulkan_artifact_record & ar
     uint8_t model_gate = 0;
     uint8_t vulkan_gate = 0;
     auto & evidence = artifact.evidence;
+    const uint32_t storage_version = version >= kCatalogLabelsManifestVersion ?
+        version : kHistoricalArtifactStorageVersion;
     if (!read_string(file, artifact.id) ||
-        !read_tensor_record(file, artifact.storage, kCurrentManifestVersion) ||
+        !read_tensor_record(file, artifact.storage, storage_version) ||
         !read_scalar(file, variant) || !read_scalar(file, normalization) ||
         !read_scalar(file, semantic) || !read_string(file, artifact.encoder_profile) ||
         !read_scalar(file, model_gate) || !read_scalar(file, vulkan_gate) ||
@@ -346,6 +421,37 @@ bool for_each_storage_record(const astc_vulkan_manifest & manifest, Callback cal
 }
 
 } // namespace
+
+std::string astc_vulkan_tensor_semantic_role(const std::string & name) {
+    const std::vector<std::string> parts = split_name(name);
+    if (parts.empty()) return "unknown";
+    const size_t component_index = parts.size() >= 2 && parts.back() == "weight" ?
+        parts.size() - 2 : parts.size() - 1;
+    return role_for_component(parts[component_index]);
+}
+
+std::string astc_vulkan_tensor_canonical_path(const std::string & name) {
+    const std::vector<std::string> parts = split_name(name);
+    if (parts.empty()) return "unknown";
+    size_t index = 0;
+    std::string result;
+    if (parts.size() >= 2 && parts[0] == "blk" && !parts[1].empty()) {
+        bool numeric = true;
+        for (const char ch : parts[1]) numeric = numeric && std::isdigit(static_cast<unsigned char>(ch));
+        if (numeric) {
+            result = "layers/" + parts[1];
+            index = 2;
+        }
+    }
+    if (result.empty()) {
+        result = "global";
+    }
+    for (; index < parts.size(); ++index) {
+        if (parts[index].empty()) continue;
+        result += "/" + replace_underscores(parts[index]);
+    }
+    return result;
+}
 
 uint64_t astc_vulkan_payload_hash64(const uint8_t * data, size_t size) {
     return astc_vulkan_fnv1a64(data, size);
@@ -466,6 +572,8 @@ bool astc_vulkan_validate_manifest(const astc_vulkan_manifest & manifest,
         manifest.version != kPairedLayoutManifestVersion &&
         manifest.version != kArtifactManifestVersion &&
         manifest.version != kPairMapManifestVersion &&
+        manifest.version != kRobustEvidenceManifestVersion &&
+        manifest.version != kSplitEvidenceManifestVersion &&
         manifest.version != kCurrentManifestVersion) {
         error = "unsupported ASTC Vulkan manifest version";
         return false;
