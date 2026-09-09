@@ -261,6 +261,17 @@ if (BUILD_TESTING)
     set_property(TEST test-astc-vulkan-compiled-catalog PROPERTY LABELS astc)
 endif()
 
+add_executable(test-astc-vulkan-catalog-loader
+    tests/test-astc-vulkan-catalog-loader.cpp)
+target_link_libraries(test-astc-vulkan-catalog-loader PRIVATE
+    astc-vulkan-catalog-loader)
+target_compile_features(test-astc-vulkan-catalog-loader PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-catalog-loader
+        COMMAND test-astc-vulkan-catalog-loader)
+    set_property(TEST test-astc-vulkan-catalog-loader PROPERTY LABELS astc)
+endif()
+
 add_library(astc-vulkan-provenance STATIC
     astc-vulkan-provenance.cpp)
 target_include_directories(astc-vulkan-provenance PUBLIC
@@ -275,6 +286,14 @@ target_include_directories(astc-vulkan-cache PUBLIC
 target_link_libraries(astc-vulkan-cache PUBLIC
     astc-vulkan-driver astc-vulkan-provenance ggml-base)
 target_compile_features(astc-vulkan-cache PUBLIC cxx_std_17)
+
+add_library(astc-vulkan-catalog-loader STATIC
+    astc-vulkan-catalog-loader.cpp)
+target_include_directories(astc-vulkan-catalog-loader PUBLIC
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_link_libraries(astc-vulkan-catalog-loader PUBLIC
+    astc-vulkan-cache astc-vulkan-compiled-catalog)
+target_compile_features(astc-vulkan-catalog-loader PUBLIC cxx_std_17)
 
 # Shared physical row-band/range contract for D1 and D2. It is deliberately
 # independent of Vulkan resources so geometry and cache-range tests stay fast.
@@ -314,7 +333,7 @@ add_executable(astc-vulkan-cache-tool
     astc-vulkan-cache-tool.cpp)
 set_target_properties(astc-vulkan-cache-tool PROPERTIES OUTPUT_NAME astc-vulkan-cache)
 target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-cache)
-target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-compiled-catalog)
+target_link_libraries(astc-vulkan-cache-tool PRIVATE astc-vulkan-catalog-loader)
 target_include_directories(astc-vulkan-cache-tool PRIVATE
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(astc-vulkan-cache-tool PRIVATE cxx_std_17)
