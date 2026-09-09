@@ -25,17 +25,18 @@ uint8_t bit_reverse(uint8_t value) {
     return static_cast<uint8_t>((value << 4u) | (value >> 4u));
 }
 
-std::array<uint8_t, 16> pack_luminance_raw_weights(
+std::array<uint8_t, 16> pack_direct_endpoint_binary_weights(
     uint32_t block_mode, uint32_t endpoint_format,
     const uint8_t * endpoints, uint32_t endpoint_count,
     const uint8_t * weights, uint32_t weight_count, uint32_t bits_per_weight);
 
-std::array<uint8_t, 16> pack_luminance_raw_weights(
+std::array<uint8_t, 16> pack_direct_endpoint_binary_weights(
     uint32_t block_mode, uint8_t endpoint_low, uint8_t endpoint_high,
     const uint8_t * weights, uint32_t weight_count, uint32_t bits_per_weight) {
     std::array<uint8_t, 2> endpoints{endpoint_low, endpoint_high};
-    return pack_luminance_raw_weights(block_mode, 0u, endpoints.data(), endpoints.size(),
-                                      weights, weight_count, bits_per_weight);
+    return pack_direct_endpoint_binary_weights(
+        block_mode, 0u, endpoints.data(), endpoints.size(),
+        weights, weight_count, bits_per_weight);
 }
 
 uint8_t quantize_unorm8(float value) {
@@ -47,6 +48,94 @@ enum class binary_refinement_seed : uint8_t {
     mean_split,
     quartiles,
 };
+
+enum class exact_subset_physical_mode : uint8_t {
+    void_extent,
+    d1_luminance_binary_6x6,
+    d1_luminance_binary_5x5,
+    d1_luminance_quant4_4x4,
+    d2_luminance_alpha_binary_8x5,
+    d2_luminance_alpha_dual_binary_8x5,
+};
+
+enum class d2_weight_guide : uint8_t {
+    balanced,
+    luminance,
+    alpha,
+};
+
+// The GPU subset kind controls fitting only. This table is the single place
+// that says which audited physical mode a variant actually emits.
+struct exact_subset_traits {
+    exact_subset_physical_mode physical_mode;
+    binary_refinement_seed refinement_seed = binary_refinement_seed::minmax;
+    d2_weight_guide d2_guide = d2_weight_guide::balanced;
+    bool d1_refined = false;
+    bool d2_refined = false;
+};
+
+exact_subset_traits exact_subset_traits_for(astc_gpu_exact_subset_kind kind) {
+    using kind_t = astc_gpu_exact_subset_kind;
+    switch (kind) {
+    case kind_t::void_extent_unorm16:
+        return {exact_subset_physical_mode::void_extent};
+    case kind_t::d1_luminance_binary_6x6:
+        return {exact_subset_physical_mode::d1_luminance_binary_6x6};
+    case kind_t::d1_luminance_binary_refined_6x6:
+        return {exact_subset_physical_mode::d1_luminance_binary_6x6,
+                binary_refinement_seed::minmax, d2_weight_guide::balanced, true};
+    case kind_t::d1_luminance_binary_mean_refined_6x6:
+        return {exact_subset_physical_mode::d1_luminance_binary_6x6,
+                binary_refinement_seed::mean_split, d2_weight_guide::balanced, true};
+    case kind_t::d1_luminance_binary_quantile_refined_6x6:
+        return {exact_subset_physical_mode::d1_luminance_binary_6x6,
+                binary_refinement_seed::quartiles, d2_weight_guide::balanced, true};
+    case kind_t::d1_luminance_binary_5x5:
+        return {exact_subset_physical_mode::d1_luminance_binary_5x5};
+    case kind_t::d1_luminance_quant4_4x4:
+        return {exact_subset_physical_mode::d1_luminance_quant4_4x4};
+    case kind_t::luminance_alpha_binary_8x5:
+        return {exact_subset_physical_mode::d2_luminance_alpha_binary_8x5};
+    case kind_t::luminance_alpha_binary_luminance_weights_8x5:
+        return {exact_subset_physical_mode::d2_luminance_alpha_binary_8x5,
+                binary_refinement_seed::minmax, d2_weight_guide::luminance};
+    case kind_t::luminance_alpha_binary_alpha_weights_8x5:
+        return {exact_subset_physical_mode::d2_luminance_alpha_binary_8x5,
+                binary_refinement_seed::minmax, d2_weight_guide::alpha};
+    case kind_t::luminance_alpha_binary_refined_8x5:
+        return {exact_subset_physical_mode::d2_luminance_alpha_binary_8x5,
+                binary_refinement_seed::minmax, d2_weight_guide::balanced, false, true};
+    case kind_t::luminance_alpha_binary_mean_refined_8x5:
+        return {exact_subset_physical_mode::d2_luminance_alpha_binary_8x5,
+                binary_refinement_seed::mean_split, d2_weight_guide::balanced, false, true};
+    case kind_t::luminance_alpha_binary_quantile_refined_8x5:
+        return {exact_subset_physical_mode::d2_luminance_alpha_binary_8x5,
+                binary_refinement_seed::quartiles, d2_weight_guide::balanced, false, true};
+    case kind_t::luminance_alpha_dual_binary_8x5:
+        return {exact_subset_physical_mode::d2_luminance_alpha_dual_binary_8x5};
+    }
+    return {exact_subset_physical_mode::void_extent};
+}
+
+const astc_vulkan_astc_mode_descriptor * descriptor_for(
+    exact_subset_physical_mode physical_mode) {
+    using audited = astc_vulkan_audited_mode;
+    switch (physical_mode) {
+    case exact_subset_physical_mode::d1_luminance_binary_6x6:
+        return astc_vulkan_find_audited_mode(audited::d1_luminance_binary_6x6);
+    case exact_subset_physical_mode::d1_luminance_binary_5x5:
+        return astc_vulkan_find_audited_mode(audited::d1_luminance_binary_5x5);
+    case exact_subset_physical_mode::d1_luminance_quant4_4x4:
+        return astc_vulkan_find_audited_mode(audited::d1_luminance_quant4_4x4);
+    case exact_subset_physical_mode::d2_luminance_alpha_binary_8x5:
+        return astc_vulkan_find_audited_mode(audited::d2_luminance_alpha_binary_8x5);
+    case exact_subset_physical_mode::d2_luminance_alpha_dual_binary_8x5:
+        return astc_vulkan_find_audited_mode(audited::d2_luminance_alpha_dual_binary_8x5);
+    case exact_subset_physical_mode::void_extent:
+        return nullptr;
+    }
+    return nullptr;
+}
 
 // A deliberately small Lloyd-style solve in the exact discrete domain used
 // by our binary 6x6 subset. It is not a general ASTC optimizer: endpoints are
@@ -186,7 +275,7 @@ void refine_luminance_alpha_binary_8x5(
     }
 }
 
-std::array<uint8_t, 16> pack_luminance_raw_weights(
+std::array<uint8_t, 16> pack_direct_endpoint_binary_weights(
     uint32_t block_mode, uint32_t endpoint_format,
     const uint8_t * endpoints, uint32_t endpoint_count,
     const uint8_t * weights, uint32_t weight_count, uint32_t bits_per_weight) {
@@ -214,36 +303,13 @@ std::array<uint8_t, 16> pack_luminance_raw_weights(
 
 const astc_vulkan_astc_mode_descriptor * astc_gpu_exact_subset_audited_mode(
     astc_gpu_exact_subset_kind kind) {
-    using gpu_kind = astc_gpu_exact_subset_kind;
-    using audited = astc_vulkan_audited_mode;
-    switch (kind) {
-        case gpu_kind::d1_luminance_binary_6x6:
-        case gpu_kind::d1_luminance_binary_refined_6x6:
-        case gpu_kind::d1_luminance_binary_mean_refined_6x6:
-        case gpu_kind::d1_luminance_binary_quantile_refined_6x6:
-            return astc_vulkan_find_audited_mode(audited::d1_luminance_binary_6x6);
-        case gpu_kind::d1_luminance_binary_5x5:
-            return astc_vulkan_find_audited_mode(audited::d1_luminance_binary_5x5);
-        case gpu_kind::d1_luminance_quant4_4x4:
-            return astc_vulkan_find_audited_mode(audited::d1_luminance_quant4_4x4);
-        case gpu_kind::luminance_alpha_binary_8x5:
-        case gpu_kind::luminance_alpha_binary_luminance_weights_8x5:
-        case gpu_kind::luminance_alpha_binary_alpha_weights_8x5:
-        case gpu_kind::luminance_alpha_binary_refined_8x5:
-        case gpu_kind::luminance_alpha_binary_mean_refined_8x5:
-        case gpu_kind::luminance_alpha_binary_quantile_refined_8x5:
-            return astc_vulkan_find_audited_mode(audited::d2_luminance_alpha_binary_8x5);
-        case gpu_kind::luminance_alpha_dual_binary_8x5:
-            return astc_vulkan_find_audited_mode(audited::d2_luminance_alpha_dual_binary_8x5);
-        case gpu_kind::void_extent_unorm16:
-            return nullptr;
-    }
-    return nullptr;
+    return descriptor_for(exact_subset_traits_for(kind).physical_mode);
 }
 
 bool astc_gpu_exact_subset_matches_audited_mode(
     const astc_gpu_encoder_request & request) {
-    if (request.exact_subset == astc_gpu_exact_subset_kind::void_extent_unorm16) {
+    const auto traits = exact_subset_traits_for(request.exact_subset);
+    if (traits.physical_mode == exact_subset_physical_mode::void_extent) {
         return astc_vulkan_footprint_is_valid(request.footprint);
     }
     const auto * descriptor = astc_gpu_exact_subset_audited_mode(request.exact_subset);
@@ -267,24 +333,24 @@ std::array<uint8_t, 16> astc_gpu_exact_subset_pack_d1_luminance_binary_6x6(
     uint8_t endpoint_low, uint8_t endpoint_high,
     const std::array<uint8_t, 36> & weights) {
     // ASTC normal block mode 0x104: 6x6 grid, QUANT_2 weights, one plane.
-    return pack_luminance_raw_weights(0x104u, endpoint_low, endpoint_high,
-                                      weights.data(), weights.size(), 1);
+    return pack_direct_endpoint_binary_weights(0x104u, endpoint_low, endpoint_high,
+                                                weights.data(), weights.size(), 1);
 }
 
 std::array<uint8_t, 16> astc_gpu_exact_subset_pack_d1_luminance_binary_5x5(
     uint8_t endpoint_low, uint8_t endpoint_high,
     const std::array<uint8_t, 25> & weights) {
     // ASTC normal block mode 0x0e1: 5x5 grid, QUANT_2 weights, one plane.
-    return pack_luminance_raw_weights(0x0e1u, endpoint_low, endpoint_high,
-                                      weights.data(), weights.size(), 1);
+    return pack_direct_endpoint_binary_weights(0x0e1u, endpoint_low, endpoint_high,
+                                                weights.data(), weights.size(), 1);
 }
 
 std::array<uint8_t, 16> astc_gpu_exact_subset_pack_d1_luminance_quant4_4x4(
     uint8_t endpoint_low, uint8_t endpoint_high,
     const std::array<uint8_t, 16> & weights) {
     // ASTC normal block mode 0x042: 4x4 grid, QUANT_4 weights, one plane.
-    return pack_luminance_raw_weights(0x042u, endpoint_low, endpoint_high,
-                                      weights.data(), weights.size(), 2);
+    return pack_direct_endpoint_binary_weights(0x042u, endpoint_low, endpoint_high,
+                                                weights.data(), weights.size(), 2);
 }
 
 std::array<uint8_t, 16> astc_gpu_exact_subset_pack_luminance_alpha_binary_8x5(
@@ -292,8 +358,8 @@ std::array<uint8_t, 16> astc_gpu_exact_subset_pack_luminance_alpha_binary_8x5(
     const std::array<uint8_t, 40> & weights) {
     // ASTC normal block mode 0x065: 8x5 grid, QUANT_2 weights, one plane.
     // FMT_LUMINANCE_ALPHA provides L0, L1, A0, A1 direct endpoints.
-    return pack_luminance_raw_weights(0x065u, 4u, endpoints.data(), endpoints.size(),
-                                      weights.data(), weights.size(), 1);
+    return pack_direct_endpoint_binary_weights(0x065u, 4u, endpoints.data(), endpoints.size(),
+                                                weights.data(), weights.size(), 1);
 }
 
 std::array<uint8_t, 16> astc_gpu_exact_subset_pack_luminance_alpha_dual_binary_8x5(
@@ -301,8 +367,9 @@ std::array<uint8_t, 16> astc_gpu_exact_subset_pack_luminance_alpha_dual_binary_8
     const std::array<uint8_t, 40> & interleaved_weights) {
     // Mode 0x4c1: 5x4 QUANT_2 grid, two planes. 40 binary values are stored
     // as L/A pairs; plane two's component selector is Alpha (3).
-    auto payload = pack_luminance_raw_weights(0x4c1u, 4u, endpoints.data(), endpoints.size(),
-                                              interleaved_weights.data(), interleaved_weights.size(), 1);
+    auto payload = pack_direct_endpoint_binary_weights(
+        0x4c1u, 4u, endpoints.data(), endpoints.size(),
+        interleaved_weights.data(), interleaved_weights.size(), 1);
     write_bits(3u, 2, 86u, payload);
     return payload;
 }
@@ -314,35 +381,20 @@ bool astc_gpu_exact_subset_encode_cpu(
     if (!astc_gpu_exact_subset_matches_audited_mode(request) ||
         !astc_gpu_encoder_plan_batches(request, batches)) return false;
 
-    const bool void_extent = request.exact_subset == astc_gpu_exact_subset_kind::void_extent_unorm16;
-    const bool binary_6x6 = request.exact_subset == astc_gpu_exact_subset_kind::d1_luminance_binary_6x6 &&
-        request.footprint == astc_vulkan_footprint::k6x6;
-    const bool refined_binary_6x6 =
-        (request.exact_subset == astc_gpu_exact_subset_kind::d1_luminance_binary_refined_6x6 ||
-         request.exact_subset == astc_gpu_exact_subset_kind::d1_luminance_binary_mean_refined_6x6 ||
-         request.exact_subset == astc_gpu_exact_subset_kind::d1_luminance_binary_quantile_refined_6x6) &&
-        request.footprint == astc_vulkan_footprint::k6x6;
-    const bool binary_5x5 = request.exact_subset == astc_gpu_exact_subset_kind::d1_luminance_binary_5x5 &&
-        request.footprint == astc_vulkan_footprint::k5x5;
-    const bool quant4_4x4 = request.exact_subset == astc_gpu_exact_subset_kind::d1_luminance_quant4_4x4 &&
-        request.footprint == astc_vulkan_footprint::k4x4;
-    const bool luminance_alpha_balanced_8x5 = request.exact_subset == astc_gpu_exact_subset_kind::luminance_alpha_binary_8x5 &&
-        request.footprint == astc_vulkan_footprint::k8x5;
-    const bool luminance_alpha_luminance_8x5 = request.exact_subset == astc_gpu_exact_subset_kind::luminance_alpha_binary_luminance_weights_8x5 &&
-        request.footprint == astc_vulkan_footprint::k8x5;
-    const bool luminance_alpha_alpha_8x5 = request.exact_subset == astc_gpu_exact_subset_kind::luminance_alpha_binary_alpha_weights_8x5 &&
-        request.footprint == astc_vulkan_footprint::k8x5;
-    const bool refined_luminance_alpha_8x5 =
-        (request.exact_subset == astc_gpu_exact_subset_kind::luminance_alpha_binary_refined_8x5 ||
-         request.exact_subset == astc_gpu_exact_subset_kind::luminance_alpha_binary_mean_refined_8x5 ||
-         request.exact_subset == astc_gpu_exact_subset_kind::luminance_alpha_binary_quantile_refined_8x5) &&
-        request.footprint == astc_vulkan_footprint::k8x5;
-    const bool luminance_alpha_dual_8x5 = request.exact_subset == astc_gpu_exact_subset_kind::luminance_alpha_dual_binary_8x5 &&
-        request.footprint == astc_vulkan_footprint::k8x5;
-    const bool luminance_alpha_8x5 = luminance_alpha_balanced_8x5 ||
-        luminance_alpha_luminance_8x5 || luminance_alpha_alpha_8x5 || refined_luminance_alpha_8x5;
-    if (!void_extent && !binary_6x6 && !refined_binary_6x6 && !binary_5x5 && !quant4_4x4 && !luminance_alpha_8x5 && !luminance_alpha_dual_8x5) return false;
-    const bool scalar_luminance = binary_6x6 || refined_binary_6x6 || binary_5x5 || quant4_4x4;
+    const auto traits = exact_subset_traits_for(request.exact_subset);
+    const auto physical_mode = traits.physical_mode;
+    const bool void_extent = physical_mode == exact_subset_physical_mode::void_extent;
+    const bool d1_binary_6x6 = physical_mode == exact_subset_physical_mode::d1_luminance_binary_6x6;
+    const bool d1_binary_5x5 = physical_mode == exact_subset_physical_mode::d1_luminance_binary_5x5;
+    const bool d1_quant4_4x4 = physical_mode == exact_subset_physical_mode::d1_luminance_quant4_4x4;
+    const bool d2_one_plane_8x5 = physical_mode == exact_subset_physical_mode::d2_luminance_alpha_binary_8x5;
+    const bool d2_dual_plane_8x5 = physical_mode == exact_subset_physical_mode::d2_luminance_alpha_dual_binary_8x5;
+    const bool scalar_luminance = d1_binary_6x6 || d1_binary_5x5 || d1_quant4_4x4;
+    if ((!void_extent && !scalar_luminance && !d2_one_plane_8x5 && !d2_dual_plane_8x5) ||
+        (d1_binary_6x6 && request.footprint != astc_vulkan_footprint::k6x6) ||
+        (d1_binary_5x5 && request.footprint != astc_vulkan_footprint::k5x5) ||
+        (d1_quant4_4x4 && request.footprint != astc_vulkan_footprint::k4x4) ||
+        ((d2_one_plane_8x5 || d2_dual_plane_8x5) && request.footprint != astc_vulkan_footprint::k8x5)) return false;
     blocks.clear();
     blocks.reserve(request.blocks.size());
     for (const auto & source : request.blocks) {
@@ -383,31 +435,28 @@ bool astc_gpu_exact_subset_encode_cpu(
                 const float normalized = range > 0.0f ? (source.texels[index].rgba[0] - low) / range : 0.0f;
                 const float alpha_normalized = alpha_range > 0.0f
                     ? (source.texels[index].rgba[3] - alpha_low) / alpha_range : 0.0f;
-                weights[index] = quant4_4x4
+                weights[index] = d1_quant4_4x4
                     ? static_cast<uint8_t>(std::lround(std::clamp(normalized, 0.0f, 1.0f) * 3.0f))
-                    : (luminance_alpha_8x5
-                        ? ((luminance_alpha_luminance_8x5 ? normalized :
-                            (luminance_alpha_alpha_8x5 ? alpha_normalized :
+                    : (d2_one_plane_8x5
+                        ? ((traits.d2_guide == d2_weight_guide::luminance ? normalized :
+                            (traits.d2_guide == d2_weight_guide::alpha ? alpha_normalized :
                              0.5f * (normalized + alpha_normalized))) >= 0.5f ? 1u : 0u)
                         : (source.texels[index].rgba[0] >= threshold ? 1u : 0u));
             }
-            if (refined_binary_6x6) {
+            if (traits.d1_refined) {
                 std::array<uint8_t, 36> refined_weights{};
-                const auto seed = request.exact_subset == astc_gpu_exact_subset_kind::d1_luminance_binary_mean_refined_6x6
-                    ? binary_refinement_seed::mean_split
-                    : (request.exact_subset == astc_gpu_exact_subset_kind::d1_luminance_binary_quantile_refined_6x6
-                        ? binary_refinement_seed::quartiles : binary_refinement_seed::minmax);
-                refine_binary_luminance_6x6(source, endpoint_low, endpoint_high, refined_weights, seed);
+                refine_binary_luminance_6x6(
+                    source, endpoint_low, endpoint_high, refined_weights, traits.refinement_seed);
                 std::copy(refined_weights.begin(), refined_weights.end(), weights.begin());
             }
             result.unorm16_rgba[0] = endpoint_low;
             result.unorm16_rgba[1] = endpoint_high;
-            if (luminance_alpha_8x5 || luminance_alpha_dual_8x5) {
+            if (d2_one_plane_8x5 || d2_dual_plane_8x5) {
                 std::array<uint8_t, 4> endpoints{
                     endpoint_low, endpoint_high,
                     static_cast<uint8_t>(std::lround(alpha_low * 255.0f)),
                     static_cast<uint8_t>(std::lround(alpha_high * 255.0f))};
-                if (luminance_alpha_dual_8x5) {
+                if (d2_dual_plane_8x5) {
                     std::array<uint8_t, 40> dual_weights{};
                     for (uint32_t y = 0; y < 4; ++y) for (uint32_t x = 0; x < 5; ++x) {
                         const uint32_t source_x = (x * 7u + 2u) / 4u;
@@ -422,22 +471,19 @@ bool astc_gpu_exact_subset_encode_cpu(
                     result.payload = astc_gpu_exact_subset_pack_luminance_alpha_dual_binary_8x5(
                         endpoints, dual_weights);
                 } else {
-                    if (refined_luminance_alpha_8x5) {
-                        const auto seed = request.exact_subset == astc_gpu_exact_subset_kind::luminance_alpha_binary_mean_refined_8x5
-                            ? binary_refinement_seed::mean_split
-                            : (request.exact_subset == astc_gpu_exact_subset_kind::luminance_alpha_binary_quantile_refined_8x5
-                                ? binary_refinement_seed::quartiles : binary_refinement_seed::minmax);
-                        refine_luminance_alpha_binary_8x5(source, endpoints, weights, seed);
+                    if (traits.d2_refined) {
+                        refine_luminance_alpha_binary_8x5(
+                            source, endpoints, weights, traits.refinement_seed);
                     }
                     result.payload = astc_gpu_exact_subset_pack_luminance_alpha_binary_8x5(
                         endpoints, weights);
                 }
-            } else if (binary_6x6 || refined_binary_6x6) {
+            } else if (d1_binary_6x6) {
                 std::array<uint8_t, 36> weights_6x6{};
                 std::copy_n(weights.begin(), weights_6x6.size(), weights_6x6.begin());
                 result.payload = astc_gpu_exact_subset_pack_d1_luminance_binary_6x6(
                     endpoint_low, endpoint_high, weights_6x6);
-            } else if (binary_5x5) {
+            } else if (d1_binary_5x5) {
                 std::array<uint8_t, 25> weights_5x5{};
                 std::copy_n(weights.begin(), weights_5x5.size(), weights_5x5.begin());
                 result.payload = astc_gpu_exact_subset_pack_d1_luminance_binary_5x5(
