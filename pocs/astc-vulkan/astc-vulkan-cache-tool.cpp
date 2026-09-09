@@ -181,13 +181,14 @@ void print_help(const char * executable) {
         "  %s admit-base --source-model source-f16.gguf --model runtime.gguf\n"
             "            --family <runtime-family> [--cache source-cache|auto]  (alias)\n"
         "\nDetaljerade build-argument (valfria):\n"
-        "  --gpu-proposer-shader shader.spv --preset thorough|medium|fast\n"
+        "  --gpu-proposer-shader shader.spv --gpu-exact-shader shader.spv --preset thorough|medium|fast\n"
         "  --artifact-dir dir --source-family fp16|bf16|q4_k_m|q3_k_m|tq2_0|tq1_0|...\n"
         "  --rows N --columns N (D2-shape; alias för crop-gränser i D1)\n"
         "            [--paired-semantic direct|la] [--channel-weights legacy|balanced-a025]\n"
         "            [--source-derived-alpha 0|1] [--row-scale none|absmax]\n"
         "            [--row-pairing optimized|adjacent] [--row-transform identity]\n"
         "            [--workers N] [--d2-prescreen cpu|gpu] [--d2-prescreen-top-k N]\n"
+        "            (gpu-exact D2: endast L+A 8x5, utan absmax eller Givens)\n"
         "\nAvancerat/artifact-packning (för reproducerbara scripts):\n"
         "  %s publish --model model.gguf --artifact-dir artifact-dir [--storage-profile name] [--cache path|auto]\n"
         "  %s install --model model.gguf --artifact-dir artifact-dir [--profile name] [--cache path|auto]\n"
@@ -735,6 +736,7 @@ bool build_d2_cache(const char * argv0, const std::string & model,
                     const std::string & footprint, const std::string & cache,
                     const std::string & artifact_dir, const std::string & source_family,
                     const std::string & backend, const std::string & preset,
+                    const std::string & exact_shader,
                     const std::string & paired_semantic, const std::string & channel_weights,
                     const std::string & source_alpha, const std::string & row_scale,
                     const std::string & row_pairing, const std::string & row_transform,
@@ -754,10 +756,6 @@ bool build_d2_cache(const char * argv0, const std::string & model,
     }
     if (find_profile("d2-" + footprint) == nullptr) {
         error = "paired-D2 build supports only 6x5, 8x5 and 10x5 footprints";
-        return false;
-    }
-    if (backend == "gpu-exact") {
-        error = "GPU exact cache export is currently D1-only; D2 continues to use the paired candidate selector";
         return false;
     }
     if (paired_semantic != "direct" && paired_semantic != "la") {
@@ -836,7 +834,7 @@ bool build_d2_cache(const char * argv0, const std::string & model,
     // CPU is the portable/reference paired-D2 finisher. Hybrid keeps the
     // neural proposer path; selecting this explicitly makes large pilot
     // caches usable without paying neural table-init cost.
-    std::string executable_name = backend == "cpu"
+    std::string executable_name = backend == "cpu" || backend == "gpu-exact"
         ? "astc-vulkan-paired-selection-smoke"
         : "astc-vulkan-paired-selection-smoke-neural";
     if (footprint == "6x5") executable_name += "-6x5";
@@ -852,6 +850,20 @@ bool build_d2_cache(const char * argv0, const std::string & model,
         "--paired-semantic", paired_semantic, "--paired-basis", "direct",
         "--row-strip-chunked", "1", "--row-pairing", row_pairing,
         "--row-transform", row_transform};
+    if (backend == "gpu-exact") {
+        if (exact_shader.empty()) {
+            error = "D2 --backend gpu-exact requires --gpu-exact-shader";
+            cleanup();
+            return false;
+        }
+        if (footprint != "8x5" || paired_semantic != "la" || row_scale != "none" || row_transform != "none") {
+            error = "D2 GPU exact candidates currently require 8x5 D2-LA without row-scale or row transform";
+            cleanup();
+            return false;
+        }
+        generator_args.push_back("--gpu-exact-shader");
+        generator_args.push_back(exact_shader);
+    }
     if (!workers.empty()) {
         generator_args.push_back("--workers");
         generator_args.push_back(workers);
@@ -1690,7 +1702,7 @@ int main(int argc, char ** argv) {
         }
         const bool built = d2 ? build_d2_cache(
             argv[0], model, tensor, trace, footprint, cache, artifact_dir, source_family,
-            backend, preset,
+            backend, preset, exact_shader,
             paired_semantic, channel_weights, source_alpha, row_scale, row_pairing, row_transform, rows, columns,
             calibration_samples, validation_samples, workers, !no_publish, paths, error) : build_d1_cache(
             argv[0], model, tensor, trace, footprint, cache, backend, shader, exact_shader, preset,

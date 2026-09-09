@@ -954,6 +954,15 @@ if (TARGET astcenc::astcenc-static)
         target_link_libraries(astc-vulkan-paired-selection-smoke PRIVATE
             astcenc::astcenc-static astc-vulkan-algorithms ggml-base)
         target_compile_features(astc-vulkan-paired-selection-smoke PRIVATE cxx_std_17)
+        if (TARGET astc-vulkan-gpu-encoder-dispatch AND
+            TARGET astc-vulkan-gpu-encoder-finisher)
+            target_include_directories(astc-vulkan-paired-selection-smoke PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared)
+            target_link_libraries(astc-vulkan-paired-selection-smoke PRIVATE
+                astc-vulkan-gpu-encoder-dispatch astc-vulkan-gpu-encoder-finisher)
+            target_compile_definitions(astc-vulkan-paired-selection-smoke PRIVATE
+                ASTC_VULKAN_GPU_EXACT_D2_BACKEND=1)
+        endif()
 
         add_executable(astc-vulkan-paired-selection-smoke-6x5
             astc-vulkan-paired-selection-smoke.cpp

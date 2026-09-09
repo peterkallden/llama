@@ -209,11 +209,23 @@ astc-vulkan-cache build ... --backend gpu-exact \
   --gpu-exact-shader path/to/astc-gpu-exact-d1-luminance-refined-6x6.comp.spv
 ```
 
-`gpu-exact` is intentionally not accepted for paired D2 cache exports yet:
-D2 must first merge its GPU-generated L+A payload bank into the existing
-paired candidate selector, where pair maps, layout metadata, and validation
-selection are preserved. This prevents a narrow GPU control mode from being
-mistaken for a replacement of the D2 quality path.
+Paired D2 now accepts the same backend as an **additional candidate bank**,
+not as a replacement encoder. The initial cache-tool contract is deliberately
+narrow:
+
+```bash
+astc-vulkan-cache build ... --representation paired-d2 --footprint 8x5 \
+  --paired-semantic la --backend gpu-exact \
+  --gpu-exact-shader path/to/astc-gpu-exact-la-binary-8x5.comp.spv
+```
+
+It injects deterministic, legal GPU-produced L+A 8x5 controls into the
+ordinary CPU `astcenc` candidate bank. The existing paired selector still
+deduplicates all payloads, preserves the mandatory CPU neutral candidate,
+and chooses only through its normal validation prefix. Optimized row pairing
+is supported; absmax scaling and Givens transforms remain CPU-only for now,
+because their inverse semantics are not yet represented by the narrow GPU
+control subset. D2 6x5 and 10x5 remain CPU/hybrid paths.
 The D2 frontend now has its own representation-specific hybrid seam:
 `direct-neutral`, `direct-steered`, and D2-LA candidates are finished by the
 same CPU oracle and ranked only after exact paired decode. This remains an

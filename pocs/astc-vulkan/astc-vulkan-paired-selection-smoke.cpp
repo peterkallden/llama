@@ -9,6 +9,10 @@
 #include "astc-vulkan-paired-selector.h"
 #include "astc-vulkan-pv.h"
 #include "astc-vulkan-yaqa.h"
+#if defined(ASTC_VULKAN_GPU_EXACT_D2_BACKEND)
+#include "astc-gpu-encoder-exact-dispatch.h"
+#include "astc-gpu-encoder-finisher.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -99,6 +103,7 @@ struct params {
     std::string export_neutral_layout;
     std::string export_row_scales;
     std::string export_pair_map;
+    std::string gpu_exact_shader;
     bool export_neutral = false;
     bool row_scale_absmax = false;
     bool structure_bank = false;
@@ -268,6 +273,7 @@ bool parse_params(int argc, char ** argv, params & result) {
         else if (option == "--export-neutral") result.export_neutral = value == "1" || value == "true";
         else if (option == "--export-row-scales") result.export_row_scales = value;
         else if (option == "--export-pair-map") result.export_pair_map = value;
+        else if (option == "--gpu-exact-shader") result.gpu_exact_shader = value;
         else if (option == "--row-scale") {
             if (value == "none") result.row_scale_absmax = false;
             else if (value == "absmax") result.row_scale_absmax = true;
@@ -362,7 +368,7 @@ public:
                 ready_ = astcenc_context_alloc(&config, 1, &context_, nullptr) == ASTCENC_SUCCESS;
             }
 #else
-            ready_ = astcenc_context_alloc(&config, 1, &context_) == ASTCENC_SUCCESS;
+            ready_ = astcenc_context_alloc(&config, 1, &context_, nullptr) == ASTCENC_SUCCESS;
 #endif
         }
     }
@@ -463,6 +469,118 @@ private:
     structure_bank_state structure_bank_;
 #endif
 };
+
+#if defined(ASTC_VULKAN_GPU_EXACT_D2_BACKEND)
+bool same_candidate(const generated_candidate & lhs, const generated_candidate & rhs);
+
+void fill_source_block_with_steering(
+    std::vector<float> & source, const ggml_vk_astc_loaded_matrix & matrix,
+    uint32_t row0, uint32_t column0, uint32_t rows, uint32_t columns,
+    float minimum, float range, astc_vulkan_paired_layout layout,
+    astc_vulkan_paired_basis basis, astc_vulkan_paired_semantic semantic,
+    const std::function<float(float, float, float, float)> & steering_value,
+    const astc_vulkan_d2_pairing * pairing,
+    const astc_vulkan_d2_givens_transform * transform,
+    float * transform_minimum, float * transform_range,
+    const row_pair_transform_map * row_transforms);
+
+bool decode_gpu_exact_candidate(const astc_gpu_encoder_finished_block & finished,
+                                astc_vulkan_paired_layout layout,
+                                decoded_block & result) {
+    if (finished.footprint != kFootprint ||
+        finished.decoded_rgba.size() != kBlockWidth * kPhysicalBlockHeight * 4u) return false;
+    result = {};
+    result.payload = finished.payload;
+    for (uint32_t texel_y = 0; texel_y < kPhysicalBlockHeight; ++texel_y) {
+        for (uint32_t x = 0; x < kBlockWidth; ++x) {
+            const size_t offset = (static_cast<size_t>(texel_y) * kBlockWidth + x) * 4u;
+            const astc_vulkan_rgba_texel texel{finished.decoded_rgba[offset],
+                                               finished.decoded_rgba[offset + 1],
+                                               finished.decoded_rgba[offset + 2],
+                                               finished.decoded_rgba[offset + 3]};
+#if defined(ASTC_VULKAN_PAIRED_D2_TRANSPOSED)
+            result.logical_weights[(2 * x) * kLogicalBlockWidth + texel_y] =
+                astc_vulkan_paired_weight(texel, 0, layout,
+                                          astc_vulkan_paired_basis::direct,
+                                          astc_vulkan_paired_semantic::luminance_alpha);
+            result.logical_weights[(2 * x + 1) * kLogicalBlockWidth + texel_y] =
+                astc_vulkan_paired_weight(texel, 1, layout,
+                                          astc_vulkan_paired_basis::direct,
+                                          astc_vulkan_paired_semantic::luminance_alpha);
+#else
+            result.logical_weights[(2 * texel_y) * kLogicalBlockWidth + x] =
+                astc_vulkan_paired_weight(texel, 0, layout,
+                                          astc_vulkan_paired_basis::direct,
+                                          astc_vulkan_paired_semantic::luminance_alpha);
+            result.logical_weights[(2 * texel_y + 1) * kLogicalBlockWidth + x] =
+                astc_vulkan_paired_weight(texel, 1, layout,
+                                          astc_vulkan_paired_basis::direct,
+                                          astc_vulkan_paired_semantic::luminance_alpha);
+#endif
+        }
+    }
+    return true;
+}
+
+// Add a compact, deterministic GPU L+A control family without changing the
+// paired selector: it is deduplicated with normal astcenc candidates below.
+bool append_gpu_exact_la_controls(
+    const params & options, const ggml_vk_astc_loaded_matrix & matrix,
+    uint32_t row0, uint32_t blocks_x, float minimum, float range,
+    const astc_vulkan_d2_pairing & pairing,
+    std::vector<std::vector<generated_candidate>> & generated,
+    uint64_t & raw_candidates, std::string & error) {
+    if (options.gpu_exact_shader.empty()) return true;
+    for (const auto layout : {astc_vulkan_paired_layout::rg_b, astc_vulkan_paired_layout::r_gb}) {
+        astc_gpu_encoder_request request;
+        request.mode = astc_gpu_encode_mode::exact_subset;
+        request.footprint = kFootprint;
+        request.exact_subset = astc_gpu_exact_subset_kind::luminance_alpha_binary_8x5;
+        request.max_blocks_per_batch = 256;
+        request.blocks.reserve(blocks_x);
+        for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
+            std::vector<float> source;
+            fill_source_block_with_steering(source, matrix, row0, block_x * kLogicalBlockWidth,
+                options.rows, options.columns, minimum, range, layout,
+                astc_vulkan_paired_basis::direct, options.paired_semantic,
+                [](float, float, float, float) { return 0.5f; },
+                options.optimized_pairing ? &pairing : nullptr,
+                nullptr, nullptr, nullptr, nullptr);
+            astc_gpu_encoder_source_block block;
+            block.footprint = kFootprint;
+            block.source_block_id = block_x;
+            block.texels.resize(kBlockWidth * kPhysicalBlockHeight);
+            for (size_t texel = 0; texel < block.texels.size(); ++texel) {
+                for (uint32_t channel = 0; channel < 4; ++channel) {
+                    block.texels[texel].rgba[channel] = source[texel * 4u + channel];
+                }
+            }
+            request.blocks.push_back(std::move(block));
+        }
+        std::vector<astc_gpu_exact_subset_block> payloads;
+        if (!astc_gpu_exact_subset_encode_gpu_default(options.gpu_exact_shader, request, payloads, error)) return false;
+        std::vector<astc_gpu_encoder_finished_block> finished;
+        if (!astc_gpu_exact_subset_finish_payloads(kFootprint, payloads, finished, error) ||
+            finished.size() != blocks_x) return false;
+        for (const auto & block : finished) {
+            if (block.source_block_id >= generated.size()) return false;
+            generated_candidate candidate;
+            candidate.layout = layout;
+            candidate.alpha_source = d2_alpha_source_kind::geometric;
+            candidate.basis = astc_vulkan_paired_basis::direct;
+            candidate.steering = {};
+            if (!decode_gpu_exact_candidate(block, layout, candidate.block)) return false;
+            candidate.delta.payload = candidate.block.payload;
+            ++raw_candidates;
+            auto & candidates = generated[block.source_block_id];
+            bool duplicate = false;
+            for (const auto & existing : candidates) duplicate = duplicate || same_candidate(existing, candidate);
+            if (!duplicate) candidates.push_back(std::move(candidate));
+        }
+    }
+    return true;
+}
+#endif
 
 float normalized_weight(const ggml_vk_astc_loaded_matrix & matrix, uint32_t row, uint32_t column,
                         float minimum, float range) {
@@ -1211,9 +1329,22 @@ bool run_row_strip_chunked(const params & options,
         for (uint32_t worker_index = 0; worker_index < worker_count; ++worker_index) workers.emplace_back(worker, worker_index);
         for (auto & thread : workers) thread.join();
         if (generation_failed.load(std::memory_order_relaxed)) return false;
+#if defined(ASTC_VULKAN_GPU_EXACT_D2_BACKEND)
+        std::string gpu_exact_error;
+        uint64_t gpu_exact_raw = 0;
+        if (!append_gpu_exact_la_controls(options, matrix, row0, blocks_x, minimum, range,
+                                          pairing, generated, gpu_exact_raw, gpu_exact_error)) {
+            std::fprintf(stderr, "paired-select GPU exact candidate bank failed: %s\n",
+                         gpu_exact_error.c_str());
+            return false;
+        }
+        strip_raw += gpu_exact_raw;
+#endif
         raw_candidates += strip_raw.load();
-        unique_candidates += strip_unique.load();
-        peak_candidates = std::max<uint64_t>(peak_candidates, strip_unique.load());
+        uint64_t strip_candidate_count = 0;
+        for (const auto & candidates : generated) strip_candidate_count += candidates.size();
+        unique_candidates += strip_candidate_count;
+        peak_candidates = std::max<uint64_t>(peak_candidates, strip_candidate_count);
         for (uint32_t local_row = 0; local_row < strip_rows; ++local_row) {
             std::copy_n(strip_neutral.data() + static_cast<size_t>(local_row) * options.columns,
                         options.columns, neutral.data() + static_cast<size_t>(row0 + local_row) * options.columns);
@@ -1556,6 +1687,23 @@ int main(int argc, char ** argv) {
         }
         source_matrix = &scaled_matrix;
     }
+#if defined(ASTC_VULKAN_GPU_EXACT_D2_BACKEND)
+    // The first exact GPU D2 subset is deliberately narrow. It contributes
+    // extra L+A controls to the existing CPU-selected bank; it does not own
+    // row-scale or inverse-transform semantics yet.
+    if (!options.gpu_exact_shader.empty() &&
+        (kFootprint != astc_vulkan_footprint::k8x5 ||
+         options.paired_semantic != astc_vulkan_paired_semantic::luminance_alpha ||
+         options.row_scale_absmax || options.givens_transform || options.row_givens_transform)) {
+        std::fprintf(stderr, "--gpu-exact-shader currently requires D2-LA 8x5 without row-scale or Givens transforms\n");
+        return 2;
+    }
+#else
+    if (!options.gpu_exact_shader.empty()) {
+        std::fprintf(stderr, "this paired selector was built without the GPU exact D2 backend\n");
+        return 2;
+    }
+#endif
     float minimum = std::numeric_limits<float>::infinity();
     float maximum = -std::numeric_limits<float>::infinity();
     for (uint32_t row = 0; row < options.rows; ++row) for (uint32_t column = 0; column < options.columns; ++column) {
@@ -1870,11 +2018,11 @@ int main(int argc, char ** argv) {
                           static_cast<std::streamsize>(layout_words.size() * sizeof(uint32_t)));
         if (!payload_file.good() || !layout_file.good()) return 1;
     }
-    std::printf("paired-select D2_%s mapping=%s semantic=%s rows=%u columns=%u objective=%s channel-weights=%s source-alpha=%s basis=%s blocks=%u raw=%llu unique=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu\n",
+    std::printf("paired-select D2_%s mapping=%s semantic=%s rows=%u columns=%u objective=%s channel-weights=%s source-alpha=%s basis=%s gpu-exact-controls=%s blocks=%u raw=%llu unique=%llu dual-plane=%llu semantic-plane=%llu alpha-plane=%llu\n",
                 kFootprintName,
                 kMappingName, astc_vulkan_paired_semantic_name(options.paired_semantic), options.rows, options.columns, astc_vulkan_objective_name(options.objective), channel_weight_profile_name(options.channel_weights),
                 options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1",
-                paired_basis_selection_name(options.paired_basis), blocks_x * blocks_y,
+                paired_basis_selection_name(options.paired_basis), options.gpu_exact_shader.empty() ? "false" : "true", blocks_x * blocks_y,
                 static_cast<unsigned long long>(raw_candidates), static_cast<unsigned long long>(unique_candidates),
                 static_cast<unsigned long long>(selected_dual_planes),
                 static_cast<unsigned long long>(selected_semantic_dual_planes),
@@ -1910,6 +2058,7 @@ int main(int argc, char ** argv) {
                << "paired_semantic=" << astc_vulkan_paired_semantic_name(options.paired_semantic) << '\n'
                << "source_alpha=" << (options.source_derived_alpha ? "derived-replace-diagonals" : "geometric-v1") << '\n'
                << "paired_basis=" << paired_basis_selection_name(options.paired_basis) << '\n'
+               << "gpu_exact_controls=" << (!options.gpu_exact_shader.empty() ? 1 : 0) << '\n'
                << "objective=" << astc_vulkan_objective_name(options.objective) << '\n'
                << "output_trace=" << (options.output_trace.empty() ? "" : options.output_trace) << '\n'
                << "blocks=" << blocks_x * blocks_y << '\n'
