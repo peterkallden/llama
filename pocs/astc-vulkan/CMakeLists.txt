@@ -33,6 +33,7 @@ add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-gpu-d1-ranking.cpp
     astc-vulkan-gpu-ranking.cpp
     astc-vulkan-hash.cpp
+    astc-vulkan-astc-mode.cpp
     astc-vulkan-ise.cpp
     astc-vulkan-bit-budget.cpp
     astc-vulkan-objective.cpp
@@ -88,6 +89,15 @@ target_compile_features(test-astc-vulkan-ise PRIVATE cxx_std_17)
 if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-ise COMMAND test-astc-vulkan-ise)
     set_property(TEST test-astc-vulkan-ise PROPERTY LABELS astc)
+endif()
+
+add_executable(test-astc-vulkan-astc-mode
+    tests/test-astc-vulkan-astc-mode.cpp)
+target_link_libraries(test-astc-vulkan-astc-mode PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-astc-mode PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-astc-mode COMMAND test-astc-vulkan-astc-mode)
+    set_property(TEST test-astc-vulkan-astc-mode PROPERTY LABELS astc)
 endif()
 
 add_executable(test-astc-vulkan-hash
