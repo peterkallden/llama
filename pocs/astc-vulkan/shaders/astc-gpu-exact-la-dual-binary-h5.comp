@@ -1,0 +1,74 @@
+#version 450
+
+#ifndef ASTC_D2_TEXELS
+#error "ASTC_D2_TEXELS must be supplied by CMake"
+#endif
+#ifndef ASTC_D2_MODE
+#error "ASTC_D2_MODE must be supplied by CMake"
+#endif
+#ifndef ASTC_D2_BLOCK_WIDTH
+#error "ASTC_D2_BLOCK_WIDTH must be supplied by CMake"
+#endif
+#ifndef ASTC_D2_BLOCK_HEIGHT
+#error "ASTC_D2_BLOCK_HEIGHT must be supplied by CMake"
+#endif
+#ifndef ASTC_D2_GRID_WIDTH
+#error "ASTC_D2_GRID_WIDTH must be supplied by CMake"
+#endif
+#ifndef ASTC_D2_GRID_HEIGHT
+#error "ASTC_D2_GRID_HEIGHT must be supplied by CMake"
+#endif
+
+#include "astc-gpu-exact-pack.glsl"
+
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) readonly buffer Source { vec4 texels[]; } source;
+layout(std430, set = 0, binding = 1) writeonly buffer Payloads { uvec4 values[]; } payloads;
+layout(push_constant) uniform Push { uint block_count; uint texels_per_block; } params;
+shared vec2 values[64];
+
+void main() {
+    const uint block = gl_WorkGroupID.x;
+    if (block >= params.block_count || params.texels_per_block != ASTC_D2_TEXELS) return;
+    const uint lane = gl_LocalInvocationID.x;
+    values[lane] = lane < ASTC_D2_TEXELS
+        ? vec2(source.texels[block * ASTC_D2_TEXELS + lane].r,
+               source.texels[block * ASTC_D2_TEXELS + lane].a)
+        : vec2(0.0);
+    barrier();
+    if (lane != 0u) return;
+
+    vec2 low = values[0];
+    vec2 high = values[0];
+    for (uint index = 1u; index < ASTC_D2_TEXELS; ++index) {
+        low = min(low, values[index]);
+        high = max(high, values[index]);
+    }
+    const vec2 range = high - low;
+    uint bytes[16] = uint[16](0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+                               0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);
+    for (uint y = 0u; y < ASTC_D2_GRID_HEIGHT; ++y) for (uint x = 0u; x < ASTC_D2_GRID_WIDTH; ++x) {
+        const uint source_x = (x * (ASTC_D2_BLOCK_WIDTH - 1u) +
+                               (ASTC_D2_GRID_WIDTH - 1u) / 2u) /
+                              (ASTC_D2_GRID_WIDTH - 1u);
+        const uint source_y = (y * (ASTC_D2_BLOCK_HEIGHT - 1u) +
+                               (ASTC_D2_GRID_HEIGHT - 1u) / 2u) /
+                              (ASTC_D2_GRID_HEIGHT - 1u);
+        const vec2 sample_value = values[source_y * ASTC_D2_BLOCK_WIDTH + source_x];
+        const vec2 normalized = vec2(
+            range.x > 0.0 ? (sample_value.x - low.x) / range.x : 0.0,
+            range.y > 0.0 ? (sample_value.y - low.y) / range.y : 0.0);
+        const uint grid_index = y * ASTC_D2_GRID_WIDTH + x;
+        astc_gpu_binary_ise_store(bytes, 2u * grid_index, normalized.x >= 0.5 ? 1u : 0u, 1u);
+        astc_gpu_binary_ise_store(bytes, 2u * grid_index + 1u, normalized.y >= 0.5 ? 1u : 0u, 1u);
+    }
+    uvec4 payload = uvec4(0u);
+    astc_gpu_emit_binary_ise_stream(payload, bytes);
+    astc_gpu_write_normal_header(payload, ASTC_D2_MODE,
+                                 astc_gpu_endpoint_format_luminance_alpha);
+    astc_gpu_write_direct_luminance_alpha_endpoints(
+        payload, uvec2(astc_gpu_unorm8(low.x), astc_gpu_unorm8(low.y)),
+        uvec2(astc_gpu_unorm8(high.x), astc_gpu_unorm8(high.y)));
+    astc_gpu_payload_bits(payload, 3u, 2u, 128u - ASTC_D2_TEXELS - 2u);
+    payloads.values[block] = payload;
+}

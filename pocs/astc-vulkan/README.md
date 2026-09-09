@@ -177,12 +177,15 @@ bytes for the deterministic smoke fixtures. Future modes can be added when
 they pass the same gates; the normal CPU `astcenc` finisher remains the
 quality oracle and fallback while this subset grows.
 
-The first D2 exact entry is likewise intentionally narrow: `8x5` L+A can
-emit either a one-plane `8x5` binary-weight control or a `5x4` binary
-dual-plane candidate with the second plane assigned to Alpha. In D2-LA Alpha
-is the second logical weight, so the latter is a semantic dual-plane use. The
-D2 frontend owns pair maps, transforms and reconstruction; the shared codec
-layer only packs the physical L+A signals.
+The first D2 exact family is deliberately narrow but now covers the shared
+five-row geometry: `6x5`, `8x5`, and `10x5` L+A each emit a one-plane binary
+control, plus an audited semantic-Alpha dual-plane control for the device
+oracle. Their one-plane grids are `6x5`, `8x5`, and `10x5`; their dual-plane
+grids are `5x3`, `5x4`, and `5x5`, respectively. In D2-LA Alpha is the second
+logical weight, so the latter is a semantic dual-plane use. The D2 frontend
+owns pair maps, transforms and reconstruction; the shared codec layer only
+packs the physical L+A signals. The larger 8x5-only refinement bank remains
+separate until its fitting rules are independently ported and validated.
 
 The device smoke builds the relevant shaders and exercises all four entries:
 
@@ -214,18 +217,20 @@ not as a replacement encoder. The initial cache-tool contract is deliberately
 narrow:
 
 ```bash
-astc-vulkan-cache build ... --representation paired-d2 --footprint 8x5 \
+astc-vulkan-cache build ... --representation paired-d2 --footprint 6x5 \
   --paired-semantic la --backend gpu-exact \
-  --gpu-exact-shader path/to/astc-gpu-exact-la-binary-8x5.comp.spv
+  --gpu-exact-shader path/to/astc-gpu-exact-la-binary-6x5.comp.spv
 ```
 
-It injects deterministic, legal GPU-produced L+A 8x5 controls into the
+It injects deterministic, legal GPU-produced L+A H5 controls into the
 ordinary CPU `astcenc` candidate bank. The existing paired selector still
 deduplicates all payloads, preserves the mandatory CPU neutral candidate,
 and chooses only through its normal validation prefix. Optimized row pairing
 is supported; absmax scaling and Givens transforms remain CPU-only for now,
 because their inverse semantics are not yet represented by the narrow GPU
-control subset. D2 6x5 and 10x5 remain CPU/hybrid paths.
+control subset. The 6x5/10x5 GPU-exact paths have passed only physical
+CPU/Vulkan-oracle gates; they remain experimental until their own model gates
+have passed.
 The D2 frontend now has its own representation-specific hybrid seam:
 `direct-neutral`, `direct-steered`, and D2-LA candidates are finished by the
 same CPU oracle and ranked only after exact paired decode. This remains an

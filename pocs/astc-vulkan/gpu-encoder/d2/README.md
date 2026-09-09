@@ -75,19 +75,18 @@ contract, but still require the global selection, artifact, model, and Vulkan
 quality gates before admission. D2 8x8/10x10 remain a separate eight/ten-row
 geometry milestone.
 
-`astc-gpu-d2-exact-subset.*` is the parallel GPU-exact entry for D2-LA 8x5.
-It emits five bounded physical requests for the same normalized L+A source:
-balanced one-plane binary L+A, luminance-guided one-plane binary L+A,
-Alpha-guided one-plane binary L+A, a quantization-aware joint-L/A refined
-one-plane fit, and a semantic-Alpha dual-plane binary alternative. The refined
-fit stays in the same legal 8x5 mode and runtime decoder; it only broadens the
-offline candidate set. Its companion semantic-bank builder assigns globally unique
-candidate IDs while retaining D2 layout and pair-map metadata. The shared
-decode-only oracle then consumes the emitted payload bytes directly, so the
-existing D2 pair-map/Givens restore and selector score the GPU candidate
-itself rather than a regenerated astcenc encode. This is still offline
-engineering infrastructure: it does not publish a cache artifact or alter
-runtime admission.
+`astc-gpu-d2-exact-subset.*` is the parallel GPU-exact entry for D2-LA's
+five-row family. `6x5`, `8x5`, and `10x5` share a descriptor-driven base L+A
+binary mode and a semantic-Alpha dual-plane oracle mode; CPU and Vulkan smokes
+must reproduce the same 16-byte payload. The `8x5` profile additionally emits
+luminance-guided, Alpha-guided, and bounded refined one-plane controls. Those
+extra fitting variants are intentionally *not* implied for 6x5 or 10x5: the
+profiles share physical packing, not unvalidated quality heuristics. The
+shared decode-only oracle consumes the emitted payload bytes directly, so the
+existing D2 pair-map/Givens restore and selector score the GPU candidate itself
+rather than a regenerated astcenc encode. This remains offline engineering
+infrastructure: it does not publish a cache artifact or alter runtime
+admission.
 
 The device smoke exercises all three implemented five-row footprints and the
 full hybrid hand-off. Its 8x5 path additionally crosses the GPU proposer seam

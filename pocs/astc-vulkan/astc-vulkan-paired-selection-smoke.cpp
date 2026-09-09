@@ -46,6 +46,18 @@ constexpr const char * kFootprintName = "8x5";
 constexpr astc_vulkan_footprint kFootprint = astc_vulkan_footprint::k8x5;
 #endif
 constexpr uint32_t kPhysicalBlockHeight = 5;
+#if defined(ASTC_VULKAN_GPU_EXACT_D2_BACKEND)
+#if defined(ASTC_VULKAN_PAIRED_D2_10X5)
+constexpr astc_gpu_exact_subset_kind kGpuExactOnePlaneKind =
+    astc_gpu_exact_subset_kind::luminance_alpha_binary_10x5;
+#elif defined(ASTC_VULKAN_PAIRED_D2_6X5)
+constexpr astc_gpu_exact_subset_kind kGpuExactOnePlaneKind =
+    astc_gpu_exact_subset_kind::luminance_alpha_binary_6x5;
+#else
+constexpr astc_gpu_exact_subset_kind kGpuExactOnePlaneKind =
+    astc_gpu_exact_subset_kind::luminance_alpha_binary_8x5;
+#endif
+#endif
 #if defined(ASTC_VULKAN_PAIRED_D2_TRANSPOSED)
 // Research-only semantic mapping: keep the physical 8x5 ASTC block, but map
 // its X axis to eight paired output rows and its Y axis to five reduction
@@ -535,7 +547,7 @@ bool append_gpu_exact_la_controls(
         astc_gpu_encoder_request request;
         request.mode = astc_gpu_encode_mode::exact_subset;
         request.footprint = kFootprint;
-        request.exact_subset = astc_gpu_exact_subset_kind::luminance_alpha_binary_8x5;
+        request.exact_subset = kGpuExactOnePlaneKind;
         request.max_blocks_per_batch = 256;
         request.blocks.reserve(blocks_x);
         for (uint32_t block_x = 0; block_x < blocks_x; ++block_x) {
@@ -1692,10 +1704,12 @@ int main(int argc, char ** argv) {
     // extra L+A controls to the existing CPU-selected bank; it does not own
     // row-scale or inverse-transform semantics yet.
     if (!options.gpu_exact_shader.empty() &&
-        (kFootprint != astc_vulkan_footprint::k8x5 ||
+        ((kFootprint != astc_vulkan_footprint::k6x5 &&
+          kFootprint != astc_vulkan_footprint::k8x5 &&
+          kFootprint != astc_vulkan_footprint::k10x5) ||
          options.paired_semantic != astc_vulkan_paired_semantic::luminance_alpha ||
          options.row_scale_absmax || options.givens_transform || options.row_givens_transform)) {
-        std::fprintf(stderr, "--gpu-exact-shader currently requires D2-LA 8x5 without row-scale or Givens transforms\n");
+        std::fprintf(stderr, "--gpu-exact-shader currently requires D2-LA H5 (6x5, 8x5 or 10x5) without row-scale or Givens transforms\n");
         return 2;
     }
 #else

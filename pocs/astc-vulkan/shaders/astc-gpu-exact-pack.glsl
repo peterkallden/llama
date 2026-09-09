@@ -15,8 +15,12 @@
 const uint astc_gpu_mode_d1_luminance_binary_6x6 = 0x104u;
 const uint astc_gpu_mode_d1_luminance_binary_5x5 = 0x0e1u;
 const uint astc_gpu_mode_d1_luminance_quant4_4x4 = 0x042u;
+const uint astc_gpu_mode_d2_luminance_alpha_binary_6x5 = 0x161u;
+const uint astc_gpu_mode_d2_luminance_alpha_dual_binary_6x5 = 0x4a1u;
 const uint astc_gpu_mode_d2_luminance_alpha_binary_8x5 = 0x065u;
 const uint astc_gpu_mode_d2_luminance_alpha_dual_binary_8x5 = 0x4c1u;
+const uint astc_gpu_mode_d2_luminance_alpha_binary_10x5 = 0x165u;
+const uint astc_gpu_mode_d2_luminance_alpha_dual_binary_10x5 = 0x4e1u;
 const uint astc_gpu_endpoint_format_luminance = 0u;
 const uint astc_gpu_endpoint_format_luminance_alpha = 4u;
 

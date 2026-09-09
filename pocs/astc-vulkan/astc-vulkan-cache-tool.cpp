@@ -188,7 +188,7 @@ void print_help(const char * executable) {
         "            [--source-derived-alpha 0|1] [--row-scale none|absmax]\n"
         "            [--row-pairing optimized|adjacent] [--row-transform identity]\n"
         "            [--workers N] [--d2-prescreen cpu|gpu] [--d2-prescreen-top-k N]\n"
-        "            (gpu-exact D2: endast L+A 8x5, utan absmax eller Givens)\n"
+            "            (gpu-exact D2: L+A 6x5, 8x5 eller 10x5, utan absmax eller Givens)\n"
         "\nAvancerat/artifact-packning (för reproducerbara scripts):\n"
         "  %s publish --model model.gguf --artifact-dir artifact-dir [--storage-profile name] [--cache path|auto]\n"
         "  %s install --model model.gguf --artifact-dir artifact-dir [--profile name] [--cache path|auto]\n"
@@ -856,8 +856,9 @@ bool build_d2_cache(const char * argv0, const std::string & model,
             cleanup();
             return false;
         }
-        if (footprint != "8x5" || paired_semantic != "la" || row_scale != "none" || row_transform != "identity") {
-            error = "D2 GPU exact candidates currently require 8x5 D2-LA without row-scale or row transform "
+        if ((footprint != "6x5" && footprint != "8x5" && footprint != "10x5") ||
+            paired_semantic != "la" || row_scale != "none" || row_transform != "identity") {
+            error = "D2 GPU exact candidates currently require H5 D2-LA (6x5, 8x5 or 10x5) without row-scale or row transform "
                 "(got footprint=" + footprint + ", semantic=" + paired_semantic +
                 ", row-scale=" + row_scale + ", row-transform=" + row_transform + ")";
             cleanup();
@@ -1713,8 +1714,12 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "astc-cache build failed: %s\n", error.c_str());
             return 1;
         }
-        std::printf("astc-cache build published root=%s\n", paths.root.c_str());
-        print_paths(paths);
+        if (no_publish) {
+            std::printf("astc-cache build staged only; artifact-dir=%s\n", artifact_dir.c_str());
+        } else {
+            std::printf("astc-cache build published root=%s\n", paths.root.c_str());
+            print_paths(paths);
+        }
         return 0;
     }
     if (command == "inspect" || command == "verify") {

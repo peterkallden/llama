@@ -41,6 +41,8 @@ enum class astc_gpu_exact_subset_kind : uint8_t {
     d1_luminance_binary_quantile_refined_6x6,
     d1_luminance_binary_5x5,
     d1_luminance_quant4_4x4,
+    luminance_alpha_binary_6x5,
+    luminance_alpha_dual_binary_6x5,
     // One-plane D2-LA 8x5 candidates. All use the same legal physical mode
     // but differ in which semantic lane guides the shared binary weights.
     luminance_alpha_binary_8x5,
@@ -52,6 +54,8 @@ enum class astc_gpu_exact_subset_kind : uint8_t {
     luminance_alpha_binary_mean_refined_8x5,
     luminance_alpha_binary_quantile_refined_8x5,
     luminance_alpha_dual_binary_8x5,
+    luminance_alpha_binary_10x5,
+    luminance_alpha_dual_binary_10x5,
 };
 
 struct astc_gpu_encoder_texel {

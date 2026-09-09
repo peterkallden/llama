@@ -464,6 +464,51 @@ int main() {
     require(subset_blocks.size() == 1 && subset_blocks[0].payload[0] == 0xc1u &&
             (subset_blocks[0].payload[1] & 0x04u) != 0u);
 
+    // The three H5 profiles share D2's ten-logical-row contract but must not
+    // share 8x5's physical mode. Exercise the descriptor-driven CPU packer
+    // for the newly audited 6x5 and 10x5 modes here; device smokes then prove
+    // the GPU payload and Vulkan decode match this reference.
+    const auto check_h5_cpu_profile = [&](astc_vulkan_footprint footprint,
+                                          astc_gpu_exact_subset_kind one_plane,
+                                          astc_gpu_exact_subset_kind dual_plane,
+                                          uint8_t one_plane_header,
+                                          uint8_t dual_plane_header) {
+        const auto format = astc_vulkan_format(footprint);
+        std::vector<float> values(10u * format.block_width, 0.5f);
+        for (uint32_t row = 0; row < 10u; ++row) for (uint32_t column = 0; column < format.block_width; ++column) {
+            values[row * format.block_width + column] =
+                0.05f + 0.90f * float((row * 11u + column * 5u) % 23u) / 22.0f;
+        }
+        std::vector<astc_vulkan_paired_layout> layouts;
+        std::vector<astc_gpu_encoder_source_block> source;
+        require(astc_gpu_d2_make_uniform_layout_map(
+            footprint, 10u, format.block_width, astc_vulkan_paired_layout::rg_b, layouts));
+        require(astc_gpu_d2_build_paired_source_blocks(
+            footprint, values, 10u, format.block_width, layouts, {},
+            astc_vulkan_paired_semantic::luminance_alpha, source));
+        auto request = subset_d2_request;
+        request.footprint = footprint;
+        request.blocks = source;
+        request.exact_subset = one_plane;
+        require(astc_gpu_exact_subset_encode_cpu(request, subset_blocks));
+        require(subset_blocks.size() == 1u && subset_blocks[0].payload[0] == one_plane_header);
+        request.exact_subset = dual_plane;
+        require(astc_gpu_exact_subset_encode_cpu(request, subset_blocks));
+        require(subset_blocks.size() == 1u && subset_blocks[0].payload[0] == dual_plane_header);
+        astc_gpu_d2_exact_subset_bank bank;
+        require(astc_gpu_d2_build_luminance_alpha_exact_subset_bank(source, 3u, bank));
+        require(bank.one_plane.exact_subset == one_plane &&
+                bank.alpha_dual_plane.exact_subset == dual_plane);
+    };
+    check_h5_cpu_profile(astc_vulkan_footprint::k6x5,
+                         astc_gpu_exact_subset_kind::luminance_alpha_binary_6x5,
+                         astc_gpu_exact_subset_kind::luminance_alpha_dual_binary_6x5,
+                         0x61u, 0xa1u);
+    check_h5_cpu_profile(astc_vulkan_footprint::k10x5,
+                         astc_gpu_exact_subset_kind::luminance_alpha_binary_10x5,
+                         astc_gpu_exact_subset_kind::luminance_alpha_dual_binary_10x5,
+                         0x65u, 0xe1u);
+
     astc_gpu_d2_exact_subset_bank subset_d2_bank;
     require(astc_gpu_d2_build_luminance_alpha_exact_subset_bank(
         subset_d2_source, 3, subset_d2_bank));

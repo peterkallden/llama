@@ -1,0 +1,56 @@
+#version 450
+
+// Compile this source once per audited five-row profile. The physical ASTC
+// parameters are compile-time constants, while D2's logical pair semantics
+// remain outside this shared packer.
+#ifndef ASTC_D2_TEXELS
+#error "ASTC_D2_TEXELS must be supplied by CMake"
+#endif
+#ifndef ASTC_D2_MODE
+#error "ASTC_D2_MODE must be supplied by CMake"
+#endif
+
+#include "astc-gpu-exact-pack.glsl"
+
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) readonly buffer Source { vec4 texels[]; } source;
+layout(std430, set = 0, binding = 1) writeonly buffer Payloads { uvec4 values[]; } payloads;
+layout(push_constant) uniform Push { uint block_count; uint texels_per_block; } params;
+shared vec2 values[64];
+
+void main() {
+    const uint block = gl_WorkGroupID.x;
+    if (block >= params.block_count || params.texels_per_block != ASTC_D2_TEXELS) return;
+    const uint lane = gl_LocalInvocationID.x;
+    values[lane] = lane < ASTC_D2_TEXELS
+        ? vec2(source.texels[block * ASTC_D2_TEXELS + lane].r,
+               source.texels[block * ASTC_D2_TEXELS + lane].a)
+        : vec2(0.0);
+    barrier();
+    if (lane != 0u) return;
+
+    vec2 low = values[0];
+    vec2 high = values[0];
+    for (uint index = 1u; index < ASTC_D2_TEXELS; ++index) {
+        low = min(low, values[index]);
+        high = max(high, values[index]);
+    }
+    const vec2 range = high - low;
+    uint bytes[16] = uint[16](0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+                               0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);
+    for (uint index = 0u; index < ASTC_D2_TEXELS; ++index) {
+        const vec2 normalized = vec2(
+            range.x > 0.0 ? (values[index].x - low.x) / range.x : 0.0,
+            range.y > 0.0 ? (values[index].y - low.y) / range.y : 0.0);
+        astc_gpu_binary_ise_store(bytes, index,
+            0.5 * (normalized.x + normalized.y) >= 0.5 ? 1u : 0u, 1u);
+    }
+    uvec4 payload = uvec4(0u);
+    astc_gpu_emit_binary_ise_stream(payload, bytes);
+    astc_gpu_write_normal_header(payload, ASTC_D2_MODE,
+                                 astc_gpu_endpoint_format_luminance_alpha);
+    astc_gpu_write_direct_luminance_alpha_endpoints(
+        payload, uvec2(astc_gpu_unorm8(low.x), astc_gpu_unorm8(low.y)),
+        uvec2(astc_gpu_unorm8(high.x), astc_gpu_unorm8(high.y)));
+    payloads.values[block] = payload;
+}

@@ -753,6 +753,20 @@ if (TARGET Vulkan::Vulkan)
         astc-vulkan-gpu-encoder-dispatch astc-vulkan-gpu-encoder-finisher)
     target_compile_features(astc-vulkan-gpu-exact-d2-8x5-device-smoke PRIVATE cxx_std_17)
 
+    foreach(ASTC_VULKAN_D2_H5_WIDTH IN ITEMS 6 10)
+        add_executable(astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke
+            astc-vulkan-gpu-exact-d2-8x5-device-smoke.cpp)
+        target_include_directories(astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared
+            ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/d2)
+        target_link_libraries(astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke PRIVATE
+            astc-vulkan-gpu-encoder-dispatch astc-vulkan-gpu-encoder-finisher)
+        target_compile_features(astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke PRIVATE cxx_std_17)
+        target_compile_definitions(astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke PRIVATE
+            ASTC_VULKAN_D2_EXACT_WIDTH=${ASTC_VULKAN_D2_H5_WIDTH})
+    endforeach()
+
     add_executable(astc-vulkan-gpu-d2-exact-bank-fixture-smoke
         astc-vulkan-gpu-d2-exact-bank-fixture-smoke.cpp)
     target_include_directories(astc-vulkan-gpu-d2-exact-bank-fixture-smoke PRIVATE
@@ -844,6 +858,12 @@ if (TARGET astcenc::astcenc-static)
             target_link_libraries(astc-vulkan-gpu-exact-d2-8x5-device-smoke PRIVATE
                 astc-vulkan-gpu-encoder-verify)
         endif()
+        foreach(ASTC_VULKAN_D2_H5_WIDTH IN ITEMS 6 10)
+            if (TARGET astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke)
+                target_link_libraries(astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke PRIVATE
+                    astc-vulkan-gpu-encoder-verify)
+            endif()
+        endforeach()
     endif()
 
     add_executable(astc-vulkan-artifact-decode
@@ -975,6 +995,14 @@ if (TARGET astcenc::astcenc-static)
         target_compile_features(astc-vulkan-paired-selection-smoke-6x5 PRIVATE cxx_std_17)
         target_compile_definitions(astc-vulkan-paired-selection-smoke-6x5 PRIVATE
             ASTC_VULKAN_PAIRED_D2_6X5=1)
+        if (TARGET astc-vulkan-gpu-encoder-dispatch AND TARGET astc-vulkan-gpu-encoder-finisher)
+            target_include_directories(astc-vulkan-paired-selection-smoke-6x5 PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared)
+            target_link_libraries(astc-vulkan-paired-selection-smoke-6x5 PRIVATE
+                astc-vulkan-gpu-encoder-dispatch astc-vulkan-gpu-encoder-finisher)
+            target_compile_definitions(astc-vulkan-paired-selection-smoke-6x5 PRIVATE
+                ASTC_VULKAN_GPU_EXACT_D2_BACKEND=1)
+        endif()
 
         add_executable(astc-vulkan-paired-selection-smoke-10x5
             astc-vulkan-paired-selection-smoke.cpp
@@ -987,6 +1015,14 @@ if (TARGET astcenc::astcenc-static)
         target_compile_features(astc-vulkan-paired-selection-smoke-10x5 PRIVATE cxx_std_17)
         target_compile_definitions(astc-vulkan-paired-selection-smoke-10x5 PRIVATE
             ASTC_VULKAN_PAIRED_D2_10X5=1)
+        if (TARGET astc-vulkan-gpu-encoder-dispatch AND TARGET astc-vulkan-gpu-encoder-finisher)
+            target_include_directories(astc-vulkan-paired-selection-smoke-10x5 PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/gpu-encoder/shared)
+            target_link_libraries(astc-vulkan-paired-selection-smoke-10x5 PRIVATE
+                astc-vulkan-gpu-encoder-dispatch astc-vulkan-gpu-encoder-finisher)
+            target_compile_definitions(astc-vulkan-paired-selection-smoke-10x5 PRIVATE
+                ASTC_VULKAN_GPU_EXACT_D2_BACKEND=1)
+        endif()
 
         if (GGML_VK_ASTC_EXPERIMENTAL_NEURAL_RANK)
             if (NOT EXISTS "${GGML_VK_ASTC_NEURAL_RANK_LIBRARY}" OR
@@ -1334,6 +1370,14 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-quantile-refined-8x5.comp.spv)
     set(ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_8X5_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-dual-binary-8x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_LA_BINARY_6X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-binary-6x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_6X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-dual-binary-6x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_LA_BINARY_10X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-binary-10x5.comp.spv)
+    set(ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_10X5_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-dual-binary-10x5.comp.spv)
     set(ASTC_VULKAN_GPU_EXACT_PACK_INCLUDE
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-pack.glsl)
     add_custom_command(
@@ -1718,6 +1762,37 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling exact dual-plane L+A 8x5 ASTC subset shader")
     add_custom_target(astc-vulkan-gpu-exact-la-dual-binary-8x5-shader
         DEPENDS ${ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_8X5_SHADER_OUTPUT})
+    function(astc_vulkan_add_gpu_exact_d2_h5_shader width mode dual_mode grid_width grid_height)
+        set(binary_output ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-binary-${width}x5.comp.spv)
+        set(dual_output ${CMAKE_CURRENT_BINARY_DIR}/astc-gpu-exact-la-dual-binary-${width}x5.comp.spv)
+        math(EXPR texels "${width} * 5")
+        add_custom_command(
+            OUTPUT ${binary_output}
+            COMMAND ${ASTC_VULKAN_GLSLC}
+                --target-env=vulkan1.1 -fshader-stage=compute
+                -DASTC_D2_TEXELS=${texels} -DASTC_D2_MODE=${mode}u
+                ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-binary-h5.comp
+                -o ${binary_output}
+            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-binary-h5.comp
+                ${ASTC_VULKAN_GPU_EXACT_PACK_INCLUDE}
+            COMMENT "Compiling exact L+A ${width}x5 ASTC subset shader")
+        add_custom_target(astc-vulkan-gpu-exact-la-binary-${width}x5-shader DEPENDS ${binary_output})
+        add_custom_command(
+            OUTPUT ${dual_output}
+            COMMAND ${ASTC_VULKAN_GLSLC}
+                --target-env=vulkan1.1 -fshader-stage=compute
+                -DASTC_D2_TEXELS=${texels} -DASTC_D2_MODE=${dual_mode}u
+                -DASTC_D2_BLOCK_WIDTH=${width} -DASTC_D2_BLOCK_HEIGHT=5
+                -DASTC_D2_GRID_WIDTH=${grid_width} -DASTC_D2_GRID_HEIGHT=${grid_height}
+                ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-dual-binary-h5.comp
+                -o ${dual_output}
+            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-gpu-exact-la-dual-binary-h5.comp
+                ${ASTC_VULKAN_GPU_EXACT_PACK_INCLUDE}
+            COMMENT "Compiling exact dual-plane L+A ${width}x5 ASTC subset shader")
+        add_custom_target(astc-vulkan-gpu-exact-la-dual-binary-${width}x5-shader DEPENDS ${dual_output})
+    endfunction()
+    astc_vulkan_add_gpu_exact_d2_h5_shader(6 0x161 0x4a1 5 3)
+    astc_vulkan_add_gpu_exact_d2_h5_shader(10 0x165 0x4e1 5 5)
     add_custom_command(
         OUTPUT ${ASTC_VULKAN_GPU_D1_PROPOSER_8X6_SHADER_OUTPUT}
         COMMAND ${ASTC_VULKAN_GLSLC}
@@ -1931,6 +2006,21 @@ if (ASTC_VULKAN_GLSLC)
         set_property(TEST astc-vulkan-gpu-exact-d2-8x5-device-smoke PROPERTY LABELS astc)
         set_property(TEST astc-vulkan-gpu-exact-d2-8x5-device-smoke PROPERTY SKIP_RETURN_CODE 77)
     endif()
+    foreach(ASTC_VULKAN_D2_H5_WIDTH IN ITEMS 6 10)
+        if (ASTC_VULKAN_GLSLC AND TARGET astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke)
+            add_dependencies(astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke
+                astc-vulkan-gpu-exact-la-binary-${ASTC_VULKAN_D2_H5_WIDTH}x5-shader
+                astc-vulkan-gpu-exact-la-dual-binary-${ASTC_VULKAN_D2_H5_WIDTH}x5-shader
+                astc-vulkan-shader-smoke)
+            add_test(NAME astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke
+                COMMAND astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke
+                    ${ASTC_VULKAN_GPU_EXACT_LA_BINARY_${ASTC_VULKAN_D2_H5_WIDTH}X5_SHADER_OUTPUT}
+                    ${ASTC_VULKAN_GPU_EXACT_LA_DUAL_BINARY_${ASTC_VULKAN_D2_H5_WIDTH}X5_SHADER_OUTPUT}
+                    ${ASTC_VULKAN_SHADER_OUTPUT})
+            set_property(TEST astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke PROPERTY LABELS astc)
+            set_property(TEST astc-vulkan-gpu-exact-d2-${ASTC_VULKAN_D2_H5_WIDTH}x5-device-smoke PROPERTY SKIP_RETURN_CODE 77)
+        endif()
+    endforeach()
     if (TARGET ggml-base AND TARGET astc-vulkan-ffn-adapter)
         add_executable(astc-vulkan-ffn-e2e-smoke
             astc-vulkan-ffn-e2e-smoke.cpp

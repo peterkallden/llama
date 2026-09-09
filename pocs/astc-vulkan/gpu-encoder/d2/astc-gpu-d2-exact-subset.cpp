@@ -5,8 +5,10 @@
 namespace {
 
 bool is_luminance_alpha_source(const astc_gpu_encoder_source_block & block) {
-    const auto format = astc_vulkan_format(astc_vulkan_footprint::k8x5);
-    if (block.footprint != astc_vulkan_footprint::k8x5 ||
+    const auto format = astc_vulkan_format(block.footprint);
+    if ((block.footprint != astc_vulkan_footprint::k6x5 &&
+         block.footprint != astc_vulkan_footprint::k8x5 &&
+         block.footprint != astc_vulkan_footprint::k10x5) ||
         block.texels.size() != size_t(format.block_width) * format.block_height) return false;
     for (const auto & texel : block.texels) {
         for (const float value : texel.rgba) {
@@ -16,6 +18,24 @@ bool is_luminance_alpha_source(const astc_gpu_encoder_source_block & block) {
             std::fabs(texel.rgba[0] - texel.rgba[2]) > 1e-6f) return false;
     }
     return true;
+}
+
+astc_gpu_exact_subset_kind one_plane_kind(astc_vulkan_footprint footprint) {
+    switch (footprint) {
+    case astc_vulkan_footprint::k6x5: return astc_gpu_exact_subset_kind::luminance_alpha_binary_6x5;
+    case astc_vulkan_footprint::k8x5: return astc_gpu_exact_subset_kind::luminance_alpha_binary_8x5;
+    case astc_vulkan_footprint::k10x5: return astc_gpu_exact_subset_kind::luminance_alpha_binary_10x5;
+    default: return astc_gpu_exact_subset_kind::void_extent_unorm16;
+    }
+}
+
+astc_gpu_exact_subset_kind dual_plane_kind(astc_vulkan_footprint footprint) {
+    switch (footprint) {
+    case astc_vulkan_footprint::k6x5: return astc_gpu_exact_subset_kind::luminance_alpha_dual_binary_6x5;
+    case astc_vulkan_footprint::k8x5: return astc_gpu_exact_subset_kind::luminance_alpha_dual_binary_8x5;
+    case astc_vulkan_footprint::k10x5: return astc_gpu_exact_subset_kind::luminance_alpha_dual_binary_10x5;
+    default: return astc_gpu_exact_subset_kind::void_extent_unorm16;
+    }
 }
 
 } // namespace
@@ -28,27 +48,33 @@ bool astc_gpu_d2_build_luminance_alpha_exact_subset_bank(
     if (source_blocks.empty() || max_blocks_per_batch == 0) return false;
     for (const auto & block : source_blocks) if (!is_luminance_alpha_source(block)) return false;
 
+    const auto footprint = source_blocks.front().footprint;
     const auto make_request = [&](astc_gpu_exact_subset_kind mode) {
         astc_gpu_encoder_request request;
-        request.footprint = astc_vulkan_footprint::k8x5;
+        request.footprint = footprint;
         request.mode = astc_gpu_encode_mode::exact_subset;
         request.exact_subset = mode;
         request.max_blocks_per_batch = max_blocks_per_batch;
         request.blocks = source_blocks;
         return request;
     };
-    bank.one_plane = make_request(astc_gpu_exact_subset_kind::luminance_alpha_binary_8x5);
-    bank.one_plane_luminance_weights = make_request(
-        astc_gpu_exact_subset_kind::luminance_alpha_binary_luminance_weights_8x5);
-    bank.one_plane_alpha_weights = make_request(
-        astc_gpu_exact_subset_kind::luminance_alpha_binary_alpha_weights_8x5);
-    bank.one_plane_refined = make_request(
-        astc_gpu_exact_subset_kind::luminance_alpha_binary_refined_8x5);
-    bank.one_plane_mean_refined = make_request(
-        astc_gpu_exact_subset_kind::luminance_alpha_binary_mean_refined_8x5);
-    bank.one_plane_quantile_refined = make_request(
-        astc_gpu_exact_subset_kind::luminance_alpha_binary_quantile_refined_8x5);
-    bank.alpha_dual_plane = make_request(astc_gpu_exact_subset_kind::luminance_alpha_dual_binary_8x5);
+    bank.one_plane = make_request(one_plane_kind(footprint));
+    bank.alpha_dual_plane = make_request(dual_plane_kind(footprint));
+    // The extra fitting controls are audited only for 8x5 today. The H5
+    // profile remains useful at 6x5/10x5 with its base and dual-plane modes,
+    // without pretending that 8x5's refinement has been ported.
+    if (footprint == astc_vulkan_footprint::k8x5) {
+        bank.one_plane_luminance_weights = make_request(
+            astc_gpu_exact_subset_kind::luminance_alpha_binary_luminance_weights_8x5);
+        bank.one_plane_alpha_weights = make_request(
+            astc_gpu_exact_subset_kind::luminance_alpha_binary_alpha_weights_8x5);
+        bank.one_plane_refined = make_request(
+            astc_gpu_exact_subset_kind::luminance_alpha_binary_refined_8x5);
+        bank.one_plane_mean_refined = make_request(
+            astc_gpu_exact_subset_kind::luminance_alpha_binary_mean_refined_8x5);
+        bank.one_plane_quantile_refined = make_request(
+            astc_gpu_exact_subset_kind::luminance_alpha_binary_quantile_refined_8x5);
+    }
     return true;
 }
 

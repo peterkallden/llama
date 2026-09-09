@@ -16,8 +16,12 @@ enum class astc_vulkan_audited_mode : uint8_t {
     d1_luminance_binary_6x6 = 0,
     d1_luminance_binary_5x5,
     d1_luminance_quant4_4x4,
+    d2_luminance_alpha_binary_6x5,
+    d2_luminance_alpha_dual_binary_6x5,
     d2_luminance_alpha_binary_8x5,
     d2_luminance_alpha_dual_binary_8x5,
+    d2_luminance_alpha_binary_10x5,
+    d2_luminance_alpha_dual_binary_10x5,
 };
 
 enum class astc_vulkan_endpoint_family : uint8_t {
@@ -35,6 +39,10 @@ struct astc_vulkan_astc_mode_descriptor {
     uint8_t endpoint_value_count = 0;
     uint32_t endpoint_field_bits = 0;
     uint32_t weight_value_count = 0;
+    // The stored weight grid. For dual-plane modes weight_value_count is
+    // grid_width * grid_height * 2; otherwise it is grid_width * grid_height.
+    uint8_t weight_grid_width = 0;
+    uint8_t weight_grid_height = 0;
     astc_vulkan_ise_range weight_range{};
     bool dual_plane = false;
     uint8_t dual_plane_component = 0;
@@ -66,4 +74,3 @@ const astc_vulkan_astc_mode_descriptor * astc_vulkan_audited_modes(
 astc_vulkan_astc_mode_budget astc_vulkan_audit_mode_budget(
     const astc_vulkan_astc_mode_descriptor & descriptor,
     uint32_t payload_bits = 128);
-
