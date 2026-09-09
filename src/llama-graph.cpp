@@ -143,6 +143,14 @@ bool llm_graph_input_ffn_down_runtime::can_reuse(const llm_graph_params & /*para
     return true;
 }
 
+void llm_graph_input_tensor_runtime::set_input(const llama_ubatch * /*ubatch*/) {
+    // MAP_CUSTOM receives its activation tensor from the graph.
+}
+
+bool llm_graph_input_tensor_runtime::can_reuse(const llm_graph_params & /*params*/) {
+    return true;
+}
+
 namespace {
 void llama_ffn_down_runtime_custom_op(
         ggml_tensor * dst, const ggml_tensor * src, int ith, int /*nth*/, void * user_data) {
@@ -153,6 +161,20 @@ void llama_ffn_down_runtime_custom_op(
     const uint32_t tokens = static_cast<uint32_t>(src->ne[1]);
     const bool ok = binding->provider.run(
         binding->provider.user_data, binding->lid,
+        static_cast<const float *>(src->data), tokens, input_columns,
+        static_cast<float *>(dst->data), output_columns);
+    GGML_ASSERT(ok);
+}
+
+void llama_tensor_runtime_custom_op(
+        ggml_tensor * dst, const ggml_tensor * src, int ith, int /*nth*/, void * user_data) {
+    if (ith != 0) return;
+    const auto * binding = static_cast<const llm_graph_input_tensor_runtime *>(user_data);
+    const uint32_t input_columns = static_cast<uint32_t>(src->ne[0]);
+    const uint32_t output_columns = static_cast<uint32_t>(dst->ne[0]);
+    const uint32_t tokens = static_cast<uint32_t>(src->ne[1]);
+    const bool ok = binding->provider.run(
+        binding->provider.user_data, binding->tensor_name.c_str(),
         static_cast<const float *>(src->data), tokens, input_columns,
         static_cast<float *>(dst->data), output_columns);
     GGML_ASSERT(ok);
@@ -1344,6 +1366,7 @@ void llm_graph_result::reset() {
 
     t_ffn_down_out.resize(LLAMA_MAX_LAYERS + 1);
     std::fill(t_ffn_down_out.begin(), t_ffn_down_out.end(), nullptr);
+    t_tensor_inputs.clear();
 
     t_sampled.clear();
     t_sampled_probs.clear();
@@ -1412,6 +1435,12 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
                 GGML_ASSERT(t_ffn_down_out[il] != nullptr && "FFN down output tensor is null");
                 ggml_set_output(t_ffn_down_out[il]);
             }
+        }
+    }
+    for (const auto & name : params.cparams.embeddings_tensor_names) {
+        const auto it = t_tensor_inputs.find(name);
+        if (it != t_tensor_inputs.end() && it->second != nullptr) {
+            ggml_set_output(it->second);
         }
     }
     for (auto * tensor : t_sampled) {
@@ -1532,6 +1561,10 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
         cparams.ffn_down_runtime_provider.native_generation_begin(
             cparams.ffn_down_runtime_provider.user_data);
     }
+    if (cparams.tensor_runtime_provider.generation_begin != nullptr) {
+        cparams.tensor_runtime_provider.generation_begin(
+            cparams.tensor_runtime_provider.user_data);
+    }
 }
 
 void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
@@ -1563,6 +1596,51 @@ ggml_tensor * llm_graph_context::build_lora_mm(
           ggml_tensor * cur,
           ggml_tensor * w_s) const {
     ggml_tensor * res = ggml_mul_mat(ctx0, w, cur);
+    bool has_lora = false;
+    if (w != nullptr) {
+        for (const auto & lora : *loras) {
+            if (lora.first->get_weight(w) != nullptr) {
+                has_lora = true;
+                break;
+            }
+        }
+    }
+
+    if (w != nullptr && w->name[0] != '\0' &&
+        cparams.embeddings_tensor_names.count(w->name) != 0) {
+        ggml_set_name(res, w->name);
+        // Traces are exposed as token-major F32 regardless of the backend's
+        // activation precision.  Keep the cast in the graph so extraction
+        // never interprets F16/BF16 bytes as floats.
+        ggml_tensor * capture = cur->type == GGML_TYPE_F32 ? cur : ggml_cast(ctx0, cur, GGML_TYPE_F32);
+        this->res->set_tensor_input(w->name, capture);
+    }
+
+    if (w != nullptr && w_s == nullptr && w->name[0] != '\0' &&
+        cparams.tensor_runtime_provider.native_bind != nullptr) {
+        cparams.tensor_runtime_provider.native_bind(
+            cparams.tensor_runtime_provider.user_data, res, w->name);
+    }
+
+    // A non-native generic provider is the CPU/replay fallback for one named
+    // rank-2 matrix.  Keep the normal graph node when a native binder exists;
+    // the binder may replace it later after backend capability checks.
+    const auto & tensor_provider = cparams.tensor_runtime_provider;
+    if (w != nullptr && w_s == nullptr && !has_lora &&
+        w->name[0] != '\0' && tensor_provider.native_bind == nullptr &&
+        tensor_provider.is_ready != nullptr && tensor_provider.run != nullptr &&
+        tensor_provider.is_ready(tensor_provider.user_data, w->name,
+                                 static_cast<uint32_t>(cur->ne[0]),
+                                 static_cast<uint32_t>(w->ne[1]))) {
+        auto input = std::make_unique<llm_graph_input_tensor_runtime>(tensor_provider, w->name);
+        ggml_tensor * input_f32 = ggml_cast(ctx0, cur, GGML_TYPE_F32);
+        res = ggml_map_custom1_with_output(ctx0, input_f32, GGML_TYPE_F32,
+                                           w->ne[1], cur->ne[1],
+                                           llama_tensor_runtime_custom_op, 1, input.get());
+        ggml_set_name(res, w->name);
+        this->res->add_input(std::move(input));
+        return res;
+    }
 
     // The ASTC provider historically bound only the explicit FFN-down node
     // below. Let the same native seam discover other ordinary matrix weights
@@ -1572,13 +1650,6 @@ ggml_tensor * llm_graph_context::build_lora_mm(
     if (w != nullptr && w_s == nullptr && w->name[0] != '\0' &&
         std::strstr(w->name, ".ffn_down.weight") == nullptr &&
         cparams.ffn_down_runtime_provider.native_bind != nullptr) {
-        bool has_lora = false;
-        for (const auto & lora : *loras) {
-            if (lora.first->get_weight(w) != nullptr) {
-                has_lora = true;
-                break;
-            }
-        }
         if (!has_lora) {
             cparams.ffn_down_runtime_provider.native_bind(
                 cparams.ffn_down_runtime_provider.user_data, res, UINT32_MAX);

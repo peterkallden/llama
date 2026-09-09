@@ -12,6 +12,8 @@
 #include "ggml-opt.h"
 
 #include <map>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 struct llama_model;
@@ -91,6 +93,8 @@ struct llama_context {
     float * get_embeddings_layer_inp(uint32_t lid);
     float * get_embeddings_ffn_down_inp(uint32_t lid);
     float * get_embeddings_ffn_down_out(uint32_t lid);
+    float * get_embeddings_tensor(const char * tensor_name);
+    uint32_t get_embeddings_tensor_columns(const char * tensor_name) const;
 
     llama_token * get_sampled_tokens() const;
     llama_token   get_sampled_token_ith(int32_t idx);
@@ -119,6 +123,7 @@ struct llama_context {
     void set_embeddings_layer_inp(uint32_t lid, bool enable);
     void set_embeddings_ffn_down_inp(uint32_t lid, bool enable);
     void set_embeddings_ffn_down_out(uint32_t lid, bool enable);
+    void set_embeddings_tensor(const char * tensor_name, bool enable);
     bool set_ffn_down_output_override(uint32_t lid, const float * data, uint32_t n_tokens, uint32_t columns);
     bool set_ffn_down_runtime_provider(llama_ffn_down_runtime_is_ready_fn is_ready,
                                        llama_ffn_down_runtime_run_fn run, void * user_data,
@@ -126,6 +131,11 @@ struct llama_context {
     bool set_ffn_down_runtime_native_binding(llama_ffn_down_runtime_native_bind_fn native_bind);
     bool set_ffn_down_runtime_native_generation_begin(
             llama_ffn_down_runtime_native_generation_begin_fn generation_begin);
+    bool set_tensor_runtime_provider(llama_tensor_runtime_is_ready_fn is_ready,
+                                    llama_tensor_runtime_run_fn run, void * user_data);
+    bool set_tensor_runtime_native_binding(llama_tensor_runtime_native_bind_fn native_bind);
+    bool set_tensor_runtime_native_generation_begin(
+            llama_tensor_runtime_generation_begin_fn generation_begin);
     void set_nextn_layer_offset(int32_t offset);
     void set_causal_attn(bool value);
     void set_warmup(bool value);
@@ -246,6 +256,7 @@ private:
     void extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
     void extract_ffn_down_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
     void extract_ffn_down_outputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
+    void extract_tensor_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
 
     //
     // graph
@@ -321,6 +332,7 @@ private:
     // model.hparams.n_ff(il), not model.hparams.n_embd.
     std::vector<buffer_view<float>> embd_ffn_down_inp;
     std::vector<buffer_view<float>> embd_ffn_down_out;
+    std::unordered_map<std::string, buffer_view<float>> embd_tensors;
 
     struct sampling_info {
         // !samplers.empty() to check if any samplers are active

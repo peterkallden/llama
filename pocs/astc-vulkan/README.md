@@ -761,6 +761,33 @@ runtime model is Q4/Q3; the tool verifies the previously created
 machine-readable result containing model/cache hashes and logits/loss/top-1
 metrics.
 
+### Tensor-specific traces and replay
+
+The trace tool can capture the activation consumed by any named rank-2 GGUF
+matrix. This is the preferred input for per-tensor discovery; it avoids
+assuming that every candidate is an FFN-down projection:
+
+```bash
+build-astc-neural/bin/astc-vulkan-trace-capture \
+  --model /absolute/path/model.gguf \
+  --tensor blk.0.attn_q.weight \
+  --prompt-file /absolute/path/replay-prompts.txt \
+  --output /absolute/path/blk.0.attn_q.trace
+```
+
+Discovery consumes one trace per tensor through a tab-separated map
+(`tensor-name<TAB>trace-path`):
+
+```bash
+build-astc-neural/bin/astc-vulkan-cache discover \
+  --model /absolute/path/model.gguf --usage usage.tsv \
+  --quality-trace-map tensor-traces.tsv --output discovery.tsv
+```
+
+Model replay accepts the same tensor name and replaces only that matrix for
+the replay run. For a named tensor, `--width` and `--height` may be omitted;
+they are read from the model and checked against the cache and trace.
+
 For a small, reproducible D1 cache build, the cache tool now provides a
 bounded orchestration command. It runs the existing latent exporter, packs a
 v4 scalar artifact, and publishes it through the same atomic/hash-validated

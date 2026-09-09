@@ -157,8 +157,44 @@ LLAMA_API bool llama_set_ffn_down_runtime_native_generation_begin(
         struct llama_context * ctx,
         llama_ffn_down_runtime_native_generation_begin_fn generation_begin);
 
+// Generic tensor capture/runtime bridge for rank-2 model tensors.  Unlike the
+// legacy FFN-down API this is keyed by the authoritative GGUF tensor name, so
+// discovery/replay can target attention, FFN-up/gate, output, or other matrix
+// roles without adding another layer-indexed API.
+LLAMA_API void llama_set_embeddings_tensor(struct llama_context * ctx, const char * tensor_name, bool value);
+LLAMA_API float * llama_get_embeddings_tensor(struct llama_context * ctx, const char * tensor_name);
+LLAMA_API uint32_t llama_get_embeddings_tensor_columns(const struct llama_context * ctx, const char * tensor_name);
+
+typedef bool (*llama_tensor_runtime_is_ready_fn)(
+        void * user_data, const char * tensor_name, uint32_t input_columns, uint32_t output_columns);
+typedef bool (*llama_tensor_runtime_run_fn)(
+        void * user_data, const char * tensor_name,
+        const float * input, uint32_t n_tokens, uint32_t input_columns,
+        float * output, uint32_t output_columns);
+typedef bool (*llama_tensor_runtime_native_bind_fn)(
+        void * user_data, struct ggml_tensor * node, const char * tensor_name);
+typedef void (*llama_tensor_runtime_generation_begin_fn)(void * user_data);
+
+LLAMA_API bool llama_set_tensor_runtime_provider(
+        struct llama_context * ctx,
+        llama_tensor_runtime_is_ready_fn is_ready,
+        llama_tensor_runtime_run_fn run,
+        void * user_data);
+LLAMA_API bool llama_set_tensor_runtime_native_binding(
+        struct llama_context * ctx,
+        llama_tensor_runtime_native_bind_fn native_bind);
+LLAMA_API bool llama_set_tensor_runtime_native_generation_begin(
+        struct llama_context * ctx,
+        llama_tensor_runtime_generation_begin_fn generation_begin);
+
 // PoC helper exposing the FFN width needed to interpret the capture above.
 LLAMA_API int32_t llama_model_n_ff(const struct llama_model * model, uint32_t layer);
+// Returns the logical shape of a named rank-2 model tensor.  `columns` is
+// ne[0] (the matmul input width) and `rows` is ne[1] (the output width).
+LLAMA_API bool llama_model_get_tensor_shape(const struct llama_model * model,
+                                            const char * tensor_name,
+                                            uint32_t * columns,
+                                            uint32_t * rows);
 
 LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
 

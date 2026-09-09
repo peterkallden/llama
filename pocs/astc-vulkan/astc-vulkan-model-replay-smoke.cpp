@@ -182,14 +182,56 @@ struct logits_result {
     int32_t status = 1;
 };
 
+// Model-replay bridge for an arbitrary named rank-2 tensor.  The artifact
+// output is prepared offline (CPU oracle or GPU adapter) and copied into the
+// graph custom-op when the matching matrix is evaluated.  This keeps replay
+// deterministic while allowing the same mechanism for attention/FFN/output
+// tensors instead of a layer-indexed FFN-down special case.
+struct tensor_replay_provider {
+    std::string tensor_name;
+    std::vector<float> output;
+    uint32_t n_tokens = 0;
+    uint32_t input_columns = 0;
+    uint32_t output_columns = 0;
+
+    static bool is_ready(void * user_data, const char * name,
+                         uint32_t input_columns, uint32_t output_columns) {
+        const auto * self = static_cast<const tensor_replay_provider *>(user_data);
+        return self != nullptr && name != nullptr && self->tensor_name == name &&
+               self->input_columns == input_columns && self->output_columns == output_columns;
+    }
+
+    static bool run(void * user_data, const char * name, const float * /*input*/,
+                    uint32_t n_tokens, uint32_t input_columns,
+                    float * output, uint32_t output_columns) {
+        const auto * self = static_cast<const tensor_replay_provider *>(user_data);
+        if (self == nullptr || output == nullptr || name == nullptr || self->tensor_name != name ||
+            self->n_tokens != n_tokens || self->input_columns != input_columns ||
+            self->output_columns != output_columns ||
+            self->output.size() != static_cast<size_t>(n_tokens) * output_columns) {
+            return false;
+        }
+        std::copy(self->output.begin(), self->output.end(), output);
+        return true;
+    }
+};
+
 logits_result run_model(llama_model * model, const std::vector<llama_token> & tokens,
-                        uint32_t layer, const std::vector<float> * override_output) {
+                        uint32_t layer, const std::vector<float> * override_output,
+                        tensor_replay_provider * tensor_provider = nullptr) {
     llama_context_params params = llama_context_default_params();
     params.n_ctx = std::max<uint32_t>(512, static_cast<uint32_t>(tokens.size()));
     params.n_batch = static_cast<uint32_t>(tokens.size());
     params.n_ubatch = static_cast<uint32_t>(tokens.size());
     llama_context * context = llama_init_from_model(model, params);
     if (context == nullptr) return {};
+
+    if (tensor_provider != nullptr &&
+        !llama_set_tensor_runtime_provider(context, tensor_replay_provider::is_ready,
+                                           tensor_replay_provider::run, tensor_provider)) {
+        llama_free(context);
+        return {};
+    }
 
     if (override_output != nullptr &&
         !llama_set_ffn_down_output_override(context, layer, override_output->data(),
@@ -495,7 +537,8 @@ int main(int argc, char ** argv) {
         (!gpu_requested && !oracle_streamed && !baseline_only && (rgba_path.empty() || weights_path.empty())) ||
         (gpu_requested && (gpu_shader_path.empty() || cache_path.empty() || tensor_name.empty())) ||
         (oracle_streamed && (cache_path.empty() || tensor_name.empty())) ||
-        (!baseline_only && (activation_path.empty() || width == 0 || height == 0)) || prompt.empty()) {
+        (!baseline_only && (activation_path.empty() ||
+                            (tensor_name.empty() && (width == 0 || height == 0)))) || prompt.empty()) {
         std::fprintf(stderr, "usage: %s --model model.gguf --rgba decoded.rgba --weights weights.f32 --activations trace "
                             "--layer N --width columns --height rows --metadata export.meta --prompt text [--cpu-only]\n"
                             "       %s --model model.gguf --cache cache-dir --gpu-shader paired-matvec.spv "
@@ -620,10 +663,22 @@ int main(int argc, char ** argv) {
         model_params.devices = cpu_devices;
     }
     llama_model * model = llama_model_load_from_file(model_path.c_str(), model_params);
-    if (model == nullptr || layer >= static_cast<uint32_t>(llama_model_n_layer(model)) ||
-        (!baseline_only && (width != static_cast<uint32_t>(llama_model_n_ff(model, layer)) ||
-                            height != static_cast<uint32_t>(llama_model_n_embd(model))))) {
-        std::fprintf(stderr, "model or matrix shape is incompatible with the selected FFN-down layer\n");
+    uint32_t model_columns = 0, model_rows = 0;
+    const bool generic_tensor = !tensor_name.empty() &&
+        tensor_name.find(".ffn_down.weight") == std::string::npos;
+    const bool shape_ok = generic_tensor ?
+        llama_model_get_tensor_shape(model, tensor_name.c_str(), &model_columns, &model_rows) :
+        (model != nullptr && layer < static_cast<uint32_t>(llama_model_n_layer(model)) &&
+         (baseline_only || (width == static_cast<uint32_t>(llama_model_n_ff(model, layer)) &&
+                            height == static_cast<uint32_t>(llama_model_n_embd(model)))));
+    if (generic_tensor && shape_ok && width == 0 && height == 0) {
+        width = model_columns;
+        height = model_rows;
+    }
+    if (model == nullptr || !shape_ok ||
+        (!baseline_only && generic_tensor &&
+         (width != model_columns || height != model_rows))) {
+        std::fprintf(stderr, "model or matrix shape is incompatible with the selected tensor\n");
         if (model) llama_model_free(model);
         llama_backend_free();
         return 2;
@@ -766,8 +821,21 @@ int main(int argc, char ** argv) {
         }
     }
 
+    tensor_replay_provider generic_provider;
+    tensor_replay_provider * generic_provider_ptr = nullptr;
+    if (!baseline_only && generic_tensor) {
+        generic_provider.tensor_name = tensor_name;
+        generic_provider.output = override_output;
+        generic_provider.n_tokens = static_cast<uint32_t>(tokens.size());
+        generic_provider.input_columns = width;
+        generic_provider.output_columns = height;
+        generic_provider_ptr = &generic_provider;
+    }
     const logits_result reference = run_model(model, tokens, layer, nullptr);
-    const logits_result replay = baseline_only ? reference : run_model(model, tokens, layer, &override_output);
+    const logits_result replay = baseline_only ? reference :
+        (generic_provider_ptr != nullptr ?
+            run_model(model, tokens, layer, nullptr, generic_provider_ptr) :
+            run_model(model, tokens, layer, &override_output));
     if (reference.status != 0 || replay.status != 0 || reference.values.size() != replay.values.size() ||
         reference.n_tokens != replay.n_tokens || reference.n_vocab != replay.n_vocab ||
         reference.n_tokens != tokens.size()) {

@@ -18,6 +18,7 @@ struct trace_capture_params {
     std::string output_path;
     std::string prompt;
     std::string prompt_file;
+    std::string tensor_name;
     uint32_t layer = 0;
     bool ffn_down_input = false;
     bool ffn_down_output = false;
@@ -25,7 +26,7 @@ struct trace_capture_params {
 
 void print_usage(const char * program) {
     std::fprintf(stderr,
-                 "usage: %s --model model.gguf --output trace.astc --layer N (--prompt text | --prompt-file prompts.txt) [--ffn-down-input|--ffn-down-output]\n",
+                 "usage: %s --model model.gguf --output trace.astc (--tensor NAME | --layer N [--ffn-down-input|--ffn-down-output]) (--prompt text | --prompt-file prompts.txt)\n",
                  program);
 }
 
@@ -77,6 +78,8 @@ bool parse_args(int argc, char ** argv, trace_capture_params & params) {
             params.prompt = value;
         } else if (std::strcmp(option, "--prompt-file") == 0) {
             params.prompt_file = value;
+        } else if (std::strcmp(option, "--tensor") == 0) {
+            params.tensor_name = value;
         } else if (std::strcmp(option, "--layer") == 0) {
             if (!parse_u32(value, params.layer)) {
                 return false;
@@ -88,6 +91,7 @@ bool parse_args(int argc, char ** argv, trace_capture_params & params) {
     if (!params.prompt.empty() && !params.prompt_file.empty()) return false;
     if (params.prompt.empty() && !params.prompt_file.empty() &&
         !read_text_file(params.prompt_file, params.prompt)) return false;
+    if (!params.tensor_name.empty() && (params.ffn_down_input || params.ffn_down_output)) return false;
     return !params.model_path.empty() && !params.output_path.empty() && !params.prompt.empty();
 }
 
@@ -124,7 +128,7 @@ int main(int argc, char ** argv) {
         llama_backend_free();
         return 1;
     }
-    if (params.layer > static_cast<uint32_t>(llama_model_n_layer(model))) {
+    if (params.tensor_name.empty() && params.layer > static_cast<uint32_t>(llama_model_n_layer(model))) {
         std::fprintf(stderr, "layer must be in [0, %d]\n", llama_model_n_layer(model));
         llama_model_free(model);
         llama_backend_free();
@@ -158,7 +162,16 @@ int main(int argc, char ** argv) {
         llama_backend_free();
         return 2;
     }
-    if (params.ffn_down_input) {
+    if (!params.tensor_name.empty()) {
+        if (llama_get_embeddings_tensor_columns(context, params.tensor_name.c_str()) == 0) {
+            std::fprintf(stderr, "tensor is missing or is not a rank-2 matrix: %s\n", params.tensor_name.c_str());
+            llama_free(context);
+            llama_model_free(model);
+            llama_backend_free();
+            return 2;
+        }
+        llama_set_embeddings_tensor(context, params.tensor_name.c_str(), true);
+    } else if (params.ffn_down_input) {
         llama_set_embeddings_ffn_down_inp(context, params.layer, true);
     } else if (params.ffn_down_output) {
         llama_set_embeddings_ffn_down_out(context, params.layer, true);
@@ -184,9 +197,13 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    const int32_t columns = params.ffn_down_input ? llama_model_n_ff(model, params.layer) : llama_model_n_embd(model);
+    const int32_t columns = !params.tensor_name.empty() ?
+        static_cast<int32_t>(llama_get_embeddings_tensor_columns(context, params.tensor_name.c_str())) :
+        (params.ffn_down_input ? llama_model_n_ff(model, params.layer) : llama_model_n_embd(model));
     const float * layer_input = nullptr;
-    if (params.ffn_down_input) {
+    if (!params.tensor_name.empty()) {
+        layer_input = llama_get_embeddings_tensor(context, params.tensor_name.c_str());
+    } else if (params.ffn_down_input) {
         layer_input = llama_get_embeddings_ffn_down_inp(context, params.layer);
     } else if (params.ffn_down_output) {
         layer_input = llama_get_embeddings_ffn_down_out(context, params.layer);
@@ -210,10 +227,15 @@ int main(int argc, char ** argv) {
     if (!write_ok) {
         std::fprintf(stderr, "%s\n", error.c_str());
     } else {
-        std::printf("captured %u %s activations for layer-%u with %u columns to %s\n",
-                    trace.samples,
-                    params.ffn_down_input ? "ffn-down-input" : (params.ffn_down_output ? "ffn-down-output" : "layer-input"),
-                    params.layer, trace.columns, params.output_path.c_str());
+        if (!params.tensor_name.empty()) {
+            std::printf("captured %u tensor-input activations for %s with %u columns to %s\n",
+                        trace.samples, params.tensor_name.c_str(), trace.columns, params.output_path.c_str());
+        } else {
+            std::printf("captured %u %s activations for layer-%u with %u columns to %s\n",
+                        trace.samples,
+                        params.ffn_down_input ? "ffn-down-input" : (params.ffn_down_output ? "ffn-down-output" : "layer-input"),
+                        params.layer, trace.columns, params.output_path.c_str());
+        }
     }
 
     llama_batch_free(batch);

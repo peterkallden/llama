@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <vector>
+#include <string>
+#include <unordered_set>
 
 struct llama_ffn_down_output_override {
     const float * data = nullptr;
@@ -21,6 +23,17 @@ struct llama_ffn_down_runtime_provider {
     // Called once before a graph generation starts so external owners can
     // discard bindings for the previous graph generation.
     llama_ffn_down_runtime_native_generation_begin_fn native_generation_begin = nullptr;
+    void * user_data = nullptr;
+};
+
+// Generic tensor runtime bridge used by the ASTC research path.  The
+// legacy FFN-down provider remains source-compatible; this bridge adds the
+// authoritative tensor name so cache/replay can target any rank-2 matrix.
+struct llama_tensor_runtime_provider {
+    llama_tensor_runtime_is_ready_fn is_ready = nullptr;
+    llama_tensor_runtime_run_fn run = nullptr;
+    llama_tensor_runtime_native_bind_fn native_bind = nullptr;
+    llama_tensor_runtime_generation_begin_fn generation_begin = nullptr;
     void * user_data = nullptr;
 };
 
@@ -80,6 +93,8 @@ struct llama_cparams {
     // gated FFNs its width is n_ff(il), which may be larger than n_embd.
     std::vector<bool> embeddings_ffn_down_inp;
     std::vector<bool> embeddings_ffn_down_out;
+    std::unordered_set<std::string> embeddings_tensor_names;
+    llama_tensor_runtime_provider tensor_runtime_provider;
     std::vector<llama_ffn_down_output_override> ffn_down_output_overrides;
     llama_ffn_down_runtime_provider ffn_down_runtime_provider;
 

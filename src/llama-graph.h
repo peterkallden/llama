@@ -9,6 +9,8 @@
 
 #include <cstdint>
 #include <vector>
+#include <string>
+#include <unordered_map>
 #include <memory>
 #include <set>
 #include <functional>
@@ -181,6 +183,20 @@ public:
 
     const llama_ffn_down_runtime_provider provider;
     const uint32_t lid;
+};
+
+// Generic rank-2 tensor runtime bridge.  The tensor name is kept with the
+// graph input so a reused graph never points at a temporary caller string.
+class llm_graph_input_tensor_runtime : public llm_graph_input_i {
+public:
+    llm_graph_input_tensor_runtime(const llama_tensor_runtime_provider & provider, const char * tensor_name) :
+        provider(provider), tensor_name(tensor_name != nullptr ? tensor_name : "") {}
+
+    void set_input(const llama_ubatch * ubatch) override;
+    bool can_reuse(const llm_graph_params & params) override;
+
+    const llama_tensor_runtime_provider provider;
+    const std::string tensor_name;
 };
 
 class llm_graph_input_pos : public llm_graph_input_i {
@@ -887,6 +903,17 @@ struct llm_graph_params {
             return false;
         }
 
+        const auto & tensor_runtime_lhs = cparams.tensor_runtime_provider;
+        const auto & tensor_runtime_rhs = other.cparams.tensor_runtime_provider;
+        if (cparams.embeddings_tensor_names != other.cparams.embeddings_tensor_names ||
+            tensor_runtime_lhs.is_ready != tensor_runtime_rhs.is_ready ||
+            tensor_runtime_lhs.run != tensor_runtime_rhs.run ||
+            tensor_runtime_lhs.native_bind != tensor_runtime_rhs.native_bind ||
+            tensor_runtime_lhs.generation_begin != tensor_runtime_rhs.generation_begin ||
+            tensor_runtime_lhs.user_data != tensor_runtime_rhs.user_data) {
+            return false;
+        }
+
         return
             cparams.embeddings              == other.cparams.embeddings              &&
             cparams.embeddings_nextn        == other.cparams.embeddings_nextn        &&
@@ -921,6 +948,10 @@ public:
     ggml_tensor * get_layer_inp(int il) const { return t_layer_inp[il]; }
     ggml_tensor * get_ffn_down_inp(int il) const { return t_ffn_down_inp[il]; }
     ggml_tensor * get_ffn_down_out(int il) const { return t_ffn_down_out[il]; }
+    ggml_tensor * get_tensor_input(const std::string & name) const {
+        const auto it = t_tensor_inputs.find(name);
+        return it == t_tensor_inputs.end() ? nullptr : it->second;
+    }
 
     void set_ffn_down_inp(int il, ggml_tensor * tensor) {
         GGML_ASSERT(il >= 0 && il < (int) t_ffn_down_inp.size());
@@ -930,6 +961,10 @@ public:
     void set_ffn_down_out(int il, ggml_tensor * tensor) {
         GGML_ASSERT(il >= 0 && il < (int) t_ffn_down_out.size());
         t_ffn_down_out[il] = tensor;
+    }
+
+    void set_tensor_input(const std::string & name, ggml_tensor * tensor) {
+        if (!name.empty() && tensor != nullptr) t_tensor_inputs[name] = tensor;
     }
 
     ggml_cgraph  * get_gf()  const { return gf; }
@@ -968,6 +1003,7 @@ public:
     std::vector<ggml_tensor *> t_layer_inp;
     std::vector<ggml_tensor *> t_ffn_down_inp;
     std::vector<ggml_tensor *> t_ffn_down_out;
+    std::unordered_map<std::string, ggml_tensor *> t_tensor_inputs;
 
     std::vector<ggml_tensor *> t_sampled;
     std::vector<ggml_tensor *> t_sampled_probs;

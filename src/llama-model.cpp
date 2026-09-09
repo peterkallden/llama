@@ -2537,6 +2537,23 @@ int32_t llama_model_n_ff(const llama_model * model, uint32_t layer) {
     return static_cast<int32_t>(model->hparams.n_ff(layer));
 }
 
+bool llama_model_get_tensor_shape(const llama_model * model, const char * tensor_name,
+                                  uint32_t * columns, uint32_t * rows) {
+    if (columns != nullptr) *columns = 0;
+    if (rows != nullptr) *rows = 0;
+    if (model == nullptr || tensor_name == nullptr || columns == nullptr || rows == nullptr) {
+        return false;
+    }
+    const ggml_tensor * tensor = model->get_tensor(tensor_name);
+    if (tensor == nullptr || ggml_n_dims(tensor) != 2 || tensor->ne[0] <= 0 || tensor->ne[1] <= 0 ||
+        tensor->ne[0] > UINT32_MAX || tensor->ne[1] > UINT32_MAX) {
+        return false;
+    }
+    *columns = static_cast<uint32_t>(tensor->ne[0]);
+    *rows = static_cast<uint32_t>(tensor->ne[1]);
+    return true;
+}
+
 int32_t llama_model_n_layer(const llama_model * model) {
     return model->hparams.n_layer();
 }

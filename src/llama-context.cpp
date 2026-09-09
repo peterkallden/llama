@@ -1000,6 +1000,24 @@ float * llama_context::get_embeddings_ffn_down_out(uint32_t lid) {
     return embd_ffn_down_out[lid].data;
 }
 
+float * llama_context::get_embeddings_tensor(const char * tensor_name) {
+    output_reorder();
+    const auto it = embd_tensors.find(tensor_name != nullptr ? tensor_name : "");
+    GGML_ASSERT(it != embd_tensors.end() && it->second.has_data());
+    return it->second.data;
+}
+
+uint32_t llama_context::get_embeddings_tensor_columns(const char * tensor_name) const {
+    if (tensor_name == nullptr) {
+        return 0;
+    }
+    const ggml_tensor * tensor = model.get_tensor(tensor_name);
+    if (tensor == nullptr || ggml_n_dims(tensor) < 2 || tensor->ne[0] <= 0 || tensor->ne[0] > UINT32_MAX) {
+        return 0;
+    }
+    return static_cast<uint32_t>(tensor->ne[0]);
+}
+
 llama_token llama_context::get_sampled_token_ith(int32_t idx) {
     output_reorder();
 
@@ -1216,6 +1234,19 @@ void llama_context::set_embeddings_ffn_down_out(uint32_t lid, bool enable) {
     sched_need_reserve = true;
 }
 
+void llama_context::set_embeddings_tensor(const char * tensor_name, bool enable) {
+    if (tensor_name == nullptr || tensor_name[0] == '\0') {
+        return;
+    }
+    if (enable) {
+        cparams.embeddings_tensor_names.emplace(tensor_name);
+    } else {
+        cparams.embeddings_tensor_names.erase(tensor_name);
+        embd_tensors.erase(tensor_name);
+    }
+    sched_need_reserve = true;
+}
+
 bool llama_context::set_ffn_down_output_override(uint32_t lid, const float * data, uint32_t n_tokens, uint32_t columns) {
     if (lid >= model.hparams.n_layer() || data == nullptr || n_tokens == 0 ||
         columns != static_cast<uint32_t>(model.hparams.n_embd)) {
@@ -1250,6 +1281,34 @@ bool llama_context::set_ffn_down_runtime_native_binding(
 bool llama_context::set_ffn_down_runtime_native_generation_begin(
         llama_ffn_down_runtime_native_generation_begin_fn generation_begin) {
     cparams.ffn_down_runtime_provider.native_generation_begin = generation_begin;
+    sched_need_reserve = true;
+    return true;
+}
+
+bool llama_context::set_tensor_runtime_provider(
+        llama_tensor_runtime_is_ready_fn is_ready,
+        llama_tensor_runtime_run_fn run,
+        void * user_data) {
+    if ((is_ready == nullptr) != (run == nullptr)) {
+        return false;
+    }
+    cparams.tensor_runtime_provider.is_ready = is_ready;
+    cparams.tensor_runtime_provider.run = run;
+    cparams.tensor_runtime_provider.user_data = user_data;
+    sched_need_reserve = true;
+    return true;
+}
+
+bool llama_context::set_tensor_runtime_native_binding(
+        llama_tensor_runtime_native_bind_fn native_bind) {
+    cparams.tensor_runtime_provider.native_bind = native_bind;
+    sched_need_reserve = true;
+    return true;
+}
+
+bool llama_context::set_tensor_runtime_native_generation_begin(
+        llama_tensor_runtime_generation_begin_fn generation_begin) {
+    cparams.tensor_runtime_provider.generation_begin = generation_begin;
     sched_need_reserve = true;
     return true;
 }
@@ -2014,6 +2073,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
         extract_layer_inputs(res, n_tokens_prev, ubatch.n_tokens);
         extract_ffn_down_inputs(res, n_tokens_prev, ubatch.n_tokens);
         extract_ffn_down_outputs(res, n_tokens_prev, ubatch.n_tokens);
+        extract_tensor_inputs(res, n_tokens_prev, ubatch.n_tokens);
 
         // extract nextn embeddings before
         // only meaningful in LLAMA_POOLING_TYPE_NONE (per-token); other pooling modes are ignored.
@@ -2134,6 +2194,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
     size_t embd_layer_inp_float_count = 0;
     size_t embd_ffn_down_inp_float_count = 0;
     size_t embd_ffn_down_out_float_count = 0;
+    size_t embd_tensor_float_count = 0;
 
     logits.size     = has_logits     ? n_vocab*n_outputs_max     : 0;
     embd.size       = has_embd       ? n_embd_out*n_outputs_max  : 0;
@@ -2163,6 +2224,13 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
         }
     }
 
+    for (const auto & name : cparams.embeddings_tensor_names) {
+        const ggml_tensor * tensor = model.get_tensor(name.c_str());
+        if (tensor != nullptr && ggml_n_dims(tensor) >= 2 && tensor->ne[0] > 0 && tensor->ne[1] > 0) {
+            embd_tensor_float_count += static_cast<size_t>(tensor->ne[0]) * n_batch;
+        }
+    }
+
     // Allocate backend sampling output buffers if there are backend samplers configured.
     const bool has_sampling = !sampling.samplers.empty();
     if (has_sampling) {
@@ -2177,7 +2245,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
 
     const size_t prev_size = buf_output ? ggml_backend_buffer_get_size(buf_output.get()) : 0;
     const size_t new_size  =
-        (logits.size + embd.size + embd_nextn.size + embd_layer_inp_float_count + embd_ffn_down_inp_float_count + embd_ffn_down_out_float_count + backend_float_count) * sizeof(float) +
+        (logits.size + embd.size + embd_nextn.size + embd_layer_inp_float_count + embd_ffn_down_inp_float_count + embd_ffn_down_out_float_count + embd_tensor_float_count + backend_float_count) * sizeof(float) +
         (                                                                         backend_token_count) * sizeof(llama_token);
 
     // alloc only when more than the current capacity is required
@@ -2203,6 +2271,9 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
             }
             for (auto & ffn_down_out : embd_ffn_down_out) {
                 ffn_down_out = {nullptr, 0};
+            }
+            for (auto & tensor : embd_tensors) {
+                tensor.second = {nullptr, 0};
             }
         }
 
@@ -2260,6 +2331,16 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
         } else {
             embd_ffn_down_out[il] = buffer_view<float>{nullptr, 0};
         }
+    }
+
+    embd_tensors.clear();
+    for (const auto & name : cparams.embeddings_tensor_names) {
+        const ggml_tensor * tensor = model.get_tensor(name.c_str());
+        if (tensor == nullptr || ggml_n_dims(tensor) < 2 || tensor->ne[0] <= 0 || tensor->ne[1] <= 0) {
+            continue;
+        }
+        embd_tensors.emplace(name, buffer_view<float>{(float *) (base + offset), (size_t) tensor->ne[0] * n_batch});
+        offset += embd_tensors.at(name).size * sizeof(float);
     }
 
     if (has_sampling) {
@@ -2392,6 +2473,28 @@ void llama_context::extract_ffn_down_outputs(const llm_graph_result * res, size_
     }
 }
 
+void llama_context::extract_tensor_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens) {
+    for (const auto & name : cparams.embeddings_tensor_names) {
+        const auto it = embd_tensors.find(name);
+        if (it == embd_tensors.end() || !it->second.has_data()) {
+            GGML_ABORT("tensor capture buffer not allocated");
+        }
+        ggml_tensor * tensor = res->get_tensor_input(name);
+        if (tensor == nullptr) {
+            GGML_ABORT("requested tensor input was not present in graph");
+        }
+        const size_t nbytes = ggml_nbytes(tensor);
+        const size_t nfloats = nbytes / sizeof(float);
+        GGML_ASSERT(n_tokens > 0 && nfloats % n_tokens == 0);
+        const size_t row_floats = nfloats / n_tokens;
+        const size_t dst_offset = token_offset * row_floats;
+        GGML_ASSERT(dst_offset + nfloats <= it->second.size);
+        ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched.get(), tensor);
+        GGML_ASSERT(backend != nullptr);
+        ggml_backend_tensor_get_async(backend, tensor, it->second.data + dst_offset, 0, nbytes);
+    }
+}
+
 void llama_context::output_reorder() {
     const uint64_t n_vocab     = model.vocab.n_tokens();
     const uint64_t n_embd      = model.hparams.n_embd;
@@ -2425,6 +2528,15 @@ void llama_context::output_reorder() {
                     for (uint64_t k = 0; k < n_embd; ++k) {
                         std::swap(embd_layer_inp[lid].data[i0*n_embd + k], embd_layer_inp[lid].data[i1*n_embd + k]);
                     }
+                }
+            }
+        }
+
+        for (auto & tensor : embd_tensors) {
+            if (tensor.second.size > 0 && cparams.n_batch > 0) {
+                const uint64_t columns = tensor.second.size / cparams.n_batch;
+                for (uint64_t k = 0; k < columns; ++k) {
+                    std::swap(tensor.second.data[i0*columns + k], tensor.second.data[i1*columns + k]);
                 }
             }
         }
@@ -4005,6 +4117,24 @@ float * llama_get_embeddings_ffn_down_out(llama_context * ctx, uint32_t lid) {
     return ctx->get_embeddings_ffn_down_out(lid);
 }
 
+void llama_set_embeddings_tensor(llama_context * ctx, const char * tensor_name, bool value) {
+    if (ctx != nullptr) {
+        ctx->set_embeddings_tensor(tensor_name, value);
+    }
+}
+
+float * llama_get_embeddings_tensor(llama_context * ctx, const char * tensor_name) {
+    if (ctx == nullptr) {
+        return nullptr;
+    }
+    ctx->synchronize();
+    return ctx->get_embeddings_tensor(tensor_name);
+}
+
+uint32_t llama_get_embeddings_tensor_columns(const llama_context * ctx, const char * tensor_name) {
+    return ctx != nullptr ? ctx->get_embeddings_tensor_columns(tensor_name) : 0;
+}
+
 bool llama_set_ffn_down_output_override(llama_context * ctx, uint32_t lid,
                                         const float * data, uint32_t n_tokens, uint32_t columns) {
     return ctx != nullptr && ctx->set_ffn_down_output_override(lid, data, n_tokens, columns);
@@ -4028,6 +4158,24 @@ bool llama_set_ffn_down_runtime_native_generation_begin(
         llama_context * ctx,
         llama_ffn_down_runtime_native_generation_begin_fn generation_begin) {
     return ctx != nullptr && ctx->set_ffn_down_runtime_native_generation_begin(generation_begin);
+}
+
+bool llama_set_tensor_runtime_provider(
+        llama_context * ctx,
+        llama_tensor_runtime_is_ready_fn is_ready,
+        llama_tensor_runtime_run_fn run,
+        void * user_data) {
+    return ctx != nullptr && ctx->set_tensor_runtime_provider(is_ready, run, user_data);
+}
+
+bool llama_set_tensor_runtime_native_binding(
+        llama_context * ctx, llama_tensor_runtime_native_bind_fn native_bind) {
+    return ctx != nullptr && ctx->set_tensor_runtime_native_binding(native_bind);
+}
+
+bool llama_set_tensor_runtime_native_generation_begin(
+        llama_context * ctx, llama_tensor_runtime_generation_begin_fn generation_begin) {
+    return ctx != nullptr && ctx->set_tensor_runtime_native_generation_begin(generation_begin);
 }
 
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {
