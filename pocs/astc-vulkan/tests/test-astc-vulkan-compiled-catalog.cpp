@@ -30,12 +30,23 @@ int main() {
     artifact.pair_map_byte_size = 10;
     manifest.artifacts.push_back(artifact);
 
+    astc_vulkan_artifact_record d1;
+    d1.id = "blk.0.ffn_down.weight/d1-gauge";
+    d1.storage.name = "blk.0.ffn_down.weight";
+    d1.storage.width = 6;
+    d1.storage.height = 6;
+    d1.storage.footprint = astc_vulkan_footprint::k6x6;
+    d1.storage.representation = astc_vulkan_representation::kGaugeLumaAlpha;
+    d1.storage.byte_size = astc_vulkan_image_bytes(
+        d1.storage.footprint, d1.storage.width, d1.storage.height);
+    manifest.artifacts.push_back(d1);
+
     std::string error;
     astc_vulkan_compiled_catalog catalog;
     assert(astc_vulkan_compiled_catalog_from_manifest(manifest, catalog, error));
     assert(catalog.version == 1);
     assert(catalog.logical_model_id == "compiled-catalog-fixture");
-    assert(catalog.tensors.size() == 1);
+    assert(catalog.tensors.size() == 2);
     const auto & record = catalog.tensors.front();
     assert(record.logical_name == "blk.12.ffn_down.weight");
     assert(record.semantic_role == "ffn.down");
@@ -46,6 +57,8 @@ int main() {
     assert(record.layout_size == 4);
     assert(record.row_scale_size == 40);
     assert(record.pair_map_size == 10);
+    assert(catalog.tensors[1].storage_class == "astc.d1.la.6x6");
+    assert(catalog.tensors[1].storage_kind == astc_vulkan_compiled_storage_kind::astc_d1);
 
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() / "astc-vulkan-compiled-catalog-test.astcc";

@@ -56,7 +56,10 @@ std::string footprint_name(astc_vulkan_footprint footprint) {
 std::string storage_class(const astc_vulkan_artifact_record & artifact) {
     const std::string prefix = artifact.storage.representation == astc_vulkan_representation::kPairedD2 ?
         "astc.d2" : "astc.d1";
-    const std::string semantic = artifact.paired_semantic == astc_vulkan_paired_semantic::luminance_alpha ?
+    const bool luminance_alpha =
+        artifact.storage.representation == astc_vulkan_representation::kGaugeLumaAlpha ||
+        artifact.paired_semantic == astc_vulkan_paired_semantic::luminance_alpha;
+    const std::string semantic = luminance_alpha ?
         ".la" : ".direct";
     return prefix + semantic + "." + footprint_name(artifact.storage.footprint);
 }

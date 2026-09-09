@@ -874,7 +874,7 @@ canonical_path  = layers/12/ffn/down/weight   # human-readable catalog path
 `name` is always the lookup key used by runtime binding.  `semantic_role` and
 `canonical_path` are derived labels for inspection, discovery and future
 compiled-container catalogs; changing them must never redirect a tensor.  The
-physical ASTC storage class (for example `astc.d2-la.8x5`) remains a separate
+physical ASTC storage class (for example `astc.d2.la.8x5`) remains a separate
 artifact/storage field, so several tensors with recognizable source names can
 share an atlas or page without losing their origin.  `inspect --tree 1` prints
 the source names together with these labels.  Artifact replay must consume the
