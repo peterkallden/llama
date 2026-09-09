@@ -103,6 +103,15 @@ void add_fallback(const std::string & name,
     result.entries.push_back(std::move(entry));
 }
 
+void ensure_catalog_labels(astc_vulkan_tensor_record & tensor) {
+    if (tensor.semantic_role.empty()) {
+        tensor.semantic_role = astc_vulkan_tensor_semantic_role(tensor.name);
+    }
+    if (tensor.canonical_path.empty()) {
+        tensor.canonical_path = astc_vulkan_tensor_canonical_path(tensor.name);
+    }
+}
+
 bool append_range(const std::string & source_path,
                   uint64_t source_offset,
                   uint64_t source_size,
@@ -188,6 +197,7 @@ bool astc_vulkan_model_cache_make_plan(
             astc_vulkan_model_cache_entry entry;
             entry.tensor_name = tensor.name;
             entry.storage = tensor;
+            ensure_catalog_labels(entry.storage);
             entry.device_bytes = tensor.byte_size;
             entry.host_bytes = tensor.byte_size + tensor.layout_byte_size;
             entry.paired_semantic = astc_vulkan_paired_semantic::direct_rgb;
@@ -227,6 +237,7 @@ bool astc_vulkan_model_cache_make_plan(
         entry.tensor_name = best->storage.name;
         entry.artifact_id = best->id;
         entry.storage = best->storage;
+        ensure_catalog_labels(entry.storage);
         entry.evidence = best->evidence;
         entry.variant = best->variant;
         entry.normalization = best->normalization;

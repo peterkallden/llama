@@ -131,6 +131,8 @@ int main(int argc, char ** argv) {
     assert(astc_vulkan_model_cache_make_plan(manifest, options, plan, error));
     assert(plan.entries.size() == 3);
     assert(plan.entries[0].tensor_name == "blk.0.ffn_down.weight");
+    assert(plan.entries[0].storage.semantic_role == "ffn.down");
+    assert(plan.entries[0].storage.canonical_path == "layers/0/ffn/down/weight");
     assert(plan.entries[0].artifact_id == "layer0-selected");
     assert(!plan.entries[0].use_native_fallback);
     assert(plan.entries[1].tensor_name == "blk.1.ffn_down.weight");
@@ -143,6 +145,7 @@ int main(int argc, char ** argv) {
     assert(astc_vulkan_model_cache_make_plan(
         manifest, options, experimental_plan, error));
     assert(experimental_plan.entries[2].artifact_id == "layer2-experimental");
+    assert(experimental_plan.entries[2].storage.semantic_role == "ffn.down");
 
     astc_vulkan_memory_budget budget;
     budget.effective_device_limit_bytes = plan.entries[0].device_bytes;
@@ -151,7 +154,9 @@ int main(int argc, char ** argv) {
     assert(astc_vulkan_model_cache_plan_residency(
         plan, budget, resident_plan, error));
     assert(resident_plan.residency.resident_items.size() == 1);
-    assert(resident_plan.residency.requires_streaming);
+    // The two rejected artifacts are native fallbacks and are not residency
+    // items. The single admitted ASTC artifact therefore fully preloads.
+    assert(!resident_plan.residency.requires_streaming);
 
     // Usage/benefit planning is a separate, non-serialized layer. It can
     // reorder validated artifacts and optionally demote zero-benefit entries
@@ -259,7 +264,7 @@ int main(int argc, char ** argv) {
     const auto merged_payload_path = merge_root / "merged.payload.astcpack";
     astc_vulkan_manifest merged;
     assert(astc_vulkan_model_cache_merge_fragments(
-        fragments, merged_manifest_path.string(), merged_payload_path.string(), {}, {}, merged, error));
+        fragments, merged_manifest_path.string(), merged_payload_path.string(), {}, {}, {}, merged, error));
     assert(merged.artifacts.size() == 2);
     assert(merged.artifacts[0].storage.byte_offset == 0);
     assert(merged.artifacts[1].storage.byte_offset == 16);
