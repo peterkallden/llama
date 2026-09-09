@@ -18,9 +18,8 @@ struct astc_vulkan_tensor_role_capability {
 std::string astc_vulkan_tensor_semantic_role(const std::string & name);
 std::string astc_vulkan_tensor_canonical_path(const std::string & name);
 
-// Central role registry for cache planning/runtime preparation.  The current
-// implementation has a source builder for FFN-down only; the other matrix
-// roles are intentionally marked planned-only until their offline source
-// construction and replay gates are implemented.
+// Central role registry for cache planning/runtime preparation. All supported
+// rank-2 matrix roles share the current source builder/encoder path. Quality
+// approval and replay evidence remain per tensor; non-matrix roles stay out.
 astc_vulkan_tensor_role_capability astc_vulkan_tensor_role_capability_for_name(
         const std::string & name);

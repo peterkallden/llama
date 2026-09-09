@@ -86,8 +86,9 @@ astc_vulkan_tensor_role_capability astc_vulkan_tensor_role_capability_for_name(
         return result;
     }
 
-    // These roles are deliberately prepared for tensor-name binding and
-    // scheduler/catalog discovery, but their source builders remain planned.
+    // These roles use the same rank-2 matrix loader and D1/D2 encoders as
+    // FFN-down. Their model-quality evidence is still role/tensor-specific,
+    // but no separate source-construction algorithm is required.
     result.matrix_candidate =
         result.semantic_role == "ffn.up" ||
         result.semantic_role == "ffn.gate" ||
@@ -97,5 +98,6 @@ astc_vulkan_tensor_role_capability astc_vulkan_tensor_role_capability_for_name(
         result.semantic_role == "attention.output" ||
         result.semantic_role == "output";
     result.native_binding_ready = result.matrix_candidate;
+    result.source_builder_ready = result.matrix_candidate;
     return result;
 }

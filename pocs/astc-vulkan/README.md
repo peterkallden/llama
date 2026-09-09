@@ -37,12 +37,11 @@ shape, a LoRA/scale-sensitive graph form, or a failed device preflight leaves
 the ordinary GGUF operation intact.  The legacy layer-number callback remains
 only for the FFN-down CPU bridge.
 
-The tensor catalog records this distinction explicitly: `ffn.down` is the
-current role with a complete source-builder path, while the other accepted
-matrix roles are `planned` source roles.  They can therefore appear in model
-catalogs, scheduler plans and runtime binding discovery now, without causing
-cache generation to claim support before a role-specific source builder and
-model-replay gate have been added.
+The tensor catalog records this distinction explicitly: all accepted matrix
+roles use the same rank-2 source-builder/encoder path as `ffn.down`.  They can
+therefore appear in model catalogs, scheduler plans and runtime binding
+discovery now.  Their model-quality evidence is still collected per tensor;
+norm/embedding roles remain outside this matrix path.
 
 Example using an existing cache (no cache generation):
 

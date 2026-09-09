@@ -86,7 +86,7 @@ int main() {
             "blk.0.attn_output.weight", "output.weight"}) {
         const auto capability = astc_vulkan_tensor_role_capability_for_name(name);
         assert(capability.matrix_candidate && capability.native_binding_ready);
-        assert(!capability.source_builder_ready);
+        assert(capability.source_builder_ready);
     }
     const auto norm_cap = astc_vulkan_tensor_role_capability_for_name("blk.0.attn_norm.weight");
     assert(!norm_cap.matrix_candidate && !norm_cap.native_binding_ready);
