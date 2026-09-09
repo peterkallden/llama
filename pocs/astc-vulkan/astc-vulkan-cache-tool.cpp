@@ -856,8 +856,10 @@ bool build_d2_cache(const char * argv0, const std::string & model,
             cleanup();
             return false;
         }
-        if (footprint != "8x5" || paired_semantic != "la" || row_scale != "none" || row_transform != "none") {
-            error = "D2 GPU exact candidates currently require 8x5 D2-LA without row-scale or row transform";
+        if (footprint != "8x5" || paired_semantic != "la" || row_scale != "none" || row_transform != "identity") {
+            error = "D2 GPU exact candidates currently require 8x5 D2-LA without row-scale or row transform "
+                "(got footprint=" + footprint + ", semantic=" + paired_semantic +
+                ", row-scale=" + row_scale + ", row-transform=" + row_transform + ")";
             cleanup();
             return false;
         }
