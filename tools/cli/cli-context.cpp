@@ -125,8 +125,9 @@ bool cli_context::init() {
             return false;
         }
         params.model.path = impl->compiled_source->model_path();
-        params.astc_cache = impl->compiled_source->cache_path();
-        LOG_INF("compiled model active: %s (embedded GGUF via %s + ASTC cache)\n",
+        params.astc_cache_source = impl->compiled_source->cache_source();
+        params.astc_cache_source_fingerprint = impl->compiled_source->source_fingerprint();
+        LOG_INF("compiled model active: %s (embedded GGUF via %s + in-memory ASTC blobs)\n",
                 params.compiled_model.c_str(),
                 impl->compiled_source->materialization_mode_name());
     }

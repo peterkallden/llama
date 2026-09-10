@@ -40,7 +40,7 @@ bool write_scalar(std::ofstream & file, T value) {
 }
 
 template<typename T>
-bool read_scalar(std::ifstream & file, T & value) {
+bool read_scalar(std::istream & file, T & value) {
     file.read(reinterpret_cast<char *>(&value), sizeof(value));
     return file.good();
 }
@@ -52,7 +52,7 @@ bool write_string(std::ofstream & file, const std::string & value) {
            (size == 0 || (file.write(value.data(), size), file.good()));
 }
 
-bool read_string(std::ifstream & file, std::string & value) {
+bool read_string(std::istream & file, std::string & value) {
     uint32_t size = 0;
     if (!read_scalar(file, size) || size > kMaxStringBytes) return false;
     value.resize(size);
@@ -242,7 +242,7 @@ bool write_tensor_record(std::ofstream & file, const astc_vulkan_tensor_record &
     return true;
 }
 
-bool read_tensor_record(std::ifstream & file, astc_vulkan_tensor_record & tensor,
+bool read_tensor_record(std::istream & file, astc_vulkan_tensor_record & tensor,
                         uint32_t version) {
     uint8_t footprint = 0;
     uint8_t representation = 0;
@@ -320,7 +320,7 @@ bool write_artifact_record(std::ofstream & file, const astc_vulkan_artifact_reco
              write_scalar(file, artifact.pair_map_hash64)));
 }
 
-bool read_artifact_record(std::ifstream & file, astc_vulkan_artifact_record & artifact,
+bool read_artifact_record(std::istream & file, astc_vulkan_artifact_record & artifact,
                           uint32_t version) {
     uint8_t variant = 0;
     uint8_t normalization = 0;
@@ -380,6 +380,49 @@ bool for_each_storage_record(const astc_vulkan_manifest & manifest, Callback cal
         if (!callback(tensor)) return false;
     }
     return true;
+}
+
+bool read_manifest_stream(std::istream & file,
+                          astc_vulkan_manifest & manifest,
+                          std::string & error) {
+    std::array<char, 8> magic{};
+    file.read(magic.data(), magic.size());
+    uint32_t version = 0;
+    uint32_t count = 0;
+    uint32_t artifact_count = 0;
+    if (!file.good() || magic != kMagic || !read_scalar(file, version) ||
+        !read_string(file, manifest.model_fingerprint) || !read_scalar(file, count) ||
+        count > kMaxTensorRecords) {
+        error = "invalid ASTC Vulkan manifest header";
+        return false;
+    }
+    manifest.version = version;
+    if (version >= kArtifactManifestVersion &&
+        (!read_scalar(file, artifact_count) || artifact_count > kMaxTensorRecords)) {
+        error = "invalid ASTC Vulkan artifact manifest header";
+        return false;
+    }
+    manifest.tensors.clear();
+    manifest.artifacts.clear();
+    manifest.tensors.reserve(count);
+    for (uint32_t index = 0; index < count; ++index) {
+        astc_vulkan_tensor_record tensor;
+        if (!read_tensor_record(file, tensor, version)) {
+            error = "truncated ASTC Vulkan tensor record";
+            return false;
+        }
+        manifest.tensors.push_back(std::move(tensor));
+    }
+    manifest.artifacts.reserve(artifact_count);
+    for (uint32_t index = 0; index < artifact_count; ++index) {
+        astc_vulkan_artifact_record artifact;
+        if (!read_artifact_record(file, artifact, version)) {
+            error = "truncated ASTC Vulkan artifact record";
+            return false;
+        }
+        manifest.artifacts.push_back(std::move(artifact));
+    }
+    return astc_vulkan_validate_manifest(manifest, error);
 }
 
 } // namespace
@@ -606,42 +649,16 @@ bool astc_vulkan_read_manifest(const std::string & path,
                                std::string & error) {
     std::ifstream file(path, std::ios::binary);
     if (!file) { error = "cannot open ASTC Vulkan manifest for reading"; return false; }
-    std::array<char, 8> magic{};
-    file.read(magic.data(), magic.size());
-    uint32_t version = 0;
-    uint32_t count = 0;
-    uint32_t artifact_count = 0;
-    if (!file.good() || magic != kMagic || !read_scalar(file, version) ||
-        !read_string(file, manifest.model_fingerprint) || !read_scalar(file, count) ||
-        count > kMaxTensorRecords) {
-        error = "invalid ASTC Vulkan manifest header";
+    return read_manifest_stream(file, manifest, error);
+}
+
+bool astc_vulkan_read_manifest_bytes(const uint8_t * data, size_t size,
+                                     astc_vulkan_manifest & manifest,
+                                     std::string & error) {
+    if (size != 0 && data == nullptr) {
+        error = "ASTC Vulkan manifest byte view is null";
         return false;
     }
-    manifest.version = version;
-    if (version >= kArtifactManifestVersion &&
-        (!read_scalar(file, artifact_count) || artifact_count > kMaxTensorRecords)) {
-        error = "invalid ASTC Vulkan artifact manifest header";
-        return false;
-    }
-    manifest.tensors.clear();
-    manifest.artifacts.clear();
-    manifest.tensors.reserve(count);
-    for (uint32_t index = 0; index < count; ++index) {
-        astc_vulkan_tensor_record tensor;
-        if (!read_tensor_record(file, tensor, version)) {
-            error = "truncated ASTC Vulkan tensor record";
-            return false;
-        }
-        manifest.tensors.push_back(std::move(tensor));
-    }
-    manifest.artifacts.reserve(artifact_count);
-    for (uint32_t index = 0; index < artifact_count; ++index) {
-        astc_vulkan_artifact_record artifact;
-        if (!read_artifact_record(file, artifact, version)) {
-            error = "truncated ASTC Vulkan artifact record";
-            return false;
-        }
-        manifest.artifacts.push_back(std::move(artifact));
-    }
-    return astc_vulkan_validate_manifest(manifest, error);
+    std::istringstream file(std::string(reinterpret_cast<const char *>(data), size));
+    return read_manifest_stream(file, manifest, error);
 }

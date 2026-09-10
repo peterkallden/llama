@@ -151,6 +151,14 @@ bool astc_vulkan_model_cache_load_catalog(
     astc_vulkan_model_cache_catalog & result,
     std::string & error);
 
+bool astc_vulkan_model_cache_load_catalog_from_source(
+    const std::string & model_path,
+    const std::shared_ptr<const astc_vulkan_cache_source> & source,
+    const std::string & source_fingerprint,
+    const astc_vulkan_model_cache_plan_options & options,
+    astc_vulkan_model_cache_catalog & result,
+    std::string & error);
+
 // Same catalog load for an admitted logical-model-equivalent runtime GGUF.
 // The compatible base must already have an admission record. Production use
 // additionally requires runtime-specific model/Vulkan gates; passing

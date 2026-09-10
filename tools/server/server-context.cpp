@@ -1130,10 +1130,15 @@ private:
         }
 
 #if defined(LLAMA_ASTC_VULKAN_RUNTIME_AVAILABLE)
-        if (!params_base.astc_cache.empty()) {
+        if (!params_base.astc_cache.empty() || params_base.astc_cache_source) {
             astc_vulkan_llama_provider::options astc_options;
             astc_options.model_path = params_base.model.path;
             astc_options.cache_path = params_base.astc_cache;
+            astc_options.cache_source_fingerprint = params_base.astc_cache_source_fingerprint;
+            if (params_base.astc_cache_source) {
+                astc_options.cache_source = std::static_pointer_cast<
+                    const astc_vulkan_cache_source>(params_base.astc_cache_source);
+            }
             astc_options.allow_experimental = params_base.astc_research;
             astc_options.allow_unverified = params_base.astc_research;
             if (params_base.astc_profile == "quality") {
@@ -1159,8 +1164,10 @@ private:
                 llama_set_ffn_down_runtime_native_generation_begin(
                     ctx_tgt, astc_vulkan_llama_provider::native_generation_begin_callback);
                 astc_provider = std::move(provider);
+                const char * astc_source_label = params_base.astc_cache_source ?
+                    "compiled-model blobs" : params_base.astc_cache.c_str();
                 SRV_INF("ASTC cache overlay active: %s (%s policy)\\n",
-                        params_base.astc_cache.c_str(), params_base.astc_profile.c_str());
+                        astc_source_label, params_base.astc_profile.c_str());
             } else {
                 SRV_WRN("ASTC cache overlay unavailable (%s); using native GGUF tensors\\n",
                         astc_error.c_str());

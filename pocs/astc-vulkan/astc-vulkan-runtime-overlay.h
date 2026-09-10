@@ -17,6 +17,8 @@ struct astc_vulkan_runtime_overlay_options {
     std::string source_model_path;
     std::string runtime_model_path;
     std::string cache_path = "auto";
+    std::shared_ptr<const astc_vulkan_cache_source> cache_source;
+    std::string cache_source_fingerprint;
     astc_vulkan_model_cache_plan_options policy{};
     astc_vulkan_memory_budget memory_budget{};
     uint64_t max_page_payload_bytes = 0;

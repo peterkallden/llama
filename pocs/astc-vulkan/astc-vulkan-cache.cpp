@@ -403,6 +403,7 @@ bool astc_vulkan_cache_validate(const std::string & model_path,
                                 std::string & error) {
     result = {};
     if (!astc_vulkan_cache_resolve(model_path, requested_cache_path, result.paths, error)) return false;
+    result.source = astc_vulkan_make_file_cache_source(result.paths);
     std::error_code ec;
     if (!fs::is_regular_file(model_path, ec) || !fs::is_directory(result.paths.root, ec)) {
         error = "ASTC cache or source GGUF is unavailable";
@@ -468,6 +469,129 @@ bool astc_vulkan_cache_validate(const std::string & model_path,
                                   layout_size, result.paths.layout,
                                   row_scale_size, result.paths.row_scales,
                                   pair_map_size, result.paths.pair_map, error)) return false;
+    error.clear();
+    return true;
+}
+
+bool astc_vulkan_cache_validate_source(
+        const std::string & model_path,
+        const std::shared_ptr<const astc_vulkan_cache_source> & source,
+        const std::string & expected_source_sha256,
+        astc_vulkan_cache_validation & result,
+        std::string & error) {
+    result = {};
+    if (!source) {
+        error = "ASTC cache source is null";
+        return false;
+    }
+    if (model_path.empty()) {
+        error = "ASTC cache source requires a model path";
+        return false;
+    }
+
+    std::string model_hash;
+    if (!astc_vulkan_sha256_file_hex(model_path, model_hash, error)) return false;
+    if (!expected_source_sha256.empty() && model_hash != expected_source_sha256) {
+        error = "embedded ASTC cache source does not match the embedded GGUF";
+        return false;
+    }
+
+    astc_vulkan_cache_blob manifest_blob;
+    astc_vulkan_cache_blob payload_blob;
+    if (!source->blob(astc_vulkan_cache_blob_kind::manifest, manifest_blob, error) ||
+        !source->blob(astc_vulkan_cache_blob_kind::payload, payload_blob, error) ||
+        manifest_blob.size == 0 || payload_blob.size == 0) {
+        if (error.empty()) error = "ASTC memory cache is missing manifest or payload";
+        return false;
+    }
+    if (!astc_vulkan_read_manifest_bytes(manifest_blob.data,
+                                         static_cast<size_t>(manifest_blob.size),
+                                         result.manifest, error)) return false;
+
+    result.source = source;
+    result.runtime_base.is_source = true;
+    result.runtime_base.admitted = true;
+    result.runtime_base.model_gate_passed = true;
+    result.runtime_base.vulkan_gate_passed = true;
+    result.runtime_base.source_sha256 = model_hash;
+    result.runtime_base.runtime_sha256 = model_hash;
+    result.runtime_base.family = "source";
+    result.has_paired_d2 = has_paired_d2(result.manifest);
+    result.has_row_scales = has_row_scales(result.manifest);
+    result.has_pair_map = has_pair_map(result.manifest);
+
+    astc_vulkan_cache_blob layout_blob;
+    astc_vulkan_cache_blob scales_blob;
+    astc_vulkan_cache_blob pair_map_blob;
+    if (!source->blob(astc_vulkan_cache_blob_kind::layout, layout_blob, error) ||
+        !source->blob(astc_vulkan_cache_blob_kind::row_scales, scales_blob, error) ||
+        !source->blob(astc_vulkan_cache_blob_kind::pair_map, pair_map_blob, error)) {
+        return false;
+    }
+    if (!astc_vulkan_validate_payload_blob(result.manifest, payload_blob.size, error) ||
+        (result.has_paired_d2 &&
+         (!astc_vulkan_validate_layout_blob(result.manifest, layout_blob.size, error) ||
+          layout_blob.size == 0)) ||
+        (result.has_row_scales && scales_blob.size == 0) ||
+        (result.has_pair_map && pair_map_blob.size == 0)) {
+        return false;
+    }
+
+    const auto validate_storage = [&](const astc_vulkan_tensor_record & tensor) {
+        std::vector<uint8_t> bytes;
+        if (!source->read_range(astc_vulkan_cache_blob_kind::payload,
+                                tensor.byte_offset, tensor.byte_size, bytes, error) ||
+            (tensor.payload_hash64 != 0 &&
+             astc_vulkan_payload_hash64(bytes.data(), bytes.size()) != tensor.payload_hash64)) {
+            if (error.empty()) error = "ASTC memory cache tensor payload checksum mismatch";
+            return false;
+        }
+        if (tensor.representation == astc_vulkan_representation::kPairedD2) {
+            if (!source->read_range(astc_vulkan_cache_blob_kind::layout,
+                                    tensor.layout_byte_offset, tensor.layout_byte_size,
+                                    bytes, error) ||
+                (tensor.layout_hash64 != 0 &&
+                 astc_vulkan_payload_hash64(bytes.data(), bytes.size()) != tensor.layout_hash64)) {
+                if (error.empty()) error = "ASTC memory cache layout checksum mismatch";
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (result.manifest.version >= 4) {
+        for (const auto & artifact : result.manifest.artifacts) {
+            if (!validate_storage(artifact.storage)) return false;
+            if (artifact.normalization == astc_vulkan_normalization::per_row_absmax) {
+                std::vector<uint8_t> bytes;
+                if (!source->read_range(astc_vulkan_cache_blob_kind::row_scales,
+                                        artifact.row_scale_byte_offset,
+                                        artifact.row_scale_byte_size, bytes, error)) {
+                    return false;
+                }
+                if (artifact.row_scale_hash64 != 0 &&
+                    astc_vulkan_payload_hash64(bytes.data(), bytes.size()) != artifact.row_scale_hash64) {
+                    error = "ASTC memory cache row-scale checksum mismatch";
+                    return false;
+                }
+            }
+            if (artifact.pair_map_byte_size != 0) {
+                std::vector<uint8_t> bytes;
+                if (!source->read_range(astc_vulkan_cache_blob_kind::pair_map,
+                                        artifact.pair_map_byte_offset,
+                                        artifact.pair_map_byte_size, bytes, error) ||
+                    !astc_vulkan_validate_pair_map(artifact, bytes.data(), bytes.size(), error)) {
+                    if (error.empty()) error = "ASTC memory cache pair map is invalid";
+                    return false;
+                }
+            }
+        }
+    } else {
+        for (const auto & tensor : result.manifest.tensors) {
+            if (!validate_storage(tensor)) return false;
+        }
+    }
+
     error.clear();
     return true;
 }

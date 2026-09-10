@@ -16,6 +16,7 @@
 #include <map>
 #include <algorithm>
 #include <fstream>
+#include <memory>
 
 #if defined(_WIN32) && !defined(_WIN32_WINNT)
 #define _WIN32_WINNT 0x0A00
@@ -514,6 +515,10 @@ struct common_params {
     // Experimental ASTC runtime overlay. The cache is optional; an artifact
     // miss keeps the normal GGUF tensor path intact.
     std::string astc_cache           = "";
+    // Opaque ASTC cache-source handle populated by --compiled-model. Keeping
+    // this type-erased avoids coupling common/ggml to the ASTC POC headers.
+    std::shared_ptr<const void> astc_cache_source;
+    std::string astc_cache_source_fingerprint;
     std::string astc_profile         = "balanced";
     bool        astc_research        = false;
 

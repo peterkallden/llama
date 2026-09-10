@@ -28,6 +28,10 @@ public:
         // the runtime model is also treated as the cache source.
         std::string source_model_path;
         std::string cache_path = "auto";
+        // Optional immutable cache source (for example embedded ASTC sections
+        // from a compiled model). The owner must outlive the provider.
+        std::shared_ptr<const astc_vulkan_cache_source> cache_source;
+        std::string cache_source_fingerprint;
         astc_vulkan_quality_policy policy = astc_vulkan_quality_policy::balanced;
         bool allow_experimental = false;
         bool allow_unverified = false;

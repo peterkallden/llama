@@ -222,14 +222,24 @@ bool astc_vulkan_page_owner::load_entry_material(
         return false;
     }
     const auto & entry = plan_.entries[entry_index];
-    if (!astc_vulkan_read_file_range(catalog.validation.paths.payload,
-                                     entry.storage.byte_offset, entry.storage.byte_size,
-                                     result.payload, error)) return false;
+    if (catalog.validation.source) {
+        if (!catalog.validation.source->read_range(
+                astc_vulkan_cache_blob_kind::payload,
+                entry.storage.byte_offset, entry.storage.byte_size,
+                result.payload, error)) return false;
+    } else if (!astc_vulkan_read_file_range(catalog.validation.paths.payload,
+                                            entry.storage.byte_offset, entry.storage.byte_size,
+                                            result.payload, error)) return false;
     if (entry.storage.layout_byte_size != 0) {
-        if (!astc_vulkan_read_file_range(catalog.validation.paths.layout,
-                                         entry.storage.layout_byte_offset,
-                                         entry.storage.layout_byte_size,
-                                         result.paired_layout, error)) return false;
+        if (catalog.validation.source) {
+            if (!catalog.validation.source->read_range(
+                    astc_vulkan_cache_blob_kind::layout,
+                    entry.storage.layout_byte_offset, entry.storage.layout_byte_size,
+                    result.paired_layout, error)) return false;
+        } else if (!astc_vulkan_read_file_range(catalog.validation.paths.layout,
+                                                entry.storage.layout_byte_offset,
+                                                entry.storage.layout_byte_size,
+                                                result.paired_layout, error)) return false;
     }
     if (entry.row_scale_byte_size != 0) {
         if (entry.row_scale_byte_size % sizeof(float) != 0 ||
@@ -238,9 +248,14 @@ bool astc_vulkan_page_owner::load_entry_material(
             return false;
         }
         std::vector<uint8_t> bytes;
-        if (!astc_vulkan_read_file_range(catalog.validation.paths.row_scales,
-                                         entry.row_scale_byte_offset,
-                                         entry.row_scale_byte_size, bytes, error)) return false;
+        if (catalog.validation.source) {
+            if (!catalog.validation.source->read_range(
+                    astc_vulkan_cache_blob_kind::row_scales,
+                    entry.row_scale_byte_offset, entry.row_scale_byte_size,
+                    bytes, error)) return false;
+        } else if (!astc_vulkan_read_file_range(catalog.validation.paths.row_scales,
+                                                entry.row_scale_byte_offset,
+                                                entry.row_scale_byte_size, bytes, error)) return false;
         result.row_scales.resize(entry.storage.height);
         std::memcpy(result.row_scales.data(), bytes.data(), bytes.size());
     }
@@ -250,10 +265,15 @@ bool astc_vulkan_page_owner::load_entry_material(
             error = "ASTC page pair-map range does not match tensor height";
             return false;
         }
-        if (!astc_vulkan_read_file_range(catalog.validation.paths.pair_map,
-                                         entry.pair_map_byte_offset,
-                                         entry.pair_map_byte_size,
-                                         result.pair_map, error)) return false;
+        if (catalog.validation.source) {
+            if (!catalog.validation.source->read_range(
+                    astc_vulkan_cache_blob_kind::pair_map,
+                    entry.pair_map_byte_offset, entry.pair_map_byte_size,
+                    result.pair_map, error)) return false;
+        } else if (!astc_vulkan_read_file_range(catalog.validation.paths.pair_map,
+                                                entry.pair_map_byte_offset,
+                                                entry.pair_map_byte_size,
+                                                result.pair_map, error)) return false;
     }
     error.clear();
     return true;

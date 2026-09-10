@@ -512,6 +512,23 @@ bool astc_vulkan_model_cache_load_catalog(
     return true;
 }
 
+bool astc_vulkan_model_cache_load_catalog_from_source(
+        const std::string & model_path,
+        const std::shared_ptr<const astc_vulkan_cache_source> & source,
+        const std::string & source_fingerprint,
+        const astc_vulkan_model_cache_plan_options & options,
+        astc_vulkan_model_cache_catalog & result,
+        std::string & error) {
+    result = {};
+    if (!astc_vulkan_cache_validate_source(
+            model_path, source, source_fingerprint, result.validation, error)) return false;
+    result.runtime_base = result.validation.runtime_base;
+    if (!astc_vulkan_model_cache_make_plan(
+            result.validation.manifest, options, result.plan, error)) return false;
+    error.clear();
+    return true;
+}
+
 bool astc_vulkan_model_cache_load_catalog_for_runtime(
     const std::string & source_model_path,
     const std::string & runtime_model_path,

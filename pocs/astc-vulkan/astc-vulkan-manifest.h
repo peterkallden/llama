@@ -129,3 +129,6 @@ bool astc_vulkan_write_manifest(const std::string & path,
 bool astc_vulkan_read_manifest(const std::string & path,
                                astc_vulkan_manifest & manifest,
                                std::string & error);
+bool astc_vulkan_read_manifest_bytes(const uint8_t * data, size_t size,
+                                     astc_vulkan_manifest & manifest,
+                                     std::string & error);

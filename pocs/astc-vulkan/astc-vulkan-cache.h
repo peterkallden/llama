@@ -2,7 +2,57 @@
 
 #include "astc-vulkan-manifest.h"
 
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
+
+enum class astc_vulkan_cache_blob_kind : uint8_t {
+    manifest,
+    payload,
+    layout,
+    row_scales,
+    pair_map,
+    provenance,
+    catalog,
+};
+
+struct astc_vulkan_cache_blob {
+    const uint8_t * data = nullptr;
+    uint64_t size = 0;
+};
+
+// Immutable cache storage independent of whether the bytes originate in a
+// sidecar directory or an embedded compiled-model container. The owner of the
+// pointed-to bytes must outlive this source and all users of its validation.
+struct astc_vulkan_cache_blob_set {
+    astc_vulkan_cache_blob manifest;
+    astc_vulkan_cache_blob payload;
+    astc_vulkan_cache_blob layout;
+    astc_vulkan_cache_blob row_scales;
+    astc_vulkan_cache_blob pair_map;
+    astc_vulkan_cache_blob provenance;
+    astc_vulkan_cache_blob catalog;
+};
+
+class astc_vulkan_cache_source {
+public:
+    virtual ~astc_vulkan_cache_source() = default;
+    virtual bool blob(astc_vulkan_cache_blob_kind kind,
+                      astc_vulkan_cache_blob & result,
+                      std::string & error) const = 0;
+    virtual bool read_range(astc_vulkan_cache_blob_kind kind, uint64_t offset,
+                            uint64_t size, std::vector<uint8_t> & result,
+                            std::string & error) const = 0;
+    virtual bool sha256(astc_vulkan_cache_blob_kind kind, std::string & result,
+                        std::string & error) const = 0;
+};
+
+std::shared_ptr<const astc_vulkan_cache_source> astc_vulkan_make_file_cache_source(
+    const struct astc_vulkan_cache_paths & paths);
+std::shared_ptr<const astc_vulkan_cache_source> astc_vulkan_make_memory_cache_source(
+    const astc_vulkan_cache_blob_set & blobs,
+    std::shared_ptr<const void> owner = {});
 
 // Versioned, model-adjacent ASTC artifact cache. The cache intentionally keeps
 // GGUF separate: it is an overlay for approved ASTC tensors, never a second
@@ -59,6 +109,7 @@ struct astc_vulkan_cache_runtime_base {
 
 struct astc_vulkan_cache_validation {
     astc_vulkan_cache_paths paths;
+    std::shared_ptr<const astc_vulkan_cache_source> source;
     astc_vulkan_manifest manifest;
     bool has_paired_d2 = false;
     bool has_row_scales = false;
@@ -80,6 +131,16 @@ bool astc_vulkan_cache_validate(const std::string & model_path,
                                 const std::string & requested_cache_path,
                                 astc_vulkan_cache_validation & result,
                                 std::string & error);
+
+// Validates an immutable cache source against the supplied model path. The
+// source may be backed by embedded compiled-model sections and therefore does
+// not require a cache directory or sidecar files.
+bool astc_vulkan_cache_validate_source(
+    const std::string & model_path,
+    const std::shared_ptr<const astc_vulkan_cache_source> & source,
+    const std::string & expected_source_sha256,
+    astc_vulkan_cache_validation & result,
+    std::string & error);
 
 // Registers an exact runtime GGUF as a structurally compatible base for an
 // existing source-derived cache. Both GGUF files are parsed once and must have

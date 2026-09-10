@@ -280,7 +280,8 @@ target_link_libraries(astc-vulkan-provenance PUBLIC vendor::hash)
 target_compile_features(astc-vulkan-provenance PUBLIC cxx_std_17)
 
 add_library(astc-vulkan-cache STATIC
-    astc-vulkan-cache.cpp)
+    astc-vulkan-cache.cpp
+    astc-vulkan-cache-source.cpp)
 target_include_directories(astc-vulkan-cache PUBLIC
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_link_libraries(astc-vulkan-cache PUBLIC
@@ -331,7 +332,7 @@ endif()
 add_executable(test-astc-vulkan-compiled-source
     tests/test-astc-vulkan-compiled-source.cpp)
 target_link_libraries(test-astc-vulkan-compiled-source PRIVATE
-    astc-vulkan-compiled-source)
+    astc-vulkan-compiled-source astc-vulkan-model-cache)
 target_compile_features(test-astc-vulkan-compiled-source PRIVATE cxx_std_17)
 if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-compiled-source
@@ -483,7 +484,8 @@ if (TARGET Vulkan::Vulkan)
         astc-vulkan-page-owner.cpp)
     target_include_directories(astc-vulkan-page-owner PUBLIC
         ${ASTC_VULKAN_POC_INCLUDE_DIR})
-    target_link_libraries(astc-vulkan-page-owner PUBLIC astc-vulkan-model-cache)
+    target_link_libraries(astc-vulkan-page-owner PUBLIC
+        astc-vulkan-model-cache astc-vulkan-cache astc-vulkan-stream-loader)
     target_compile_features(astc-vulkan-page-owner PUBLIC cxx_std_17)
 
     # Single runtime-facing cache owner. It intentionally stays independent

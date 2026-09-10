@@ -3,6 +3,7 @@
 #include "astc-vulkan-compiled-source.h"
 #include "astc-vulkan-hash.h"
 #include "astc-vulkan-manifest.h"
+#include "astc-vulkan-model-cache.h"
 #include "astc-vulkan-provenance.h"
 
 #include <cassert>
@@ -55,22 +56,37 @@ int main() {
     assert(astc_vulkan_compiled_model_write(container_path.string(), model, error));
 
     std::string materialized_model_path;
-    std::string materialized_cache_path;
+    std::shared_ptr<const astc_vulkan_cache_source> retained_source;
     bool used_memory_file = false;
     {
         astc_vulkan_compiled_source source;
         assert(source.open(container_path.string(), error));
         assert(source.ready());
         materialized_model_path = source.model_path();
-        materialized_cache_path = source.cache_path();
         used_memory_file = source.materialization_mode() ==
             astc_vulkan_compiled_source_mode::memory_file;
         assert(read_bytes(source.model_path()) == model.gguf);
 
-        astc_vulkan_cache_validation validation;
-        assert(astc_vulkan_cache_validate(source.model_path(), source.cache_path(), validation, error));
-        assert(validation.manifest.tensors.size() == 1);
+        astc_vulkan_cache_validation memory_validation;
+        assert(astc_vulkan_cache_validate_source(
+            source.model_path(), source.cache_source(), source.source_fingerprint(),
+            memory_validation, error));
+        assert(memory_validation.source);
+        assert(memory_validation.manifest.tensors.size() == 1);
+        astc_vulkan_model_cache_catalog catalog;
+        astc_vulkan_model_cache_plan_options options;
+        assert(astc_vulkan_model_cache_load_catalog_from_source(
+            source.model_path(), source.cache_source(), source.source_fingerprint(),
+            options, catalog, error));
+        assert(catalog.plan.entries.size() == 1);
+        retained_source = source.cache_source();
+
     }
+    astc_vulkan_cache_blob retained_payload;
+    assert(retained_source && retained_source->blob(
+        astc_vulkan_cache_blob_kind::payload, retained_payload, error));
+    assert(retained_payload.size == model.payload.size());
+    assert(retained_payload.data[0] == model.payload[0]);
 
 #if defined(__linux__)
     // The descriptor is owned by the adapter and must be closed when its
@@ -80,8 +96,6 @@ int main() {
         assert(!std::filesystem::exists(materialized_model_path));
     }
 #endif
-    assert(!std::filesystem::exists(materialized_cache_path));
-
     std::error_code ignored;
     std::filesystem::remove(manifest_path, ignored);
     std::filesystem::remove(container_path, ignored);

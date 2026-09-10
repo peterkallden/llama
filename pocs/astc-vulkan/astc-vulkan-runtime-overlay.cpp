@@ -26,9 +26,18 @@ bool astc_vulkan_runtime_overlay::prepare(
         return false;
     }
 
-    if (!astc_vulkan_model_cache_load_catalog_for_runtime(
-            options.source_model_path, options.runtime_model_path, options.cache_path,
-            options.policy, catalog_, error)) {
+    if (options.cache_source) {
+        if (options.source_model_path != options.runtime_model_path) {
+            error = "compiled ASTC cache source currently requires the embedded GGUF as runtime base";
+            return false;
+        }
+        if (!astc_vulkan_model_cache_load_catalog_from_source(
+                options.source_model_path, options.cache_source,
+                options.cache_source_fingerprint, options.policy,
+                catalog_, error)) return false;
+    } else if (!astc_vulkan_model_cache_load_catalog_for_runtime(
+                   options.source_model_path, options.runtime_model_path, options.cache_path,
+                   options.policy, catalog_, error)) {
         return false;
     }
 

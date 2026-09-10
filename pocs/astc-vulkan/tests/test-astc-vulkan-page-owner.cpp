@@ -75,20 +75,27 @@ int main() {
 
     const auto payload_path = std::filesystem::temp_directory_path() /
         "astc-vulkan-page-owner-payload.bin";
+    const std::vector<uint8_t> payload_bytes(32, 0x7b);
     {
         std::ofstream payload(payload_path, std::ios::binary | std::ios::trunc);
-        const std::vector<uint8_t> bytes(32, 0x7b);
-        payload.write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+        payload.write(reinterpret_cast<const char *>(payload_bytes.data()), payload_bytes.size());
     }
     astc_vulkan_model_cache_catalog catalog;
     catalog.plan = plan;
     catalog.validation.paths.payload = payload_path.string();
     astc_vulkan_page_material material;
+    assert(owner.set_resident_prefix(1, error));
     assert(owner.load_entry_material(catalog, 0, material, error));
     assert(!material.resolve.use_native_fallback && material.payload.size() == 16);
     assert(material.payload.front() == 0x7b);
+    astc_vulkan_cache_blob_set memory_blobs;
+    memory_blobs.payload = {payload_bytes.data(), payload_bytes.size()};
+    catalog.validation.source = astc_vulkan_make_memory_cache_source(memory_blobs);
+    astc_vulkan_page_material memory_material;
+    assert(owner.load_entry_material(catalog, 0, memory_material, error));
+    assert(memory_material.resolve.resident && memory_material.payload == material.payload);
     assert(owner.load_entry_material(catalog, 1, material, error));
-    assert(material.resolve.use_native_fallback && material.payload.empty());
+    assert(!material.resolve.use_native_fallback && material.payload.size() == 16);
     std::error_code ignored;
 
     // D2 uses the same page owner but carries its paired layout and optional

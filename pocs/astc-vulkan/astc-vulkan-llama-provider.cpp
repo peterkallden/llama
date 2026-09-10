@@ -136,6 +136,8 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
     overlay_options.source_model_path = source_model_path;
     overlay_options.runtime_model_path = options.model_path;
     overlay_options.cache_path = options.cache_path;
+    overlay_options.cache_source = options.cache_source;
+    overlay_options.cache_source_fingerprint = options.cache_source_fingerprint;
     overlay_options.policy.policy = options.policy;
     overlay_options.policy.allow_experimental = options.allow_experimental;
     overlay_options.policy.allow_unverified = options.allow_unverified;
