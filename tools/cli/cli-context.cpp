@@ -6,6 +6,10 @@
 #include "log.h"
 #include "console.h"
 
+#if defined(LLAMA_ASTC_VULKAN_COMPILED_SOURCE_AVAILABLE)
+#include "astc-vulkan-compiled-source.h"
+#endif
+
 #define JSON_ASSERT GGML_ASSERT
 #include <nlohmann/json.hpp>
 
@@ -21,6 +25,9 @@ using json = nlohmann::ordered_json;
 struct cli_context_impl {
     json messages      = json::array();
     json pending_media = json::array(); // staged multimodal content parts
+#if defined(LLAMA_ASTC_VULKAN_COMPILED_SOURCE_AVAILABLE)
+    std::unique_ptr<astc_vulkan_compiled_source> compiled_source;
+#endif
 };
 
 cli_context::cli_context(const common_params & params) : params(params), impl(new cli_context_impl()) {}
@@ -98,6 +105,37 @@ bool cli_context::init() {
     std::optional<ui::spinner> spinner;
 
     bool use_external_server = !params.server_base.empty();
+#if defined(LLAMA_ASTC_VULKAN_COMPILED_SOURCE_AVAILABLE)
+    if (use_external_server && !params.compiled_model.empty()) {
+        ui::show_error("--compiled-model cannot be used with --server-base",
+                       "start a local llama-cli server when using a compiled model container");
+        return false;
+    }
+    if (!use_external_server && !params.compiled_model.empty()) {
+        if (!params.astc_cache.empty()) {
+            ui::show_error("--compiled-model cannot be combined with --astc-cache",
+                           "the container supplies its embedded ASTC cache");
+            return false;
+        }
+        impl->compiled_source = std::make_unique<astc_vulkan_compiled_source>();
+        std::string compiled_error;
+        if (!impl->compiled_source->open(params.compiled_model, compiled_error)) {
+            ui::show_error("compiled model could not be opened", compiled_error);
+            impl->compiled_source.reset();
+            return false;
+        }
+        params.model.path = impl->compiled_source->model_path();
+        params.astc_cache = impl->compiled_source->cache_path();
+        LOG_INF("compiled model active: %s (embedded GGUF + ASTC cache)\n",
+                params.compiled_model.c_str());
+    }
+#elif defined(LLAMA_ASTC_VULKAN_POC)
+    if (!params.compiled_model.empty()) {
+        ui::show_error("compiled-model support is unavailable in this build",
+                       "rebuild with the ASTC Vulkan POC enabled");
+        return false;
+    }
+#endif
     if (use_external_server) {
         std::string base = params.server_base;
         while (!base.empty() && base.back() == '/') {
@@ -107,7 +145,7 @@ bool cli_context::init() {
 
         spinner.emplace("Connecting to server at " + base);
     } else {
-        if (params.model.path.empty() && params.model.url.empty() &&
+        if (params.model.path.empty() && params.compiled_model.empty() && params.model.url.empty() &&
                 params.model.hf_repo.empty() && params.model.docker_repo.empty()) {
             ui::show_error(
                 "no model specified",

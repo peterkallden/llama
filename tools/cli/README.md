@@ -1,5 +1,24 @@
 # llama.cpp/tools/cli
 
+## Self-contained ASTC model containers
+
+When the ASTC Vulkan POC is enabled, `llama-cli` accepts an experimental
+self-contained container through the explicit `--compiled-model` option:
+
+```bash
+llama-cli --compiled-model /path/to/model.astccm -p "Hello" -n 32
+```
+
+The CLI materializes the embedded GGUF and ASTC resources into a private
+temporary workspace owned by the process, then starts the ordinary local
+server/loader and existing ASTC overlay. The original GGUF and external ASTC
+cache are not required at runtime. The workspace is removed when the CLI
+shuts down. `--compiled-model` cannot be combined with `--model`,
+`--astc-cache`, or `--server-base` in this first local-server implementation.
+
+Without `LLAMA_ASTC_VULKAN_POC`, the option is rejected with a build/runtime
+diagnostic; ordinary `--model model.gguf` behavior is unchanged.
+
 ## Usage
 
 <!-- HELP_START -->

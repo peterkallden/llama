@@ -989,11 +989,25 @@ checksum; the embedded manifest is parsed again on read. It is therefore
 self-contained for transport while preserving GGUF metadata/tokenizer and
 native fallback tensors exactly.
 
-This is not yet a `llama-cli` model-loader format: the ordinary loader still
-opens GGUF and the ASTC provider remains an overlay. The next integration gate
-is a separate compiled-model storage adapter that exposes the embedded GGUF
-through the existing loader contract and resolves ASTC/native tensors by the
-catalog. No private `ggml_type` and no `ggml-vulkan` changes are required.
+`llama-cli` has an experimental compatibility path for this container:
+
+```bash
+build-llama/bin/llama-cli \
+  --compiled-model /absolute/path/model.astccm \
+  -p "Hello" -n 32
+```
+
+The `CompiledSource` adapter validates the container, materializes the embedded
+GGUF and ASTC sections in a private RAII-owned temporary workspace, and then
+reuses the ordinary loader and ASTC overlay. The original GGUF and external
+sidecar are therefore not required while the process runs. The workspace is
+removed when the local CLI server shuts down. `--compiled-model` is explicit
+and cannot be combined with `--model`, `--astc-cache`, or `--server-base`.
+
+This first bridge is deliberately file-oriented; a future in-memory source
+adapter can remove the temporary extraction without changing the container or
+runtime provider contract. No private `ggml_type` and no `ggml-vulkan` changes
+are required.
 
 ## Runtime use today
 

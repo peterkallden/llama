@@ -494,6 +494,11 @@ struct common_params {
 
     struct common_params_model model;
 
+    // Explicit self-contained ASTC model container. The llama-cli adapter
+    // materializes this into the ordinary model/cache seams before starting
+    // the local server; normal --model GGUF behavior is unchanged.
+    std::string compiled_model;
+
     std::set<std::string> model_alias;     // model aliases                                                 // NOLINT
     std::set<std::string> model_tags;      // model tags (informational, not used for routing)              // NOLINT
     std::string hf_token             = ""; // HF token (aka bearer token)                                   // NOLINT

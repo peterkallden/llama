@@ -915,7 +915,7 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
         // model is required (except for server)
         // TODO @ngxson : maybe show a list of available models in CLI in this case
         bool can_skip_model = params.usage || params.completion || !params.server_base.empty();
-        if (!can_skip_model && params.model.path.empty()) {
+        if (!can_skip_model && params.model.path.empty() && params.compiled_model.empty()) {
             throw std::invalid_argument("error: --model is required\n");
         }
     }
@@ -3040,9 +3040,22 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             ? "model path from which to load base model"
             : "model path to load",
         [](common_params & params, const std::string & value) {
+            if (!params.compiled_model.empty()) {
+                throw std::invalid_argument("--model cannot be combined with --compiled-model");
+            }
             params.model.path = value;
         }
     ).set_examples({LLAMA_EXAMPLE_COMMON, LLAMA_EXAMPLE_EXPORT_LORA, LLAMA_EXAMPLE_DOWNLOAD, LLAMA_EXAMPLE_TOKENIZE}).set_env("LLAMA_ARG_MODEL"));
+    add_opt(common_arg(
+        {"--compiled-model"}, "FNAME",
+        "load a self-contained ASTC compiled model container (llama-cli only)",
+        [](common_params & params, const std::string & value) {
+            if (!params.model.path.empty()) {
+                throw std::invalid_argument("--compiled-model cannot be combined with --model");
+            }
+            params.compiled_model = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_CLI}));
     add_opt(common_arg(
         {"-mu", "--model-url"}, "MODEL_URL",
         "model download url (default: unused)",

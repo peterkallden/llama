@@ -306,6 +306,17 @@ target_link_libraries(astc-vulkan-compiled-model PUBLIC
     astc-vulkan-cache astc-vulkan-compiled-catalog)
 target_compile_features(astc-vulkan-compiled-model PUBLIC cxx_std_17)
 
+# File-oriented compatibility adapter for the explicit llama-cli
+# --compiled-model path. It materializes validated embedded sections so the
+# ordinary model loader and ASTC overlay can remain unchanged.
+add_library(astc-vulkan-compiled-source STATIC
+    astc-vulkan-compiled-source.cpp)
+target_include_directories(astc-vulkan-compiled-source PUBLIC
+    ${ASTC_VULKAN_POC_INCLUDE_DIR})
+target_link_libraries(astc-vulkan-compiled-source PUBLIC
+    astc-vulkan-compiled-model)
+target_compile_features(astc-vulkan-compiled-source PUBLIC cxx_std_17)
+
 add_executable(test-astc-vulkan-compiled-model
     tests/test-astc-vulkan-compiled-model.cpp)
 target_link_libraries(test-astc-vulkan-compiled-model PRIVATE
@@ -315,6 +326,17 @@ if (BUILD_TESTING)
     add_test(NAME test-astc-vulkan-compiled-model
         COMMAND test-astc-vulkan-compiled-model)
     set_property(TEST test-astc-vulkan-compiled-model PROPERTY LABELS astc)
+endif()
+
+add_executable(test-astc-vulkan-compiled-source
+    tests/test-astc-vulkan-compiled-source.cpp)
+target_link_libraries(test-astc-vulkan-compiled-source PRIVATE
+    astc-vulkan-compiled-source)
+target_compile_features(test-astc-vulkan-compiled-source PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-compiled-source
+        COMMAND test-astc-vulkan-compiled-source)
+    set_property(TEST test-astc-vulkan-compiled-source PROPERTY LABELS astc)
 endif()
 
 # Shared physical row-band/range contract for D1 and D2. It is deliberately
