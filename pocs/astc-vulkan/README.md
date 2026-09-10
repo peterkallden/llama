@@ -998,16 +998,22 @@ build-llama/bin/llama-cli \
 ```
 
 The `CompiledSource` adapter validates the container, materializes the embedded
-GGUF and ASTC sections in a private RAII-owned temporary workspace, and then
-reuses the ordinary loader and ASTC overlay. The original GGUF and external
-sidecar are therefore not required while the process runs. The workspace is
-removed when the local CLI server shuts down. `--compiled-model` is explicit
-and cannot be combined with `--model`, `--astc-cache`, or `--server-base`.
+GGUF and ASTC sections, and then reuses the ordinary loader and ASTC overlay.
+On Linux the GGUF is backed by a process-owned `memfd` and exposed through
+`/proc/self/fd`; this avoids a second persistent GGUF copy while keeping the
+existing path-based loader unchanged. If that facility is unavailable, the
+adapter falls back to a private temporary GGUF file. ASTC sections remain in a
+private RAII-owned cache directory because the existing overlay is directory-
+based. The resources are released when the local CLI server shuts down. The
+original GGUF and external sidecar are therefore not required while the
+process runs. `--compiled-model` is explicit and cannot be combined with
+`--model`, `--astc-cache`, or `--server-base`.
 
-This first bridge is deliberately file-oriented; a future in-memory source
-adapter can remove the temporary extraction without changing the container or
-runtime provider contract. No private `ggml_type` and no `ggml-vulkan` changes
-are required.
+This first bridge is intentionally compatibility-oriented: it provides
+memory-backed GGUF lifetime without introducing a private `ggml_type`, a
+second model loader, or any `ggml-vulkan` changes. A later direct section-view
+API can remove the temporary ASTC directory once the overlay accepts owned
+blob views.
 
 ## Runtime use today
 

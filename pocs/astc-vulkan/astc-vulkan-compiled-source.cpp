@@ -6,6 +6,14 @@
 #include <chrono>
 #include <fstream>
 
+#if defined(__linux__)
+#include <cerrno>
+#include <fcntl.h>
+#include <linux/memfd.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
 namespace {
 namespace fs = std::filesystem;
 
@@ -19,6 +27,35 @@ bool write_bytes(const fs::path & path, const std::vector<uint8_t> & bytes, std:
     }
     return true;
 }
+
+#if defined(__linux__)
+int create_memory_file(const char * name) {
+#if defined(SYS_memfd_create)
+    return static_cast<int>(syscall(SYS_memfd_create, name, MFD_CLOEXEC));
+#else
+    (void) name;
+    return -1;
+#endif
+}
+
+bool write_memory_file(int fd, const std::vector<uint8_t> & bytes, std::string & error) {
+    size_t written = 0;
+    while (written < bytes.size()) {
+        const ssize_t count = ::write(fd, bytes.data() + written, bytes.size() - written);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+            error = "cannot write embedded GGUF memory file";
+            return false;
+        }
+        written += static_cast<size_t>(count);
+    }
+    if (::lseek(fd, 0, SEEK_SET) < 0) {
+        error = "cannot rewind embedded GGUF memory file";
+        return false;
+    }
+    return true;
+}
+#endif
 
 bool write_text(const fs::path & path, const std::string & text, std::string & error) {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
@@ -59,12 +96,30 @@ astc_vulkan_compiled_source::~astc_vulkan_compiled_source() {
 }
 
 void astc_vulkan_compiled_source::reset() {
+    close_model_file();
     std::error_code ignored;
     if (!root_.empty()) fs::remove_all(root_, ignored);
     root_.clear();
     model_path_.clear();
     cache_path_.clear();
     source_fingerprint_.clear();
+    mode_ = astc_vulkan_compiled_source_mode::private_file;
+}
+
+void astc_vulkan_compiled_source::close_model_file() {
+#if defined(__linux__)
+    if (model_fd_ >= 0) {
+        ::close(model_fd_);
+        model_fd_ = -1;
+    }
+#else
+    model_fd_ = -1;
+#endif
+}
+
+const char * astc_vulkan_compiled_source::materialization_mode_name() const {
+    return mode_ == astc_vulkan_compiled_source_mode::memory_file ?
+        "memory-file" : "private-file";
 }
 
 bool astc_vulkan_compiled_source::open(const std::string & compiled_model_path,
@@ -95,19 +150,52 @@ bool astc_vulkan_compiled_source::open(const std::string & compiled_model_path,
 
     const fs::path gguf_path = root_ / "embedded-model.gguf";
     const fs::path cache_root = root_ / "astc-cache";
-    if (!fs::create_directories(cache_root, ec) || ec || !write_bytes(gguf_path, model.gguf, error)) {
+    if (!fs::create_directories(cache_root, ec) || ec) {
         if (error.empty()) error = "cannot create compiled-model cache workspace";
         reset();
         return false;
     }
 
-    std::string embedded_hash;
-    if (!astc_vulkan_sha256_file_hex(gguf_path.string(), embedded_hash, error) ||
-        embedded_hash != model.source_model_fingerprint) {
+    const std::string embedded_hash = astc_vulkan_sha256_hex(
+        model.gguf.data(), model.gguf.size());
+    if (embedded_hash != model.source_model_fingerprint) {
         error = "compiled-model source fingerprint does not match embedded GGUF";
         reset();
         return false;
     }
+
+    // The normal model loader is path-based today. On Linux, a memfd keeps
+    // the GGUF bytes out of the private workspace and remains valid for the
+    // whole server lifetime. If memfd is unavailable, use the portable file
+    // materialization below.
+#if defined(__linux__)
+    model_fd_ = create_memory_file("astc-vulkan-embedded-gguf");
+    if (model_fd_ >= 0 && write_memory_file(model_fd_, model.gguf, error)) {
+        const std::string proc_path = "/proc/self/fd/" + std::to_string(model_fd_);
+        if (::access(proc_path.c_str(), R_OK) == 0) {
+            model_path_ = proc_path;
+            mode_ = astc_vulkan_compiled_source_mode::memory_file;
+        } else {
+            close_model_file();
+        }
+    }
+    if (model_path_.empty()) {
+        if (model_fd_ >= 0) close_model_file();
+        if (!write_bytes(gguf_path, model.gguf, error)) {
+            reset();
+            return false;
+        }
+        model_path_ = gguf_path.string();
+        mode_ = astc_vulkan_compiled_source_mode::private_file;
+    }
+#else
+    if (!write_bytes(gguf_path, model.gguf, error)) {
+        reset();
+        return false;
+    }
+    model_path_ = gguf_path.string();
+    mode_ = astc_vulkan_compiled_source_mode::private_file;
+#endif
 
     if (!write_hashed(cache_root / "manifest.astcv", model.manifest,
                       cache_root / "manifest.sha256", error) ||
@@ -124,7 +212,6 @@ bool astc_vulkan_compiled_source::open(const std::string & compiled_model_path,
         return false;
     }
 
-    model_path_ = gguf_path.string();
     cache_path_ = cache_root.string();
     source_fingerprint_ = embedded_hash;
     error.clear();

@@ -9,12 +9,15 @@ self-contained container through the explicit `--compiled-model` option:
 llama-cli --compiled-model /path/to/model.astccm -p "Hello" -n 32
 ```
 
-The CLI materializes the embedded GGUF and ASTC resources into a private
-temporary workspace owned by the process, then starts the ordinary local
-server/loader and existing ASTC overlay. The original GGUF and external ASTC
-cache are not required at runtime. The workspace is removed when the CLI
-shuts down. `--compiled-model` cannot be combined with `--model`,
-`--astc-cache`, or `--server-base` in this first local-server implementation.
+The CLI materializes the embedded GGUF and ASTC resources, then starts the
+ordinary local server/loader and existing ASTC overlay. On Linux the GGUF is
+held in a process-owned `memfd` and exposed through `/proc/self/fd`; a private
+temporary GGUF file is used as fallback. ASTC resources use a private temporary
+directory because the current overlay is directory-based. All resources are
+released when the CLI shuts down. The original GGUF and external ASTC cache
+are not required at runtime. `--compiled-model` cannot be combined with
+`--model`, `--astc-cache`, or `--server-base` in this first local-server
+implementation.
 
 Without `LLAMA_ASTC_VULKAN_POC`, the option is rejected with a build/runtime
 diagnostic; ordinary `--model model.gguf` behavior is unchanged.

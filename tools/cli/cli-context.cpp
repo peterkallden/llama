@@ -126,8 +126,9 @@ bool cli_context::init() {
         }
         params.model.path = impl->compiled_source->model_path();
         params.astc_cache = impl->compiled_source->cache_path();
-        LOG_INF("compiled model active: %s (embedded GGUF + ASTC cache)\n",
-                params.compiled_model.c_str());
+        LOG_INF("compiled model active: %s (embedded GGUF via %s + ASTC cache)\n",
+                params.compiled_model.c_str(),
+                impl->compiled_source->materialization_mode_name());
     }
 #elif defined(LLAMA_ASTC_VULKAN_POC)
     if (!params.compiled_model.empty()) {
