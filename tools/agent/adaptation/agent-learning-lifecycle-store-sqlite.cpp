@@ -71,7 +71,7 @@ bool common_agent_sqlite_learning_lifecycle_store::append(
             !statement.bind_text(9, record.source_id, error) ||
             !statement.bind_text(10, record.content_hash, error) ||
             !statement.bind_text(11, record.created_at, error) ||
-            !statement.bind_text(12, common_learning_lifecycle_to_json(record), error)) return false;
+            !statement.bind_text(12, record.payload_json, error)) return false;
     bool row = false;
     return statement.step(row, error);
 }

@@ -98,6 +98,11 @@ training route. FlyDelta, if implemented and validated, is a bounded,
 reversible nearline association layer. Neither path may weaken deterministic
 host contracts or automatically activate from a single runtime observation.
 
+The lifecycle stores share one persistence contract: the `payload_json` column
+contains the record payload, not the serialized lifecycle envelope. JSONL,
+SQLite and Cozo must therefore produce the same idempotent read-back; the
+backend contract test covers duplicate append and round-trip behavior.
+
 ## Review conclusion and recommended adjustments
 
 The proposed direction is sound, provided that adaptation is treated as a

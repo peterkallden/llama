@@ -134,7 +134,7 @@ bool common_agent_cozo_learning_lifecycle_store::append(
         {"source_id", record.source_id},
         {"content_hash", record.content_hash},
         {"created_at", record.created_at},
-        {"payload_json", common_learning_lifecycle_to_json(record)},
+        {"payload_json", record.payload_json},
     };
     std::string result;
     return run("?[event_id, idempotency_key, subject_id, kind, status, namespace_id, project_id, session_id, source_id, content_hash, created_at, payload_json] <- [[$event_id, $idempotency_key, $subject_id, $kind, $status, $namespace_id, $project_id, $session_id, $source_id, $content_hash, $created_at, $payload_json]] :put agent_learning_lifecycle { event_id => idempotency_key, subject_id, kind, status, namespace_id, project_id, session_id, source_id, content_hash, created_at, payload_json }", params.dump(), result, error);
