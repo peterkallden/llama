@@ -2632,7 +2632,11 @@ output rows; otherwise the intended fetch/bandwidth benefit is lost. D2's
 logical row-strip height is twice its ASTC texture-block height, so row-strip
 selection, padding masks, CPU oracle, and shader indexing need their own
 explicit geometry contract. D2 is never auto-scheduled into the production
-adapter until its artifact and model gates pass.
+adapter until its artifact and model gates pass. This is an evidence/rollout
+gate, not a statement that D2 8x5 is an invalid ASTC format; the format is
+legal and its paired runtime path has the same correctness contract as D1.
+Strict containers use the same evidence rule for D1 and D2 and retain native
+bytes for rejected artifacts.
 
 For D2 and other profiles at or below roughly 1.6 nominal b/w, selection uses
 an objective hierarchy rather than raw weight-MSE: retain weight-error/tail

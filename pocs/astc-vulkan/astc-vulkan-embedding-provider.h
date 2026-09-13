@@ -5,14 +5,16 @@
 #include "ggml-vulkan-external-op.h"
 
 #include <cstdint>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
 
-// ASTC-owned token embedding provider.  The first runtime implementation is
-// deliberately a CPU decoder: it consumes the validated token-local E1
-// annex, keeps the normal ggml_get_rows path as a hard fallback, and leaves
-// the native Vulkan GET_ROWS binding as a separate later gate.
+// ASTC-owned token embedding provider. It consumes a validated token-local E1
+// annex, keeps the normal ggml_get_rows path as a hard fallback, and can
+// record a native Vulkan GET_ROWS dispatch after lifecycle/resource checks.
+// The explicit research/evidence policy is separate from ASTC legality and
+// model correctness.
 class astc_vulkan_embedding_provider {
 public:
     astc_vulkan_embedding_provider();
@@ -57,6 +59,15 @@ public:
     const std::vector<float> & affine() const { return affine_; }
     const std::string & last_error() const { return last_error_; }
 
+    uint64_t readiness_queries() const { return readiness_queries_.load(); }
+    uint64_t readiness_accepts() const { return readiness_accepts_.load(); }
+    uint64_t cpu_dispatches() const { return cpu_dispatches_.load(); }
+    uint64_t cpu_tokens() const { return cpu_tokens_.load(); }
+    uint64_t native_binds() const { return native_binds_.load(); }
+    uint64_t native_context_checks() const { return native_context_checks_.load(); }
+    uint64_t native_context_accepts() const { return native_context_accepts_.load(); }
+    uint64_t native_dispatches() const { return native_dispatches_.load(); }
+
 private:
     bool decode_token(uint32_t token, float * output, uint32_t dimensions);
     bool can_record_native(const ggml_vk_external_op_dispatch_context * context);
@@ -78,4 +89,12 @@ private:
     struct ggml_tensor * native_node_ = nullptr;
     std::string last_error_;
     uint64_t generation_count_ = 0;
+    mutable std::atomic<uint64_t> readiness_queries_{0};
+    mutable std::atomic<uint64_t> readiness_accepts_{0};
+    std::atomic<uint64_t> cpu_dispatches_{0};
+    std::atomic<uint64_t> cpu_tokens_{0};
+    std::atomic<uint64_t> native_binds_{0};
+    std::atomic<uint64_t> native_context_checks_{0};
+    std::atomic<uint64_t> native_context_accepts_{0};
+    std::atomic<uint64_t> native_dispatches_{0};
 };

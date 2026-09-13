@@ -73,8 +73,8 @@ std::shared_ptr<const astc_vulkan_cache_source> astc_vulkan_make_memory_cache_so
 //     compatible-bases/<runtime-gguf-sha256>.astcbase
 //
 // `layout-map.bin` is optional for D1 and required for a cache containing any
-// paired-D2 record. Cache support does not imply scheduler support: the normal
-// D1-only production adapter still rejects paired-D2 artifacts.
+// paired-D2 record. Cache support covers both D1 and D2; scheduler admission
+// still applies the artifact evidence and explicit experimental policy.
 
 struct astc_vulkan_cache_paths {
     std::string root;

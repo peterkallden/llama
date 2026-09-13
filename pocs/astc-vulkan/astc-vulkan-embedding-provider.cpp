@@ -149,6 +149,20 @@ std::vector<uint32_t> read_spirv(const char * path) {
 astc_vulkan_embedding_provider::astc_vulkan_embedding_provider() = default;
 
 astc_vulkan_embedding_provider::~astc_vulkan_embedding_provider() {
+    if (ready_) {
+        std::fprintf(stderr,
+                     "ASTC E1 stats: ready-queries=%llu ready-accepts=%llu cpu-dispatches=%llu "
+                     "cpu-tokens=%llu native-binds=%llu native-context-checks=%llu "
+                     "native-context-accepts=%llu native-dispatches=%llu\n",
+                     static_cast<unsigned long long>(readiness_queries_.load()),
+                     static_cast<unsigned long long>(readiness_accepts_.load()),
+                     static_cast<unsigned long long>(cpu_dispatches_.load()),
+                     static_cast<unsigned long long>(cpu_tokens_.load()),
+                     static_cast<unsigned long long>(native_binds_.load()),
+                     static_cast<unsigned long long>(native_context_checks_.load()),
+                     static_cast<unsigned long long>(native_context_accepts_.load()),
+                     static_cast<unsigned long long>(native_dispatches_.load()));
+    }
     reset();
 }
 
@@ -167,12 +181,21 @@ void astc_vulkan_embedding_provider::reset() {
     block_width_ = block_height_ = 0;
     last_error_.clear();
     generation_count_ = 0;
+    readiness_queries_ = 0;
+    readiness_accepts_ = 0;
+    cpu_dispatches_ = 0;
+    cpu_tokens_ = 0;
+    native_binds_ = 0;
+    native_context_checks_ = 0;
+    native_context_accepts_ = 0;
+    native_dispatches_ = 0;
 }
 
 bool astc_vulkan_embedding_provider::native_bind(ggml_tensor * node, const char * tensor_name) {
     if (!ready_ || node == nullptr || tensor_name == nullptr ||
         std::strcmp(tensor_name, "token_embd.weight") != 0) return false;
     native_node_ = node;
+    ++native_binds_;
     ggml_vk_astc_external_op::bind_node(node, native_dispatch_callback, this,
                                         native_context_callback, this);
     return true;
@@ -203,11 +226,13 @@ bool astc_vulkan_embedding_provider::materialize_native(
 
 bool astc_vulkan_embedding_provider::can_record_native(
         const ggml_vk_external_op_dispatch_context * context) {
+    ++native_context_checks_;
     if (!ready_ || context == nullptr || context->node != native_node_ ||
         context->native_command_buffer == 0 || context->get_buffer == nullptr ||
         context->node->src[0] == nullptr || context->node->ne[0] != dimensions_ || context->node->ne[1] == 0) return false;
     std::string error;
     if (!materialize_native(context, error)) { last_error_ = error; return false; }
+    ++native_context_accepts_;
     return true;
 }
 
@@ -225,7 +250,8 @@ bool astc_vulkan_embedding_provider::record_native(
         reinterpret_cast<VkBuffer>(tokens.native_buffer), tokens.offset, tokens.size,
         reinterpret_cast<VkBuffer>(output.native_buffer), output.offset, output.size,
         static_cast<uint32_t>(context->node->ne[1]), error);
-    if (!ok) last_error_ = error;
+    if (ok) ++native_dispatches_;
+    else last_error_ = error;
     return ok;
 }
 
@@ -345,8 +371,11 @@ bool astc_vulkan_embedding_provider::prepare_from_cache_source(
 bool astc_vulkan_embedding_provider::is_ready(const char * tensor_name,
                                               uint32_t dimensions,
                                               uint32_t vocabulary) const {
-    return ready_ && tensor_name != nullptr && std::strcmp(tensor_name, "token_embd.weight") == 0 &&
-           dimensions == dimensions_ && vocabulary == vocabulary_;
+    ++readiness_queries_;
+    const bool accepted = ready_ && tensor_name != nullptr && std::strcmp(tensor_name, "token_embd.weight") == 0 &&
+        dimensions == dimensions_ && vocabulary == vocabulary_;
+    if (accepted) ++readiness_accepts_;
+    return accepted;
 }
 
 bool astc_vulkan_embedding_provider::decode_token(uint32_t token, float * output, uint32_t dimensions) {
@@ -385,6 +414,8 @@ bool astc_vulkan_embedding_provider::decode_token(uint32_t token, float * output
 bool astc_vulkan_embedding_provider::run(const char * tensor_name, const int32_t * token_ids,
                                          uint32_t n_tokens, float * output, uint32_t dimensions) {
     if (!is_ready(tensor_name, dimensions, vocabulary_) || token_ids == nullptr || output == nullptr) return false;
+    ++cpu_dispatches_;
+    cpu_tokens_ += n_tokens;
     for (uint32_t i = 0; i < n_tokens; ++i) {
         const int32_t token = token_ids[i];
         if (token < 0 || !decode_token(static_cast<uint32_t>(token), output + static_cast<size_t>(i) * dimensions, dimensions)) {

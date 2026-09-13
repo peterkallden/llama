@@ -7,7 +7,7 @@ work. It records decisions, observations, and changes against
 
 ## Scope and status
 
-The work is on the isolated branch `kallden/vulkan-astc-int4-decoder`.
+The work is on the isolated branch `kallden/vulkan-astc`.
 The normal llama.cpp/ggml Vulkan backend remains unchanged and is the required
 fallback. The experiment currently has no production ASTC resource path. It
 now has a device-backed validation executable that can upload a known-valid
@@ -9895,8 +9895,10 @@ per-token affine normalization and restore
 native/E1/E2 token descriptor
 ```
 
-It is deliberately not a GPU encoder. A first CPU `get_rows` runtime provider
-now consumes a validated E1 annex; the native Vulkan binding remains deferred.
+It is deliberately not a GPU encoder. The E1 `get_rows` provider consumes a
+validated annex through the CPU oracle and has a native Vulkan binding that
+records directly into the graph command buffer after lifecycle/resource
+checks. The normal GGUF path remains the fallback.
 The
 first smoke validates a 1536-dimensional Qwen-like E2 8x5 vector: 80 values
 per 128-bit tile, 20 tiles and 320 payload bytes per token, including exact
@@ -9957,8 +9959,15 @@ The approved full-vocabulary run uses the same single-threaded oracle context
 as the bounded quality gate. A parallel-context experiment was rejected:
 although all `4710016` blocks were legal, its round-trip error was two orders
 of magnitude worse than the bounded gate, so its temporary annex was
-discarded. The approved payload and affine sizes/hashes will be recorded when
-the run completes. The provider implementation is
+discarded. The approved full-vocabulary annex contains 4,710,016 legal E1
+blocks, a 75,360,256-byte payload and a 1,215,488-byte affine table. Its
+payload SHA-256 is
+`291669d06254f129af60f54e71686aaef61ec426cb7afabf3d32da8d5d4b5c50`, the
+affine SHA-256 is
+`30a65c7d51e4ab163181e7596e36d57ed4bc1bc368ee365b2c9ec3418abfc5d1`, and
+the descriptor SHA-256 is
+`2fdaaf9994aff1661424c22d9f3700729baa1094a2208963a59638e0c2e8b04c`.
+The provider implementation is
 `astc-vulkan-embedding-provider.{h,cpp}`: it validates the `.astce` descriptor,
 payload/affine sizes, finite positive scales, and decodes token-local blocks
 with the CPU astcenc oracle. Missing or invalid annexes are non-fatal and
@@ -9967,8 +9976,9 @@ single block-aligned 2D ASTC atlas (token microtiles remain token-local), keeps
 the per-token affine `(bias, scale)` table in an SSBO, and records an external
 Vulkan lookup directly into ggml's command buffer. It reads token ids from the
 existing ggml buffer and emits F32 `[dimension, token]` output without CPU
-readback. A graph-device/materialization failure is still a hard CPU fallback
-until the dedicated GPU decode smoke and model-level correctness gate pass.
+readback. A graph-device/materialization failure is still a hard CPU fallback.
+The dedicated GPU decode smoke has passed; broad model-level evidence remains
+a separate rollout gate before E1 becomes the default embedding path.
 The dedicated GPU smoke now passes against the complete Qwen annex: five
 token IDs and all 1536 output dimensions match the CPU provider with
 `max_abs=7.45e-09` and `RMSE=6.84e-10`. The atlas is `16120x14610` with 52
@@ -9982,3 +9992,50 @@ model/request size. Text output was byte-identical between the verified
 overlay and native run. Enabling the old research-only D1 matrix artifacts
 caused severe quality degradation, so that path remains excluded from this
 embedding gate.
+
+### E1 strict-ASTCCM multi-prompt runtime gate
+
+The older repeated-prompt timing check was not enough to establish that the
+compiled-model path actually consumed E1, nor did it cover varied prompt
+content. A new deterministic three-prompt gate therefore used the strict
+`qwen-coder-strict-e1-v10.astccm` container, which intentionally contains no
+matrix ASTC artifacts: Q4_K_M native tensors remain the control path and only
+the complete token-local E1 10x5 annex may replace `token_embd.weight`.
+
+Both sides used Qwen2.5-Coder-1.5B-Instruct-Q4_K_M, Vulkan with all layers
+requested, `seed=1234`, `temperature=0`, and a 32-token cap. The E1 run was
+explicitly research-opted-in because broad model evidence has not yet been
+serialized as an E1 artifact gate. Runtime counters prove the intended path:
+each request reported six readiness queries and six accepts, six graph-node
+bindings, no CPU embedding dispatches, and successful native Vulkan E1
+dispatches (30, 3, and 33 respectively).
+
+| Prompt class | Native Vulkan | Strict ASTCCM + E1 Vulkan | Throughput, native / E1 |
+|---|---|---|---|
+| Replay explanation | Semantically correct explanation | Semantically correct explanation; wording differs | 9.5 / 10.3 prompt t/s; 3.8 / 4.0 generation t/s |
+| One-word fact | `Paris` | `Paris` (exact) | 11.1 / 11.0; 4.0 / 4.0 |
+| Short Python function | Same generated prefix through the 32-token cap | Same generated prefix through the cap | 10.4 / 10.3; 4.1 / 4.0 |
+
+This passes the runtime-functional gate: the strict container is self-contained,
+E1 is selected and recorded in the native Vulkan command buffer, and no prompt
+produced a malformed or unrelated answer. It is deliberately **not** a broad
+quality approval: the explanation wording changes, and this small prompt set
+has neither loss/logit measurements nor adversarial, rare-token, or long-context
+coverage. Those belong to the next E1 evidence gate, rather than being inferred
+from structural decode or a single repeated request.
+
+## Strict ASTCCM policy clarification
+
+D2 8x5 is a legal standard ASTC format. Its CPU and Vulkan decode paths,
+paired dispatch, and full-shape artifact path have passed their corresponding
+correctness tests. The word `experimental` in the format table is a rollout
+and evidence policy; it does not mean that D2 8x5 is malformed or unsupported
+by the codec. Recent D2 failures were integration failures in cache seams,
+resource wiring, or replay setup, not evidence that the format is invalid.
+
+Strict ASTCCM packaging uses the same evidence gate for D1 and D2. It must
+never hard-code a D1-only rule. An approved D2 artifact may displace its
+native tensor when the explicit runtime policy enables its experimental
+footprint; an unapproved or unavailable artifact keeps the native fallback.
+This preserves strict no-duplicate storage without turning a rollout policy
+into a codec restriction.

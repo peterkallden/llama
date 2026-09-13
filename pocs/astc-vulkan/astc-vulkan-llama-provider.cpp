@@ -149,9 +149,11 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
         return false;
     }
     // Embeddings are an optional annex and are intentionally independent of
-    // the binary matrix manifest.  Until the annex has its own model-level
-    // evidence gate, keep the ordinary GGUF get_rows path as the production
-    // default.  Explicit research mode is the only opt-in for E1 today.
+    // the binary matrix manifest. E1 10x5 has passed structural CPU/Vulkan
+    // decode checks and a matched replay, but it does not yet carry the same
+    // broad model-level evidence contract as matrix artifacts. Keep the
+    // ordinary GGUF get_rows path as the default and use the explicit research
+    // flag as the rollout gate; this is policy, not a format restriction.
     if (options.allow_unverified) {
         auto candidate = std::make_unique<astc_vulkan_embedding_provider>();
         std::string embedding_error;

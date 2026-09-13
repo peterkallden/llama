@@ -208,7 +208,21 @@ bool strict_manifest_filter(astc_vulkan_manifest & manifest, std::string & error
     // Legacy single-artifact manifests have no split evidence fields. Keep
     // their established strict behavior; v4+ artifact tables can be filtered
     // safely because each entry carries independent model/Vulkan gates.
-    if (manifest.artifacts.empty() || manifest.version < 4) return true;
+    if (manifest.version < 4) return true;
+    // Some early v2 containers carried a v7 header but only the legacy
+    // tensor table. Those records have no independent evidence and therefore
+    // must remain native-only in a strict container.
+    if (manifest.artifacts.empty()) {
+        // A v4+ manifest is required to contain at least one artifact.  A
+        // strict native-only container is nevertheless a valid result when
+        // every candidate was rejected by the evidence/rollout policy.  Use
+        // the established legacy empty-table representation instead of
+        // serializing an invalid v4+ header; the native tensor table remains
+        // the authoritative fallback for every logical tensor.
+        manifest.version = 3;
+        manifest.tensors.clear();
+        return astc_vulkan_validate_manifest(manifest, error);
+    }
     std::vector<astc_vulkan_artifact_record> approved;
     approved.reserve(manifest.artifacts.size());
     for (const auto & artifact : manifest.artifacts) {
@@ -221,14 +235,28 @@ bool strict_manifest_filter(astc_vulkan_manifest & manifest, std::string & error
         candidate.artifact_id = artifact.id;
         // Match the production metadata predicate (including robust replay
         // thresholds), while allowing any device/memory during packaging.
-        const bool approved_for_production =
-            !astc_vulkan_footprint_is_experimental(artifact.storage.footprint) &&
+        const bool runtime_representation_supported =
+            artifact.storage.representation == astc_vulkan_representation::kScalar ||
+            artifact.storage.representation == astc_vulkan_representation::kGaugeLumaAlpha ||
+            artifact.storage.representation == astc_vulkan_representation::kPairedD2;
+        const bool runtime_shape_supported =
+            runtime_representation_supported &&
+            astc_vulkan_footprint_is_valid(artifact.storage.footprint) &&
+            !astc_vulkan_footprint_is_experimental(artifact.storage.footprint);
+        const bool approved_for_production = runtime_shape_supported &&
             astc_vulkan_artifact_is_eligible(candidate, true, true, {});
         if (approved_for_production) {
             approved.push_back(artifact);
         }
     }
     manifest.artifacts = std::move(approved);
+    if (manifest.artifacts.empty()) {
+        // See the native-only case above.  Do this after filtering so a
+        // strict conversion can safely represent a cache whose D1/D2 entries
+        // are all experimental or lack model/Vulkan evidence.
+        manifest.version = 3;
+        manifest.tensors.clear();
+    }
     return astc_vulkan_validate_manifest(manifest, error);
 }
 

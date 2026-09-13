@@ -30,8 +30,9 @@ inline constexpr size_t astc_vulkan_footprint_count = 10;
 
 astc_vulkan_format_info astc_vulkan_format(astc_vulkan_footprint footprint);
 bool astc_vulkan_footprint_is_valid(astc_vulkan_footprint footprint);
-// 6x5, 8x5, 8x6, 10x5, 10x6, 8x8, and 10x8 are standard Vulkan formats, but remain opt-in in this PoC
-// until broader device coverage and quality data are available.
+// 6x5, 8x5, 8x6, 10x5, 10x6, 8x8, and 10x8 are standard Vulkan formats.
+// The experimental bit is a rollout/evidence policy, not a legality or
+// decoder limitation; an explicit runtime policy may enable these formats.
 bool astc_vulkan_footprint_is_experimental(astc_vulkan_footprint footprint);
 uint64_t astc_vulkan_block_count(astc_vulkan_footprint footprint,
                                  uint32_t width, uint32_t height);
