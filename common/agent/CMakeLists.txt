@@ -77,6 +77,7 @@ add_library(${TARGET}
     adaptation/evaluation-contract.cpp adaptation/evaluation-contract.h
     adaptation/flydelta/flydelta.cpp adaptation/flydelta/flydelta.h
     adaptation/flydelta/flydelta-contracts.cpp adaptation/flydelta/flydelta-contracts.h
+    adaptation/flydelta/flydelta-experiment.cpp adaptation/flydelta/flydelta-experiment.h
     thinking/reflection-json.cpp thinking/reflection-json.h
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
     tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h

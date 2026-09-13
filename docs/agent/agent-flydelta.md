@@ -253,13 +253,48 @@ profile/configuration feature; the caller that eventually wires it must gate
 it to the CPU V0 experiment. Server-context, residency reuse, CUDA/Vulkan,
 Android and dynamic capture remain disabled until independently tested.
 
-### 4. Contrastive basis and bounded two-pass experiment
+### 4A. Host-owned counterfactual contract — implemented
 
-Define exact positive/negative prompt alignment before deriving any basis.
-Never subtract unrelated free-form outputs. If needed, add the bounded
-two-pass capture path with explicit token/layer/byte/latency budgets.
+`flydelta-experiment.*` defines an immutable experiment fixture, two trial
+records and a host callback seam. The seam runs the same fixture once with the
+baseline profile and once with the candidate overlay. It does not perform
+inference itself, persist learning or accept a model self-assessment as
+verification. Each known result must carry host evidence.
 
-### 5. Optional dynamic hook
+The report classifies the pair as:
+
+```text
+baseline fail + candidate pass -> HELPED
+baseline pass + candidate fail -> HARMED
+baseline pass + candidate pass  -> NEUTRAL
+unknown verification or both fail -> UNKNOWN
+```
+
+This is intentionally an individual causal experiment, not yet an aggregate
+promotion decision. The fixture carries task, model, tokenizer, template,
+tool-catalog, resource-snapshot and verifier fingerprints so a later runner
+cannot silently compare different environments. The quality delta is recorded
+but never overrides the host outcome classification.
+
+### 4B. Repair transitions and contrast sets — next
+
+Connect a failed host-verified attempt to its repaired attempt using the
+existing learning transaction IDs and one immutable task fixture. Build bounded
+positive/negative sets only from aligned transitions. Main-model descriptions
+may remain metadata for clustering, but host evidence decides correctness.
+Add explicit intervention credit and negative evidence; a successful repair
+alone is not proof that a future overlay caused the improvement.
+
+### 4C. Capture, basis and gating — later
+
+After 4A/4B provide useful evidence, add bounded activation capture and derive
+repair deltas or clustered basis directions. Keep `WHAT` (basis) separate from
+`WHEN/HOW MUCH` (recognition and delta memory). Counterfactual replay must
+compare overlay and no-op on the same fixture before any candidate can be
+promoted. The objective is minimum intervention, repeatable verified lift and
+minimum collateral change.
+
+### 4D. Optional dynamic hook
 
 Only propose an upstream-quality llama.cpp hook if the evidence warrants it.
 It needs backend behavior, tensor lifetime, threading, architecture coverage,
