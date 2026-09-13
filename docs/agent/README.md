@@ -169,6 +169,11 @@ remote MCP providers, status/readiness, and Docker usage.
   turn evidence to reproducible training corpora, an external QLoRA worker,
   and evaluated LoRA adapters. See
   [Agent model adaptation](agent-model-adaptation.md).
+- **FlyDelta sideband learning (design hypothesis)** — a separate,
+  host-certified sparse associative steering overlay for a frozen model. It
+  is not implemented or active model adaptation; its seams, bounds and staged
+  evaluation are documented in
+  [FlyDelta sideband learning](agent-flydelta.md).
 - **Model residency and multi-model scheduling (in progress)** — named
   generation profiles, shared resident model handles, per-session contexts,
   profile pinning, eviction and backend-neutral inference admission. See

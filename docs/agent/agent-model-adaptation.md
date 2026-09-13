@@ -83,6 +83,20 @@ That document is the source of truth for the remaining loader and scheduler
 work; this document only describes how adaptation artifacts become eligible
 profiles.
 
+## Relation to FlyDelta sideband learning
+
+[FlyDelta sideband learning](agent-flydelta.md) is a separate experimental
+proposal for an immutable, host-certified activation-steering sideband. It
+shares this path's observation boundary, scope/redaction rules, evaluation
+discipline and candidate/canary/active/retired lifecycle principles. It does
+**not** share the corpus/QLoRA artifact contract and must not be inserted into
+the existing LoRA adapter registry as if it were a weight adapter.
+
+The model-adaptation path remains the long-horizon reproducible corpus and
+training route. FlyDelta, if implemented and validated, is a bounded,
+reversible nearline association layer. Neither path may weaken deterministic
+host contracts or automatically activate from a single runtime observation.
+
 ## Review conclusion and recommended adjustments
 
 The proposed direction is sound, provided that adaptation is treated as a
