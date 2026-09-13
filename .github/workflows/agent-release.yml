@@ -866,10 +866,10 @@ jobs:
 
           # A tag-triggered run already has the exact release target. Passing
           # refs/tags/<tag> to --target makes the Releases API reject the
-          # request with HTTP 422. Only manual runs that need to create the
-          # tag should supply a target commit or branch.
-          if git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
-            echo "Using existing release tag $RELEASE_TAG as the target"
+          # request with HTTP 422. Manual runs must still supply source_ref,
+          # even if the requested release tag is already present locally.
+          if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then
+            echo "Using tag-triggered release ref $GITHUB_REF_NAME as the target"
           else
             release_args+=(--target "$SOURCE_REF")
           fi
