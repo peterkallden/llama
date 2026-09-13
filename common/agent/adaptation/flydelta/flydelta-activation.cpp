@@ -47,3 +47,25 @@ bool common_flydelta_prepare_activation(
     }
     return true;
 }
+
+bool common_flydelta_activation_result_validate(
+        const common_flydelta_activation_result & result,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error) {
+    error.clear();
+    if (result.gate.apply != result.overlay.enabled) {
+        error = "FlyDelta activation gate and overlay state differ";
+        return false;
+    }
+    if (!result.gate.apply) {
+        if (!result.overlay.artifact_id.empty() || !result.overlay.data.empty()) {
+            error = "FlyDelta no-op activation contains overlay data";
+            return false;
+        }
+        return true;
+    }
+    return common_flydelta_static_overlay_validate(
+        result.overlay, model_n_embd, model_n_layers, max_bytes, error);
+}

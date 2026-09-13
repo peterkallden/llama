@@ -18,9 +18,12 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+struct common_flydelta_activation_result;
 
 struct common_agent_objective {
     std::string purpose;
@@ -61,6 +64,9 @@ struct common_agent_request {
     std::vector<common_agent_dataset_descriptor> available_datasets;
     std::optional<common_agent_working_state> working_state;
     std::optional<common_agent_objective> objective;
+    // Host-prepared, immutable per-turn FlyDelta activation. Runtime code
+    // propagates this snapshot but never invents or mutates it.
+    std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
     std::optional<common_memory_policy_pack> policy_pack;
     std::vector<common_memory_hit> memories;
     std::optional<common_agent_user_correction> user_correction;

@@ -179,6 +179,12 @@ public:
 
         try {
             resident_trace("start", request);
+            std::string flydelta_error;
+            if (!server_context_agent_generation_supports_flydelta(request, flydelta_error)) {
+                result.error_message = flydelta_error;
+                resident_trace("flydelta-unsupported", request, flydelta_error.c_str());
+                return false;
+            }
             common_agent_prepared_generation prepared;
             common_chat_params chat_params;
             if (!common_agent_prepare_chat_generation(templates, request, prepared, &chat_params)) {

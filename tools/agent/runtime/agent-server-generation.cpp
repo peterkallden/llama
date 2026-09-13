@@ -1,5 +1,18 @@
 #include "agent-server-generation.h"
 
+#include "agent/adaptation/flydelta/flydelta-activation.h"
+
+bool server_context_agent_generation_supports_flydelta(
+        const common_agent_generation_request & request,
+        std::string & error) {
+    error.clear();
+    if (request.flydelta_activation && request.flydelta_activation->overlay.enabled) {
+        error = "server-context backend does not support per-turn FlyDelta activation";
+        return false;
+    }
+    return true;
+}
+
 task_params make_server_task_params_from_prepared_generation(
         const common_params & params_base,
         const common_agent_generation_request & request,

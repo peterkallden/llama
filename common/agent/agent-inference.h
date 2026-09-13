@@ -7,9 +7,12 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+struct common_flydelta_activation_result;
 
 enum class common_agent_generation_purpose {
     planner,
@@ -85,6 +88,9 @@ struct common_agent_generation_request {
     common_agent_generation_options options;
     std::string json_schema;
     std::vector<common_agent_generation_resource> input_resources;
+    // Immutable host-prepared activation for this turn. The shared snapshot
+    // avoids copying potentially large cvec data across continuation steps.
+    std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
 };
 
 inline common_agent_generation_request common_agent_make_generation_request(
@@ -95,7 +101,8 @@ inline common_agent_generation_request common_agent_make_generation_request(
         common_agent_generation_options options,
         std::string json_schema = {},
         std::vector<common_chat_tool> tools = {},
-        common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE) {
+        common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE,
+        std::shared_ptr<const common_flydelta_activation_result> flydelta_activation = {}) {
     common_agent_generation_request request;
     request.purpose = purpose;
     request.trace_id = std::move(trace_id);
@@ -105,6 +112,7 @@ inline common_agent_generation_request common_agent_make_generation_request(
     request.tool_choice = tool_choice;
     request.options = std::move(options);
     request.json_schema = std::move(json_schema);
+    request.flydelta_activation = std::move(flydelta_activation);
     return request;
 }
 

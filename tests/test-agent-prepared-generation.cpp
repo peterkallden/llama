@@ -1,5 +1,6 @@
 #include "agent/agent-inference.h"
 #include "agent/agent-prepared-generation.h"
+#include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent-server-generation.h"
 #include "chat.h"
 
@@ -88,6 +89,47 @@ void test_prepare_json_schema_generation() {
     assert(!prepared.parse_tool_calls);
 }
 
+void test_flydelta_activation_is_per_request_and_server_rejects_active() {
+    auto activation = std::make_shared<common_flydelta_activation_result>();
+    activation->gate.apply = true;
+    activation->gate.scale = 0.1f;
+    activation->overlay.enabled = true;
+    activation->overlay.artifact_id = "flydelta://artifact/1";
+    activation->overlay.n_embd = 2;
+    activation->overlay.il_start = 1;
+    activation->overlay.il_end = 2;
+    activation->overlay.data.assign(4, 0.0f);
+
+    auto request = make_base_request();
+    request.flydelta_activation = activation;
+    auto generation = common_agent_make_generation_request(
+        request.purpose,
+        request.trace_id,
+        request.scope,
+        request.messages,
+        request.options,
+        request.json_schema,
+        request.tools,
+        request.tool_choice,
+        request.flydelta_activation);
+    assert(generation.flydelta_activation == activation);
+
+    std::string error;
+    assert(common_flydelta_activation_result_validate(
+        *generation.flydelta_activation, 2, 3, 1024, error));
+    assert(!server_context_agent_generation_supports_flydelta(generation, error));
+
+    auto no_op = make_base_request();
+    auto no_op_generation = common_agent_make_generation_request(
+        no_op.purpose,
+        no_op.trace_id,
+        no_op.scope,
+        no_op.messages,
+        no_op.options);
+    assert(!no_op_generation.flydelta_activation);
+    assert(server_context_agent_generation_supports_flydelta(no_op_generation, error));
+}
+
 void test_prepare_plain_chat_has_no_tool_grammar() {
     auto templates = make_templates();
     const auto request = make_base_request();
@@ -154,6 +196,7 @@ void test_server_task_params_from_prepared_generation() {
 int main() {
     test_prepare_tool_generation();
     test_prepare_json_schema_generation();
+    test_flydelta_activation_is_per_request_and_server_rejects_active();
     test_prepare_plain_chat_has_no_tool_grammar();
     test_server_task_params_from_prepared_generation();
     return 0;

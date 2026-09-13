@@ -8,5 +8,9 @@
 task_params make_server_task_params_from_prepared_generation(
     const common_params & params_base,
     const common_agent_generation_request & request,
-    const common_agent_prepared_generation & prepared,
-    const std::vector<llama_logit_bias> & logit_bias_eog);
+        const common_agent_prepared_generation & prepared,
+        const std::vector<llama_logit_bias> & logit_bias_eog);
+
+bool server_context_agent_generation_supports_flydelta(
+        const common_agent_generation_request & request,
+        std::string & error);

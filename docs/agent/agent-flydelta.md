@@ -41,9 +41,10 @@ recognition memory, bounded delta memory, versioned JSON artifact and
 compatibility checks, plus host-certified candidate, capture-manifest and
 sideband-evaluation contracts. These are contract/library slices only: no
 daemon, profile or server inference path loads or activates a FlyDelta artifact
-yet. The CLI generation function now has an explicit static-overlay parameter
-that can apply a host-resolved cvec to a fresh context; it is disabled by
-default and is not connected to configuration or registry resolution.
+yet. The CLI generation path now accepts a host-prepared activation snapshot
+on the per-generation request and can apply its cvec to a fresh context; it is
+disabled by default and is not connected to configuration or registry
+resolution.
 
 ## Intended mechanism
 
@@ -246,13 +247,17 @@ intervention rate, latency/token and overlay bytes per improvement.
 ### 3. CPU-only static cvec V0 — explicit seam implemented
 
 The CLI generation path now has an agent-owned overlay seam between context
-creation and the first `llama_decode`. It validates the host-provided static
-overlay against model embedding/layer dimensions, scales a bounded cvec,
-applies it to the new context and fails closed on invalid data. An absent or
-disabled overlay is a no-op. The current API is an explicit seam, not a
-profile/configuration feature; the caller that eventually wires it must gate
-it to the CPU V0 experiment. Server-context, residency reuse, CUDA/Vulkan,
-Android and dynamic capture remain disabled until independently tested.
+creation and the first `llama_decode`. A host-prepared activation snapshot is
+carried by the generation request through conversation, continuation and tool
+follow-up calls. The CLI validates the snapshot against model
+embedding/layer dimensions, scales a bounded cvec, applies it to the fresh
+context and fails closed on invalid data. An absent or disabled snapshot is a
+no-op, and a snapshot is never stored on the inference object; this prevents
+one turn's overlay from leaking into the next turn. The current API is an
+explicit seam, not a profile/configuration feature; the caller that eventually
+wires it must gate it to the CPU V0 experiment. Server-context, residency
+reuse, CUDA/Vulkan, Android and dynamic capture remain disabled until
+independently tested.
 
 ### 4A. Host-owned counterfactual contract — implemented
 
@@ -365,6 +370,22 @@ This keeps CLI and future server integrations from independently repeating
 approval, no-op and compatibility conditions. The result is still an
 ephemeral request value. It does not resolve a registry artifact, persist a
 decision, alter a resident model or make FlyDelta active by itself.
+
+### 4G. Per-turn propagation and backend boundary — implemented
+
+The resolved activation is held as an immutable shared snapshot on
+`common_agent_request` and propagated to each generation request. This avoids
+copying full cvec buffers during continuation and makes the lifetime explicit:
+one top-level turn may reuse its snapshot, but a later turn starts without one
+unless the host supplies a new decision. The CLI consumes the snapshot on its
+fresh context. The server-context backend rejects an active snapshot with a
+clear unsupported error because its current task contract has no per-turn cvec
+field; it continues to support ordinary generation and clean FlyDelta no-op
+requests.
+
+This boundary is intentional. Server support must later be implemented as a
+request-scoped server/llama.cpp capability, not by mutating startup
+`common_params` or resident KV state.
 
 ### 5. Optional dynamic hook
 

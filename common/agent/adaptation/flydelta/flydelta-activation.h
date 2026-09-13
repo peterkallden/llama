@@ -37,3 +37,10 @@ bool common_flydelta_prepare_activation(
         size_t max_bytes,
         common_flydelta_activation_result & result,
         std::string & error);
+
+bool common_flydelta_activation_result_validate(
+        const common_flydelta_activation_result & result,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error);
