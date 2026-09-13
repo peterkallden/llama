@@ -46,6 +46,16 @@ on the per-generation request and can apply its cvec to a fresh context; it is
 disabled by default and is not connected to configuration or registry
 resolution.
 
+The adaptation boundary now also has one shared, reference-only evidence
+contract (`common_adaptation_evidence`). It is a view over the existing
+learning transaction ledger, not a second evidence store. A small turn router
+can identify several sources in the same result: tool repair, reflection,
+research, user correction and dataset/resource use. It deliberately does not
+infer workflow/code or explicit plan-revision evidence from broad flags. A
+host must complete a source relation with task, baseline, candidate and
+verifier references before it becomes comparable evidence. Source discovery is
+therefore not promotion and cannot activate FlyDelta.
+
 ## Intended mechanism
 
 The full research hypothesis is a sparse contextual association:
@@ -135,6 +145,40 @@ The sideband references observation/transaction IDs; it does not copy
 arbitrary tool output into another durable store. Do not put raw activation
 buffers into the generic observation contract: they are model-specific,
 potentially sensitive, and need bounded artifacts and retention policy.
+
+### Evidence sources and alternative candidates
+
+The source router is intentionally additive: one turn may produce more than
+one source match. The current derived matches are:
+
+| Source | Discovered from | Candidate-ready by default |
+| --- | --- | --- |
+| `tool_repair` | tool failure plus successful recovery | yes, when both have evidence refs |
+| `reflection_alternative` | reflection or reflection learning hint | no; host verification is required |
+| `research_alternative` | research result, checkpoint or verification | no |
+| `user_correction` | explicit user correction signal | no |
+| `dataset_resource` | plan observation containing resource/dataset refs | no |
+
+`workflow_code` and `planning_revision` are valid shared source kinds but must
+be created by a host integration that knows the exact baseline, alternative and
+verifier. The router must not treat `result.revised` alone as proof of a plan
+revision, because that flag can also describe a response revision.
+
+The completion helper enforces the seam in this order:
+
+```text
+turn result
+  -> source discovery
+  -> host supplies immutable relation refs
+  -> evidence contract validation
+  -> counterfactual evaluation
+  -> basis/gate/promotion
+```
+
+Reflection is consequently a candidate generator, not an authority. A model
+reflection may suggest several alternatives, but only the host verifier can
+mark one as a useful comparison arm. An unverified alternative remains an
+observation and cannot update a basis or active sideband.
 
 Contrastive steering needs a separate immutable capture manifest with the
 observation ID, profile/template fingerprints, positive/negative execution

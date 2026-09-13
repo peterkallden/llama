@@ -199,6 +199,22 @@ describe an approved, redacted, potentially generalizable behavior with an
 explicit input and target. The two paths may share scope, hashing, and
 provenance helpers, but not their promotion policy.
 
+The shared `common_adaptation_evidence` contract is the next derived view over
+this boundary. It binds a source kind to a baseline execution, an alternative
+or repaired execution, a verifier reference and existing transaction IDs. It
+does not duplicate the transaction payload and it does not create an SFT pair.
+The source kind can be `tool_repair`, `reflection_alternative`,
+`planning_revision`, `research_alternative`, `dataset_resource`,
+`workflow_code`, or `user_correction`; provider transport remains provenance,
+so native, MCP and OpenAPI tools use the same `tool_repair` path.
+
+The turn router may discover tool-repair, reflection, research,
+user-correction and dataset/resource matches from existing result fields. It
+does not infer a workflow/code or plan-revision relation from a generic status
+flag. The host must supply the comparison and verifier references explicitly.
+This keeps alternative reflection plans useful as candidate material without
+allowing a model-generated reflection to certify itself.
+
 The current runtime derives `successful_recovery` late, after a response has
 been accepted. The runtime finalization seam makes that signal visible to
 both consumers. It should also invoke adaptation for an error result when a
