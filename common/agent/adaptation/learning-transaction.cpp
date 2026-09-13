@@ -358,7 +358,11 @@ bool common_learning_transaction_observer::observe(
     if (config.source_observer) {
         const auto matches = common_adaptation_evidence_sources_for_turn(request, plan, result);
         for (const auto & match : matches) {
-            if (!config.source_observer(match, transaction, error)) return false;
+            // Source collection is a derived auxiliary path. The transaction
+            // has already been accepted, so a collector failure must not turn
+            // a successful learning observation into a ledger failure.
+            std::string source_error;
+            (void) config.source_observer(match, transaction, source_error);
         }
     }
     return true;

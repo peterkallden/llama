@@ -102,6 +102,18 @@ int main() {
     CHECK(source_matches.front().source == common_adaptation_evidence_source::tool_repair);
     CHECK(source_matches.front().candidate_ready);
 
+    common_learning_in_memory_transaction_store best_effort_store;
+    common_learning_transaction_observer_config best_effort_config;
+    best_effort_config.collection_allowed = true;
+    best_effort_config.max_evidence = 4;
+    best_effort_config.source_observer = [](const auto &, const auto &, std::string & callback_error) {
+        callback_error = "collector unavailable";
+        return false;
+    };
+    common_learning_transaction_observer best_effort(best_effort_store, best_effort_config);
+    CHECK(best_effort.observe(req, pl, recovered, error));
+    CHECK(best_effort_store.list(error).size() == 1);
+
     const auto path = std::filesystem::temp_directory_path() / "llama-agent-learning-test.jsonl";
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
