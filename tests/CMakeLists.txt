@@ -372,6 +372,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-learning-domain-policy.cpp
         test-agent-learning-cause.cpp
         test-agent-adaptation-evidence.cpp
+        test-agent-adaptation-evidence-routing.cpp
         test-agent-learning-case.cpp
         test-agent-learning-transaction.cpp
         test-agent-training-candidate.cpp
