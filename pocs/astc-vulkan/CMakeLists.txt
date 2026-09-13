@@ -28,6 +28,7 @@ add_library(astc-vulkan-algorithms STATIC
     astc-vulkan-d2-prescreen.cpp
     astc-vulkan-d2-pair-transform.cpp
     astc-vulkan-d2-row-scale.cpp
+    astc-vulkan-embedding-layout.cpp
     astc-vulkan-format.cpp
     astc-vulkan-gauge.cpp
     astc-vulkan-gpu-d1-ranking.cpp
@@ -46,6 +47,31 @@ add_library(astc-vulkan-algorithms STATIC
 target_include_directories(astc-vulkan-algorithms PUBLIC
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_compile_features(astc-vulkan-algorithms PUBLIC cxx_std_17)
+
+add_executable(test-astc-vulkan-embedding-layout
+    tests/test-astc-vulkan-embedding-layout.cpp)
+target_link_libraries(test-astc-vulkan-embedding-layout PRIVATE astc-vulkan-algorithms)
+target_compile_features(test-astc-vulkan-embedding-layout PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME test-astc-vulkan-embedding-layout
+        COMMAND test-astc-vulkan-embedding-layout)
+    set_property(TEST test-astc-vulkan-embedding-layout PROPERTY LABELS astc)
+endif()
+
+add_executable(astc-vulkan-embedding-layout-smoke
+    astc-vulkan-embedding-layout-smoke.cpp)
+target_link_libraries(astc-vulkan-embedding-layout-smoke PRIVATE astc-vulkan-algorithms)
+target_compile_features(astc-vulkan-embedding-layout-smoke PRIVATE cxx_std_17)
+
+add_executable(astc-vulkan-embedding-discovery-smoke
+    astc-vulkan-embedding-discovery-smoke.cpp)
+target_link_libraries(astc-vulkan-embedding-discovery-smoke PRIVATE astc-vulkan-algorithms)
+target_compile_features(astc-vulkan-embedding-discovery-smoke PRIVATE cxx_std_17)
+if (BUILD_TESTING)
+    add_test(NAME astc-vulkan-embedding-discovery-smoke
+        COMMAND astc-vulkan-embedding-discovery-smoke)
+    set_property(TEST astc-vulkan-embedding-discovery-smoke PROPERTY LABELS astc)
+endif()
 
 # Offline GPU-encoder experiment.  The cache generator may opt into its
 # hybrid backend (GPU proposer + CPU astcenc finisher); CPU astcenc remains the
@@ -300,11 +326,12 @@ target_compile_features(astc-vulkan-catalog-loader PUBLIC cxx_std_17)
 # ASTC POC: GGUF bytes, native fallback tensors and ASTC sidecar sections are
 # owned by one portable file, without introducing an ASTC ggml type.
 add_library(astc-vulkan-compiled-model STATIC
-    astc-vulkan-compiled-model.cpp)
+    astc-vulkan-compiled-model.cpp
+    astc-vulkan-native-tensor-table.cpp)
 target_include_directories(astc-vulkan-compiled-model PUBLIC
     ${ASTC_VULKAN_POC_INCLUDE_DIR})
 target_link_libraries(astc-vulkan-compiled-model PUBLIC
-    astc-vulkan-cache astc-vulkan-compiled-catalog)
+    astc-vulkan-cache astc-vulkan-compiled-catalog ggml-base)
 target_compile_features(astc-vulkan-compiled-model PUBLIC cxx_std_17)
 
 # File-oriented compatibility adapter for the explicit llama-cli
@@ -706,6 +733,8 @@ if (TARGET Vulkan::Vulkan)
         # It does not participate in encoding or alter the cache format.
         add_library(astc-vulkan-llama-provider STATIC
             astc-vulkan-llama-provider.cpp
+            astc-vulkan-embedding-provider.cpp
+            astc-vulkan-embedding-gpu.cpp
             astc-vulkan-ggml-external-op.cpp)
         target_include_directories(astc-vulkan-llama-provider PUBLIC
             ${ASTC_VULKAN_POC_INCLUDE_DIR}
@@ -713,15 +742,49 @@ if (TARGET Vulkan::Vulkan)
             ${CMAKE_SOURCE_DIR}/include
             ${CMAKE_SOURCE_DIR}/ggml/include)
         target_link_libraries(astc-vulkan-llama-provider PUBLIC
-            astc-vulkan-runtime-overlay astc-vulkan-scheduler-adapter)
+            astc-vulkan-runtime-overlay astc-vulkan-scheduler-adapter
+            # The provider is linked into llama-server's shared library; use
+            # the PIC shared astcenc target here. Offline encoders/smokes keep
+            # using astcenc-static independently.
+            astcenc::astcenc-shared)
         target_compile_features(astc-vulkan-llama-provider PUBLIC cxx_std_17)
         set_target_properties(astc-vulkan-llama-provider PROPERTIES
             POSITION_INDEPENDENT_CODE ON)
         target_compile_definitions(astc-vulkan-llama-provider PRIVATE
             ASTC_VULKAN_D1_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-ffn-matvec.comp.spv"
-            ASTC_VULKAN_D2_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-paired-matvec.comp.spv")
+            ASTC_VULKAN_D2_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-paired-matvec.comp.spv"
+            ASTC_VULKAN_EMBEDDING_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-embedding-get-rows.comp.spv")
         add_dependencies(astc-vulkan-llama-provider
-            astc-vulkan-ffn-e2e-shader astc-vulkan-paired-matvec-shader)
+            astc-vulkan-ffn-e2e-shader astc-vulkan-paired-matvec-shader
+            astc-vulkan-embedding-get-rows-shader)
+
+        add_executable(astc-vulkan-embedding-provider-smoke
+            astc-vulkan-embedding-provider-smoke.cpp)
+        target_include_directories(astc-vulkan-embedding-provider-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(astc-vulkan-embedding-provider-smoke PRIVATE
+            astc-vulkan-llama-provider ggml)
+        target_compile_features(astc-vulkan-embedding-provider-smoke PRIVATE cxx_std_17)
+        if (BUILD_TESTING)
+            add_test(NAME astc-vulkan-embedding-provider-smoke
+                COMMAND astc-vulkan-embedding-provider-smoke)
+            set_property(TEST astc-vulkan-embedding-provider-smoke PROPERTY LABELS astc)
+        endif()
+
+        add_executable(astc-vulkan-embedding-gpu-smoke
+            astc-vulkan-embedding-gpu-smoke.cpp)
+        target_include_directories(astc-vulkan-embedding-gpu-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/ggml/include)
+        target_link_libraries(astc-vulkan-embedding-gpu-smoke PRIVATE
+            astc-vulkan-llama-provider astc-vulkan-shared-device ggml)
+        target_compile_definitions(astc-vulkan-embedding-gpu-smoke PRIVATE
+            ASTC_VULKAN_EMBEDDING_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/astc-embedding-get-rows.comp.spv")
+        target_compile_features(astc-vulkan-embedding-gpu-smoke PRIVATE cxx_std_17)
+        add_dependencies(astc-vulkan-embedding-gpu-smoke
+            astc-vulkan-embedding-get-rows-shader)
 
         add_executable(test-astc-vulkan-scheduler-adapter
             tests/test-astc-vulkan-scheduler-adapter.cpp)
@@ -1373,6 +1436,22 @@ if (TARGET ggml-base)
         target_link_libraries(astc-vulkan-model-baseline-smoke PRIVATE
             llama-common llama ggml-base ${CMAKE_THREAD_LIBS_INIT})
         target_compile_features(astc-vulkan-model-baseline-smoke PRIVATE cxx_std_17)
+
+        # Real-source, bounded embedding discovery.  This is deliberately an
+        # offline tool: it reads token_embd.weight through the normal llama
+        # loader and uses astcenc only as an exact legality/decode oracle.
+        if (TARGET astcenc::astcenc-static)
+            add_executable(astc-vulkan-embedding-real-discovery
+                astc-vulkan-embedding-real-discovery.cpp)
+            target_include_directories(astc-vulkan-embedding-real-discovery PRIVATE
+                ${ASTC_VULKAN_POC_INCLUDE_DIR}
+                ${CMAKE_SOURCE_DIR}/include
+                ${CMAKE_SOURCE_DIR}/src)
+            target_link_libraries(astc-vulkan-embedding-real-discovery PRIVATE
+                llama-common llama astc-vulkan-algorithms
+                astcenc::astcenc-static ${CMAKE_THREAD_LIBS_INIT})
+            target_compile_features(astc-vulkan-embedding-real-discovery PRIVATE cxx_std_17)
+        endif()
     endif()
 endif()
 
@@ -1384,6 +1463,8 @@ if (ASTC_VULKAN_GLSLC)
         ${CMAKE_CURRENT_BINARY_DIR}/astc-matvec.comp.spv)
     set(ASTC_VULKAN_PAIRED_MATVEC_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-matvec.comp.spv)
+    set(ASTC_VULKAN_EMBEDDING_GET_ROWS_SHADER_OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/astc-embedding-get-rows.comp.spv)
     set(ASTC_VULKAN_PAIRED_CANDIDATE_DELTA_SHADER_OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/astc-paired-candidate-delta.comp.spv)
     set(ASTC_VULKAN_PAIRED_PROPOSAL_GAIN_SHADER_OUTPUT
@@ -1501,6 +1582,17 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling experimental paired-D2 ASTC Vulkan matvec shader")
     add_custom_target(astc-vulkan-paired-matvec-shader
         DEPENDS ${ASTC_VULKAN_PAIRED_MATVEC_SHADER_OUTPUT})
+    add_custom_command(
+        OUTPUT ${ASTC_VULKAN_EMBEDDING_GET_ROWS_SHADER_OUTPUT}
+        COMMAND ${ASTC_VULKAN_GLSLC}
+            --target-env=vulkan1.1
+            -fshader-stage=compute
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-embedding-get-rows.comp
+            -o ${ASTC_VULKAN_EMBEDDING_GET_ROWS_SHADER_OUTPUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/astc-embedding-get-rows.comp
+        COMMENT "Compiling E1 token-local ASTC embedding lookup shader")
+    add_custom_target(astc-vulkan-embedding-get-rows-shader
+        DEPENDS ${ASTC_VULKAN_EMBEDDING_GET_ROWS_SHADER_OUTPUT})
 
     # Both replay entry points load the paired-D2 SPIR-V at runtime. Keep the
     # executable target dependent on it so a source change cannot leave a

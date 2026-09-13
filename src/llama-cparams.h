@@ -37,6 +37,17 @@ struct llama_tensor_runtime_provider {
     void * user_data = nullptr;
 };
 
+// Optional token-embedding lookup provider. The provider is keyed by the
+// authoritative tensor name and receives token ids, returning token-major F32
+// rows. A false/absent native hook preserves ordinary ggml_get_rows.
+struct llama_embedding_runtime_provider {
+    llama_embedding_runtime_is_ready_fn is_ready = nullptr;
+    llama_embedding_runtime_run_fn run = nullptr;
+    llama_embedding_runtime_native_bind_fn native_bind = nullptr;
+    llama_embedding_runtime_generation_begin_fn generation_begin = nullptr;
+    void * user_data = nullptr;
+};
+
 #define LLAMA_MAX_SEQ 256
 
 struct llama_cparams {
@@ -95,6 +106,7 @@ struct llama_cparams {
     std::vector<bool> embeddings_ffn_down_out;
     std::unordered_set<std::string> embeddings_tensor_names;
     llama_tensor_runtime_provider tensor_runtime_provider;
+    llama_embedding_runtime_provider embedding_runtime_provider;
     std::vector<llama_ffn_down_output_override> ffn_down_output_overrides;
     llama_ffn_down_runtime_provider ffn_down_runtime_provider;
 

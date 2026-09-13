@@ -199,6 +199,22 @@ public:
     const std::string tensor_name;
 };
 
+// Graph-owned userdata for an optional token-local embedding get_rows
+// provider. The token-id tensor remains the custom-op input; keeping the
+// provider and canonical name here makes graph reuse lifetime-safe.
+class llm_graph_input_embedding_runtime : public llm_graph_input_i {
+public:
+    llm_graph_input_embedding_runtime(const llama_embedding_runtime_provider & provider,
+                                      const char * tensor_name) :
+        provider(provider), tensor_name(tensor_name != nullptr ? tensor_name : "") {}
+
+    void set_input(const llama_ubatch * /*ubatch*/) override {}
+    bool can_reuse(const llm_graph_params & /*params*/) override { return true; }
+
+    const llama_embedding_runtime_provider provider;
+    const std::string tensor_name;
+};
+
 class llm_graph_input_pos : public llm_graph_input_i {
 public:
     llm_graph_input_pos(uint32_t n_pos_per_embd) : n_pos_per_embd(n_pos_per_embd) {}
@@ -911,6 +927,16 @@ struct llm_graph_params {
             tensor_runtime_lhs.native_bind != tensor_runtime_rhs.native_bind ||
             tensor_runtime_lhs.generation_begin != tensor_runtime_rhs.generation_begin ||
             tensor_runtime_lhs.user_data != tensor_runtime_rhs.user_data) {
+            return false;
+        }
+
+        const auto & embedding_runtime_lhs = cparams.embedding_runtime_provider;
+        const auto & embedding_runtime_rhs = other.cparams.embedding_runtime_provider;
+        if (embedding_runtime_lhs.is_ready != embedding_runtime_rhs.is_ready ||
+            embedding_runtime_lhs.run != embedding_runtime_rhs.run ||
+            embedding_runtime_lhs.native_bind != embedding_runtime_rhs.native_bind ||
+            embedding_runtime_lhs.generation_begin != embedding_runtime_rhs.generation_begin ||
+            embedding_runtime_lhs.user_data != embedding_runtime_rhs.user_data) {
             return false;
         }
 

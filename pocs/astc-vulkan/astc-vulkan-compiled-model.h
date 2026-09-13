@@ -4,18 +4,20 @@
 #include <string>
 #include <vector>
 
-// A self-contained, hybrid ASTC model container.  The embedded GGUF remains
-// byte-identical, so it continues to own architecture, tokenizer and native
-// tensor semantics.  ASTC resources are copied into independent sections and
-// can therefore be consumed without the original GGUF or sidecar directory.
+// A self-contained ASTC model container. V1 embeds a byte-identical GGUF.
+// V2 instead stores the canonical GGUF bootstrap (metadata, tokenizer and
+// tensor descriptors) plus a native residual blob; approved ASTC tensors are
+// omitted from that blob and supplied by the existing overlay.
 //
 // This is deliberately a POC container and not a new ggml_type.  The runtime
 // provider can later expose the sections through the existing native/ASTC
 // storage boundary without changing ggml-vulkan.
 struct astc_vulkan_compiled_model {
-    static constexpr uint32_t kCurrentVersion = 1;
+    static constexpr uint32_t kCurrentVersion = 2;
 
-    uint32_t version = kCurrentVersion;
+    // Keep direct struct construction source-compatible with v1 tests and
+    // tools. `compiled-pack --bootstrap` explicitly selects v2.
+    uint32_t version = 1;
     std::string source_model_fingerprint;
     std::vector<uint8_t> gguf;
     std::vector<uint8_t> manifest;
@@ -25,12 +27,32 @@ struct astc_vulkan_compiled_model {
     std::vector<uint8_t> pair_map;
     std::vector<uint8_t> provenance;
     std::vector<uint8_t> catalog;
+
+    // ASTCCM v2-only sections. `gguf` is a bootstrap GGUF ending at its data
+    // offset, not a complete data file. Native bytes and their table cover all
+    // logical tensors that have no selected ASTC artifact.
+    std::vector<uint8_t> native_table;
+    std::vector<uint8_t> native_payload;
+    std::vector<uint8_t> embedding_metadata;
+    std::vector<uint8_t> embedding_payload;
+    std::vector<uint8_t> embedding_affine;
+
+    bool is_bootstrap_v2() const { return version >= 2; }
 };
 
 // Build a self-contained container from a source GGUF and a validated cache
 // directory (or manifest path).  The source GGUF is copied byte-for-byte;
 // cache sections are copied from the published, checksum-validated files.
 bool astc_vulkan_compiled_model_pack(
+    const std::string & model_path,
+    const std::string & requested_cache_path,
+    const std::string & output_path,
+    std::string & error);
+
+// Same build operation, but emits a v2 bootstrap container.  It is strict:
+// every source tensor occurs exactly once in native_table, and ASTC entries do
+// not retain a duplicate native payload.
+bool astc_vulkan_compiled_model_pack_bootstrap(
     const std::string & model_path,
     const std::string & requested_cache_path,
     const std::string & output_path,

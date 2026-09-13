@@ -500,6 +500,13 @@ struct common_params {
     // the local server; normal --model GGUF behavior is unchanged.
     std::string compiled_model;
 
+    // Optional metadata/data adapter for an in-memory compiled model. This is
+    // intentionally a generic llama public-API seam; common/ggml never needs
+    // to know about ASTC container types.
+    gguf_context * model_user_metadata = nullptr;
+    llama_model_set_tensor_data_t model_user_set_tensor_data = nullptr;
+    void * model_user_data = nullptr;
+
     std::set<std::string> model_alias;     // model aliases                                                 // NOLINT
     std::set<std::string> model_tags;      // model tags (informational, not used for routing)              // NOLINT
     std::string hf_token             = ""; // HF token (aka bearer token)                                   // NOLINT

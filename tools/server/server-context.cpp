@@ -1133,6 +1133,9 @@ private:
         if (!params_base.astc_cache.empty() || params_base.astc_cache_source) {
             astc_vulkan_llama_provider::options astc_options;
             astc_options.model_path = params_base.model.path;
+            // Bootstrap compiled sources intentionally have no materialized
+            // GGUF path; their immutable source fingerprint is sufficient.
+            if (params_base.model_user_metadata) astc_options.source_model_path.clear();
             astc_options.cache_path = params_base.astc_cache;
             astc_options.cache_source_fingerprint = params_base.astc_cache_source_fingerprint;
             if (params_base.astc_cache_source) {
@@ -1141,6 +1144,7 @@ private:
             }
             astc_options.allow_experimental = params_base.astc_research;
             astc_options.allow_unverified = params_base.astc_research;
+            astc_options.require_all_artifacts = params_base.model_user_metadata != nullptr;
             if (params_base.astc_profile == "quality") {
                 astc_options.policy = astc_vulkan_quality_policy::quality;
             } else if (params_base.astc_profile == "compact" ||
@@ -1163,6 +1167,28 @@ private:
                     ctx_tgt, astc_vulkan_llama_provider::native_bind_callback);
                 llama_set_ffn_down_runtime_native_generation_begin(
                     ctx_tgt, astc_vulkan_llama_provider::native_generation_begin_callback);
+                // Register the name-keyed bridge as well.  This is the
+                // production path for ffn_up/gate, attention matrices and
+                // output.weight; the legacy FFN-down bridge above remains
+                // source-compatible with older graph construction paths.
+                llama_set_tensor_runtime_provider(
+                    ctx_tgt,
+                    astc_vulkan_llama_provider::tensor_is_ready_callback,
+                    astc_vulkan_llama_provider::tensor_run_callback,
+                    provider.get());
+                llama_set_tensor_runtime_native_binding(
+                    ctx_tgt, astc_vulkan_llama_provider::tensor_native_bind_callback);
+                llama_set_tensor_runtime_native_generation_begin(
+                    ctx_tgt, astc_vulkan_llama_provider::tensor_generation_begin_callback);
+                llama_set_embedding_runtime_provider(
+                    ctx_tgt,
+                    astc_vulkan_llama_provider::embedding_is_ready_callback,
+                    astc_vulkan_llama_provider::embedding_run_callback,
+                    provider.get());
+                llama_set_embedding_runtime_native_binding(
+                    ctx_tgt, astc_vulkan_llama_provider::embedding_native_bind_callback);
+                llama_set_embedding_runtime_native_generation_begin(
+                    ctx_tgt, astc_vulkan_llama_provider::embedding_generation_begin_callback);
                 astc_provider = std::move(provider);
                 const char * astc_source_label = params_base.astc_cache_source ?
                     "compiled-model blobs" : params_base.astc_cache.c_str();

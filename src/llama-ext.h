@@ -187,6 +187,28 @@ LLAMA_API bool llama_set_tensor_runtime_native_generation_begin(
         struct llama_context * ctx,
         llama_tensor_runtime_generation_begin_fn generation_begin);
 
+// Experimental token-embedding get_rows bridge. If `is_ready` returns false,
+// graph construction retains the normal GGUF-backed ggml_get_rows node.
+typedef bool (*llama_embedding_runtime_is_ready_fn)(
+        void * user_data, const char * tensor_name, uint32_t dimensions, uint32_t vocabulary);
+typedef bool (*llama_embedding_runtime_run_fn)(
+        void * user_data, const char * tensor_name, const int32_t * token_ids,
+        uint32_t n_tokens, float * output, uint32_t dimensions);
+typedef bool (*llama_embedding_runtime_native_bind_fn)(
+        void * user_data, struct ggml_tensor * node, const char * tensor_name);
+typedef void (*llama_embedding_runtime_generation_begin_fn)(void * user_data);
+
+LLAMA_API bool llama_set_embedding_runtime_provider(
+        struct llama_context * ctx,
+        llama_embedding_runtime_is_ready_fn is_ready,
+        llama_embedding_runtime_run_fn run,
+        void * user_data);
+LLAMA_API bool llama_set_embedding_runtime_native_binding(
+        struct llama_context * ctx, llama_embedding_runtime_native_bind_fn native_bind);
+LLAMA_API bool llama_set_embedding_runtime_native_generation_begin(
+        struct llama_context * ctx,
+        llama_embedding_runtime_generation_begin_fn generation_begin);
+
 // PoC helper exposing the FFN width needed to interpret the capture above.
 LLAMA_API int32_t llama_model_n_ff(const struct llama_model * model, uint32_t layer);
 // Returns the logical shape of a named rank-2 model tensor.  `columns` is

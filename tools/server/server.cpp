@@ -134,7 +134,13 @@ int llama_server(common_params & params, int argc, char ** argv) {
     // router server never loads a model and must not touch the GPU
     const bool is_router_server = params.model.path.empty()
                                && params.model.hf_repo.empty()
-                               && params.model.docker_repo.empty();
+                               && params.model.docker_repo.empty()
+                               // A compiled ASTCCM bootstrap supplies GGUF
+                               // metadata through the user-loader interface
+                               // and intentionally has no filesystem model
+                               // path.  It is still a local model, not a
+                               // router instance.
+                               && params.model_user_metadata == nullptr;
 
     // skip device enumeration so the CUDA primary context stays uncreated
     common_params_print_info(params, !is_router_server);

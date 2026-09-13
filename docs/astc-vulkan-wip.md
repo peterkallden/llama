@@ -16,6 +16,27 @@ texels when a compatible physical device is available.
 
 Current phase: **Phase 2, sidecar resource/session foundation**.
 
+## Compiled bootstrap model: ASTCCM v2
+
+ASTCCM v2 stores a canonical GGUF bootstrap prefix together with an exhaustive
+logical native/ASTC table, native residual bytes, and the existing immutable
+ASTC resources. It is a source-container change, not a new `ggml_type`.
+Runtime parses the bootstrap using the ordinary GGUF reader and loads it via
+the public `llama_model_init_from_user()` seam; a generic callback supplies the
+native residuals and the current overlay/provider supplies ASTC records.
+
+The table is strict: each source tensor is represented exactly once as native
+or ASTC; selected ASTC tensors have no duplicate native bytes. Initial v2 does
+not yet remove the conventional ggml placeholder allocation for an ASTC tensor,
+because that requires a separate buffer-ownership change. It must nevertheless
+fail closed if the selected ASTC provider cannot bind an omitted native tensor.
+
+The E1 token-local 10x5 embedding annex is also a first-class v2 resource:
+metadata, ASTC payload and affine table are embedded separately and exposed via
+the cache-source blob interface. A complete E1 annex removes
+`token_embd.weight` from the native residual blob; an incomplete annex is
+rejected during packing rather than producing a hybrid duplicate.
+
 ## Decisions made
 
 ### Repository structure
@@ -9853,3 +9874,111 @@ gate is to make D2 and D1 use the same timestamp source (or the same external
 command-buffer timing scope), then compare D2 8x5, D1 8x6/6x6 and the native
 Q4_K path on matched coverage.  Until that gate passes, D2 remains a runtime
 speed hypothesis and D1 remains a correctness/cache reference.
+
+## Token-local embedding ASTC groundwork
+
+`token_embd.weight` is a lookup (`get_rows`) resource rather than a dense
+matrix. A row-major ASTC image that packs several token rows into one physical
+block has poor effective lookup traffic: one requested token row still accesses
+a whole 128-bit ASTC block while only its horizontal slice is useful.
+
+The planned embedding representation is therefore token-local. Each physical
+ASTC microtile contains dimensions from one logical token vector only. E1 uses
+one value/texel; E2 uses standard luminance-plus-alpha semantics for two
+dimensions/texel. The initial metadata-only implementation,
+`astc-vulkan-embedding-layout.{h,cpp}`, provides:
+
+```text
+token-local E1/E2 tile geometry
+global logical-dimension -> physical-slot permutation/pair map
+per-token affine normalization and restore
+native/E1/E2 token descriptor
+```
+
+It is deliberately not a GPU encoder. A first CPU `get_rows` runtime provider
+now consumes a validated E1 annex; the native Vulkan binding remains deferred.
+The
+first smoke validates a 1536-dimensional Qwen-like E2 8x5 vector: 80 values
+per 128-bit tile, 20 tiles and 320 payload bytes per token, including exact
+affine/permutation round-trip. E1 10x5 is the simpler 496-byte/token control;
+E2 10x5 (256 bytes/token) remains a lower-rate research point.
+
+The next gate is offline discovery on real embeddings: identity order versus a
+global dimension pair-map, none/RMS/affine normalization, and a protected
+native tier. It must report frequency strata, special tokens, outliers, raw
+MSE, cosine error, RMSNorm-space error, prompt replay and generation replay.
+Only then may a separate Vulkan `get_rows` adapter consume the artifact. This
+keeps D1/D2 matvec semantics and the generic ASTC page owner unchanged.
+
+The discovery smoke now includes a deterministic negative-control pairing. On
+its correlated synthetic fixture, the intended adjacent pairing measured
+`163.782` squared-difference energy versus `454.718` for the broken pairing
+(ratio `0.360183`). This only verifies that the pair-map metric can detect a
+known structural signal; it is not an ASTC error or model-quality result.
+
+### Real-source embedding discovery
+
+`astc-vulkan-embedding-real-discovery` is now the first real-source gate. It
+loads `token_embd.weight` through the normal llama model loader (CPU-only for
+this offline tool), creates token-local E1 10x5 and E2-L+A 8x5 rows, and sends
+each sampled token row through the CPU astcenc compressor and decompressor.
+Every 16-byte payload is inspected with `astcenc_get_block_info`, so the tool
+checks legal ASTC blocks as well as numerical reconstruction. The sample count
+is a command-line bound; the default is 64 deterministic vocabulary-spaced
+rows and `0` requests all rows. With a cache directory, `0` writes a complete
+validated E1 annex (`embedding-10x5.astcpack`, affine metadata, and `.astce`
+descriptor); it does not modify the binary manifest or runtime provider.
+
+On Qwen2.5-Coder-1.5B-Instruct-Q4_K_M, 256 sampled rows produced:
+
+```text
+E1 token-local 10x5: 7936/7936 legal blocks, 4.89156e-05 raw MSE,
+  0.16501 relative MSE, 496 B/token, 2.56 bpw
+E2 token-local LA 8x5: 5120/5120 legal blocks, 1.13916e-04 raw MSE,
+  0.38427 relative MSE, 320 B/token, 1.60 bpw
+```
+
+This confirms that the proposed token-local geometry can be encoded and
+round-tripped from an actual Q4 model source, but it also shows the expected
+rate-quality tradeoff (E2's lower rate has higher source error in this bounded
+sample). Frequency-stratified usage and model replay remain separate gates:
+the GGUF contains vocabulary and embeddings, not corpus frequencies, so a
+future discovery invocation must supply a representative token-use corpus
+before “protected” token tiers can be promoted.
+
+The llama graph now exposes an embedding runtime seam: an ASTC owner may
+register `llama_set_embedding_runtime_provider()`. `build_inp_embd()` consults
+it for `token_embd.weight` and keeps the ordinary GGUF `ggml_get_rows` node
+unless the provider explicitly reports ready. A native-bind callback can hand
+the node to the existing ASTC-owned Vulkan external-op dispatcher; no changes
+to `ggml-vulkan` or default runtime behavior are required.
+
+The approved full-vocabulary run uses the same single-threaded oracle context
+as the bounded quality gate. A parallel-context experiment was rejected:
+although all `4710016` blocks were legal, its round-trip error was two orders
+of magnitude worse than the bounded gate, so its temporary annex was
+discarded. The approved payload and affine sizes/hashes will be recorded when
+the run completes. The provider implementation is
+`astc-vulkan-embedding-provider.{h,cpp}`: it validates the `.astce` descriptor,
+payload/affine sizes, finite positive scales, and decodes token-local blocks
+with the CPU astcenc oracle. Missing or invalid annexes are non-fatal and
+preserve GGUF fallback. The first native E1 10x5 implementation now builds a
+single block-aligned 2D ASTC atlas (token microtiles remain token-local), keeps
+the per-token affine `(bias, scale)` table in an SSBO, and records an external
+Vulkan lookup directly into ggml's command buffer. It reads token ids from the
+existing ggml buffer and emits F32 `[dimension, token]` output without CPU
+readback. A graph-device/materialization failure is still a hard CPU fallback
+until the dedicated GPU decode smoke and model-level correctness gate pass.
+The dedicated GPU smoke now passes against the complete Qwen annex: five
+token IDs and all 1536 output dimensions match the CPU provider with
+`max_abs=7.45e-09` and `RMSE=6.84e-10`. The atlas is `16120x14610` with 52
+token columns on this Vulkan device. This validates resource lifecycle,
+ASTC sampling and affine restoration; it does not establish a speedup.
+The full Qwen server replay used the same 31-token prompt and 20 generated
+tokens. Three native Vulkan requests measured 4.595, 4.553 and 4.538
+tokens/s; three overlay requests measured 4.609, 4.481 and 4.543 tokens/s.
+The medians (4.553 vs 4.543 tokens/s) are effectively equal at this small
+model/request size. Text output was byte-identical between the verified
+overlay and native run. Enabling the old research-only D1 matrix artifacts
+caused severe quality degradation, so that path remains excluded from this
+embedding gate.

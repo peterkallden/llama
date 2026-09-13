@@ -1,0 +1,50 @@
+#version 450
+
+// Token-local E1 10x5 ASTC embedding lookup.
+//
+// The atlas contains complete token microtiles: one ASTC 10x5 block stores
+// 50 adjacent dimensions from exactly one token.  This deliberately avoids
+// the read amplification of a layout where one physical block spans several
+// unrelated token rows.  Token ids remain on the ggml Vulkan buffer; this
+// shader reads them and writes the standard F32 [dimension, token] output.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D astc_embeddings;
+layout(std430, set = 0, binding = 1) readonly buffer TokenIds { int values[]; } token_ids;
+layout(std430, set = 0, binding = 2) writeonly buffer Output { float values[]; } output_values;
+layout(std430, set = 0, binding = 3) readonly buffer Affine { float values[]; } affine;
+
+layout(push_constant) uniform PushConstants {
+    uint dimensions;
+    uint vocabulary;
+    uint tiles_per_token;
+    uint token_columns;
+    uint token_count;
+} params;
+
+void main() {
+    const uint dimension = gl_GlobalInvocationID.x;
+    const uint token_index = gl_GlobalInvocationID.y;
+    if (dimension >= params.dimensions || token_index >= params.token_count) return;
+
+    const int token_id = token_ids.values[token_index];
+    // Invalid token ids should never arrive from llama, but writing zero is a
+    // deterministic and memory-safe failure mode. The ordinary GGUF path is
+    // retained as fallback if the native binding cannot be prepared.
+    if (token_id < 0 || uint(token_id) >= params.vocabulary) {
+        output_values.values[token_index * params.dimensions + dimension] = 0.0;
+        return;
+    }
+    const uint token = uint(token_id);
+    const uint tile = dimension / 50u;
+    const uint in_tile = dimension % 50u;
+    const uint token_x = token % params.token_columns;
+    const uint token_y = token / params.token_columns;
+    const uint x = token_x * params.tiles_per_token * 10u + tile * 10u + (in_tile % 10u);
+    const uint y = token_y * 5u + (in_tile / 10u);
+    const float normalized = texelFetch(astc_embeddings, ivec2(x, y), 0).r;
+    const float bias = affine.values[token * 2u + 0u];
+    const float scale = affine.values[token * 2u + 1u];
+    output_values.values[token_index * params.dimensions + dimension] =
+        bias + scale * (2.0 * normalized - 1.0);
+}

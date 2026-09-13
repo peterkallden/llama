@@ -1313,6 +1313,33 @@ bool llama_context::set_tensor_runtime_native_generation_begin(
     return true;
 }
 
+bool llama_context::set_embedding_runtime_provider(
+        llama_embedding_runtime_is_ready_fn is_ready,
+        llama_embedding_runtime_run_fn run, void * user_data) {
+    if ((is_ready == nullptr) != (run == nullptr)) {
+        return false;
+    }
+    cparams.embedding_runtime_provider.is_ready = is_ready;
+    cparams.embedding_runtime_provider.run = run;
+    cparams.embedding_runtime_provider.user_data = user_data;
+    sched_need_reserve = true;
+    return true;
+}
+
+bool llama_context::set_embedding_runtime_native_binding(
+        llama_embedding_runtime_native_bind_fn native_bind) {
+    cparams.embedding_runtime_provider.native_bind = native_bind;
+    sched_need_reserve = true;
+    return true;
+}
+
+bool llama_context::set_embedding_runtime_native_generation_begin(
+        llama_embedding_runtime_generation_begin_fn generation_begin) {
+    cparams.embedding_runtime_provider.generation_begin = generation_begin;
+    sched_need_reserve = true;
+    return true;
+}
+
 void llama_context::set_nextn_layer_offset(int32_t offset) {
     cparams.nextn_layer_offset = offset;
 }
@@ -4176,6 +4203,25 @@ bool llama_set_tensor_runtime_native_binding(
 bool llama_set_tensor_runtime_native_generation_begin(
         llama_context * ctx, llama_tensor_runtime_generation_begin_fn generation_begin) {
     return ctx != nullptr && ctx->set_tensor_runtime_native_generation_begin(generation_begin);
+}
+
+bool llama_set_embedding_runtime_provider(
+        llama_context * ctx,
+        llama_embedding_runtime_is_ready_fn is_ready,
+        llama_embedding_runtime_run_fn run,
+        void * user_data) {
+    return ctx != nullptr && ctx->set_embedding_runtime_provider(is_ready, run, user_data);
+}
+
+bool llama_set_embedding_runtime_native_binding(
+        llama_context * ctx, llama_embedding_runtime_native_bind_fn native_bind) {
+    return ctx != nullptr && ctx->set_embedding_runtime_native_binding(native_bind);
+}
+
+bool llama_set_embedding_runtime_native_generation_begin(
+        llama_context * ctx,
+        llama_embedding_runtime_generation_begin_fn generation_begin) {
+    return ctx != nullptr && ctx->set_embedding_runtime_native_generation_begin(generation_begin);
 }
 
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {

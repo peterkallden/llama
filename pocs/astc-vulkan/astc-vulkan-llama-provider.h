@@ -2,6 +2,7 @@
 
 #include "astc-vulkan-runtime-overlay.h"
 #include "astc-vulkan-scheduler-adapter.h"
+#include "astc-vulkan-embedding-provider.h"
 #include "ggml-vulkan-external-op.h"
 
 #include "llama-ext.h"
@@ -35,6 +36,7 @@ public:
         astc_vulkan_quality_policy policy = astc_vulkan_quality_policy::balanced;
         bool allow_experimental = false;
         bool allow_unverified = false;
+        bool require_all_artifacts = false;
     };
 
     bool prepare(const options & options, std::string & error);
@@ -54,6 +56,31 @@ public:
     static bool native_bind_callback(void * user_data, struct ggml_tensor * node, uint32_t layer);
     static void native_generation_begin_callback(void * user_data);
 
+    // Name-keyed callbacks are the production seam for all supported matrix
+    // roles.  The legacy layer-keyed callbacks above remain for source
+    // compatibility with the original FFN-down bridge.
+    static bool tensor_is_ready_callback(void * user_data, const char * tensor_name,
+                                         uint32_t input_columns, uint32_t output_columns);
+    static bool tensor_run_callback(void * user_data, const char * tensor_name,
+                                    const float * input, uint32_t n_tokens,
+                                    uint32_t input_columns, float * output,
+                                    uint32_t output_columns);
+    static bool tensor_native_bind_callback(void * user_data, struct ggml_tensor * node,
+                                            const char * tensor_name);
+    static void tensor_generation_begin_callback(void * user_data);
+
+    // Optional token embedding callbacks.  They are independent from the
+    // matrix callbacks above and return false when no validated embedding
+    // annex is present, preserving the native GGUF get_rows path.
+    static bool embedding_is_ready_callback(void * user_data, const char * tensor_name,
+                                            uint32_t dimensions, uint32_t vocabulary);
+    static bool embedding_run_callback(void * user_data, const char * tensor_name,
+                                       const int32_t * token_ids, uint32_t n_tokens,
+                                       float * output, uint32_t dimensions);
+    static bool embedding_native_bind_callback(void * user_data, struct ggml_tensor * node,
+                                               const char * tensor_name);
+    static void embedding_generation_begin_callback(void * user_data);
+
 private:
     struct entry {
         std::string tensor_name;
@@ -71,6 +98,9 @@ private:
     std::string last_error_;
     std::shared_ptr<astc_vulkan_shared_device> shared_device_;
     astc_vulkan_runtime_overlay overlay_;
+    // Optional token-local embedding annex.  Absence or failed validation is
+    // deliberately non-fatal and leaves ordinary GGUF get_rows in place.
+    std::unique_ptr<astc_vulkan_embedding_provider> embedding_provider_;
     std::vector<uint32_t> d1_spirv_;
     std::vector<uint32_t> d2_spirv_;
     // Tensor name is the authoritative runtime key. `layer` remains populated
@@ -99,6 +129,11 @@ private:
     bool external_op_installed_ = false;
 
     bool bind_native_node(ggml_tensor * node, uint32_t layer);
+    bool bind_native_tensor(ggml_tensor * node, const char * tensor_name);
+    bool is_ready_tensor(const char * tensor_name, uint32_t input_columns,
+                         uint32_t output_columns) const;
+    bool run_tensor(const char * tensor_name, const float * input, uint32_t n_tokens,
+                    uint32_t input_columns, float * output, uint32_t output_columns);
     bool materialize_entries(const std::shared_ptr<astc_vulkan_shared_device> & device,
                              std::unordered_map<std::string, std::unique_ptr<entry>> & entries,
                              std::string & error) const;

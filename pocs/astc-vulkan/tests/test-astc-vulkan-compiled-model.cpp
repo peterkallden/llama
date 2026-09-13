@@ -1,5 +1,6 @@
 #include "astc-vulkan-compiled-model.h"
 #include "astc-vulkan-manifest.h"
+#include "astc-vulkan-native-tensor-table.h"
 
 #include <cassert>
 #include <filesystem>
@@ -22,6 +23,21 @@ std::vector<uint8_t> read_bytes(const std::filesystem::path & path) {
 } // namespace
 
 int main() {
+    // The v2 residual table is independently portable and refuses a duplicate
+    // native payload for an ASTC-owned logical tensor.
+    astc_vulkan_native_tensor_table native_table;
+    native_table.tensors = {
+        {"blk.0.ffn_down.weight", astc_vulkan_native_tensor_storage::astc, 30, 2, {4, 4, 1, 1}, 0, 0, 0},
+        {"blk.0.attn_norm.weight", astc_vulkan_native_tensor_storage::native, 1, 1, {4, 1, 1, 1}, 0, 8, 42},
+    };
+    std::vector<uint8_t> native_bytes;
+    std::string native_error;
+    assert(astc_vulkan_encode_native_tensor_table(native_table, native_bytes, native_error));
+    astc_vulkan_native_tensor_table decoded_native_table;
+    assert(astc_vulkan_decode_native_tensor_table(native_bytes, decoded_native_table, native_error));
+    assert(decoded_native_table.tensors.size() == native_table.tensors.size());
+    assert(decoded_native_table.tensors[0].storage == astc_vulkan_native_tensor_storage::astc);
+
     astc_vulkan_manifest manifest;
     manifest.version = 3;
     manifest.model_fingerprint = "compiled-model-test";

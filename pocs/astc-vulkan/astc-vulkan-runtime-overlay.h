@@ -19,6 +19,10 @@ struct astc_vulkan_runtime_overlay_options {
     std::string cache_path = "auto";
     std::shared_ptr<const astc_vulkan_cache_source> cache_source;
     std::string cache_source_fingerprint;
+    // Bootstrap containers omit duplicate native bytes for ASTC records. They
+    // must reject a policy/residency miss rather than executing a zeroed
+    // conventional tensor allocation.
+    bool require_all_artifacts = false;
     astc_vulkan_model_cache_plan_options policy{};
     astc_vulkan_memory_budget memory_budget{};
     uint64_t max_page_payload_bytes = 0;

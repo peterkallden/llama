@@ -4,17 +4,22 @@
 #include "astc-vulkan-compiled-catalog.h"
 #include "astc-vulkan-hash.h"
 #include "astc-vulkan-manifest.h"
+#include "astc-vulkan-native-tensor-table.h"
+
+#include "gguf.h"
 
 #include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <unordered_set>
 
 namespace {
 
 constexpr std::array<char, 8> kMagic = {'A', 'S', 'T', 'C', 'M', '0', '0', '1'};
-constexpr uint32_t kMaxSectionCount = 8;
+constexpr uint32_t kV1SectionCount = 8;
+constexpr uint32_t kV2SectionCount = 13;
 constexpr uint64_t kMaxSectionBytes = 16ull * 1024ull * 1024ull * 1024ull;
 
 struct section_header {
@@ -83,6 +88,22 @@ bool read_file(const std::string & path, std::vector<uint8_t> & bytes, std::stri
     return true;
 }
 
+bool read_file_range(const std::string & path, uint64_t offset, uint64_t size,
+                     std::vector<uint8_t> & bytes, std::string & error) {
+    if (size > kMaxSectionBytes || offset > static_cast<uint64_t>(std::numeric_limits<std::streamoff>::max())) {
+        error = "compiled-model source range exceeds safety limit";
+        return false;
+    }
+    std::ifstream file(path, std::ios::binary);
+    if (!file) { error = "cannot open source GGUF: " + path; return false; }
+    file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+    bytes.resize(static_cast<size_t>(size));
+    if (size && !file.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(size))) {
+        error = "cannot read source GGUF tensor bytes"; return false;
+    }
+    return true;
+}
+
 uint64_t hash_bytes(const std::vector<uint8_t> & bytes) {
     return astc_vulkan_payload_hash64(bytes.data(), bytes.size());
 }
@@ -115,12 +136,61 @@ bool read_section(std::ifstream & file, const section_header & header,
 
 std::vector<const std::vector<uint8_t> *> sections(const astc_vulkan_compiled_model & model) {
     return {&model.gguf, &model.manifest, &model.payload, &model.layout,
-            &model.row_scales, &model.pair_map, &model.provenance, &model.catalog};
+            &model.row_scales, &model.pair_map, &model.provenance, &model.catalog,
+            &model.native_table, &model.native_payload, &model.embedding_metadata,
+            &model.embedding_payload, &model.embedding_affine};
 }
 
 std::vector<std::vector<uint8_t> *> mutable_sections(astc_vulkan_compiled_model & model) {
     return {&model.gguf, &model.manifest, &model.payload, &model.layout,
-            &model.row_scales, &model.pair_map, &model.provenance, &model.catalog};
+            &model.row_scales, &model.pair_map, &model.provenance, &model.catalog,
+            &model.native_table, &model.native_payload, &model.embedding_metadata,
+            &model.embedding_payload, &model.embedding_affine};
+}
+
+uint32_t section_count(const astc_vulkan_compiled_model & model) {
+    return model.version >= 2 ? kV2SectionCount : kV1SectionCount;
+}
+
+bool validate_bootstrap(const astc_vulkan_compiled_model & model, std::string & error) {
+    if (model.gguf.empty() || model.native_table.empty()) {
+        error = "bootstrap compiled-model is missing GGUF metadata or native table";
+        return false;
+    }
+    const bool has_embedding = !model.embedding_metadata.empty() || !model.embedding_payload.empty() ||
+        !model.embedding_affine.empty();
+    if (has_embedding && (model.embedding_metadata.empty() || model.embedding_payload.empty() ||
+                          model.embedding_affine.empty())) {
+        error = "bootstrap embedding annex is incomplete";
+        return false;
+    }
+    gguf_init_params params{true, nullptr};
+    gguf_context * ctx = gguf_init_from_buffer(model.gguf.data(), model.gguf.size(), params);
+    if (!ctx) { error = "bootstrap GGUF metadata cannot be parsed"; return false; }
+    const size_t offset = gguf_get_data_offset(ctx);
+    const int64_t tensor_count = gguf_get_n_tensors(ctx);
+    gguf_free(ctx);
+    if (offset != model.gguf.size() || tensor_count <= 0) {
+        error = "bootstrap GGUF does not end exactly at its tensor-data offset";
+        return false;
+    }
+    astc_vulkan_native_tensor_table table;
+    if (!astc_vulkan_decode_native_tensor_table(model.native_table, table, error)) return false;
+    if (table.tensors.size() != static_cast<size_t>(tensor_count)) {
+        error = "bootstrap native table does not cover every GGUF tensor";
+        return false;
+    }
+    for (const auto & record : table.tensors) {
+        if (record.storage == astc_vulkan_native_tensor_storage::native &&
+            (record.native_offset > model.native_payload.size() ||
+             record.native_size > model.native_payload.size() - record.native_offset ||
+             astc_vulkan_payload_hash64(model.native_payload.data() + record.native_offset,
+                                        record.native_size) != record.native_hash64)) {
+            error = "bootstrap native payload range or checksum is invalid";
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -128,7 +198,7 @@ std::vector<std::vector<uint8_t> *> mutable_sections(astc_vulkan_compiled_model 
 bool astc_vulkan_compiled_model_validate(
     const astc_vulkan_compiled_model & model,
     std::string & error) {
-    if (model.version != astc_vulkan_compiled_model::kCurrentVersion ||
+    if ((model.version != 1 && model.version != astc_vulkan_compiled_model::kCurrentVersion) ||
         model.gguf.empty() || model.manifest.empty() || model.payload.empty() ||
         model.source_model_fingerprint.empty()) {
         error = "compiled-model is missing required GGUF, manifest, payload or fingerprint";
@@ -140,6 +210,7 @@ bool astc_vulkan_compiled_model_validate(
             return false;
         }
     }
+    if (model.version >= 2 && !validate_bootstrap(model, error)) return false;
 
     // Parse the embedded manifest as a final structural gate.  Payload and
     // per-blob checksums were already verified when the cache was packed; this
@@ -202,7 +273,7 @@ bool astc_vulkan_compiled_model_write(
         return false;
     }
     file.write(kMagic.data(), kMagic.size());
-    if (!file.good() || !write_u32(file, model.version) || !write_u32(file, kMaxSectionCount) ||
+    if (!file.good() || !write_u32(file, model.version) || !write_u32(file, section_count(model)) ||
         !write_u32(file, static_cast<uint32_t>(model.source_model_fingerprint.size())) ||
         !write_u32(file, 0) ||
         (!model.source_model_fingerprint.empty() &&
@@ -214,7 +285,9 @@ bool astc_vulkan_compiled_model_write(
         std::filesystem::remove(staging, ignored);
         return false;
     }
-    for (const auto * section : sections(model)) {
+    const auto all_sections = sections(model);
+    for (size_t index = 0; index < section_count(model); ++index) {
+        const auto * section = all_sections[index];
         if (!write_u64(file, section->size()) || !write_u64(file, hash_bytes(*section))) {
             error = "cannot write compiled-model section header";
             file.close();
@@ -222,7 +295,8 @@ bool astc_vulkan_compiled_model_write(
             return false;
         }
     }
-    for (const auto * section : sections(model)) {
+    for (size_t index = 0; index < section_count(model); ++index) {
+        const auto * section = all_sections[index];
         if (!write_section(file, *section)) {
             error = "cannot write compiled-model section";
             file.close();
@@ -263,7 +337,8 @@ bool astc_vulkan_compiled_model_read(
     if (!file.read(magic.data(), magic.size()) || magic != kMagic ||
         !read_u32(file, version) || !read_u32(file, count) ||
         !read_u32(file, fingerprint_size) || !read_u32(file, reserved) ||
-        version != astc_vulkan_compiled_model::kCurrentVersion || count != kMaxSectionCount ||
+        (version != 1 && version != astc_vulkan_compiled_model::kCurrentVersion) ||
+        count != (version >= 2 ? kV2SectionCount : kV1SectionCount) ||
         fingerprint_size > (1u << 20)) {
         error = "invalid compiled-model header";
         return false;
@@ -275,9 +350,10 @@ bool astc_vulkan_compiled_model_read(
         error = "truncated compiled-model fingerprint";
         return false;
     }
-    std::array<section_header, kMaxSectionCount> headers{};
+    std::array<section_header, kV2SectionCount> headers{};
     uint64_t total = 0;
-    for (auto & header : headers) {
+    for (uint32_t index = 0; index < count; ++index) {
+        auto & header = headers[index];
         if (!read_u64(file, header.size) || !read_u64(file, header.hash) ||
             header.size > kMaxSectionBytes ||
             header.size > std::numeric_limits<uint64_t>::max() - total) {
@@ -287,7 +363,7 @@ bool astc_vulkan_compiled_model_read(
         total += header.size;
     }
     auto target = mutable_sections(model);
-    for (size_t index = 0; index < target.size(); ++index) {
+    for (size_t index = 0; index < count; ++index) {
         if (!read_section(file, headers[index], *target[index], error)) return false;
     }
     if (file.peek() != std::ifstream::traits_type::eof()) {
@@ -342,5 +418,96 @@ bool astc_vulkan_compiled_model_pack(
             model.source_model_fingerprint.back() == '\r')) {
         model.source_model_fingerprint.pop_back();
     }
+    return astc_vulkan_compiled_model_write(output_path, model, error);
+}
+
+bool astc_vulkan_compiled_model_pack_bootstrap(
+    const std::string & model_path,
+    const std::string & requested_cache_path,
+    const std::string & output_path,
+    std::string & error) {
+    astc_vulkan_cache_validation validation;
+    if (!astc_vulkan_cache_validate(model_path, requested_cache_path, validation, error)) return false;
+
+    astc_vulkan_compiled_model model;
+    model.version = astc_vulkan_compiled_model::kCurrentVersion;
+    if (!read_file(validation.paths.manifest, model.manifest, error) ||
+        !read_file(validation.paths.payload, model.payload, error) ||
+        !read_file(validation.paths.layout, model.layout, error, false) ||
+        !read_file(validation.paths.row_scales, model.row_scales, error, false) ||
+        !read_file(validation.paths.pair_map, model.pair_map, error, false) ||
+        !read_file(validation.paths.provenance, model.provenance, error, false) ||
+        !read_file(validation.paths.catalog, model.catalog, error, false)) return false;
+    std::vector<uint8_t> fingerprint_bytes;
+    if (!read_file(validation.paths.source_sha256, fingerprint_bytes, error)) return false;
+    model.source_model_fingerprint.assign(reinterpret_cast<const char *>(fingerprint_bytes.data()), fingerprint_bytes.size());
+    while (!model.source_model_fingerprint.empty() &&
+           (model.source_model_fingerprint.back() == '\n' || model.source_model_fingerprint.back() == '\r')) {
+        model.source_model_fingerprint.pop_back();
+    }
+
+    astc_vulkan_manifest manifest;
+    const auto nonce = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+    const std::filesystem::path manifest_path = std::filesystem::temp_directory_path() /
+        ("astc-vulkan-bootstrap-manifest-" + std::to_string(nonce) + ".astcv");
+    { std::ofstream out(manifest_path, std::ios::binary | std::ios::trunc);
+      if (!out || !write_section(out, model.manifest)) { error="cannot stage bootstrap manifest"; return false; } }
+    const bool manifest_ok = astc_vulkan_read_manifest(manifest_path.string(), manifest, error);
+    std::error_code ignored; std::filesystem::remove(manifest_path, ignored);
+    if (!manifest_ok) return false;
+    // E1 is deliberately an annex rather than a matrix-manifest artifact.
+    // Carry its three immutable resources in ASTCCM v2 and only then omit the
+    // corresponding native token embedding tensor.
+    const std::filesystem::path cache_root = validation.paths.root;
+    const std::filesystem::path embedding_meta = cache_root / "embedding-10x5.astce";
+    const std::filesystem::path embedding_payload = cache_root / "embedding-10x5.astcpack";
+    const std::filesystem::path embedding_affine = cache_root / "embedding-10x5-affine.bin";
+    std::error_code embedding_ec;
+    const bool any_embedding = std::filesystem::exists(embedding_meta, embedding_ec) ||
+        std::filesystem::exists(embedding_payload, embedding_ec) ||
+        std::filesystem::exists(embedding_affine, embedding_ec);
+    if (any_embedding && (!read_file(embedding_meta.string(), model.embedding_metadata, error) ||
+                          !read_file(embedding_payload.string(), model.embedding_payload, error) ||
+                          !read_file(embedding_affine.string(), model.embedding_affine, error))) {
+        return false;
+    }
+    std::unordered_set<std::string> astc_names;
+    const auto & artifacts = manifest.artifacts.empty() ? std::vector<astc_vulkan_artifact_record>{} : manifest.artifacts;
+    if (!artifacts.empty()) for (const auto & a : artifacts) astc_names.insert(a.storage.name);
+    else for (const auto & t : manifest.tensors) astc_names.insert(t.name);
+    if (!model.embedding_metadata.empty()) astc_names.insert("token_embd.weight");
+
+    gguf_init_params params{true, nullptr};
+    gguf_context * ctx = gguf_init_from_file(model_path.c_str(), params);
+    if (!ctx) { error = "cannot parse source GGUF for bootstrap compilation"; return false; }
+    const size_t data_offset = gguf_get_data_offset(ctx);
+    const int64_t count = gguf_get_n_tensors(ctx);
+    if (count <= 0) { gguf_free(ctx); error="source GGUF has no tensors"; return false; }
+    if (!read_file_range(model_path, 0, data_offset, model.gguf, error)) { gguf_free(ctx); return false; }
+    astc_vulkan_native_tensor_table table;
+    table.tensors.reserve(static_cast<size_t>(count));
+    for (int64_t i=0; i<count; ++i) {
+        astc_vulkan_native_tensor_record record;
+        record.name = gguf_get_tensor_name(ctx, i);
+        record.ggml_type = static_cast<uint32_t>(gguf_get_tensor_type(ctx, i));
+        const int64_t * ne = gguf_get_tensor_ne(ctx, i);
+        record.n_dims = 1;
+        for (uint32_t d=0; d<4; ++d) { record.ne[d] = static_cast<uint64_t>(ne[d]); if (ne[d] > 1) record.n_dims=d+1; }
+        if (astc_names.count(record.name)) {
+            record.storage = astc_vulkan_native_tensor_storage::astc;
+        } else {
+            record.storage = astc_vulkan_native_tensor_storage::native;
+            record.native_offset = model.native_payload.size();
+            record.native_size = gguf_get_tensor_size(ctx, i);
+            std::vector<uint8_t> tensor_bytes;
+            if (!read_file_range(model_path, data_offset + gguf_get_tensor_offset(ctx, i),
+                                 record.native_size, tensor_bytes, error)) { gguf_free(ctx); return false; }
+            record.native_hash64 = astc_vulkan_payload_hash64(tensor_bytes.data(), tensor_bytes.size());
+            model.native_payload.insert(model.native_payload.end(), tensor_bytes.begin(), tensor_bytes.end());
+        }
+        table.tensors.push_back(std::move(record));
+    }
+    gguf_free(ctx);
+    if (!astc_vulkan_encode_native_tensor_table(table, model.native_table, error)) return false;
     return astc_vulkan_compiled_model_write(output_path, model, error);
 }

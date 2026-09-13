@@ -136,6 +136,11 @@ struct llama_context {
     bool set_tensor_runtime_native_binding(llama_tensor_runtime_native_bind_fn native_bind);
     bool set_tensor_runtime_native_generation_begin(
             llama_tensor_runtime_generation_begin_fn generation_begin);
+    bool set_embedding_runtime_provider(llama_embedding_runtime_is_ready_fn is_ready,
+                                       llama_embedding_runtime_run_fn run, void * user_data);
+    bool set_embedding_runtime_native_binding(llama_embedding_runtime_native_bind_fn native_bind);
+    bool set_embedding_runtime_native_generation_begin(
+            llama_embedding_runtime_generation_begin_fn generation_begin);
     void set_nextn_layer_offset(int32_t offset);
     void set_causal_attn(bool value);
     void set_warmup(bool value);

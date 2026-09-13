@@ -3,8 +3,12 @@
 #include "astc-vulkan-compiled-model.h"
 #include "astc-vulkan-provenance.h"
 
+#include "ggml.h"
+#include "ggml-backend.h"
+
 #include <chrono>
 #include <fstream>
+#include <cstring>
 
 #if defined(__linux__)
 #include <cerrno>
@@ -87,8 +91,74 @@ void astc_vulkan_compiled_source::reset() {
     model_path_.clear();
     source_fingerprint_.clear();
     cache_source_.reset();
+    native_table_ = {};
+    native_index_.clear();
+    callback_error_.clear();
+    if (metadata_) {
+        gguf_free(metadata_);
+        metadata_ = nullptr;
+    }
     model_.reset();
     mode_ = astc_vulkan_compiled_source_mode::private_file;
+}
+
+bool astc_vulkan_compiled_source::initialize_v2(std::string & error) {
+    if (!model_ || !model_->is_bootstrap_v2()) { error = "not a bootstrap compiled model"; return false; }
+    gguf_init_params params{true, nullptr};
+    metadata_ = gguf_init_from_buffer(model_->gguf.data(), model_->gguf.size(), params);
+    if (!metadata_) { error = "cannot initialize embedded bootstrap GGUF metadata"; return false; }
+    if (!astc_vulkan_decode_native_tensor_table(model_->native_table, native_table_, error)) return false;
+    if (native_table_.tensors.size() != static_cast<size_t>(gguf_get_n_tensors(metadata_))) {
+        error = "bootstrap table does not cover the embedded GGUF tensor inventory"; return false;
+    }
+    for (size_t index = 0; index < native_table_.tensors.size(); ++index) {
+        const auto & record = native_table_.tensors[index];
+        const int64_t tid = gguf_find_tensor(metadata_, record.name.c_str());
+        if (tid < 0 || static_cast<uint32_t>(gguf_get_tensor_type(metadata_, tid)) != record.ggml_type ||
+            gguf_get_tensor_size(metadata_, tid) != record.native_size &&
+            record.storage == astc_vulkan_native_tensor_storage::native) {
+            error = "bootstrap table does not match GGUF tensor descriptor: " + record.name;
+            return false;
+        }
+        native_index_.emplace(record.name, index);
+    }
+    source_fingerprint_ = model_->source_model_fingerprint;
+    return true;
+}
+
+void astc_vulkan_compiled_source::set_tensor_data_callback(
+    struct ggml_tensor * tensor, void * userdata) {
+    static_cast<astc_vulkan_compiled_source *>(userdata)->set_tensor_data(tensor);
+}
+
+void astc_vulkan_compiled_source::set_tensor_data(struct ggml_tensor * tensor) {
+    if (!callback_error_.empty()) return;
+    const char * name = ggml_get_name(tensor);
+    const auto it = native_index_.find(name ? name : "");
+    if (it == native_index_.end()) { callback_error_ = "compiled bootstrap tensor missing from table"; return; }
+    const auto & record = native_table_.tensors[it->second];
+    if (!tensor->buffer) { callback_error_ = "compiled bootstrap tensor has no target buffer: " + record.name; return; }
+    if (record.storage == astc_vulkan_native_tensor_storage::native) {
+        if (ggml_nbytes(tensor) != record.native_size ||
+            record.native_offset > model_->native_payload.size() ||
+            record.native_size > model_->native_payload.size() - record.native_offset) {
+            callback_error_ = "compiled native tensor range does not match destination: " + record.name;
+            return;
+        }
+        // The destination may live in device memory when GPU offload is
+        // enabled.  Use the backend upload API rather than dereferencing
+        // tensor->data directly; the latter is only valid for host buffers.
+        ggml_backend_tensor_set(tensor,
+                                model_->native_payload.data() + record.native_offset,
+                                0, static_cast<size_t>(record.native_size));
+        return;
+    }
+    // ASTC tensors are replaced by the opt-in provider before compute. Zero
+    // their conventional ggml allocation so a missed binding is deterministic,
+    // never uninitialized memory. Strict provider admission is checked at the
+    // runtime seam; this callback is only the model-loader data contract.
+    std::vector<uint8_t> zeros(ggml_nbytes(tensor), 0);
+    ggml_backend_tensor_set(tensor, zeros.data(), 0, zeros.size());
 }
 
 void astc_vulkan_compiled_source::close_model_file() {
@@ -114,19 +184,24 @@ bool astc_vulkan_compiled_source::open(const std::string & compiled_model_path,
     if (!astc_vulkan_compiled_model_read(compiled_model_path, *model, error)) return false;
     model_ = model;
 
-    const std::string embedded_hash = astc_vulkan_sha256_hex(
-        model->gguf.data(), model->gguf.size());
-    if (embedded_hash != model->source_model_fingerprint) {
+    const std::string embedded_hash = astc_vulkan_sha256_hex(model->gguf.data(), model->gguf.size());
+    if (!model->is_bootstrap_v2() && embedded_hash != model->source_model_fingerprint) {
         error = "compiled-model source fingerprint does not match embedded GGUF";
         reset();
         return false;
     }
 
-    // The normal model loader is path-based today. On Linux, a memfd keeps
+    if (model->is_bootstrap_v2() && !initialize_v2(error)) {
+        reset();
+        return false;
+    }
+
+    // V1 uses the normal path-based model loader. On Linux, a memfd keeps
     // the GGUF bytes out of the private workspace and remains valid for the
     // whole server lifetime. If memfd is unavailable, use the portable file
     // materialization below.
 #if defined(__linux__)
+    if (!model->is_bootstrap_v2()) {
     model_fd_ = create_memory_file("astc-vulkan-embedded-gguf");
     if (model_fd_ >= 0 && write_memory_file(model_fd_, model->gguf, error)) {
         const std::string proc_path = "/proc/self/fd/" + std::to_string(model_fd_);
@@ -154,7 +229,9 @@ bool astc_vulkan_compiled_source::open(const std::string & compiled_model_path,
         model_path_ = gguf_path.string();
         mode_ = astc_vulkan_compiled_source_mode::private_file;
     }
+    }
 #else
+    if (!model->is_bootstrap_v2()) {
     const auto nonce = static_cast<uint64_t>(
         std::chrono::steady_clock::now().time_since_epoch().count()) ^
         static_cast<uint64_t>(reinterpret_cast<uintptr_t>(this));
@@ -168,6 +245,7 @@ bool astc_vulkan_compiled_source::open(const std::string & compiled_model_path,
         return false;
     }
     model_path_ = gguf_path.string();
+    }
     mode_ = astc_vulkan_compiled_source_mode::private_file;
 #endif
 
@@ -179,9 +257,12 @@ bool astc_vulkan_compiled_source::open(const std::string & compiled_model_path,
     blobs.pair_map = {model->pair_map.data(), model->pair_map.size()};
     blobs.provenance = {model->provenance.data(), model->provenance.size()};
     blobs.catalog = {model->catalog.data(), model->catalog.size()};
+    blobs.embedding_metadata = {model->embedding_metadata.data(), model->embedding_metadata.size()};
+    blobs.embedding_payload = {model->embedding_payload.data(), model->embedding_payload.size()};
+    blobs.embedding_affine = {model->embedding_affine.data(), model->embedding_affine.size()};
     cache_source_ = astc_vulkan_make_memory_cache_source(
         blobs, std::static_pointer_cast<const void>(model_));
-    source_fingerprint_ = embedded_hash;
+    if (!model->is_bootstrap_v2()) source_fingerprint_ = embedded_hash;
     error.clear();
     return true;
 }

@@ -159,7 +159,7 @@ void print_help(const char * executable) {
         "            (write a metadata-only compiled tensor catalog; runtime remains unchanged)\n"
         "  %s catalog-inspect --catalog model.astcc [--manifest manifest.astcv]\n"
         "            (read back the catalog; --manifest also checks record identity)\n"
-        "  %s compiled-pack --model model.gguf --cache path|auto --output model.astccm\n"
+        "  %s compiled-pack --model model.gguf --cache path|auto --compiled-format hybrid|bootstrap --output model.astccm\n"
         "            (pack GGUF and validated ASTC resources into one self-contained container)\n"
         "  %s compiled-inspect --compiled-model model.astccm [--extract-gguf path]\n"
         "            (validate a compiled model and optionally extract its embedded GGUF)\n"
@@ -1204,6 +1204,7 @@ int main(int argc, char ** argv) {
     std::string usage_path, discovery_output, candidate_plan_output, quality_trace_map_path,
                 policy_name = "balanced", device_budget, host_budget, page_bytes;
     std::string compiled_catalog_input, compiled_catalog_output, compiled_model_input, extract_gguf;
+    std::string compiled_format = "hybrid";
     std::string min_source_bytes, max_cache_bytes, max_tensors;
     std::string shortlist_count = "2", max_p90_loss, max_worst_loss, p90_weight;
     std::string max_rows, max_columns, workers, representation = "scalar", paired_semantic = "la";
@@ -1250,6 +1251,7 @@ int main(int argc, char ** argv) {
         else if (option == "--catalog-output") compiled_catalog_output = value;
         else if (option == "--catalog") compiled_catalog_input = value;
         else if (option == "--compiled-model") compiled_model_input = value;
+        else if (option == "--compiled-format") compiled_format = value;
         else if (option == "--extract-gguf") extract_gguf = value;
         else if (option == "--candidate-plan") candidate_plan_output = value;
         else if (option == "--quality-trace-map") quality_trace_map_path = value;
@@ -1388,7 +1390,14 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "astc-cache compiled-pack requires --model, --cache and --output\n");
             return 2;
         }
-        if (!astc_vulkan_compiled_model_pack(model, cache, discovery_output, error)) {
+        const bool bootstrap = compiled_format == "bootstrap" || compiled_format == "strict";
+        if (!bootstrap && compiled_format != "hybrid") {
+            std::fprintf(stderr, "astc-cache compiled-pack --compiled-format must be hybrid or bootstrap\n");
+            return 2;
+        }
+        if (!(bootstrap ? astc_vulkan_compiled_model_pack_bootstrap(
+                              model, cache, discovery_output, error)
+                        : astc_vulkan_compiled_model_pack(model, cache, discovery_output, error))) {
             std::fprintf(stderr, "astc-cache compiled-pack failed: %s\n", error.c_str());
             return 1;
         }
@@ -1397,9 +1406,11 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "astc-cache compiled-pack verification failed: %s\n", error.c_str());
             return 1;
         }
-        std::printf("astc-cache compiled-pack output=%s gguf-bytes=%zu payload-bytes=%zu manifest-bytes=%zu\n",
-                    discovery_output.c_str(), compiled.gguf.size(), compiled.payload.size(),
-                    compiled.manifest.size());
+        std::printf("astc-cache compiled-pack output=%s version=%u mode=%s bootstrap-gguf-bytes=%zu "
+                    "native-table-bytes=%zu native-payload-bytes=%zu payload-bytes=%zu manifest-bytes=%zu\n",
+                    discovery_output.c_str(), compiled.version, bootstrap ? "bootstrap" : "hybrid",
+                    compiled.gguf.size(), compiled.native_table.size(), compiled.native_payload.size(),
+                    compiled.payload.size(), compiled.manifest.size());
         return 0;
     }
     if (command == "compiled-inspect" || command == "compile-inspect") {
@@ -1412,13 +1423,19 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "astc-cache compiled-inspect failed: %s\n", error.c_str());
             return 1;
         }
-        std::printf("astc-cache compiled-inspect path=%s version=%u fingerprint=%s gguf-bytes=%zu "
+        std::printf("astc-cache compiled-inspect path=%s version=%u fingerprint=%s bootstrap-gguf-bytes=%zu "
                     "manifest-bytes=%zu payload-bytes=%zu layout-bytes=%zu row-scales-bytes=%zu "
-                    "pair-map-bytes=%zu catalog-bytes=%zu\n",
+                    "pair-map-bytes=%zu catalog-bytes=%zu native-table-bytes=%zu native-payload-bytes=%zu\n",
                     compiled_model_input.c_str(), compiled.version,
                     compiled.source_model_fingerprint.c_str(), compiled.gguf.size(),
                     compiled.manifest.size(), compiled.payload.size(), compiled.layout.size(),
-                    compiled.row_scales.size(), compiled.pair_map.size(), compiled.catalog.size());
+                    compiled.row_scales.size(), compiled.pair_map.size(), compiled.catalog.size(),
+                    compiled.native_table.size(), compiled.native_payload.size());
+        if (!compiled.embedding_metadata.empty()) {
+            std::printf("astc-cache compiled-inspect embedding=e1-local-10x5 metadata-bytes=%zu payload-bytes=%zu affine-bytes=%zu\n",
+                        compiled.embedding_metadata.size(), compiled.embedding_payload.size(),
+                        compiled.embedding_affine.size());
+        }
         if (!extract_gguf.empty() &&
             !astc_vulkan_compiled_model_extract_gguf(compiled, extract_gguf, error)) {
             std::fprintf(stderr, "astc-cache compiled-inspect extraction failed: %s\n", error.c_str());

@@ -15,6 +15,9 @@ enum class astc_vulkan_cache_blob_kind : uint8_t {
     pair_map,
     provenance,
     catalog,
+    embedding_metadata,
+    embedding_payload,
+    embedding_affine,
 };
 
 struct astc_vulkan_cache_blob {
@@ -33,6 +36,9 @@ struct astc_vulkan_cache_blob_set {
     astc_vulkan_cache_blob pair_map;
     astc_vulkan_cache_blob provenance;
     astc_vulkan_cache_blob catalog;
+    astc_vulkan_cache_blob embedding_metadata;
+    astc_vulkan_cache_blob embedding_payload;
+    astc_vulkan_cache_blob embedding_affine;
 };
 
 class astc_vulkan_cache_source {

@@ -81,6 +81,7 @@ void astc_vulkan_llama_provider::reset() {
     }
     entries_.clear();
     native_bindings_.clear();
+    embedding_provider_.reset();
     d1_spirv_.clear();
     d2_spirv_.clear();
     overlay_.reset();
@@ -102,8 +103,8 @@ void astc_vulkan_llama_provider::reset() {
 bool astc_vulkan_llama_provider::prepare(const options & options, std::string & error) {
     const auto prepare_begin = std::chrono::steady_clock::now();
     reset();
-    if (options.model_path.empty()) {
-        error = "ASTC llama provider requires a runtime model path";
+    if (options.model_path.empty() && !options.cache_source) {
+        error = "ASTC llama provider requires a runtime model path or compiled cache source";
         return false;
     }
     const std::string source_model_path = options.source_model_path.empty() ?
@@ -138,6 +139,7 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
     overlay_options.cache_path = options.cache_path;
     overlay_options.cache_source = options.cache_source;
     overlay_options.cache_source_fingerprint = options.cache_source_fingerprint;
+    overlay_options.require_all_artifacts = options.require_all_artifacts;
     overlay_options.policy.policy = options.policy;
     overlay_options.policy.allow_experimental = options.allow_experimental;
     overlay_options.policy.allow_unverified = options.allow_unverified;
@@ -145,6 +147,30 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
     if (!overlay_.prepare(overlay_options, error)) {
         reset();
         return false;
+    }
+    // Embeddings are an optional annex and are intentionally independent of
+    // the binary matrix manifest. A missing or invalid annex keeps the
+    // ordinary GGUF get_rows path intact and must not disable D1/D2 overlays.
+    {
+        auto candidate = std::make_unique<astc_vulkan_embedding_provider>();
+        std::string embedding_error;
+        std::string annex_root = overlay_.catalog().validation.paths.root;
+        if (annex_root.empty() && options.cache_path != "auto") {
+            annex_root = options.cache_path;
+        }
+        const bool prepared_embedding = options.cache_source ?
+            candidate->prepare_from_cache_source(options.cache_source, embedding_error) :
+            candidate->prepare(annex_root, embedding_error);
+        if (prepared_embedding) {
+            embedding_provider_ = std::move(candidate);
+            std::fprintf(stderr,
+                         "ASTC embedding annex ready: E1 token-local 10x5 "
+                         "(GPU get_rows armed; CPU fallback retained)\n");
+        } else if (native_trace_enabled() &&
+                   !embedding_error.empty() &&
+                   embedding_error.find("cannot open embedding metadata") == std::string::npos) {
+            std::fprintf(stderr, "ASTC embedding annex ignored: %s\n", embedding_error.c_str());
+        }
     }
     if (native_trace_enabled()) {
         const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - prepare_begin).count();
@@ -292,6 +318,15 @@ bool astc_vulkan_llama_provider::is_ready(
     return record.width == input_columns && record.height == output_columns;
 }
 
+bool astc_vulkan_llama_provider::is_ready_tensor(
+        const char * tensor_name, uint32_t input_columns, uint32_t output_columns) const {
+    if (!ready_ || tensor_name == nullptr || tensor_name[0] == '\0') return false;
+    const auto it = entries_.find(tensor_name);
+    if (it == entries_.end() || it->second == nullptr) return false;
+    const auto & record = it->second->adapter.binding().record;
+    return record.width == input_columns && record.height == output_columns;
+}
+
 bool astc_vulkan_llama_provider::run(
         uint32_t layer, const float * input, uint32_t n_tokens, uint32_t input_columns,
         float * output, uint32_t output_columns) {
@@ -317,11 +352,26 @@ bool astc_vulkan_llama_provider::run(
         }
     }
     if (matched == nullptr) return false;
+    return run_tensor(matched->tensor_name.c_str(), input, n_tokens, input_columns,
+                      output, output_columns);
+}
+
+bool astc_vulkan_llama_provider::run_tensor(
+        const char * tensor_name, const float * input, uint32_t n_tokens,
+        uint32_t input_columns, float * output, uint32_t output_columns) {
+    if (!is_ready_tensor(tensor_name, input_columns, output_columns) ||
+        input == nullptr || output == nullptr || n_tokens == 0) {
+        ++dispatch_failures_;
+        last_error_ = "ASTC runtime provider was called for an unprepared tensor";
+        return false;
+    }
+    const auto it = entries_.find(tensor_name);
+    if (it == entries_.end() || it->second == nullptr) return false;
+    entry * matched = it->second.get();
     ++dispatch_calls_;
     dispatch_tokens_ += n_tokens;
-    // ggml's CPU custom-op boundary invokes this serially. Keep the vector
-    // copies here for the first functional bridge; the in-backend Vulkan path
-    // will consume native buffers directly through the same provider policy.
+    // The CPU custom-op bridge is retained as a safe fallback. Production
+    // Vulkan execution uses record_native() below and never enters this path.
     const size_t input_count = static_cast<size_t>(n_tokens) * input_columns;
     std::vector<float> activations(input, input + input_count);
     std::vector<float> result;
@@ -357,6 +407,61 @@ bool astc_vulkan_llama_provider::native_bind_callback(
         void * user_data, ggml_tensor * node, uint32_t layer) {
     auto * provider = static_cast<astc_vulkan_llama_provider *>(user_data);
     return provider != nullptr && provider->bind_native_node(node, layer);
+}
+
+bool astc_vulkan_llama_provider::tensor_is_ready_callback(
+        void * user_data, const char * tensor_name, uint32_t input_columns,
+        uint32_t output_columns) {
+    const auto * provider = static_cast<const astc_vulkan_llama_provider *>(user_data);
+    return provider != nullptr && provider->is_ready_tensor(
+        tensor_name, input_columns, output_columns);
+}
+
+bool astc_vulkan_llama_provider::tensor_run_callback(
+        void * user_data, const char * tensor_name, const float * input, uint32_t n_tokens,
+        uint32_t input_columns, float * output, uint32_t output_columns) {
+    auto * provider = static_cast<astc_vulkan_llama_provider *>(user_data);
+    return provider != nullptr && provider->run_tensor(
+        tensor_name, input, n_tokens, input_columns, output, output_columns);
+}
+
+bool astc_vulkan_llama_provider::tensor_native_bind_callback(
+        void * user_data, ggml_tensor * node, const char * tensor_name) {
+    auto * provider = static_cast<astc_vulkan_llama_provider *>(user_data);
+    return provider != nullptr && provider->bind_native_tensor(node, tensor_name);
+}
+
+void astc_vulkan_llama_provider::tensor_generation_begin_callback(void * user_data) {
+    native_generation_begin_callback(user_data);
+}
+
+bool astc_vulkan_llama_provider::embedding_is_ready_callback(
+        void * user_data, const char * tensor_name, uint32_t dimensions, uint32_t vocabulary) {
+    auto * provider = static_cast<astc_vulkan_llama_provider *>(user_data);
+    return provider != nullptr && provider->embedding_provider_ != nullptr &&
+           provider->embedding_provider_->is_ready(tensor_name, dimensions, vocabulary);
+}
+
+bool astc_vulkan_llama_provider::embedding_run_callback(
+        void * user_data, const char * tensor_name, const int32_t * token_ids,
+        uint32_t n_tokens, float * output, uint32_t dimensions) {
+    auto * provider = static_cast<astc_vulkan_llama_provider *>(user_data);
+    return provider != nullptr && provider->embedding_provider_ != nullptr &&
+           provider->embedding_provider_->run(tensor_name, token_ids, n_tokens, output, dimensions);
+}
+
+bool astc_vulkan_llama_provider::embedding_native_bind_callback(
+        void * user_data, struct ggml_tensor * node, const char * tensor_name) {
+    auto * provider = static_cast<astc_vulkan_llama_provider *>(user_data);
+    return provider != nullptr && provider->embedding_provider_ != nullptr &&
+           provider->embedding_provider_->native_bind(node, tensor_name);
+}
+
+void astc_vulkan_llama_provider::embedding_generation_begin_callback(void * user_data) {
+    auto * provider = static_cast<astc_vulkan_llama_provider *>(user_data);
+    if (provider != nullptr && provider->embedding_provider_ != nullptr) {
+        provider->embedding_provider_->generation_begin();
+    }
 }
 
 void astc_vulkan_llama_provider::native_generation_begin_callback(void * user_data) {
@@ -408,14 +513,22 @@ bool astc_vulkan_llama_provider::bind_native_node(ggml_tensor * node, uint32_t l
         }
     }
     if (entry_it == entries_.end()) return false;
+    return bind_native_tensor(node, tensor_name.c_str());
+}
+
+bool astc_vulkan_llama_provider::bind_native_tensor(ggml_tensor * node, const char * tensor_name) {
+    if (!ready_ || node == nullptr || tensor_name == nullptr || tensor_name[0] == '\0') return false;
+    const auto entry_it = entries_.find(tensor_name);
+    if (entry_it == entries_.end()) return false;
+    const std::string canonical_name = entry_it->first;
     native_bind_calls_.fetch_add(1);
     if (native_trace_enabled()) {
-        std::fprintf(stderr, "ASTC native bind: tensor=%s layer=%u node=%p\n",
-                     tensor_name.c_str(), layer, static_cast<void *>(node));
+        std::fprintf(stderr, "ASTC native bind: tensor=%s node=%p\n",
+                     canonical_name.c_str(), static_cast<void *>(node));
     }
     native_binding * binding = nullptr;
     for (const auto & candidate : native_bindings_) {
-        if (candidate->tensor_name == tensor_name) {
+        if (candidate->tensor_name == canonical_name) {
             binding = candidate.get();
             break;
         }
@@ -423,8 +536,9 @@ bool astc_vulkan_llama_provider::bind_native_node(ggml_tensor * node, uint32_t l
     if (binding == nullptr) {
         auto created = std::make_unique<native_binding>();
         created->provider = this;
-        created->tensor_name = tensor_name;
-        created->layer = layer;
+        created->tensor_name = canonical_name;
+        uint32_t parsed_layer = 0;
+        created->layer = parse_ffn_down_layer(canonical_name, parsed_layer) ? parsed_layer : UINT32_MAX;
         binding = created.get();
         native_bindings_.push_back(std::move(created));
     }
@@ -490,6 +604,12 @@ bool astc_vulkan_llama_provider::can_record_native(
         return false;
     }
     const auto & record = entry_it->second->adapter.binding().record;
+    if (context->node->ne[0] != record.height ||
+        context->node->ne[1] == 0) {
+        trace_native_context_reject("native node output shape does not match artifact",
+                                    context, shared_device_->device());
+        return false;
+    }
     // The native path binds the ordinary MUL_MAT node, whose activation is
     // normally src[1]. The legacy CPU bridge used src[0]. Accept either only
     // when it has the expected input width and current token extent.

@@ -124,12 +124,23 @@ bool cli_context::init() {
             impl->compiled_source.reset();
             return false;
         }
-        params.model.path = impl->compiled_source->model_path();
+        if (impl->compiled_source->uses_user_loader()) {
+            params.model_user_metadata = impl->compiled_source->metadata();
+            params.model_user_set_tensor_data = astc_vulkan_compiled_source::set_tensor_data_callback;
+            params.model_user_data = impl->compiled_source.get();
+            // The server normally derives its model name from the GGUF path.
+            // Bootstrap containers intentionally have no runtime path, so
+            // provide a deterministic API alias for local CLI requests.
+            if (params.model_alias.empty()) params.model_alias.insert("compiled-model");
+        } else {
+            params.model.path = impl->compiled_source->model_path();
+        }
         params.astc_cache_source = impl->compiled_source->cache_source();
         params.astc_cache_source_fingerprint = impl->compiled_source->source_fingerprint();
-        LOG_INF("compiled model active: %s (embedded GGUF via %s + in-memory ASTC blobs)\n",
+        LOG_INF("compiled model active: %s (%s + in-memory ASTC blobs)\n",
                 params.compiled_model.c_str(),
-                impl->compiled_source->materialization_mode_name());
+                impl->compiled_source->uses_user_loader() ?
+                    "bootstrap GGUF/user-loader" : impl->compiled_source->materialization_mode_name());
     }
 #elif defined(LLAMA_ASTC_VULKAN_POC)
     if (!params.compiled_model.empty()) {
@@ -211,6 +222,13 @@ bool cli_context::init() {
     }
 
     fetch_server_props();
+    // A local bootstrap server may report its generic display name in
+    // /props, while request routing uses the explicit alias passed in params.
+    // Keep the two sides aligned for /v1/chat/completions.
+    if (!params.compiled_model.empty() && !params.model_alias.empty()) {
+        client.model = *params.model_alias.begin();
+        model_name = client.model;
+    }
 
     if (!params.out_file.empty()) {
         output_file.emplace(params.out_file);
@@ -233,6 +251,9 @@ void cli_context::fetch_server_props() {
                 model_name = std::filesystem::path(path).filename().string();
             }
         }
+        // Local compiled-model runs have no GGUF path from which the client
+        // could infer an API model id. Keep the request contract explicit.
+        if (client.model.empty() && !model_name.empty()) client.model = model_name;
         model_ftype = props.value("model_ftype", "");
         build_info = props.value("build_info", "");
         if (props.contains("modalities") && props.at("modalities").is_object()) {

@@ -19,6 +19,9 @@ const std::string * path_for(const astc_vulkan_cache_paths & paths,
         case astc_vulkan_cache_blob_kind::pair_map:    return &paths.pair_map;
         case astc_vulkan_cache_blob_kind::provenance:  return &paths.provenance;
         case astc_vulkan_cache_blob_kind::catalog:     return &paths.catalog;
+        case astc_vulkan_cache_blob_kind::embedding_metadata: return nullptr;
+        case astc_vulkan_cache_blob_kind::embedding_payload:  return nullptr;
+        case astc_vulkan_cache_blob_kind::embedding_affine:   return nullptr;
     }
     return nullptr;
 }
@@ -33,6 +36,9 @@ const astc_vulkan_cache_blob * blob_for(const astc_vulkan_cache_blob_set & blobs
         case astc_vulkan_cache_blob_kind::pair_map:    return &blobs.pair_map;
         case astc_vulkan_cache_blob_kind::provenance:  return &blobs.provenance;
         case astc_vulkan_cache_blob_kind::catalog:     return &blobs.catalog;
+        case astc_vulkan_cache_blob_kind::embedding_metadata: return &blobs.embedding_metadata;
+        case astc_vulkan_cache_blob_kind::embedding_payload:  return &blobs.embedding_payload;
+        case astc_vulkan_cache_blob_kind::embedding_affine:   return &blobs.embedding_affine;
     }
     return nullptr;
 }

@@ -179,6 +179,19 @@ void llama_tensor_runtime_custom_op(
         static_cast<float *>(dst->data), output_columns);
     GGML_ASSERT(ok);
 }
+
+void llama_embedding_runtime_custom_op(
+        ggml_tensor * dst, const ggml_tensor * src, int ith, int /*nth*/, void * user_data) {
+    if (ith != 0) return;
+    const auto * binding = static_cast<const llm_graph_input_embedding_runtime *>(user_data);
+    const uint32_t n_tokens = static_cast<uint32_t>(src->ne[0]);
+    const uint32_t dimensions = static_cast<uint32_t>(dst->ne[0]);
+    const bool ok = binding != nullptr && binding->provider.run != nullptr &&
+        binding->provider.run(binding->provider.user_data, binding->tensor_name.c_str(),
+                              static_cast<const int32_t *>(src->data), n_tokens,
+                              static_cast<float *>(dst->data), dimensions);
+    GGML_ASSERT(ok);
+}
 }
 
 void llm_graph_input_pos::set_input(const llama_ubatch * ubatch) {
@@ -1565,6 +1578,10 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
         cparams.tensor_runtime_provider.generation_begin(
             cparams.tensor_runtime_provider.user_data);
     }
+    if (cparams.embedding_runtime_provider.generation_begin != nullptr) {
+        cparams.embedding_runtime_provider.generation_begin(
+            cparams.embedding_runtime_provider.user_data);
+    }
 }
 
 void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
@@ -2510,7 +2527,28 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
     {
         auto & cur = inps[0];
 
-        cur = ggml_get_rows(ctx0, tok_embd, inp->tokens);
+        const auto & embedding_provider = cparams.embedding_runtime_provider;
+        const bool embedding_ready = tok_embd != nullptr && tok_embd->name[0] != '\0' &&
+            embedding_provider.is_ready != nullptr && embedding_provider.run != nullptr &&
+            embedding_provider.is_ready(embedding_provider.user_data, tok_embd->name,
+                                        static_cast<uint32_t>(tok_embd->ne[0]),
+                                        static_cast<uint32_t>(tok_embd->ne[1]));
+        if (embedding_ready) {
+            auto embedding_input = std::make_unique<llm_graph_input_embedding_runtime>(
+                embedding_provider, tok_embd->name);
+            cur = ggml_map_custom1_with_output(ctx0, inp->tokens, GGML_TYPE_F32,
+                                               n_embd_inp, ubatch.n_tokens,
+                                               llama_embedding_runtime_custom_op, 1,
+                                               embedding_input.get());
+            ggml_set_name(cur, tok_embd->name);
+            if (embedding_provider.native_bind != nullptr) {
+                embedding_provider.native_bind(embedding_provider.user_data, cur,
+                                               tok_embd->name);
+            }
+            res->add_input(std::move(embedding_input));
+        } else {
+            cur = ggml_get_rows(ctx0, tok_embd, inp->tokens);
+        }
 
         // apply lora for embedding tokens if needed
         for (const auto & lora : *loras) {

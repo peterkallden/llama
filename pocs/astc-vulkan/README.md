@@ -446,6 +446,145 @@ one F32 scale per output row and applies it after the reduction. Scheduler
 selection therefore chooses a prevalidated artifact per tensor – it never
 re-runs an encoder or guesses a codec configuration during inference.
 
+### E1/E2: token-local embedding lookup (experimental groundwork)
+
+`token_embd.weight` is not on the matrix provider path. A matrix layout that
+puts several token rows in the same ASTC block is therefore a poor lookup
+layout: a `get_rows(token)` operation uses one row but must access the complete
+128-bit compressed block that contains it. The planned embedding profiles keep
+each ASTC microtile inside **one token vector** instead:
+
+```text
+token id -> descriptor -> token-local ASTC microtiles -> embedding vector
+```
+
+`E1-local` maps one embedding dimension to each texel. `E2-local-L+A` maps two
+dimensions from the same token to ASTC luminance and alpha. Both remain normal
+ASTC images and use fixed-function decode; they are separate from D1/D2
+matrix semantics and require a dedicated Vulkan `get_rows` consumer.
+
+| Embedding profile | Example footprint | Logical values/tile | Qwen-1536 payload/token |
+|---|---:|---:|---:|
+| E1-local | 10x5 | 50 | 31 blocks / 496 B |
+| E2-local-L+A | 8x5 | 80 | 20 blocks / 320 B |
+| E2-local-L+A | 10x5 | 100 | 16 blocks / 256 B |
+
+The first groundwork lives in `astc-vulkan-embedding-layout.{h,cpp}` and its
+smoke. It defines a token-local tile contract, a global dimension permutation
+or pair-map, per-token affine normalization (`value = scale * decoded + bias`)
+and native-versus-ASTC token descriptors. The real-source tool below can write
+a validated token-local E1 annex into an existing cache directory. The runtime
+provider consumes that annex through the embedding callback seam and uses a
+CPU astcenc decode fallback; absence or failed validation leaves the normal
+GGUF `get_rows` path unchanged. The native Vulkan `get_rows` implementation
+now has a deliberately narrow E1 10x5 fast path: it materializes one
+block-aligned 2D atlas, binds the affine table as an SSBO, and records a
+`texelFetch` lookup into ggml's command buffer. It is still a separate
+performance/correctness gate: a graph-device/materialization failure falls
+back to CPU rather than silently changing results.
+
+Initial discovery must compare a simple identity dimension order with a global
+dimension pair-map. Per-token permutation codebooks are deferred: they may
+improve compression, but require an additional scatter map for every lookup.
+The protected tier is likewise explicit rather than simply “hot”: special,
+frequent, outlier, and empirically sensitive tokens can stay native while the
+rest use E1/E2. This keeps the representation fallback-safe for arbitrary
+token input.
+
+Run the metadata/layout smoke after configuring the build:
+
+```bash
+cmake --build build-astc-neural-rank --target \
+  test-astc-vulkan-embedding-layout astc-vulkan-embedding-layout-smoke -j4
+ctest --test-dir build-astc-neural-rank -R test-astc-vulkan-embedding-layout --output-on-failure
+./build-astc-neural-rank/bin/astc-vulkan-embedding-layout-smoke
+./build-astc-neural-rank/bin/astc-vulkan-embedding-discovery-smoke
+./build-astc-neural-rank/bin/astc-vulkan-embedding-provider-smoke
+./build-astc-neural-rank/bin/astc-vulkan-embedding-real-discovery \
+  /home/prbm/models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf 256
+```
+
+The discovery smoke is intentionally a pre-codec structural proxy: it checks
+that a correlated global dimension pairing beats a negative-control pairing and
+that affine normalization is bounded. It does not claim ASTC quality. Real
+embedding promotion still requires a dedicated `get_rows` Vulkan path and model
+replay. The real-source tool is bounded by the optional second argument (the
+default is 64 token rows; `0` means the full vocabulary), reads the model's
+`token_embd.weight`, and runs exact CPU astcenc encode/decode on every sampled
+token-local tile. It reports both nominal payload rate and round-trip error;
+the reported MSE is an embedding-source diagnostic, not a model-quality gate.
+With an optional third argument the tool writes the complete E1 annex (`0`
+selects the full vocabulary):
+
+```bash
+./build-astc-neural-rank/bin/astc-vulkan-embedding-real-discovery \
+  /home/prbm/models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf 0 \
+  /home/prbm/models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf.astc-vulkan.d1-6x6-50m
+
+After a cache has an annex, the provider smoke can validate its complete
+payload and decode boundary without starting a model:
+
+```bash
+./build-astc-neural-rank/bin/astc-vulkan-embedding-provider-smoke \
+  /path/to/cache
+```
+```
+
+For a 256-row Qwen2.5-Coder Q4_K_M sample, all `7936/7936` E1 blocks and
+`5120/5120` E2 blocks were legal and decoded successfully. E1 10x5 measured
+`4.89156e-05` raw MSE (`0.16501` relative) at `2.56 bpw` and `496 B/token`;
+E2 8x5 measured `1.13916e-04` raw MSE (`0.38427` relative) at `1.60 bpw` and
+`320 B/token`. This is the first real source/codec gate only; it does not yet
+justify replacing the native embedding table.
+
+The approved full-vocabulary run is executed with the same single-threaded
+oracle context as the bounded quality gate. A parallel-context experiment was
+rejected: although all `4710016` blocks were legal, its round-trip error was
+two orders of magnitude worse than the bounded gate. The rejected temporary
+files were discarded. The approved full Qwen run completed with
+`151936` rows, `4710016/4710016` legal E1 blocks, raw MSE
+`4.9295886e-05` (`0.1649193` relative), maximum error `0.091021225`,
+payload `75360256` bytes and affine table `1215488` bytes. Its SHA-256 values
+are `291669d06254f129af60f54e71686aaef61ec426cb7afabf3d32da8d5d4b5c50`
+(payload), `30a65c7d51e4ab163181e7596e36d57ed4bc1bc368ee365b2c9ec3418abfc5d1`
+(affine), and `2fdaaf9994aff1661424c22d9f3700729baa1094a2208963a59638e0c2e8b04c`
+(descriptor). The annex is independent of the binary
+`manifest.astcv`; the ASTC-owned provider discovers it by its versioned
+filenames under the validated cache root.
+
+The GPU correctness smoke compares the same token IDs and complete embedding
+vectors against the CPU provider:
+
+```bash
+./build-astc-neural-rank/bin/astc-vulkan-embedding-gpu-smoke \
+  /path/to/cache
+```
+
+On the full Qwen annex it passed for five tokens × 1536 dimensions with
+`max_abs=7.45e-09` and `RMSE=6.84e-10`. This is a fixed-function
+decode/atlas gate, not a throughput claim; runtime timing and model quality
+remain separate gates.
+
+Full Qwen Vulkan replay was then run with the same 31-token prompt and 20
+generated tokens. Native Vulkan produced the same text as the verified
+overlay run. Across three requests, native generation was 4.595/4.553/4.538
+tokens/s and overlay generation was 4.609/4.481/4.543 tokens/s (medians
+4.553 vs 4.543 tokens/s, effectively equal within run noise). The first
+prompt pass was 16.19 tokens/s native versus 16.64 with overlay. The
+research-opt-in run that enabled the old experimental D1 matrix artifacts
+produced a visibly degraded answer; those artifacts are therefore not a
+valid embedding or production quality gate.
+
+The graph seam for that provider is now prepared. An embedding owner registers
+`llama_set_embedding_runtime_provider()` and is queried for
+`token_embd.weight`; only a positive readiness result replaces the normal
+GGUF-backed `ggml_get_rows` node. Otherwise the original path is preserved.
+An optional native-bind callback can register the lookup node with the
+ASTC-owned Vulkan external-op hook, so a future GPU `get_rows` implementation
+does not require changes to `ggml-vulkan`. The provider becomes ready only
+when a validated `embedding-10x5.astce` annex is present, and currently logs
+that it is using the CPU fallback.
+
 ### Lightweight scheduler profiles
 
 The artifact policy accepts `quality`, `balanced`, `compact`, `speed`, and
@@ -970,6 +1109,42 @@ to select policy, redirect a tensor, or replace payload validation.
 
 ### Self-contained compiled model (experimental)
 
+#### Bootstrap form: ASTCCM v2
+
+`compiled-pack --compiled-format bootstrap` emits the deployable form of a
+validated overlay. Unlike the original hybrid container it does **not** copy a
+complete GGUF alongside ASTC. It contains the canonical GGUF prefix through
+its data offset (architecture, tokenizer, KVs and tensor descriptors), an
+exhaustive native-tensor table, native bytes only for tensors without a chosen
+ASTC artifact, and the existing manifest/payload/layout/scale/pair-map/evidence
+sections unchanged.
+
+When the published cache contains the token-local E1 10x5 annex,
+`embedding-10x5.astce`, its ASTC payload and affine table are carried as three
+additional immutable sections. `token_embd.weight` is then classified as ASTC
+in the exhaustive table and has no native duplicate. The E1 provider consumes
+these bytes through the same in-memory cache-source interface as D1/D2.
+
+The v2 source uses llama.cpp's public `llama_model_init_from_user()` API. The
+ordinary GGUF parser therefore continues to own model metadata semantics; one
+small generic data callback fills the native residuals while the existing ASTC
+overlay owns selected D1/D2/E1 records. This introduces neither an ASTC
+`ggml_type` nor a ggml-vulkan fork.
+
+```bash
+build-astc-neural-rank/bin/astc-vulkan-cache compiled-pack \
+  --model /path/to/model.gguf --cache /path/to/cache \
+  --compiled-format bootstrap --output /path/to/model.astccm
+build-astc-neural-rank/bin/llama-cli --compiled-model /path/to/model.astccm \
+  --astc-profile compact --astc-research -p 'Hello'
+```
+
+V2 validates native ranges/checksums and requires every logical tensor to be
+exactly one of native or ASTC. The current ggml loader still creates ordinary
+placeholder buffers for ASTC entries before the provider binds them; removing
+those allocations is a later memory-owner optimization, not a reason to retain
+duplicate native payloads.
+
 `catalog.astcc` is only an index. When the original GGUF and sidecar must be
 distributed as one unit, create an experimental hybrid container:
 
@@ -1225,3 +1400,6 @@ standard ASTC payload format.  This boundary gives us three useful properties:
 - GPTVQ for block/vector target regeneration.
 - PV-Tuning (arXiv:2405.14852) for codec-aware low-bit optimization.
 - YAQA for two-sided, sensitivity-aware quantization objectives.
+- Guan et al., [*Post-Training 4-bit Quantization on Embedding Tables*](https://arxiv.org/abs/1911.02079), for row-wise affine quantization of embedding rows.
+- Tamura et al., [*Frequency-aware Partial Sparse Coding of Embeddings*](https://aclanthology.org/2024.conll-1.29/), for protecting frequent/common embeddings while compressing the remainder.
+- Arm, [*ASTC Format Overview*](https://github.com/ARM-software/astc-encoder/blob/main/Docs/FormatOverview.md), for the fixed 128-bit ASTC block and random texel-access model.

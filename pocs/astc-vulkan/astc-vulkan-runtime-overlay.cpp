@@ -13,7 +13,7 @@ void astc_vulkan_runtime_overlay::reset() {
 bool astc_vulkan_runtime_overlay::prepare(
         const astc_vulkan_runtime_overlay_options & options, std::string & error) {
     reset();
-    if (options.source_model_path.empty() || options.runtime_model_path.empty()) {
+    if (!options.cache_source && (options.source_model_path.empty() || options.runtime_model_path.empty())) {
         error = "ASTC runtime overlay requires source and runtime model paths";
         return false;
     }
@@ -27,7 +27,7 @@ bool astc_vulkan_runtime_overlay::prepare(
     }
 
     if (options.cache_source) {
-        if (options.source_model_path != options.runtime_model_path) {
+        if (!options.runtime_model_path.empty() && options.source_model_path != options.runtime_model_path) {
             error = "compiled ASTC cache source currently requires the embedded GGUF as runtime base";
             return false;
         }
@@ -48,6 +48,22 @@ bool astc_vulkan_runtime_overlay::prepare(
         return false;
     }
     catalog_.plan.residency = resident_plan.residency;
+
+    if (options.require_all_artifacts) {
+        for (const auto & entry : catalog_.plan.entries) {
+            if (entry.use_native_fallback) {
+                error = "bootstrap ASTC container policy rejected an artifact: " + entry.tensor_name;
+                reset();
+                return false;
+            }
+        }
+        if (catalog_.plan.residency.requires_streaming ||
+            catalog_.plan.residency.resident_items.size() != catalog_.plan.entries.size()) {
+            error = "bootstrap ASTC container does not fit the required all-resident policy";
+            reset();
+            return false;
+        }
+    }
 
     std::vector<astc_vulkan_model_cache_storage_page> pages;
     if (!astc_vulkan_model_cache_make_storage_pages(

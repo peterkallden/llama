@@ -484,13 +484,17 @@ bool astc_vulkan_cache_validate_source(
         error = "ASTC cache source is null";
         return false;
     }
-    if (model_path.empty()) {
-        error = "ASTC cache source requires a model path";
-        return false;
-    }
-
     std::string model_hash;
-    if (!astc_vulkan_sha256_file_hex(model_path, model_hash, error)) return false;
+    if (model_path.empty()) {
+        // A bootstrap .astccm has no full GGUF file by design. Its container
+        // checksum plus the caller-supplied source fingerprint are the
+        // identity contract in this branch.
+        if (expected_source_sha256.empty()) {
+            error = "ASTC bootstrap cache source requires a source fingerprint";
+            return false;
+        }
+        model_hash = expected_source_sha256;
+    } else if (!astc_vulkan_sha256_file_hex(model_path, model_hash, error)) return false;
     if (!expected_source_sha256.empty() && model_hash != expected_source_sha256) {
         error = "embedded ASTC cache source does not match the embedded GGUF";
         return false;
