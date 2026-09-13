@@ -10024,6 +10024,33 @@ has neither loss/logit measurements nor adversarial, rare-token, or long-context
 coverage. Those belong to the next E1 evidence gate, rather than being inferred
 from structural decode or a single repeated request.
 
+### E1 expanded deterministic prompt follow-up (2026-09-13)
+
+The runtime gate was extended with four additional deterministic Qwen prompts,
+including JSON-format adherence, embedding/ASTC terminology, and a 96-token
+long-form Vulkan explanation. Both runs used the same Q4_K_M model, Vulkan
+backend, seed `1234`, temperature `0`, and the strict E1 ASTCCM container for
+the overlay side. The observed prompt/generation rates (native/E1) were:
+
+| Prompt | Native answer vs E1 answer | Prompt t/s | Generation t/s |
+|---|---|---:|---:|
+| `Summarize why Vulkan uses command buffers in two concise sentences.` | Both correct; E1 is shorter and omits the efficiency/flexibility detail. | 9.6 / 10.4 | 3.2 / 3.1 |
+| `Return JSON with exactly two keys: name and count. Use apples and 3.` | Byte-identical JSON: `{ "name": "apples", "count": 3 }`. | 11.3 / 11.1 | 3.2 / 3.2 |
+| `Explain row-wise embedding quantization and ASTC lookup in four concise sentences.` | Both give two correct sentences; wording differs and both under-deliver the requested four sentences. | 12.2 / 12.0 | 3.6 / 3.6 |
+| 96-token Vulkan dispatch explanation | Both are coherent but truncated by the token cap; E1 reaches synchronization wording, native reaches a buffer-readback phrase. | 14.5 / 14.1 | 3.4 / 3.3 |
+
+Together with the earlier replay, fact, and Python prompts this gives seven
+deterministic prompt pairs. The E1 counters continued to report zero CPU
+embedding dispatches (the long run reported 97 native Vulkan dispatches), so
+the comparisons exercised the intended GPU `get_rows` path. The differences
+are stylistic/length-related rather than malformed output, and throughput is
+within normal run-to-run noise.
+
+**E1 status:** runtime-validated and suitable for explicit research/experimental
+selection. A production-quality promotion is still pending a model-level
+logits/loss gate: the existing matrix replay tool does not consume an E1
+`.astccm` annex, and `llama-perplexity` has no compiled-model input path yet.
+
 ## Strict ASTCCM policy clarification
 
 D2 8x5 is a legal standard ASTC format. Its CPU and Vulkan decode paths,

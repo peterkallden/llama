@@ -446,7 +446,7 @@ one F32 scale per output row and applies it after the reduction. Scheduler
 selection therefore chooses a prevalidated artifact per tensor – it never
 re-runs an encoder or guesses a codec configuration during inference.
 
-### E1/E2: token-local embedding lookup (experimental groundwork)
+### E1/E2: token-local embedding lookup (E1 runtime-validated; model gate pending)
 
 `token_embd.weight` is not on the matrix provider path. A matrix layout that
 puts several token rows in the same ASTC block is therefore a poor lookup
