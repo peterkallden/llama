@@ -289,16 +289,29 @@ positive and negative evidence (`HELPED`, `HARMED`, `NEUTRAL`). `UNKNOWN` is
 never eligible for a learning update. A successful repair by itself is not
 treated as proof that a future overlay caused the improvement.
 
-### 4C. Capture, basis and gating — later
+### 4C. Capture and bounded basis — implemented
 
-After 4A/4B provide useful evidence, add bounded activation capture and derive
-repair deltas or clustered basis directions. Keep `WHAT` (basis) separate from
-`WHEN/HOW MUCH` (recognition and delta memory). Counterfactual replay must
-compare overlay and no-op on the same fixture before any candidate can be
-promoted. The objective is minimum intervention, repeatable verified lift and
-minimum collateral change.
+`flydelta-basis.*` accepts a bounded, host-captured and redacted repair delta.
+The builder normalizes and clusters similar directions. `HELPED` may create or
+update a direction; `HARMED` and `NEUTRAL` can only add evidence to an existing
+similar direction; `UNKNOWN` is a no-op. This makes `WHAT` (basis) separate from
+`WHEN/HOW MUCH` (recognition and delta memory).
 
-### 4D. Optional dynamic hook
+The component still does not capture activations or run inference. The host
+must produce a valid capture manifest and counterfactual report first. The
+objective remains minimum intervention, repeatable verified lift and minimum
+collateral change.
+
+### 4D. Explicit gating and promotion — next
+
+Add a small host-owned no-op gate for explicit opt-in, approved candidate
+status, familiarity/novelty thresholds and bounded scale. A low-confidence or
+unknown context must return no-op, not an error that invites fallback
+activation. Only after that gate should the existing static cvec seam receive
+data. Dynamic capture, server wiring and automatic promotion remain later
+work.
+
+### 5. Optional dynamic hook
 
 Only propose an upstream-quality llama.cpp hook if the evidence warrants it.
 It needs backend behavior, tensor lifetime, threading, architecture coverage,
