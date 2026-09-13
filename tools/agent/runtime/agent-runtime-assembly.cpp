@@ -23,6 +23,10 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.adaptation_config = std::move(build_config.adaptation_config);
     config.adaptation_transaction_backend = std::move(build_config.adaptation_transaction_backend);
     config.adaptation_transaction_path = std::move(build_config.adaptation_transaction_path);
+    config.enable_flydelta_capture_candidates = build_config.enable_flydelta_capture_candidates;
+    config.flydelta_model_profile_fingerprint = std::move(build_config.flydelta_model_profile_fingerprint);
+    config.flydelta_capture_layout_revision = std::move(build_config.flydelta_capture_layout_revision);
+    config.flydelta_max_capture_candidates = build_config.flydelta_max_capture_candidates;
     return config;
 }
 
@@ -72,8 +76,16 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
             store_error);
         if (!assembly.adaptation_store) assembly.adaptation_error = std::move(store_error);
         if (assembly.adaptation_store) {
+            auto adaptation_config = runtime_config.adaptation_config;
+            if (runtime_config.enable_flydelta_capture_candidates) {
+                assembly.flydelta_capture_collector = std::make_unique<common_flydelta_capture_candidate_collector>(
+                    runtime_config.flydelta_model_profile_fingerprint,
+                    runtime_config.flydelta_capture_layout_revision,
+                    runtime_config.flydelta_max_capture_candidates);
+                adaptation_config.source_observer = assembly.flydelta_capture_collector->source_observer();
+            }
             assembly.adaptation_observer = std::make_unique<common_learning_transaction_observer>(
-                *assembly.adaptation_store, runtime_config.adaptation_config);
+                *assembly.adaptation_store, std::move(adaptation_config));
         }
     }
 

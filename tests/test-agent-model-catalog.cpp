@@ -28,6 +28,9 @@ const char * kCatalog = R"json({
       "adapters": [
         {"adapter_id": "agent-correction-v1", "scale": 0.75}
       ],
+      "sidebands": [
+        {"sideband_id": "flydelta://sideband/tool-repair-v1", "scale": 0.5}
+      ],
       "context_size": 4096,
       "load": "resident"
     }
@@ -60,6 +63,8 @@ bool test_parse_and_resolve() {
         profile, error)) return false;
     if (!(profile.id == "agent-default" && profile.base_model_id == "small" &&
         profile.context_size_tokens == 4096 && profile.adapters.size() == 1 &&
+        profile.sidebands.size() == 1 &&
+        profile.sidebands.front().sideband_id == "flydelta://sideband/tool-repair-v1" &&
         profile.load_policy == "resident")) return false;
 
     common_agent_model_selection selection;
@@ -68,7 +73,7 @@ bool test_parse_and_resolve() {
         selection.base_model_id == "small" &&
         selection.path == (std::filesystem::path("/models") / "qwen.gguf").lexically_normal().string() &&
         selection.mmproj.empty() && selection.context_size_tokens == 4096 &&
-        selection.adapters.size() == 1;
+        selection.adapters.size() == 1 && selection.sidebands.size() == 1;
 }
 
 bool test_rejects_invalid_catalogs() {

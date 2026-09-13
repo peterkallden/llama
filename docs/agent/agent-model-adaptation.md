@@ -229,6 +229,17 @@ ledger append or the user-facing turn. The callback is a hand-off point only;
 it does not create a comparison relation, training pair, basis update or
 active adapter.
 
+FlyDelta uses this same opt-in boundary. Set
+`enable_flydelta_capture_candidates` only together with
+`enable_adaptation_capture=true` and
+`adaptation_config.collection_allowed=true`, then provide the host-owned
+`flydelta_model_profile_fingerprint` and
+`flydelta_capture_layout_revision`. The collector queues only tool-repair
+matches that already contain both failure/recovery evidence references. It
+does not turn reflection, research, user correction or an ordinary successful
+turn into a training pair. A later capture/evaluation worker must create the
+immutable manifest and decide whether the candidate is useful.
+
 ## End-to-end process and provider convergence
 
 Native, MCP, and OpenAPI tools enter adaptation through the same host-owned

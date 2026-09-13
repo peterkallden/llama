@@ -71,6 +71,21 @@ bool parse_profile(const std::string & id, const json & value,
         }
         profile.adapters.push_back(std::move(adapter));
     }
+    const auto sidebands = value.value("sidebands", json::array());
+    if (!sidebands.is_array()) { error = "model profile sidebands must be an array: " + id; return false; }
+    for (const auto & item : sidebands) {
+        common_agent_flydelta_sideband_overlay sideband;
+        if (item.is_string()) {
+            sideband.sideband_id = item.get<std::string>();
+        } else if (item.is_object() && item.contains("sideband_id") && item.at("sideband_id").is_string()) {
+            sideband.sideband_id = item.at("sideband_id").get<std::string>();
+            sideband.scale = item.value("scale", 1.0);
+        } else {
+            error = "model profile FlyDelta sideband is invalid: " + id;
+            return false;
+        }
+        profile.sidebands.push_back(std::move(sideband));
+    }
     if (!bounded(id) || !bounded(profile.base_model_id) ||
             profile.context_size_tokens == 0 ||
             profile.context_size_tokens > 1024 * 1024 ||
@@ -85,6 +100,19 @@ bool parse_profile(const std::string & id, const json & value,
                 adapter.scale <= 0.0 || adapter.scale > 4.0 ||
                 !ids.insert(adapter.adapter_id).second) {
             error = "model profile adapter overlay is invalid or repeated: " + id;
+            return false;
+        }
+    }
+    if (profile.sidebands.size() > 4) {
+        error = "model profile has too many FlyDelta sidebands: " + id;
+        return false;
+    }
+    ids.clear();
+    for (const auto & sideband : profile.sidebands) {
+        if (!bounded(sideband.sideband_id) || !std::isfinite(sideband.scale) ||
+                sideband.scale <= 0.0 || sideband.scale > 4.0 ||
+                !ids.insert(sideband.sideband_id).second) {
+            error = "model profile FlyDelta sideband is invalid or repeated: " + id;
             return false;
         }
     }
@@ -162,9 +190,14 @@ std::string common_agent_model_catalog_to_json(
         for (const auto & adapter : entry.second.adapters) {
             adapters.push_back({{"adapter_id", adapter.adapter_id}, {"scale", adapter.scale}});
         }
+        json sidebands = json::array();
+        for (const auto & sideband : entry.second.sidebands) {
+            sidebands.push_back({{"sideband_id", sideband.sideband_id}, {"scale", sideband.scale}});
+        }
         profiles[entry.first] = {
             {"base", entry.second.base_model_id},
             {"adapters", adapters},
+            {"sidebands", sidebands},
             {"context_size", entry.second.context_size_tokens},
             {"load", entry.second.load_policy},
         };
@@ -249,6 +282,7 @@ bool common_agent_model_catalog_make_profile(
     profile.load_policy = selected->second.load_policy.empty()
         ? base->second.load_policy : selected->second.load_policy;
     profile.adapters = selected->second.adapters;
+    profile.sidebands = selected->second.sidebands;
     if (!common_agent_validate_model_profile(profile, error)) return false;
     return true;
 }
@@ -282,6 +316,7 @@ bool common_agent_model_catalog_resolve_profile(
     selection.load_policy = selected->second.load_policy.empty()
         ? base->second.load_policy : selected->second.load_policy;
     selection.adapters = selected->second.adapters;
+    selection.sidebands = selected->second.sidebands;
     error.clear();
     return true;
 }
@@ -298,6 +333,9 @@ std::string common_agent_model_selection_cache_key(
         << selection.load_policy << '\n';
     for (const auto & adapter : selection.adapters) {
         key << adapter.adapter_id << ':' << adapter.scale << '\n';
+    }
+    for (const auto & sideband : selection.sidebands) {
+        key << "flydelta:" << sideband.sideband_id << ':' << sideband.scale << '\n';
     }
     return key.str();
 }

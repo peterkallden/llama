@@ -14,6 +14,13 @@ struct common_agent_adapter_overlay {
     double scale = 1.0;
 };
 
+// A profile may name a host-resolved FlyDelta sideband.  This is identity and
+// policy metadata only; loading and activation remain host responsibilities.
+struct common_agent_flydelta_sideband_overlay {
+    std::string sideband_id;
+    double scale = 1.0;
+};
+
 struct common_agent_model_profile {
     int schema_version = 1;
     std::string id;
@@ -24,6 +31,7 @@ struct common_agent_model_profile {
     size_t context_size_tokens = 0;
     std::string load_policy = "lazy";
     std::vector<common_agent_adapter_overlay> adapters;
+    std::vector<common_agent_flydelta_sideband_overlay> sidebands;
 };
 
 bool common_agent_validate_model_profile(

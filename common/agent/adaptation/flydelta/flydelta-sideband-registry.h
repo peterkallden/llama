@@ -1,0 +1,66 @@
+#pragma once
+
+#include "agent/adaptation/flydelta/flydelta-contracts.h"
+#include "agent/runtime/model-profile.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <map>
+#include <string>
+
+enum class common_flydelta_sideband_status {
+    candidate,
+    canary,
+    active,
+    retired,
+    rejected,
+};
+const char * common_flydelta_sideband_status_name(common_flydelta_sideband_status status);
+
+// Registry metadata is separate from the activation payload. The host
+// verifies the artifact hash and identity here, then loads the payload and
+// passes it through common_flydelta_prepare_activation().
+struct common_flydelta_sideband_manifest {
+    int schema_version = 1;
+    std::string id;
+    common_flydelta_sideband_status status = common_flydelta_sideband_status::candidate;
+    std::string artifact_path;
+    std::string artifact_hash;
+    common_flydelta_compatibility compatibility;
+    size_t model_n_embd = 0;
+    size_t model_n_layers = 0;
+    int32_t il_start = 1;
+    int32_t il_end = 0;
+    std::string evaluation_revision;
+    bool evaluation_passed = false;
+};
+
+bool common_flydelta_sideband_manifest_validate(
+        const common_flydelta_sideband_manifest & manifest,
+        std::string & error);
+
+class common_flydelta_sideband_registry {
+public:
+    bool admit(const common_flydelta_sideband_manifest & manifest, std::string & error);
+    bool stage_canary(const std::string & id, const std::string & evaluation_revision,
+            std::string & error);
+    bool activate(const std::string & id, std::string & error);
+    bool retire(const std::string & id, std::string & error);
+
+    // Resolve only an explicitly named sideband from a profile. The registry
+    // never guesses between multiple sidebands and never reads artifact data.
+    bool resolve(
+            const common_agent_model_profile & profile,
+            const std::string & sideband_id,
+            const common_flydelta_compatibility & expected,
+            size_t model_n_embd,
+            size_t model_n_layers,
+            common_flydelta_sideband_manifest & manifest,
+            double & profile_scale,
+            std::string & error) const;
+
+    const std::map<std::string, common_flydelta_sideband_manifest> & list() const { return manifests; }
+
+private:
+    std::map<std::string, common_flydelta_sideband_manifest> manifests;
+};

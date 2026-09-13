@@ -3843,6 +3843,16 @@ The new host-config slice is intentionally modest. It currently models:
 - tool profile, repository root, and a list of configured MCP providers
 - a few daemon-style limits such as queue capacity and max turn seconds
 
+Adaptation capture remains explicitly opt-in. `enable_adaptation_capture`
+enables the host learning transaction observer, while
+`adaptation_config.collection_allowed` is the collection permission. FlyDelta
+capture candidates use those same switches and add
+`enable_flydelta_capture_candidates`,
+`flydelta_model_profile_fingerprint`,
+`flydelta_capture_layout_revision`, and a bounded maximum candidate count.
+The runtime only forwards host-visible tool-repair evidence to that queue; it
+does not capture hidden states, train, or activate a sideband inside a turn.
+
 In the current slice, the daemon and the real MCP stdio server can both carry a list of enabled stdio MCP subprocess providers from that host-config path into the provider/view seam. The daemon also supports outbound Streamable HTTP providers and inbound Streamable HTTP hosting. Outbound stdio and HTTP tool calls consume the host-owned cancellation/deadline state; broader streaming hardening remains follow-up work.
 
 A thin resident-host wrapper now exists above this layer. It owns a runtime session and can run multiple turns against the same host contract without forcing session reset after each turn. That keeps the resident path small: it reuses the same runtime host and turn request instead of introducing a second agent loop.

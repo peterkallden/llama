@@ -2,11 +2,11 @@
 
 ## Status and purpose
 
-**Status: model-free experiment, evidence, basis and gate contracts are
-implemented; runtime capture/steering is not implemented.** FlyDelta is not an
-active model capability or a replacement for the current model-adaptation
-path. It must not be activated until it has passed explicit evaluation and
-promotion gates.
+**Status: V0 host seam and opt-in CLI experiment are implemented; dynamic
+hidden-state capture/injection is not implemented.** FlyDelta is not enabled by
+default and is not a replacement for the current model-adaptation path. It
+must not be activated until it has passed explicit evaluation and promotion
+gates.
 
 FlyDelta is a proposed, small, host-controlled associative sideband for a
 frozen language model. It records only host-certified experience and can
@@ -41,10 +41,31 @@ recognition memory, bounded delta memory, versioned JSON artifact and
 compatibility checks, plus host-certified candidate, capture-manifest and
 sideband-evaluation contracts. These are contract/library slices only: no
 daemon, profile or server inference path loads or activates a FlyDelta artifact
-yet. The CLI generation path now accepts a host-prepared activation snapshot
-on the per-generation request and can apply its cvec to a fresh context; it is
-disabled by default and is not connected to configuration or registry
-resolution.
+yet. The CLI generation path accepts a host-prepared activation snapshot on
+the per-generation request and can apply its cvec to a fresh context. The
+profile/catalog contract can declare sideband identities, and the host-only
+registry resolves an explicitly named, active sideband after exact
+identity/layout checks. It still does not load artifact files or select a
+sideband on behalf of the model.
+
+The runtime assembly has an opt-in capture-candidate handoff. It reuses the
+existing `enable_adaptation_capture` and
+`adaptation_config.collection_allowed` switches and adds:
+
+```text
+enable_flydelta_capture_candidates
+flydelta_model_profile_fingerprint
+flydelta_capture_layout_revision
+flydelta_max_capture_candidates
+```
+
+Only a host-discovered `candidate_ready` source (currently a tool failure plus
+a successful recovery with evidence references) is queued. The handoff
+contains transaction/evidence IDs and fingerprints, not prompts, tool output
+or hidden-state tensors. Reflection, research and user-correction matches
+remain non-ready until a host supplies an explicit relation and verifier. The
+collector is bounded, idempotent and best-effort; it cannot make the active
+turn fail.
 
 The adaptation boundary now also has one shared, reference-only evidence
 contract (`common_adaptation_evidence`). It is a view over the existing
@@ -205,6 +226,16 @@ The artifact must contain neither credentials nor unbounded raw conversation
 content. Import must reuse the established containment, symlink, byte-bound,
 hash and atomic-write discipline.
 
+The implemented `common_flydelta_sideband_registry` is metadata-only. Admission
+validates the artifact hash, model/layout identity and dimensions. A manifest
+must move through `candidate -> canary -> active`; activation requires a passed
+evaluation. Profile resolution is explicit and rejects missing profile entries,
+inactive sidebands, mismatched model/tokenizer/template/architecture/layout
+identity, or mismatched dimensions. The caller then loads and verifies the
+referenced artifact and passes its bounded basis payload to
+`common_flydelta_prepare_activation()`. There is no implicit “first sideband”
+selection.
+
 ### Model profile and residency: resolve immutable metadata
 
 `common_agent_model_profile` currently describes a base model plus LoRA
@@ -218,18 +249,17 @@ profile may conceptually contain:
   "base_model_id": "qwen-agent",
   "adapters": [{ "adapter_id": "agent-lora-v2", "scale": 0.8 }],
   "sidebands": [{
-    "id": "agent-flydelta-v1",
-    "kind": "flydelta",
-    "mode": "canary",
-    "max_scale": 0.12
+    "sideband_id": "flydelta://sideband/tool-repair-v1",
+    "scale": 0.12
   }]
 }
 ```
 
-This is illustrative, not a current configuration contract. Profile validation
-resolves immutable artifact metadata. Per-turn coefficients and the mutable
-inference context never belong in the resident model handle. The residency
-cache key must include sideband revision/hash and mode.
+This is the profile/catalog contract for identity and scale; it is not an
+artifact-loading configuration by itself. Per-turn coefficients and the
+mutable inference context never belong in the resident model handle. The
+residency cache key includes declared sideband identity and scale; the registry
+additionally checks the resolved artifact hash and compatibility metadata.
 
 ### Current llama.cpp control-vector seam: static V0 is viable
 
@@ -472,11 +502,27 @@ scripts/test-qwen-nomic-agent.sh
 ```
 
 That smoke validates ordinary Qwen generation together with Nomic query
-embedding. It is not a FlyDelta activation test because artifact resolution,
-real activation capture, automatic registry selection and model-side
-intervention are intentionally not wired yet. A full `llama-agent` rebuild is
-required when shared agent/runtime libraries have changed; otherwise an
-incremental executable may be out of sync with those libraries.
+embedding. It remains separate from FlyDelta. The optional
+`llama-agent-flydelta-model-ab-smoke` performs a real CLI A/B generation with
+the same model, once without and once with a host-prepared static V0 cvec. It
+accepts `--model` or `LLAMA_AGENT_MODEL` and limits the documented local
+example to three threads:
+
+```bash
+LD_LIBRARY_PATH=build-agent-sqlite/bin \
+LLAMA_AGENT_MODEL=/path/to/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf \
+LLAMA_AGENT_THREADS=3 \
+build-agent-sqlite/bin/llama-agent-flydelta-model-ab-smoke --threads 3
+```
+
+The smoke verifies both arms with a host-owned response check and reports
+`outcome=neutral` when both pass. That is intentional: without a baseline
+failure and a counterfactual lift, it must not claim that the overlay helped.
+The A/B smoke proves model loading, registry resolution, cvec preparation and
+fresh-context application; it does not capture hidden states or train a model.
+A full `llama-agent` rebuild is required when shared agent/runtime libraries
+have changed; otherwise an incremental executable may be out of sync with
+those libraries.
 
 ### 5. Optional dynamic hook
 

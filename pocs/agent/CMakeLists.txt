@@ -974,6 +974,21 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Optional real-model FlyDelta A/B smoke. It is CTest-compatible but skips
+# when LLAMA_AGENT_MODEL is not supplied, like the existing model smokes.
+set(TARGET llama-agent-flydelta-model-ab-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-model-ab-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-tool-provider-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-tool-provider-smoke.cpp
@@ -1991,6 +2006,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-adaptation-e2e-smoke
     llama-agent-model-adaptation-smoke
     llama-agent-flydelta-tool-repair-smoke
+    llama-agent-flydelta-model-ab-smoke
     llama-agent-resident-smoke
     llama-agent-model-residency-smoke
     llama-agent-two-model-smoke
@@ -2058,6 +2074,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-adaptation-e2e-smoke
     llama-agent-model-adaptation-smoke
     llama-agent-flydelta-tool-repair-smoke
+    llama-agent-flydelta-model-ab-smoke
     llama-agent-resident-smoke
     llama-agent-model-residency-smoke
     llama-agent-tool-provider-smoke
@@ -2159,6 +2176,12 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-flydelta-tool-repair-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-tool-repair-smoke>)
     set_property(TEST llama-agent-flydelta-tool-repair-ctest PROPERTY LABELS agent-adaptation)
+
+    add_test(NAME llama-agent-flydelta-model-ab-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-model-ab-smoke>)
+    set_property(TEST llama-agent-flydelta-model-ab-ctest PROPERTY LABELS agent-adaptation)
+    set_tests_properties(llama-agent-flydelta-model-ab-ctest PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 180)
 
     add_test(NAME llama-agent-tool-runtime-ctest
         COMMAND $<TARGET_FILE:llama-agent-tool-runtime-smoke>)

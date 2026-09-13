@@ -1,0 +1,75 @@
+#include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-sideband-registry.h"
+
+#include <string>
+
+#define CHECK(condition) do { if (!(condition)) return 1; } while (false)
+
+static common_flydelta_sideband_manifest manifest() {
+    common_flydelta_sideband_manifest value;
+    value.id = "flydelta://sideband/tool-repair-v1";
+    value.artifact_path = "sidebands/tool-repair-v1.json";
+    value.artifact_hash = "sha256:artifact-v1";
+    value.compatibility.base_model_fingerprint = "sha256:base";
+    value.compatibility.tokenizer_fingerprint = "sha256:tokenizer";
+    value.compatibility.template_fingerprint = "sha256:template";
+    value.compatibility.architecture = "qwen2";
+    value.compatibility.inference_layout_revision = "layout:cvec-v1";
+    value.model_n_embd = 4;
+    value.model_n_layers = 3;
+    value.il_end = 2;
+    return value;
+}
+
+static common_agent_model_profile profile() {
+    common_agent_model_profile value;
+    value.id = "agent-default";
+    value.base_model_id = "qwen";
+    value.base_model_fingerprint = "sha256:base";
+    value.tokenizer_fingerprint = "sha256:tokenizer";
+    value.chat_template_fingerprint = "sha256:template";
+    value.context_size_tokens = 4096;
+    value.sidebands.push_back({"flydelta://sideband/tool-repair-v1", 0.5});
+    return value;
+}
+
+int main() {
+    std::string error;
+    auto sideband = manifest();
+    common_flydelta_sideband_registry registry;
+    CHECK(registry.admit(sideband, error));
+    CHECK(!registry.activate(sideband.id, error));
+    CHECK(registry.stage_canary(sideband.id, "eval:tool-repair-v1", error));
+    CHECK(registry.activate(sideband.id, error));
+
+    common_flydelta_compatibility expected = sideband.compatibility;
+    common_flydelta_sideband_manifest resolved;
+    double scale = 0.0;
+    CHECK(registry.resolve(profile(), sideband.id, expected, 4, 3, resolved, scale, error));
+    CHECK(resolved.id == sideband.id && scale == 0.5 &&
+            common_flydelta_sideband_status_name(resolved.status) == std::string("active"));
+
+    expected.base_model_fingerprint = "sha256:other";
+    CHECK(!registry.resolve(profile(), sideband.id, expected, 4, 3, resolved, scale, error));
+    CHECK(error.find("base model") != std::string::npos);
+
+    common_flydelta_capture_candidate_collector collector(
+        "profile:qwen", "layout:cvec-v1", 2);
+    common_adaptation_evidence_source_match not_ready;
+    not_ready.source = common_adaptation_evidence_source::reflection_alternative;
+    common_learning_transaction transaction;
+    transaction.id = "learning://transaction/reflection";
+    CHECK(collector.observe(not_ready, transaction, error));
+    CHECK(collector.candidates().empty());
+
+    common_adaptation_evidence_source_match ready;
+    ready.source = common_adaptation_evidence_source::tool_repair;
+    ready.candidate_ready = true;
+    ready.evidence_refs = {"evidence:failed", "evidence:repaired"};
+    CHECK(collector.observe(ready, transaction, error));
+    CHECK(collector.candidates().size() == 1);
+    CHECK(collector.candidates().front().model_profile_fingerprint == "profile:qwen");
+    CHECK(collector.observe(ready, transaction, error));
+    CHECK(collector.candidates().size() == 1);
+    return 0;
+}

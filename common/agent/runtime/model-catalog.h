@@ -21,6 +21,7 @@ struct common_agent_model_base_spec {
 struct common_agent_model_profile_spec {
     std::string base_model_id;
     std::vector<common_agent_adapter_overlay> adapters;
+    std::vector<common_agent_flydelta_sideband_overlay> sidebands;
     size_t context_size_tokens = 0;
     // Empty means inherit the base model's load policy.
     std::string load_policy;
@@ -48,6 +49,7 @@ struct common_agent_model_selection {
     size_t context_size_tokens = 0;
     std::string load_policy;
     std::vector<common_agent_adapter_overlay> adapters;
+    std::vector<common_agent_flydelta_sideband_overlay> sidebands;
 };
 
 bool common_agent_validate_model_catalog(
