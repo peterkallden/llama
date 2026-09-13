@@ -2,10 +2,10 @@
 
 ## Status and purpose
 
-**Status: design and seam analysis only.** FlyDelta is not implemented. It is
-not a replacement for the current model-adaptation path and must not be
-advertised as a model capability until it has passed explicit evaluation and
-promotion gates.
+**Status: initial model-free contract slices implemented; runtime steering is
+not implemented.** FlyDelta is not an active model capability or a replacement
+for the current model-adaptation path. It must not be activated until it has
+passed explicit evaluation and promotion gates.
 
 FlyDelta is a proposed, small, host-controlled associative sideband for a
 frozen language model. It records only host-certified experience and can
@@ -34,6 +34,12 @@ The existing transaction, corpus, trainer, evaluator and LoRA-registry route
 is described in [Agent model adaptation](agent-model-adaptation.md). FlyDelta
 reuses its evidence and promotion principles but is not a LoRA adapter or a
 training-corpus format.
+
+The current implementation contains the model-free sparse encoder,
+recognition memory, bounded delta memory, versioned JSON artifact and
+compatibility checks, plus host-certified candidate, capture-manifest and
+sideband-evaluation contracts. These are contract/library slices only: no
+daemon, CLI or server inference path loads or applies a FlyDelta artifact yet.
 
 ## Intended mechanism
 
@@ -217,7 +223,7 @@ bounded results.
 
 ## Recommended implementation sweeps
 
-### 1. Model-free associative core
+### 1. Model-free associative core — implemented
 
 Add `common/agent/adaptation/flydelta/` with a deterministic sparse encoder,
 bounded delta/recognition memory, novelty scorer, artifact codec and strict
@@ -225,7 +231,7 @@ compatibility validator. Use synthetic vectors only. Tests cover determinism,
 tie breaking, update/prediction, clipping, novelty no-op, tampering and atomic
 candidate snapshots.
 
-### 2. Host-certified candidate and evaluation contracts
+### 2. Host-certified candidate and evaluation contracts — implemented
 
 Build sideband candidates from qualified existing transactions and separate
 capture manifests. Prove with fixtures that host-contract, policy, resource and

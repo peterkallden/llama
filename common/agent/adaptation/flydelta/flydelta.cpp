@@ -234,6 +234,9 @@ bool common_flydelta_delta_memory::predict(
             output[target] += weights_[target * config_.expansion_dim + code.indices[i]] * code.values[i];
         }
     }
+    for (float & value : output) {
+        value = std::max(-config_.max_abs_weight, std::min(config_.max_abs_weight, value));
+    }
     return true;
 }
 

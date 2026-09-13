@@ -1,7 +1,8 @@
 #include "agent/adaptation/flydelta/flydelta.h"
 
-#include <cassert>
 #include <cmath>
+
+#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
 static common_flydelta_encoder_config encoder_config() {
     common_flydelta_encoder_config config;
@@ -35,41 +36,41 @@ int main() {
     common_flydelta_encoder encoder(encoder_config());
     common_flydelta_sparse_code first;
     common_flydelta_sparse_code second;
-    assert(encoder.encode({1.0f, 0.0f, 0.5f, -0.25f}, first, error));
-    assert(encoder.encode({1.0f, 0.0f, 0.5f, -0.25f}, second, error));
-    assert(first.indices == second.indices);
-    assert(first.values == second.values);
-    assert(first.indices.size() == 2);
-    assert(!encoder.encode({1.0f}, second, error));
+    CHECK(encoder.encode({1.0f, 0.0f, 0.5f, -0.25f}, first, error));
+    CHECK(encoder.encode({1.0f, 0.0f, 0.5f, -0.25f}, second, error));
+    CHECK(first.indices == second.indices);
+    CHECK(first.values == second.values);
+    CHECK(first.indices.size() == 2);
+    CHECK(!encoder.encode({1.0f}, second, error));
 
     common_flydelta_recognition_memory recognition(1);
-    assert(recognition.remember(first, error));
-    assert(recognition.familiarity(first) > 0.99f);
-    assert(recognition.novelty(first) < 0.01f);
+    CHECK(recognition.remember(first, error));
+    CHECK(recognition.familiarity(first) > 0.99f);
+    CHECK(recognition.novelty(first) < 0.01f);
 
     common_flydelta_delta_memory memory({8, 2, 0.5f});
     std::vector<float> prediction;
-    assert(memory.predict(first, prediction, error));
-    assert(prediction.size() == 2);
-    assert(memory.learn(first, {1.0f, -1.0f}, 1.0f, 1.0f, 1.0f, error));
-    assert(memory.predict(first, prediction, error));
-    assert(std::fabs(prediction[0]) > 0.0f);
-    assert(std::fabs(prediction[0]) <= 0.5f);
-    assert(!memory.learn(first, {1.0f}, 1.0f, 1.0f, 1.0f, error));
+    CHECK(memory.predict(first, prediction, error));
+    CHECK(prediction.size() == 2);
+    CHECK(memory.learn(first, {1.0f, -1.0f}, 1.0f, 1.0f, 1.0f, error));
+    CHECK(memory.predict(first, prediction, error));
+    CHECK(std::fabs(prediction[0]) > 0.0f);
+    CHECK(std::fabs(prediction[0]) <= 0.5f);
+    CHECK(!memory.learn(first, {1.0f}, 1.0f, 1.0f, 1.0f, error));
 
     auto value = artifact();
-    assert(common_flydelta_artifact_validate(value, 32, 65536, error));
+    CHECK(common_flydelta_artifact_validate(value, 32, 65536, error));
     const auto text = common_flydelta_artifact_to_json(value);
     common_flydelta_artifact parsed;
-    assert(common_flydelta_artifact_from_json(text, 32, 65536, parsed, error));
-    assert(parsed.id == value.id);
-    assert(parsed.content_hash == common_flydelta_artifact_hash(parsed));
+    CHECK(common_flydelta_artifact_from_json(text, 32, 65536, parsed, error));
+    CHECK(parsed.id == value.id);
+    CHECK(parsed.content_hash == common_flydelta_artifact_hash(parsed));
     auto tampered = text;
     tampered[tampered.find("sha256:model") + 7] = 'X';
-    assert(!common_flydelta_artifact_from_json(tampered, 32, 65536, parsed, error));
+    CHECK(!common_flydelta_artifact_from_json(tampered, 32, 65536, parsed, error));
     auto expected = value.compatibility;
-    assert(common_flydelta_artifact_matches(value, expected, error));
+    CHECK(common_flydelta_artifact_matches(value, expected, error));
     expected.architecture = "qwen";
-    assert(!common_flydelta_artifact_matches(value, expected, error));
+    CHECK(!common_flydelta_artifact_matches(value, expected, error));
     return 0;
 }
