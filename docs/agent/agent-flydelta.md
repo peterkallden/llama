@@ -2,10 +2,11 @@
 
 ## Status and purpose
 
-**Status: initial model-free contract slices implemented; runtime steering is
-not implemented.** FlyDelta is not an active model capability or a replacement
-for the current model-adaptation path. It must not be activated until it has
-passed explicit evaluation and promotion gates.
+**Status: model-free experiment, evidence, basis and gate contracts are
+implemented; runtime capture/steering is not implemented.** FlyDelta is not an
+active model capability or a replacement for the current model-adaptation
+path. It must not be activated until it has passed explicit evaluation and
+promotion gates.
 
 FlyDelta is a proposed, small, host-controlled associative sideband for a
 frozen language model. It records only host-certified experience and can
@@ -296,6 +297,11 @@ The builder normalizes and clusters similar directions. `HELPED` may create or
 update a direction; `HARMED` and `NEUTRAL` can only add evidence to an existing
 similar direction; `UNKNOWN` is a no-op. This makes `WHAT` (basis) separate from
 `WHEN/HOW MUCH` (recognition and delta memory).
+
+Each delta carries its model-profile fingerprint, capture-layout revision and
+layer index. A basis builder is configured for one model/layout pair and never
+clusters vectors from different layers. This is a compatibility guard, not a
+substitute for the later runtime artifact validation.
 
 The component still does not capture activations or run inference. The host
 must produce a valid capture manifest and counterfactual report first. The

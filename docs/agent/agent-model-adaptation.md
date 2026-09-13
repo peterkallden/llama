@@ -86,11 +86,12 @@ profiles.
 ## Relation to FlyDelta sideband learning
 
 [FlyDelta sideband learning](agent-flydelta.md) is a separate experimental
-proposal for an immutable, host-certified activation-steering sideband. It
-shares this path's observation boundary, scope/redaction rules, evaluation
-discipline and candidate/canary/active/retired lifecycle principles. It does
-**not** share the corpus/QLoRA artifact contract and must not be inserted into
-the existing LoRA adapter registry as if it were a weight adapter.
+sideband for immutable, host-certified activation steering. Its model-free
+experiment, repair-evidence, basis and no-op-gate contracts now reuse this
+path's observation boundary, scope/redaction rules and evaluation discipline.
+It does **not** share the corpus/QLoRA artifact contract and must not be
+inserted into the existing LoRA adapter registry as if it were a weight
+adapter; it is not active runtime adaptation.
 
 The model-adaptation path remains the long-horizon reproducible corpus and
 training route. FlyDelta, if implemented and validated, is a bounded,
