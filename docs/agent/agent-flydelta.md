@@ -323,6 +323,36 @@ non-qualifying summary remains `observed` so negative evidence is retained.
 The gate and promotion code do not load artifacts, capture activations, persist
 learning or wire the server. Those remain separate runtime work.
 
+### 4E. Basis-to-overlay composition — implemented
+
+`flydelta-overlay.*` is the next small seam after the gate. It composes the
+host-selected, model/layout-compatible basis directions and bounded
+coefficients into the existing static cvec overlay contract. The composition
+is deliberately a pure operation: it does not resolve an artifact, load a
+model, capture activations, persist state or start inference.
+
+The layout is explicit and matches `llama_set_adapter_cvec`:
+
+```text
+layer 0                 -> no cvec slot
+layer 1, [0 .. n_embd)  -> first slot
+layer 2                 -> second slot
+...
+```
+
+The helper creates a full zero-filled buffer for layers `1..n_layers-1`, adds
+each direction multiplied by its coefficient and the gate scale, and runs the
+existing overlay validator before returning. A refused gate produces a clean
+empty no-op even if there is no artifact. Any dimension, layer, coefficient,
+finite-value or byte-bound mismatch fails closed. The resulting overlay uses
+scale `1.0` because the gate scale has already been applied during composition;
+this avoids applying the same scale twice in the CLI seam.
+
+This is still not automatic FlyDelta activation. A future caller must provide
+an approved artifact, an explicit gate decision and a fresh compatible model
+context. Server/resident-model wiring, dynamic hidden-state capture, CUDA/
+Vulkan and Android remain outside this sweep.
+
 ### 5. Optional dynamic hook
 
 Only propose an upstream-quality llama.cpp hook if the evidence warrants it.
