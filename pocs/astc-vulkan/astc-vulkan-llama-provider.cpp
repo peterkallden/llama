@@ -149,9 +149,10 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
         return false;
     }
     // Embeddings are an optional annex and are intentionally independent of
-    // the binary matrix manifest. A missing or invalid annex keeps the
-    // ordinary GGUF get_rows path intact and must not disable D1/D2 overlays.
-    {
+    // the binary matrix manifest.  Until the annex has its own model-level
+    // evidence gate, keep the ordinary GGUF get_rows path as the production
+    // default.  Explicit research mode is the only opt-in for E1 today.
+    if (options.allow_unverified) {
         auto candidate = std::make_unique<astc_vulkan_embedding_provider>();
         std::string embedding_error;
         std::string annex_root = overlay_.catalog().validation.paths.root;
@@ -171,6 +172,9 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
                    embedding_error.find("cannot open embedding metadata") == std::string::npos) {
             std::fprintf(stderr, "ASTC embedding annex ignored: %s\n", embedding_error.c_str());
         }
+    } else if (native_trace_enabled()) {
+        std::fprintf(stderr,
+                     "ASTC embedding annex present but disabled without research opt-in\n");
     }
     if (native_trace_enabled()) {
         const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - prepare_begin).count();

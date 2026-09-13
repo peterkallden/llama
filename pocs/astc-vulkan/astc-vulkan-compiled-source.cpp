@@ -7,8 +7,12 @@
 #include "ggml-backend.h"
 
 #include <chrono>
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <cstring>
+#include <stdexcept>
 
 #if defined(__linux__)
 #include <cerrno>
@@ -135,15 +139,49 @@ void astc_vulkan_compiled_source::set_tensor_data(struct ggml_tensor * tensor) {
     if (!callback_error_.empty()) return;
     const char * name = ggml_get_name(tensor);
     const auto it = native_index_.find(name ? name : "");
-    if (it == native_index_.end()) { callback_error_ = "compiled bootstrap tensor missing from table"; return; }
+    if (it == native_index_.end()) {
+        // llama creates a small number of virtual helper tensors (for
+        // example output.bias) that are not part of the GGUF inventory. They
+        // have no source bytes in ASTCCM and must be initialized explicitly
+        // rather than being mistaken for a corrupt native table.
+        if (metadata_ != nullptr && gguf_find_tensor(metadata_, name ? name : "") < 0) {
+            if (!tensor->buffer) {
+                callback_error_ = "compiled virtual tensor has no target buffer";
+                throw std::runtime_error(callback_error_ + ": " + (name ? name : "<unnamed>"));
+            }
+            const std::string tensor_name = name ? name : "";
+            const bool is_default_scale =
+                (tensor_name.size() >= 6 && tensor_name.compare(tensor_name.size() - 6, 6, ".scale") == 0) ||
+                (tensor_name.size() >= 12 && tensor_name.compare(tensor_name.size() - 12, 12, ".input_scale") == 0);
+            std::vector<float> defaults(ggml_nbytes(tensor) / sizeof(float),
+                                        is_default_scale ? 1.0f : 0.0f);
+            const size_t byte_count = defaults.size() * sizeof(float);
+            if (byte_count != ggml_nbytes(tensor)) {
+                callback_error_ = "compiled virtual tensor has unsupported element size";
+                throw std::runtime_error(callback_error_ + ": " + tensor_name);
+            }
+            ggml_backend_tensor_set(tensor, defaults.data(), 0, byte_count);
+            if (std::getenv("ASTC_VULKAN_NATIVE_TRACE")) {
+                std::fprintf(stderr, "ASTC compiled virtual tensor initialized: %s bytes=%zu default=%s\n",
+                             tensor_name.c_str(), byte_count,
+                             is_default_scale ? "one" : "zero");
+            }
+            return;
+        }
+        callback_error_ = "compiled bootstrap tensor missing from table";
+        throw std::runtime_error(callback_error_ + ": " + (name ? name : "<unnamed>"));
+    }
     const auto & record = native_table_.tensors[it->second];
-    if (!tensor->buffer) { callback_error_ = "compiled bootstrap tensor has no target buffer: " + record.name; return; }
+    if (!tensor->buffer) {
+        callback_error_ = "compiled bootstrap tensor has no target buffer: " + record.name;
+        throw std::runtime_error(callback_error_);
+    }
     if (record.storage == astc_vulkan_native_tensor_storage::native) {
         if (ggml_nbytes(tensor) != record.native_size ||
             record.native_offset > model_->native_payload.size() ||
             record.native_size > model_->native_payload.size() - record.native_offset) {
             callback_error_ = "compiled native tensor range does not match destination: " + record.name;
-            return;
+            throw std::runtime_error(callback_error_);
         }
         // The destination may live in device memory when GPU offload is
         // enabled.  Use the backend upload API rather than dereferencing
@@ -151,6 +189,18 @@ void astc_vulkan_compiled_source::set_tensor_data(struct ggml_tensor * tensor) {
         ggml_backend_tensor_set(tensor,
                                 model_->native_payload.data() + record.native_offset,
                                 0, static_cast<size_t>(record.native_size));
+        if (std::getenv("ASTC_VULKAN_NATIVE_TRACE")) {
+            std::vector<uint8_t> check(record.native_size);
+            ggml_backend_tensor_get(tensor, check.data(), 0, check.size());
+            std::fprintf(stderr, "ASTC compiled native tensor loaded: %s bytes=%llu offset=%llu\n",
+                         record.name.c_str(),
+                         static_cast<unsigned long long>(record.native_size),
+                         static_cast<unsigned long long>(record.native_offset));
+            std::fprintf(stderr, "ASTC compiled native tensor checksum: %s expected=%016llx actual=%016llx\n",
+                         record.name.c_str(),
+                         static_cast<unsigned long long>(record.native_hash64),
+                         static_cast<unsigned long long>(astc_vulkan_payload_hash64(check.data(), check.size())));
+        }
         return;
     }
     // ASTC tensors are replaced by the opt-in provider before compute. Zero
