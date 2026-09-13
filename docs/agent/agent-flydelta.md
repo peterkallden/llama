@@ -175,6 +175,12 @@ turn result
   -> basis/gate/promotion
 ```
 
+The learning observer can forward the discovered source matches through its
+optional host collector callback. This callback is deliberately best-effort
+and runs after the transaction append; a collector or downstream evidence
+store must therefore be idempotent and must never be able to fail the active
+turn. It is only a notification/hand-off seam, not an activation path.
+
 Reflection is consequently a candidate generator, not an authority. A model
 reflection may suggest several alternatives, but only the host verifier can
 mark one as a useful comparison arm. An unverified alternative remains an

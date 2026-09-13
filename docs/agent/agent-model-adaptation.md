@@ -221,6 +221,14 @@ both consumers. It should also invoke adaptation for an error result when a
 qualifying signal exists, while retaining the current rule that ordinary
 successful turns do not become training data.
 
+The learning transaction observer exposes an optional read-only source
+collector callback for host integrations. It is invoked after the transaction
+has been appended and receives the discovered source match plus the stored
+transaction. Collection is best-effort: a collector outage must not fail the
+ledger append or the user-facing turn. The callback is a hand-off point only;
+it does not create a comparison relation, training pair, basis update or
+active adapter.
+
 ## End-to-end process and provider convergence
 
 Native, MCP, and OpenAPI tools enter adaptation through the same host-owned
