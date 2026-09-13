@@ -4,6 +4,10 @@
 #include "log.h"
 #include "llama.h"
 
+#if defined(LLAMA_ASTC_VULKAN_RUNTIME_AVAILABLE)
+#include "astc-vulkan-runtime-attach.h"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -15,6 +19,7 @@
 #include <ctime>
 #include <fstream>
 #include <mutex>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -2062,6 +2067,34 @@ int llama_perplexity(int argc, char ** argv) {
         return 1;
     }
 
+#if defined(LLAMA_ASTC_VULKAN_RUNTIME_AVAILABLE)
+    // Perplexity must exercise the same D1/D2 runtime overlay as inference.
+    // E1 is intentionally evaluated through the compiled-model replay path,
+    // because this generic tool does not own a compiled-model source adapter.
+    std::unique_ptr<astc_vulkan_runtime_attachment> astc_attachment;
+    if (!params.astc_cache.empty()) {
+        astc_vulkan_llama_provider::options astc_options;
+        astc_options.model_path = params.model.path;
+        astc_options.cache_path = params.astc_cache;
+        astc_options.allow_experimental = params.astc_research;
+        astc_options.allow_unverified = params.astc_research;
+        if (params.astc_profile == "quality") {
+            astc_options.policy = astc_vulkan_quality_policy::quality;
+        } else if (params.astc_profile == "compact" || params.astc_profile == "size") {
+            astc_options.policy = astc_vulkan_quality_policy::size;
+        } else if (params.astc_profile == "speed") {
+            astc_options.policy = astc_vulkan_quality_policy::speed;
+        }
+        auto attachment = std::make_unique<astc_vulkan_runtime_attachment>();
+        std::string astc_error;
+        if (!attachment->prepare_and_attach(ctx, astc_options, astc_error)) {
+            LOG_ERR("%s: ASTC cache overlay unavailable: %s\n", __func__, astc_error.c_str());
+            return 1;
+        }
+        astc_attachment = std::move(attachment);
+    }
+#endif
+
     const int n_ctx_train = llama_model_n_ctx_train(model);
 
     if (params.n_ctx > n_ctx_train) {
@@ -2092,6 +2125,10 @@ int llama_perplexity(int argc, char ** argv) {
     llama_perf_context_print(ctx);
     common_memory_breakdown_print(ctx);
 
+    // Destroy the provider before its Vulkan/ggml backend is torn down.
+#if defined(LLAMA_ASTC_VULKAN_RUNTIME_AVAILABLE)
+    astc_attachment.reset();
+#endif
     llama_backend_free();
 
     return 0;

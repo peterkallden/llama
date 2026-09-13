@@ -733,6 +733,7 @@ if (TARGET Vulkan::Vulkan)
         # It does not participate in encoding or alter the cache format.
         add_library(astc-vulkan-llama-provider STATIC
             astc-vulkan-llama-provider.cpp
+            astc-vulkan-runtime-attach.cpp
             astc-vulkan-embedding-provider.cpp
             astc-vulkan-embedding-gpu.cpp
             astc-vulkan-ggml-external-op.cpp)
@@ -1379,6 +1380,12 @@ if (TARGET ggml-base)
         target_link_libraries(astc-vulkan-model-replay-smoke PRIVATE
             llama-common llama ggml-base ${CMAKE_THREAD_LIBS_INIT})
         target_compile_features(astc-vulkan-model-replay-smoke PRIVATE cxx_std_17)
+        if (TARGET astc-vulkan-llama-provider AND TARGET astc-vulkan-compiled-source)
+            target_link_libraries(astc-vulkan-model-replay-smoke PRIVATE
+                astc-vulkan-llama-provider astc-vulkan-compiled-source)
+            target_compile_definitions(astc-vulkan-model-replay-smoke PRIVATE
+                ASTC_VULKAN_COMPILED_REPLAY_AVAILABLE=1)
+        endif()
         if (TARGET astc-vulkan-scheduler-adapter)
             target_link_libraries(astc-vulkan-model-replay-smoke PRIVATE
                 astc-vulkan-scheduler-adapter astc-vulkan-stream-loader)
@@ -1406,6 +1413,12 @@ if (TARGET ggml-base)
         target_link_libraries(llama-astc-replay PRIVATE
             llama-common llama ggml-base ${CMAKE_THREAD_LIBS_INIT})
         target_compile_features(llama-astc-replay PRIVATE cxx_std_17)
+        if (TARGET astc-vulkan-llama-provider AND TARGET astc-vulkan-compiled-source)
+            target_link_libraries(llama-astc-replay PRIVATE
+                astc-vulkan-llama-provider astc-vulkan-compiled-source)
+            target_compile_definitions(llama-astc-replay PRIVATE
+                ASTC_VULKAN_COMPILED_REPLAY_AVAILABLE=1)
+        endif()
         if (TARGET astc-vulkan-scheduler-adapter)
             target_link_libraries(llama-astc-replay PRIVATE
                 astc-vulkan-scheduler-adapter astc-vulkan-stream-loader)

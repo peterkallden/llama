@@ -340,8 +340,21 @@ it is never implied by `d1-6x6`, `balanced`, `speed`, or `auto`.
 
 ### D1: one logical weight per texel
 
-D1 maps one neural weight to one decoded ASTC texel.  Two semantic decoders
-are available:
+D1 is the single-weight representation: one logical matrix weight maps to one
+decoded ASTC texel. It is the conservative ASTC path because it leaves the
+matrix row layout unchanged and needs no paired-row metadata. Its physical
+payload rate is `128 / (footprint width * footprint height)` b/w:
+
+| D1 footprint | Payload rate | Role |
+|---|---:|---|
+| 4x4 | 8.00 b/w | decoder/reference-quality control |
+| 5x5 | 5.12 b/w | intermediate scalar rung |
+| 6x6 | 3.56 b/w | normal practical D1 starting point |
+| 8x6 | 2.67 b/w | lower-rate, tensor-gated extension |
+| 10x6 | 2.13 b/w | low-rate research rung |
+| 8x8 | 2.00 b/w | extreme low-rate research rung |
+
+Two D1 source/semantic algorithms are available:
 
 - **Scalar** stores one normalised weight field; decoded channels reconstruct
   the same scalar weight.
@@ -362,14 +375,34 @@ The practical D1 pipeline is scalar-anchored: scalar remains a mandatory
 fallback candidate, while gauge candidates may be selected only when they
 improve the relevant offline objective.
 
+```text
+matrix tensor -> scalar source q -> legal ASTC candidate bank
+              -> exact CPU/Vulkan decode -> activation/model evidence
+              -> scalar or gauge payload -> texelFetch -> scalar weight
+```
+
+`d1-6x6` means scalar unless `gauge` is explicitly requested. Gauge is not a
+numeric residual sidecar: it is an offline zero-sum source perturbation used
+to expose different legal ASTC payloads. Runtime always samples ordinary ASTC
+and runs the selected small semantic reconstruction only.
+
 ### D2: two logical weights per texel
 
-D2 trades independent per-texel channels for density.  A physical `W x H`
-ASTC image represents two logical output rows per texel, hence:
+D2 is the paired-matrix representation. It trades independent per-texel
+channels for density: a physical `W x H` ASTC image represents two logical
+output rows per texel, hence:
 
 ```text
 logical tensor coverage = W reduction columns x (2 * H) output rows
 ```
+
+Its payload rate is `128 / (2 * W * H)` b/w:
+
+| D2 footprint | Payload rate | Role |
+|---|---:|---|
+| 6x5 | 2.13 b/w | higher-quality paired rung |
+| 8x5 | 1.60 b/w | principal compact paired rung |
+| 10x5 | 1.28 b/w | extreme low-rate research rung |
 
 For the direct layouts, one logical weight is duplicated across two RGB lanes
 and the other uses the remaining lane:
@@ -397,6 +430,27 @@ The current D2 main path combines:
   ten-logical-row stripe, stored as a hash-verified `pair-map.bin` resource;
 - an activation/sensitivity-aware selection objective.  YAQA-style diagonal
   output sensitivity can weight the two paired rows differently.
+
+The preferred semantic is **D2-LA**: the two paired weights occupy ordinary
+ASTC luminance and alpha channels. The earlier RGB-duplicated direct layout is
+retained as a candidate/control, not as the preferred new representation. For
+each tensor, `neutral` and `validation-selected` payloads are separate
+artifact variants; optional absmax row scaling is another independent choice.
+The scheduler consumes only the artifact that has already passed its offline
+evidence. It never derives pairing, normalization, or a selection prefix at
+inference time.
+
+```text
+matrix rows -> pair rows inside each 10-row stripe -> optional row scale
+            -> D2-LA source and ASTC candidate bank -> exact decode
+            -> inverse pair-map / inverse optional transform -> model evidence
+            -> paired texelFetch matvec for the approved artifact
+```
+
+Optimized pairing is the standard D2 8x5 build choice. The pair map is a
+versioned artifact resource, not an implicit adjacent-row assumption. Bounded
+Givens rotation is a separate research transform: it may be exported only with
+its transform metadata and evidence, and zero rotation remains its fallback.
 
 Common/difference transforms, explicit semantic dual-plane search, mixed
 footprints, and full PV tuning remain research tracks rather than cache/runtime
@@ -446,7 +500,7 @@ one F32 scale per output row and applies it after the reduction. Scheduler
 selection therefore chooses a prevalidated artifact per tensor – it never
 re-runs an encoder or guesses a codec configuration during inference.
 
-### E1/E2: token-local embedding lookup (E1 runtime-validated; model gate pending)
+### E1/E2: token-local embedding lookup
 
 `token_embd.weight` is not on the matrix provider path. A matrix layout that
 puts several token rows in the same ASTC block is therefore a poor lookup
@@ -482,6 +536,28 @@ block-aligned 2D atlas, binds the affine table as an SSBO, and records a
 `texelFetch` lookup into ggml's command buffer. It is still a separate
 performance/correctness gate: a graph-device/materialization failure falls
 back to CPU rather than silently changing results.
+
+E1's current algorithm is deliberately local to a token vector:
+
+```text
+token embedding row -> affine normalize (scale,bias) -> optional dimension order
+                    -> consecutive 10x5 ASTC microtiles -> legal payloads
+token id -> descriptor -> texelFetch/decode microtiles -> inverse affine
+         -> ordinary embedding vector
+```
+
+This avoids the lookup read amplification of a matrix-style layout where one
+ASTC block contains several unrelated token rows. `E1-local 10x5` stores 50
+dimensions per 16-byte block (2.56 b/w nominally); Qwen's 1536-dimension row
+uses 31 blocks or 496 payload bytes before the small affine/descriptor tables.
+Protected tokens may remain native. E1 is consequently a per-token storage
+decision, whereas D1/D2 are matrix/matvec storage decisions.
+
+E1 has passed layout, full-payload, provider and Vulkan `get_rows`
+correctness smokes. Its model gate uses the same replay metrics as D1/D2:
+logits MSE, relative logits MSE, top-1 agreement and loss delta. The compiled
+model replay mode is explicit so an E1-only `.astccm` can be compared with a
+native reference without relying on an implicit GGUF embedding fallback.
 
 Initial discovery must compare a simple identity dimension order with a global
 dimension pair-map. Per-token permutation codebooks are deferred: they may
@@ -520,6 +596,7 @@ selects the full vocabulary):
 ./build-astc-neural-rank/bin/astc-vulkan-embedding-real-discovery \
   /home/prbm/models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf 0 \
   /home/prbm/models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf.astc-vulkan.d1-6x6-50m
+```
 
 After a cache has an annex, the provider smoke can validate its complete
 payload and decode boundary without starting a model:
@@ -527,7 +604,6 @@ payload and decode boundary without starting a model:
 ```bash
 ./build-astc-neural-rank/bin/astc-vulkan-embedding-provider-smoke \
   /path/to/cache
-```
 ```
 
 For a 256-row Qwen2.5-Coder Q4_K_M sample, all `7936/7936` E1 blocks and
@@ -582,8 +658,42 @@ GGUF-backed `ggml_get_rows` node. Otherwise the original path is preserved.
 An optional native-bind callback can register the lookup node with the
 ASTC-owned Vulkan external-op hook, so a future GPU `get_rows` implementation
 does not require changes to `ggml-vulkan`. The provider becomes ready only
-when a validated `embedding-10x5.astce` annex is present, and currently logs
-that it is using the CPU fallback.
+when a validated `embedding-10x5.astce` annex is present. It records the
+native E1 10x5 path when the graph/device preflight succeeds and otherwise
+uses the verified CPU fallback.
+
+### Replay and perplexity evaluation
+
+All three representations use one runtime-attachment contract. D1 and D2
+sidecars can therefore be exercised by the normal perplexity tool; the cache
+is attached after the ordinary llama context is created and remains an opt-in
+overlay:
+
+```bash
+./build-astc-neural-rank/bin/llama-perplexity \
+  -m model-Q4_K_M.gguf -f evaluation.txt --gpu-layers all \
+  --astc-cache model-Q4_K_M.gguf.astc-vulkan.d1-6x6 \
+  --astc-profile balanced
+```
+
+Use `--astc-research` only to smoke an artifact that has not completed its
+evidence gates. A one-chunk perplexity result proves wiring, not quality.
+
+E1 is evaluated from an explicit compiled container because its native GGUF
+embedding may intentionally be absent. The replay tool compares all logits
+from the native reference and the `.astccm` model and writes ordinary evidence:
+
+```bash
+./build-astc-neural-rank/bin/llama-astc-replay \
+  --model model-Q4_K_M.gguf --compiled-model model-e1.astccm \
+  --prompt 'A deterministic evaluation prompt.' --research \
+  --evidence e1-replay.json
+```
+
+The report contains logits MSE, relative logits MSE, maximum absolute logit
+delta, top-1 agreement, reference/replay cross-entropy and loss delta. Those
+are the same model-facing measures used for D1/D2 artifact evidence; the
+representation-specific encoder never substitutes a different quality gate.
 
 ### Lightweight scheduler profiles
 

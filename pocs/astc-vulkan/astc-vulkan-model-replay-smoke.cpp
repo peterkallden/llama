@@ -4,6 +4,10 @@
 #include "astc-vulkan-paired-layout.h"
 #include "astc-vulkan-provenance.h"
 #include "astc-vulkan-stream-loader.h"
+#if defined(ASTC_VULKAN_COMPILED_REPLAY_AVAILABLE)
+#include "astc-vulkan-compiled-source.h"
+#include "astc-vulkan-runtime-attach.h"
+#endif
 #if defined(ASTC_VULKAN_MODEL_REPLAY_GPU)
 #include "astc-vulkan-scheduler-adapter.h"
 #include <astcenc.h>
@@ -218,13 +222,19 @@ struct tensor_replay_provider {
 
 logits_result run_model(llama_model * model, const std::vector<llama_token> & tokens,
                         uint32_t layer, const std::vector<float> * override_output,
-                        tensor_replay_provider * tensor_provider = nullptr) {
+                        tensor_replay_provider * tensor_provider = nullptr
+#if defined(ASTC_VULKAN_COMPILED_REPLAY_AVAILABLE)
+                        , astc_vulkan_runtime_attachment * astc_attachment = nullptr,
+                        const astc_vulkan_llama_provider::options * astc_options = nullptr
+#endif
+                        ) {
     llama_context_params params = llama_context_default_params();
     params.n_ctx = std::max<uint32_t>(512, static_cast<uint32_t>(tokens.size()));
     params.n_batch = static_cast<uint32_t>(tokens.size());
     params.n_ubatch = static_cast<uint32_t>(tokens.size());
     llama_context * context = llama_init_from_model(model, params);
     if (context == nullptr) return {};
+    logits_result result;
 
     if (tensor_provider != nullptr &&
         !llama_set_tensor_runtime_provider(context, tensor_replay_provider::is_ready,
@@ -232,6 +242,18 @@ logits_result run_model(llama_model * model, const std::vector<llama_token> & to
         llama_free(context);
         return {};
     }
+
+#if defined(ASTC_VULKAN_COMPILED_REPLAY_AVAILABLE)
+    if (astc_attachment != nullptr && astc_options != nullptr) {
+        std::string attach_error;
+        if (!astc_attachment->prepare_and_attach(context, *astc_options, attach_error)) {
+            std::fprintf(stderr, "ASTC replay runtime attach failed: %s\n", attach_error.c_str());
+            result.status = -2;
+            llama_free(context);
+            return result;
+        }
+    }
+#endif
 
     if (override_output != nullptr &&
         !llama_set_ffn_down_output_override(context, layer, override_output->data(),
@@ -243,7 +265,6 @@ logits_result run_model(llama_model * model, const std::vector<llama_token> & to
 
     llama_batch batch = make_batch(tokens);
     const int32_t status = llama_decode(context, batch);
-    logits_result result;
     result.status = status;
     if (status == 0) {
         const int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
@@ -434,10 +455,133 @@ bool reconstruct_streamed_cpu_oracle(
 }
 #endif
 
+#if defined(ASTC_VULKAN_COMPILED_REPLAY_AVAILABLE)
+int run_compiled_e1_replay(const std::string & reference_model_path,
+                           const std::string & compiled_model_path,
+                           const std::string & prompt,
+                           const std::string & evidence_path,
+                           bool research) {
+    astc_vulkan_compiled_source compiled_source;
+    std::string compiled_error;
+    if (!compiled_source.open(compiled_model_path, compiled_error)) {
+        std::fprintf(stderr, "cannot open compiled model: %s\n", compiled_error.c_str());
+        return 1;
+    }
+
+    llama_backend_init();
+    llama_model_params reference_params = llama_model_default_params();
+    reference_params.n_gpu_layers = 0;
+    llama_model * reference_model = llama_model_load_from_file(reference_model_path.c_str(), reference_params);
+    if (reference_model == nullptr) {
+        std::fprintf(stderr, "cannot load native reference model\n");
+        llama_backend_free();
+        return 1;
+    }
+
+    llama_model_params compiled_params = llama_model_default_params();
+    compiled_params.n_gpu_layers = 0;
+    llama_model * compiled_model = compiled_source.uses_user_loader() ?
+        llama_model_init_from_user(compiled_source.metadata(),
+                                   astc_vulkan_compiled_source::set_tensor_data_callback,
+                                   &compiled_source, compiled_params) :
+        llama_model_load_from_file(compiled_source.model_path().c_str(), compiled_params);
+    if (compiled_model == nullptr || !compiled_source.callback_ok()) {
+        std::fprintf(stderr, "cannot load compiled replay model: %s\n",
+                     compiled_source.callback_ok() ? "model initialization failed" :
+                     compiled_source.callback_error().c_str());
+        if (compiled_model) llama_model_free(compiled_model);
+        llama_model_free(reference_model);
+        llama_backend_free();
+        return 1;
+    }
+
+    std::vector<llama_token> tokens;
+    if (!tokenize(llama_model_get_vocab(reference_model), prompt, tokens) || tokens.size() < 2 ||
+        llama_vocab_n_tokens(llama_model_get_vocab(reference_model)) !=
+            llama_vocab_n_tokens(llama_model_get_vocab(compiled_model))) {
+        std::fprintf(stderr, "compiled replay requires matching vocabularies and at least two prompt tokens\n");
+        llama_model_free(compiled_model);
+        llama_model_free(reference_model);
+        llama_backend_free();
+        return 2;
+    }
+
+    astc_vulkan_llama_provider::options options;
+    options.model_path = compiled_source.uses_user_loader() ? "" : compiled_source.model_path();
+    options.cache_source = compiled_source.cache_source();
+    options.cache_source_fingerprint = compiled_source.source_fingerprint();
+    options.allow_experimental = research;
+    options.allow_unverified = research;
+    options.require_all_artifacts = compiled_source.strict();
+
+    const logits_result reference = run_model(reference_model, tokens, 0, nullptr);
+    astc_vulkan_runtime_attachment attachment;
+    const logits_result replay = run_model(compiled_model, tokens, 0, nullptr, nullptr,
+                                           &attachment, &options);
+    attachment.reset();
+    if (reference.status != 0 || replay.status != 0 || reference.values.size() != replay.values.size() ||
+        reference.n_tokens != replay.n_tokens || reference.n_vocab != replay.n_vocab) {
+        std::fprintf(stderr, "compiled E1 replay failed: reference=%d replay=%d\n",
+                     reference.status, replay.status);
+        llama_model_free(compiled_model);
+        llama_model_free(reference_model);
+        llama_backend_free();
+        return 1;
+    }
+
+    double mse = 0.0, max_abs = 0.0, reference_energy = 0.0;
+    size_t top1_matches = 0, loss_tokens = 0;
+    double reference_loss = 0.0, replay_loss = 0.0;
+    for (size_t i = 0; i < reference.values.size(); ++i) {
+        const double delta = static_cast<double>(reference.values[i]) - replay.values[i];
+        mse += delta * delta;
+        max_abs = std::max(max_abs, std::abs(delta));
+        reference_energy += static_cast<double>(reference.values[i]) * reference.values[i];
+    }
+    for (size_t token = 0; token < reference.n_tokens; ++token) {
+        const float * ref = reference.values.data() + token * reference.n_vocab;
+        const float * got = replay.values.data() + token * replay.n_vocab;
+        top1_matches += static_cast<size_t>(std::max_element(ref, ref + reference.n_vocab) - ref ==
+                                             std::max_element(got, got + replay.n_vocab) - got);
+        if (token + 1 < tokens.size()) {
+            reference_loss += cross_entropy(ref, reference.n_vocab, tokens[token + 1]);
+            replay_loss += cross_entropy(got, replay.n_vocab, tokens[token + 1]);
+            ++loss_tokens;
+        }
+    }
+    const double logits_mse = mse / std::max(reference.values.size(), size_t(1));
+    const double relative_mse = mse / std::max(reference_energy, 1e-12);
+    const double mean_reference_loss = reference_loss / std::max(loss_tokens, size_t(1));
+    const double mean_replay_loss = replay_loss / std::max(loss_tokens, size_t(1));
+    const double loss_delta = mean_replay_loss - mean_reference_loss;
+    std::printf("embedding-replay tokens=%zu vocab=%zu logits-mse=%.8g logits-relative-mse=%.8g max-abs=%.8g "
+                "top1-agreement=%.8g reference-loss=%.8g replay-loss=%.8g loss-delta=%.8g\n",
+                reference.n_tokens, reference.n_vocab, logits_mse, relative_mse, max_abs,
+                static_cast<double>(top1_matches) / std::max(reference.n_tokens, size_t(1)),
+                mean_reference_loss, mean_replay_loss, loss_delta);
+    if (!write_replay_evidence(evidence_path, reference_model_path, "", compiled_model_path,
+                               "token_embd.weight", "inline", "compiled-e1", 0, 0, 0,
+                               reference.n_tokens, reference.n_vocab, logits_mse, relative_mse,
+                               max_abs, static_cast<double>(top1_matches) /
+                                   std::max(reference.n_tokens, size_t(1)),
+                               mean_reference_loss, mean_replay_loss, loss_delta)) {
+        std::fprintf(stderr, "failed to write compiled E1 evidence: %s\n", evidence_path.c_str());
+        llama_model_free(compiled_model);
+        llama_model_free(reference_model);
+        llama_backend_free();
+        return 1;
+    }
+    llama_model_free(compiled_model);
+    llama_model_free(reference_model);
+    llama_backend_free();
+    return 0;
+}
+#endif
+
 } // namespace
 
 int main(int argc, char ** argv) {
-    std::string model_path, source_model_path, rgba_path, weights_path, activation_path, metadata_path, prompt, prompt_file, evidence_path;
+    std::string model_path, source_model_path, compiled_model_path, rgba_path, weights_path, activation_path, metadata_path, prompt, prompt_file, evidence_path;
     std::string layout_map_path, row_scales_path, pair_map_path, representation = "d1", footprint_name = "8x5";
     std::string gpu_shader_path, cache_path, tensor_name;
     uint32_t layer = 0, width = 0, height = 0;
@@ -466,12 +610,14 @@ int main(int argc, char ** argv) {
             continue;
         }
         if (option == "--help" || option == "-h") {
-            std::printf("usage: %s --model runtime.gguf [--source-model source-f16.gguf] [--baseline-only] --cache cache-dir --tensor name --activations trace --layer N --width columns --height rows (--prompt text | --prompt-file prompts.txt) [--footprint 4x4|5x5|6x6|6x5|8x5|10x5|8x6|10x6|8x8|10x8] [--gpu-shader shader.spv] [--evidence evidence.json] [--streamed] [--oracle-streamed --cpu-only] [--research]\n", argv[0]);
+            std::printf("usage: %s --model runtime.gguf [--source-model source-f16.gguf] [--baseline-only] --cache cache-dir --tensor name --activations trace --layer N --width columns --height rows (--prompt text | --prompt-file prompts.txt) [--footprint 4x4|5x5|6x6|6x5|8x5|10x5|8x6|10x6|8x8|10x8] [--gpu-shader shader.spv] [--evidence evidence.json] [--streamed] [--oracle-streamed --cpu-only] [--research]\n"
+                        "       %s --model native-reference.gguf --compiled-model model.astccm --prompt text [--evidence evidence.json] --research\n", argv[0], argv[0]);
             return 0;
         }
         if (i + 1 >= argc) break;
         if (option == "--model") model_path = argv[++i];
         else if (option == "--source-model") source_model_path = argv[++i];
+        else if (option == "--compiled-model") compiled_model_path = argv[++i];
         else if (option == "--rgba") rgba_path = argv[++i];
         else if (option == "--weights") weights_path = argv[++i];
         else if (option == "--activations") activation_path = argv[++i];
@@ -518,6 +664,21 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "failed to read prompt file: %s\n", prompt_file.c_str());
         return 2;
     }
+#if defined(ASTC_VULKAN_COMPILED_REPLAY_AVAILABLE)
+    if (!compiled_model_path.empty()) {
+        if (model_path.empty() || prompt.empty() || !cache_path.empty() || !tensor_name.empty() ||
+            !activation_path.empty() || baseline_only) {
+            std::fprintf(stderr, "compiled E1 replay requires --model, --compiled-model, and a prompt only\n");
+            return 2;
+        }
+        return run_compiled_e1_replay(model_path, compiled_model_path, prompt, evidence_path, research);
+    }
+#elif !defined(ASTC_VULKAN_COMPILED_REPLAY_AVAILABLE)
+    if (!compiled_model_path.empty()) {
+        std::fprintf(stderr, "compiled E1 replay is unavailable in this build\n");
+        return 2;
+    }
+#endif
     std::string cache_validation_model = model_path;
     if (!source_model_path.empty()) {
         if (source_model_path == model_path || cache_path.empty()) {

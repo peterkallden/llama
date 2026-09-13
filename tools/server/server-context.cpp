@@ -18,7 +18,7 @@
 #include "mtmd-helper.h"
 
 #if defined(LLAMA_ASTC_VULKAN_RUNTIME_AVAILABLE)
-#include "astc-vulkan-llama-provider.h"
+#include "astc-vulkan-runtime-attach.h"
 #endif
 
 #include <algorithm>
@@ -890,7 +890,7 @@ private:
     bool sleeping = false;
 
 #if defined(LLAMA_ASTC_VULKAN_RUNTIME_AVAILABLE)
-    std::unique_ptr<astc_vulkan_llama_provider> astc_provider;
+    std::unique_ptr<astc_vulkan_runtime_attachment> astc_provider;
 #endif
 
     int64_t t_last_load_progress_ms = 0;
@@ -1156,42 +1156,9 @@ private:
             } else if (params_base.astc_profile == "speed") {
                 astc_options.policy = astc_vulkan_quality_policy::speed;
             }
-            auto provider = std::make_unique<astc_vulkan_llama_provider>();
+            auto provider = std::make_unique<astc_vulkan_runtime_attachment>();
             std::string astc_error;
-            if (provider->prepare(astc_options, astc_error)) {
-                llama_set_ffn_down_runtime_provider(
-                    ctx_tgt,
-                    astc_vulkan_llama_provider::is_ready_callback,
-                    astc_vulkan_llama_provider::run_callback,
-                    provider.get());
-                // The provider's context preflight keeps this opt-in path
-                // device-safe; a mismatch falls back to the normal graph op.
-                llama_set_ffn_down_runtime_native_binding(
-                    ctx_tgt, astc_vulkan_llama_provider::native_bind_callback);
-                llama_set_ffn_down_runtime_native_generation_begin(
-                    ctx_tgt, astc_vulkan_llama_provider::native_generation_begin_callback);
-                // Register the name-keyed bridge as well.  This is the
-                // production path for ffn_up/gate, attention matrices and
-                // output.weight; the legacy FFN-down bridge above remains
-                // source-compatible with older graph construction paths.
-                llama_set_tensor_runtime_provider(
-                    ctx_tgt,
-                    astc_vulkan_llama_provider::tensor_is_ready_callback,
-                    astc_vulkan_llama_provider::tensor_run_callback,
-                    provider.get());
-                llama_set_tensor_runtime_native_binding(
-                    ctx_tgt, astc_vulkan_llama_provider::tensor_native_bind_callback);
-                llama_set_tensor_runtime_native_generation_begin(
-                    ctx_tgt, astc_vulkan_llama_provider::tensor_generation_begin_callback);
-                llama_set_embedding_runtime_provider(
-                    ctx_tgt,
-                    astc_vulkan_llama_provider::embedding_is_ready_callback,
-                    astc_vulkan_llama_provider::embedding_run_callback,
-                    provider.get());
-                llama_set_embedding_runtime_native_binding(
-                    ctx_tgt, astc_vulkan_llama_provider::embedding_native_bind_callback);
-                llama_set_embedding_runtime_native_generation_begin(
-                    ctx_tgt, astc_vulkan_llama_provider::embedding_generation_begin_callback);
+            if (provider->prepare_and_attach(ctx_tgt, astc_options, astc_error)) {
                 astc_provider = std::move(provider);
                 const char * astc_source_label = params_base.astc_cache_source ?
                     "compiled-model blobs" : params_base.astc_cache.c_str();
