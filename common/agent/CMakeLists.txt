@@ -69,6 +69,7 @@ add_library(${TARGET}
     adaptation/learning-domain-policy.cpp adaptation/learning-domain-policy.h
     adaptation/adaptation-observer.h
     adaptation/learning-transaction.cpp adaptation/learning-transaction.h
+    adaptation/adaptation-evidence.cpp adaptation/adaptation-evidence.h
     adaptation/training-candidate.cpp adaptation/training-candidate.h
     adaptation/corpus-builder.cpp adaptation/corpus-builder.h
     adaptation/trainer-protocol.cpp adaptation/trainer-protocol.h
