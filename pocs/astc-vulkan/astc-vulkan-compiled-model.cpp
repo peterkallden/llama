@@ -5,6 +5,7 @@
 #include "astc-vulkan-hash.h"
 #include "astc-vulkan-manifest.h"
 #include "astc-vulkan-native-tensor-table.h"
+#include "astc-vulkan-artifact-policy.h"
 
 #include "gguf.h"
 
@@ -179,6 +180,56 @@ bool read_embedded_manifest(const std::vector<uint8_t> & bytes,
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
     return ok;
+}
+
+// Keep compiled-model rewrites self-contained while reusing the canonical
+// manifest serializer.  The temporary file is only an implementation detail;
+// the resulting bytes are embedded in the ASTCCM section.
+bool write_embedded_manifest(const astc_vulkan_manifest & manifest,
+                             std::vector<uint8_t> & bytes,
+                             std::string & error) {
+    const auto nonce = static_cast<uint64_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count()) ^
+        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&manifest));
+    const std::filesystem::path path = std::filesystem::temp_directory_path() /
+        ("astc-vulkan-compiled-model-manifest-write-" + std::to_string(nonce) + ".astcv");
+    if (!astc_vulkan_write_manifest(path.string(), manifest, error)) {
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+        return false;
+    }
+    const bool ok = read_file(path.string(), bytes, error);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    return ok;
+}
+
+bool strict_manifest_filter(astc_vulkan_manifest & manifest, std::string & error) {
+    // Legacy single-artifact manifests have no split evidence fields. Keep
+    // their established strict behavior; v4+ artifact tables can be filtered
+    // safely because each entry carries independent model/Vulkan gates.
+    if (manifest.artifacts.empty() || manifest.version < 4) return true;
+    std::vector<astc_vulkan_artifact_record> approved;
+    approved.reserve(manifest.artifacts.size());
+    for (const auto & artifact : manifest.artifacts) {
+        astc_vulkan_artifact_candidate candidate;
+        candidate.tensor = &artifact.storage;
+        candidate.variant = artifact.variant;
+        candidate.normalization = artifact.normalization;
+        candidate.evidence = artifact.evidence;
+        candidate.rate_bpw = astc_vulkan_artifact_storage_bpw(artifact);
+        candidate.artifact_id = artifact.id;
+        // Match the production metadata predicate (including robust replay
+        // thresholds), while allowing any device/memory during packaging.
+        const bool approved_for_production =
+            !astc_vulkan_footprint_is_experimental(artifact.storage.footprint) &&
+            astc_vulkan_artifact_is_eligible(candidate, true, true, {});
+        if (approved_for_production) {
+            approved.push_back(artifact);
+        }
+    }
+    manifest.artifacts = std::move(approved);
+    return astc_vulkan_validate_manifest(manifest, error);
 }
 
 std::unordered_set<std::string> manifest_astc_tensor_names(const astc_vulkan_manifest & manifest) {
@@ -508,7 +559,30 @@ bool astc_vulkan_compiled_model_pack_bootstrap(
         return false;
     }
     // The E1 annex is always optional today, so token_embd remains native in
-    // both modes. Strict only omits matrix artifacts that the overlay owns.
+    // both modes. In strict mode only evidence-approved matrix artifacts are
+    // allowed to displace native bytes; rejected/experimental entries remain
+    // native-only and are removed from the embedded ASTC manifest.
+    if (storage_mode == astc_vulkan_compiled_storage_mode::strict) {
+        if (!strict_manifest_filter(manifest, error)) return false;
+        if (!write_embedded_manifest(manifest, model.manifest, error)) return false;
+        astc_vulkan_compiled_catalog filtered_catalog;
+        if (!astc_vulkan_compiled_catalog_from_manifest(manifest, filtered_catalog, error)) {
+            return false;
+        }
+        const auto nonce = static_cast<uint64_t>(
+            std::chrono::steady_clock::now().time_since_epoch().count()) ^
+            static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&filtered_catalog));
+        const std::filesystem::path catalog_path = std::filesystem::temp_directory_path() /
+            ("astc-vulkan-compiled-model-catalog-write-" + std::to_string(nonce) + ".astcc");
+        if (!astc_vulkan_write_compiled_catalog(catalog_path.string(), filtered_catalog, error) ||
+            !read_file(catalog_path.string(), model.catalog, error)) {
+            std::error_code ignored;
+            std::filesystem::remove(catalog_path, ignored);
+            return false;
+        }
+        std::error_code ignored;
+        std::filesystem::remove(catalog_path, ignored);
+    }
     const auto astc_names = manifest_astc_tensor_names(manifest);
 
     gguf_init_params params{true, nullptr};
@@ -570,6 +644,25 @@ bool astc_vulkan_compiled_model_convert_to_strict(
     }
     astc_vulkan_manifest manifest;
     if (!read_embedded_manifest(model.manifest, manifest, error)) return false;
+    if (!strict_manifest_filter(manifest, error)) return false;
+    if (!write_embedded_manifest(manifest, model.manifest, error)) return false;
+    astc_vulkan_compiled_catalog filtered_catalog;
+    if (!astc_vulkan_compiled_catalog_from_manifest(manifest, filtered_catalog, error)) {
+        return false;
+    }
+    const auto nonce = static_cast<uint64_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count()) ^
+        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&filtered_catalog));
+    const std::filesystem::path catalog_path = std::filesystem::temp_directory_path() /
+        ("astc-vulkan-compiled-model-catalog-write-" + std::to_string(nonce) + ".astcc");
+    if (!astc_vulkan_write_compiled_catalog(catalog_path.string(), filtered_catalog, error) ||
+        !read_file(catalog_path.string(), model.catalog, error)) {
+        std::error_code ignored;
+        std::filesystem::remove(catalog_path, ignored);
+        return false;
+    }
+    std::error_code ignored;
+    std::filesystem::remove(catalog_path, ignored);
     const auto astc_names = manifest_astc_tensor_names(manifest);
     astc_vulkan_native_tensor_table table;
     if (!astc_vulkan_decode_native_tensor_table(model.native_table, table, error)) return false;

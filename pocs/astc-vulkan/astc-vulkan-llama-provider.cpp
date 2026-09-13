@@ -213,7 +213,14 @@ bool astc_vulkan_llama_provider::prepare(const options & options, std::string & 
         std::fprintf(stderr, "ASTC prepare: %zu artifact bindings materialized after %.3f s\n",
                      entries_.size(), elapsed);
     }
-    if (entries_.empty()) {
+    // A strict container may legitimately contain no approved ASTC entries:
+    // all experimental/unverified manifest records are filtered at pack time
+    // and their native copies remain available.  Keep the provider ready as a
+    // native-only overlay in that case; hybrid/sidecar callers still get the
+    // diagnostic error they historically received for an empty cache.
+    if (entries_.empty() &&
+        !(prepared_options_.require_all_artifacts &&
+          overlay_.catalog().plan.entries.empty())) {
         error = "ASTC cache contains no resident D1/D2 matrix artifacts eligible for runtime";
         reset();
         return false;
