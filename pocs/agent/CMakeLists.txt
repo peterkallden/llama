@@ -610,6 +610,11 @@ target_compile_definitions(llama-agent-runtime-support
     PUBLIC LLAMA_MEMORY_POC_USE_AGENT_TOOLS
         LLAMA_AGENT_SYSCONFDIR="${LLAMA_AGENT_SYSCONFDIR}"
 )
+if(LLAMA_AGENT_SANDBOX)
+    target_compile_definitions(llama-agent-runtime-support PUBLIC LLAMA_AGENT_SANDBOX=1)
+else()
+    target_compile_definitions(llama-agent-runtime-support PUBLIC LLAMA_AGENT_SANDBOX=0)
+endif()
 target_link_libraries(llama-agent-runtime-support
     PUBLIC
         llama-agent-memory

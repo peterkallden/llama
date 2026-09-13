@@ -11,10 +11,12 @@
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
 #include "../runtime/agent-runtime-execution.h"
+#if LLAMA_AGENT_SANDBOX
 #include "agent/sandbox/sandbox-docker-runtime.h"
 #include "agent/sandbox/sandbox-kubernetes-runtime.h"
 #include "agent/sandbox/sandbox-lxc-runtime.h"
 #include "agent/sandbox/sandbox-local-runtime.h"
+#endif
 #include "agent/sandbox/sandbox-runtime.h"
 #include "../diagnostics/agent-clangd-provider.h"
 #include "../diagnostics/agent-native-crash.h"
@@ -589,9 +591,11 @@ bool resolve_agent_host_tool_selection(
                 request.resource_processor_policies.find("html.text") != request.resource_processor_policies.end() ||
                 request.resource_processor_policies.find("xlsx.workbook") != request.resource_processor_policies.end();
         };
+#if LLAMA_AGENT_SANDBOX
         std::shared_ptr<common_agent_sandbox_docker_runtime> docker_runtime;
         std::shared_ptr<common_agent_sandbox_kubernetes_runtime> kubernetes_runtime;
         std::shared_ptr<common_agent_sandbox_lxc_runtime> lxc_runtime;
+#endif
         std::shared_ptr<common_agent_workspace_manager> workspace_manager;
         if (needs_sandbox_assembly()) {
             auto sandbox_assembly = make_agent_host_sandbox_assembly({
@@ -599,9 +603,11 @@ bool resolve_agent_host_tool_selection(
                 request.tool_context.scope,
                 resource_store,
             });
+#if LLAMA_AGENT_SANDBOX
             docker_runtime = std::move(sandbox_assembly.docker_runtime);
             kubernetes_runtime = std::move(sandbox_assembly.kubernetes_runtime);
             lxc_runtime = std::move(sandbox_assembly.lxc_runtime);
+#endif
             workspace_manager = std::move(sandbox_assembly.workspace_manager);
             bindings.sandbox_execute = std::move(sandbox_assembly.execute);
         } else {
@@ -617,10 +623,14 @@ bool resolve_agent_host_tool_selection(
             assembly.policies = request.resource_processor_policies;
             assembly.sandbox_classes = request.sandbox.classes;
             assembly.sandbox_defaults = request.sandbox.defaults;
+#if LLAMA_AGENT_SANDBOX
             assembly.docker_runtime = docker_runtime;
             assembly.kubernetes_runtime = kubernetes_runtime;
             assembly.lxc_runtime = lxc_runtime;
             assembly.local_runtime = std::make_shared<common_agent_sandbox_local_runtime>();
+#else
+            assembly.local_runtime = std::make_shared<common_agent_sandbox_unavailable_runtime>();
+#endif
             assembly.workspace_manager = workspace_manager;
             assembly.resource_store = resource_store;
             assembly.sandbox_backend = request.sandbox.backend;

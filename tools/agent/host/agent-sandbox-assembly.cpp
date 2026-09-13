@@ -1,9 +1,11 @@
 #include "agent-sandbox-assembly.h"
 
+#if LLAMA_AGENT_SANDBOX
 #include "agent/sandbox/sandbox-docker-runtime.h"
 #include "agent/sandbox/sandbox-kubernetes-runtime.h"
 #include "agent/sandbox/sandbox-lxc-runtime.h"
 #include "agent/sandbox/sandbox-local-runtime.h"
+#endif
 #include "agent/sandbox/sandbox-policy.h"
 #include "tools/agent/tooling/agent-sandbox-helper.h"
 
@@ -46,6 +48,7 @@ agent_host_sandbox_assembly make_agent_host_sandbox_assembly(
     auto * resource_store = request.resource_store;
 
     result.workspace_manager = std::make_shared<common_agent_workspace_manager>(config.workspace);
+#if LLAMA_AGENT_SANDBOX
     result.docker_runtime = std::make_shared<common_agent_sandbox_docker_runtime>(
         common_agent_docker_sandbox_config{
             config.docker_executable,
@@ -112,6 +115,7 @@ agent_host_sandbox_assembly make_agent_host_sandbox_assembly(
         };
         return result;
     }
+#endif
 
     auto unavailable_runtime = std::make_shared<common_agent_sandbox_unavailable_runtime>();
     const auto policies = config.classes;
