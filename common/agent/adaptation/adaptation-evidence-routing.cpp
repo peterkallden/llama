@@ -87,3 +87,40 @@ common_adaptation_evidence_sources_for_turn(
     return matches;
 }
 
+bool common_adaptation_evidence_from_turn(
+        const common_agent_request & request,
+        const common_plan_state & plan,
+        const common_agent_result & result,
+        const common_adaptation_evidence_relation & relation,
+        common_adaptation_evidence & evidence,
+        std::string & error) {
+    error.clear();
+    const auto matches = common_adaptation_evidence_sources_for_turn(request, plan, result);
+    const auto match = std::find_if(matches.begin(), matches.end(), [&](const auto & value) {
+        return value.source == relation.source;
+    });
+    if (match == matches.end()) {
+        error = "adaptation evidence source is not present in the turn";
+        return false;
+    }
+    // A tool-repair relation is the one source for which the runtime already
+    // exposes both sides. Other sources require the host to complete the
+    // candidate/baseline relation and verifier evidence explicitly.
+    if (relation.source == common_adaptation_evidence_source::tool_repair &&
+            !match->candidate_ready) {
+        error = "tool-repair adaptation evidence requires failure and recovery";
+        return false;
+    }
+    evidence = {};
+    evidence.id = relation.id;
+    evidence.source = relation.source;
+    evidence.scope = common_agent_scope_from_request(request);
+    evidence.task_fingerprint = relation.task_fingerprint;
+    evidence.baseline_ref = relation.baseline_ref;
+    evidence.candidate_ref = relation.candidate_ref;
+    evidence.verifier_ref = relation.verifier_ref;
+    evidence.transaction_ids = relation.transaction_ids;
+    evidence.cause = relation.cause;
+    evidence.host_verified = relation.host_verified;
+    return common_adaptation_evidence_validate(evidence, 64, error);
+}
