@@ -1144,7 +1144,10 @@ private:
             }
             astc_options.allow_experimental = params_base.astc_research;
             astc_options.allow_unverified = params_base.astc_research;
-            astc_options.require_all_artifacts = params_base.model_user_metadata != nullptr;
+            // A hybrid ASTCCM retains native tensor bytes, so its overlay is
+            // optional. Strict deliberately omits ASTC-owned native tensors
+            // and therefore must fail closed at this seam.
+            astc_options.require_all_artifacts = params_base.astc_compiled_strict;
             if (params_base.astc_profile == "quality") {
                 astc_options.policy = astc_vulkan_quality_policy::quality;
             } else if (params_base.astc_profile == "compact" ||
@@ -1195,6 +1198,11 @@ private:
                 SRV_INF("ASTC cache overlay active: %s (%s policy)\\n",
                         astc_source_label, params_base.astc_profile.c_str());
             } else {
+                if (params_base.astc_compiled_strict) {
+                    SRV_ERR("strict ASTCCM requires its ASTC overlay, but preparation failed: %s\\n",
+                            astc_error.c_str());
+                    return false;
+                }
                 SRV_WRN("ASTC cache overlay unavailable (%s); using native GGUF tensors\\n",
                         astc_error.c_str());
             }

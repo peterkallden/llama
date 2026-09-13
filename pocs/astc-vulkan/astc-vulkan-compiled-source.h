@@ -42,6 +42,7 @@ public:
     }
     astc_vulkan_compiled_source_mode materialization_mode() const { return mode_; }
     const char * materialization_mode_name() const;
+    bool strict() const { return model_ && model_->is_strict(); }
     bool ready() const { return (uses_user_loader() || !model_path_.empty()) && cache_source_ != nullptr; }
 
 private:

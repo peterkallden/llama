@@ -295,6 +295,19 @@ bool astc_vulkan_llama_provider::materialize_entries(
                          plan_entry.tensor_name.c_str(), elapsed);
         }
     }
+    // In a strict ASTCCM the loader deliberately omitted native bytes for
+    // every non-fallback manifest entry. Do not let a later capability or
+    // name-binding miss turn into a graph-level fallback over placeholders.
+    if (prepared_options_.require_all_artifacts) {
+        for (const auto & plan_entry : overlay_.catalog().plan.entries) {
+            if (!plan_entry.use_native_fallback &&
+                prepared_entries.find(plan_entry.tensor_name) == prepared_entries.end()) {
+                error = "strict ASTCCM has no prepared runtime binding for artifact: " +
+                        plan_entry.tensor_name;
+                return false;
+            }
+        }
+    }
     entries = std::move(prepared_entries);
     error.clear();
     return true;

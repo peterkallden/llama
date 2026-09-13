@@ -152,6 +152,45 @@ uint32_t section_count(const astc_vulkan_compiled_model & model) {
     return model.version >= 2 ? kV2SectionCount : kV1SectionCount;
 }
 
+bool valid_storage_mode(astc_vulkan_compiled_storage_mode mode) {
+    return mode == astc_vulkan_compiled_storage_mode::hybrid ||
+           mode == astc_vulkan_compiled_storage_mode::strict;
+}
+
+bool read_embedded_manifest(const std::vector<uint8_t> & bytes,
+                            astc_vulkan_manifest & manifest,
+                            std::string & error) {
+    const auto nonce = static_cast<uint64_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count()) ^
+        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&bytes));
+    const std::filesystem::path path = std::filesystem::temp_directory_path() /
+        ("astc-vulkan-compiled-model-manifest-" + std::to_string(nonce) + ".astcv");
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        if (!file || !write_section(file, bytes)) {
+            error = "cannot stage embedded compiled-model manifest";
+            file.close();
+            std::error_code ignored;
+            std::filesystem::remove(path, ignored);
+            return false;
+        }
+    }
+    const bool ok = astc_vulkan_read_manifest(path.string(), manifest, error);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    return ok;
+}
+
+std::unordered_set<std::string> manifest_astc_tensor_names(const astc_vulkan_manifest & manifest) {
+    std::unordered_set<std::string> names;
+    if (!manifest.artifacts.empty()) {
+        for (const auto & artifact : manifest.artifacts) names.insert(artifact.storage.name);
+    } else {
+        for (const auto & tensor : manifest.tensors) names.insert(tensor.name);
+    }
+    return names;
+}
+
 bool validate_bootstrap(const astc_vulkan_compiled_model & model, std::string & error) {
     if (model.gguf.empty() || model.native_table.empty()) {
         error = "bootstrap compiled-model is missing GGUF metadata or native table";
@@ -172,6 +211,10 @@ bool validate_bootstrap(const astc_vulkan_compiled_model & model, std::string & 
     gguf_free(ctx);
     if (offset != model.gguf.size() || tensor_count <= 0) {
         error = "bootstrap GGUF does not end exactly at its tensor-data offset";
+        return false;
+    }
+    if (!valid_storage_mode(model.storage_mode)) {
+        error = "bootstrap compiled-model has an invalid storage mode";
         return false;
     }
     astc_vulkan_native_tensor_table table;
@@ -215,22 +258,8 @@ bool astc_vulkan_compiled_model_validate(
     // Parse the embedded manifest as a final structural gate.  Payload and
     // per-blob checksums were already verified when the cache was packed; this
     // check ensures the container cannot contain arbitrary required bytes.
-    const auto nonce = static_cast<uint64_t>(
-        std::chrono::steady_clock::now().time_since_epoch().count()) ^
-        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&model));
-    const std::filesystem::path temp = std::filesystem::temp_directory_path() /
-        ("astc-vulkan-compiled-model-manifest-" + std::to_string(nonce) + ".astcv");
-    {
-        std::ofstream file(temp, std::ios::binary | std::ios::trunc);
-        if (!file || !write_section(file, model.manifest)) {
-            error = "cannot stage embedded compiled-model manifest";
-            return false;
-        }
-    }
     astc_vulkan_manifest manifest;
-    const bool ok = astc_vulkan_read_manifest(temp.string(), manifest, error);
-    std::error_code ignored;
-    std::filesystem::remove(temp, ignored);
+    const bool ok = read_embedded_manifest(model.manifest, manifest, error);
     if (!ok || !astc_vulkan_validate_manifest(manifest, error) ||
         !astc_vulkan_validate_payload_blob(manifest, model.payload.size(), error) ||
         !astc_vulkan_validate_layout_blob(manifest, model.layout.size(), error)) {
@@ -275,7 +304,7 @@ bool astc_vulkan_compiled_model_write(
     file.write(kMagic.data(), kMagic.size());
     if (!file.good() || !write_u32(file, model.version) || !write_u32(file, section_count(model)) ||
         !write_u32(file, static_cast<uint32_t>(model.source_model_fingerprint.size())) ||
-        !write_u32(file, 0) ||
+        !write_u32(file, model.version >= 2 ? static_cast<uint32_t>(model.storage_mode) : 0) ||
         (!model.source_model_fingerprint.empty() &&
          (file.write(model.source_model_fingerprint.data(),
                      static_cast<std::streamsize>(model.source_model_fingerprint.size())),
@@ -344,6 +373,17 @@ bool astc_vulkan_compiled_model_read(
         return false;
     }
     model.version = version;
+    // Early v2 files used the reserved field as zero and were strict by
+    // construction. Preserve that behavior instead of treating them as the
+    // new safe hybrid default.
+    if (version >= 2) {
+        if (reserved == 0) model.storage_mode = astc_vulkan_compiled_storage_mode::strict;
+        else model.storage_mode = static_cast<astc_vulkan_compiled_storage_mode>(reserved);
+        if (!valid_storage_mode(model.storage_mode)) {
+            error = "invalid bootstrap compiled-model storage mode";
+            return false;
+        }
+    }
     model.source_model_fingerprint.resize(fingerprint_size);
     if (fingerprint_size &&
         !file.read(model.source_model_fingerprint.data(), fingerprint_size)) {
@@ -425,12 +465,15 @@ bool astc_vulkan_compiled_model_pack_bootstrap(
     const std::string & model_path,
     const std::string & requested_cache_path,
     const std::string & output_path,
+    astc_vulkan_compiled_storage_mode storage_mode,
     std::string & error) {
     astc_vulkan_cache_validation validation;
     if (!astc_vulkan_cache_validate(model_path, requested_cache_path, validation, error)) return false;
 
     astc_vulkan_compiled_model model;
     model.version = astc_vulkan_compiled_model::kCurrentVersion;
+    model.storage_mode = storage_mode;
+    if (!valid_storage_mode(storage_mode)) { error = "invalid bootstrap storage mode"; return false; }
     if (!read_file(validation.paths.manifest, model.manifest, error) ||
         !read_file(validation.paths.payload, model.payload, error) ||
         !read_file(validation.paths.layout, model.layout, error, false) ||
@@ -447,17 +490,10 @@ bool astc_vulkan_compiled_model_pack_bootstrap(
     }
 
     astc_vulkan_manifest manifest;
-    const auto nonce = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
-    const std::filesystem::path manifest_path = std::filesystem::temp_directory_path() /
-        ("astc-vulkan-bootstrap-manifest-" + std::to_string(nonce) + ".astcv");
-    { std::ofstream out(manifest_path, std::ios::binary | std::ios::trunc);
-      if (!out || !write_section(out, model.manifest)) { error="cannot stage bootstrap manifest"; return false; } }
-    const bool manifest_ok = astc_vulkan_read_manifest(manifest_path.string(), manifest, error);
-    std::error_code ignored; std::filesystem::remove(manifest_path, ignored);
-    if (!manifest_ok) return false;
+    if (!read_embedded_manifest(model.manifest, manifest, error)) return false;
     // E1 is deliberately an annex rather than a matrix-manifest artifact.
-    // Carry its three immutable resources in ASTCCM v2 and only then omit the
-    // corresponding native token embedding tensor.
+    // Carry its immutable resources in ASTCCM v2, but retain the native
+    // embedding until the E1 provider has a strict resource gate of its own.
     const std::filesystem::path cache_root = validation.paths.root;
     const std::filesystem::path embedding_meta = cache_root / "embedding-10x5.astce";
     const std::filesystem::path embedding_payload = cache_root / "embedding-10x5.astcpack";
@@ -471,11 +507,9 @@ bool astc_vulkan_compiled_model_pack_bootstrap(
                           !read_file(embedding_affine.string(), model.embedding_affine, error))) {
         return false;
     }
-    std::unordered_set<std::string> astc_names;
-    const auto & artifacts = manifest.artifacts.empty() ? std::vector<astc_vulkan_artifact_record>{} : manifest.artifacts;
-    if (!artifacts.empty()) for (const auto & a : artifacts) astc_names.insert(a.storage.name);
-    else for (const auto & t : manifest.tensors) astc_names.insert(t.name);
-    if (!model.embedding_metadata.empty()) astc_names.insert("token_embd.weight");
+    // The E1 annex is always optional today, so token_embd remains native in
+    // both modes. Strict only omits matrix artifacts that the overlay owns.
+    const auto astc_names = manifest_astc_tensor_names(manifest);
 
     gguf_init_params params{true, nullptr};
     gguf_context * ctx = gguf_init_from_file(model_path.c_str(), params);
@@ -493,7 +527,7 @@ bool astc_vulkan_compiled_model_pack_bootstrap(
         const int64_t * ne = gguf_get_tensor_ne(ctx, i);
         record.n_dims = 1;
         for (uint32_t d=0; d<4; ++d) { record.ne[d] = static_cast<uint64_t>(ne[d]); if (ne[d] > 1) record.n_dims=d+1; }
-        if (astc_names.count(record.name)) {
+        if (storage_mode == astc_vulkan_compiled_storage_mode::strict && astc_names.count(record.name)) {
             record.storage = astc_vulkan_native_tensor_storage::astc;
         } else {
             record.storage = astc_vulkan_native_tensor_storage::native;
@@ -508,6 +542,61 @@ bool astc_vulkan_compiled_model_pack_bootstrap(
         table.tensors.push_back(std::move(record));
     }
     gguf_free(ctx);
+    if (!astc_vulkan_encode_native_tensor_table(table, model.native_table, error)) return false;
+    return astc_vulkan_compiled_model_write(output_path, model, error);
+}
+
+const char * astc_vulkan_compiled_storage_mode_name(astc_vulkan_compiled_storage_mode mode) {
+    switch (mode) {
+        case astc_vulkan_compiled_storage_mode::hybrid: return "hybrid";
+        case astc_vulkan_compiled_storage_mode::strict: return "strict";
+    }
+    return "invalid";
+}
+
+bool astc_vulkan_compiled_model_convert_to_strict(
+    const std::string & input_path,
+    const std::string & output_path,
+    std::string & error) {
+    astc_vulkan_compiled_model model;
+    if (!astc_vulkan_compiled_model_read(input_path, model, error)) return false;
+    if (!model.is_bootstrap_v2()) {
+        error = "only ASTCCM v2 bootstrap containers can be converted to strict";
+        return false;
+    }
+    if (model.is_strict()) {
+        error = "compiled model is already strict";
+        return false;
+    }
+    astc_vulkan_manifest manifest;
+    if (!read_embedded_manifest(model.manifest, manifest, error)) return false;
+    const auto astc_names = manifest_astc_tensor_names(manifest);
+    astc_vulkan_native_tensor_table table;
+    if (!astc_vulkan_decode_native_tensor_table(model.native_table, table, error)) return false;
+
+    std::vector<uint8_t> strict_native_payload;
+    for (auto & record : table.tensors) {
+        if (astc_names.count(record.name)) {
+            record.storage = astc_vulkan_native_tensor_storage::astc;
+            record.native_offset = 0;
+            record.native_size = 0;
+            record.native_hash64 = 0;
+            continue;
+        }
+        if (record.storage != astc_vulkan_native_tensor_storage::native ||
+            record.native_offset > model.native_payload.size() ||
+            record.native_size > model.native_payload.size() - record.native_offset) {
+            error = "hybrid compiled model lacks native bytes for: " + record.name;
+            return false;
+        }
+        const uint8_t * bytes = model.native_payload.data() + record.native_offset;
+        record.native_offset = strict_native_payload.size();
+        strict_native_payload.insert(strict_native_payload.end(), bytes, bytes + record.native_size);
+        record.native_hash64 = astc_vulkan_payload_hash64(
+            strict_native_payload.data() + record.native_offset, record.native_size);
+    }
+    model.native_payload = std::move(strict_native_payload);
+    model.storage_mode = astc_vulkan_compiled_storage_mode::strict;
     if (!astc_vulkan_encode_native_tensor_table(table, model.native_table, error)) return false;
     return astc_vulkan_compiled_model_write(output_path, model, error);
 }

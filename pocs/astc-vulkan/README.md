@@ -1115,15 +1115,25 @@ to select policy, redirect a tensor, or replace payload validation.
 validated overlay. Unlike the original hybrid container it does **not** copy a
 complete GGUF alongside ASTC. It contains the canonical GGUF prefix through
 its data offset (architecture, tokenizer, KVs and tensor descriptors), an
-exhaustive native-tensor table, native bytes only for tensors without a chosen
-ASTC artifact, and the existing manifest/payload/layout/scale/pair-map/evidence
-sections unchanged.
+exhaustive native-tensor table, native bytes, and the existing
+manifest/payload/layout/scale/pair-map/evidence sections unchanged.
+
+Bootstrap containers have an explicit storage mode:
+
+- `hybrid` is the default. Every logical tensor retains native bytes. ASTC is
+  opportunistic, so an unavailable device, rejected artifact, or failed ASTC
+  resource creation safely uses the native tensor.
+- `strict` removes native bytes only for matrix tensors owned by the manifest.
+  It is a deployment assertion: the runtime must prepare every required ASTC
+  resource or abort model loading. It never substitutes zero-filled
+  placeholders. E1 remains native-backed in both modes until its provider has
+  the same strict resource gate.
 
 When the published cache contains the token-local E1 10x5 annex,
 `embedding-10x5.astce`, its ASTC payload and affine table are carried as three
-additional immutable sections. `token_embd.weight` is then classified as ASTC
-in the exhaustive table and has no native duplicate. The E1 provider consumes
-these bytes through the same in-memory cache-source interface as D1/D2.
+additional immutable sections. The E1 provider consumes these bytes through
+the same in-memory cache-source interface as D1/D2, while the native embedding
+is retained as a safety fallback.
 
 The v2 source uses llama.cpp's public `llama_model_init_from_user()` API. The
 ordinary GGUF parser therefore continues to own model metadata semantics; one
@@ -1134,16 +1144,22 @@ overlay owns selected D1/D2/E1 records. This introduces neither an ASTC
 ```bash
 build-astc-neural-rank/bin/astc-vulkan-cache compiled-pack \
   --model /path/to/model.gguf --cache /path/to/cache \
-  --compiled-format bootstrap --output /path/to/model.astccm
+  --compiled-format bootstrap --compiled-mode hybrid --output /path/to/model.astccm
+# After device/model validation, make a smaller deployment assertion without
+# rereading the source GGUF:
+build-astc-neural-rank/bin/astc-vulkan-cache compiled-convert \
+  --compiled-model /path/to/model.astccm --compiled-mode strict \
+  --output /path/to/model.strict.astccm
 build-astc-neural-rank/bin/llama-cli --compiled-model /path/to/model.astccm \
   --astc-profile compact --astc-research -p 'Hello'
 ```
 
 V2 validates native ranges/checksums and requires every logical tensor to be
-exactly one of native or ASTC. The current ggml loader still creates ordinary
-placeholder buffers for ASTC entries before the provider binds them; removing
-those allocations is a later memory-owner optimization, not a reason to retain
-duplicate native payloads.
+represented by native storage, ASTC storage, or both. Hybrid-to-strict is
+one-way because strict deliberately discards selected native bytes. The current
+ggml loader still creates ordinary placeholder buffers for ASTC entries before
+the provider binds them; removing those allocations is a later memory-owner
+optimization.
 
 `catalog.astcc` is only an index. When the original GGUF and sidecar must be
 distributed as one unit, create an experimental hybrid container:

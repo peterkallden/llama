@@ -137,10 +137,12 @@ bool cli_context::init() {
         }
         params.astc_cache_source = impl->compiled_source->cache_source();
         params.astc_cache_source_fingerprint = impl->compiled_source->source_fingerprint();
-        LOG_INF("compiled model active: %s (%s + in-memory ASTC blobs)\n",
+        params.astc_compiled_strict = impl->compiled_source->strict();
+        LOG_INF("compiled model active: %s (%s, %s storage + in-memory ASTC blobs)\n",
                 params.compiled_model.c_str(),
                 impl->compiled_source->uses_user_loader() ?
-                    "bootstrap GGUF/user-loader" : impl->compiled_source->materialization_mode_name());
+                    "bootstrap GGUF/user-loader" : impl->compiled_source->materialization_mode_name(),
+                params.astc_compiled_strict ? "strict" : "hybrid");
     }
 #elif defined(LLAMA_ASTC_VULKAN_POC)
     if (!params.compiled_model.empty()) {

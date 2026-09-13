@@ -500,6 +500,11 @@ struct common_params {
     // the local server; normal --model GGUF behavior is unchanged.
     std::string compiled_model;
 
+    // A strict ASTCCM has intentionally omitted native copies for its ASTC
+    // matrix artifacts. A failed overlay preparation must abort model loading
+    // rather than silently executing zero-filled placeholder tensors.
+    bool astc_compiled_strict = false;
+
     // Optional metadata/data adapter for an in-memory compiled model. This is
     // intentionally a generic llama public-API seam; common/ggml never needs
     // to know about ASTC container types.
