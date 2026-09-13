@@ -354,5 +354,12 @@ bool common_learning_transaction_observer::observe(
     transaction.observation = observation;
     transaction.created_at = now_iso8601();
     if (!common_learning_transaction_validate(transaction, config.max_evidence, error)) return false;
-    return store.append(transaction, error);
+    if (!store.append(transaction, error)) return false;
+    if (config.source_observer) {
+        const auto matches = common_adaptation_evidence_sources_for_turn(request, plan, result);
+        for (const auto & match : matches) {
+            if (!config.source_observer(match, transaction, error)) return false;
+        }
+    }
+    return true;
 }
