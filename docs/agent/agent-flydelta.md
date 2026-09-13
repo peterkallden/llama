@@ -308,14 +308,20 @@ must produce a valid capture manifest and counterfactual report first. The
 objective remains minimum intervention, repeatable verified lift and minimum
 collateral change.
 
-### 4D. Explicit gating and promotion — gate implemented
+### 4D. Explicit gating and promotion — implemented
 
 `flydelta-gate.*` provides the host-owned no-op gate for explicit opt-in,
 approved candidate status, familiarity/novelty thresholds, basis availability
 and bounded scale. A low-confidence or unknown context returns a stable no-op
 reason rather than an activation fallback. Only after this decision should the
-existing static cvec seam receive data. Candidate promotion and server wiring
-remain later work; this gate does not promote or persist anything.
+existing static cvec seam receive data. `flydelta-promotion.*` aggregates
+individual counterfactual reports and marks a summary `eligible` only after
+bounded trial, help, harm and unknown-ratio thresholds pass. It never marks a
+summary `approved`; explicit host/curator approval is still required. A
+non-qualifying summary remains `observed` so negative evidence is retained.
+
+The gate and promotion code do not load artifacts, capture activations, persist
+learning or wire the server. Those remain separate runtime work.
 
 ### 5. Optional dynamic hook
 
