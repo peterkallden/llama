@@ -384,6 +384,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta.cpp
         test-agent-flydelta-contracts.cpp
         test-agent-flydelta-experiment.cpp
+        test-agent-flydelta-evidence.cpp
         test-memory-policy.cpp
         test-plan-context.cpp
         test-plan-json.cpp

@@ -276,14 +276,18 @@ tool-catalog, resource-snapshot and verifier fingerprints so a later runner
 cannot silently compare different environments. The quality delta is recorded
 but never overrides the host outcome classification.
 
-### 4B. Repair transitions and contrast sets — next
+### 4B. Repair transitions, contrast sets and intervention credit — implemented
 
-Connect a failed host-verified attempt to its repaired attempt using the
-existing learning transaction IDs and one immutable task fixture. Build bounded
-positive/negative sets only from aligned transitions. Main-model descriptions
-may remain metadata for clustering, but host evidence decides correctness.
-Add explicit intervention credit and negative evidence; a successful repair
-alone is not proof that a future overlay caused the improvement.
+`flydelta-evidence.*` connects a failed host-verified attempt to its repaired
+attempt using existing learning transaction IDs and one immutable task
+fingerprint. It builds bounded positive/negative pairs only from aligned
+transitions in the same namespace, project and session. Main-model descriptions
+can remain metadata for later clustering, but host evidence decides correctness.
+
+Intervention credit is derived from the 4A counterfactual report and preserves
+positive and negative evidence (`HELPED`, `HARMED`, `NEUTRAL`). `UNKNOWN` is
+never eligible for a learning update. A successful repair by itself is not
+treated as proof that a future overlay caused the improvement.
 
 ### 4C. Capture, basis and gating — later
 

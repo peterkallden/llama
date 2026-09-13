@@ -1,0 +1,168 @@
+#include "agent/adaptation/flydelta/flydelta-evidence.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace {
+
+bool nonempty_bounded(const std::string & value, size_t max_size = 512) {
+    return !value.empty() && value.size() <= max_size;
+}
+
+bool verified_model_behavior(const common_learning_transaction & transaction) {
+    const auto & observation = transaction.observation;
+    return observation.collection_allowed && observation.cause == common_learning_cause::model_behavior &&
+        (observation.verification == common_learning_verification::host_verified ||
+         observation.verification == common_learning_verification::user_confirmed) &&
+        common_learning_observation_qualifies(observation);
+}
+
+bool has_signal(const common_learning_observation & observation, common_learning_signal_type type) {
+    return std::any_of(observation.signals.begin(), observation.signals.end(),
+        [type](const auto & signal) { return signal.type == type; });
+}
+
+} // namespace
+
+bool common_flydelta_repair_transition_validate(
+        const common_flydelta_repair_transition & transition,
+        std::string & error) {
+    error.clear();
+    if (transition.schema_version != 1 || !nonempty_bounded(transition.id) ||
+            transition.scope.namespace_id.empty() || !nonempty_bounded(transition.task_fingerprint) ||
+            !nonempty_bounded(transition.failed_transaction_id) ||
+            !nonempty_bounded(transition.repaired_transaction_id) ||
+            transition.failed_transaction_id == transition.repaired_transaction_id ||
+            !nonempty_bounded(transition.failed_execution_ref) ||
+            !nonempty_bounded(transition.repaired_execution_ref) ||
+            !nonempty_bounded(transition.host_verifier_ref)) {
+        error = "FlyDelta repair transition identity is incomplete";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_repair_transition_from_transactions(
+        const common_learning_transaction & failed,
+        const common_learning_transaction & repaired,
+        const std::string & task_fingerprint,
+        const std::string & failed_execution_ref,
+        const std::string & repaired_execution_ref,
+        const std::string & host_verifier_ref,
+        common_flydelta_repair_transition & transition,
+        std::string & error) {
+    error.clear();
+    if (!common_learning_transaction_validate(failed, 64, error) ||
+            !common_learning_transaction_validate(repaired, 64, error)) {
+        return false;
+    }
+    if (!verified_model_behavior(failed) || !verified_model_behavior(repaired) ||
+            !has_signal(failed.observation, common_learning_signal_type::tool_failure) ||
+            !has_signal(repaired.observation, common_learning_signal_type::successful_recovery) ||
+            failed.observation.scope.namespace_id != repaired.observation.scope.namespace_id ||
+            failed.observation.scope.project_id != repaired.observation.scope.project_id ||
+            failed.observation.scope.session_id != repaired.observation.scope.session_id ||
+            failed.observation.cause != repaired.observation.cause) {
+        error = "FlyDelta repair transition requires aligned host-verified failure and recovery";
+        return false;
+    }
+    transition = {};
+    transition.id = "learning://flydelta/repair/" + failed.id + "/" + repaired.id;
+    transition.scope = failed.observation.scope;
+    transition.task_fingerprint = task_fingerprint;
+    transition.failed_transaction_id = failed.id;
+    transition.repaired_transaction_id = repaired.id;
+    transition.failed_execution_ref = failed_execution_ref;
+    transition.repaired_execution_ref = repaired_execution_ref;
+    transition.host_verifier_ref = host_verifier_ref;
+    return common_flydelta_repair_transition_validate(transition, error);
+}
+
+bool common_flydelta_contrast_set_validate(
+        const common_flydelta_contrast_set & contrast_set,
+        size_t max_transitions,
+        std::string & error) {
+    error.clear();
+    if (contrast_set.schema_version != 1 || !nonempty_bounded(contrast_set.id) ||
+            !nonempty_bounded(contrast_set.behavior_key) || contrast_set.scope.namespace_id.empty() ||
+            contrast_set.repair_transition_ids.empty() ||
+            contrast_set.repair_transition_ids.size() > max_transitions ||
+            contrast_set.repair_transition_ids.size() != contrast_set.positive_transaction_ids.size() ||
+            contrast_set.repair_transition_ids.size() != contrast_set.negative_transaction_ids.size()) {
+        error = "FlyDelta contrast set bounds or identity are invalid";
+        return false;
+    }
+    for (size_t i = 0; i < contrast_set.repair_transition_ids.size(); ++i) {
+        if (!nonempty_bounded(contrast_set.repair_transition_ids[i]) ||
+                !nonempty_bounded(contrast_set.positive_transaction_ids[i]) ||
+                !nonempty_bounded(contrast_set.negative_transaction_ids[i]) ||
+                contrast_set.positive_transaction_ids[i] == contrast_set.negative_transaction_ids[i]) {
+            error = "FlyDelta contrast set contains an invalid aligned pair";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool common_flydelta_contrast_set_from_transitions(
+        const std::string & id,
+        const std::string & behavior_key,
+        const std::vector<common_flydelta_repair_transition> & transitions,
+        size_t max_transitions,
+        common_flydelta_contrast_set & contrast_set,
+        std::string & error) {
+    error.clear();
+    if (transitions.empty() || transitions.size() > max_transitions ||
+            !nonempty_bounded(id) || !nonempty_bounded(behavior_key)) {
+        error = "FlyDelta contrast set input bound is invalid";
+        return false;
+    }
+    contrast_set = {};
+    contrast_set.id = id;
+    contrast_set.behavior_key = behavior_key;
+    contrast_set.scope = transitions.front().scope;
+    for (const auto & transition : transitions) {
+        if (!common_flydelta_repair_transition_validate(transition, error) ||
+                transition.scope.namespace_id != contrast_set.scope.namespace_id ||
+                transition.scope.project_id != contrast_set.scope.project_id ||
+                transition.scope.session_id != contrast_set.scope.session_id) {
+            error = "FlyDelta contrast set mixes invalid or incompatible transitions";
+            return false;
+        }
+        contrast_set.repair_transition_ids.push_back(transition.id);
+        contrast_set.positive_transaction_ids.push_back(transition.repaired_transaction_id);
+        contrast_set.negative_transaction_ids.push_back(transition.failed_transaction_id);
+    }
+    return common_flydelta_contrast_set_validate(contrast_set, max_transitions, error);
+}
+
+bool common_flydelta_intervention_credit_validate(
+        const common_flydelta_intervention_credit & credit,
+        std::string & error) {
+    error.clear();
+    if (credit.schema_version != 1 || !nonempty_bounded(credit.experiment_id) ||
+            !nonempty_bounded(credit.candidate_id) || !nonempty_bounded(credit.fixture_id) ||
+            !std::isfinite(credit.quality_delta) || credit.quality_delta < -1.0f ||
+            credit.quality_delta > 1.0f ||
+            (credit.eligible_for_learning && credit.outcome == common_flydelta_counterfactual_outcome::unknown)) {
+        error = "FlyDelta intervention credit is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_intervention_credit_from_report(
+        const common_flydelta_counterfactual_report & report,
+        common_flydelta_intervention_credit & credit,
+        std::string & error) {
+    error.clear();
+    if (!common_flydelta_counterfactual_report_validate(report, error)) return false;
+    credit = {};
+    credit.experiment_id = report.experiment_id;
+    credit.candidate_id = report.candidate_id;
+    credit.fixture_id = report.fixture_id;
+    credit.outcome = report.outcome;
+    credit.quality_delta = report.quality_delta;
+    credit.eligible_for_learning = report.outcome != common_flydelta_counterfactual_outcome::unknown;
+    return common_flydelta_intervention_credit_validate(credit, error);
+}
