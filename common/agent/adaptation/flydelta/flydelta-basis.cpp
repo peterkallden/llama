@@ -34,6 +34,8 @@ bool common_flydelta_repair_delta_validate(
     if (delta.schema_version != 1 || !nonempty_bounded(delta.id) ||
             !nonempty_bounded(delta.capture_manifest_id) ||
             !nonempty_bounded(delta.host_evidence_ref) || expected_dimension == 0 ||
+            !nonempty_bounded(delta.model_profile_fingerprint) ||
+            !nonempty_bounded(delta.capture_layout_revision) || delta.layer_index < 0 ||
             delta.values.size() != expected_dimension ||
             (max_bytes != 0 && delta.values.size() * sizeof(float) > max_bytes)) {
         error = "FlyDelta repair delta identity or bounds are invalid";
@@ -60,7 +62,9 @@ bool common_flydelta_basis_config_validate(
     error.clear();
     if (config.dimension == 0 || config.dimension > (1U << 20) || config.max_directions == 0 ||
             config.max_directions > 256 || !std::isfinite(config.cluster_similarity) ||
-            config.cluster_similarity < 0.0f || config.cluster_similarity > 1.0f) {
+            config.cluster_similarity < 0.0f || config.cluster_similarity > 1.0f ||
+            !nonempty_bounded(config.model_profile_fingerprint) ||
+            !nonempty_bounded(config.capture_layout_revision)) {
         error = "FlyDelta basis configuration is invalid";
         return false;
     }
@@ -81,6 +85,11 @@ bool common_flydelta_basis_builder::add(
             !common_flydelta_intervention_credit_validate(credit, error)) {
         return false;
     }
+    if (delta.model_profile_fingerprint != config_.model_profile_fingerprint ||
+            delta.capture_layout_revision != config_.capture_layout_revision) {
+        error = "FlyDelta repair delta is incompatible with basis configuration";
+        return false;
+    }
     if (credit.outcome == common_flydelta_counterfactual_outcome::unknown) return true;
 
     const float delta_norm = norm(delta.values);
@@ -90,6 +99,7 @@ bool common_flydelta_basis_builder::add(
     size_t best_index = directions_.size();
     float best_similarity = -1.0f;
     for (size_t i = 0; i < directions_.size(); ++i) {
+        if (directions_[i].layer_index != delta.layer_index) continue;
         const float candidate_similarity = similarity(normalized, directions_[i].values);
         if (candidate_similarity > best_similarity) {
             best_similarity = candidate_similarity;
@@ -103,7 +113,7 @@ bool common_flydelta_basis_builder::add(
             error = "FlyDelta basis direction bound is exhausted";
             return false;
         }
-        directions_.push_back({normalized, 1, 0, 0});
+        directions_.push_back({delta.layer_index, normalized, 1, 0, 0});
         return true;
     }
     if (best_index == directions_.size() || best_similarity < config_.cluster_similarity) return true;

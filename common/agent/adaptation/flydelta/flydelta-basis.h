@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,9 @@ struct common_flydelta_repair_delta {
     std::string id;
     std::string capture_manifest_id;
     std::string host_evidence_ref;
+    std::string model_profile_fingerprint;
+    std::string capture_layout_revision;
+    int32_t layer_index = -1;
     std::vector<float> values;
 };
 
@@ -27,6 +31,8 @@ struct common_flydelta_basis_config {
     size_t dimension = 0;
     size_t max_directions = 16;
     float cluster_similarity = 0.85f;
+    std::string model_profile_fingerprint;
+    std::string capture_layout_revision;
 };
 
 bool common_flydelta_basis_config_validate(
@@ -34,6 +40,7 @@ bool common_flydelta_basis_config_validate(
         std::string & error);
 
 struct common_flydelta_basis_direction {
+    int32_t layer_index = -1;
     std::vector<float> values;
     size_t helped_observations = 0;
     size_t neutral_observations = 0;

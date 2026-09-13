@@ -7,6 +7,9 @@ static common_flydelta_repair_delta delta(const std::vector<float> & values) {
     value.id = "flydelta://delta/1";
     value.capture_manifest_id = "flydelta://capture/1";
     value.host_evidence_ref = "evidence:repair";
+    value.model_profile_fingerprint = "sha256:model";
+    value.capture_layout_revision = "layout:v1";
+    value.layer_index = 12;
     value.values = values;
     return value;
 }
@@ -27,6 +30,8 @@ int main() {
     common_flydelta_basis_config config;
     config.dimension = 3;
     config.cluster_similarity = 0.8f;
+    config.model_profile_fingerprint = "sha256:model";
+    config.capture_layout_revision = "layout:v1";
     common_flydelta_basis_builder builder(config);
 
     CHECK(builder.add(delta({1.0f, 0.0f, 0.0f}), credit(common_flydelta_counterfactual_outcome::helped), error));
@@ -39,6 +44,12 @@ int main() {
     CHECK(builder.directions().size() == 1);
     CHECK(builder.directions()[0].helped_observations == 2);
 
+    auto other_layer = delta({1.0f, 0.0f, 0.0f});
+    other_layer.id = "flydelta://delta/other-layer";
+    other_layer.layer_index = 13;
+    CHECK(builder.add(other_layer, credit(common_flydelta_counterfactual_outcome::helped), error));
+    CHECK(builder.directions().size() == 2);
+
     auto harmed = delta({1.0f, 0.0f, 0.0f});
     harmed.id = "flydelta://delta/3";
     CHECK(builder.add(harmed, credit(common_flydelta_counterfactual_outcome::harmed), error));
@@ -46,8 +57,9 @@ int main() {
 
     auto unknown = delta({0.0f, 1.0f, 0.0f});
     unknown.id = "flydelta://delta/4";
+    unknown.layer_index = 13;
     CHECK(builder.add(unknown, credit(common_flydelta_counterfactual_outcome::unknown), error));
-    CHECK(builder.directions().size() == 1);
+    CHECK(builder.directions().size() == 2);
     CHECK(!common_flydelta_repair_delta_validate(delta({0.0f, 0.0f, 0.0f}), 3, 1024, error));
     return 0;
 }
