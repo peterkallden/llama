@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/agent-inference.h"
+#include "agent/adaptation/flydelta/flydelta-contracts.h"
 #include "common.h"
 #include "chat.h"
 #include "llama.h"
@@ -14,7 +15,8 @@ std::unique_ptr<common_agent_inference> make_llama_cli_agent_inference(
     llama_model * model,
     const common_chat_templates * templates,
     const std::vector<llama_adapter_lora *> & adapters = {},
-    const std::vector<float> & adapter_scales = {});
+    const std::vector<float> & adapter_scales = {},
+    const common_flydelta_static_overlay & flydelta_overlay = {});
 
 std::unique_ptr<common_agent_inference> make_server_context_agent_inference(
     server_context & server,

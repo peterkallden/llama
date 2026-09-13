@@ -2,6 +2,7 @@
 
 #include "agent/agent-inference.h"
 #include "agent/agent-prepared-generation.h"
+#include "agent/adaptation/flydelta/flydelta-contracts.h"
 #include "chat.h"
 #include "llama.h"
 
@@ -19,7 +20,8 @@ bool generate_chat_turn_result(
     common_chat_params * chat_params = nullptr,
     const std::string & json_schema = {},
     const std::vector<llama_adapter_lora *> & adapters = {},
-    const std::vector<float> & adapter_scales = {});
+    const std::vector<float> & adapter_scales = {},
+    const common_flydelta_static_overlay & flydelta_overlay = {});
 
 bool generate_chat_turn(
     llama_model * model,

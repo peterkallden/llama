@@ -46,6 +46,20 @@ int main() {
     manifest.redaction_attested = false;
     CHECK(!common_flydelta_capture_manifest_validate(manifest, 1024, error));
 
+    common_flydelta_static_overlay overlay;
+    overlay.enabled = true;
+    overlay.artifact_id = "flydelta://artifact/1";
+    overlay.n_embd = 4;
+    overlay.il_start = 1;
+    overlay.il_end = 2;
+    overlay.data.assign(8, 0.25f);
+    CHECK(common_flydelta_static_overlay_validate(overlay, 4, 3, 1024, error));
+    overlay.data[0] = 0.0f / 0.0f;
+    CHECK(!common_flydelta_static_overlay_validate(overlay, 4, 3, 1024, error));
+    overlay.data[0] = 0.25f;
+    overlay.scale = 2.0f;
+    CHECK(!common_flydelta_static_overlay_validate(overlay, 4, 3, 1024, error));
+
     common_flydelta_candidate_policy policy;
     policy.min_observations = 3;
     policy.min_verified_recoveries = 2;

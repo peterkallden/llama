@@ -38,7 +38,8 @@ bool generate_chat_turn_result(
     common_chat_params * chat_params,
     const std::string & json_schema,
     const std::vector<llama_adapter_lora *> & adapters,
-    const std::vector<float> & adapter_scales) {
+    const std::vector<float> & adapter_scales,
+    const common_flydelta_static_overlay & flydelta_overlay) {
     result = {};
 
     common_agent_generation_request request;
@@ -102,6 +103,32 @@ bool generate_chat_turn_result(
         result.error_message = "failed to apply model adapters";
         llama_free(ctx);
         return false;
+    }
+    std::string flydelta_error;
+    if (!common_flydelta_static_overlay_validate(
+            flydelta_overlay,
+            static_cast<size_t>(llama_model_n_embd(model)),
+            static_cast<size_t>(llama_model_n_layer(model)),
+            64U * 1024U * 1024U,
+            flydelta_error)) {
+        result.error_message = "invalid FlyDelta static overlay: " + flydelta_error;
+        llama_free(ctx);
+        return false;
+    }
+    if (flydelta_overlay.enabled) {
+        std::vector<float> scaled = flydelta_overlay.data;
+        for (float & value : scaled) value *= flydelta_overlay.scale;
+        if (llama_set_adapter_cvec(
+                ctx,
+                scaled.data(),
+                scaled.size(),
+                flydelta_overlay.n_embd,
+                flydelta_overlay.il_start,
+                flydelta_overlay.il_end) != 0) {
+            result.error_message = "failed to apply FlyDelta static overlay";
+            llama_free(ctx);
+            return false;
+        }
     }
 
     common_params_sampling sampling;

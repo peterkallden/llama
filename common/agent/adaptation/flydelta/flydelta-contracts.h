@@ -47,6 +47,26 @@ struct common_flydelta_candidate_policy {
     float min_confidence = 0.80f;
 };
 
+// Runtime V0 input. The artifact must already have been resolved and
+// verified by the host. The generation path only applies this data to a fresh
+// context; it never loads an artifact or mutates a resident model.
+struct common_flydelta_static_overlay {
+    bool enabled = false;
+    std::string artifact_id;
+    int32_t n_embd = 0;
+    int32_t il_start = 1;
+    int32_t il_end = 0;
+    float scale = 1.0f;
+    std::vector<float> data;
+};
+
+bool common_flydelta_static_overlay_validate(
+        const common_flydelta_static_overlay & overlay,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error);
+
 // This record contains references and qualification evidence only. It is a
 // sideband candidate, not an activation request and not a training corpus.
 struct common_flydelta_candidate {

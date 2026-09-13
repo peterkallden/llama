@@ -39,7 +39,10 @@ The current implementation contains the model-free sparse encoder,
 recognition memory, bounded delta memory, versioned JSON artifact and
 compatibility checks, plus host-certified candidate, capture-manifest and
 sideband-evaluation contracts. These are contract/library slices only: no
-daemon, CLI or server inference path loads or applies a FlyDelta artifact yet.
+daemon, profile or server inference path loads or activates a FlyDelta artifact
+yet. The CLI generation function now has an explicit static-overlay parameter
+that can apply a host-resolved cvec to a fresh context; it is disabled by
+default and is not connected to configuration or registry resolution.
 
 ## Intended mechanism
 
@@ -239,14 +242,16 @@ transport failures do not qualify. Measure verified success, held-out
 retention, regression/interference, false intervention, no-op rate, runtime
 intervention rate, latency/token and overlay bytes per improvement.
 
-### 3. CPU-only static cvec V0
+### 3. CPU-only static cvec V0 — explicit seam implemented
 
-Insert an agent-owned overlay applicator between profile resolution and the
-first `llama_decode` in the CLI inference path. It validates the selected
-artifact, derives host-side features, composes a cvec, applies it to a new
-context and fails closed to no-op. Restrict it to one CPU architecture/path.
-Server-context, residency reuse, CUDA/Vulkan, Android and dynamic capture stay
-disabled until independently tested.
+The CLI generation path now has an agent-owned overlay seam between context
+creation and the first `llama_decode`. It validates the host-provided static
+overlay against model embedding/layer dimensions, scales a bounded cvec,
+applies it to the new context and fails closed on invalid data. An absent or
+disabled overlay is a no-op. The current API is an explicit seam, not a
+profile/configuration feature; the caller that eventually wires it must gate
+it to the CPU V0 experiment. Server-context, residency reuse, CUDA/Vulkan,
+Android and dynamic capture remain disabled until independently tested.
 
 ### 4. Contrastive basis and bounded two-pass experiment
 

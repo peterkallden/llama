@@ -34,6 +34,41 @@ const char * common_flydelta_candidate_status_name(common_flydelta_candidate_sta
     return "rejected";
 }
 
+bool common_flydelta_static_overlay_validate(
+        const common_flydelta_static_overlay & overlay,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error) {
+    error.clear();
+    if (!overlay.enabled) return true;
+    if (overlay.artifact_id.empty() || overlay.n_embd <= 0 || overlay.il_start < 1 ||
+            overlay.il_end < overlay.il_start || overlay.scale <= 0.0f ||
+            !std::isfinite(overlay.scale) || overlay.scale > 1.0f) {
+        error = "FlyDelta static overlay identity or bounds are invalid";
+        return false;
+    }
+    if (model_n_embd == 0 || model_n_layers < 2 ||
+            static_cast<size_t>(overlay.n_embd) != model_n_embd ||
+            static_cast<size_t>(overlay.il_end) >= model_n_layers) {
+        error = "FlyDelta static overlay does not match model dimensions";
+        return false;
+    }
+    const size_t required_values = model_n_embd * (model_n_layers - 1);
+    if (overlay.data.size() < required_values ||
+            (max_bytes != 0 && overlay.data.size() * sizeof(float) > max_bytes)) {
+        error = "FlyDelta static overlay data exceeds its bound";
+        return false;
+    }
+    for (const float value : overlay.data) {
+        if (!std::isfinite(value)) {
+            error = "FlyDelta static overlay contains a non-finite value";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool common_flydelta_capture_manifest_validate(
         const common_flydelta_capture_manifest & manifest,
         size_t max_captured_bytes,
