@@ -353,6 +353,19 @@ an approved artifact, an explicit gate decision and a fresh compatible model
 context. Server/resident-model wiring, dynamic hidden-state capture, CUDA/
 Vulkan and Android remain outside this sweep.
 
+### 4F. Host activation preparation — implemented
+
+`flydelta-activation.*` is the single host-owned preparation seam for a
+future caller. It performs the order explicitly: evaluate the gate, require
+candidate/model/layout metadata only after an approved decision, then call
+the bounded basis-to-overlay composer. A rejected gate returns a successful
+empty result; invalid active metadata or composition bounds fail closed.
+
+This keeps CLI and future server integrations from independently repeating
+approval, no-op and compatibility conditions. The result is still an
+ephemeral request value. It does not resolve a registry artifact, persist a
+decision, alter a resident model or make FlyDelta active by itself.
+
 ### 5. Optional dynamic hook
 
 Only propose an upstream-quality llama.cpp hook if the evidence warrants it.

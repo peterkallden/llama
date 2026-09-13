@@ -389,6 +389,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-gate.cpp
         test-agent-flydelta-promotion.cpp
         test-agent-flydelta-overlay.cpp
+        test-agent-flydelta-activation.cpp
         test-memory-policy.cpp
         test-plan-context.cpp
         test-plan-json.cpp
