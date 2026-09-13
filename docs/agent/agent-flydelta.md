@@ -437,6 +437,47 @@ This boundary is intentional. Server support must later be implemented as a
 request-scoped server/llama.cpp capability, not by mutating startup
 `common_params` or resident KV state.
 
+### Current smoke coverage
+
+The host-level repair path is covered by
+`llama-agent-flydelta-tool-repair-smoke` and the CTest
+`llama-agent-flydelta-tool-repair-ctest`. Its deterministic fixture exercises
+the complete control flow:
+
+```text
+wrong data.describe
+  -> host-verified repair to data.inspect
+  -> aligned contrast set
+  -> baseline/candidate counterfactual = HELPED
+  -> eligible promotion summary
+  -> explicit host approval
+  -> recognition-gated delta memory
+  -> familiar context applies overlay
+  -> novel context is a no-op
+```
+
+This is deliberately model-free. It proves the host contracts and bounded
+state transitions, but it does not capture a real hidden state, train a model,
+or demonstrate that a cvec changes a model's tool choice. The existing
+`scripts/test-qwen-nomic-agent.sh` can be used separately for the small-model
+inference/embedding smoke, for example:
+
+```bash
+LLAMA_AGENT_BUILD_DIR=build-agent-sqlite \
+LLAMA_AGENT_MODEL=/path/to/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf \
+LLAMA_AGENT_EMBEDDING_MODEL=/path/to/nomic-embed-text-v1.5.Q4_K_M.gguf \
+LLAMA_AGENT_THREADS=3 \
+LLAMA_AGENT_N_PREDICT=32 \
+scripts/test-qwen-nomic-agent.sh
+```
+
+That smoke validates ordinary Qwen generation together with Nomic query
+embedding. It is not a FlyDelta activation test because artifact resolution,
+real activation capture, automatic registry selection and model-side
+intervention are intentionally not wired yet. A full `llama-agent` rebuild is
+required when shared agent/runtime libraries have changed; otherwise an
+incremental executable may be out of sync with those libraries.
+
 ### 5. Optional dynamic hook
 
 Only propose an upstream-quality llama.cpp hook if the evidence warrants it.
