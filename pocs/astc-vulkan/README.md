@@ -59,6 +59,74 @@ llama-cli -m model-Q4_K_M.gguf -ngl 99 \
   --astc-profile balanced --astc-research
 ```
 
+### Quick-start recipes
+
+The following recipes name the representation explicitly. They are useful for
+reproducible evaluation; a high-level `--profile` is only a starting default,
+not evidence that an older cache used the current encoder policy.
+
+**Existing strict E1 reference.** The checked local Qwen fixture can be run
+directly, without rebuilding its complete embedding annex:
+
+```bash
+build-astc-neural-rank/bin/llama-cli \
+  --compiled-model build-astc-neural-rank/qwen-coder-strict-e1-v10.astccm \
+  --astc-profile compact --astc-research -p 'Hello'
+```
+
+That file is a strict E1 deployment/control: it has the complete E1 10x5
+annex and retains native matrix storage. It deliberately has no admitted D2
+matrix records, so it must not be cited as a D2 8x5 benchmark.
+
+**Balanced D1 6x6 sidecar.** This is the normal single-weight starting point.
+Build each discovered tensor from its trace, then publish the resulting
+artifact(s) into one cache root. The bounded command below shows one tensor:
+
+```bash
+build-astc-neural-rank/bin/astc-vulkan-cache build \
+  --model model-Q4_K_M.gguf --tensor blk.0.ffn_down.weight \
+  --trace blk.0.ffn_down.trace --profile balanced \
+  --representation scalar --footprint 6x6 --backend hybrid \
+  --cache /path/to/model.d1-6x6.astc
+
+build-astc-neural-rank/bin/llama-cli -m model-Q4_K_M.gguf --gpu-layers all \
+  --astc-cache /path/to/model.d1-6x6.astc --astc-profile balanced
+```
+
+**Compact D2 8x5 + E1, packaged as a strict compiled model.** D2 must be
+generated as D2-LA with the current balanced channel weighting and optimized
+pairing; do not substitute an older direct-D2 or adjacent-pair fixture. The
+same process is repeated for the shortlisted tensors before packaging:
+
+```bash
+build-astc-neural-rank/bin/astc-vulkan-cache build \
+  --model model-Q4_K_M.gguf --tensor blk.0.ffn_down.weight \
+  --trace blk.0.ffn_down.trace --profile compact \
+  --representation paired-d2 --footprint 8x5 --paired-semantic la \
+  --channel-weights balanced-a025 --source-derived-alpha 1 \
+  --row-pairing optimized --row-scale none --row-transform identity \
+  --backend hybrid --cache /path/to/model.d2-8x5-e1.astc
+
+# Add the complete token-local E1 10x5 annex to that same cache root.
+build-astc-neural-rank/bin/astc-vulkan-embedding-real-discovery \
+  model-Q4_K_M.gguf 0 /path/to/model.d2-8x5-e1.astc
+
+# Package after the matrix artifacts and E1 annex have passed their intended gates.
+build-astc-neural-rank/bin/astc-vulkan-cache compiled-pack \
+  --model model-Q4_K_M.gguf --cache /path/to/model.d2-8x5-e1.astc \
+  --compiled-format bootstrap --compiled-mode hybrid --output model.astccm
+build-astc-neural-rank/bin/astc-vulkan-cache compiled-convert \
+  --compiled-model model.astccm --compiled-mode strict --output model.strict.astccm
+build-astc-neural-rank/bin/llama-cli --compiled-model model.strict.astccm \
+  --astc-profile compact -p 'Hello'
+```
+
+`strict` removes a native duplicate only where the compiled catalog owns a
+validated ASTC resource; tensors without an ASTC representation remain native
+inside the container. During research, append `--astc-research` to make an
+incomplete-evidence artifact explicit. Do not use a one-chunk perplexity smoke
+or an old D2 cache as the model-quality gate for this recipe.
+
 The runtime integration is deliberately split into three layers:
 
 ```text
