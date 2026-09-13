@@ -80,6 +80,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-experiment.cpp adaptation/flydelta/flydelta-experiment.h
     adaptation/flydelta/flydelta-evidence.cpp adaptation/flydelta/flydelta-evidence.h
     adaptation/flydelta/flydelta-basis.cpp adaptation/flydelta/flydelta-basis.h
+    adaptation/flydelta/flydelta-gate.cpp adaptation/flydelta/flydelta-gate.h
     thinking/reflection-json.cpp thinking/reflection-json.h
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
     tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h

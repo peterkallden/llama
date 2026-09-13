@@ -302,14 +302,14 @@ must produce a valid capture manifest and counterfactual report first. The
 objective remains minimum intervention, repeatable verified lift and minimum
 collateral change.
 
-### 4D. Explicit gating and promotion — next
+### 4D. Explicit gating and promotion — gate implemented
 
-Add a small host-owned no-op gate for explicit opt-in, approved candidate
-status, familiarity/novelty thresholds and bounded scale. A low-confidence or
-unknown context must return no-op, not an error that invites fallback
-activation. Only after that gate should the existing static cvec seam receive
-data. Dynamic capture, server wiring and automatic promotion remain later
-work.
+`flydelta-gate.*` provides the host-owned no-op gate for explicit opt-in,
+approved candidate status, familiarity/novelty thresholds, basis availability
+and bounded scale. A low-confidence or unknown context returns a stable no-op
+reason rather than an activation fallback. Only after this decision should the
+existing static cvec seam receive data. Candidate promotion and server wiring
+remain later work; this gate does not promote or persist anything.
 
 ### 5. Optional dynamic hook
 
