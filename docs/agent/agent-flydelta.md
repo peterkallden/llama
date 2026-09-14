@@ -900,6 +900,15 @@ helped. The A/B smoke proves model loading, registry resolution, cvec
 preparation, bounded Qwen2 capture and fresh-context application; it does not
 train a model or make the overlay persistent. Capture remains disabled unless
 the smoke/host explicitly requests it.
+
+The same executable accepts `--multi-arm` for a bounded CPU technical smoke.
+It runs a no-op baseline plus four small scales of the same deliberately tiny,
+non-learned direction through separate fresh contexts, measures each arm, and
+uses the existing alpha-search selector to report the smallest verified HELPED
+scale. A neutral result validates isolation and cost only; it is not evidence
+against FlyDelta because the direction is not a host-certified repair basis.
+The smoke intentionally does not share a baseline KV cache: cvec affects
+prefill, so sharing it would invalidate the counterfactual.
 A full `llama-agent` rebuild is required when shared agent/runtime libraries
 have changed; otherwise an incremental executable may be out of sync with
 those libraries.

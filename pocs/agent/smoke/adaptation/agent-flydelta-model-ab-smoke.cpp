@@ -6,6 +6,7 @@
 #include "tools/agent/runtime/agent-model-loaders.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
@@ -21,6 +22,7 @@ struct options {
     int n_predict = 16;
     int n_threads = 3;
     int n_gpu_layers = 0;
+    bool multi_arm = false;
 };
 
 bool parse_args(int argc, char ** argv, options & value) {
@@ -40,6 +42,8 @@ bool parse_args(int argc, char ** argv, options & value) {
             const char * count = next("--threads"); if (!count) return false; value.n_threads = std::stoi(count);
         } else if (arg == "--n-gpu-layers") {
             const char * count = next("--n-gpu-layers"); if (!count) return false; value.n_gpu_layers = std::stoi(count);
+        } else if (arg == "--multi-arm") {
+            value.multi_arm = true;
         } else if (arg == "--help" || arg == "-h") {
             return false;
         } else {
@@ -84,7 +88,7 @@ int main(int argc, char ** argv) {
     options value;
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
-                  << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N]\n";
+                  << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N] [--multi-arm]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -173,31 +177,38 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    common_flydelta_activation_request activation_request;
-    activation_request.candidate_id = "flydelta://candidate/ab-smoke";
-    activation_request.artifact_id = resolved.id;
-    activation_request.model_profile_fingerprint = profile.base_model_fingerprint;
-    activation_request.capture_layout_revision = resolved.compatibility.inference_layout_revision;
-    activation_request.model_n_embd = manifest.model_n_embd;
-    activation_request.model_n_layers = manifest.model_n_layers;
-    activation_request.il_end = manifest.il_end;
-    common_flydelta_basis_direction direction;
-    direction.layer_index = 1;
-    direction.values.assign(manifest.model_n_embd, 0.0f);
-    direction.values.front() = 0.0001f;
-    activation_request.directions.push_back(std::move(direction));
-    activation_request.coefficients = {1.0f};
-    activation_request.gate_request.explicit_opt_in = true;
-    activation_request.gate_request.candidate_status = common_flydelta_candidate_status::approved;
-    activation_request.gate_request.basis_available = true;
-    activation_request.gate_request.familiarity = 1.0f;
-    activation_request.gate_request.novelty = 0.0f;
-    activation_request.gate_request.requested_scale = 0.01f;
     common_flydelta_gate_config gate_config;
     gate_config.enabled = true;
+    const auto prepare_activation = [&](float scale,
+            common_flydelta_activation_result & activation) {
+        common_flydelta_activation_request activation_request;
+        activation_request.candidate_id = "flydelta://candidate/ab-smoke";
+        activation_request.artifact_id = resolved.id;
+        activation_request.model_profile_fingerprint = profile.base_model_fingerprint;
+        activation_request.capture_layout_revision = resolved.compatibility.inference_layout_revision;
+        activation_request.model_n_embd = manifest.model_n_embd;
+        activation_request.model_n_layers = manifest.model_n_layers;
+        activation_request.il_end = manifest.il_end;
+        common_flydelta_basis_direction direction;
+        direction.layer_index = 1;
+        direction.values.assign(manifest.model_n_embd, 0.0f);
+        // This deliberately tiny static direction tests cvec isolation and
+        // timing only. It is not a learned repair basis and must not be used
+        // to claim a behavior improvement from a neutral smoke result.
+        direction.values.front() = 0.0001f;
+        activation_request.directions.push_back(std::move(direction));
+        activation_request.coefficients = {1.0f};
+        activation_request.gate_request.explicit_opt_in = true;
+        activation_request.gate_request.candidate_status = common_flydelta_candidate_status::approved;
+        activation_request.gate_request.basis_available = true;
+        activation_request.gate_request.familiarity = 1.0f;
+        activation_request.gate_request.novelty = 0.0f;
+        activation_request.gate_request.requested_scale = scale;
+        return common_flydelta_prepare_activation(gate_config, activation_request,
+            64U * 1024U * 1024U, activation, error);
+    };
     common_flydelta_activation_result activation;
-    if (!common_flydelta_prepare_activation(gate_config, activation_request,
-            64U * 1024U * 1024U, activation, error)) {
+    if (!prepare_activation(0.01f, activation)) {
         std::cerr << "FlyDelta model A/B activation preparation failed: " << error << '\n';
         return 1;
     }
@@ -226,6 +237,77 @@ int main(int argc, char ** argv) {
     fixture.tool_catalog_fingerprint = "sha256:flydelta-no-tools";
     fixture.resource_snapshot_fingerprint = "sha256:flydelta-no-resources";
     fixture.verifier_revision = "flydelta-model-ab-smoke:v1";
+    if (value.multi_arm) {
+        // Each arm deliberately creates a fresh inference context. A cvec is
+        // applied during prefill, so sharing a baseline KV cache would not be
+        // a valid same-fixture counterfactual.
+        common_flydelta_alpha_search_config config;
+        config.candidates = {0.0025f, 0.005f, 0.01f, 0.02f};
+        config.magnitude_penalty = 0.01f;
+        struct arm_metric {
+            float alpha = 0.0f;
+            long long elapsed_ms = 0;
+            bool passed = false;
+        };
+        std::vector<arm_metric> metrics;
+        std::vector<common_flydelta_alpha_trial> trials;
+        common_flydelta_alpha_selection selection;
+        const auto started = std::chrono::steady_clock::now();
+        const bool multi_arm_executed = capture_passed && common_flydelta_run_alpha_search(
+            fixture, config,
+            [&](const common_flydelta_experiment_fixture &, float alpha, bool apply_overlay,
+                    common_flydelta_counterfactual_trial & trial, std::string & runner_error) {
+                common_flydelta_activation_result arm_activation;
+                std::shared_ptr<const common_flydelta_activation_result> arm_activation_ptr;
+                if (apply_overlay) {
+                    if (!prepare_activation(alpha, arm_activation)) {
+                        runner_error = error;
+                        return false;
+                    }
+                    arm_activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                        std::move(arm_activation));
+                }
+                common_agent_generation_result arm;
+                const auto arm_started = std::chrono::steady_clock::now();
+                const bool executed = run_arm(
+                    *inference, value.n_predict, value.n_threads, arm_activation_ptr, {}, arm);
+                const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - arm_started).count();
+                const bool passed = executed && host_verifies(arm);
+                metrics.push_back({alpha, elapsed, passed});
+                trial.executed = executed;
+                trial.verifier_known = executed;
+                trial.passed = passed;
+                trial.quality = passed ? 1.0f : 0.0f;
+                trial.overlay_applied = apply_overlay;
+                trial.intervention_count = apply_overlay ? 1 : 0;
+                trial.evidence_ref = apply_overlay
+                    ? "evidence:flydelta-multi-arm-candidate"
+                    : "evidence:flydelta-multi-arm-baseline";
+                if (!executed && !arm.error_message.empty()) runner_error = arm.error_message;
+                return executed;
+            }, trials, selection, error);
+        if (!multi_arm_executed) {
+            std::cerr << "FlyDelta model multi-arm host verification failed"
+                      << " capture=" << (capture_passed ? "pass" : "fail")
+                      << " error=" << error << '\n';
+            return 1;
+        }
+        const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started).count();
+        std::cout << "flydelta_model_multi_arm=passed\n"
+                  << "capture_host_verified=" << (capture_passed ? "yes" : "no") << '\n'
+                  << "arm_count=" << metrics.size() << '\n'
+                  << "total_elapsed_ms=" << total_ms << '\n'
+                  << "selected_alpha=" << (selection.selected ? std::to_string(selection.alpha) : "none") << '\n'
+                  << "verdict=" << (selection.selected ? "helped" : "neutral") << '\n';
+        for (const auto & metric : metrics) {
+            std::cout << "arm alpha=" << metric.alpha
+                      << " elapsed_ms=" << metric.elapsed_ms
+                      << " host_verified=" << (metric.passed ? "yes" : "no") << '\n';
+        }
+        return 0;
+    }
     common_flydelta_counterfactual_report report;
     const bool counterfactual_executed = capture_passed && common_flydelta_run_counterfactual(
         "flydelta://experiment/model-ab-smoke",
