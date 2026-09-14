@@ -38,6 +38,8 @@ const char * common_learning_lifecycle_kind_name(common_learning_lifecycle_kind 
         case common_learning_lifecycle_kind::training_job: return "training_job";
         case common_learning_lifecycle_kind::training_result: return "training_result";
         case common_learning_lifecycle_kind::adapter: return "adapter";
+        case common_learning_lifecycle_kind::flydelta_experiment: return "flydelta_experiment";
+        case common_learning_lifecycle_kind::flydelta_result: return "flydelta_result";
     }
     return "candidate";
 }
@@ -70,6 +72,8 @@ bool parse_common_learning_lifecycle_kind(
     else if (value == "training_job") kind = common_learning_lifecycle_kind::training_job;
     else if (value == "training_result") kind = common_learning_lifecycle_kind::training_result;
     else if (value == "adapter") kind = common_learning_lifecycle_kind::adapter;
+    else if (value == "flydelta_experiment") kind = common_learning_lifecycle_kind::flydelta_experiment;
+    else if (value == "flydelta_result") kind = common_learning_lifecycle_kind::flydelta_result;
     else { error = "unknown lifecycle record kind"; return false; }
     return true;
 }

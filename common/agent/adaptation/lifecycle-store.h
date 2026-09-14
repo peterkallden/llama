@@ -14,6 +14,8 @@ enum class common_learning_lifecycle_kind {
     training_job,
     training_result,
     adapter,
+    flydelta_experiment,
+    flydelta_result,
 };
 
 enum class common_learning_lifecycle_status {
