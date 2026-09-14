@@ -85,7 +85,7 @@ bool common_adaptation_evidence_validate(
         size_t max_transactions,
         std::string & error) {
     error.clear();
-    if (evidence.schema_version != 1 || !bounded_nonempty(evidence.id) ||
+    if (evidence.schema_version != 2 || !bounded_nonempty(evidence.id) ||
             evidence.scope.namespace_id.empty() || evidence.scope.session_id.empty() ||
             !bounded_nonempty(evidence.behavior_key) ||
             !bounded_nonempty(evidence.task_fingerprint) ||

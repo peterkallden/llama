@@ -42,7 +42,7 @@ common_adaptation_evidence_source_for_signal(
 // host evidence.  It is deliberately not another store and contains no raw
 // prompt, tool output, activation buffer or credential.
 struct common_adaptation_evidence {
-    int schema_version = 1;
+    int schema_version = 2;
     std::string id;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     common_agent_scope scope;

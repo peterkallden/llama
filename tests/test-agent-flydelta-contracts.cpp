@@ -41,6 +41,9 @@ int main() {
     manifest.redaction_attested = true;
     manifest.captured_bytes = 128;
     CHECK(common_flydelta_capture_manifest_validate(manifest, 1024, error));
+    auto legacy_manifest = manifest;
+    legacy_manifest.schema_version = 1;
+    CHECK(!common_flydelta_capture_manifest_validate(legacy_manifest, 1024, error));
     common_flydelta_capture_manifest parsed_manifest;
     CHECK(common_flydelta_capture_manifest_from_json(
         common_flydelta_capture_manifest_to_json(manifest), 1024, parsed_manifest, error));

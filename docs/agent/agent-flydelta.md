@@ -92,6 +92,16 @@ host must complete a source relation with task, baseline, candidate and
 verifier references before it becomes comparable evidence. Source discovery is
 therefore not promotion and cannot activate FlyDelta.
 
+The evidence contract is schema version 2. The version bump is intentional:
+every host-certified relation must carry an explicit, bounded `behavior_key`
+in addition to its source, scope, task fingerprint, baseline/candidate
+references, verifier reference and transaction IDs. Schema-v1 evidence and
+serialized evidence without that key are rejected; there is no implicit
+tool-repair default or compatibility migration. This keeps a planning,
+research, procedure or dataset observation from being accidentally compared
+with a different behavior. Capture manifests use the same explicit
+source/behavior identity when they become activation material.
+
 ## Intended mechanism
 
 The full research hypothesis is a sparse contextual association:

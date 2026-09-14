@@ -75,7 +75,7 @@ bool common_flydelta_capture_manifest_validate(
         size_t max_captured_bytes,
         std::string & error) {
     error.clear();
-    if (manifest.schema_version != 1 || !nonempty_bounded(manifest.id) ||
+    if (manifest.schema_version != 2 || !nonempty_bounded(manifest.id) ||
             !nonempty_bounded(manifest.observation_id) ||
             !nonempty_bounded(manifest.behavior_key) ||
             !nonempty_bounded(manifest.model_profile_fingerprint) ||

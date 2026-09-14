@@ -25,6 +25,9 @@ int main() {
     auto value = make_evidence();
     std::string error;
     assert(common_adaptation_evidence_validate(value, 4, error));
+    auto legacy = value;
+    legacy.schema_version = 1;
+    assert(!common_adaptation_evidence_validate(legacy, 4, error));
     const auto encoded = common_adaptation_evidence_to_json(value);
     common_adaptation_evidence decoded;
     assert(common_adaptation_evidence_from_json(encoded, decoded, error));
@@ -35,6 +38,13 @@ int main() {
         common_adaptation_evidence_source::research_alternative);
     assert(decoded.cause == common_learning_cause::model_behavior);
     assert(decoded.transaction_ids.size() == 2);
+    auto missing_key = encoded;
+    const auto key_position = missing_key.find("\"behavior_key\"");
+    assert(key_position != std::string::npos);
+    const auto comma_after_key = missing_key.find(',', key_position);
+    assert(comma_after_key != std::string::npos);
+    missing_key.erase(key_position, comma_after_key - key_position + 1);
+    assert(!common_adaptation_evidence_from_json(missing_key, decoded, error));
 
     value.host_verified = true;
     value.verifier_ref.clear();
