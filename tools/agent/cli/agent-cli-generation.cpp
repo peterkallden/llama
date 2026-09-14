@@ -9,6 +9,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <array>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -107,6 +109,20 @@ bool generate_chat_turn_result(
         return false;
     }
     if (flydelta_capture && flydelta_capture->enabled) {
+        std::array<char, 128> architecture{};
+        const int32_t architecture_size = llama_model_meta_val_str(
+            model, "general.architecture", architecture.data(), architecture.size());
+        const std::string_view architecture_name = architecture_size > 0
+            ? std::string_view(architecture.data(), static_cast<size_t>(architecture_size))
+            : std::string_view{};
+        if (!common_flydelta_hidden_state_capture_architecture_supported(architecture_name)) {
+            result.error_message = architecture_name.empty()
+                ? "FlyDelta hidden-state capture requires model architecture metadata"
+                : "FlyDelta hidden-state capture is unsupported for architecture: " +
+                    std::string(architecture_name);
+            llama_free(ctx);
+            return false;
+        }
         for (const uint32_t layer : flydelta_capture->layer_indices) {
             llama_set_embeddings_layer_inp(ctx, layer, true);
         }
@@ -230,11 +246,14 @@ bool generate_chat_turn_result(
                     capture->values.insert(capture->values.end(), row, row + n_embd);
                 }
                 if (capture->failure_reason.empty()) {
+                    capture->captured = true;
                     std::string validation_error;
                     if (common_flydelta_hidden_state_capture_validate(
                             *capture, flydelta_capture->max_bytes, validation_error)) {
-                        capture->captured = true;
+                        // The capture is complete and passed the host-owned
+                        // contract validation.
                     } else {
+                        capture->captured = false;
                         capture->values.clear();
                         capture->n_embd = 0;
                         capture->failure_reason = validation_error;

@@ -13,6 +13,22 @@ bool nonempty_bounded(const std::string & value) {
 
 } // namespace
 
+bool common_flydelta_hidden_state_capture_architecture_supported(
+        std::string_view architecture) {
+    // Keep this allow-list aligned with llama.cpp graph implementations that
+    // assign llm_graph_result::t_layer_inp. Unknown architectures fail closed.
+    static constexpr std::string_view supported[] = {
+        "deepseek4", "gemma3n", "gemma4", "lfm2", "llama",
+        "minimax-m2", "muse-glimmer", "nemotron-h", "openai-moe",
+        "qwen2", "qwen3", "qwen3moe", "qwen3next", "qwen35",
+        "qwen35moe",
+    };
+    for (const std::string_view candidate : supported) {
+        if (candidate == architecture) return true;
+    }
+    return false;
+}
+
 bool common_flydelta_hidden_state_capture_request_validate(
         const common_flydelta_hidden_state_capture_request & request,
         size_t model_n_layers,
@@ -32,7 +48,7 @@ bool common_flydelta_hidden_state_capture_request_validate(
         return false;
     }
     for (const uint32_t layer : request.layer_indices) {
-        if (layer > model_n_layers) {
+        if (layer >= model_n_layers) {
             error = "FlyDelta hidden-state capture layer is out of range";
             return false;
         }
@@ -98,4 +114,3 @@ bool common_flydelta_hidden_state_capture_validate(
     }
     return true;
 }
-

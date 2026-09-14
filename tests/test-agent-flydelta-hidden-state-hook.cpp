@@ -11,8 +11,13 @@ int main() {
     request.model_profile_fingerprint = "model:qwen:v1";
     request.capture_layout_revision = "layer-input:v1";
     CHECK(common_flydelta_hidden_state_capture_request_validate(request, 8, 4096, error));
+    CHECK(common_flydelta_hidden_state_capture_architecture_supported("qwen2"));
+    CHECK(!common_flydelta_hidden_state_capture_architecture_supported("unknown"));
 
     request.layer_indices = {4, 1};
+    CHECK(!common_flydelta_hidden_state_capture_request_validate(request, 8, 4096, error));
+    request.layer_indices = {1, 4};
+    request.layer_indices = {1, 8};
     CHECK(!common_flydelta_hidden_state_capture_request_validate(request, 8, 4096, error));
     request.layer_indices = {1, 4};
     request.max_bytes = 8192;

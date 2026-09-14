@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Agent-owned wrapper around llama.cpp's staging layer-input extraction API.
@@ -31,6 +32,12 @@ struct common_flydelta_hidden_state_capture {
     std::string failure_reason;
 };
 
+// The llama.cpp staging API is only safe for graph implementations that
+// publish layer inputs. Unknown architectures must fail closed before graph
+// reservation rather than reaching an internal assertion.
+bool common_flydelta_hidden_state_capture_architecture_supported(
+        std::string_view architecture);
+
 bool common_flydelta_hidden_state_capture_request_validate(
         const common_flydelta_hidden_state_capture_request & request,
         size_t model_n_layers,
@@ -41,4 +48,3 @@ bool common_flydelta_hidden_state_capture_validate(
         const common_flydelta_hidden_state_capture & capture,
         size_t max_bytes,
         std::string & error);
-

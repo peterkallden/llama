@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 #include "agent/adaptation/flydelta/flydelta-sideband-registry.h"
 #include "tools/agent/cli/agent-cli-inference.h"
 #include "tools/agent/runtime/agent-model-loaders.h"
@@ -52,6 +53,7 @@ bool run_arm(
         int n_predict,
         int n_threads,
         const std::shared_ptr<const common_flydelta_activation_result> & activation,
+        const std::shared_ptr<const common_flydelta_hidden_state_capture_request> & capture,
         common_agent_generation_result & result) {
     common_agent_generation_request request;
     request.purpose = common_agent_generation_purpose::conversation;
@@ -62,6 +64,7 @@ bool run_arm(
         {"user", "Run the requested check."},
     };
     request.flydelta_activation = activation;
+    request.flydelta_capture = capture;
     return inference.generate(request, result);
 }
 
@@ -188,22 +191,37 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    auto capture_request = std::make_shared<common_flydelta_hidden_state_capture_request>();
+    capture_request->enabled = true;
+    capture_request->layer_indices = {1};
+    capture_request->max_bytes = 4U * 1024U * 1024U;
+    capture_request->model_profile_fingerprint = profile.base_model_fingerprint;
+    capture_request->capture_layout_revision = "layer-input:v1";
+
     common_agent_generation_result baseline;
     common_agent_generation_result candidate;
-    const bool baseline_executed = run_arm(*inference, value.n_predict, value.n_threads, {}, baseline);
+    const bool baseline_executed = run_arm(*inference, value.n_predict, value.n_threads, {}, capture_request, baseline);
     const auto activation_ptr = std::make_shared<const common_flydelta_activation_result>(std::move(activation));
-    const bool candidate_executed = run_arm(*inference, value.n_predict, value.n_threads, activation_ptr, candidate);
+    const bool candidate_executed = run_arm(*inference, value.n_predict, value.n_threads, activation_ptr, {}, candidate);
     const bool baseline_passed = baseline_executed && host_verifies(baseline);
     const bool candidate_passed = candidate_executed && host_verifies(candidate);
-    if (!baseline_passed || !candidate_passed) {
+    const bool capture_passed = baseline.flydelta_capture != nullptr &&
+        baseline.flydelta_capture->captured &&
+        common_flydelta_hidden_state_capture_validate(
+            *baseline.flydelta_capture, 64U * 1024U * 1024U, error);
+    if (!baseline_passed || !candidate_passed || !capture_passed) {
         std::cerr << "FlyDelta model A/B host verification failed"
                   << " baseline=" << (baseline_passed ? "pass" : "fail")
-                  << " candidate=" << (candidate_passed ? "pass" : "fail") << '\n';
+                  << " candidate=" << (candidate_passed ? "pass" : "fail")
+                  << " capture=" << (capture_passed ? "pass" : "fail")
+                  << " capture_reason=" << (baseline.flydelta_capture
+                      ? baseline.flydelta_capture->failure_reason : "missing") << '\n';
         return 1;
     }
     std::cout << "flydelta_model_ab=passed\n"
               << "baseline_host_verified=yes\n"
               << "candidate_host_verified=yes\n"
+              << "baseline_capture_host_verified=yes\n"
               << "candidate_overlay_applied=yes\n"
               << "outcome=neutral\n"
               << "note=both arms passed; no causal lift is claimed by this smoke\n";
