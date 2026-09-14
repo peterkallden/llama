@@ -48,6 +48,66 @@ bool common_flydelta_prepare_activation(
     return true;
 }
 
+bool common_flydelta_prepare_activation_from_artifact(
+        const common_flydelta_artifact & artifact,
+        const common_flydelta_compatibility & expected,
+        const std::string & model_profile_fingerprint,
+        const common_flydelta_sparse_code & code,
+        const std::string & candidate_id,
+        const common_flydelta_gate_config & gate_config,
+        const common_flydelta_gate_request & gate_request,
+        size_t max_artifact_weights,
+        size_t max_artifact_bytes,
+        size_t max_overlay_bytes,
+        common_flydelta_activation_result & result,
+        std::string & error) {
+    error.clear();
+    result = {};
+    if (artifact.schema_version != 2 || artifact.content_hash.empty() ||
+            artifact.content_hash != common_flydelta_artifact_hash(artifact) ||
+            !common_flydelta_artifact_validate(
+                artifact, max_artifact_weights, max_artifact_bytes, error) ||
+            !common_flydelta_artifact_matches(artifact, expected, error)) {
+        if (error.empty()) error = "FlyDelta activation requires a verified compatible v2 artifact";
+        return false;
+    }
+    if (code.expansion_dim != artifact.encoder.expansion_dim ||
+            code.indices.size() != code.values.size() ||
+            !nonempty_bounded(model_profile_fingerprint) ||
+            !nonempty_bounded(candidate_id)) {
+        error = "FlyDelta artifact activation context is invalid";
+        return false;
+    }
+
+    common_flydelta_delta_memory memory(artifact.memory);
+    if (!memory.set_weights(artifact.weights, error)) return false;
+    std::vector<float> coefficients;
+    if (!memory.predict(code, coefficients, error)) return false;
+
+    std::vector<common_flydelta_basis_direction> directions;
+    directions.reserve(artifact.steering_basis.size());
+    for (const auto & source : artifact.steering_basis) {
+        common_flydelta_basis_direction direction;
+        direction.layer_index = source.layer_index;
+        direction.values = source.values;
+        directions.push_back(std::move(direction));
+    }
+    common_flydelta_activation_request request;
+    request.candidate_id = candidate_id;
+    request.artifact_id = artifact.id;
+    request.model_profile_fingerprint = model_profile_fingerprint;
+    request.capture_layout_revision = expected.inference_layout_revision;
+    request.model_n_embd = artifact.model_n_embd;
+    request.model_n_layers = artifact.model_n_layers;
+    request.il_start = artifact.il_start;
+    request.il_end = artifact.il_end;
+    request.directions = std::move(directions);
+    request.coefficients = std::move(coefficients);
+    request.gate_request = gate_request;
+    return common_flydelta_prepare_activation(
+        gate_config, request, max_overlay_bytes, result, error);
+}
+
 bool common_flydelta_activation_result_validate(
         const common_flydelta_activation_result & result,
         size_t model_n_embd,

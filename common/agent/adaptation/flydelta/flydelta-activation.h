@@ -38,6 +38,23 @@ bool common_flydelta_prepare_activation(
         common_flydelta_activation_result & result,
         std::string & error);
 
+// Loads a complete approved v2 artifact into an activation request. The host
+// still supplies candidate/gate context; this helper never resolves files,
+// chooses a sideband or bypasses explicit opt-in.
+bool common_flydelta_prepare_activation_from_artifact(
+        const common_flydelta_artifact & artifact,
+        const common_flydelta_compatibility & expected,
+        const std::string & model_profile_fingerprint,
+        const common_flydelta_sparse_code & code,
+        const std::string & candidate_id,
+        const common_flydelta_gate_config & gate_config,
+        const common_flydelta_gate_request & gate_request,
+        size_t max_artifact_weights,
+        size_t max_artifact_bytes,
+        size_t max_overlay_bytes,
+        common_flydelta_activation_result & result,
+        std::string & error);
+
 bool common_flydelta_activation_result_validate(
         const common_flydelta_activation_result & result,
         size_t model_n_embd,

@@ -41,5 +41,83 @@ int main() {
     request.artifact_id.clear();
     CHECK(!common_flydelta_prepare_activation(gate_config, request, 1024, result, error));
     CHECK(!error.empty());
+
+    common_flydelta_artifact artifact;
+    artifact.schema_version = 2;
+    artifact.id = "flydelta://artifact/v2";
+    artifact.generation = 7;
+    artifact.encoder = {42, 2, 2, 1, 1};
+    artifact.memory = {2, 1, 1.0f};
+    artifact.compatibility.base_model_fingerprint = "sha256:model";
+    artifact.compatibility.tokenizer_fingerprint = "sha256:tokenizer";
+    artifact.compatibility.template_fingerprint = "sha256:template";
+    artifact.compatibility.architecture = "qwen2";
+    artifact.compatibility.inference_layout_revision = "layout-1";
+    artifact.weights = {1.0f, 0.0f};
+    artifact.model_n_embd = 2;
+    artifact.model_n_layers = 4;
+    artifact.il_start = 1;
+    artifact.il_end = 3;
+    artifact.steering_basis = {{2, {1.0f, 2.0f}}};
+    artifact.content_hash = common_flydelta_artifact_hash(artifact);
+
+    common_flydelta_sparse_code code;
+    code.expansion_dim = 2;
+    code.indices = {0};
+    code.values = {1.0f};
+    common_flydelta_gate_request artifact_gate = request.gate_request;
+    request.artifact_id = "flydelta://artifact/v2";
+    request.gate_request = artifact_gate;
+    CHECK(common_flydelta_prepare_activation_from_artifact(
+            artifact,
+            artifact.compatibility,
+            "model-profile-1",
+            code,
+            "flydelta://candidate/v2",
+            gate_config,
+            artifact_gate,
+            32,
+            65536,
+            1024,
+            result,
+            error));
+    CHECK(result.gate.apply && result.overlay.enabled);
+    CHECK(result.overlay.artifact_id == artifact.id);
+    CHECK(result.overlay.data.size() == 6);
+    CHECK(result.overlay.data[2] == 0.5f && result.overlay.data[3] == 1.0f);
+    CHECK(common_flydelta_activation_result_validate(result, 2, 4, 1024, error));
+
+    artifact_gate.explicit_opt_in = false;
+    CHECK(common_flydelta_prepare_activation_from_artifact(
+            artifact,
+            artifact.compatibility,
+            "model-profile-1",
+            code,
+            "flydelta://candidate/v2",
+            gate_config,
+            artifact_gate,
+            32,
+            65536,
+            1024,
+            result,
+            error));
+    CHECK(!result.gate.apply && !result.overlay.enabled);
+
+    artifact_gate.explicit_opt_in = true;
+    artifact.schema_version = 1;
+    CHECK(!common_flydelta_prepare_activation_from_artifact(
+            artifact,
+            artifact.compatibility,
+            "model-profile-1",
+            code,
+            "flydelta://candidate/v2",
+            gate_config,
+            artifact_gate,
+            32,
+            65536,
+            1024,
+            result,
+            error));
+    CHECK(!error.empty());
     return 0;
 }
