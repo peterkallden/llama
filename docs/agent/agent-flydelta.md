@@ -38,8 +38,9 @@ training-corpus format.
 
 The current implementation contains the model-free sparse encoder,
 recognition memory, bounded delta memory, versioned JSON artifact and
-compatibility checks, plus host-certified candidate, capture-manifest and
-sideband-evaluation contracts. These are still contract/library slices only:
+compatibility checks, plus an immutable host-owned `.flyd` artifact store,
+host-certified candidate, capture-manifest and sideband-evaluation contracts.
+These are still contract/library slices only:
 no daemon, profile or server inference path loads or activates a FlyDelta
 artifact yet. The CLI generation path accepts a host-prepared activation
 snapshot on the per-generation request and can apply its cvec to a fresh
@@ -239,6 +240,17 @@ identity, or mismatched dimensions. The caller then loads and verifies the
 referenced artifact and passes its bounded basis payload to
 `common_flydelta_prepare_activation()`. There is no implicit “first sideband”
 selection.
+
+The separate `common_flydelta_artifact_store` is the byte/artifact seam. It
+stores the existing canonical JSON codec under an absolute host-owned root and
+accepts only normalized relative `.flyd` paths. Reads and writes are bounded,
+reject symlinks and traversal, verify the artifact schema and content hash,
+and install new files through a temporary file followed by an atomic rename.
+An identical retry is idempotent; a different artifact cannot replace an
+existing path. The store does not decide lifecycle status, evaluate a
+candidate, or activate a sideband. TTL, scope ownership, revocation and a
+persistent registry/journal still belong in the next lifecycle integration
+sweep.
 
 ### Model profile and residency: resolve immutable metadata
 
