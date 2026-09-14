@@ -65,6 +65,43 @@ int main() {
     CHECK(common_flydelta_select_layer_candidate(plan, trials, selection, error));
     CHECK(!selection.selected);
 
+    // Coarse-to-fine execution runs one baseline and all singletons, then
+    // expands to neighborhoods only when the singleton stage has no HELPED.
+    size_t runner_calls = 0;
+    std::vector<std::vector<uint32_t>> executed_layers;
+    std::vector<common_flydelta_layer_search_trial> executed_trials;
+    common_flydelta_layer_search_selection executed_selection;
+    CHECK(common_flydelta_run_layer_search(
+        common_flydelta_experiment_fixture{
+            1, "fixture:layer-search", "task", "model", "tokenizer",
+            "template", "context", "verifier"
+        }, plan,
+        [&](const common_flydelta_experiment_fixture &,
+                const common_flydelta_layer_candidate * candidate,
+                bool apply_overlay,
+                common_flydelta_counterfactual_trial & result,
+                std::string &) {
+            ++runner_calls;
+            executed_layers.push_back(candidate ? candidate->layer_indices : std::vector<uint32_t>{});
+            result = {};
+            result.executed = true;
+            result.verifier_known = true;
+            result.passed = apply_overlay && candidate && candidate->layer_indices ==
+                std::vector<uint32_t>({11, 12});
+            result.quality = result.passed ? 1.0f : 0.0f;
+            result.overlay_applied = apply_overlay;
+            result.intervention_count = apply_overlay ? candidate->layer_indices.size() : 0;
+            result.evidence_ref = "evidence:layer-search-runner";
+            return true;
+        }, executed_trials, executed_selection, error));
+    CHECK(runner_calls == 1 + plan.singleton_candidates.size() +
+        plan.neighborhood_candidates.size());
+    CHECK(executed_trials.size() == plan.singleton_candidates.size() +
+        plan.neighborhood_candidates.size());
+    CHECK(executed_selection.selected);
+    CHECK(executed_selection.candidate.layer_indices == std::vector<uint32_t>({11, 12}));
+    CHECK(executed_layers.front().empty());
+
     // A missing captured neighbor must not be invented by the planner.
     CHECK(common_flydelta_build_layer_search_plan(
         {diagnostic(12, 0.8f, 0.7f, 0.1f)}, {12}, config, plan, error));

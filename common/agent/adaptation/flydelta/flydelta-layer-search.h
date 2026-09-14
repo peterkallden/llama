@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -103,5 +104,25 @@ bool common_flydelta_layer_search_trial_validate(
 bool common_flydelta_select_layer_candidate(
         const common_flydelta_layer_search_plan & plan,
         const std::vector<common_flydelta_layer_search_trial> & trials,
+        common_flydelta_layer_search_selection & selection,
+        std::string & error);
+
+// The runner owns fresh inference contexts, overlay composition and host
+// verification. A null candidate with apply_overlay=false is the baseline;
+// non-null candidates are the planned layer masks. This helper executes
+// singleton candidates first and expands to adjacent pairs only when the
+// baseline is not already passing and no singleton is host-verified HELPED.
+using common_flydelta_layer_search_runner = std::function<bool(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_layer_candidate * candidate,
+        bool apply_overlay,
+        common_flydelta_counterfactual_trial & trial,
+        std::string & error)>;
+
+bool common_flydelta_run_layer_search(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_layer_search_plan & plan,
+        const common_flydelta_layer_search_runner & runner,
+        std::vector<common_flydelta_layer_search_trial> & trials,
         common_flydelta_layer_search_selection & selection,
         std::string & error);

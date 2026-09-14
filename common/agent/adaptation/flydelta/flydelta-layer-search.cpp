@@ -338,3 +338,75 @@ bool common_flydelta_select_layer_candidate(
     }
     return true;
 }
+
+bool common_flydelta_run_layer_search(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_layer_search_plan & plan,
+        const common_flydelta_layer_search_runner & runner,
+        std::vector<common_flydelta_layer_search_trial> & trials,
+        common_flydelta_layer_search_selection & selection,
+        std::string & error) {
+    error.clear();
+    trials.clear();
+    selection = {};
+    common_flydelta_layer_search_config config;
+    config.max_regions = std::max<size_t>(1, plan.singleton_candidates.size());
+    config.max_singletons = std::max<size_t>(1, plan.singleton_candidates.size());
+    config.max_neighborhoods = plan.neighborhood_candidates.size();
+    config.max_candidates = std::max<size_t>(1,
+        plan.singleton_candidates.size() + plan.neighborhood_candidates.size());
+    if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
+            !common_flydelta_layer_search_plan_validate(plan, config, error) || !runner) {
+        if (error.empty()) error = "FlyDelta layer search runner configuration is invalid";
+        return false;
+    }
+
+    common_flydelta_counterfactual_trial baseline;
+    if (!runner(fixture, nullptr, false, baseline, error) ||
+            !common_flydelta_counterfactual_trial_validate(baseline, error)) {
+        return false;
+    }
+
+    bool singleton_helped = false;
+    for (const auto & candidate : plan.singleton_candidates) {
+        common_flydelta_counterfactual_trial counterfactual;
+        if (!runner(fixture, &candidate, true, counterfactual, error) ||
+                !common_flydelta_counterfactual_trial_validate(counterfactual, error)) {
+            return false;
+        }
+        common_flydelta_layer_search_trial trial;
+        trial.candidate = candidate;
+        trial.executed = counterfactual.executed;
+        trial.verifier_known = baseline.verifier_known && counterfactual.verifier_known;
+        trial.outcome = common_flydelta_classify_counterfactual(baseline, counterfactual);
+        trial.quality_delta = counterfactual.quality - baseline.quality;
+        trial.evidence_ref = counterfactual.evidence_ref;
+        if (trial.outcome == common_flydelta_counterfactual_outcome::helped &&
+                trial.executed && trial.verifier_known) {
+            singleton_helped = true;
+        }
+        trials.push_back(std::move(trial));
+    }
+
+    // Do not spend additional model calls when the baseline already passes or
+    // a singleton has already produced a verified improvement. The selection
+    // still sees all executed trials and applies its normal HELPED-only rule.
+    if (!baseline.passed && !singleton_helped) {
+        for (const auto & candidate : plan.neighborhood_candidates) {
+            common_flydelta_counterfactual_trial counterfactual;
+            if (!runner(fixture, &candidate, true, counterfactual, error) ||
+                    !common_flydelta_counterfactual_trial_validate(counterfactual, error)) {
+                return false;
+            }
+            common_flydelta_layer_search_trial trial;
+            trial.candidate = candidate;
+            trial.executed = counterfactual.executed;
+            trial.verifier_known = baseline.verifier_known && counterfactual.verifier_known;
+            trial.outcome = common_flydelta_classify_counterfactual(baseline, counterfactual);
+            trial.quality_delta = counterfactual.quality - baseline.quality;
+            trial.evidence_ref = counterfactual.evidence_ref;
+            trials.push_back(std::move(trial));
+        }
+    }
+    return common_flydelta_select_layer_candidate(plan, trials, selection, error);
+}
