@@ -75,6 +75,10 @@ int main() {
     value.behavior_delta_ids = {"flydelta://delta/invalid-for-counterfactual"};
     CHECK(!common_flydelta_collect_experiment_job(root, {}, value, result, error));
 
+    value = request();
+    value.behavior_key = "tool_use/diagnostics/wrong-tool";
+    CHECK(!common_flydelta_collect_experiment_job(root, {}, value, result, error));
+
     std::filesystem::remove_all(root, ignored);
     return 0;
 }

@@ -52,6 +52,11 @@ bool common_flydelta_collect_experiment_job(
         return false;
     }
 
+    if (request.evidence.behavior_key != request.behavior_key) {
+        error = "FlyDelta experiment collection evidence behavior does not match request";
+        return false;
+    }
+
     common_flydelta_experiment_job job;
     job.id = seed.id + "/job/" + common_flydelta_experiment_job_kind_name(request.kind);
     job.kind = request.kind;

@@ -349,6 +349,8 @@ produced those references. With `enabled: false` the bridge is a no-op. With
 reference kind, builds the typed job and enqueues it. A repeated
 evidence/kind request returns `already_present`; it does not create another
 job. This is the same conservative idempotency rule as the learning stores.
+The request's `behavior_key` must equal the evidence relation's key; a
+source match alone is never enough to cross-wire two behaviors.
 
 The bridge accepts only reference IDs and bounded configuration. It must never
 place prompts, raw responses, tool payloads, credentials or activation
