@@ -1,10 +1,10 @@
 #include "agent/adaptation/flydelta/flydelta.h"
 
+#include "hash/hash.h"
+
 #include <algorithm>
 #include <cmath>
-#include <iomanip>
 #include <limits>
-#include <sstream>
 
 #include <nlohmann/json.hpp>
 
@@ -28,14 +28,7 @@ bool finite_unit(float value) {
 }
 
 std::string hash_text(const std::string & text) {
-    uint64_t hash = 1469598103934665603ULL;
-    for (const unsigned char byte : text) {
-        hash ^= byte;
-        hash *= 1099511628211ULL;
-    }
-    std::ostringstream out;
-    out << "identity:fnv1a64:" << std::hex << std::setw(16) << std::setfill('0') << hash;
-    return out.str();
+    return "sha256:" + hash_sha256_hex(text.data(), text.size());
 }
 
 json artifact_json_without_hash(const common_flydelta_artifact & artifact) {

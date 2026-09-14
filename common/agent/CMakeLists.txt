@@ -172,7 +172,7 @@ target_link_libraries(${TARGET}
         llama-agent-tooling
         llama-agent-protocol
 )
-target_link_libraries(${TARGET} PRIVATE cpp-httplib)
+target_link_libraries(${TARGET} PRIVATE cpp-httplib vendor::hash)
 if (BUILD_SHARED_LIBS)
     set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     set_target_properties(${TARGET} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)

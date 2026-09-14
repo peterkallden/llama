@@ -61,6 +61,8 @@ int main() {
     auto value = artifact();
     CHECK(common_flydelta_artifact_validate(value, 32, 65536, error));
     const auto text = common_flydelta_artifact_to_json(value);
+    CHECK(value.content_hash.rfind("sha256:", 0) == 0);
+    CHECK(common_flydelta_artifact_hash(value).size() == 71);
     common_flydelta_artifact parsed;
     CHECK(common_flydelta_artifact_from_json(text, 32, 65536, parsed, error));
     CHECK(parsed.id == value.id);
