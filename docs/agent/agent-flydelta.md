@@ -619,7 +619,9 @@ and byte bounds; slot scheduling prevents different cvecs from sharing a
 context-wide cvec, and a cvec change invalidates the slot's prompt/KV state.
 This is static, turn-scoped activation only: it does not make hidden-state
 capture request-scoped, inject a direction mid-decode, resolve `.flyd` files in
-the server, or change host scope and promotion policy.
+the server, or change host scope and promotion policy. If speculative decoding
+is active, the same cvec is validated against and applied to the draft context
+when one exists; a dimension/layout mismatch is rejected at task admission.
 
 This boundary is intentional. Server support must later be implemented as a
 request-scoped server/llama.cpp capability, not by mutating startup

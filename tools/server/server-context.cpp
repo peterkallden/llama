@@ -1673,6 +1673,16 @@ private:
                 send_error(task, "invalid request control vector: " + cvec_error, ERROR_TYPE_INVALID_REQUEST);
                 return false;
             }
+            if (ctx_dft && !server_task_cvec_validate(
+                    *task.params.cvec,
+                    llama_model_n_embd_inp(model_dft),
+                    llama_model_n_layer(model_dft),
+                    64 * 1024 * 1024,
+                    cvec_error)) {
+                send_error(task, "request control vector is incompatible with speculative model: " + cvec_error,
+                    ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
         }
 
         // llama_set_adapter_cvec() is context-wide, so a slot may retain its
@@ -2812,16 +2822,20 @@ private:
             common_set_adapter_lora(ctx_tgt, slot_batched->lora);
 
             const auto & cvec = slot_batched->cvec;
-            const int32_t cvec_result = cvec
-                ? llama_set_adapter_cvec(
-                    ctx_tgt,
-                    cvec->data.data(),
-                    cvec->data.size(),
-                    cvec->n_embd,
-                    cvec->il_start,
-                    cvec->il_end)
-                : llama_set_adapter_cvec(ctx_tgt, nullptr, 0, 0, 0, 0);
-            if (cvec_result != 0) {
+            const auto apply_cvec = [&cvec](llama_context * context) {
+                return cvec
+                    ? llama_set_adapter_cvec(
+                        context,
+                        cvec->data.data(),
+                        cvec->data.size(),
+                        cvec->n_embd,
+                        cvec->il_start,
+                        cvec->il_end)
+                    : llama_set_adapter_cvec(context, nullptr, 0, 0, 0, 0);
+            };
+            const int32_t cvec_result = apply_cvec(ctx_tgt);
+            const int32_t cvec_draft_result = ctx_dft ? apply_cvec(ctx_dft) : 0;
+            if (cvec_result != 0 || cvec_draft_result != 0) {
                 SRV_ERR("failed to apply request control vector for slot %d\n", slot_batched->id);
                 abort_all_slots("failed to apply request control vector");
                 return;
