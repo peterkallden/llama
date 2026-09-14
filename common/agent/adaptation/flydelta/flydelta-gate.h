@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-contracts.h"
+#include "agent/adaptation/flydelta/flydelta.h"
 
 #include <string>
 
@@ -36,4 +37,17 @@ bool common_flydelta_gate_decide(
         const common_flydelta_gate_config & config,
         const common_flydelta_gate_request & request,
         common_flydelta_gate_decision & decision,
+        std::string & error);
+
+// Derives only the context-dependent part of a gate request. An empty
+// recognition memory therefore produces familiarity=0/novelty=1 and lets the
+// normal gate return a stable no-op decision.
+bool common_flydelta_gate_request_from_context(
+        const common_flydelta_recognition_memory & recognition,
+        const common_flydelta_sparse_code & code,
+        bool explicit_opt_in,
+        common_flydelta_candidate_status candidate_status,
+        bool basis_available,
+        float requested_scale,
+        common_flydelta_gate_request & request,
         std::string & error);

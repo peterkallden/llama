@@ -38,5 +38,25 @@ int main() {
     config.max_novelty = 0.0f;
     config.min_familiarity = 0.0f;
     CHECK(!common_flydelta_gate_config_validate(config, error));
+
+    common_flydelta_sparse_code code;
+    code.expansion_dim = 8;
+    code.indices = {1, 3};
+    code.values = {0.8f, 0.2f};
+    common_flydelta_recognition_memory recognition;
+    CHECK(common_flydelta_gate_request_from_context(
+        recognition, code, true, common_flydelta_candidate_status::approved,
+        true, 0.1f, request, error));
+    CHECK(request.familiarity == 0.0f && request.novelty == 1.0f);
+    config = {};
+    config.enabled = true;
+    CHECK(common_flydelta_gate_decide(config, request, decision, error));
+    CHECK(!decision.apply && decision.reason == "context_not_familiar");
+    CHECK(recognition.remember(code, error));
+    CHECK(common_flydelta_gate_request_from_context(
+        recognition, code, true, common_flydelta_candidate_status::approved,
+        true, 0.1f, request, error));
+    CHECK(common_flydelta_gate_decide(config, request, decision, error));
+    CHECK(decision.apply && decision.reason == "approved_familiar_context");
     return 0;
 }

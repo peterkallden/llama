@@ -62,3 +62,27 @@ bool common_flydelta_gate_decide(
     decision.reason = "approved_familiar_context";
     return true;
 }
+
+bool common_flydelta_gate_request_from_context(
+        const common_flydelta_recognition_memory & recognition,
+        const common_flydelta_sparse_code & code,
+        bool explicit_opt_in,
+        common_flydelta_candidate_status candidate_status,
+        bool basis_available,
+        float requested_scale,
+        common_flydelta_gate_request & request,
+        std::string & error) {
+    error.clear();
+    if (code.expansion_dim == 0 || code.indices.size() != code.values.size()) {
+        error = "FlyDelta recognition context is invalid";
+        return false;
+    }
+    request = {};
+    request.explicit_opt_in = explicit_opt_in;
+    request.candidate_status = candidate_status;
+    request.basis_available = basis_available;
+    request.familiarity = recognition.familiarity(code);
+    request.novelty = recognition.novelty(code);
+    request.requested_scale = requested_scale;
+    return true;
+}
