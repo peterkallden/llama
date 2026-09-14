@@ -70,6 +70,19 @@ bool contains_tool(const common_agent_generation_result & result, const char * t
         result.content.find(std::string("\"name\": \"") + tool_name) != std::string::npos;
 }
 
+std::string output_preview(const common_agent_generation_result & result) {
+    if (!common_agent_generation_succeeded(result)) {
+        return std::string("<generation-failed: ") + result.error_message + ">";
+    }
+    std::string preview = result.content;
+    for (char & value : preview) {
+        if (value == '\n' || value == '\r' || value == '\t') value = ' ';
+    }
+    constexpr size_t max_preview = 512;
+    if (preview.size() > max_preview) preview.resize(max_preview);
+    return preview;
+}
+
 common_agent_generation_request make_request(
         const options & value,
         const char * instruction,
@@ -205,6 +218,8 @@ int main(int argc, char ** argv) {
                   << " error=" << error << '\n';
         return 1;
     }
+    std::cout << "failed_model_output=" << output_preview(failed) << '\n'
+              << "repaired_model_output=" << output_preview(repaired) << '\n';
 
     const common_flydelta_experiment_fixture experiment_fixture = fixture(profile);
     common_flydelta_capture_manifest manifest;
@@ -346,6 +361,9 @@ int main(int argc, char ** argv) {
                 trial.evidence_ref = apply_overlay
                     ? "evidence:model-repair-counterfactual-overlay"
                     : "evidence:model-repair-counterfactual-baseline";
+                std::cout << "arm_model_output alpha=" << alpha
+                          << " overlay=" << (apply_overlay ? "yes" : "no")
+                          << " output=" << output_preview(result) << '\n';
                 if (!executed && !result.error_message.empty()) runner_error = result.error_message;
                 return executed;
             }, trials, selected, error)) {
