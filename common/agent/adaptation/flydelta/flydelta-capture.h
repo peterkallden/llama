@@ -41,6 +41,15 @@ public:
             const common_learning_transaction & transaction,
             std::string & error);
 
+    // Completes a discovered source with a host-verified, reference-only
+    // relation. This is the explicit path for reflection/user-correction and
+    // other sources that are never candidate-ready from broad runtime flags.
+    bool observe_verified_relation(
+            const common_adaptation_evidence_relation & relation,
+            const common_adaptation_evidence & evidence,
+            const common_learning_transaction & transaction,
+            std::string & error);
+
     std::function<bool(
             const common_adaptation_evidence_source_match &,
             const common_learning_transaction &,

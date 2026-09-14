@@ -51,7 +51,11 @@ bool common_flydelta_capture_candidate_collector::observe(
         return false;
     }
     common_flydelta_capture_candidate candidate;
-    candidate.id = "flydelta://capture-candidate/" + transaction.id;
+    // A turn may expose more than one qualified source. Include the source
+    // in the identity so a reflection relation cannot collide with a tool
+    // repair relation that happens to reference the same transaction.
+    candidate.id = std::string("flydelta://capture-candidate/") +
+        common_adaptation_evidence_source_name(match.source) + "/" + transaction.id;
     candidate.transaction_id = transaction.id;
     candidate.source = match.source;
     candidate.evidence_refs = match.evidence_refs;
@@ -64,6 +68,31 @@ bool common_flydelta_capture_candidate_collector::observe(
     });
     if (duplicate == queue.end()) queue.push_back(std::move(candidate));
     return true;
+}
+
+bool common_flydelta_capture_candidate_collector::observe_verified_relation(
+        const common_adaptation_evidence_relation & relation,
+        const common_adaptation_evidence & evidence,
+        const common_learning_transaction & transaction,
+        std::string & error) {
+    error.clear();
+    if (relation.source != evidence.source) {
+        error = "FlyDelta relation and evidence sources differ";
+        return false;
+    }
+    if (!common_adaptation_evidence_validate(evidence, 64, error)) return false;
+    if (!relation.host_verified || !evidence.host_verified) return true;
+
+    common_adaptation_evidence_source_match match;
+    match.source = relation.source;
+    match.candidate_ready = true;
+    match.evidence_refs = {
+        evidence.id, evidence.baseline_ref, evidence.candidate_ref,
+        evidence.verifier_ref,
+    };
+    match.evidence_refs.insert(match.evidence_refs.end(),
+        evidence.transaction_ids.begin(), evidence.transaction_ids.end());
+    return observe(match, transaction, error);
 }
 
 std::function<bool(

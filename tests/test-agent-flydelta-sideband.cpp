@@ -54,7 +54,7 @@ int main() {
     CHECK(error.find("base model") != std::string::npos);
 
     common_flydelta_capture_candidate_collector collector(
-        "profile:qwen", "layout:cvec-v1", 2);
+        "profile:qwen", "layout:cvec-v1", 3);
     common_adaptation_evidence_source_match not_ready;
     not_ready.source = common_adaptation_evidence_source::reflection_alternative;
     common_learning_transaction transaction;
@@ -69,7 +69,31 @@ int main() {
     CHECK(collector.observe(ready, transaction, error));
     CHECK(collector.candidates().size() == 1);
     CHECK(collector.candidates().front().model_profile_fingerprint == "profile:qwen");
+
+    common_adaptation_evidence_relation reflection_relation;
+    reflection_relation.source = common_adaptation_evidence_source::reflection_alternative;
+    reflection_relation.host_verified = true;
+    common_adaptation_evidence reflection_evidence;
+    reflection_evidence.id = "evidence:reflection-relation";
+    reflection_evidence.source = reflection_relation.source;
+    reflection_evidence.scope.namespace_id = "local";
+    reflection_evidence.scope.session_id = "session";
+    reflection_evidence.task_fingerprint = "sha256:task";
+    reflection_evidence.baseline_ref = "execution:reflection-failed";
+    reflection_evidence.candidate_ref = "execution:reflection-repaired";
+    reflection_evidence.verifier_ref = "verifier:reflection-v1";
+    reflection_evidence.host_verified = true;
+    CHECK(collector.observe_verified_relation(
+        reflection_relation, reflection_evidence, transaction, error));
+    CHECK(collector.candidates().size() == 2);
+    CHECK(collector.candidates().back().source ==
+        common_adaptation_evidence_source::reflection_alternative);
+    reflection_relation.host_verified = false;
+    CHECK(collector.observe_verified_relation(
+        reflection_relation, reflection_evidence, transaction, error));
+    CHECK(collector.candidates().size() == 2);
+
     CHECK(collector.observe(ready, transaction, error));
-    CHECK(collector.candidates().size() == 1);
+    CHECK(collector.candidates().size() == 2);
     return 0;
 }

@@ -2,11 +2,11 @@
 
 ## Status and purpose
 
-**Status: V0 host seam and opt-in CLI experiment are implemented; dynamic
-hidden-state capture/injection is not implemented.** FlyDelta is not enabled by
-default and is not a replacement for the current model-adaptation path. It
-must not be activated until it has passed explicit evaluation and promotion
-gates.
+**Status: V0 host seam, bounded CPU CLI capture, two-pass experiment and
+opt-in model smoke are implemented; automatic learning and activation are not
+implemented.** FlyDelta is not enabled by default and is not a replacement for
+the current model-adaptation path. It must not be activated until it has
+passed explicit evaluation and promotion gates.
 
 FlyDelta is a proposed, small, host-controlled associative sideband for a
 frozen language model. It records only host-certified experience and can
@@ -39,14 +39,18 @@ training-corpus format.
 The current implementation contains the model-free sparse encoder,
 recognition memory, bounded delta memory, versioned JSON artifact and
 compatibility checks, plus host-certified candidate, capture-manifest and
-sideband-evaluation contracts. These are contract/library slices only: no
-daemon, profile or server inference path loads or activates a FlyDelta artifact
-yet. The CLI generation path accepts a host-prepared activation snapshot on
-the per-generation request and can apply its cvec to a fresh context. The
-profile/catalog contract can declare sideband identities, and the host-only
-registry resolves an explicitly named, active sideband after exact
-identity/layout checks. It still does not load artifact files or select a
-sideband on behalf of the model.
+sideband-evaluation contracts. These are still contract/library slices only:
+no daemon, profile or server inference path loads or activates a FlyDelta
+artifact yet. The CLI generation path accepts a host-prepared activation
+snapshot on the per-generation request and can apply its cvec to a fresh
+context. It can also request a bounded prompt layer-input capture on the
+allowlisted graph architectures that expose the required internal staging
+tensor; unsupported or unknown architectures fail closed. The generic
+two-pass helper discards the capture context before running the second fresh
+generation. The profile/catalog contract can declare sideband identities, and
+the host-only registry resolves an explicitly named, active sideband after
+exact identity/layout checks. It still does not load artifact files or select
+a sideband on behalf of the model.
 
 The runtime assembly has an opt-in capture-candidate handoff. It reuses the
 existing `enable_adaptation_capture` and
@@ -286,7 +290,26 @@ The cvec must be set before prompt evaluation on a fresh context. Changing it
 after prompt tokens are in the KV cache would mix unsteered and steered state;
 that is not valid V0 behavior. Contexts must not be shared across cvec values.
 
-### Dynamic hidden-state capture/injection is a later seam
+### CLI V1 bounded capture and two-pass seam — implemented
+
+The CLI can opt in to a bounded prompt capture request. The request carries
+explicit layer indices, a prompt token index, model/layout identities and a
+byte bound. The host validates the request before enabling the internal
+llama.cpp staging tensors, and validates the captured dimensions and finite
+values before exposing the snapshot. The architecture guard is deliberately
+fail-closed and is currently an explicit list of graph implementations known
+to publish the staging tensor; it must be kept in sync with llama.cpp graph
+changes.
+
+`common_flydelta_run_two_pass()` provides the first end-to-end host seam. It
+runs a capture-only first pass, builds an immutable host-owned activation
+snapshot, discards the first inference context, and runs the normal second
+pass on a fresh context with the optional static overlay. The helper does not
+persist state, train a model or give the model authority over the capture.
+This is an experiment and bounded data handoff, not automatic FlyDelta
+learning.
+
+### Dynamic same-pass hidden-state capture/injection is a later seam
 
 The public API has output embeddings and an evaluation callback; internal
 graphs label layer outputs such as `l_out`. The scheduler callback is an
@@ -303,8 +326,9 @@ The full loop needs an explicitly staged route:
    unsupported backends must no-op. GPU support needs kernels and scheduling,
    not per-layer host copies.
 
-Neither route belongs in generic inference until static V0 shows useful,
-bounded results.
+The CLI V1 capture is CPU/internal-staging scoped and is not a stable public
+llama.cpp API. Neither same-pass route belongs in generic inference until
+static V0 and the two-pass experiment show useful, bounded results.
 
 ## Recommended implementation sweeps
 
@@ -388,10 +412,26 @@ layer index. A basis builder is configured for one model/layout pair and never
 clusters vectors from different layers. This is a compatibility guard, not a
 substitute for the later runtime artifact validation.
 
-The component still does not capture activations or run inference. The host
-must produce a valid capture manifest and counterfactual report first. The
-objective remains minimum intervention, repeatable verified lift and minimum
-collateral change.
+The CLI capture hook and two-pass host helper now provide a bounded way to
+produce the activation inputs for a manifest on supported graph
+architectures. The basis component itself still does not run inference or
+choose what is correct: the host must produce a valid capture manifest and
+counterfactual report first. The objective remains minimum intervention,
+repeatable verified lift and minimum collateral change.
+
+### 4H. Verified source handoff — implemented
+
+The capture candidate collector has an explicit
+`observe_verified_relation()` path for reflection alternatives, research,
+user corrections and other sources that broad runtime discovery must not
+promote automatically. It requires matching source kinds, valid reference-only
+evidence and host verification. An unverified relation is a successful
+no-op; it does not enter the queue. A verified relation becomes a bounded
+candidate containing transaction/evidence references and model/layout
+fingerprints, never raw prompts, outputs or hidden tensors. Candidate IDs
+include the source kind so multiple qualified sources from one transaction do
+not overwrite each other. This handoff is still only candidate preparation;
+it does not capture, train, approve or activate an overlay.
 
 ### 4D. Explicit gating and promotion — implemented
 
@@ -487,8 +527,12 @@ wrong data.describe
 ```
 
 This is deliberately model-free. It proves the host contracts and bounded
-state transitions, but it does not capture a real hidden state, train a model,
-or demonstrate that a cvec changes a model's tool choice. The existing
+state transitions, but it does not train a model or demonstrate that a cvec
+changes a model's tool choice. The optional
+`llama-agent-flydelta-model-ab-smoke` also exercises a real Qwen2 prompt
+capture before running fresh baseline and candidate arms. On a model where
+both arms pass, it reports `outcome=neutral`; it must not claim causal lift
+without a baseline failure and a candidate improvement. The existing
 `scripts/test-qwen-nomic-agent.sh` can be used separately for the small-model
 inference/embedding smoke, for example:
 
@@ -502,11 +546,9 @@ scripts/test-qwen-nomic-agent.sh
 ```
 
 That smoke validates ordinary Qwen generation together with Nomic query
-embedding. It remains separate from FlyDelta. The optional
-`llama-agent-flydelta-model-ab-smoke` performs a real CLI A/B generation with
-the same model, once without and once with a host-prepared static V0 cvec. It
-accepts `--model` or `LLAMA_AGENT_MODEL` and limits the documented local
-example to three threads:
+embedding. It remains separate from FlyDelta. The model A/B smoke accepts
+`--model` or `LLAMA_AGENT_MODEL` and limits the documented local example to
+three threads:
 
 ```bash
 LD_LIBRARY_PATH=build-agent-sqlite/bin \
@@ -515,11 +557,13 @@ LLAMA_AGENT_THREADS=3 \
 build-agent-sqlite/bin/llama-agent-flydelta-model-ab-smoke --threads 3
 ```
 
-The smoke verifies both arms with a host-owned response check and reports
-`outcome=neutral` when both pass. That is intentional: without a baseline
-failure and a counterfactual lift, it must not claim that the overlay helped.
-The A/B smoke proves model loading, registry resolution, cvec preparation and
-fresh-context application; it does not capture hidden states or train a model.
+The smoke verifies capture and both arms with a host-owned response check and
+reports `outcome=neutral` when both pass. That is intentional: without a
+baseline failure and a counterfactual lift, it must not claim that the overlay
+helped. The A/B smoke proves model loading, registry resolution, cvec
+preparation, bounded Qwen2 capture and fresh-context application; it does not
+train a model or make the overlay persistent. Capture remains disabled unless
+the smoke/host explicitly requests it.
 A full `llama-agent` rebuild is required when shared agent/runtime libraries
 have changed; otherwise an incremental executable may be out of sync with
 those libraries.
