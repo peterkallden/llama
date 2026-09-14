@@ -40,16 +40,22 @@ The current implementation contains the model-free sparse encoder,
 recognition memory, bounded delta memory, versioned JSON artifact and
 compatibility checks, plus an immutable host-owned `.flyd` artifact store,
 host-certified candidate, capture-manifest and sideband-evaluation contracts.
-These are still contract/library slices only:
-no daemon, profile or server inference path loads or activates a FlyDelta
-artifact yet. The CLI generation path accepts a host-prepared activation
+The artifact codec now has a complete schema-v2 form: the artifact carries the
+bounded steering basis needed to compose an activation underlay. The explicit
+activation loader accepts only an already verified, compatible v2 artifact and
+never resolves files, selects a sideband or bypasses the host gate. No daemon,
+profile or server inference path performs artifact discovery or automatic
+activation yet. The CLI generation path accepts a host-prepared activation
 snapshot on the per-generation request and can apply its cvec to a fresh
-context. It can also request a bounded prompt layer-input capture on the
-allowlisted graph architectures that expose the required internal staging
-tensor; unsupported or unknown architectures fail closed. The generic
-two-pass helper discards the capture context before running the second fresh
-generation. The profile/catalog contract can declare sideband identities, and
-the host-only registry resolves an explicitly named, active sideband after
+context. The CLI agent driver carries the same immutable snapshot through
+planner, draft, reflection, continuation and tool-follow-up requests within a
+turn; a later top-level turn still starts without activation unless the host
+supplies a new snapshot. It can also request a bounded prompt layer-input
+capture on the allowlisted graph architectures that expose the required
+internal staging tensor; unsupported or unknown architectures fail closed. The
+generic two-pass helper discards the capture context before running the second
+fresh generation. The profile/catalog contract can declare sideband identities,
+and the host-only registry resolves an explicitly named, active sideband after
 exact identity/layout checks. It still does not load artifact files or select
 a sideband on behalf of the model.
 
@@ -550,21 +556,75 @@ approval, no-op and compatibility conditions. The result is still an
 ephemeral request value. It does not resolve a registry artifact, persist a
 decision, alter a resident model or make FlyDelta active by itself.
 
+### 4F.1. Schema-v2 artifact to activation underlay — implemented
+
+`common_flydelta_prepare_activation_from_artifact()` is the explicit bridge
+from a complete v2 artifact to the existing activation request. It requires:
+
+```text
+schema_version == 2
+content_hash == common_flydelta_artifact_hash(artifact)
+artifact compatibility == expected model/profile compatibility
+sparse code dimension == artifact encoder expansion dimension
+artifact bounds and basis dimensions == valid
+```
+
+The helper reconstructs the bounded delta memory from the serialized weights,
+predicts coefficients for the host-supplied sparse code, converts the
+serialized per-layer basis to the cvec composer and then invokes the existing
+host-owned gate. A refused gate is a successful empty no-op. Any hash,
+compatibility, dimension, finite-value or byte-bound mismatch fails closed.
+
+The v2 payload is intentionally compact and explicit:
+
+```json
+{
+  "schema_version": 2,
+  "encoder": { "seed": 42, "input_dim": 2, "expansion_dim": 2,
+               "fan_in": 2, "winners": 1 },
+  "memory": { "expansion_dim": 2, "target_dim": 1,
+              "max_abs_weight": 1.0 },
+  "model_n_embd": 4096,
+  "model_n_layers": 32,
+  "il_start": 1,
+  "il_end": 31,
+  "steering_basis": [
+    { "layer_index": 12, "values": [/* n_embd floats */] }
+  ]
+}
+```
+
+The basis count must equal `memory.target_dim`, each direction must use the
+model embedding dimension, and every direction must fall inside the declared
+layer interval. The artifact hash covers this payload. Schema v1 remains a
+readable/serializable memory-only artifact for the first experimental slices,
+but it cannot be activated through this loader because it has no complete
+steering basis. There is no automatic v1-to-v2 migration.
+
 ### 4G. Per-turn propagation and backend boundary — implemented
 
 The resolved activation is held as an immutable shared snapshot on
-`common_agent_request` and propagated to each generation request. This avoids
-copying full cvec buffers during continuation and makes the lifetime explicit:
-one top-level turn may reuse its snapshot, but a later turn starts without one
-unless the host supplies a new decision. The CLI consumes the snapshot on its
-fresh context. The server-context backend rejects an active snapshot with a
-clear unsupported error because its current task contract has no per-turn cvec
-field; it continues to support ordinary generation and clean FlyDelta no-op
-requests.
+`common_agent_request` and propagated to each generation request. The CLI
+runtime driver also preserves the snapshot while it rebuilds requests between
+planner, draft, reflection, continuation and tool-follow-up slices. This
+avoids copying full cvec buffers during continuation and makes the lifetime
+explicit: one top-level turn may reuse its snapshot, but a later turn starts
+without one unless the host supplies a new decision. The CLI consumes the
+snapshot on its fresh context. The server-context backend rejects an active
+snapshot with a clear unsupported error because its current task contract has
+no per-turn cvec field; it continues to support ordinary generation and clean
+FlyDelta no-op requests.
 
 This boundary is intentional. Server support must later be implemented as a
 request-scoped server/llama.cpp capability, not by mutating startup
 `common_params` or resident KV state.
+
+The contract coverage is split deliberately: `test-agent-flydelta-activation`
+checks v2 hash/basis loading, active composition and explicit-opt-in no-op;
+`llama-agent-inference-smoke` checks that a host-provided activation survives
+the CLI driver request builder. The model-backed Qwen+Nomic smoke remains a
+baseline runtime check; it does not claim a useful learned FlyDelta effect
+until a host-verified artifact and a real HELPED counterfactual exist.
 
 ### Current smoke coverage
 
