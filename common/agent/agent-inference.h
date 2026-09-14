@@ -13,6 +13,8 @@
 #include <vector>
 
 struct common_flydelta_activation_result;
+struct common_flydelta_hidden_state_capture_request;
+struct common_flydelta_hidden_state_capture;
 
 enum class common_agent_generation_purpose {
     planner,
@@ -91,6 +93,7 @@ struct common_agent_generation_request {
     // Immutable host-prepared activation for this turn. The shared snapshot
     // avoids copying potentially large cvec data across continuation steps.
     std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
+    std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
 };
 
 inline common_agent_generation_request common_agent_make_generation_request(
@@ -102,7 +105,8 @@ inline common_agent_generation_request common_agent_make_generation_request(
         std::string json_schema = {},
         std::vector<common_chat_tool> tools = {},
         common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE,
-        std::shared_ptr<const common_flydelta_activation_result> flydelta_activation = {}) {
+        std::shared_ptr<const common_flydelta_activation_result> flydelta_activation = {},
+        std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture = {}) {
     common_agent_generation_request request;
     request.purpose = purpose;
     request.trace_id = std::move(trace_id);
@@ -113,6 +117,7 @@ inline common_agent_generation_request common_agent_make_generation_request(
     request.options = std::move(options);
     request.json_schema = std::move(json_schema);
     request.flydelta_activation = std::move(flydelta_activation);
+    request.flydelta_capture = std::move(flydelta_capture);
     return request;
 }
 
@@ -123,6 +128,7 @@ struct common_agent_generation_result {
     common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error;
     std::string error_message;
     std::optional<common_chat_params> chat_params;
+    std::shared_ptr<const common_flydelta_hidden_state_capture> flydelta_capture;
 };
 
 inline bool common_agent_generation_succeeded(const common_agent_generation_result & result) {

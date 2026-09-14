@@ -88,6 +88,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-activation.cpp adaptation/flydelta/flydelta-activation.h
     adaptation/flydelta/flydelta-sideband-registry.cpp adaptation/flydelta/flydelta-sideband-registry.h
     adaptation/flydelta/flydelta-capture.cpp adaptation/flydelta/flydelta-capture.h
+    adaptation/flydelta/flydelta-hidden-state-hook.cpp adaptation/flydelta/flydelta-hidden-state-hook.h
     thinking/reflection-json.cpp thinking/reflection-json.h
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
     tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h

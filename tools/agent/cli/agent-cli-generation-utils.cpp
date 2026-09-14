@@ -48,7 +48,8 @@ common_agent_generation_request make_agent_cli_generation_request(
         std::move(json_schema),
         std::move(tools),
         tool_choice,
-        request.flydelta_activation);
+        request.flydelta_activation,
+        request.flydelta_capture);
     generation.input_resources.reserve(request.input_resources.size());
     for (const auto & input : request.input_resources) {
         generation.input_resources.push_back({input.resource, input.role, input.required});

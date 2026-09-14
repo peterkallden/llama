@@ -3,6 +3,9 @@
 #include "common.h"
 #include "json-schema-to-grammar.h"
 #include "sampling.h"
+#include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
+
+#include "../../../src/llama-ext.h"
 
 #include <chrono>
 #include <cmath>
@@ -39,7 +42,8 @@ bool generate_chat_turn_result(
     const std::string & json_schema,
     const std::vector<llama_adapter_lora *> & adapters,
     const std::vector<float> & adapter_scales,
-    const common_flydelta_static_overlay & flydelta_overlay) {
+    const common_flydelta_static_overlay & flydelta_overlay,
+    const std::shared_ptr<const common_flydelta_hidden_state_capture_request> & flydelta_capture) {
     result = {};
 
     common_agent_generation_request request;
@@ -91,6 +95,21 @@ bool generate_chat_turn_result(
         result.error_message = "failed to create llama context";
         fprintf(stderr, "%s\n", result.error_message.c_str());
         return false;
+    }
+    std::string capture_error;
+    if (flydelta_capture && !common_flydelta_hidden_state_capture_request_validate(
+            *flydelta_capture,
+            static_cast<size_t>(llama_model_n_layer(model)),
+            64U * 1024U * 1024U,
+            capture_error)) {
+        result.error_message = "invalid FlyDelta hidden-state capture: " + capture_error;
+        llama_free(ctx);
+        return false;
+    }
+    if (flydelta_capture && flydelta_capture->enabled) {
+        for (const uint32_t layer : flydelta_capture->layer_indices) {
+            llama_set_embeddings_layer_inp(ctx, layer, true);
+        }
     }
     if (adapters.size() != adapter_scales.size()) {
         result.error_message = "adapter and scale counts differ";
@@ -154,6 +173,7 @@ bool generate_chat_turn_result(
     result.decoded_tokens = 0;
     common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::limit;
     bool completed_json_schema = false;
+    bool capture_attempted = false;
     std::optional<steady_clock::time_point> predict_started_at;
 
     bool logged_prompt_decode = false;
@@ -183,6 +203,46 @@ bool generate_chat_turn_result(
             logged_prompt_decode = true;
         }
         n_pos += batch.n_tokens;
+        if (flydelta_capture && flydelta_capture->enabled && n_pos == n_prompt && !capture_attempted) {
+            capture_attempted = true;
+            auto capture = std::make_shared<common_flydelta_hidden_state_capture>();
+            capture->model_profile_fingerprint = flydelta_capture->model_profile_fingerprint;
+            capture->capture_layout_revision = flydelta_capture->capture_layout_revision;
+            capture->layer_indices = flydelta_capture->layer_indices;
+            capture->token_index = flydelta_capture->token_index < 0
+                ? n_prompt - 1
+                : flydelta_capture->token_index;
+            if (capture->token_index < 0 || capture->token_index >= n_prompt) {
+                capture->failure_reason = "prompt token index is out of range";
+            } else {
+                const size_t n_embd = static_cast<size_t>(llama_model_n_embd(model));
+                capture->n_embd = static_cast<uint32_t>(n_embd);
+                capture->values.reserve(capture->layer_indices.size() * n_embd);
+                for (const uint32_t layer : capture->layer_indices) {
+                    const float * values = llama_get_embeddings_layer_inp(ctx, layer);
+                    if (values == nullptr) {
+                        capture->values.clear();
+                        capture->n_embd = 0;
+                        capture->failure_reason = "llama.cpp did not return the requested layer input";
+                        break;
+                    }
+                    const float * row = values + static_cast<size_t>(capture->token_index) * n_embd;
+                    capture->values.insert(capture->values.end(), row, row + n_embd);
+                }
+                if (capture->failure_reason.empty()) {
+                    std::string validation_error;
+                    if (common_flydelta_hidden_state_capture_validate(
+                            *capture, flydelta_capture->max_bytes, validation_error)) {
+                        capture->captured = true;
+                    } else {
+                        capture->values.clear();
+                        capture->n_embd = 0;
+                        capture->failure_reason = validation_error;
+                    }
+                }
+            }
+            result.flydelta_capture = std::move(capture);
+        }
         if (n_pos == n_prompt && budget_exceeded(prompt_started_at, options.t_max_prompt_ms)) {
             result.stop_reason = common_agent_generation_stop_reason::limit;
             result.error_message = "prompt time budget exceeded";

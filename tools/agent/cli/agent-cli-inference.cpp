@@ -1,6 +1,7 @@
 #include "agent-cli-inference.h"
 
 #include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 #include "tools/agent/cli/agent-cli-generation.h"
 
 namespace {
@@ -47,7 +48,8 @@ public:
             request.json_schema,
             adapters,
             adapter_scales,
-            *flydelta_overlay);
+            *flydelta_overlay,
+            request.flydelta_capture);
         result.chat_params = chat_params;
         return ok;
     }

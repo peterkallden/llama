@@ -24,6 +24,7 @@
 #include <vector>
 
 struct common_flydelta_activation_result;
+struct common_flydelta_hidden_state_capture_request;
 
 struct common_agent_objective {
     std::string purpose;
@@ -67,6 +68,9 @@ struct common_agent_request {
     // Host-prepared, immutable per-turn FlyDelta activation. Runtime code
     // propagates this snapshot but never invents or mutates it.
     std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
+    // Optional host-owned capture request for the CLI V1 experiment. It is
+    // not serialized into the model-facing prompt contract.
+    std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
     std::optional<common_memory_policy_pack> policy_pack;
     std::vector<common_memory_hit> memories;
     std::optional<common_agent_user_correction> user_correction;
