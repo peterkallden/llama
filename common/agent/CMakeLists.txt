@@ -90,6 +90,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-capture.cpp adaptation/flydelta/flydelta-capture.h
     adaptation/flydelta/flydelta-hidden-state-hook.cpp adaptation/flydelta/flydelta-hidden-state-hook.h
     adaptation/flydelta/flydelta-two-pass.cpp adaptation/flydelta/flydelta-two-pass.h
+    adaptation/flydelta/flydelta-artifact-store.cpp adaptation/flydelta/flydelta-artifact-store.h
     thinking/reflection-json.cpp thinking/reflection-json.h
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
     tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h
