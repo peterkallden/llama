@@ -7,6 +7,7 @@
 #include <unordered_set>
 #include <list>
 #include <map>
+#include <memory>
 
 // TODO: prevent including the whole server-common.h as we only use server_tokens
 #include "server-common.h"
@@ -48,6 +49,32 @@ enum stop_type {
     STOP_TYPE_LIMIT,
 };
 
+// A host-prepared, request-scoped control vector.  The server owns only the
+// execution lifetime of this immutable buffer; it does not resolve artifacts,
+// apply learning policy, or load files from an external path.  A null pointer
+// means that the task uses the model's no-op control-vector state.
+struct server_task_cvec {
+    std::string identity;
+    std::string content_hash;
+    int32_t n_embd = 0;
+    int32_t il_start = 1;
+    int32_t il_end = 0;
+    std::vector<float> data;
+};
+
+using server_task_cvec_ptr = std::shared_ptr<const server_task_cvec>;
+
+bool server_task_cvec_equal(
+        const server_task_cvec_ptr & left,
+        const server_task_cvec_ptr & right);
+
+bool server_task_cvec_validate(
+        const server_task_cvec & cvec,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error);
+
 struct task_params {
     bool stream          = false;
     bool include_usage   = false;
@@ -69,6 +96,9 @@ struct task_params {
     int64_t t_max_predict_ms = -1; // if positive, limit the generation phase to this time limit
 
     std::map<int, float> lora; // mapping adapter ID -> scale
+
+    // Internal typed field; deliberately omitted from task_params::to_json().
+    server_task_cvec_ptr cvec;
 
     std::vector<std::string> antiprompt;
     std::vector<std::string> response_fields;

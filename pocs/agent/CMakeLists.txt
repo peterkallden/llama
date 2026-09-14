@@ -535,6 +535,7 @@ target_link_libraries(llama-agent-runtime-engine
         llama-agent-diagnostics
         llama-agent-runtime-adapters
         server-context
+        vendor::hash
         Threads::Threads
     PRIVATE
         cpp-httplib

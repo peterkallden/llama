@@ -2,13 +2,53 @@
 
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 
+#include "hash/hash.h"
+
+#include <cstring>
+
+namespace {
+
+server_task_cvec_ptr make_server_task_cvec(
+        const common_flydelta_static_overlay & overlay) {
+    auto cvec = std::make_shared<server_task_cvec>();
+    cvec->identity = overlay.artifact_id;
+    cvec->n_embd = overlay.n_embd;
+    cvec->il_start = overlay.il_start;
+    cvec->il_end = overlay.il_end;
+    cvec->data = overlay.data;
+
+    std::string fingerprint;
+    fingerprint.reserve(sizeof(overlay.n_embd) + sizeof(overlay.il_start) +
+        sizeof(overlay.il_end) + sizeof(overlay.scale) +
+        overlay.data.size() * sizeof(float));
+    fingerprint.append(reinterpret_cast<const char *>(&overlay.n_embd), sizeof(overlay.n_embd));
+    fingerprint.append(reinterpret_cast<const char *>(&overlay.il_start), sizeof(overlay.il_start));
+    fingerprint.append(reinterpret_cast<const char *>(&overlay.il_end), sizeof(overlay.il_end));
+    fingerprint.append(reinterpret_cast<const char *>(&overlay.scale), sizeof(overlay.scale));
+    if (!overlay.data.empty()) {
+        fingerprint.append(reinterpret_cast<const char *>(overlay.data.data()),
+            overlay.data.size() * sizeof(float));
+    }
+    cvec->content_hash = "sha256:" + hash_sha256_hex(fingerprint.data(), fingerprint.size());
+    return cvec;
+}
+
+} // namespace
+
 bool server_context_agent_generation_supports_flydelta(
         const common_agent_generation_request & request,
         std::string & error) {
     error.clear();
-    if (request.flydelta_activation && request.flydelta_activation->overlay.enabled) {
-        error = "server-context backend does not support per-turn FlyDelta activation";
-        return false;
+    if (request.flydelta_activation) {
+        const auto & activation = *request.flydelta_activation;
+        if (activation.gate.apply != activation.overlay.enabled) {
+            error = "server-context received an inconsistent FlyDelta activation gate";
+            return false;
+        }
+        if (activation.overlay.enabled && activation.overlay.data.empty()) {
+            error = "server-context received an empty active FlyDelta overlay";
+            return false;
+        }
     }
     return true;
 }
@@ -45,6 +85,10 @@ task_params make_server_task_params_from_prepared_generation(
     params.chat_parser_params.format = prepared.chat_format;
     params.chat_parser_params.generation_prompt = prepared.parser_generation_prompt;
     params.chat_parser_params.parse_tool_calls = prepared.parse_tool_calls;
+
+    if (request.flydelta_activation && request.flydelta_activation->overlay.enabled) {
+        params.cvec = make_server_task_cvec(request.flydelta_activation->overlay);
+    }
 
     if (!prepared.parser.empty()) {
         params.chat_parser_params.parser.load(prepared.parser);

@@ -296,6 +296,9 @@ struct server_slot {
     }
 
     std::vector<common_adapter_lora_info> lora;
+    // The active request-scoped control vector. It stays attached to the
+    // slot while its prompt/KV state is reusable.
+    server_task_cvec_ptr cvec;
     int32_t alora_invocation_start = -1;
 
     // sampling
@@ -407,7 +410,8 @@ struct server_slot {
 
         return task->type == other_slot.task->type
             && inp_embd.size() == other_slot.inp_embd.size()
-            && are_lora_equal(lora, other_slot.lora);
+            && are_lora_equal(lora, other_slot.lora)
+            && server_task_cvec_equal(cvec, other_slot.cvec);
     }
 
     // returns -1 if the generation is limitless
@@ -1658,6 +1662,29 @@ private:
     }
 
     bool launch_slot_with_task(server_slot & slot, server_task && task) {
+        if (task.params.cvec) {
+            std::string cvec_error;
+            if (!server_task_cvec_validate(
+                    *task.params.cvec,
+                    llama_model_n_embd_inp(model_tgt),
+                    llama_model_n_layer(model_tgt),
+                    64 * 1024 * 1024,
+                    cvec_error)) {
+                send_error(task, "invalid request control vector: " + cvec_error, ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+        }
+
+        // llama_set_adapter_cvec() is context-wide, so a slot may retain its
+        // prompt/KV state only while the cvec identity is unchanged.
+        if (!server_task_cvec_equal(slot.cvec, task.params.cvec)) {
+            if (slot.prompt.n_tokens() > 0) {
+                SLT_TRC(slot, "%s", "clearing cache for control-vector change\n");
+                slot.prompt_clear();
+            }
+            slot.cvec = task.params.cvec;
+        }
+
         // process per-request lora adapters
         if (!task.params.lora.empty()) {
             auto task_loras = construct_lora_list(task.params.lora);
@@ -2783,6 +2810,22 @@ private:
             // TODO @ngxson : alora handling is too messy, need to refactor it to be more clear and maintainable
             // apply lora, only need to do it once per batch
             common_set_adapter_lora(ctx_tgt, slot_batched->lora);
+
+            const auto & cvec = slot_batched->cvec;
+            const int32_t cvec_result = cvec
+                ? llama_set_adapter_cvec(
+                    ctx_tgt,
+                    cvec->data.data(),
+                    cvec->data.size(),
+                    cvec->n_embd,
+                    cvec->il_start,
+                    cvec->il_end)
+                : llama_set_adapter_cvec(ctx_tgt, nullptr, 0, 0, 0, 0);
+            if (cvec_result != 0) {
+                SRV_ERR("failed to apply request control vector for slot %d\n", slot_batched->id);
+                abort_all_slots("failed to apply request control vector");
+                return;
+            }
 
             // if the lora is temporarily disabled for an alora, re-enable it
             // for next time

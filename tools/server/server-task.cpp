@@ -11,8 +11,65 @@
 #include "server-common.h"
 
 #include <sstream>
+#include <cmath>
+#include <limits>
 
 using json = nlohmann::ordered_json;
+
+bool server_task_cvec_equal(
+        const server_task_cvec_ptr & left,
+        const server_task_cvec_ptr & right) {
+    if (left == right) {
+        return true;
+    }
+    if (!left || !right) {
+        return false;
+    }
+    if (left->identity != right->identity ||
+            left->content_hash != right->content_hash ||
+            left->n_embd != right->n_embd ||
+            left->il_start != right->il_start ||
+            left->il_end != right->il_end ||
+            left->data.size() != right->data.size()) {
+        return false;
+    }
+    // A host-provided hash is the normal fast path.  Compare the payload when
+    // no hash is available so an incomplete identity can never alias state.
+    return !left->content_hash.empty() || left->data == right->data;
+}
+
+bool server_task_cvec_validate(
+        const server_task_cvec & cvec,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error) {
+    error.clear();
+    if (cvec.identity.empty() || cvec.n_embd <= 0 || cvec.il_start < 1 ||
+            cvec.il_end < cvec.il_start || model_n_embd == 0 || model_n_layers < 2 ||
+            static_cast<size_t>(cvec.n_embd) != model_n_embd ||
+            static_cast<size_t>(cvec.il_end) >= model_n_layers) {
+        error = "server task cvec identity or dimensions are invalid";
+        return false;
+    }
+    if (model_n_embd > std::numeric_limits<size_t>::max() / (model_n_layers - 1)) {
+        error = "server task cvec dimensions overflow";
+        return false;
+    }
+    const size_t required_values = model_n_embd * (model_n_layers - 1);
+    if (cvec.data.size() < required_values ||
+            (max_bytes != 0 && cvec.data.size() > max_bytes / sizeof(float))) {
+        error = "server task cvec exceeds its byte bound";
+        return false;
+    }
+    for (const float value : cvec.data) {
+        if (!std::isfinite(value)) {
+            error = "server task cvec contains a non-finite value";
+            return false;
+        }
+    }
+    return true;
+}
 
 //
 // task_params

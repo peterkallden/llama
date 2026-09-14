@@ -89,7 +89,7 @@ void test_prepare_json_schema_generation() {
     assert(!prepared.parse_tool_calls);
 }
 
-void test_flydelta_activation_is_per_request_and_server_rejects_active() {
+void test_flydelta_activation_is_per_request_and_server_accepts_active() {
     auto activation = std::make_shared<common_flydelta_activation_result>();
     activation->gate.apply = true;
     activation->gate.scale = 0.1f;
@@ -117,7 +117,7 @@ void test_flydelta_activation_is_per_request_and_server_rejects_active() {
     std::string error;
     assert(common_flydelta_activation_result_validate(
         *generation.flydelta_activation, 2, 3, 1024, error));
-    assert(!server_context_agent_generation_supports_flydelta(generation, error));
+    assert(server_context_agent_generation_supports_flydelta(generation, error));
 
     auto no_op = make_base_request();
     auto no_op_generation = common_agent_make_generation_request(
@@ -145,6 +145,16 @@ void test_prepare_plain_chat_has_no_tool_grammar() {
 
 void test_server_task_params_from_prepared_generation() {
     auto request = make_base_request();
+    auto activation = std::make_shared<common_flydelta_activation_result>();
+    activation->gate.apply = true;
+    activation->gate.scale = 0.1f;
+    activation->overlay.enabled = true;
+    activation->overlay.artifact_id = "flydelta://artifact/task";
+    activation->overlay.n_embd = 2;
+    activation->overlay.il_start = 1;
+    activation->overlay.il_end = 2;
+    activation->overlay.data.assign(4, 0.25f);
+    request.flydelta_activation = activation;
     common_params params_base;
     params_base.n_keep = 9;
     params_base.n_cache_reuse = 17;
@@ -170,6 +180,12 @@ void test_server_task_params_from_prepared_generation() {
     };
 
     const auto params = make_server_task_params_from_prepared_generation(params_base, request, prepared, logit_bias_eog);
+    assert(params.cvec);
+    assert(params.cvec->identity == "flydelta://artifact/task");
+    assert(params.cvec->n_embd == 2);
+    assert(params.cvec->il_start == 1);
+    assert(params.cvec->il_end == 2);
+    assert(params.cvec->data.size() == 4);
     assert(params.stream);
     assert(!params.cache_prompt);
     assert(params.n_keep == 9);
@@ -191,13 +207,43 @@ void test_server_task_params_from_prepared_generation() {
     assert(params.chat_parser_params.parse_tool_calls);
 }
 
+void test_server_task_cvec_contract() {
+    auto first = std::make_shared<server_task_cvec>();
+    first->identity = "flydelta://artifact/slot";
+    first->content_hash = "sha256:one";
+    first->n_embd = 2;
+    first->il_start = 1;
+    first->il_end = 2;
+    first->data.assign(4, 0.25f);
+
+    auto same = std::make_shared<server_task_cvec>(*first);
+    auto different = std::make_shared<server_task_cvec>(*first);
+    different->content_hash = "sha256:two";
+    different->data[0] = 0.5f;
+
+    assert(server_task_cvec_equal(first, same));
+    assert(!server_task_cvec_equal(first, different));
+
+    std::string error;
+    assert(server_task_cvec_validate(*first, 2, 3, 1024, error));
+
+    auto wrong_dimensions = *first;
+    wrong_dimensions.n_embd = 4;
+    assert(!server_task_cvec_validate(wrong_dimensions, 2, 3, 1024, error));
+
+    auto over_bound = *first;
+    over_bound.data.assign(1025, 0.0f);
+    assert(!server_task_cvec_validate(over_bound, 2, 3, 1024, error));
+}
+
 } // namespace
 
 int main() {
     test_prepare_tool_generation();
     test_prepare_json_schema_generation();
-    test_flydelta_activation_is_per_request_and_server_rejects_active();
+    test_flydelta_activation_is_per_request_and_server_accepts_active();
     test_prepare_plain_chat_has_no_tool_grammar();
     test_server_task_params_from_prepared_generation();
+    test_server_task_cvec_contract();
     return 0;
 }
