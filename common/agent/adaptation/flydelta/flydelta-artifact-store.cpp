@@ -72,13 +72,23 @@ bool common_flydelta_artifact_store::resolve(
         if (error.empty()) error = "FlyDelta artifact store requires an absolute root";
         return false;
     }
-    resolved = root / relative_path;
     std::error_code ec;
-    if (std::filesystem::exists(resolved, ec) && std::filesystem::is_symlink(resolved, ec)) {
-        error = "FlyDelta artifact path must not be a symlink";
-        return false;
+    std::filesystem::path current = root;
+    for (const auto & component : relative_path) {
+        current /= component;
+        if (std::filesystem::exists(current, ec)) {
+            if (ec || std::filesystem::is_symlink(current, ec)) {
+                error = "FlyDelta artifact path must not contain symlinks";
+                return false;
+            }
+        }
+        if (ec) {
+            error = "could not inspect FlyDelta artifact path";
+            return false;
+        }
     }
-    return !ec;
+    resolved = current;
+    return true;
 }
 
 bool common_flydelta_artifact_store::write(
@@ -118,6 +128,10 @@ bool common_flydelta_artifact_store::write(
     if (ec) { error = "could not create FlyDelta artifact directory"; return false; }
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const std::filesystem::path temporary = path.string() + ".tmp-" + std::to_string(stamp);
+    if (std::filesystem::exists(temporary, ec)) {
+        error = "temporary FlyDelta artifact path already exists";
+        return false;
+    }
     std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
     if (!output) { error = "could not create temporary FlyDelta artifact"; return false; }
     output.write(text.data(), static_cast<std::streamsize>(text.size()));

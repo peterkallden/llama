@@ -36,6 +36,7 @@ int main() {
     CHECK(store.read("candidate-v1.flyd", loaded, error));
     CHECK(loaded.id == source.id && loaded.content_hash == common_flydelta_artifact_hash(loaded));
     CHECK(!store.read("../outside.flyd", loaded, error));
+    CHECK(!store.read("candidate-v1.tmp.flyd.bak", loaded, error));
     CHECK(!store.write("candidate-v1.json", source, error));
 
     auto changed = source;
