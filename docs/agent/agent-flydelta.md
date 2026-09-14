@@ -252,6 +252,29 @@ penalty; `UNKNOWN` and `HARMED` trials cannot be promoted as a useful
 intervention. This makes the experiment contract explicit without treating a
 lower internal loss or a model self-description as evidence.
 
+The host can run the alpha grid through
+`common_flydelta_run_alpha_search()`. It runs one no-overlay baseline and one
+fresh host callback per configured alpha on the same fixture. The helper only
+classifies the callback's host-verifier results and delegates selection to the
+conservative selector. Once a trial is selected, the host may call
+`common_flydelta_training_example_from_alpha_selection()` to create the typed
+train input. That function requires the selected trial to be executed,
+host-known and `HELPED`; it validates the supplied sparse context, basis
+revision, coefficients, split and confidence before returning an example.
+This is the explicit seam:
+
+```text
+baseline + alpha trials
+        -> verified selection
+        -> selected training example
+        -> train-only DeltaMemory batch
+```
+
+It is not a hidden training loop: the callback still owns inference and
+verification, the host supplies the basis coefficients, and a queue/evaluator
+must still decide whether the resulting candidate can be persisted or
+promoted.
+
 The typed job can be placed in the dedicated bounded FlyDelta filesystem
 queue. Its lifecycle is:
 
