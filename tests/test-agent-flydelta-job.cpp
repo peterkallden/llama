@@ -42,6 +42,20 @@ int main() {
     CHECK(parsed.seed.scope.session_id == job.seed.scope.session_id);
     CHECK(parsed.seed.scope.turn_id == job.seed.scope.turn_id);
 
+    for (const auto source : {
+            common_adaptation_evidence_source::planning_revision,
+            common_adaptation_evidence_source::research_alternative,
+            common_adaptation_evidence_source::dataset_resource,
+            common_adaptation_evidence_source::workflow_code,
+            common_adaptation_evidence_source::procedure_blueprint,
+            common_adaptation_evidence_source::user_correction}) {
+        job.seed.source = source;
+        const auto source_text = common_flydelta_experiment_job_to_json(job);
+        common_flydelta_experiment_job source_parsed;
+        CHECK(common_flydelta_experiment_job_from_json(source_text, source_parsed, error));
+        CHECK(source_parsed.seed.source == source);
+    }
+
     job.kind = common_flydelta_experiment_job_kind::counterfactual;
     job.capture_manifest_ids = {"flydelta://capture/1"};
     job.alpha_search.candidates = {0.05f, 0.1f};

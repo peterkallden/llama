@@ -131,20 +131,14 @@ bool common_flydelta_experiment_job_from_json(
         const auto seed = value.value("seed", json::object());
         job.seed.id = seed.value("id", "");
         job.seed.behavior_key = seed.value("behavior_key", "");
-        bool source_ok = false;
-        for (const auto source : {
-                common_adaptation_evidence_source::tool_repair,
-                common_adaptation_evidence_source::reflection_alternative}) {
-            if (seed.value("source", "") == common_adaptation_evidence_source_name(source)) {
-                job.seed.source = source;
-                source_ok = true;
-            }
-        }
-        if (!source_ok || !common_flydelta_training_split_from_name(
+        const auto source = common_adaptation_evidence_source_from_name(
+            seed.value("source", ""));
+        if (!source || !common_flydelta_training_split_from_name(
                 seed.value("split", ""), job.seed.split)) {
             error = "FlyDelta experiment job seed source or split is invalid";
             return false;
         }
+        job.seed.source = *source;
         const auto scope = seed.value("scope", json::object());
         job.seed.scope.namespace_id = scope.value("namespace_id", "");
         job.seed.scope.project_id = scope.value("project_id", "");

@@ -25,6 +25,12 @@ enum class common_adaptation_evidence_source {
 const char * common_adaptation_evidence_source_name(
         common_adaptation_evidence_source source);
 
+// Parses the canonical source name used by evidence and FlyDelta job
+// envelopes. Unknown names are rejected instead of falling back to a
+// tool-repair source.
+std::optional<common_adaptation_evidence_source>
+common_adaptation_evidence_source_from_name(const std::string & value);
+
 // Maps a host-owned learning signal to its canonical adaptation source. A
 // missing value means that the signal is not sufficient to identify a source
 // on its own; callers must not guess from transport names or free text.

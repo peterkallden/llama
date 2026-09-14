@@ -10,8 +10,7 @@ bool bounded_nonempty(const std::string & value, size_t max_size = 512) {
     return !value.empty() && value.size() <= max_size;
 }
 
-common_adaptation_evidence_source parse_source(const std::string & value, bool & ok) {
-    ok = true;
+std::optional<common_adaptation_evidence_source> parse_source(const std::string & value) {
     const common_adaptation_evidence_source sources[] = {
         common_adaptation_evidence_source::tool_repair,
         common_adaptation_evidence_source::reflection_alternative,
@@ -25,8 +24,7 @@ common_adaptation_evidence_source parse_source(const std::string & value, bool &
     for (const auto source : sources) {
         if (value == common_adaptation_evidence_source_name(source)) return source;
     }
-    ok = false;
-    return common_adaptation_evidence_source::tool_repair;
+    return std::nullopt;
 }
 
 common_learning_cause parse_cause(const std::string & value) {
@@ -53,6 +51,11 @@ const char * common_adaptation_evidence_source_name(
         case common_adaptation_evidence_source::user_correction: return "user_correction";
     }
     return "tool_repair";
+}
+
+std::optional<common_adaptation_evidence_source>
+common_adaptation_evidence_source_from_name(const std::string & value) {
+    return parse_source(value);
 }
 
 std::optional<common_adaptation_evidence_source>
@@ -141,12 +144,12 @@ bool common_adaptation_evidence_from_json(
         evidence = {};
         evidence.schema_version = value.value("schema_version", 0);
         evidence.id = value.value("id", "");
-        bool source_ok = false;
-        evidence.source = parse_source(value.value("source", ""), source_ok);
-        if (!source_ok) {
+        const auto source = parse_source(value.value("source", ""));
+        if (!source) {
             error = "adaptation evidence source is unknown";
             return false;
         }
+        evidence.source = *source;
         const auto scope = value.value("scope", json::object());
         if (!scope.is_object()) {
             error = "adaptation evidence scope is invalid";

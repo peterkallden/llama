@@ -10,8 +10,18 @@ bool nonempty_bounded(const std::string & value, size_t max_size = 512) {
 }
 
 bool supported_seed_source(common_adaptation_evidence_source source) {
-    return source == common_adaptation_evidence_source::tool_repair ||
-        source == common_adaptation_evidence_source::reflection_alternative;
+    switch (source) {
+        case common_adaptation_evidence_source::tool_repair:
+        case common_adaptation_evidence_source::reflection_alternative:
+        case common_adaptation_evidence_source::planning_revision:
+        case common_adaptation_evidence_source::research_alternative:
+        case common_adaptation_evidence_source::dataset_resource:
+        case common_adaptation_evidence_source::workflow_code:
+        case common_adaptation_evidence_source::procedure_blueprint:
+        case common_adaptation_evidence_source::user_correction:
+            return true;
+    }
+    return false;
 }
 
 bool verified_model_behavior(const common_learning_transaction & transaction) {
