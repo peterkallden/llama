@@ -1,5 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
 
+#include <array>
+
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
 static common_learning_transaction transaction(
@@ -104,13 +106,27 @@ int main() {
     CHECK(generic_transition.baseline_transaction_id == failed.id);
     CHECK(generic_transition.candidate_transaction_id == repaired.id);
 
-    auto planning_evidence = source;
-    planning_evidence.id = "evidence://planning/1";
-    planning_evidence.source = common_adaptation_evidence_source::planning_revision;
-    CHECK(common_flydelta_behavior_transition_from_evidence(
-        planning_evidence, failed.id, repaired.id, generic_transition, error));
-    CHECK(generic_transition.source == common_adaptation_evidence_source::planning_revision);
-    CHECK(generic_transition.behavior_key == planning_evidence.behavior_key);
+    const std::array generic_sources = {
+        common_adaptation_evidence_source::reflection_alternative,
+        common_adaptation_evidence_source::planning_revision,
+        common_adaptation_evidence_source::research_alternative,
+        common_adaptation_evidence_source::dataset_resource,
+        common_adaptation_evidence_source::workflow_code,
+        common_adaptation_evidence_source::procedure_blueprint,
+        common_adaptation_evidence_source::user_correction,
+    };
+    for (const auto generic_source : generic_sources) {
+        auto generic_evidence = source;
+        generic_evidence.id = std::string("evidence://generic/") +
+            common_adaptation_evidence_source_name(generic_source);
+        generic_evidence.source = generic_source;
+        generic_evidence.behavior_key = std::string("behavior/") +
+            common_adaptation_evidence_source_name(generic_source);
+        CHECK(common_flydelta_behavior_transition_from_evidence(
+            generic_evidence, failed.id, repaired.id, generic_transition, error));
+        CHECK(generic_transition.source == generic_source);
+        CHECK(generic_transition.behavior_key == generic_evidence.behavior_key);
+    }
     CHECK(seed.split == common_flydelta_training_split::holdout);
     common_flydelta_experiment_fixture seed_fixture;
     CHECK(common_flydelta_experiment_fixture_from_seed(seed, seed_fixture, error));
