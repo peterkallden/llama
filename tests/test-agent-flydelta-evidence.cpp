@@ -76,5 +76,32 @@ int main() {
     credit.outcome = common_flydelta_counterfactual_outcome::unknown;
     credit.eligible_for_learning = true;
     CHECK(!common_flydelta_intervention_credit_validate(credit, error));
+
+    common_adaptation_evidence source;
+    source.id = "evidence://tool-repair/1";
+    source.source = common_adaptation_evidence_source::tool_repair;
+    source.scope.namespace_id = "local";
+    source.scope.project_id = "project";
+    source.scope.session_id = "session";
+    source.task_fingerprint = "sha256:task";
+    source.baseline_ref = "execution:failed";
+    source.candidate_ref = "execution:repaired";
+    source.verifier_ref = "verifier:v1";
+    source.transaction_ids = {failed.id, repaired.id};
+    source.host_verified = true;
+    common_flydelta_experiment_seed seed;
+    CHECK(common_flydelta_experiment_seed_from_evidence(
+        source, "tool_use/diagnostics/missing-argument", "sha256:model",
+        "sha256:tokenizer", "sha256:template", "sha256:tools", "sha256:resources",
+        common_flydelta_training_split::holdout, seed, error));
+    CHECK(seed.split == common_flydelta_training_split::holdout);
+    common_flydelta_experiment_fixture seed_fixture;
+    CHECK(common_flydelta_experiment_fixture_from_seed(seed, seed_fixture, error));
+    CHECK(seed_fixture.verifier_revision == source.verifier_ref);
+    source.host_verified = false;
+    CHECK(!common_flydelta_experiment_seed_from_evidence(
+        source, "tool_use/diagnostics/missing-argument", "sha256:model",
+        "sha256:tokenizer", "sha256:template", "sha256:tools", "sha256:resources",
+        common_flydelta_training_split::train, seed, error));
     return 0;
 }

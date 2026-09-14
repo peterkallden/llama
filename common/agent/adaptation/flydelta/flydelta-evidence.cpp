@@ -9,6 +9,11 @@ bool nonempty_bounded(const std::string & value, size_t max_size = 512) {
     return !value.empty() && value.size() <= max_size;
 }
 
+bool supported_seed_source(common_adaptation_evidence_source source) {
+    return source == common_adaptation_evidence_source::tool_repair ||
+        source == common_adaptation_evidence_source::reflection_alternative;
+}
+
 bool verified_model_behavior(const common_learning_transaction & transaction) {
     const auto & observation = transaction.observation;
     return observation.collection_allowed && observation.cause == common_learning_cause::model_behavior &&
@@ -165,4 +170,92 @@ bool common_flydelta_intervention_credit_from_report(
     credit.quality_delta = report.quality_delta;
     credit.eligible_for_learning = report.outcome != common_flydelta_counterfactual_outcome::unknown;
     return common_flydelta_intervention_credit_validate(credit, error);
+}
+
+bool common_flydelta_experiment_seed_validate(
+        const common_flydelta_experiment_seed & seed,
+        std::string & error) {
+    error.clear();
+    common_adaptation_evidence evidence;
+    evidence.id = seed.evidence_ref;
+    evidence.source = seed.source;
+    evidence.scope = seed.scope;
+    evidence.task_fingerprint = seed.task_fingerprint;
+    evidence.baseline_ref = seed.baseline_ref;
+    evidence.candidate_ref = seed.candidate_ref;
+    evidence.verifier_ref = seed.verifier_ref;
+    evidence.transaction_ids = seed.transaction_ids;
+    evidence.host_verified = true;
+    if (seed.schema_version != 1 || !nonempty_bounded(seed.id) ||
+            !nonempty_bounded(seed.behavior_key) || !supported_seed_source(seed.source) ||
+            !nonempty_bounded(seed.model_profile_fingerprint) ||
+            !nonempty_bounded(seed.tokenizer_fingerprint) ||
+            !nonempty_bounded(seed.template_fingerprint) ||
+            !nonempty_bounded(seed.tool_catalog_fingerprint) ||
+            !nonempty_bounded(seed.resource_snapshot_fingerprint) ||
+            !nonempty_bounded(seed.evidence_ref) ||
+            !common_adaptation_evidence_validate(evidence, 64, error)) {
+        if (error.empty()) error = "FlyDelta experiment seed identity is incomplete";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_experiment_seed_from_evidence(
+        const common_adaptation_evidence & evidence,
+        const std::string & behavior_key,
+        const std::string & model_profile_fingerprint,
+        const std::string & tokenizer_fingerprint,
+        const std::string & template_fingerprint,
+        const std::string & tool_catalog_fingerprint,
+        const std::string & resource_snapshot_fingerprint,
+        common_flydelta_training_split split,
+        common_flydelta_experiment_seed & seed,
+        std::string & error) {
+    error.clear();
+    if (!common_adaptation_evidence_validate(evidence, 64, error) ||
+            !evidence.host_verified || !supported_seed_source(evidence.source) ||
+            !nonempty_bounded(behavior_key) || !nonempty_bounded(model_profile_fingerprint) ||
+            !nonempty_bounded(tokenizer_fingerprint) || !nonempty_bounded(template_fingerprint) ||
+            !nonempty_bounded(tool_catalog_fingerprint) ||
+            !nonempty_bounded(resource_snapshot_fingerprint)) {
+        if (error.empty()) error = "FlyDelta experiment seed requires host-verified supported evidence";
+        return false;
+    }
+    seed = {};
+    seed.id = evidence.id + "/flydelta";
+    seed.behavior_key = behavior_key;
+    seed.source = evidence.source;
+    seed.scope = evidence.scope;
+    seed.split = split;
+    seed.task_fingerprint = evidence.task_fingerprint;
+    seed.model_profile_fingerprint = model_profile_fingerprint;
+    seed.tokenizer_fingerprint = tokenizer_fingerprint;
+    seed.template_fingerprint = template_fingerprint;
+    seed.tool_catalog_fingerprint = tool_catalog_fingerprint;
+    seed.resource_snapshot_fingerprint = resource_snapshot_fingerprint;
+    seed.baseline_ref = evidence.baseline_ref;
+    seed.candidate_ref = evidence.candidate_ref;
+    seed.verifier_ref = evidence.verifier_ref;
+    seed.evidence_ref = evidence.id;
+    seed.transaction_ids = evidence.transaction_ids;
+    return common_flydelta_experiment_seed_validate(seed, error);
+}
+
+bool common_flydelta_experiment_fixture_from_seed(
+        const common_flydelta_experiment_seed & seed,
+        common_flydelta_experiment_fixture & fixture,
+        std::string & error) {
+    error.clear();
+    if (!common_flydelta_experiment_seed_validate(seed, error)) return false;
+    fixture = {};
+    fixture.id = seed.id + "/fixture";
+    fixture.task_fingerprint = seed.task_fingerprint;
+    fixture.model_profile_fingerprint = seed.model_profile_fingerprint;
+    fixture.tokenizer_fingerprint = seed.tokenizer_fingerprint;
+    fixture.template_fingerprint = seed.template_fingerprint;
+    fixture.tool_catalog_fingerprint = seed.tool_catalog_fingerprint;
+    fixture.resource_snapshot_fingerprint = seed.resource_snapshot_fingerprint;
+    fixture.verifier_revision = seed.verifier_ref;
+    return common_flydelta_experiment_fixture_validate(fixture, error);
 }

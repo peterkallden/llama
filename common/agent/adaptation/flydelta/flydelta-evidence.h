@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
+#include "agent/adaptation/flydelta/flydelta-training.h"
 #include "agent/adaptation/learning-transaction.h"
 
 #include <cstddef>
@@ -75,4 +76,46 @@ bool common_flydelta_intervention_credit_validate(
 bool common_flydelta_intervention_credit_from_report(
         const common_flydelta_counterfactual_report & report,
         common_flydelta_intervention_credit & credit,
+        std::string & error);
+
+// Host bridge from the shared evidence ledger into a FlyDelta experiment.
+// This is reference-only: it does not load captures, infer a repair, or
+// assert that a reflection suggestion is correct.
+struct common_flydelta_experiment_seed {
+    int schema_version = 1;
+    std::string id;
+    std::string behavior_key;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    common_agent_scope scope;
+    common_flydelta_training_split split = common_flydelta_training_split::train;
+    std::string task_fingerprint;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string tool_catalog_fingerprint;
+    std::string resource_snapshot_fingerprint;
+    std::string baseline_ref;
+    std::string candidate_ref;
+    std::string verifier_ref;
+    std::string evidence_ref;
+    std::vector<std::string> transaction_ids;
+};
+
+bool common_flydelta_experiment_seed_validate(
+        const common_flydelta_experiment_seed & seed,
+        std::string & error);
+bool common_flydelta_experiment_seed_from_evidence(
+        const common_adaptation_evidence & evidence,
+        const std::string & behavior_key,
+        const std::string & model_profile_fingerprint,
+        const std::string & tokenizer_fingerprint,
+        const std::string & template_fingerprint,
+        const std::string & tool_catalog_fingerprint,
+        const std::string & resource_snapshot_fingerprint,
+        common_flydelta_training_split split,
+        common_flydelta_experiment_seed & seed,
+        std::string & error);
+bool common_flydelta_experiment_fixture_from_seed(
+        const common_flydelta_experiment_seed & seed,
+        common_flydelta_experiment_fixture & fixture,
         std::string & error);
