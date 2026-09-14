@@ -100,6 +100,13 @@ struct common_flydelta_compatibility {
     std::string inference_layout_revision;
 };
 
+// Serialized steering direction owned by a complete FlyDelta v2 artifact.
+// Runtime/basis-builder statistics are intentionally not part of this codec.
+struct common_flydelta_artifact_direction {
+    int32_t layer_index = -1;
+    std::vector<float> values;
+};
+
 struct common_flydelta_artifact {
     int schema_version = 1;
     std::string id;
@@ -108,6 +115,11 @@ struct common_flydelta_artifact {
     common_flydelta_memory_config memory;
     common_flydelta_compatibility compatibility;
     std::vector<float> weights;
+    size_t model_n_embd = 0;
+    size_t model_n_layers = 0;
+    int32_t il_start = 1;
+    int32_t il_end = 0;
+    std::vector<common_flydelta_artifact_direction> steering_basis;
     std::string content_hash;
 };
 

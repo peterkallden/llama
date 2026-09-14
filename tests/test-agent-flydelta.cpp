@@ -74,5 +74,24 @@ int main() {
     CHECK(common_flydelta_artifact_matches(value, expected, error));
     expected.architecture = "qwen";
     CHECK(!common_flydelta_artifact_matches(value, expected, error));
+
+    auto v2 = value;
+    v2.schema_version = 2;
+    v2.model_n_embd = 4;
+    v2.model_n_layers = 3;
+    v2.il_start = 1;
+    v2.il_end = 2;
+    v2.steering_basis = {
+        {1, {1.0f, 0.0f, 0.0f, 0.0f}},
+        {2, {0.0f, 1.0f, 0.0f, 0.0f}},
+    };
+    v2.content_hash = common_flydelta_artifact_hash(v2);
+    CHECK(common_flydelta_artifact_validate(v2, 32, 65536, error));
+    common_flydelta_artifact parsed_v2;
+    CHECK(common_flydelta_artifact_from_json(
+        common_flydelta_artifact_to_json(v2), 32, 65536, parsed_v2, error));
+    CHECK(parsed_v2.schema_version == 2 && parsed_v2.steering_basis.size() == 2);
+    v2.steering_basis.front().values.pop_back();
+    CHECK(!common_flydelta_artifact_validate(v2, 32, 65536, error));
     return 0;
 }

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -32,7 +33,7 @@ std::string hash_text(const std::string & text) {
 }
 
 json artifact_json_without_hash(const common_flydelta_artifact & artifact) {
-    return json{
+    auto value = json{
         {"schema_version", artifact.schema_version},
         {"kind", "flydelta"},
         {"id", artifact.id},
@@ -58,6 +59,20 @@ json artifact_json_without_hash(const common_flydelta_artifact & artifact) {
         }},
         {"weights", artifact.weights},
     };
+    if (artifact.schema_version == 2) {
+        value["model_n_embd"] = artifact.model_n_embd;
+        value["model_n_layers"] = artifact.model_n_layers;
+        value["il_start"] = artifact.il_start;
+        value["il_end"] = artifact.il_end;
+        value["steering_basis"] = json::array();
+        for (const auto & direction : artifact.steering_basis) {
+            value["steering_basis"].push_back({
+                {"layer_index", direction.layer_index},
+                {"values", direction.values},
+            });
+        }
+    }
+    return value;
 }
 
 bool same(const std::string & actual, const std::string & expected, const char * name, std::string & error) {
@@ -287,7 +302,7 @@ bool common_flydelta_artifact_validate(
         size_t max_serialized_bytes,
         std::string & error) {
     error.clear();
-    if (artifact.schema_version != 1 || artifact.id.empty()) { error = "FlyDelta artifact identity is invalid"; return false; }
+    if ((artifact.schema_version != 1 && artifact.schema_version != 2) || artifact.id.empty()) { error = "FlyDelta artifact identity is invalid"; return false; }
     if (!common_flydelta_validate_encoder_config(artifact.encoder, error) ||
             !common_flydelta_validate_memory_config(artifact.memory, error)) return false;
     if (artifact.encoder.expansion_dim != artifact.memory.expansion_dim || artifact.weights.size() != artifact.memory.target_dim * artifact.memory.expansion_dim) {
@@ -303,6 +318,37 @@ bool common_flydelta_artifact_validate(
     }
     for (const float value : artifact.weights) {
         if (!std::isfinite(value) || std::fabs(value) > artifact.memory.max_abs_weight) { error = "FlyDelta artifact contains an invalid weight"; return false; }
+    }
+    if (artifact.schema_version == 2) {
+        if (artifact.model_n_embd == 0 || artifact.model_n_layers < 2 ||
+                artifact.il_start < 1 || artifact.il_end < artifact.il_start ||
+                static_cast<size_t>(artifact.il_end) >= artifact.model_n_layers ||
+                artifact.steering_basis.size() != artifact.memory.target_dim) {
+            error = "FlyDelta v2 artifact basis layout is invalid";
+            return false;
+        }
+        size_t basis_values = 0;
+        for (const auto & direction : artifact.steering_basis) {
+            if (direction.layer_index < artifact.il_start ||
+                    direction.layer_index > artifact.il_end ||
+                    direction.values.size() != artifact.model_n_embd ||
+                    basis_values > max_weights ||
+                    direction.values.size() > max_weights - basis_values) {
+                error = "FlyDelta v2 artifact basis direction is invalid";
+                return false;
+            }
+            basis_values += direction.values.size();
+            for (const float value : direction.values) {
+                if (!std::isfinite(value)) {
+                    error = "FlyDelta v2 artifact basis contains a non-finite value";
+                    return false;
+                }
+            }
+        }
+        if (artifact.weights.size() > max_weights - std::min(max_weights, basis_values)) {
+            error = "FlyDelta v2 artifact exceeds combined weight bound";
+            return false;
+        }
     }
     if (max_serialized_bytes != 0 && artifact_json_without_hash(artifact).dump().size() > max_serialized_bytes) {
         error = "FlyDelta artifact exceeds serialized byte bound";
@@ -353,6 +399,18 @@ bool common_flydelta_artifact_from_json(
         artifact.compatibility.architecture = compatibility.value("architecture", "");
         artifact.compatibility.inference_layout_revision = compatibility.value("inference_layout_revision", "");
         artifact.weights = value.at("weights").get<std::vector<float>>();
+        artifact.model_n_embd = value.value("model_n_embd", 0U);
+        artifact.model_n_layers = value.value("model_n_layers", 0U);
+        artifact.il_start = value.value("il_start", 1);
+        artifact.il_end = value.value("il_end", 0);
+        if (artifact.schema_version == 2) {
+            for (const auto & direction : value.at("steering_basis")) {
+                common_flydelta_artifact_direction parsed;
+                parsed.layer_index = direction.value("layer_index", -1);
+                parsed.values = direction.at("values").get<std::vector<float>>();
+                artifact.steering_basis.push_back(std::move(parsed));
+            }
+        }
         artifact.content_hash = value.value("content_hash", "");
     } catch (const std::exception & exception) {
         error = std::string("invalid FlyDelta artifact fields: ") + exception.what();
