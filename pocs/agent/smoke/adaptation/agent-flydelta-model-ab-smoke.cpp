@@ -148,8 +148,18 @@ int main(int argc, char ** argv) {
     manifest.compatibility.architecture = "runtime-model";
 
     common_flydelta_sideband_registry registry;
-    if (!registry.admit(manifest, error) ||
-            !registry.stage_canary(sideband_id, "eval:flydelta-ab-smoke", error) ||
+    if (!registry.admit(manifest, error)) {
+        std::cerr << "FlyDelta model A/B registry setup failed: " << error
+                  << " (id=" << manifest.id
+                  << ", artifact_path=" << manifest.artifact_path
+                  << ", artifact_hash=" << manifest.artifact_hash
+                  << ", model_n_embd=" << manifest.model_n_embd
+                  << ", model_n_layers=" << manifest.model_n_layers
+                  << ", il_start=" << manifest.il_start
+                  << ", il_end=" << manifest.il_end << ")\n";
+        return 1;
+    }
+    if (!registry.stage_canary(sideband_id, "eval:flydelta-ab-smoke", error) ||
             !registry.activate(sideband_id, error)) {
         std::cerr << "FlyDelta model A/B registry setup failed: " << error << '\n';
         return 1;
