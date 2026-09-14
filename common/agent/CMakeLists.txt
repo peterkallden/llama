@@ -113,6 +113,7 @@ add_library(${TARGET}
     tooling/registry/tool-registry.cpp tooling/registry/tool-registry.h
     tooling/contracts/tool-result-contracts.cpp tooling/contracts/tool-result-contracts.h
     tooling/schema/tool-schema-compact.cpp tooling/schema/tool-schema-compact.h
+    tooling/synthetic/synthetic-tool-cases.cpp tooling/synthetic/synthetic-tool-cases.h
     tooling/routing/tool-navigation.cpp tooling/routing/tool-navigation.h
     thinking/research/research-contract.h
     thinking/research/research-workspace.cpp thinking/research/research-workspace.h
@@ -138,6 +139,7 @@ set(AGENT_TOOLING_SOURCES
     tooling/registry/tool-registry.cpp
     tooling/contracts/tool-result-contracts.cpp
     tooling/schema/tool-schema-compact.cpp
+    tooling/synthetic/synthetic-tool-cases.cpp
     tool-family-index.cpp
     tool-workflow-index.cpp
     tooling/routing/tool-navigation.cpp

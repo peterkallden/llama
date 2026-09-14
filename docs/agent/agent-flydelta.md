@@ -422,6 +422,38 @@ OpenAPI and dataset projections, this list/inspect chain and these malformed
 repair cases. Native, MCP and OpenAPI providers share the same host repair and
 verification boundary; only provider provenance differs.
 
+### Host-generated synthetic tool cases
+
+The host can generate a bounded, deterministic fixture set directly from a
+resolved `common_tool_definition`, without invoking a model. The first
+generator supports missing required fields, wrong types, invalid enum values,
+unexpected properties and malformed JSON. It uses the full host input schema
+to create the valid baseline, the invalid mutation and the expected repair,
+then re-runs the existing host schema validator to certify the result.
+
+Each case also carries the model-facing input projection and the compact tool
+description. This is intentional: a later model-backed run must give the
+model exactly the contract it would receive during normal inference, rather
+than exposing the full host schema by accident. The case can therefore be
+used as a fixture for both sides of the seam:
+
+```text
+host tool definition
+  -> full-schema mutation
+  -> host validator: invalid mutation + valid repair
+  -> model projection + compact contract
+  -> optional model repair attempt
+```
+
+The exported synthetic JSONL is test/corpus material, not model evidence. A
+host-generated invalid call does not demonstrate that a model made a mistake,
+does not create a FlyDelta capture pair and must not be promoted to a learning
+candidate by itself. Only a later model attempt, followed by host
+verification and (for FlyDelta) a valid counterfactual experiment, can cross
+that boundary. Synthetic cases are consequently useful for contract
+coverage, controlled model experiments and negative examples, while keeping
+`Generation != Evidence != Learning != Promotion` intact.
+
 When a mandatory tool step fails while later steps are still pending, the
 runtime gives the failed step precedence: it enters reflection instead of
 deferring the whole plan as an incomplete continuation. The CLI reflection

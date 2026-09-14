@@ -373,6 +373,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-learning-cause.cpp
         test-agent-adaptation-evidence.cpp
         test-agent-adaptation-evidence-routing.cpp
+        test-agent-synthetic-tool-cases.cpp
         test-agent-learning-case.cpp
         test-agent-learning-transaction.cpp
         test-agent-training-candidate.cpp
@@ -481,6 +482,10 @@ if (LLAMA_AGENT_RUNTIME)
             target_include_directories(${TEST_NAME} PRIVATE
                 ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
             target_link_libraries(${TEST_NAME} PRIVATE vendor::hash)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-synthetic-tool-cases")
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-tooling)
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
         endif()
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
     endforeach()
