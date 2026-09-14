@@ -89,11 +89,9 @@ bool common_flydelta_alpha_trial_validate(
         error = "FlyDelta verified alpha trial requires evidence";
         return false;
     }
-    if (trial.outcome == common_flydelta_counterfactual_outcome::unknown &&
-            trial.verifier_known) {
-        error = "FlyDelta known alpha trial cannot have unknown outcome";
-        return false;
-    }
+    // A verifier may know that both arms failed without that constituting a
+    // comparable outcome. Such a trial is retained as known negative
+    // evidence, but common_flydelta_select_alpha deliberately skips it.
     return true;
 }
 
@@ -134,6 +132,46 @@ bool common_flydelta_select_alpha(
         }
     }
     return true;
+}
+
+bool common_flydelta_run_alpha_search(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_alpha_search_config & config,
+        const common_flydelta_alpha_runner & runner,
+        std::vector<common_flydelta_alpha_trial> & trials,
+        common_flydelta_alpha_selection & selection,
+        std::string & error) {
+    error.clear();
+    trials.clear();
+    selection = {};
+    if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
+            !common_flydelta_alpha_search_config_validate(config, error) || !runner) {
+        if (error.empty()) error = "FlyDelta alpha runner configuration is invalid";
+        return false;
+    }
+
+    common_flydelta_counterfactual_trial baseline;
+    if (!runner(fixture, 0.0f, false, baseline, error) ||
+            !common_flydelta_counterfactual_trial_validate(baseline, error)) {
+        return false;
+    }
+    for (const float alpha : config.candidates) {
+        common_flydelta_counterfactual_trial candidate;
+        if (!runner(fixture, alpha, std::fabs(alpha) > std::numeric_limits<float>::epsilon(),
+                candidate, error) ||
+                !common_flydelta_counterfactual_trial_validate(candidate, error)) {
+            return false;
+        }
+        common_flydelta_alpha_trial trial;
+        trial.alpha = alpha;
+        trial.executed = candidate.executed;
+        trial.verifier_known = baseline.verifier_known && candidate.verifier_known;
+        trial.outcome = common_flydelta_classify_counterfactual(baseline, candidate);
+        trial.quality_delta = candidate.quality - baseline.quality;
+        trial.evidence_ref = candidate.evidence_ref;
+        trials.push_back(std::move(trial));
+    }
+    return common_flydelta_select_alpha(config, trials, selection, error);
 }
 
 bool common_flydelta_training_example_validate(

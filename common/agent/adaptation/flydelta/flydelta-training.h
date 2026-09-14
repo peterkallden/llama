@@ -4,6 +4,7 @@
 #include "agent/adaptation/flydelta/flydelta.h"
 
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,25 @@ bool common_flydelta_alpha_trial_validate(
 bool common_flydelta_select_alpha(
         const common_flydelta_alpha_search_config & config,
         const std::vector<common_flydelta_alpha_trial> & trials,
+        common_flydelta_alpha_selection & selection,
+        std::string & error);
+
+// Runs a baseline plus each configured candidate on the same immutable
+// fixture. The host callback owns inference and verification; this helper
+// only classifies the resulting candidate against the baseline and applies
+// the existing conservative alpha selector.
+using common_flydelta_alpha_runner = std::function<bool(
+        const common_flydelta_experiment_fixture & fixture,
+        float alpha,
+        bool apply_overlay,
+        common_flydelta_counterfactual_trial & trial,
+        std::string & error)>;
+
+bool common_flydelta_run_alpha_search(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_alpha_search_config & config,
+        const common_flydelta_alpha_runner & runner,
+        std::vector<common_flydelta_alpha_trial> & trials,
         common_flydelta_alpha_selection & selection,
         std::string & error);
 

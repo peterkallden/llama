@@ -40,6 +40,32 @@ int main() {
     CHECK(common_flydelta_select_alpha(alpha_config, trials, selection, error));
     CHECK(selection.selected && std::fabs(selection.alpha - 0.1f) < 1e-6f);
 
+    common_flydelta_experiment_fixture fixture;
+    fixture.id = "fixture:alpha";
+    fixture.task_fingerprint = "sha256:task";
+    fixture.model_profile_fingerprint = "sha256:model";
+    fixture.tokenizer_fingerprint = "sha256:tokenizer";
+    fixture.template_fingerprint = "sha256:template";
+    fixture.tool_catalog_fingerprint = "sha256:tools";
+    fixture.resource_snapshot_fingerprint = "sha256:resources";
+    fixture.verifier_revision = "verifier:v1";
+    std::vector<common_flydelta_alpha_trial> generated_trials;
+    common_flydelta_alpha_selection generated_selection;
+    size_t runner_calls = 0;
+    CHECK(common_flydelta_run_alpha_search(fixture, alpha_config,
+        [&](const common_flydelta_experiment_fixture &, float alpha, bool apply_overlay,
+                common_flydelta_counterfactual_trial & trial, std::string &) {
+            ++runner_calls;
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.evidence_ref = "evidence:alpha";
+            trial.passed = apply_overlay && std::fabs(alpha - 0.1f) < 1e-6f;
+            trial.quality = trial.passed ? 1.0f : 0.0f;
+            return true;
+        }, generated_trials, generated_selection, error));
+    CHECK(runner_calls == alpha_config.candidates.size() + 1);
+    CHECK(generated_selection.selected && std::fabs(generated_selection.alpha - 0.1f) < 1e-6f);
+
     common_flydelta_delta_memory memory({8, 2, 0.5f});
     auto train = example(common_flydelta_training_split::train,
             common_flydelta_counterfactual_outcome::helped);
