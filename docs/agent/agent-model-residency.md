@@ -106,7 +106,7 @@ contract:
 | Backend | Residency unit | Context rule | First limitation |
 | --- | --- | --- | --- |
 | `cli` | `llama_model` plus chat templates and approved overlays | one context per session/profile | simplest first loader; rejects `mmproj` today |
-| `server-context` | one server-context host per model/load identity | server context and session state remain isolated | runtime adapter overlays are not supported yet |
+| `server-context` | one server-context host per model/load identity | server context and session state remain isolated; static FlyDelta cvecs are request/slot scoped | LoRA runtime overlays and dynamic hidden-state intervention are not supported yet |
 
 The scheduler must not know these backend details. It receives an abstract
 loaded-profile handle and a release operation. The CLI and server-context
@@ -116,9 +116,12 @@ The catalog currently permits backend metadata that the concrete loader may not
 yet support. In particular, a CLI profile with `mmproj` is rejected by the
 runtime today; this combination should be rejected during catalog validation
 once the catalog is wired into serving. A server-context profile containing
-adapters must likewise fail at profile resolution unless server-context adapter
+adapters must likewise fail at profile resolution unless server-context LoRA
 support has been implemented. It must not silently fall back to another
-backend or to the adapter-free profile.
+backend or to the adapter-free profile. A host-prepared FlyDelta cvec is
+different: it is a per-turn execution input, not a resident profile adapter,
+and is carried through the internal task contract after the host has completed
+artifact and policy validation.
 
 ## Profile identity and cache safety
 

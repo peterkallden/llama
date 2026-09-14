@@ -2,9 +2,9 @@
 
 ## Status and purpose
 
-**Status: V0 host seam, bounded CPU CLI capture, two-pass experiment and
-opt-in model smoke are implemented; automatic learning and activation are not
-implemented.** FlyDelta is not enabled by default and is not a replacement for
+**Status: V0 host seam, bounded CPU capture, two-pass experiment, explicit CLI
+activation and request-scoped server-context activation are implemented;
+automatic learning and activation are not implemented.** FlyDelta is not enabled by default and is not a replacement for
 the current model-adaptation path. It must not be activated until it has
 passed explicit evaluation and promotion gates.
 
@@ -45,12 +45,15 @@ bounded steering basis needed to compose an activation underlay. The explicit
 activation loader accepts only an already verified, compatible v2 artifact and
 never resolves files, selects a sideband or bypasses the host gate. No daemon,
 profile or server inference path performs artifact discovery or automatic
-activation yet. The CLI generation path accepts a host-prepared activation
+activation. The CLI generation path accepts a host-prepared activation
 snapshot on the per-generation request and can apply its cvec to a fresh
 context. The CLI agent driver carries the same immutable snapshot through
 planner, draft, reflection, continuation and tool-follow-up requests within a
 turn; a later top-level turn still starts without activation unless the host
-supplies a new snapshot. It can also request a bounded prompt layer-input
+supplies a new snapshot. The server-context path maps the same snapshot to an
+internal immutable task cvec, keeps it on the server slot, batches only equal
+cvec identities and clears prompt/KV state when the identity changes. An
+absent cvec explicitly restores the no-op state. It can also request a bounded prompt layer-input
 capture on the allowlisted graph architectures that expose the required
 internal staging tensor; unsupported or unknown architectures fail closed. The
 generic two-pass helper discards the capture context before running the second
@@ -610,10 +613,13 @@ planner, draft, reflection, continuation and tool-follow-up slices. This
 avoids copying full cvec buffers during continuation and makes the lifetime
 explicit: one top-level turn may reuse its snapshot, but a later turn starts
 without one unless the host supplies a new decision. The CLI consumes the
-snapshot on its fresh context. The server-context backend rejects an active
-snapshot with a clear unsupported error because its current task contract has
-no per-turn cvec field; it continues to support ordinary generation and clean
-FlyDelta no-op requests.
+snapshot on its fresh context. The server-context adapter maps it to the
+generic `server_task_cvec` field. Server admission validates model dimensions
+and byte bounds; slot scheduling prevents different cvecs from sharing a
+context-wide cvec, and a cvec change invalidates the slot's prompt/KV state.
+This is static, turn-scoped activation only: it does not make hidden-state
+capture request-scoped, inject a direction mid-decode, resolve `.flyd` files in
+the server, or change host scope and promotion policy.
 
 This boundary is intentional. Server support must later be implemented as a
 request-scoped server/llama.cpp capability, not by mutating startup
@@ -621,8 +627,9 @@ request-scoped server/llama.cpp capability, not by mutating startup
 
 The contract coverage is split deliberately: `test-agent-flydelta-activation`
 checks v2 hash/basis loading, active composition and explicit-opt-in no-op;
-`llama-agent-inference-smoke` checks that a host-provided activation survives
-the CLI driver request builder. The model-backed Qwen+Nomic smoke remains a
+`test-agent-prepared-generation` checks server-task cvec mapping, dimension,
+byte-bound and identity contracts; `llama-agent-inference-smoke` checks that a
+host-provided activation survives the CLI driver request builder. The model-backed Qwen+Nomic smoke remains a
 baseline runtime check; it does not claim a useful learned FlyDelta effect
 until a host-verified artifact and a real HELPED counterfactual exist.
 
