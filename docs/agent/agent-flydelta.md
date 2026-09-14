@@ -1044,7 +1044,45 @@ DeltaMemory or promote an artifact by itself. The diagnostics are deliberately
 outside the counterfactual outcome and promotion contracts; they never create
 `HELPED`, select an alpha, or serve as learning evidence.
 
-### 4I. Source-neutral behavior transitions — implemented
+### 4I. Coarse-to-fine layer search — implemented
+
+When an overlay arm remains `UNKNOWN`, the host may use its per-layer
+representation diagnostics to decide where a bounded follow-up experiment is
+worth trying. This is a search over the existing cvec/activation seam; it does
+not require a change to llama.cpp's model graph or a second inference backend.
+
+The planner applies the following sequence:
+
+```text
+per-layer diagnostics
+    -> cosine gate and progress/(1 + leakage) ranking
+    -> separated numeric local maxima
+    -> singleton layer trials
+    -> adjacent pair trials only if no singleton is host-verified HELPED
+```
+
+The adjacency is numeric (`L-1`/`L` or `L`/`L+1`), not adjacency in a sparse
+capture list. A missing captured layer is never invented. At most two separated
+regions are selected by default, with bounded singleton and neighborhood
+counts. Directions must be compatible with the captured/basis layer set.
+
+Layer candidates share one total intervention budget. A singleton receives the
+full budget; a two-layer candidate receives `total_scale / sqrt(2)` per layer.
+This makes singleton and pair results comparable instead of giving pairs an
+automatic advantage from twice the injected energy. The implementation is
+`flydelta-layer-search.*`, and `common_flydelta_run_layer_search()` owns the
+baseline-once, singleton-first ordering while the caller owns fresh contexts,
+overlay composition and host verification.
+
+Only a host-certified `HELPED` trial may be selected. `UNKNOWN`, `NEUTRAL` and
+`HARMED` remain diagnostics or retention evidence and cannot promote a layer
+mask, update `DeltaMemory` or create a training example. If the baseline already
+passes, neighborhood expansion is skipped. The model-backed repair smoke
+captures a small layer window and exercises this path after its existing
+three-arm alpha search; it reports the selected mask and trial count without
+claiming that the model learned a repair.
+
+### 4J. Source-neutral behavior transitions — implemented
 
 The shared evidence contract and FlyDelta job envelope are source-neutral.
 They can carry host-certified relations from tool repair, reflection

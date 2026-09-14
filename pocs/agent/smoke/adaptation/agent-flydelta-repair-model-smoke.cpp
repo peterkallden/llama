@@ -2,6 +2,7 @@
 #include "agent/adaptation/flydelta/flydelta-basis.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
+#include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-training.h"
 #include "agent/adaptation/flydelta/flydelta.h"
@@ -175,10 +176,12 @@ int main(int argc, char ** argv) {
 
     auto capture_request = std::make_shared<common_flydelta_hidden_state_capture_request>();
     capture_request->enabled = true;
-    // layer-input is sampled before that layer's cvec addition. Capture both
-    // layers 1 and 2: compose the candidate from layer 1, then measure the
-    // propagated shift at layer 2, after layer 1's intervention.
-    capture_request->layer_indices = {1, 2};
+    // layer-input is sampled before that layer's cvec addition. Capture a
+    // small contiguous window so the host can rank actual layer locations and
+    // test adjacent neighborhoods without inventing uncaptured layers.
+    for (uint32_t layer = 1; layer < model_n_layers && layer <= 4; ++layer) {
+        capture_request->layer_indices.push_back(layer);
+    }
     // Capture the final prompt row. The two controlled prompts have the same
     // token length, and this row is after the tool-selection instruction;
     // token zero would be identical and produce a zero behavior delta.
@@ -242,7 +245,7 @@ int main(int argc, char ** argv) {
     if (!common_flydelta_behavior_deltas_from_captures(
             manifest, *failed.flydelta_capture, *repaired.flydelta_capture,
             "evidence:model-repair-e2e", 64U * 1024U * 1024U,
-            64U * 1024U * 1024U, deltas, error) || deltas.size() != 2) {
+            64U * 1024U * 1024U, deltas, error) || deltas.size() < 2) {
         std::cerr << "FlyDelta behavior delta construction failed: " << error << '\n';
         return 1;
     }
@@ -270,8 +273,14 @@ int main(int argc, char ** argv) {
     basis_config.model_profile_fingerprint = profile;
     basis_config.capture_layout_revision = "layer-input:v1";
     common_flydelta_basis_builder basis(basis_config);
-    if (!basis.add(deltas.front(), repair_credit, error) || basis.directions().empty()) {
-        std::cerr << "FlyDelta repair basis construction failed: " << error << '\n';
+    for (const auto & delta : deltas) {
+        if (!basis.add(delta, repair_credit, error)) {
+            std::cerr << "FlyDelta repair basis construction failed: " << error << '\n';
+            return 1;
+        }
+    }
+    if (basis.directions().empty()) {
+        std::cerr << "FlyDelta repair basis construction produced no directions\n";
         return 1;
     }
 
@@ -315,12 +324,13 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // The layer-2 behavior delta is the reference for the post-layer-1
-    // representation shift measured in each counterfactual arm.
+    // Each captured layer gets its own diagnostic. Layer-search later uses
+    // the most informative unknown arm to rank locations; diagnostics never
+    // create learning evidence by themselves.
     std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_arm_capture;
     struct arm_diagnostic {
         float alpha = 0.0f;
-        common_flydelta_representation_diagnostics values;
+        std::vector<common_flydelta_representation_diagnostics> values;
         bool available = false;
         std::string error;
     };
@@ -340,8 +350,8 @@ int main(int argc, char ** argv) {
         request.model_n_embd = model_n_embd;
         request.model_n_layers = model_n_layers;
         request.il_end = static_cast<int32_t>(model_n_layers - 1);
-        request.directions = basis.directions();
-        request.coefficients = coefficients;
+        request.directions = {basis.directions().front()};
+        request.coefficients = {coefficients.front()};
         request.gate_request = gate_request;
         common_flydelta_gate_config gate_config;
         gate_config.enabled = true;
@@ -393,9 +403,17 @@ int main(int argc, char ** argv) {
                         result.flydelta_capture) {
                     arm_diagnostic diagnostic;
                     diagnostic.alpha = alpha;
-                    diagnostic.available = common_flydelta_representation_diagnostics_from_captures(
-                        *baseline_arm_capture, *result.flydelta_capture, deltas.back(),
-                        64U * 1024U * 1024U, diagnostic.values, diagnostic.error);
+                    diagnostic.available = true;
+                    for (const auto & delta : deltas) {
+                        common_flydelta_representation_diagnostics values;
+                        if (!common_flydelta_representation_diagnostics_from_captures(
+                                *baseline_arm_capture, *result.flydelta_capture, delta,
+                                64U * 1024U * 1024U, values, diagnostic.error)) {
+                            diagnostic.available = false;
+                            break;
+                        }
+                        diagnostic.values.push_back(std::move(values));
+                    }
                     arm_diagnostics.push_back(std::move(diagnostic));
                 }
                 std::cout << "arm_model_output alpha=" << alpha
@@ -434,16 +452,137 @@ int main(int argc, char ** argv) {
             const auto diagnostic = std::find_if(arm_diagnostics.begin(), arm_diagnostics.end(),
                 [&](const auto & value) { return value.alpha == trial.alpha; });
             if (diagnostic != arm_diagnostics.end() && diagnostic->available) {
-                std::cout << "unknown_representation_diagnostics alpha=" << trial.alpha
-                          << " cosine=" << diagnostic->values.cosine
-                          << " progress=" << diagnostic->values.progress
-                          << " leakage=" << diagnostic->values.leakage
-                          << " shift_norm=" << diagnostic->values.shift_norm
-                          << " promotion=no next_action=extended_tuning\n";
+                for (const auto & values : diagnostic->values) {
+                    std::cout << "unknown_representation_diagnostics alpha=" << trial.alpha
+                              << " layer=" << values.layer_index
+                              << " cosine=" << values.cosine
+                              << " progress=" << values.progress
+                              << " leakage=" << values.leakage
+                              << " shift_norm=" << values.shift_norm
+                              << " promotion=no next_action=layer_search\n";
+                }
             } else {
                 std::cout << "unknown_representation_diagnostics alpha=" << trial.alpha
                           << " available=no promotion=no next_action=extended_tuning\n";
             }
+        }
+    }
+
+    common_flydelta_layer_search_selection layer_selection;
+    std::vector<common_flydelta_layer_search_trial> layer_trials;
+    if (!selected.selected) {
+        const auto best_arm = std::max_element(arm_diagnostics.begin(), arm_diagnostics.end(),
+            [](const auto & left, const auto & right) {
+                const auto best_score = [](const auto & arm) {
+                    float score = 0.0f;
+                    for (const auto & value : arm.values) {
+                        if (value.cosine >= 0.3f && value.progress > 0.0f) {
+                            score = std::max(score, value.progress / (1.0f + value.leakage));
+                        }
+                    }
+                    return score;
+                };
+                return best_score(left) < best_score(right);
+            });
+        if (best_arm != arm_diagnostics.end() && best_arm->available) {
+            std::vector<common_flydelta_layer_diagnostic> diagnostics;
+            for (const auto & value : best_arm->values) {
+                diagnostics.push_back({value.layer_index, value.cosine, value.progress,
+                    value.leakage, value.shift_norm});
+            }
+            common_flydelta_layer_search_config layer_config;
+            layer_config.max_regions = 2;
+            layer_config.max_singletons = 4;
+            layer_config.max_neighborhoods = 4;
+            layer_config.max_candidates = 8;
+            layer_config.min_region_separation = 2;
+            layer_config.min_cosine = 0.3f;
+            layer_config.total_scale = 0.02f;
+            std::vector<uint32_t> available_layers;
+            for (const auto & delta : deltas) {
+                available_layers.push_back(static_cast<uint32_t>(delta.layer_index));
+            }
+            common_flydelta_layer_search_plan layer_plan;
+            if (!common_flydelta_build_layer_search_plan(
+                    diagnostics, available_layers, layer_config, layer_plan, error)) {
+                std::cerr << "FlyDelta layer search plan failed: " << error << '\n';
+                return 1;
+            }
+            const auto prepare_layer_activation = [&](const common_flydelta_layer_candidate & candidate,
+                    common_flydelta_activation_result & activation) {
+                common_flydelta_gate_request gate_request;
+                if (!common_flydelta_gate_request_from_context(
+                        recognition, code, true, common_flydelta_candidate_status::approved,
+                        true, candidate.per_layer_scale, gate_request, error)) return false;
+                common_flydelta_activation_request request;
+                request.candidate_id = "flydelta://candidate/model-repair-layer-search";
+                request.artifact_id = "flydelta://artifact/model-repair-e2e";
+                request.model_profile_fingerprint = profile;
+                request.capture_layout_revision = "layer-input:v1";
+                request.model_n_embd = model_n_embd;
+                request.model_n_layers = model_n_layers;
+                request.il_end = static_cast<int32_t>(model_n_layers - 1);
+                for (const uint32_t layer : candidate.layer_indices) {
+                    const auto direction = std::find_if(basis.directions().begin(), basis.directions().end(),
+                        [&](const auto & value) { return value.layer_index == static_cast<int32_t>(layer); });
+                    if (direction == basis.directions().end()) {
+                        error = "FlyDelta layer search candidate has no compatible basis direction";
+                        return false;
+                    }
+                    request.directions.push_back(*direction);
+                    request.coefficients.push_back(coefficients.front());
+                }
+                request.gate_request = gate_request;
+                common_flydelta_gate_config gate_config;
+                gate_config.enabled = true;
+                return common_flydelta_prepare_activation(
+                    gate_config, request, 64U * 1024U * 1024U, activation, error);
+            };
+            if (!common_flydelta_run_layer_search(
+                    experiment_fixture, layer_plan,
+                    [&](const common_flydelta_experiment_fixture &,
+                            const common_flydelta_layer_candidate * candidate,
+                            bool apply_overlay,
+                            common_flydelta_counterfactual_trial & trial,
+                            std::string & runner_error) {
+                        common_flydelta_activation_result activation;
+                        std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
+                        if (apply_overlay) {
+                            if (!candidate || !prepare_layer_activation(*candidate, activation)) {
+                                runner_error = error;
+                                return false;
+                            }
+                            activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                                std::move(activation));
+                        }
+                        common_agent_generation_result result;
+                        const bool executed = generate(*inference, value, failed_instruction, result,
+                            activation_ptr, capture_request);
+                        trial = {};
+                        trial.executed = executed;
+                        trial.verifier_known = executed;
+                        trial.passed = executed && contains_tool(result, "data.inspect");
+                        trial.quality = trial.passed ? 1.0f : 0.0f;
+                        trial.overlay_applied = apply_overlay;
+                        trial.intervention_count = apply_overlay ? candidate->layer_indices.size() : 0;
+                        trial.evidence_ref = apply_overlay
+                            ? "evidence:model-repair-layer-search"
+                            : "evidence:model-repair-layer-baseline";
+                        std::cout << "layer_search_model_output layers="
+                                  << (candidate ? common_flydelta_layer_search_candidate_source_name(candidate->source)
+                                      : "baseline")
+                                  << " overlay=" << (apply_overlay ? "yes" : "no")
+                                  << " output=" << output_preview(result) << '\n';
+                        if (!executed && !result.error_message.empty()) runner_error = result.error_message;
+                        return executed;
+                    }, layer_trials, layer_selection, error)) {
+                std::cerr << "FlyDelta layer search failed: " << error << '\n';
+                return 1;
+            }
+            std::cout << "layer_search_singletons=" << layer_plan.singleton_candidates.size()
+                      << " layer_search_neighborhoods=" << layer_plan.neighborhood_candidates.size()
+                      << " layer_search_trials=" << layer_trials.size()
+                      << " layer_search_selected=" << (layer_selection.selected ? "yes" : "no") << '\n';
         }
     }
     return 0;
