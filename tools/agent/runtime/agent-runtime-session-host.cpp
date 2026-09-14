@@ -167,6 +167,7 @@ common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_t
             static_cast<size_t>(std::max(0, request.deliberation_policy_override->max_tool_rounds)));
     }
     turn_request.request.input_resources = request.input_resources;
+    turn_request.request.flydelta_activation = request.flydelta_activation;
     turn_request.request.event_sink = request.event_sink;
     turn_request.execution_control = request.execution_control;
     turn_request.request.research_should_stop = [control = request.execution_control]() {

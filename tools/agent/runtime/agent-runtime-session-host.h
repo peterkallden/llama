@@ -54,6 +54,9 @@ struct common_agent_runtime_session_host_turn_request {
     // but travels with the host-owned turn for checkpoint validation.
     std::string request_id;
     std::string model_profile_id;
+    // Host-prepared, immutable per-turn FlyDelta activation. The session
+    // host only propagates this snapshot to the runtime request.
+    std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
 };
 
 struct common_agent_runtime_session_host_turn_result {

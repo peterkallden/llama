@@ -831,9 +831,12 @@ the server, or change host scope and promotion policy. If speculative decoding
 is active, the same cvec is validated against and applied to the draft context
 when one exists; a dimension/layout mismatch is rejected at task admission.
 
-This boundary is intentional. Server support must later be implemented as a
-request-scoped server/llama.cpp capability, not by mutating startup
-`common_params` or resident KV state.
+This boundary is intentional. The current server-context adapter is
+request-scoped: the public session-host turn request may carry one immutable
+activation snapshot, which is copied into the runtime request and mapped to
+the server task cvec. It must not mutate startup `common_params` or resident
+KV state. A cvec change still requires a fresh prefill/context according to
+the server admission rules above.
 
 The contract coverage is split deliberately: `test-agent-flydelta-activation`
 checks v2 hash/basis loading, active composition and explicit-opt-in no-op;
@@ -912,6 +915,33 @@ prefill, so sharing it would invalidate the counterfactual.
 A full `llama-agent` rebuild is required when shared agent/runtime libraries
 have changed; otherwise an incremental executable may be out of sync with
 those libraries.
+
+The optional `llama-agent-flydelta-runtime-smoke` is the first end-to-end
+runtime wiring check. It uses the public session-host turn contract and runs
+exactly three fresh arms against the same prompt: a no-op baseline, a small
+activation, and a larger activation. The model profile is resident between
+arms, while each arm receives a fresh runtime context so the cvec affects
+prefill consistently. The backend is selectable with `--backend
+server-context|cli` (or `LLAMA_AGENT_BACKEND`), and the local example keeps
+the thread limit at three:
+
+```bash
+LD_LIBRARY_PATH=build-agent-cozo/bin \
+LLAMA_AGENT_MODEL=/path/to/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf \
+LLAMA_AGENT_THREADS=3 \
+build-agent-cozo/bin/llama-agent-flydelta-runtime-smoke \
+  --backend server-context --threads 3 --n-predict 16
+```
+
+This smoke proves activation propagation through the host, model residency,
+backend execution, and host verification. Its result is intentionally named
+`execution_verified_neutral`: a tiny synthetic direction is only a wiring
+probe, not a learned repair basis and not evidence of a HELPED outcome. A
+real HELPED result still requires a host-certified baseline failure, a
+verified repair, and counterfactual evaluation showing that the overlay
+caused the improvement. The CTest entry is registered with skip code 77 when
+no model is supplied; the model-backed command above is the explicit local
+verification path.
 
 ### 5. Optional dynamic hook
 
