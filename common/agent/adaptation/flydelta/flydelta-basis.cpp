@@ -56,6 +56,79 @@ bool common_flydelta_repair_delta_validate(
     return true;
 }
 
+bool common_flydelta_repair_deltas_from_captures(
+        const common_flydelta_capture_manifest & manifest,
+        const common_flydelta_hidden_state_capture & failed,
+        const common_flydelta_hidden_state_capture & repaired,
+        const std::string & host_evidence_ref,
+        size_t max_capture_bytes,
+        size_t max_delta_bytes,
+        std::vector<common_flydelta_repair_delta> & deltas,
+        std::string & error) {
+    error.clear();
+    deltas.clear();
+    if (!common_flydelta_capture_manifest_validate(
+            manifest, max_capture_bytes, error) ||
+            !common_flydelta_hidden_state_capture_validate(
+                failed, max_capture_bytes, error) ||
+            !common_flydelta_hidden_state_capture_validate(
+                repaired, max_capture_bytes, error) ||
+            !nonempty_bounded(host_evidence_ref)) {
+        if (error.empty()) error = "FlyDelta repair captures have invalid identity";
+        return false;
+    }
+    if (manifest.negative_execution_ref.empty() ||
+            manifest.positive_execution_ref.empty() ||
+            failed.model_profile_fingerprint != manifest.model_profile_fingerprint ||
+            repaired.model_profile_fingerprint != manifest.model_profile_fingerprint ||
+            failed.capture_layout_revision != manifest.capture_layout_revision ||
+            repaired.capture_layout_revision != manifest.capture_layout_revision ||
+            failed.layer_indices != repaired.layer_indices ||
+            failed.n_embd != repaired.n_embd ||
+            failed.token_index != repaired.token_index ||
+            failed.values.size() != repaired.values.size()) {
+        error = "FlyDelta failed and repaired captures are not aligned";
+        return false;
+    }
+
+    const size_t values_per_layer = failed.n_embd;
+    if (values_per_layer == 0 || failed.values.size() !=
+            failed.layer_indices.size() * values_per_layer) {
+        error = "FlyDelta captures have an invalid layer layout";
+        return false;
+    }
+    if (failed.values.size() > (std::numeric_limits<size_t>::max() -
+            repaired.values.size()) / sizeof(float) ||
+            manifest.captured_bytes != (failed.values.size() + repaired.values.size()) * sizeof(float)) {
+        error = "FlyDelta capture manifest byte count does not match captures";
+        return false;
+    }
+
+    deltas.reserve(failed.layer_indices.size());
+    for (size_t layer = 0; layer < failed.layer_indices.size(); ++layer) {
+        common_flydelta_repair_delta delta;
+        delta.id = manifest.id + "/repair-delta/layer-" +
+            std::to_string(failed.layer_indices[layer]);
+        delta.capture_manifest_id = manifest.id;
+        delta.host_evidence_ref = host_evidence_ref;
+        delta.model_profile_fingerprint = manifest.model_profile_fingerprint;
+        delta.capture_layout_revision = manifest.capture_layout_revision;
+        delta.layer_index = static_cast<int32_t>(failed.layer_indices[layer]);
+        delta.values.resize(values_per_layer);
+        const size_t offset = layer * values_per_layer;
+        for (size_t i = 0; i < values_per_layer; ++i) {
+            delta.values[i] = repaired.values[offset + i] - failed.values[offset + i];
+        }
+        if (!common_flydelta_repair_delta_validate(
+                delta, values_per_layer, max_delta_bytes, error)) {
+            deltas.clear();
+            return false;
+        }
+        deltas.push_back(std::move(delta));
+    }
+    return true;
+}
+
 bool common_flydelta_basis_config_validate(
         const common_flydelta_basis_config & config,
         std::string & error) {

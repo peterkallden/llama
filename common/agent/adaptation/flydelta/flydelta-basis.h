@@ -1,6 +1,8 @@
 #pragma once
 
+#include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
+#include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -25,6 +27,19 @@ bool common_flydelta_repair_delta_validate(
         const common_flydelta_repair_delta & delta,
         size_t expected_dimension,
         size_t max_bytes,
+        std::string & error);
+
+// Produces one repaired-minus-failed delta per aligned captured layer. Both
+// captures must belong to the manifest's verified execution pair and must
+// have identical layout, token and dimensions. No model inference occurs.
+bool common_flydelta_repair_deltas_from_captures(
+        const common_flydelta_capture_manifest & manifest,
+        const common_flydelta_hidden_state_capture & failed,
+        const common_flydelta_hidden_state_capture & repaired,
+        const std::string & host_evidence_ref,
+        size_t max_capture_bytes,
+        size_t max_delta_bytes,
+        std::vector<common_flydelta_repair_delta> & deltas,
         std::string & error);
 
 struct common_flydelta_basis_config {
