@@ -114,6 +114,25 @@ struct common_flydelta_training_example {
     float confidence = 0.0f;
 };
 
+// A host-assigned corpus keeps train, validation and holdout examples
+// together without allowing an example to silently cross a split boundary.
+// The split assignment is part of the evidence contract; it is not inferred
+// from model output and it is not changed by the trainer.
+struct common_flydelta_training_corpus {
+    int schema_version = 1;
+    std::string id;
+    std::string basis_revision;
+    std::vector<common_flydelta_training_example> train;
+    std::vector<common_flydelta_training_example> validation;
+    std::vector<common_flydelta_training_example> holdout;
+};
+
+bool common_flydelta_training_corpus_validate(
+        const common_flydelta_training_corpus & corpus,
+        const common_flydelta_memory_config & memory,
+        size_t max_examples,
+        std::string & error);
+
 bool common_flydelta_training_example_validate(
         const common_flydelta_training_example & example,
         const common_flydelta_memory_config & memory,

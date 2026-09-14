@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <set>
 
 #include <nlohmann/json.hpp>
 
@@ -254,6 +255,49 @@ bool common_flydelta_training_example_validate(
         return false;
     }
     return true;
+}
+
+bool common_flydelta_training_corpus_validate(
+        const common_flydelta_training_corpus & corpus,
+        const common_flydelta_memory_config & memory,
+        size_t max_examples,
+        std::string & error) {
+    error.clear();
+    if (corpus.schema_version != 1 || !bounded(corpus.id) ||
+            !bounded(corpus.basis_revision) || max_examples == 0 ||
+            corpus.train.empty()) {
+        error = "FlyDelta training corpus identity or bounds are invalid";
+        return false;
+    }
+    if (!common_flydelta_validate_memory_config(memory, error)) return false;
+
+    std::set<std::string> ids;
+    std::set<std::string> evidence_refs;
+    size_t total = 0;
+    const auto validate_bucket = [&](const auto & bucket,
+            common_flydelta_training_split expected) {
+        if (bucket.size() > max_examples - total) {
+            error = "FlyDelta training corpus exceeds its example bound";
+            return false;
+        }
+        total += bucket.size();
+        for (const auto & example : bucket) {
+            if (example.split != expected ||
+                    !common_flydelta_training_example_validate(example, memory, error) ||
+                    example.basis_revision != corpus.basis_revision ||
+                    !ids.insert(example.id).second ||
+                    !evidence_refs.insert(example.evidence_ref).second) {
+                if (error.empty()) {
+                    error = "FlyDelta training corpus contains a split or duplicate violation";
+                }
+                return false;
+            }
+        }
+        return true;
+    };
+    return validate_bucket(corpus.train, common_flydelta_training_split::train) &&
+        validate_bucket(corpus.validation, common_flydelta_training_split::validation) &&
+        validate_bucket(corpus.holdout, common_flydelta_training_split::holdout);
 }
 
 std::string common_flydelta_training_example_to_json(
