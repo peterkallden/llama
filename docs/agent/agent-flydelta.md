@@ -943,6 +943,42 @@ caused the improvement. The CTest entry is registered with skip code 77 when
 no model is supplied; the model-backed command above is the explicit local
 verification path.
 
+The optional `llama-agent-flydelta-repair-model-smoke` goes one step further
+and exercises the complete model-backed bridge:
+
+```text
+host-controlled failed selection (data.describe)
+  -> host-controlled repaired selection (data.inspect)
+  -> aligned hidden-state capture pair
+  -> repaired-minus-failed repair delta
+  -> host-approved basis direction
+  -> one train-split DeltaMemory example
+  -> three fresh inference arms
+       baseline (no-op), scale 0.01, scale 0.02
+  -> host verification of every arm
+```
+
+It uses the regular CLI generation adapter and creates a fresh context for
+every arm. This is a real model/capture/training/inference test, but it is not
+automatic turn-time learning. The successful two-pass repair is not treated as
+causal evidence for the later overlay; only the three-arm result can produce
+`HELPED`. If the overlay arms fail alongside the baseline, the result remains
+`UNKNOWN` and the smoke reports no selected overlay. This prevents a
+host-verified repair from becoming a false causal training label.
+
+Example:
+
+```bash
+LLAMA_AGENT_MODEL=/path/to/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf \
+LLAMA_AGENT_THREADS=3 \
+build-agent-cozo/bin/llama-agent-flydelta-repair-model-smoke \
+  --n-predict 96 --threads 3
+```
+
+The model-backed test skips without a model and is capped at three CPU
+threads. It complements, rather than replaces, the model-free repair smoke
+and the public session-host runtime smoke.
+
 ### 5. Optional dynamic hook
 
 Only propose an upstream-quality llama.cpp hook if the evidence warrants it.

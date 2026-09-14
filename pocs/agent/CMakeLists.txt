@@ -1005,6 +1005,23 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Optional model-backed FlyDelta repair smoke. It exercises the complete
+# host-certified bridge: real failed/repaired generations, hidden-state pair,
+# repair delta, basis/DeltaMemory training, and exactly three counterfactual
+# inference arms. It is skipped when LLAMA_AGENT_MODEL is not supplied.
+set(TARGET llama-agent-flydelta-repair-model-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-repair-model-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-tool-provider-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-tool-provider-smoke.cpp
@@ -2204,6 +2221,12 @@ if (BUILD_TESTING)
     set_property(TEST llama-agent-flydelta-runtime-ctest PROPERTY LABELS agent-adaptation)
     set_tests_properties(llama-agent-flydelta-runtime-ctest PROPERTIES
         SKIP_RETURN_CODE 77 TIMEOUT 300)
+
+    add_test(NAME llama-agent-flydelta-repair-model-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-repair-model-smoke>)
+    set_property(TEST llama-agent-flydelta-repair-model-ctest PROPERTY LABELS agent-adaptation)
+    set_tests_properties(llama-agent-flydelta-repair-model-ctest PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 420)
 
     add_test(NAME llama-agent-tool-runtime-ctest
         COMMAND $<TARGET_FILE:llama-agent-tool-runtime-smoke>)
