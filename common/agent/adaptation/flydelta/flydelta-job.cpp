@@ -83,6 +83,12 @@ std::string common_flydelta_experiment_job_to_json(
             {"behavior_key", job.seed.behavior_key},
             {"source", common_adaptation_evidence_source_name(job.seed.source)},
             {"split", common_flydelta_training_split_name(job.seed.split)},
+            {"scope", {
+                {"namespace_id", job.seed.scope.namespace_id},
+                {"project_id", job.seed.scope.project_id},
+                {"session_id", job.seed.scope.session_id},
+                {"turn_id", job.seed.scope.turn_id},
+            }},
             {"task_fingerprint", job.seed.task_fingerprint},
             {"model_profile_fingerprint", job.seed.model_profile_fingerprint},
             {"tokenizer_fingerprint", job.seed.tokenizer_fingerprint},
@@ -140,6 +146,11 @@ bool common_flydelta_experiment_job_from_json(
             error = "FlyDelta experiment job seed source or split is invalid";
             return false;
         }
+        const auto scope = seed.value("scope", json::object());
+        job.seed.scope.namespace_id = scope.value("namespace_id", "");
+        job.seed.scope.project_id = scope.value("project_id", "");
+        job.seed.scope.session_id = scope.value("session_id", "");
+        job.seed.scope.turn_id = scope.value("turn_id", "");
         job.seed.task_fingerprint = seed.value("task_fingerprint", "");
         job.seed.model_profile_fingerprint = seed.value("model_profile_fingerprint", "");
         job.seed.tokenizer_fingerprint = seed.value("tokenizer_fingerprint", "");

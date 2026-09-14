@@ -38,6 +38,10 @@ int main() {
     CHECK(common_flydelta_experiment_job_from_json(text, parsed, error));
     CHECK(parsed.kind == common_flydelta_experiment_job_kind::basis);
     CHECK(parsed.seed.behavior_key == job.seed.behavior_key);
+    CHECK(parsed.seed.scope.namespace_id == job.seed.scope.namespace_id);
+    CHECK(parsed.seed.scope.project_id == job.seed.scope.project_id);
+    CHECK(parsed.seed.scope.session_id == job.seed.scope.session_id);
+    CHECK(parsed.seed.scope.turn_id == job.seed.scope.turn_id);
 
     job.kind = common_flydelta_experiment_job_kind::counterfactual;
     job.capture_manifest_ids = {"flydelta://capture/1"};
