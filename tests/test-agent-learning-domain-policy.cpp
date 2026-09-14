@@ -36,8 +36,8 @@ bool test_domains_and_legacy_default() {
     common_plan_state plan;
     plan.id = "plan-1";
     common_agent_result result;
-    result.learning_signals.push_back({
-        common_learning_signal_type::reflection_hint, "plan-1", "step", {}, "evidence", "hint"});
+    result.learning_signals.push_back({common_learning_signal_type::planning_revision,
+        "plan-1", "step", {}, "evidence", "revised plan"});
 
     common_learning_domain_policy legacy;
     if (!common_learning_domain_policy_allows(legacy, request, plan, result)) return false;
@@ -48,11 +48,16 @@ bool test_domains_and_legacy_default() {
     planning.planning = false;
     if (common_learning_domain_policy_allows(planning, request, plan, result)) return false;
 
+    auto ordinary_planned = result;
+    ordinary_planned.learning_signals.front().type = common_learning_signal_type::reflection_hint;
+    if (common_learning_domain_policy_allows(planning, request, plan, ordinary_planned)) return false;
+
     common_learning_domain_policy research;
     research.configured = true;
     research.research = true;
-    request.deliberation_policy.mode = common_agent_thinking_mode::research;
-    return common_learning_domain_policy_allows(research, request, plan, result);
+    auto research_result = result;
+    research_result.learning_signals.front().type = common_learning_signal_type::research_verification;
+    return common_learning_domain_policy_allows(research, request, plan, research_result);
 }
 
 } // namespace

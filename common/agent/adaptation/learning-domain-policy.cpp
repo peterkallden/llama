@@ -23,10 +23,11 @@ bool common_learning_domain_policy_allows(
         const common_agent_request & request,
         const common_plan_state & plan,
         const common_agent_result & result) {
+    (void) request;
+    (void) plan;
     if (!policy.configured) return true;
 
-    const bool has_plan = !plan.id.empty() || request.plan_id.has_value();
-    if (policy.planning && has_plan) return true;
+    if (policy.planning && has_signal(result, common_learning_signal_type::planning_revision)) return true;
 
     for (const auto & signal : result.learning_signals) {
         if (signal.tool_name.empty()) continue;
@@ -37,13 +38,12 @@ bool common_learning_domain_policy_allows(
         if (enabled) return true;
     }
 
-    if (policy.research && (request.deliberation_policy.mode == common_agent_thinking_mode::research ||
-            result.research_result.has_value() || result.research_workspace_checkpoint.has_value())) {
+    if (policy.research && (has_signal(result, common_learning_signal_type::research_verification) ||
+            result.research_verification.has_value())) {
         return true;
     }
-    if (policy.procedure_learning &&
-            (has_signal(result, common_learning_signal_type::successful_recovery) ||
-             has_signal(result, common_learning_signal_type::user_correction))) {
+    if (policy.procedure_learning && (has_signal(result, common_learning_signal_type::procedure_verification) ||
+            has_signal(result, common_learning_signal_type::blueprint_verification))) {
         return true;
     }
     return false;

@@ -17,6 +17,7 @@ enum class common_adaptation_evidence_source {
     research_alternative,
     dataset_resource,
     workflow_code,
+    procedure_blueprint,
     user_correction,
 };
 
@@ -52,4 +53,3 @@ bool common_adaptation_evidence_from_json(
         const std::string & text,
         common_adaptation_evidence & evidence,
         std::string & error);
-

@@ -63,9 +63,32 @@ common_adaptation_evidence_sources_for_turn(
         matches.push_back(std::move(match));
     }
 
-    if (result.research_result || result.research_workspace_checkpoint || result.research_verification) {
+    if (has_signal(result, common_learning_signal_type::planning_revision)) {
+        common_adaptation_evidence_source_match match;
+        match.source = common_adaptation_evidence_source::planning_revision;
+        match.evidence_refs = signal_evidence(result, common_learning_signal_type::planning_revision);
+        match.candidate_ready = false;
+        matches.push_back(std::move(match));
+    }
+
+    if (result.research_result || result.research_workspace_checkpoint || result.research_verification ||
+            has_signal(result, common_learning_signal_type::research_verification)) {
         common_adaptation_evidence_source_match match;
         match.source = common_adaptation_evidence_source::research_alternative;
+        match.evidence_refs = signal_evidence(result, common_learning_signal_type::research_verification);
+        match.candidate_ready = false;
+        matches.push_back(std::move(match));
+    }
+
+    if (has_signal(result, common_learning_signal_type::procedure_verification) ||
+            has_signal(result, common_learning_signal_type::blueprint_verification)) {
+        common_adaptation_evidence_source_match match;
+        match.source = common_adaptation_evidence_source::procedure_blueprint;
+        match.evidence_refs = signal_evidence(result, common_learning_signal_type::procedure_verification);
+        const auto blueprint = signal_evidence(result, common_learning_signal_type::blueprint_verification);
+        match.evidence_refs.insert(match.evidence_refs.end(), blueprint.begin(), blueprint.end());
+        std::sort(match.evidence_refs.begin(), match.evidence_refs.end());
+        match.evidence_refs.erase(std::unique(match.evidence_refs.begin(), match.evidence_refs.end()), match.evidence_refs.end());
         match.candidate_ready = false;
         matches.push_back(std::move(match));
     }

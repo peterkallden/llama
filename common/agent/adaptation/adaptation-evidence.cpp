@@ -19,6 +19,7 @@ common_adaptation_evidence_source parse_source(const std::string & value, bool &
         common_adaptation_evidence_source::research_alternative,
         common_adaptation_evidence_source::dataset_resource,
         common_adaptation_evidence_source::workflow_code,
+        common_adaptation_evidence_source::procedure_blueprint,
         common_adaptation_evidence_source::user_correction,
     };
     for (const auto source : sources) {
@@ -48,6 +49,7 @@ const char * common_adaptation_evidence_source_name(
         case common_adaptation_evidence_source::research_alternative: return "research_alternative";
         case common_adaptation_evidence_source::dataset_resource: return "dataset_resource";
         case common_adaptation_evidence_source::workflow_code: return "workflow_code";
+        case common_adaptation_evidence_source::procedure_blueprint: return "procedure_blueprint";
         case common_adaptation_evidence_source::user_correction: return "user_correction";
     }
     return "tool_repair";
@@ -145,4 +147,3 @@ bool common_adaptation_evidence_from_json(
     }
     return common_adaptation_evidence_validate(evidence, 64, error);
 }
-

@@ -52,6 +52,23 @@ int main() {
     CHECK(transactions.front().observation.recovery_of_signal_id.empty());
     CHECK(transactions.front().observation.verification == common_learning_verification::unverified);
 
+    common_agent_result generic_sources;
+    generic_sources.learning_signals.push_back({common_learning_signal_type::planning_revision,
+        "plan-1", "step-1", {}, "planning-evidence", "plan changed"});
+    generic_sources.learning_signals.push_back({common_learning_signal_type::research_verification,
+        "plan-1", "step-1", {}, "research-evidence", "research verified"});
+    common_learning_in_memory_transaction_store generic_store;
+    common_learning_transaction_observer_config generic_config;
+    generic_config.collection_allowed = true;
+    generic_config.domain_policy.configured = true;
+    generic_config.domain_policy.planning = true;
+    generic_config.domain_policy.research = true;
+    common_learning_transaction_observer generic_observer(generic_store, generic_config);
+    CHECK(generic_observer.observe(req, pl, generic_sources, error));
+    const auto generic_transactions = generic_store.list(error);
+    CHECK(generic_transactions.size() == 1);
+    CHECK(generic_transactions.front().observation.signals.size() == 2);
+
     common_learning_transaction_query query;
     query.scope.session_id = "session-1";
     query.tool_family = "diagnostics";

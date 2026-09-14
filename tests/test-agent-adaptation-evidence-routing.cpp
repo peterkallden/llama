@@ -18,6 +18,7 @@ static bool has_source(
 }
 
 int main() {
+    std::string error;
     common_agent_request request;
     common_plan_state plan;
     common_agent_result result;
@@ -45,6 +46,33 @@ int main() {
     const auto with_resource = common_adaptation_evidence_sources_for_turn(request, plan, result);
     CHECK(has_source(with_resource, common_adaptation_evidence_source::dataset_resource));
 
+    common_agent_result other_sources;
+    other_sources.learning_signals.push_back({common_learning_signal_type::planning_revision,
+        "plan", "step", {}, "evidence:plan", "revised plan"});
+    other_sources.learning_signals.push_back({common_learning_signal_type::research_verification,
+        "plan", "step", {}, "evidence:research", "research verified"});
+    other_sources.learning_signals.push_back({common_learning_signal_type::procedure_verification,
+        "plan", "step", {}, "evidence:procedure", "procedure verified"});
+    other_sources.learning_signals.push_back({common_learning_signal_type::blueprint_verification,
+        "plan", "step", {}, "evidence:blueprint", "blueprint verified"});
+    const auto generic = common_adaptation_evidence_sources_for_turn(request, plan, other_sources);
+    CHECK(has_source(generic, common_adaptation_evidence_source::planning_revision));
+    CHECK(has_source(generic, common_adaptation_evidence_source::research_alternative));
+    CHECK(has_source(generic, common_adaptation_evidence_source::procedure_blueprint));
+
+    common_adaptation_evidence generic_evidence;
+    common_adaptation_evidence_relation generic_relation;
+    generic_relation.id = "adaptation://evidence/planning-1";
+    generic_relation.source = common_adaptation_evidence_source::planning_revision;
+    generic_relation.task_fingerprint = "sha256:planning-task";
+    generic_relation.baseline_ref = "execution:old-plan";
+    generic_relation.candidate_ref = "execution:new-plan";
+    generic_relation.verifier_ref = "verifier:planning";
+    generic_relation.host_verified = true;
+    CHECK(common_adaptation_evidence_from_turn(request, plan, other_sources,
+        generic_relation, generic_evidence, error));
+    CHECK(generic_evidence.source == common_adaptation_evidence_source::planning_revision);
+
     common_adaptation_evidence_relation relation;
     relation.id = "adaptation://evidence/tool-repair-1";
     relation.source = common_adaptation_evidence_source::tool_repair;
@@ -56,7 +84,6 @@ int main() {
     relation.cause = common_learning_cause::model_behavior;
     relation.host_verified = true;
     common_adaptation_evidence evidence;
-    std::string error;
     CHECK(common_adaptation_evidence_from_turn(request, plan, result, relation, evidence, error));
     CHECK(evidence.source == common_adaptation_evidence_source::tool_repair);
     CHECK(evidence.host_verified);

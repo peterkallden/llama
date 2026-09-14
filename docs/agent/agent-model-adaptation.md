@@ -225,7 +225,7 @@ or repaired execution, a verifier reference and existing transaction IDs. It
 does not duplicate the transaction payload and it does not create an SFT pair.
 The source kind can be `tool_repair`, `reflection_alternative`,
 `planning_revision`, `research_alternative`, `dataset_resource`,
-`workflow_code`, or `user_correction`; provider transport remains provenance,
+`workflow_code`, `procedure_blueprint`, or `user_correction`; provider transport remains provenance,
 so native, MCP and OpenAPI tools use the same `tool_repair` path.
 
 The turn router may discover tool-repair, reflection, research,

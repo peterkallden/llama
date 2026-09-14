@@ -4,7 +4,14 @@
 #include <utility>
 
 enum class common_learning_signal_type {
-    tool_failure, successful_recovery, reflection_hint, user_correction,
+    tool_failure,
+    successful_recovery,
+    reflection_hint,
+    user_correction,
+    planning_revision,
+    research_verification,
+    procedure_verification,
+    blueprint_verification,
 };
 
 inline const char * common_learning_signal_type_name(common_learning_signal_type type) {
@@ -13,6 +20,10 @@ inline const char * common_learning_signal_type_name(common_learning_signal_type
         case common_learning_signal_type::successful_recovery: return "successful_recovery";
         case common_learning_signal_type::reflection_hint: return "reflection_hint";
         case common_learning_signal_type::user_correction: return "user_correction";
+        case common_learning_signal_type::planning_revision: return "planning_revision";
+        case common_learning_signal_type::research_verification: return "research_verification";
+        case common_learning_signal_type::procedure_verification: return "procedure_verification";
+        case common_learning_signal_type::blueprint_verification: return "blueprint_verification";
     }
     return "unknown";
 }
