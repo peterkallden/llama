@@ -82,6 +82,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-experiment.cpp adaptation/flydelta/flydelta-experiment.h
     adaptation/flydelta/flydelta-evidence.cpp adaptation/flydelta/flydelta-evidence.h
     adaptation/flydelta/flydelta-basis.cpp adaptation/flydelta/flydelta-basis.h
+    adaptation/flydelta/flydelta-training.cpp adaptation/flydelta/flydelta-training.h
     adaptation/flydelta/flydelta-gate.cpp adaptation/flydelta/flydelta-gate.h
     adaptation/flydelta/flydelta-promotion.cpp adaptation/flydelta/flydelta-promotion.h
     adaptation/flydelta/flydelta-overlay.cpp adaptation/flydelta/flydelta-overlay.h
