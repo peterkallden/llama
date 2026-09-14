@@ -1,5 +1,6 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
+#include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-sideband-registry.h"
 #include "tools/agent/cli/agent-cli-inference.h"
 #include "tools/agent/runtime/agent-model-loaders.h"
@@ -198,32 +199,64 @@ int main(int argc, char ** argv) {
     capture_request->model_profile_fingerprint = profile.base_model_fingerprint;
     capture_request->capture_layout_revision = "layer-input:v1";
 
-    common_agent_generation_result baseline;
-    common_agent_generation_result candidate;
-    const bool baseline_executed = run_arm(*inference, value.n_predict, value.n_threads, {}, capture_request, baseline);
-    const auto activation_ptr = std::make_shared<const common_flydelta_activation_result>(std::move(activation));
-    const bool candidate_executed = run_arm(*inference, value.n_predict, value.n_threads, activation_ptr, {}, candidate);
-    const bool baseline_passed = baseline_executed && host_verifies(baseline);
-    const bool candidate_passed = candidate_executed && host_verifies(candidate);
-    const bool capture_passed = baseline.flydelta_capture != nullptr &&
-        baseline.flydelta_capture->captured &&
+    common_agent_generation_result capture_seed;
+    const bool capture_executed = run_arm(
+        *inference, value.n_predict, value.n_threads, {}, capture_request, capture_seed);
+    const bool capture_passed = capture_executed && host_verifies(capture_seed) &&
+        capture_seed.flydelta_capture != nullptr && capture_seed.flydelta_capture->captured &&
         common_flydelta_hidden_state_capture_validate(
-            *baseline.flydelta_capture, 64U * 1024U * 1024U, error);
-    if (!baseline_passed || !candidate_passed || !capture_passed) {
+            *capture_seed.flydelta_capture, 64U * 1024U * 1024U, error);
+    const auto activation_ptr = std::make_shared<const common_flydelta_activation_result>(std::move(activation));
+    common_flydelta_experiment_fixture fixture;
+    fixture.id = "flydelta://fixture/model-ab-smoke";
+    fixture.task_fingerprint = "sha256:flydelta-model-ab-task";
+    fixture.model_profile_fingerprint = profile.base_model_fingerprint;
+    fixture.tokenizer_fingerprint = profile.tokenizer_fingerprint;
+    fixture.template_fingerprint = profile.chat_template_fingerprint;
+    fixture.tool_catalog_fingerprint = "sha256:flydelta-no-tools";
+    fixture.resource_snapshot_fingerprint = "sha256:flydelta-no-resources";
+    fixture.verifier_revision = "flydelta-model-ab-smoke:v1";
+    common_flydelta_counterfactual_report report;
+    const bool counterfactual_executed = capture_passed && common_flydelta_run_counterfactual(
+        "flydelta://experiment/model-ab-smoke",
+        "flydelta://candidate/ab-smoke",
+        "flydelta://profile/baseline",
+        "flydelta://profile/static-overlay",
+        fixture,
+        [&](const common_flydelta_experiment_fixture &, bool apply_overlay,
+                common_flydelta_counterfactual_trial & trial, std::string & runner_error) {
+            common_agent_generation_result arm;
+            const bool executed = run_arm(
+                *inference, value.n_predict, value.n_threads,
+                apply_overlay ? activation_ptr : std::shared_ptr<const common_flydelta_activation_result>{},
+                {}, arm);
+            trial.executed = executed;
+            trial.verifier_known = executed;
+            trial.passed = executed && host_verifies(arm);
+            trial.quality = trial.passed ? 1.0f : 0.0f;
+            trial.overlay_applied = apply_overlay;
+            trial.intervention_count = apply_overlay ? 1 : 0;
+            trial.evidence_ref = apply_overlay
+                ? "evidence:flydelta-candidate-host-verifier"
+                : "evidence:flydelta-baseline-host-verifier";
+            if (!executed && !arm.error_message.empty()) runner_error = arm.error_message;
+            return executed;
+        }, report, error);
+    if (!counterfactual_executed || !common_flydelta_counterfactual_report_validate(report, error)) {
         std::cerr << "FlyDelta model A/B host verification failed"
-                  << " baseline=" << (baseline_passed ? "pass" : "fail")
-                  << " candidate=" << (candidate_passed ? "pass" : "fail")
                   << " capture=" << (capture_passed ? "pass" : "fail")
-                  << " capture_reason=" << (baseline.flydelta_capture
-                      ? baseline.flydelta_capture->failure_reason : "missing") << '\n';
+                  << " counterfactual=" << (counterfactual_executed ? "pass" : "fail")
+                  << " capture_reason=" << (capture_seed.flydelta_capture
+                      ? capture_seed.flydelta_capture->failure_reason : "missing")
+                  << " error=" << error << '\n';
         return 1;
     }
     std::cout << "flydelta_model_ab=passed\n"
-              << "baseline_host_verified=yes\n"
-              << "candidate_host_verified=yes\n"
-              << "baseline_capture_host_verified=yes\n"
+              << "capture_host_verified=yes\n"
+              << "baseline_host_verified=" << (report.baseline.passed ? "yes" : "no") << '\n'
+              << "candidate_host_verified=" << (report.candidate.passed ? "yes" : "no") << '\n'
               << "candidate_overlay_applied=yes\n"
-              << "outcome=neutral\n"
-              << "note=both arms passed; no causal lift is claimed by this smoke\n";
+              << "outcome=" << common_flydelta_counterfactual_outcome_name(report.outcome) << '\n'
+              << "quality_delta=" << report.quality_delta << '\n';
     return 0;
 }
