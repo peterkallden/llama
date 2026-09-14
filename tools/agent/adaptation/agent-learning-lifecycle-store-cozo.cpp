@@ -53,12 +53,26 @@ bool parse_rows(const std::string & raw,
         return false;
     }
     for (const auto & row : value["rows"]) {
-        if (!row.is_array() || row.size() < 12 || !row[11].is_string()) {
+        if (!row.is_array() || row.size() < 12) {
             error = "Cozo lifecycle row is invalid";
             return false;
         }
         common_learning_lifecycle_record record;
-        if (!common_learning_lifecycle_from_json(row[11].get<std::string>(), record, error) ||
+        record.schema_version = 1;
+        record.event_id = row[0].is_string() ? row[0].get<std::string>() : std::string();
+        record.idempotency_key = row[1].is_string() ? row[1].get<std::string>() : std::string();
+        record.subject_id = row[2].is_string() ? row[2].get<std::string>() : std::string();
+        record.namespace_id = row[5].is_string() ? row[5].get<std::string>() : std::string();
+        record.project_id = row[6].is_string() ? row[6].get<std::string>() : std::string();
+        record.session_id = row[7].is_string() ? row[7].get<std::string>() : std::string();
+        record.source_id = row[8].is_string() ? row[8].get<std::string>() : std::string();
+        record.content_hash = row[9].is_string() ? row[9].get<std::string>() : std::string();
+        record.created_at = row[10].is_string() ? row[10].get<std::string>() : std::string();
+        record.payload_json = row[11].is_string() ? row[11].get<std::string>() : std::string();
+        if (!row[3].is_string() || !parse_common_learning_lifecycle_kind(
+                row[3].get<std::string>(), record.kind, error) ||
+                !row[4].is_string() || !parse_common_learning_lifecycle_status(
+                row[4].get<std::string>(), record.status, error) ||
                 !common_learning_lifecycle_validate(record, 4 * 1024 * 1024, error)) return false;
         result.push_back(std::move(record));
     }

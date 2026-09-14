@@ -2456,6 +2456,30 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-learning-adapter
     test-agent-learning-adapter-import
     test-agent-learning-evaluation
+    test-agent-flydelta
+    test-agent-flydelta-contracts
+    test-agent-flydelta-experiment
+    test-agent-flydelta-evidence
+    test-agent-flydelta-basis
+    test-agent-flydelta-training
+    test-agent-flydelta-training-corpus
+    test-agent-flydelta-job
+    test-agent-flydelta-queue
+    test-agent-flydelta-collection
+    test-agent-flydelta-worker
+    test-agent-flydelta-pipeline
+    test-agent-flydelta-gate
+    test-agent-flydelta-promotion
+    test-agent-flydelta-overlay
+    test-agent-flydelta-activation
+    test-agent-flydelta-sideband
+    test-agent-flydelta-capture-manifest
+    test-agent-flydelta-repair-deltas
+    test-agent-flydelta-hidden-state-hook
+    test-agent-flydelta-two-pass
+    test-agent-flydelta-artifact-store
+    test-agent-flydelta-evaluator
+    test-agent-flydelta-sideband-controller
     test-agent-learning-transaction-backends
     test-agent-clangd-protocol
     test-agent-native-crash
