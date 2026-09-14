@@ -93,8 +93,7 @@ std::string common_flydelta_experiment_job_to_json(
             {"model_profile_fingerprint", job.seed.model_profile_fingerprint},
             {"tokenizer_fingerprint", job.seed.tokenizer_fingerprint},
             {"template_fingerprint", job.seed.template_fingerprint},
-            {"tool_catalog_fingerprint", job.seed.tool_catalog_fingerprint},
-            {"resource_snapshot_fingerprint", job.seed.resource_snapshot_fingerprint},
+            {"execution_context_fingerprint", job.seed.execution_context_fingerprint},
             {"baseline_ref", job.seed.baseline_ref},
             {"candidate_ref", job.seed.candidate_ref},
             {"verifier_ref", job.seed.verifier_ref},
@@ -155,8 +154,7 @@ bool common_flydelta_experiment_job_from_json(
         job.seed.model_profile_fingerprint = seed.value("model_profile_fingerprint", "");
         job.seed.tokenizer_fingerprint = seed.value("tokenizer_fingerprint", "");
         job.seed.template_fingerprint = seed.value("template_fingerprint", "");
-        job.seed.tool_catalog_fingerprint = seed.value("tool_catalog_fingerprint", "");
-        job.seed.resource_snapshot_fingerprint = seed.value("resource_snapshot_fingerprint", "");
+        job.seed.execution_context_fingerprint = seed.value("execution_context_fingerprint", "");
         job.seed.baseline_ref = seed.value("baseline_ref", "");
         job.seed.candidate_ref = seed.value("candidate_ref", "");
         job.seed.verifier_ref = seed.value("verifier_ref", "");

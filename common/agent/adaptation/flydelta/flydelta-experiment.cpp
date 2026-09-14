@@ -68,8 +68,7 @@ bool common_flydelta_experiment_fixture_validate(
             !nonempty_bounded(fixture.model_profile_fingerprint) ||
             !nonempty_bounded(fixture.tokenizer_fingerprint) ||
             !nonempty_bounded(fixture.template_fingerprint) ||
-            !nonempty_bounded(fixture.tool_catalog_fingerprint) ||
-            !nonempty_bounded(fixture.resource_snapshot_fingerprint) ||
+            !nonempty_bounded(fixture.execution_context_fingerprint) ||
             !nonempty_bounded(fixture.verifier_revision)) {
         error = "FlyDelta experiment fixture identity is incomplete";
         return false;

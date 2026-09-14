@@ -19,8 +19,7 @@ struct common_flydelta_experiment_collection_request {
     std::string model_profile_fingerprint;
     std::string tokenizer_fingerprint;
     std::string template_fingerprint;
-    std::string tool_catalog_fingerprint;
-    std::string resource_snapshot_fingerprint;
+    std::string execution_context_fingerprint;
     common_flydelta_training_split split = common_flydelta_training_split::train;
     std::vector<std::string> capture_manifest_ids;
     std::vector<std::string> repair_delta_ids;
@@ -46,4 +45,3 @@ bool common_flydelta_collect_experiment_job(
         const common_flydelta_experiment_collection_request & request,
         common_flydelta_experiment_collection_result & result,
         std::string & error);
-

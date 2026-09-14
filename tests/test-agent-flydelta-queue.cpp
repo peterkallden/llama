@@ -18,8 +18,7 @@ static common_flydelta_experiment_job make_job() {
     job.seed.model_profile_fingerprint = "sha256:model";
     job.seed.tokenizer_fingerprint = "sha256:tokenizer";
     job.seed.template_fingerprint = "sha256:template";
-    job.seed.tool_catalog_fingerprint = "sha256:tools";
-    job.seed.resource_snapshot_fingerprint = "sha256:resources";
+    job.seed.execution_context_fingerprint = "sha256:execution-context";
     job.seed.baseline_ref = "execution:failed";
     job.seed.candidate_ref = "execution:repaired";
     job.seed.verifier_ref = "verifier:v1";

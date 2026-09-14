@@ -137,8 +137,7 @@ common_flydelta_experiment_fixture fixture(const std::string & profile) {
     value.model_profile_fingerprint = profile;
     value.tokenizer_fingerprint = "sha256:flydelta-qwen-tokenizer";
     value.template_fingerprint = "sha256:flydelta-qwen-template";
-    value.tool_catalog_fingerprint = "sha256:data-inspect-describe-v1";
-    value.resource_snapshot_fingerprint = "sha256:sales-csv-v1";
+    value.execution_context_fingerprint = "sha256:data-inspect-sales-context-v1";
     value.verifier_revision = "verifier:structured-tool-name-v1";
     return value;
 }

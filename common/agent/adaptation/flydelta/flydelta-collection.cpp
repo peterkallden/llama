@@ -37,8 +37,7 @@ bool common_flydelta_collect_experiment_job(
             !bounded(request.model_profile_fingerprint) ||
             !bounded(request.tokenizer_fingerprint) ||
             !bounded(request.template_fingerprint) ||
-            !bounded(request.tool_catalog_fingerprint) ||
-            !bounded(request.resource_snapshot_fingerprint) ||
+            !bounded(request.execution_context_fingerprint) ||
             !bounded(request.code_revision) || !references_empty_except(request, request.kind)) {
         error = "FlyDelta experiment collection request is incomplete or mixes job references";
         return false;
@@ -48,8 +47,8 @@ bool common_flydelta_collect_experiment_job(
     if (!common_flydelta_experiment_seed_from_evidence(
             request.evidence, request.behavior_key,
             request.model_profile_fingerprint, request.tokenizer_fingerprint,
-            request.template_fingerprint, request.tool_catalog_fingerprint,
-            request.resource_snapshot_fingerprint, request.split, seed, error)) {
+            request.template_fingerprint, request.execution_context_fingerprint,
+            request.split, seed, error)) {
         return false;
     }
 
@@ -76,4 +75,3 @@ bool common_flydelta_collect_experiment_job(
     result = common_flydelta_experiment_collection_result::enqueued;
     return true;
 }
-

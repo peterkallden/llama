@@ -46,8 +46,7 @@ int main() {
     fixture.model_profile_fingerprint = "sha256:model";
     fixture.tokenizer_fingerprint = "sha256:tokenizer";
     fixture.template_fingerprint = "sha256:template";
-    fixture.tool_catalog_fingerprint = "sha256:tools";
-    fixture.resource_snapshot_fingerprint = "sha256:resources";
+    fixture.execution_context_fingerprint = "sha256:execution-context";
     fixture.verifier_revision = "verifier:v1";
     std::vector<common_flydelta_alpha_trial> generated_trials;
     common_flydelta_alpha_selection generated_selection;

@@ -234,8 +234,7 @@ int main(int argc, char ** argv) {
     fixture.model_profile_fingerprint = profile.base_model_fingerprint;
     fixture.tokenizer_fingerprint = profile.tokenizer_fingerprint;
     fixture.template_fingerprint = profile.chat_template_fingerprint;
-    fixture.tool_catalog_fingerprint = "sha256:flydelta-no-tools";
-    fixture.resource_snapshot_fingerprint = "sha256:flydelta-no-resources";
+    fixture.execution_context_fingerprint = "sha256:flydelta-runtime-context";
     fixture.verifier_revision = "flydelta-model-ab-smoke:v1";
     if (value.multi_arm) {
         // Each arm deliberately creates a fresh inference context. A cvec is

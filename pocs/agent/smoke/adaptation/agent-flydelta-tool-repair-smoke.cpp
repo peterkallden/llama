@@ -69,8 +69,7 @@ common_flydelta_experiment_fixture fixture() {
     value.model_profile_fingerprint = "profile:qwen-small";
     value.tokenizer_fingerprint = "tokenizer:qwen-small";
     value.template_fingerprint = "template:qwen-instruct";
-    value.tool_catalog_fingerprint = "sha256:data-tools-v1";
-    value.resource_snapshot_fingerprint = "sha256:resources-v1";
+    value.execution_context_fingerprint = "sha256:data-tool-resource-context-v1";
     value.verifier_revision = "verifier:tool-contract-v1";
     return value;
 }

@@ -92,8 +92,7 @@ struct common_flydelta_experiment_seed {
     std::string model_profile_fingerprint;
     std::string tokenizer_fingerprint;
     std::string template_fingerprint;
-    std::string tool_catalog_fingerprint;
-    std::string resource_snapshot_fingerprint;
+    std::string execution_context_fingerprint;
     std::string baseline_ref;
     std::string candidate_ref;
     std::string verifier_ref;
@@ -110,8 +109,7 @@ bool common_flydelta_experiment_seed_from_evidence(
         const std::string & model_profile_fingerprint,
         const std::string & tokenizer_fingerprint,
         const std::string & template_fingerprint,
-        const std::string & tool_catalog_fingerprint,
-        const std::string & resource_snapshot_fingerprint,
+        const std::string & execution_context_fingerprint,
         common_flydelta_training_split split,
         common_flydelta_experiment_seed & seed,
         std::string & error);

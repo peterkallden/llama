@@ -31,8 +31,7 @@ static common_flydelta_experiment_collection_request request() {
     value.model_profile_fingerprint = "sha256:model";
     value.tokenizer_fingerprint = "sha256:tokenizer";
     value.template_fingerprint = "sha256:template";
-    value.tool_catalog_fingerprint = "sha256:tools";
-    value.resource_snapshot_fingerprint = "sha256:resources";
+    value.execution_context_fingerprint = "sha256:execution-context";
     value.capture_manifest_ids = {"flydelta://capture/manifest-1"};
     value.alpha_search.candidates = {0.05f, 0.1f};
     value.alpha_search.max_candidates = 2;

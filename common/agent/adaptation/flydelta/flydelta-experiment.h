@@ -24,8 +24,10 @@ struct common_flydelta_experiment_fixture {
     std::string model_profile_fingerprint;
     std::string tokenizer_fingerprint;
     std::string template_fingerprint;
-    std::string tool_catalog_fingerprint;
-    std::string resource_snapshot_fingerprint;
+    // Host-composed identity for all external state relevant to this
+    // comparison: tools/resources for tool work, or the corresponding
+    // plan/research/project context for another behavior.
+    std::string execution_context_fingerprint;
     std::string verifier_revision;
 };
 

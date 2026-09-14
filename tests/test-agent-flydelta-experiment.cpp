@@ -9,8 +9,7 @@ static common_flydelta_experiment_fixture fixture() {
     value.model_profile_fingerprint = "sha256:model";
     value.tokenizer_fingerprint = "sha256:tokenizer";
     value.template_fingerprint = "sha256:template";
-    value.tool_catalog_fingerprint = "sha256:tools";
-    value.resource_snapshot_fingerprint = "sha256:resources";
+    value.execution_context_fingerprint = "sha256:execution-context";
     value.verifier_revision = "verifier:v1";
     return value;
 }

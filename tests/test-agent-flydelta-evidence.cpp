@@ -47,8 +47,7 @@ int main() {
     fixture.model_profile_fingerprint = "sha256:model";
     fixture.tokenizer_fingerprint = "sha256:tokenizer";
     fixture.template_fingerprint = "sha256:template";
-    fixture.tool_catalog_fingerprint = "sha256:tools";
-    fixture.resource_snapshot_fingerprint = "sha256:resources";
+    fixture.execution_context_fingerprint = "sha256:execution-context";
     fixture.verifier_revision = "verifier:v1";
     common_flydelta_counterfactual_report report;
     report.experiment_id = "flydelta://experiment/1";
@@ -92,7 +91,7 @@ int main() {
     common_flydelta_experiment_seed seed;
     CHECK(common_flydelta_experiment_seed_from_evidence(
         source, "tool_use/diagnostics/missing-argument", "sha256:model",
-        "sha256:tokenizer", "sha256:template", "sha256:tools", "sha256:resources",
+        "sha256:tokenizer", "sha256:template", "sha256:tool-resource-context",
         common_flydelta_training_split::holdout, seed, error));
     CHECK(seed.split == common_flydelta_training_split::holdout);
     common_flydelta_experiment_fixture seed_fixture;
@@ -101,7 +100,7 @@ int main() {
     source.host_verified = false;
     CHECK(!common_flydelta_experiment_seed_from_evidence(
         source, "tool_use/diagnostics/missing-argument", "sha256:model",
-        "sha256:tokenizer", "sha256:template", "sha256:tools", "sha256:resources",
+        "sha256:tokenizer", "sha256:template", "sha256:tool-resource-context",
         common_flydelta_training_split::train, seed, error));
     return 0;
 }

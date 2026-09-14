@@ -18,8 +18,7 @@ static common_flydelta_experiment_job job(const std::string & id) {
     value.seed.model_profile_fingerprint = "sha256:model";
     value.seed.tokenizer_fingerprint = "sha256:tokenizer";
     value.seed.template_fingerprint = "sha256:template";
-    value.seed.tool_catalog_fingerprint = "sha256:tools";
-    value.seed.resource_snapshot_fingerprint = "sha256:resources";
+    value.seed.execution_context_fingerprint = "sha256:execution-context";
     value.seed.baseline_ref = "execution:failed";
     value.seed.candidate_ref = "execution:repaired";
     value.seed.verifier_ref = "verifier:v1";

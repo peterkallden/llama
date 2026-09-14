@@ -191,8 +191,7 @@ bool common_flydelta_experiment_seed_validate(
             !nonempty_bounded(seed.model_profile_fingerprint) ||
             !nonempty_bounded(seed.tokenizer_fingerprint) ||
             !nonempty_bounded(seed.template_fingerprint) ||
-            !nonempty_bounded(seed.tool_catalog_fingerprint) ||
-            !nonempty_bounded(seed.resource_snapshot_fingerprint) ||
+            !nonempty_bounded(seed.execution_context_fingerprint) ||
             !nonempty_bounded(seed.evidence_ref) ||
             !common_adaptation_evidence_validate(evidence, 64, error)) {
         if (error.empty()) error = "FlyDelta experiment seed identity is incomplete";
@@ -207,8 +206,7 @@ bool common_flydelta_experiment_seed_from_evidence(
         const std::string & model_profile_fingerprint,
         const std::string & tokenizer_fingerprint,
         const std::string & template_fingerprint,
-        const std::string & tool_catalog_fingerprint,
-        const std::string & resource_snapshot_fingerprint,
+        const std::string & execution_context_fingerprint,
         common_flydelta_training_split split,
         common_flydelta_experiment_seed & seed,
         std::string & error) {
@@ -217,8 +215,7 @@ bool common_flydelta_experiment_seed_from_evidence(
             !evidence.host_verified || !supported_seed_source(evidence.source) ||
             !nonempty_bounded(behavior_key) || !nonempty_bounded(model_profile_fingerprint) ||
             !nonempty_bounded(tokenizer_fingerprint) || !nonempty_bounded(template_fingerprint) ||
-            !nonempty_bounded(tool_catalog_fingerprint) ||
-            !nonempty_bounded(resource_snapshot_fingerprint)) {
+            !nonempty_bounded(execution_context_fingerprint)) {
         if (error.empty()) error = "FlyDelta experiment seed requires host-verified supported evidence";
         return false;
     }
@@ -232,8 +229,7 @@ bool common_flydelta_experiment_seed_from_evidence(
     seed.model_profile_fingerprint = model_profile_fingerprint;
     seed.tokenizer_fingerprint = tokenizer_fingerprint;
     seed.template_fingerprint = template_fingerprint;
-    seed.tool_catalog_fingerprint = tool_catalog_fingerprint;
-    seed.resource_snapshot_fingerprint = resource_snapshot_fingerprint;
+    seed.execution_context_fingerprint = execution_context_fingerprint;
     seed.baseline_ref = evidence.baseline_ref;
     seed.candidate_ref = evidence.candidate_ref;
     seed.verifier_ref = evidence.verifier_ref;
@@ -254,8 +250,7 @@ bool common_flydelta_experiment_fixture_from_seed(
     fixture.model_profile_fingerprint = seed.model_profile_fingerprint;
     fixture.tokenizer_fingerprint = seed.tokenizer_fingerprint;
     fixture.template_fingerprint = seed.template_fingerprint;
-    fixture.tool_catalog_fingerprint = seed.tool_catalog_fingerprint;
-    fixture.resource_snapshot_fingerprint = seed.resource_snapshot_fingerprint;
+    fixture.execution_context_fingerprint = seed.execution_context_fingerprint;
     fixture.verifier_revision = seed.verifier_ref;
     return common_flydelta_experiment_fixture_validate(fixture, error);
 }
