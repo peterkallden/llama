@@ -419,7 +419,43 @@ choose what is correct: the host must produce a valid capture manifest and
 counterfactual report first. The objective remains minimum intervention,
 repeatable verified lift and minimum collateral change.
 
-### 4H. Verified source handoff — implemented
+### 4H. Verified candidate-to-delta materialization — implemented
+
+`flydelta-capture.*` now has a reference-only factory from a qualified,
+host-verified capture candidate to a capture manifest. The factory requires
+the candidate and evidence to share the same source and transaction, requires
+explicit redaction attestation, and records bounded template/evidence
+fingerprints and the positive/negative execution references. It does not
+capture tensors, copy prompts or tool results, or make the candidate eligible
+for activation. The byte count is supplied by the host for the already
+bounded capture payload and is checked again by the manifest validator.
+
+`common_flydelta_repair_deltas_from_captures()` is the next pure materializer:
+it accepts the manifest's failed and repaired hidden-state captures, verifies
+the exact model/layout/token/layer/dimension alignment and pair byte count,
+then emits one `repaired - failed` delta per layer. The existing repair-delta
+validator rejects non-finite and zero deltas. The helper does not run
+inference, infer which arm was correct, persist an artifact or update a basis;
+the host must first provide the verified relation and counterfactual credit,
+then explicitly pass the resulting delta to the basis builder.
+
+The current host-level repair smoke covers this complete bounded seam:
+
+```text
+verified repair relation
+  -> capture manifest
+  -> failed/repaired captures
+  -> per-layer repair delta
+  -> HELPED credit
+  -> basis direction and gated overlay
+```
+
+This is still preparation, not automatic learning. Capture-manifest scope,
+TTL, artifact persistence and revocation remain lifecycle work; the current
+manifest uses observation/transaction and execution references but does not
+claim to implement those policies by itself.
+
+### 4G. Verified source handoff — implemented
 
 The capture candidate collector has an explicit
 `observe_verified_relation()` path for reflection alternatives, research,
