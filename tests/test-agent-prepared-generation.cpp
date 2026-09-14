@@ -188,6 +188,8 @@ void test_server_task_params_from_prepared_generation() {
     assert(params.cvec->il_end == 2);
     assert(params.cvec->data.size() == 4);
     assert(std::fabs(params.cvec->data[0] - 0.125f) < 1e-6f);
+    const auto serialized_params = params.to_json();
+    assert(!serialized_params.contains("cvec"));
     assert(params.stream);
     assert(!params.cache_prompt);
     assert(params.n_keep == 9);
