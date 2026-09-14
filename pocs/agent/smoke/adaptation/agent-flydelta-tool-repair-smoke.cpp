@@ -1,4 +1,6 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-basis.h"
+#include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
 #include "agent/adaptation/flydelta/flydelta-promotion.h"
 #include "agent/adaptation/flydelta/flydelta.h"
@@ -135,17 +137,36 @@ int main() {
     CHECK(common_flydelta_intervention_credit_from_report(report, credit, error));
     CHECK(credit.eligible_for_learning);
 
-    common_flydelta_repair_delta repair_delta;
-    repair_delta.id = "flydelta://delta/tool-repair-1";
-    repair_delta.capture_manifest_id = "flydelta://capture/tool-repair-1";
-    repair_delta.host_evidence_ref = "evidence:repaired-tool";
-    repair_delta.model_profile_fingerprint = fixture().model_profile_fingerprint;
-    repair_delta.capture_layout_revision = "layout:cvec-v1";
-    repair_delta.layer_index = 2;
-    repair_delta.values = {1.0f, 0.0f, 0.0f, 0.0f};
+    common_flydelta_capture_manifest manifest;
+    manifest.id = "flydelta://capture/tool-repair-1";
+    manifest.observation_id = repaired.id;
+    manifest.model_profile_fingerprint = fixture().model_profile_fingerprint;
+    manifest.template_fingerprint = fixture().template_fingerprint;
+    manifest.positive_execution_ref = "execution:repaired-tool";
+    manifest.negative_execution_ref = "execution:wrong-tool";
+    manifest.capture_layout_revision = "layout:cvec-v1";
+    manifest.evidence_hash = "sha256:tool-repair-evidence";
+    manifest.redaction_attested = true;
+    manifest.captured_bytes = 2 * 4 * sizeof(float);
+
+    common_flydelta_hidden_state_capture failed_capture;
+    failed_capture.captured = true;
+    failed_capture.model_profile_fingerprint = fixture().model_profile_fingerprint;
+    failed_capture.capture_layout_revision = "layout:cvec-v1";
+    failed_capture.layer_indices = {2};
+    failed_capture.n_embd = 4;
+    failed_capture.token_index = 3;
+    failed_capture.values = {0.0f, 0.0f, 0.0f, 0.0f};
+    common_flydelta_hidden_state_capture repaired_capture = failed_capture;
+    repaired_capture.values = {1.0f, 0.0f, 0.0f, 0.0f};
+    std::vector<common_flydelta_repair_delta> repair_deltas;
+    CHECK(common_flydelta_repair_deltas_from_captures(
+        manifest, failed_capture, repaired_capture, "evidence:repaired-tool",
+        64 * 1024, 64 * 1024, repair_deltas, error));
+    CHECK(repair_deltas.size() == 1 && repair_deltas.front().layer_index == 2);
     common_flydelta_basis_builder basis({
         4, 4, 0.85f, fixture().model_profile_fingerprint, "layout:cvec-v1"});
-    CHECK(basis.add(repair_delta, credit, error));
+    CHECK(basis.add(repair_deltas.front(), credit, error));
     CHECK(basis.directions().size() == 1);
 
     common_flydelta_promotion_policy promotion_policy;
