@@ -112,6 +112,21 @@ int main() {
     reflection_evidence.candidate_ref = "execution:reflection-repaired";
     reflection_evidence.verifier_ref = "verifier:reflection-v1";
     reflection_evidence.host_verified = true;
+
+    common_adaptation_evidence_relation second_relation = reflection_relation;
+    second_relation.behavior_key = "reflection/other-alternative";
+    common_adaptation_evidence second_evidence = reflection_evidence;
+    second_evidence.id = "evidence:reflection-2";
+    second_evidence.behavior_key = second_relation.behavior_key;
+    common_flydelta_capture_candidate_collector identity_collector(
+        "profile:qwen", "layout:cvec-v1", 2);
+    CHECK(identity_collector.observe_verified_relation(
+        reflection_relation, reflection_evidence, transaction, error));
+    CHECK(identity_collector.observe_verified_relation(
+        second_relation, second_evidence, transaction, error));
+    CHECK(identity_collector.candidates().size() == 2);
+    CHECK(identity_collector.candidates()[0].id != identity_collector.candidates()[1].id);
+
     CHECK(collector.observe_verified_relation(
         reflection_relation, reflection_evidence, transaction, error));
     CHECK(collector.candidates().size() == 2);

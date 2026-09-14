@@ -37,8 +37,16 @@ int main() {
     CHECK(manifest.negative_execution_ref == evidence.baseline_ref);
     CHECK(common_flydelta_capture_manifest_validate(manifest, 1024, error));
 
+    candidate.behavior_key = "tool_use/diagnostics/other";
+    CHECK(!common_flydelta_capture_manifest_from_candidate(
+        candidate, evidence, "sha256:template", "sha256:evidence", 128, true,
+        manifest, error));
+    candidate.behavior_key = evidence.behavior_key;
+
     candidate.source = common_adaptation_evidence_source::reflection_alternative;
     evidence.source = candidate.source;
+    candidate.behavior_key = "reflection/alternative";
+    evidence.behavior_key = candidate.behavior_key;
     CHECK(common_flydelta_capture_manifest_from_candidate(
         candidate, evidence, "sha256:template", "sha256:evidence", 128, true,
         manifest, error));

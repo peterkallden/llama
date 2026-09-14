@@ -22,6 +22,7 @@ bool common_flydelta_capture_candidate_validate(
     if (candidate.schema_version != 1 || !bounded(candidate.id) ||
             !bounded(candidate.transaction_id) || !candidate.candidate_ready ||
             candidate.evidence_refs.empty() || candidate.evidence_refs.size() > 16 ||
+            (!candidate.behavior_key.empty() && !bounded(candidate.behavior_key)) ||
             !bounded(candidate.model_profile_fingerprint) ||
             !bounded(candidate.capture_layout_revision)) {
         error = "FlyDelta capture candidate is incomplete or outside bounds";
@@ -49,6 +50,7 @@ bool common_flydelta_capture_manifest_from_candidate(
     if (!common_flydelta_capture_candidate_validate(candidate, error)) return false;
     if (!common_adaptation_evidence_validate(evidence, 64, error)) return false;
     if (!candidate.candidate_ready || candidate.source != evidence.source ||
+            (!candidate.behavior_key.empty() && candidate.behavior_key != evidence.behavior_key) ||
             !contains(evidence.transaction_ids, candidate.transaction_id) ||
             !bounded(template_fingerprint) || !bounded(evidence_hash) ||
             captured_bytes == 0 || !redaction_attested ||
@@ -94,8 +96,10 @@ bool common_flydelta_capture_candidate_collector::observe(
     // repair relation that happens to reference the same transaction.
     candidate.id = std::string("flydelta://capture-candidate/") +
         common_adaptation_evidence_source_name(match.source) + "/" + transaction.id;
+    if (!match.behavior_key.empty()) candidate.id += "/" + match.behavior_key;
     candidate.transaction_id = transaction.id;
     candidate.source = match.source;
+    candidate.behavior_key = match.behavior_key;
     candidate.evidence_refs = match.evidence_refs;
     candidate.model_profile_fingerprint = model_profile_fingerprint;
     candidate.capture_layout_revision = capture_layout_revision;
@@ -129,6 +133,7 @@ bool common_flydelta_capture_candidate_collector::observe_verified_relation(
 
     common_adaptation_evidence_source_match match;
     match.source = relation.source;
+    match.behavior_key = relation.behavior_key;
     match.candidate_ready = true;
     match.evidence_refs = {
         evidence.id, evidence.baseline_ref, evidence.candidate_ref,

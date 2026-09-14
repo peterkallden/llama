@@ -1048,7 +1048,10 @@ Other sources must arrive through an explicit host-verified relation. The
 source is copied into the capture manifest and remains part of the evidence,
 job and artifact provenance. Callers should partition their basis and
 behavior key by the learned behavior so unrelated corrections cannot be
-clustered into one direction.
+clustered into one direction. Explicit host relations also carry the
+`behavior_key` into capture-candidate identity; broad runtime discovery may
+leave it empty until the host completes that relation. Thus two explicit
+behaviors cannot collide merely because they share a source and transaction.
 
 The model-facing roles remain unchanged: the model may produce alternatives
 and representations, while the host verifier decides whether an outcome is
