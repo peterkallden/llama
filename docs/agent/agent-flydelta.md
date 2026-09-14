@@ -977,7 +977,14 @@ build-agent-cozo/bin/llama-agent-flydelta-repair-model-smoke \
 
 The model-backed test skips without a model and is capped at three CPU
 threads. It complements, rather than replaces, the model-free repair smoke
-and the public session-host runtime smoke.
+and the public session-host runtime smoke. When an overlay arm remains
+`UNKNOWN` because it fails like the baseline, the smoke additionally reports
+the cosine similarity between that arm's hidden-state shift and the
+host-certified repair delta. A positive value is an `aligned` diagnostic
+signal, not a successful outcome: it may justify extended tuning or a later
+experiment, but it cannot update DeltaMemory or promote an artifact by
+itself. Cosine is omitted from promotion decisions and is only used to triage
+otherwise unknown samples.
 
 ### 5. Optional dynamic hook
 

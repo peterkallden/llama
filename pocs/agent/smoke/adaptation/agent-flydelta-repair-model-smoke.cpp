@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -81,6 +82,23 @@ std::string output_preview(const common_agent_generation_result & result) {
     constexpr size_t max_preview = 512;
     if (preview.size() > max_preview) preview.resize(max_preview);
     return preview;
+}
+
+float cosine_similarity(
+        const std::vector<float> & left,
+        const std::vector<float> & right) {
+    if (left.size() != right.size() || left.empty()) return 0.0f;
+    float dot = 0.0f;
+    float left_norm = 0.0f;
+    float right_norm = 0.0f;
+    for (size_t i = 0; i < left.size(); ++i) {
+        dot += left[i] * right[i];
+        left_norm += left[i] * left[i];
+        right_norm += right[i] * right[i];
+    }
+    const float denominator = std::sqrt(left_norm * right_norm);
+    return denominator > std::numeric_limits<float>::epsilon()
+        ? dot / denominator : 0.0f;
 }
 
 common_agent_generation_request make_request(
@@ -168,14 +186,17 @@ int main(int argc, char ** argv) {
     const std::string profile = "sha256:flydelta-repair-qwen";
     const size_t model_n_embd = static_cast<size_t>(llama_model_n_embd(loaded->model));
     const size_t model_n_layers = static_cast<size_t>(llama_model_n_layer(loaded->model));
-    if (model_n_embd == 0 || model_n_layers <= 1) {
+    if (model_n_embd == 0 || model_n_layers <= 2) {
         std::cerr << "FlyDelta repair model smoke received unsupported model dimensions\n";
         return 1;
     }
 
     auto capture_request = std::make_shared<common_flydelta_hidden_state_capture_request>();
     capture_request->enabled = true;
-    capture_request->layer_indices = {1};
+    // layer-input is sampled before that layer's cvec addition. Capture both
+    // layers 1 and 2: compose the candidate from layer 1, then measure the
+    // propagated shift at layer 2, after layer 1's intervention.
+    capture_request->layer_indices = {1, 2};
     // Capture the final prompt row. The two controlled prompts have the same
     // token length, and this row is after the tool-selection instruction;
     // token zero would be identical and produce a zero repair delta.
@@ -238,7 +259,7 @@ int main(int argc, char ** argv) {
     if (!common_flydelta_repair_deltas_from_captures(
             manifest, *failed.flydelta_capture, *repaired.flydelta_capture,
             "evidence:model-repair-e2e", 64U * 1024U * 1024U,
-            64U * 1024U * 1024U, deltas, error) || deltas.size() != 1) {
+            64U * 1024U * 1024U, deltas, error) || deltas.size() != 2) {
         std::cerr << "FlyDelta repair delta construction failed: " << error << '\n';
         return 1;
     }
@@ -304,6 +325,11 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    // The layer-2 repair delta is the reference for the post-layer-1
+    // representation shift measured in each counterfactual arm.
+    const std::vector<float> & repair_direction = deltas.back().values;
+    std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_arm_capture;
+
     const auto prepare_activation = [&](float scale,
             common_flydelta_activation_result & activation) {
         common_flydelta_gate_request gate_request;
@@ -350,7 +376,8 @@ int main(int argc, char ** argv) {
                 }
                 common_agent_generation_result result;
                 const bool executed = generate(
-                    *inference, value, failed_instruction, result, activation_ptr);
+                    *inference, value, failed_instruction, result, activation_ptr,
+                    capture_request);
                 trial = {};
                 trial.executed = executed;
                 trial.verifier_known = executed;
@@ -361,6 +388,27 @@ int main(int argc, char ** argv) {
                 trial.evidence_ref = apply_overlay
                     ? "evidence:model-repair-counterfactual-overlay"
                     : "evidence:model-repair-counterfactual-baseline";
+                if (!apply_overlay && result.flydelta_capture) {
+                    baseline_arm_capture = result.flydelta_capture;
+                } else if (apply_overlay && !trial.passed && !baseline_arm_capture) {
+                    runner_error = "FlyDelta unknown arm has no baseline capture";
+                    return false;
+                } else if (apply_overlay && !trial.passed && baseline_arm_capture &&
+                        result.flydelta_capture &&
+                        result.flydelta_capture->values.size() ==
+                            baseline_arm_capture->values.size()) {
+                    std::vector<float> arm_shift(model_n_embd);
+                    const size_t layer_offset = model_n_embd;
+                    for (size_t i = 0; i < arm_shift.size(); ++i) {
+                        arm_shift[i] = result.flydelta_capture->values[layer_offset + i] -
+                            baseline_arm_capture->values[layer_offset + i];
+                    }
+                    const float alignment = cosine_similarity(arm_shift, repair_direction);
+                    std::cout << "unknown_representation_cosine alpha=" << alpha
+                              << " value=" << alignment
+                              << " signal=" << (alignment > 0.0f ? "aligned" : "not_aligned")
+                              << " promotion=no next_action=extended_tuning\n";
+                }
                 std::cout << "arm_model_output alpha=" << alpha
                           << " overlay=" << (apply_overlay ? "yes" : "no")
                           << " output=" << output_preview(result) << '\n';
