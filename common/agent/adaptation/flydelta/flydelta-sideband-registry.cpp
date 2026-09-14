@@ -1,7 +1,12 @@
 #include "agent/adaptation/flydelta/flydelta-sideband-registry.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::ordered_json;
 
 namespace {
 
@@ -30,6 +35,7 @@ const char * common_flydelta_sideband_status_name(common_flydelta_sideband_statu
         case common_flydelta_sideband_status::active: return "active";
         case common_flydelta_sideband_status::retired: return "retired";
         case common_flydelta_sideband_status::rejected: return "rejected";
+        case common_flydelta_sideband_status::revoked: return "revoked";
     }
     return "rejected";
 }
@@ -40,6 +46,7 @@ bool common_flydelta_sideband_manifest_validate(
     error.clear();
     if (manifest.schema_version != 1 || !bounded(manifest.id) ||
             !bounded(manifest.artifact_path) || !hash_like(manifest.artifact_hash) ||
+            !bounded(manifest.namespace_id) || !bounded(manifest.project_id) ||
             !bounded(manifest.compatibility.base_model_fingerprint) ||
             !bounded(manifest.compatibility.tokenizer_fingerprint) ||
             !bounded(manifest.compatibility.template_fingerprint) ||
@@ -51,6 +58,11 @@ bool common_flydelta_sideband_manifest_validate(
         error = "FlyDelta sideband manifest identity or layout is invalid";
         return false;
     }
+    if (manifest.status == common_flydelta_sideband_status::revoked &&
+            !bounded(manifest.revocation_reason)) {
+        error = "revoked FlyDelta sideband requires a reason";
+        return false;
+    }
     if (manifest.status == common_flydelta_sideband_status::active &&
             (!manifest.evaluation_passed || !bounded(manifest.evaluation_revision))) {
         error = "active FlyDelta sideband requires a passed evaluation";
@@ -59,9 +71,97 @@ bool common_flydelta_sideband_manifest_validate(
     return true;
 }
 
+std::string common_flydelta_sideband_manifest_to_json(
+        const common_flydelta_sideband_manifest & manifest) {
+    return json{
+        {"schema_version", manifest.schema_version},
+        {"kind", "flydelta-sideband"},
+        {"id", manifest.id},
+        {"status", common_flydelta_sideband_status_name(manifest.status)},
+        {"artifact_path", manifest.artifact_path},
+        {"artifact_hash", manifest.artifact_hash},
+        {"scope", {
+            {"namespace_id", manifest.namespace_id},
+            {"project_id", manifest.project_id},
+        }},
+        {"expires_at_epoch_ms", manifest.expires_at_epoch_ms},
+        {"revocation_reason", manifest.revocation_reason},
+        {"compatibility", {
+            {"base_model_fingerprint", manifest.compatibility.base_model_fingerprint},
+            {"tokenizer_fingerprint", manifest.compatibility.tokenizer_fingerprint},
+            {"template_fingerprint", manifest.compatibility.template_fingerprint},
+            {"architecture", manifest.compatibility.architecture},
+            {"inference_layout_revision", manifest.compatibility.inference_layout_revision},
+        }},
+        {"model_n_embd", manifest.model_n_embd},
+        {"model_n_layers", manifest.model_n_layers},
+        {"il_start", manifest.il_start},
+        {"il_end", manifest.il_end},
+        {"evaluation_revision", manifest.evaluation_revision},
+        {"evaluation_passed", manifest.evaluation_passed},
+    }.dump();
+}
+
+bool common_flydelta_sideband_manifest_from_json(
+        const std::string & text,
+        common_flydelta_sideband_manifest & manifest,
+        std::string & error) {
+    error.clear();
+    try {
+        const auto value = json::parse(text);
+        if (!value.is_object() || value.value("kind", "") != "flydelta-sideband") {
+            error = "invalid FlyDelta sideband manifest JSON";
+            return false;
+        }
+        manifest = {};
+        manifest.schema_version = value.value("schema_version", 0);
+        manifest.id = value.value("id", "");
+        manifest.artifact_path = value.value("artifact_path", "");
+        manifest.artifact_hash = value.value("artifact_hash", "");
+        const auto scope = value.value("scope", json::object());
+        manifest.namespace_id = scope.value("namespace_id", "");
+        manifest.project_id = scope.value("project_id", "");
+        manifest.expires_at_epoch_ms = value.value("expires_at_epoch_ms", 0ULL);
+        manifest.revocation_reason = value.value("revocation_reason", "");
+        const auto compatibility = value.value("compatibility", json::object());
+        manifest.compatibility.base_model_fingerprint = compatibility.value("base_model_fingerprint", "");
+        manifest.compatibility.tokenizer_fingerprint = compatibility.value("tokenizer_fingerprint", "");
+        manifest.compatibility.template_fingerprint = compatibility.value("template_fingerprint", "");
+        manifest.compatibility.architecture = compatibility.value("architecture", "");
+        manifest.compatibility.inference_layout_revision = compatibility.value("inference_layout_revision", "");
+        manifest.model_n_embd = value.value("model_n_embd", 0U);
+        manifest.model_n_layers = value.value("model_n_layers", 0U);
+        manifest.il_start = value.value("il_start", 0);
+        manifest.il_end = value.value("il_end", 0);
+        manifest.evaluation_revision = value.value("evaluation_revision", "");
+        manifest.evaluation_passed = value.value("evaluation_passed", false);
+        const auto status = value.value("status", "candidate");
+        if (status == "candidate") manifest.status = common_flydelta_sideband_status::candidate;
+        else if (status == "canary") manifest.status = common_flydelta_sideband_status::canary;
+        else if (status == "active") manifest.status = common_flydelta_sideband_status::active;
+        else if (status == "retired") manifest.status = common_flydelta_sideband_status::retired;
+        else if (status == "rejected") manifest.status = common_flydelta_sideband_status::rejected;
+        else if (status == "revoked") manifest.status = common_flydelta_sideband_status::revoked;
+        else { error = "unknown FlyDelta sideband status"; return false; }
+    } catch (const std::exception & exception) {
+        error = std::string("invalid FlyDelta sideband manifest fields: ") + exception.what();
+        return false;
+    }
+    return common_flydelta_sideband_manifest_validate(manifest, error);
+}
+
+static uint64_t current_epoch_ms() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
 bool common_flydelta_sideband_registry::admit(
         const common_flydelta_sideband_manifest & manifest, std::string & error) {
     if (!common_flydelta_sideband_manifest_validate(manifest, error)) return false;
+    if (manifest.status != common_flydelta_sideband_status::candidate) {
+        error = "new FlyDelta sideband must enter registry as candidate";
+        return false;
+    }
     if (manifests.find(manifest.id) != manifests.end()) {
         error = "FlyDelta sideband is already registered: " + manifest.id;
         return false;
@@ -74,6 +174,14 @@ bool common_flydelta_sideband_registry::stage_canary(
         const std::string & id, const std::string & evaluation_revision, std::string & error) {
     const auto it = manifests.find(id);
     if (it == manifests.end()) { error = "FlyDelta sideband is unavailable: " + id; return false; }
+    if (it->second.status != common_flydelta_sideband_status::candidate) {
+        error = "only a candidate FlyDelta sideband can enter canary";
+        return false;
+    }
+    if (it->second.expires_at_epoch_ms != 0 && it->second.expires_at_epoch_ms <= current_epoch_ms()) {
+        error = "FlyDelta sideband has expired";
+        return false;
+    }
     if (!bounded(evaluation_revision)) { error = "FlyDelta sideband evaluation revision is invalid"; return false; }
     it->second.evaluation_revision = evaluation_revision;
     it->second.evaluation_passed = true;
@@ -98,7 +206,27 @@ bool common_flydelta_sideband_registry::activate(const std::string & id, std::st
 bool common_flydelta_sideband_registry::retire(const std::string & id, std::string & error) {
     const auto it = manifests.find(id);
     if (it == manifests.end()) { error = "FlyDelta sideband is unavailable: " + id; return false; }
+    if (it->second.status != common_flydelta_sideband_status::active) {
+        error = "only an active FlyDelta sideband can be retired";
+        return false;
+    }
     it->second.status = common_flydelta_sideband_status::retired;
+    error.clear();
+    return true;
+}
+
+bool common_flydelta_sideband_registry::revoke(
+        const std::string & id, const std::string & reason, std::string & error) {
+    const auto it = manifests.find(id);
+    if (it == manifests.end()) { error = "FlyDelta sideband is unavailable: " + id; return false; }
+    if (!bounded(reason)) { error = "FlyDelta sideband revocation reason is invalid"; return false; }
+    if (it->second.status == common_flydelta_sideband_status::revoked ||
+            it->second.status == common_flydelta_sideband_status::rejected) {
+        error = "FlyDelta sideband cannot be revoked from its current state";
+        return false;
+    }
+    it->second.status = common_flydelta_sideband_status::revoked;
+    it->second.revocation_reason = reason;
     error.clear();
     return true;
 }
@@ -124,6 +252,10 @@ bool common_flydelta_sideband_registry::resolve(
     if (it == manifests.end()) { error = "FlyDelta sideband is not registered: " + sideband_id; return false; }
     if (it->second.status != common_flydelta_sideband_status::active) {
         error = "FlyDelta sideband is not active: " + sideband_id;
+        return false;
+    }
+    if (it->second.expires_at_epoch_ms != 0 && it->second.expires_at_epoch_ms <= current_epoch_ms()) {
+        error = "FlyDelta sideband has expired: " + sideband_id;
         return false;
     }
     if (it->second.model_n_embd != model_n_embd || it->second.model_n_layers != model_n_layers ||

@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-sideband-registry.h"
 
+#include <chrono>
 #include <string>
 
 #define CHECK(condition) do { if (!(condition)) return 1; } while (false)
@@ -36,6 +37,11 @@ static common_agent_model_profile profile() {
 int main() {
     std::string error;
     auto sideband = manifest();
+    common_flydelta_sideband_manifest parsed;
+    CHECK(common_flydelta_sideband_manifest_from_json(
+        common_flydelta_sideband_manifest_to_json(sideband), parsed, error));
+    CHECK(parsed.id == sideband.id && parsed.namespace_id == "local" &&
+        parsed.project_id == "default");
     common_flydelta_sideband_registry registry;
     CHECK(registry.admit(sideband, error));
     CHECK(!registry.activate(sideband.id, error));
@@ -52,6 +58,17 @@ int main() {
     expected.base_model_fingerprint = "sha256:other";
     CHECK(!registry.resolve(profile(), sideband.id, expected, 4, 3, resolved, scale, error));
     CHECK(error.find("base model") != std::string::npos);
+
+    auto expired = manifest();
+    expired.id = "flydelta://sideband/expired-v1";
+    expired.expires_at_epoch_ms = 1;
+    CHECK(registry.admit(expired, error));
+    CHECK(!registry.stage_canary(expired.id, "eval:expired", error));
+    CHECK(error.find("expired") != std::string::npos);
+
+    CHECK(registry.revoke(sideband.id, "manual safety rollback", error));
+    CHECK(!registry.resolve(profile(), sideband.id, expected, 4, 3, resolved, scale, error));
+    CHECK(error.find("not active") != std::string::npos);
 
     common_flydelta_capture_candidate_collector collector(
         "profile:qwen", "layout:cvec-v1", 3);

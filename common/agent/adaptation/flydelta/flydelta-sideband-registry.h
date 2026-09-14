@@ -14,6 +14,7 @@ enum class common_flydelta_sideband_status {
     active,
     retired,
     rejected,
+    revoked,
 };
 const char * common_flydelta_sideband_status_name(common_flydelta_sideband_status status);
 
@@ -26,6 +27,10 @@ struct common_flydelta_sideband_manifest {
     common_flydelta_sideband_status status = common_flydelta_sideband_status::candidate;
     std::string artifact_path;
     std::string artifact_hash;
+    std::string namespace_id = "local";
+    std::string project_id = "default";
+    uint64_t expires_at_epoch_ms = 0;
+    std::string revocation_reason;
     common_flydelta_compatibility compatibility;
     size_t model_n_embd = 0;
     size_t model_n_layers = 0;
@@ -38,6 +43,12 @@ struct common_flydelta_sideband_manifest {
 bool common_flydelta_sideband_manifest_validate(
         const common_flydelta_sideband_manifest & manifest,
         std::string & error);
+std::string common_flydelta_sideband_manifest_to_json(
+        const common_flydelta_sideband_manifest & manifest);
+bool common_flydelta_sideband_manifest_from_json(
+        const std::string & text,
+        common_flydelta_sideband_manifest & manifest,
+        std::string & error);
 
 class common_flydelta_sideband_registry {
 public:
@@ -46,6 +57,7 @@ public:
             std::string & error);
     bool activate(const std::string & id, std::string & error);
     bool retire(const std::string & id, std::string & error);
+    bool revoke(const std::string & id, const std::string & reason, std::string & error);
 
     // Resolve only an explicitly named sideband from a profile. The registry
     // never guesses between multiple sidebands and never reads artifact data.
