@@ -1,4 +1,5 @@
 #include "agent/agent-inference.h"
+#include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/tooling/registry/tool-registry.h"
 #include "memory/memory-candidate.h"
 #include "memory/memory-in-memory.h"
@@ -1069,7 +1070,8 @@ static void test_runtime_request_builder() {
     const std::vector<common_chat_tool> tools;
     std::string current_plan_id = "plan-1";
     const auto tooling = make_runtime_tooling(tools, nullptr, true);
-    const common_agent_runtime_driver_execution execution{
+    const auto activation = std::make_shared<const common_flydelta_activation_result>();
+    auto execution = common_agent_runtime_driver_execution{
         memories,
         plans,
         inference,
@@ -1085,6 +1087,7 @@ static void test_runtime_request_builder() {
         true,
         tooling,
     };
+    execution.flydelta_activation = activation;
 
     const auto request = make_agent_runtime_driver_request(execution);
     assert(request.prompt == "Check status");
@@ -1106,6 +1109,7 @@ static void test_runtime_request_builder() {
     assert(request.deliberation_policy.max_reflection_rounds == 1);
     assert(request.memories.size() == 1);
     assert(request.memories[0].memory.id == "mem-1");
+    assert(request.flydelta_activation == activation);
 
     options.max_tool_rounds = 4;
     options.tool_profile = "safe";

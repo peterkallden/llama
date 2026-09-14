@@ -119,6 +119,10 @@ struct common_agent_runtime_driver_execution {
     // Bounded host-side resource.list result. Current-turn attachments remain
     // in input_resources and are always rendered as rN handles.
     std::vector<common_agent_input_resource> available_resources;
+    // Immutable host-prepared activation propagated to every generation
+    // request created for this runtime turn. Selection and activation remain
+    // host responsibilities; the driver only carries the snapshot.
+    std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

@@ -620,6 +620,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.research_stop_reason = execution.research_stop_reason;
     request.explicit_memory_candidate = execution.explicit_memory_candidate;
     request.explicit_memory_confirmed = execution.explicit_memory_confirmed;
+    request.flydelta_activation = execution.flydelta_activation;
     apply_explicit_deliberation_policy(request.deliberation_policy, request);
     return request;
 }
