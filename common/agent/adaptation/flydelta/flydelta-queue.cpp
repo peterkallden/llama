@@ -125,6 +125,22 @@ const char * common_flydelta_experiment_queue_state_name(
     return "failed";
 }
 
+bool common_flydelta_experiment_queue_contains(
+        const std::filesystem::path & queue_root,
+        const std::string & job_id,
+        bool & contains,
+        std::string & error) {
+    error.clear();
+    contains = false;
+    if (job_id.empty()) {
+        error = "FlyDelta queue lookup requires a job id";
+        return false;
+    }
+    if (!ensure_directories(queue_root, error)) return false;
+    contains = already_queued(queue_root, queue_key(job_id));
+    return true;
+}
+
 bool common_flydelta_experiment_queue_enqueue(
         const std::filesystem::path & queue_root,
         const common_flydelta_experiment_job & job,

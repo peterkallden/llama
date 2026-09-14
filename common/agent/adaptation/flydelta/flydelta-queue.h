@@ -27,6 +27,14 @@ struct common_flydelta_claimed_experiment_job {
     common_flydelta_experiment_job job;
 };
 
+// Read-only idempotency check used by host bridges before enqueue. It scans
+// only the bounded queue state directories and never reads payload content.
+bool common_flydelta_experiment_queue_contains(
+        const std::filesystem::path & queue_root,
+        const std::string & job_id,
+        bool & contains,
+        std::string & error);
+
 // The queue stores only the typed, reference-only job envelope. Captures,
 // activations and verifier payloads stay in their respective stores.
 bool common_flydelta_experiment_queue_enqueue(
