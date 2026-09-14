@@ -3852,6 +3852,12 @@ capture candidates use those same switches and add
 `flydelta_capture_layout_revision`, and a bounded maximum candidate count.
 The runtime only forwards host-visible tool-repair evidence to that queue; it
 does not capture hidden states, train, or activate a sideband inside a turn.
+When the host has established a verified failed/repaired relation, it may
+hand the reference-only seed to the dedicated FlyDelta experiment queue.
+That queue is separate from the corpus/QLoRA worker queue: it stores only the
+typed experiment envelope and never changes the active turn, model profile or
+sideband. Basis building, counterfactual evaluation, DeltaMemory updates and
+promotion remain explicit offline host operations.
 
 In the current slice, the daemon and the real MCP stdio server can both carry a list of enabled stdio MCP subprocess providers from that host-config path into the provider/view seam. The daemon also supports outbound Streamable HTTP providers and inbound Streamable HTTP hosting. Outbound stdio and HTTP tool calls consume the host-owned cancellation/deadline state; broader streaming hardening remains follow-up work.
 

@@ -226,6 +226,66 @@ observation ID, profile/template fingerprints, positive/negative execution
 references, verifier evidence, capture/layout revision and redaction
 attestation.
 
+### Experiment seed, job and queue — implemented contract slice
+
+The host turns a qualified, host-verified relation into a
+`common_flydelta_experiment_seed`. The seed carries the behavior key, full
+scope (`namespace_id`, `project_id`, `session_id`, optional `turn_id`), model
+and inference-layout fingerprints, baseline/candidate/verifier references,
+the source evidence reference and transaction IDs. It carries no prompt,
+tool output, credential or activation tensor. The seed is the stable
+provenance boundary between the learning ledger and an experiment.
+
+The seed is wrapped in a typed `common_flydelta_experiment_job`. V1 has three
+explicit job kinds:
+
+```text
+basis            repair-delta references -> candidate steering basis
+counterfactual   capture references + alpha grid -> host-evaluated trials
+delta_memory     train split examples -> DeltaMemory update
+```
+
+`delta_memory` jobs are train-only. Validation and holdout examples are
+inputs to evaluation, never silently consumed by the learner. Alpha selection
+only accepts an executed, host-known `HELPED` trial and applies a magnitude
+penalty; `UNKNOWN` and `HARMED` trials cannot be promoted as a useful
+intervention. This makes the experiment contract explicit without treating a
+lower internal loss or a model self-description as evidence.
+
+The typed job can be placed in the dedicated bounded FlyDelta filesystem
+queue. Its lifecycle is:
+
+```text
+host-verified seed
+        -> typed experiment job
+        -> pending/<job-key>/job.json
+        -> atomic claim to running/<job-key>
+        -> evaluator/learner-owned result references
+        -> succeeded | failed | cancelled
+```
+
+The queue is deliberately parallel to, rather than inside, the existing
+QLoRA adaptation queue. It uses atomic staging/rename, a hash-derived safe
+queue key, duplicate suppression across all states, bounded job/status
+metadata and a status file containing only a safe summary. It stores the job
+envelope, not captures, hidden states or raw evidence. The shared lifecycle
+journal can record `flydelta_experiment` and `flydelta_result` events, but the
+queue itself does not evaluate, build a basis, train DeltaMemory, promote an
+artifact or activate a sideband.
+
+This separation is intentional: the existing
+`llama-agent-adaptation-worker` understands corpus-backed SFT/QLoRA jobs and
+must not infer FlyDelta semantics from a different JSON shape. A future
+FlyDelta evaluator/worker may consume this queue and resolve the referenced
+capture, delta and training stores under the same host-owned scope and
+promotion rules. Until then, enqueue/claim is an orchestration seam only and
+there is no automatic runtime learning loop.
+
+The contract tests cover scope-preserving job JSON round-trips and the queue
+`enqueue -> claim -> complete` flow, including duplicate and byte-bound
+rejection. They do not claim that a queue entry has produced a useful model
+intervention.
+
 ### Promotion: parallel sideband registry
 
 `common_learning_adapter_registry` is LoRA-specific. FlyDelta should use a

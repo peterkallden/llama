@@ -98,6 +98,17 @@ training route. FlyDelta, if implemented and validated, is a bounded,
 reversible nearline association layer. Neither path may weaken deterministic
 host contracts or automatically activate from a single runtime observation.
 
+FlyDelta now also has a small dedicated experiment queue contract. A
+host-verified seed is wrapped in a typed `basis`, `counterfactual` or
+`delta_memory` job and stored as a bounded reference-only envelope. Its
+`pending -> running -> succeeded/failed/cancelled` filesystem lifecycle uses
+the same atomic-rename and duplicate-suppression discipline as this path, but
+it is not the QLoRA worker queue. The existing worker accepts only
+`common_learning_training_job` plus a matching corpus bundle; it must not be
+given a FlyDelta job or be taught to guess FlyDelta semantics. The two paths
+share evidence, lifecycle and host-promotion principles, while keeping their
+artifacts and evaluators separate.
+
 The lifecycle stores share one persistence contract: the `payload_json` column
 contains the record payload, not the serialized lifecycle envelope. JSONL,
 SQLite and Cozo must therefore produce the same idempotent read-back; the
