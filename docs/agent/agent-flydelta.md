@@ -244,7 +244,8 @@ selection.
 The separate `common_flydelta_artifact_store` is the byte/artifact seam. It
 stores the existing canonical JSON codec under an absolute host-owned root and
 accepts only normalized relative `.flyd` paths. Reads and writes are bounded,
-reject symlinks and traversal, verify the artifact schema and content hash,
+reject symlinks and traversal, verify the artifact schema and canonical
+`sha256:<64 hex>` content hash,
 and install new files through a temporary file followed by an atomic rename.
 An identical retry is idempotent; a different artifact cannot replace an
 existing path. The store does not decide lifecycle status, evaluate a
