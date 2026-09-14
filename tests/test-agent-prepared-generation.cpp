@@ -153,6 +153,7 @@ void test_server_task_params_from_prepared_generation() {
     activation->overlay.n_embd = 2;
     activation->overlay.il_start = 1;
     activation->overlay.il_end = 2;
+    activation->overlay.scale = 0.5f;
     activation->overlay.data.assign(4, 0.25f);
     request.flydelta_activation = activation;
     common_params params_base;
@@ -186,6 +187,7 @@ void test_server_task_params_from_prepared_generation() {
     assert(params.cvec->il_start == 1);
     assert(params.cvec->il_end == 2);
     assert(params.cvec->data.size() == 4);
+    assert(std::fabs(params.cvec->data[0] - 0.125f) < 1e-6f);
     assert(params.stream);
     assert(!params.cache_prompt);
     assert(params.n_keep == 9);

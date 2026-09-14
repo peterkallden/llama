@@ -16,6 +16,9 @@ server_task_cvec_ptr make_server_task_cvec(
     cvec->il_start = overlay.il_start;
     cvec->il_end = overlay.il_end;
     cvec->data = overlay.data;
+    for (float & value : cvec->data) {
+        value *= overlay.scale;
+    }
 
     std::string fingerprint;
     fingerprint.reserve(sizeof(overlay.n_embd) + sizeof(overlay.il_start) +
@@ -24,6 +27,8 @@ server_task_cvec_ptr make_server_task_cvec(
     fingerprint.append(reinterpret_cast<const char *>(&overlay.n_embd), sizeof(overlay.n_embd));
     fingerprint.append(reinterpret_cast<const char *>(&overlay.il_start), sizeof(overlay.il_start));
     fingerprint.append(reinterpret_cast<const char *>(&overlay.il_end), sizeof(overlay.il_end));
+    // The server receives the already scaled cvec. Keep the source scale in
+    // the fingerprint as an additional audit signal.
     fingerprint.append(reinterpret_cast<const char *>(&overlay.scale), sizeof(overlay.scale));
     if (!overlay.data.empty()) {
         fingerprint.append(reinterpret_cast<const char *>(overlay.data.data()),
