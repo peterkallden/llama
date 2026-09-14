@@ -1214,6 +1214,7 @@ static void test_runtime_execution_builder() {
     const std::string fallback_reason = "embedding disabled";
     std::string current_plan_id = options.plan_id;
     const auto tooling = make_runtime_tooling(tools);
+    const auto activation = std::make_shared<const common_flydelta_activation_result>();
     common_agent_runtime_driver_inputs inputs{
         memories,
         plans,
@@ -1231,6 +1232,7 @@ static void test_runtime_execution_builder() {
         fallback_reason,
         tooling,
     };
+    inputs.flydelta_activation = activation;
 
     const auto execution = make_agent_runtime_driver_execution(inputs, inference);
     assert(&execution.memory_store == &memories);
@@ -1258,6 +1260,7 @@ static void test_runtime_execution_builder() {
     assert(execution.memory_scope == common_memory_scope::project);
     assert(execution.memory_enabled);
     assert(&execution.tooling == &tooling);
+    assert(execution.flydelta_activation == activation);
     assert(!execution.tooling.profile_tools_active);
     assert(execution.tooling.tool_view == nullptr);
 }

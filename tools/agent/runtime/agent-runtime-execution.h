@@ -71,6 +71,9 @@ struct common_agent_runtime_driver_inputs {
     std::optional<common_memory_candidate> explicit_memory_candidate;
     bool explicit_memory_confirmed = false;
     common_agent_runtime_execution_control execution_control;
+    // Optional host-prepared activation for callers that construct the
+    // generic driver input path directly instead of using session-host.
+    std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
 };
 
 struct common_agent_runtime_driver_execution {

@@ -561,7 +561,7 @@ common_agent_runtime_policy make_agent_runtime_policy(common_agent_runtime_polic
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
     common_agent_runtime_driver_inputs & inputs,
     common_agent_inference & inference) {
-    return {
+    auto execution = common_agent_runtime_driver_execution{
         inputs.memory_store,
         inputs.plan_store,
         inference,
@@ -589,6 +589,8 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         {},
         inputs.execution_control,
     };
+    execution.flydelta_activation = inputs.flydelta_activation;
+    return execution;
 }
 
 common_agent_request make_agent_runtime_driver_request(
