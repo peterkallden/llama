@@ -42,7 +42,16 @@ bool common_parse_tool_family_selection(
 
 // Small-model preflight contract. This deliberately avoids JSON grammar.
 bool common_parse_tool_family_selection_text(
-    const std::string & text,
-    const std::vector<common_tool_family_index> & families,
-    common_tool_family_selection & selection,
-    std::string & error);
+        const std::string & text,
+        const std::vector<common_tool_family_index> & families,
+        common_tool_family_selection & selection,
+        std::string & error);
+
+// Conservative recovery for a small model that emits an exact registered
+// tool call before the family prefix. This selects only the owning family;
+// arguments are intentionally left for the normal tool schema/validator.
+bool common_infer_tool_family_selection_from_tool_call(
+        const std::string & text,
+        const std::vector<common_tool_family_index> & families,
+        common_tool_family_selection & selection,
+        std::string & error);

@@ -900,6 +900,15 @@ that the profile did not expose. The daemon and CLI both map
 `agent_plan=auto` to the runtime family-routing flag; this keeps their
 separate host configuration paths semantically aligned.
 
+If a small model emits an exact call to an already registered tool before the
+family prefix, the host may conservatively recover the owning family, for
+example `document.tables(resource_id=r1)` becomes a selection of the
+`document` family. This is only a routing hint: the model's arguments are not
+trusted or executed at this stage. The selected family's normal tool names,
+schemas, argument binding, scope checks and plan validation are then applied.
+Unknown names, loose mentions without call syntax, and conflicting text do not
+create a family selection.
+
 An empty tool view is therefore ordinary chat, not an empty structured
 tool-call grammar. Resource metadata is prepared before this preflight, so a
 web attachment submitted as only an opaque URI is rehydrated with its

@@ -14,10 +14,11 @@ int main() {
         {"calculator", "calculate", "{}", "{}"},
         {"memory_search", "search memory", "{}", "{}"},
         {"statistics.describe", "describe", "{}", "{}"},
+        {"document.tables", "list document tables", "{}", "{}"},
     };
 
     const auto families = common_generate_tool_family_index(tools);
-    assert(families.size() == 8);
+    assert(families.size() == 9);
     const auto find_family = [&families](const std::string & id) -> const common_tool_family_index * {
         for (const auto & family : families) if (family.id == id) return &family;
         return nullptr;
@@ -40,6 +41,7 @@ int main() {
     assert(rendered.find("time: Read current time and date information") != std::string::npos);
     assert(rendered.find("math: Perform bounded arithmetic calculations") != std::string::npos);
     assert(rendered.find("memory: Search and manage scoped runtime memory") != std::string::npos);
+    assert(rendered.find("document: Extract structured content from documents") != std::string::npos);
     assert(rendered.find("aggregate") == std::string::npos);
     assert(rendered.find("dataset.list") == std::string::npos);
 
@@ -77,6 +79,12 @@ int main() {
     assert(selection.needs_tools && selection.family_ids.size() == 2 &&
         selection.family_ids[0] == "data" && selection.family_ids[1] == "statistics");
     assert(!common_parse_tool_family_selection_text("TOOLS: unknown", families, selection, error));
+    assert(common_parse_tool_family_selection_text(
+        "document.tables(resource_id=r1)", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids.size() == 1 &&
+        selection.family_ids[0] == "document");
+    assert(!common_parse_tool_family_selection_text(
+        "invented.tool(resource=r1)", families, selection, error));
 
     const auto workflows = common_generate_tool_workflow_index();
     const auto workflow_view = common_render_tool_workflow_index(workflows, {"dataset", "data", "statistics"});

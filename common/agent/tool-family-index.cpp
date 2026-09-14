@@ -47,6 +47,11 @@ std::string family_description_for_id(const std::string & id) {
         : "Operations provided by the " + id + " tool family";
 }
 
+bool is_tool_name_char(char ch) {
+    return std::isalnum(static_cast<unsigned char>(ch)) ||
+            ch == '_' || ch == '.' || ch == '-';
+}
+
 } // namespace
 
 std::vector<common_tool_family_index> common_generate_tool_family_index(
@@ -157,6 +162,9 @@ bool common_parse_tool_family_selection_text(
         return true;
     }
     if (upper.rfind("TOOLS:", 0) != 0) {
+        if (common_infer_tool_family_selection_from_tool_call(text, families, selection, error)) {
+            return true;
+        }
         error = "tool family selection must start with NO_TOOLS or TOOLS:";
         return false;
     }
@@ -191,6 +199,41 @@ bool common_parse_tool_family_selection_text(
     if (selection.family_ids.empty()) {
         error = "tool family selection must include at least one family after TOOLS:";
         return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool common_infer_tool_family_selection_from_tool_call(
+        const std::string & text,
+        const std::vector<common_tool_family_index> & families,
+        common_tool_family_selection & selection,
+        std::string & error) {
+    selection = {};
+    std::set<std::string> selected;
+    for (const auto & family : families) {
+        for (const auto & tool_name : family.tool_names) {
+            size_t position = text.find(tool_name);
+            while (position != std::string::npos) {
+                const bool left_boundary = position == 0 || !is_tool_name_char(text[position - 1]);
+                size_t after = position + tool_name.size();
+                while (after < text.size() && std::isspace(static_cast<unsigned char>(text[after]))) ++after;
+                const bool right_boundary = after < text.size() && text[after] == '(';
+                if (left_boundary && right_boundary) {
+                    selected.insert(family.id);
+                    break;
+                }
+                position = text.find(tool_name, position + 1);
+            }
+        }
+    }
+    if (selected.empty()) {
+        error = "tool family selection contains no exact registered tool call";
+        return false;
+    }
+    selection.needs_tools = true;
+    for (const auto & family : families) {
+        if (selected.count(family.id)) selection.family_ids.push_back(family.id);
     }
     error.clear();
     return true;

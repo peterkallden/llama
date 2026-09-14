@@ -80,6 +80,18 @@ Qwen-backed web smoke with resident tracing. The trace confirms the intended
 sequence: `tool_family_selection` -> `conversation` for `hi there`, with no
 planner grammar and no timeout.
 
+### Exact tool call emitted during family preflight
+
+A small model may copy a tool name from the user request and emit a direct
+call such as `document.tables(resource_id=r1)` during the family preflight.
+That response is not a valid execution request: the preflight has not exposed
+the tool schema and the arguments may be wrong. The host recognizes an exact
+call only when the name belongs to the already policy-filtered tool view, uses
+its owning family as a routing hint, and continues through normal schema
+exposure, binding and planning. The call is never executed from the preflight
+text. Unknown names and non-call mentions remain failures, preserving the
+fail-closed boundary.
+
 ## Dataset attachment binding after compact planning
 
 - Status: Fixed locally; runtime JSON regression coverage passes
