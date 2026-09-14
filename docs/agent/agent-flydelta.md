@@ -252,6 +252,16 @@ candidate, or activate a sideband. TTL, scope ownership, revocation and a
 persistent registry/journal still belong in the next lifecycle integration
 sweep.
 
+The sideband manifest now carries an explicit `namespace_id`, `project_id`,
+optional `expires_at_epoch_ms` and revocation reason. Its in-memory registry
+enforces the lifecycle transitions `candidate -> canary -> active -> retired`
+and supports explicit `revoke(reason)`. Expired entries cannot enter canary or
+be resolved; revoked entries cannot be resolved. Manifest JSON includes these
+fields so a later persistent registry can reuse the same contract. The current
+registry is still process-local: persistence of registry transitions, durable
+scope ownership and a recovery-safe revocation journal are intentionally not
+implemented yet.
+
 ### Model profile and residency: resolve immutable metadata
 
 `common_agent_model_profile` currently describes a base model plus LoRA
