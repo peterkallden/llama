@@ -16,6 +16,7 @@ int main() {
     common_adaptation_evidence evidence;
     evidence.id = "evidence-1";
     evidence.source = candidate.source;
+    evidence.behavior_key = "tool_use/diagnostics/missing-argument";
     evidence.scope.namespace_id = "local";
     evidence.scope.session_id = "session";
     evidence.task_fingerprint = "sha256:task";
@@ -31,6 +32,7 @@ int main() {
         manifest, error));
     CHECK(manifest.observation_id == candidate.transaction_id);
     CHECK(manifest.source == candidate.source);
+    CHECK(manifest.behavior_key == evidence.behavior_key);
     CHECK(manifest.positive_execution_ref == evidence.candidate_ref);
     CHECK(manifest.negative_execution_ref == evidence.baseline_ref);
     CHECK(common_flydelta_capture_manifest_validate(manifest, 1024, error));

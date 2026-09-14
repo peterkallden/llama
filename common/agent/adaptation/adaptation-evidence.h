@@ -46,6 +46,7 @@ struct common_adaptation_evidence {
     std::string id;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     common_agent_scope scope;
+    std::string behavior_key;
     std::string task_fingerprint;
     std::string baseline_ref;
     std::string candidate_ref;

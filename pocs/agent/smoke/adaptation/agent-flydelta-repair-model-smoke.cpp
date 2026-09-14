@@ -245,6 +245,7 @@ int main(int argc, char ** argv) {
     common_flydelta_capture_manifest manifest;
     manifest.id = "flydelta://capture/model-repair-e2e";
     manifest.observation_id = "learning://observation/model-repair-e2e";
+    manifest.behavior_key = "structured_tool_selection";
     manifest.model_profile_fingerprint = profile;
     manifest.template_fingerprint = experiment_fixture.template_fingerprint;
     manifest.positive_execution_ref = "execution:model-repaired";
@@ -277,8 +278,15 @@ int main(int argc, char ** argv) {
         std::cerr << "FlyDelta repair credit validation failed: " << error << '\n';
         return 1;
     }
-    common_flydelta_basis_builder basis({
-        model_n_embd, 4, 0.85f, profile, "layer-input:v1"});
+    common_flydelta_basis_config basis_config;
+    basis_config.dimension = model_n_embd;
+    basis_config.max_directions = 4;
+    basis_config.cluster_similarity = 0.85f;
+    basis_config.source = common_adaptation_evidence_source::tool_repair;
+    basis_config.behavior_key = "structured_tool_selection";
+    basis_config.model_profile_fingerprint = profile;
+    basis_config.capture_layout_revision = "layer-input:v1";
+    common_flydelta_basis_builder basis(basis_config);
     if (!basis.add(deltas.front(), repair_credit, error) || basis.directions().empty()) {
         std::cerr << "FlyDelta repair basis construction failed: " << error << '\n';
         return 1;

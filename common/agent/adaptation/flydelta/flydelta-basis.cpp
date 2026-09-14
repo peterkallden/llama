@@ -32,6 +32,7 @@ bool common_flydelta_behavior_delta_validate(
         std::string & error) {
     error.clear();
     if (delta.schema_version != 1 || !nonempty_bounded(delta.id) ||
+            !nonempty_bounded(delta.behavior_key) ||
             !nonempty_bounded(delta.capture_manifest_id) ||
             !nonempty_bounded(delta.host_evidence_ref) || expected_dimension == 0 ||
             !nonempty_bounded(delta.model_profile_fingerprint) ||
@@ -109,6 +110,8 @@ bool common_flydelta_behavior_deltas_from_captures(
         common_flydelta_behavior_delta delta;
         delta.id = manifest.id + "/behavior-delta/layer-" +
             std::to_string(failed.layer_indices[layer]);
+        delta.source = manifest.source;
+        delta.behavior_key = manifest.behavior_key;
         delta.capture_manifest_id = manifest.id;
         delta.host_evidence_ref = host_evidence_ref;
         delta.model_profile_fingerprint = manifest.model_profile_fingerprint;
@@ -136,6 +139,7 @@ bool common_flydelta_basis_config_validate(
     if (config.dimension == 0 || config.dimension > (1U << 20) || config.max_directions == 0 ||
             config.max_directions > 256 || !std::isfinite(config.cluster_similarity) ||
             config.cluster_similarity < 0.0f || config.cluster_similarity > 1.0f ||
+            !nonempty_bounded(config.behavior_key) ||
             !nonempty_bounded(config.model_profile_fingerprint) ||
             !nonempty_bounded(config.capture_layout_revision)) {
         error = "FlyDelta basis configuration is invalid";
@@ -158,7 +162,8 @@ bool common_flydelta_basis_builder::add(
             !common_flydelta_intervention_credit_validate(credit, error)) {
         return false;
     }
-    if (delta.model_profile_fingerprint != config_.model_profile_fingerprint ||
+    if (delta.source != config_.source || delta.behavior_key != config_.behavior_key ||
+            delta.model_profile_fingerprint != config_.model_profile_fingerprint ||
             delta.capture_layout_revision != config_.capture_layout_revision) {
         error = "FlyDelta behavior delta is incompatible with basis configuration";
         return false;

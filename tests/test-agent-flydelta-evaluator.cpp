@@ -55,6 +55,8 @@ static common_flydelta_counterfactual_report report(const std::string & id) {
 static common_flydelta_behavior_delta behavior_delta() {
     common_flydelta_behavior_delta value;
     value.id = "flydelta://behavior/evaluator";
+    value.source = common_adaptation_evidence_source::tool_repair;
+    value.behavior_key = "tool_use/diagnostics/missing-argument";
     value.capture_manifest_id = "flydelta://capture/evaluator";
     value.host_evidence_ref = "evidence://repair/evaluator";
     value.model_profile_fingerprint = "sha256:model";
@@ -87,6 +89,8 @@ int main() {
     common_flydelta_evaluator_config config;
     config.basis.dimension = 3;
     config.basis.max_directions = 4;
+    config.basis.source = common_adaptation_evidence_source::tool_repair;
+    config.basis.behavior_key = "tool_use/diagnostics/missing-argument";
     config.basis.model_profile_fingerprint = "sha256:model";
     config.basis.capture_layout_revision = "layout:v1";
     config.memory = {8, 2, 1.0f};

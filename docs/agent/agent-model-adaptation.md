@@ -294,8 +294,12 @@ FlyDelta uses this same opt-in boundary. Set
 `flydelta_capture_layout_revision`. The collector queues only tool-repair
 matches that already contain both failure/recovery evidence references. It
 does not turn reflection, research, user correction or an ordinary successful
-turn into a training pair. A later capture/evaluation worker must create the
-immutable manifest and decide whether the candidate is useful.
+turn into a training pair. Those sources can still enter FlyDelta through an
+explicit host-verified relation. Every relation must carry a stable
+`behavior_key`; it is copied through the capture manifest and behavior delta,
+and the basis configuration matches both source and behavior key. A later
+capture/evaluation worker must create the immutable manifest and decide
+whether the candidate is useful.
 
 ## End-to-end process and provider convergence
 

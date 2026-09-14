@@ -98,6 +98,7 @@ int main() {
     common_flydelta_behavior_transition transition;
     CHECK(common_flydelta_tool_repair_transition_from_transactions(
         failed, repaired, "sha256:inspect-selected-dataset",
+        "tool_use/diagnostics/missing-argument",
         "execution:wrong-tool", "execution:repaired-tool", "verifier:tool-contract-v1",
         transition, error));
 
@@ -139,6 +140,7 @@ int main() {
     common_flydelta_capture_manifest manifest;
     manifest.id = "flydelta://capture/tool-repair-1";
     manifest.observation_id = repaired.id;
+    manifest.behavior_key = "tool_use/diagnostics/missing-argument";
     manifest.model_profile_fingerprint = fixture().model_profile_fingerprint;
     manifest.template_fingerprint = fixture().template_fingerprint;
     manifest.positive_execution_ref = "execution:repaired-tool";
@@ -163,8 +165,15 @@ int main() {
         manifest, failed_capture, repaired_capture, "evidence:repaired-tool",
         64 * 1024, 64 * 1024, behavior_deltas, error));
     CHECK(behavior_deltas.size() == 1 && behavior_deltas.front().layer_index == 2);
-    common_flydelta_basis_builder basis({
-        4, 4, 0.85f, fixture().model_profile_fingerprint, "layout:cvec-v1"});
+    common_flydelta_basis_config basis_config;
+    basis_config.dimension = 4;
+    basis_config.max_directions = 4;
+    basis_config.cluster_similarity = 0.85f;
+    basis_config.source = common_adaptation_evidence_source::tool_repair;
+    basis_config.behavior_key = "tool_use/diagnostics/missing-argument";
+    basis_config.model_profile_fingerprint = fixture().model_profile_fingerprint;
+    basis_config.capture_layout_revision = "layout:cvec-v1";
+    common_flydelta_basis_builder basis(basis_config);
     CHECK(basis.add(behavior_deltas.front(), credit, error));
     CHECK(basis.directions().size() == 1);
 

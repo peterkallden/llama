@@ -19,6 +19,7 @@ int main() {
     common_flydelta_capture_manifest manifest;
     manifest.id = "flydelta://capture/repair-1";
     manifest.observation_id = "transaction-1";
+    manifest.behavior_key = "tool_use/diagnostics/missing-argument";
     manifest.model_profile_fingerprint = "sha256:model";
     manifest.template_fingerprint = "sha256:template";
     manifest.positive_execution_ref = "execution:repaired";

@@ -15,6 +15,7 @@ struct common_flydelta_behavior_transition {
     int schema_version = 1;
     std::string id;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    std::string behavior_key;
     common_agent_scope scope;
     std::string task_fingerprint;
     std::string baseline_transaction_id;
@@ -32,6 +33,7 @@ bool common_flydelta_tool_repair_transition_from_transactions(
         const common_learning_transaction & failed,
         const common_learning_transaction & repaired,
         const std::string & task_fingerprint,
+        const std::string & behavior_key,
         const std::string & failed_execution_ref,
         const std::string & repaired_execution_ref,
         const std::string & host_verifier_ref,

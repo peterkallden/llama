@@ -19,6 +19,7 @@ struct common_flydelta_capture_manifest {
     std::string id;
     std::string observation_id;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    std::string behavior_key;
     std::string model_profile_fingerprint;
     std::string template_fingerprint;
     std::string positive_execution_ref;

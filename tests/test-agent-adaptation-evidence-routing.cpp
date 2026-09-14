@@ -64,6 +64,7 @@ int main() {
     common_adaptation_evidence_relation generic_relation;
     generic_relation.id = "adaptation://evidence/planning-1";
     generic_relation.source = common_adaptation_evidence_source::planning_revision;
+    generic_relation.behavior_key = "planning/plan-revision";
     generic_relation.task_fingerprint = "sha256:planning-task";
     generic_relation.baseline_ref = "execution:old-plan";
     generic_relation.candidate_ref = "execution:new-plan";
@@ -76,6 +77,7 @@ int main() {
     common_adaptation_evidence_relation relation;
     relation.id = "adaptation://evidence/tool-repair-1";
     relation.source = common_adaptation_evidence_source::tool_repair;
+    relation.behavior_key = "tool_use/diagnostics/missing-argument";
     relation.task_fingerprint = "sha256:task";
     relation.baseline_ref = "execution:failed";
     relation.candidate_ref = "execution:repaired";

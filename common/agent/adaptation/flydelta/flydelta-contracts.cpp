@@ -77,6 +77,7 @@ bool common_flydelta_capture_manifest_validate(
     error.clear();
     if (manifest.schema_version != 1 || !nonempty_bounded(manifest.id) ||
             !nonempty_bounded(manifest.observation_id) ||
+            !nonempty_bounded(manifest.behavior_key) ||
             !nonempty_bounded(manifest.model_profile_fingerprint) ||
             !nonempty_bounded(manifest.template_fingerprint) ||
             !nonempty_bounded(manifest.positive_execution_ref) ||
@@ -104,6 +105,7 @@ std::string common_flydelta_capture_manifest_to_json(
         {"id", manifest.id},
         {"observation_id", manifest.observation_id},
         {"source", common_adaptation_evidence_source_name(manifest.source)},
+        {"behavior_key", manifest.behavior_key},
         {"model_profile_fingerprint", manifest.model_profile_fingerprint},
         {"template_fingerprint", manifest.template_fingerprint},
         {"positive_execution_ref", manifest.positive_execution_ref},
@@ -134,6 +136,7 @@ bool common_flydelta_capture_manifest_from_json(
             return false;
         }
         manifest.source = *source;
+        manifest.behavior_key = value.value("behavior_key", "");
         manifest.model_profile_fingerprint = value.value("model_profile_fingerprint", "");
         manifest.template_fingerprint = value.value("template_fingerprint", "");
         manifest.positive_execution_ref = value.value("positive_execution_ref", "");

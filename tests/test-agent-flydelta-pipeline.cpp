@@ -10,6 +10,7 @@ static common_adaptation_evidence make_evidence() {
     common_adaptation_evidence value;
     value.id = "evidence://repair/pipeline-1";
     value.source = common_adaptation_evidence_source::tool_repair;
+    value.behavior_key = "tool_use/diagnostics/missing-argument";
     value.scope.namespace_id = "local";
     value.scope.project_id = "project";
     value.scope.session_id = "session";

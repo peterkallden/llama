@@ -87,6 +87,7 @@ bool common_adaptation_evidence_validate(
     error.clear();
     if (evidence.schema_version != 1 || !bounded_nonempty(evidence.id) ||
             evidence.scope.namespace_id.empty() || evidence.scope.session_id.empty() ||
+            !bounded_nonempty(evidence.behavior_key) ||
             !bounded_nonempty(evidence.task_fingerprint) ||
             !bounded_nonempty(evidence.baseline_ref) ||
             !bounded_nonempty(evidence.candidate_ref) ||
@@ -120,6 +121,7 @@ std::string common_adaptation_evidence_to_json(
             {"project_id", evidence.scope.project_id},
             {"turn_id", evidence.scope.turn_id},
         }},
+        {"behavior_key", evidence.behavior_key},
         {"task_fingerprint", evidence.task_fingerprint},
         {"baseline_ref", evidence.baseline_ref},
         {"candidate_ref", evidence.candidate_ref},
@@ -159,6 +161,7 @@ bool common_adaptation_evidence_from_json(
         evidence.scope.session_id = scope.value("session_id", "");
         evidence.scope.project_id = scope.value("project_id", "");
         evidence.scope.turn_id = scope.value("turn_id", "");
+        evidence.behavior_key = value.value("behavior_key", "");
         evidence.task_fingerprint = value.value("task_fingerprint", "");
         evidence.baseline_ref = value.value("baseline_ref", "");
         evidence.candidate_ref = value.value("candidate_ref", "");

@@ -44,7 +44,8 @@ bool common_flydelta_behavior_transition_validate(
         std::string & error) {
     error.clear();
     if (transition.schema_version != 1 || !nonempty_bounded(transition.id) ||
-            transition.scope.namespace_id.empty() || !nonempty_bounded(transition.task_fingerprint) ||
+            !nonempty_bounded(transition.behavior_key) || transition.scope.namespace_id.empty() ||
+            !nonempty_bounded(transition.task_fingerprint) ||
             !nonempty_bounded(transition.baseline_transaction_id) ||
             !nonempty_bounded(transition.candidate_transaction_id) ||
             transition.baseline_transaction_id == transition.candidate_transaction_id ||
@@ -61,6 +62,7 @@ bool common_flydelta_tool_repair_transition_from_transactions(
         const common_learning_transaction & failed,
         const common_learning_transaction & repaired,
         const std::string & task_fingerprint,
+        const std::string & behavior_key,
         const std::string & failed_execution_ref,
         const std::string & repaired_execution_ref,
         const std::string & host_verifier_ref,
@@ -74,6 +76,7 @@ bool common_flydelta_tool_repair_transition_from_transactions(
     if (!verified_model_behavior(failed) || !verified_model_behavior(repaired) ||
             !has_signal(failed.observation, common_learning_signal_type::tool_failure) ||
             !has_signal(repaired.observation, common_learning_signal_type::successful_recovery) ||
+            !nonempty_bounded(task_fingerprint) || !nonempty_bounded(behavior_key) ||
             failed.observation.scope.namespace_id != repaired.observation.scope.namespace_id ||
             failed.observation.scope.project_id != repaired.observation.scope.project_id ||
             failed.observation.scope.session_id != repaired.observation.scope.session_id ||
@@ -84,6 +87,7 @@ bool common_flydelta_tool_repair_transition_from_transactions(
     transition = {};
     transition.id = "learning://flydelta/tool-repair/" + failed.id + "/" + repaired.id;
     transition.source = common_adaptation_evidence_source::tool_repair;
+    transition.behavior_key = behavior_key;
     transition.scope = failed.observation.scope;
     transition.task_fingerprint = task_fingerprint;
     transition.baseline_transaction_id = failed.id;
@@ -115,6 +119,7 @@ bool common_flydelta_behavior_transition_from_evidence(
     transition = {};
     transition.id = evidence.id + "/flydelta/behavior";
     transition.source = evidence.source;
+    transition.behavior_key = evidence.behavior_key;
     transition.scope = evidence.scope;
     transition.task_fingerprint = evidence.task_fingerprint;
     transition.baseline_transaction_id = baseline_transaction_id;
@@ -222,6 +227,7 @@ bool common_flydelta_experiment_seed_validate(
     evidence.id = seed.evidence_ref;
     evidence.source = seed.source;
     evidence.scope = seed.scope;
+    evidence.behavior_key = seed.behavior_key;
     evidence.task_fingerprint = seed.task_fingerprint;
     evidence.baseline_ref = seed.baseline_ref;
     evidence.candidate_ref = seed.candidate_ref;

@@ -6,6 +6,7 @@ static common_adaptation_evidence make_evidence() {
     common_adaptation_evidence value;
     value.id = "adaptation://evidence/1";
     value.source = common_adaptation_evidence_source::reflection_alternative;
+    value.behavior_key = "reflection/alternative-selection";
     value.scope.namespace_id = "local";
     value.scope.session_id = "session-1";
     value.scope.project_id = "project-1";
@@ -28,6 +29,7 @@ int main() {
     common_adaptation_evidence decoded;
     assert(common_adaptation_evidence_from_json(encoded, decoded, error));
     assert(decoded.source == common_adaptation_evidence_source::reflection_alternative);
+    assert(decoded.behavior_key == value.behavior_key);
     assert(common_adaptation_evidence_source_for_signal(
         common_learning_signal_type::research_verification).value() ==
         common_adaptation_evidence_source::research_alternative);

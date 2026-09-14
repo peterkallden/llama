@@ -99,10 +99,12 @@ int main() {
 
     common_adaptation_evidence_relation reflection_relation;
     reflection_relation.source = common_adaptation_evidence_source::reflection_alternative;
+    reflection_relation.behavior_key = "reflection/alternative-selection";
     reflection_relation.host_verified = true;
     common_adaptation_evidence reflection_evidence;
     reflection_evidence.id = "evidence:reflection-relation";
     reflection_evidence.source = reflection_relation.source;
+    reflection_evidence.behavior_key = reflection_relation.behavior_key;
     reflection_evidence.scope.namespace_id = "local";
     reflection_evidence.scope.session_id = "session";
     reflection_evidence.task_fingerprint = "sha256:task";

@@ -23,6 +23,7 @@ struct common_adaptation_evidence_source_match {
 struct common_adaptation_evidence_relation {
     std::string id;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    std::string behavior_key;
     std::string task_fingerprint;
     std::string baseline_ref;
     std::string candidate_ref;

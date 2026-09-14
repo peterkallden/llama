@@ -15,6 +15,8 @@
 struct common_flydelta_behavior_delta {
     int schema_version = 1;
     std::string id;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    std::string behavior_key;
     std::string capture_manifest_id;
     std::string host_evidence_ref;
     std::string model_profile_fingerprint;
@@ -46,6 +48,8 @@ struct common_flydelta_basis_config {
     size_t dimension = 0;
     size_t max_directions = 16;
     float cluster_similarity = 0.85f;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    std::string behavior_key;
     std::string model_profile_fingerprint;
     std::string capture_layout_revision;
 };
