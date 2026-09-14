@@ -4,7 +4,8 @@
 
 **Status: V0 host seam, bounded CPU capture, two-pass experiment, explicit CLI
 activation and request-scoped server-context activation are implemented;
-automatic learning and activation are not implemented.** FlyDelta is not enabled by default and is not a replacement for
+the host evaluator, split validation and explicit sideband lifecycle are now
+implemented, while automatic runtime learning and activation are not.** FlyDelta is not enabled by default and is not a replacement for
 the current model-adaptation path. It must not be activated until it has
 passed explicit evaluation and promotion gates.
 
@@ -275,6 +276,13 @@ verification, the host supplies the basis coefficients, and a queue/evaluator
 must still decide whether the resulting candidate can be persisted or
 promoted.
 
+`common_flydelta_training_corpus_validate()` is the explicit corpus boundary
+for train, validation and holdout data. It requires a non-empty train split,
+one basis revision, the expected split tag in each bucket, unique example IDs
+and unique evidence references under a bounded total. The evaluator accepts
+only the train references for a `delta_memory` job; validation and holdout
+remain evaluation inputs and cannot be consumed accidentally by the learner.
+
 The typed job can be placed in the dedicated bounded FlyDelta filesystem
 queue. Its lifecycle is:
 
@@ -298,11 +306,14 @@ artifact or activate a sideband.
 
 This separation is intentional: the existing
 `llama-agent-adaptation-worker` understands corpus-backed SFT/QLoRA jobs and
-must not infer FlyDelta semantics from a different JSON shape. A future
-FlyDelta evaluator/worker may consume this queue and resolve the referenced
-capture, delta and training stores under the same host-owned scope and
-promotion rules. Until then, enqueue/claim is an orchestration seam only and
-there is no automatic runtime learning loop.
+must not infer FlyDelta semantics from a different JSON shape.
+`common_flydelta_evaluate_job()` now provides the one-job evaluator seam: it
+resolves only typed host callbacks for counterfactual reports, repair deltas or
+train examples, validates the returned contracts, and returns typed results.
+It never reads paths, sees raw prompt/tool data, performs model-side
+verification or activates an artifact. The queue worker remains the lifecycle
+runner; wiring a production callback and durable result store is still a
+separate integration step.
 
 The contract tests cover scope-preserving job JSON round-trips and the queue
 `enqueue -> claim -> complete` flow, including duplicate and byte-bound
@@ -367,11 +378,43 @@ host verifier
   -> separate activation decision
 ```
 
-The model-free pipeline test covers this sequence, including a mixed outcome
-set and the final canary transition. It is a contract test, not evidence that
+`common_flydelta_sideband_controller` makes the last lifecycle transitions
+explicit: promotion can only reach `canary`, activation requires a second
+explicit host approval, and retire/revoke are separate operations. It is a
+thin orchestration layer over the existing promotion policy and metadata-only
+registry; it does not discover a sideband or change the live model by itself.
+
+The model-free pipeline, evaluator, corpus and lifecycle tests cover this
+sequence, including a mixed outcome set, split-leakage rejection and the
+final canary/active transitions. They are contract tests, not evidence that
 Qwen has learned a useful correction. Automatic observer-to-queue wiring,
 real capture/delta materialization from a model repair, and an actual
 baseline-fails/candidate-helps Qwen case remain follow-up work.
+
+### Model-facing tool repair and dataflow contract
+
+The small-model test surface must exercise what the model actually receives,
+not only internal learning records. The compact preflight renders family
+descriptions first (`dataset`, `data`, `openapi`, and others); exact tool names
+and schemas are exposed only after the host accepts a family selection. The
+model-facing projection removes host controls such as scan limits,
+materialization, backend and timeout fields while retaining typed dataset,
+resource and continuation references.
+
+The canonical compact dataset chain is:
+
+```text
+dataset.list() as candidates
+  -> dataset.inspect(dataset=$candidates.datasets[0])
+  -> host resolves $from_step + $json_pointer
+```
+
+An unknown family, unknown alias, self-reference or malformed indexed
+reference is a repairable host contract failure; it must not be accepted as
+learning evidence. The model-facing contract test covers family selection,
+OpenAPI and dataset projections, this list/inspect chain and these malformed
+repair cases. Native, MCP and OpenAPI providers share the same host repair and
+verification boundary; only provider provenance differs.
 
 ### Promotion: parallel sideband registry
 

@@ -407,6 +407,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-artifact-store.cpp
         test-agent-flydelta-evaluator.cpp
         test-agent-flydelta-sideband-controller.cpp
+        test-agent-model-facing-tool-chain.cpp
         test-memory-policy.cpp
         test-plan-context.cpp
         test-plan-json.cpp
