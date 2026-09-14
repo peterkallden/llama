@@ -39,6 +39,7 @@ static std::vector<std::string> sorted_transaction_ids(const common_training_can
 static std::string candidate_fingerprint(const common_training_candidate & candidate) {
     std::ostringstream value;
     value << candidate.id << '\n';
+    value << common_adaptation_evidence_source_name(candidate.source) << '\n';
     for (const auto & transaction_id : sorted_transaction_ids(candidate)) value << transaction_id << '\n';
     value << static_cast<int>(candidate.cause) << '\n'
           << candidate.hypothesis << '\n'
@@ -63,10 +64,13 @@ static bool contains(const std::set<std::string> & values, const std::string & v
 }
 
 static json view_json(const common_learning_corpus_view & view) {
+    std::vector<std::string> sources;
+    for (const auto source : view.sources) sources.emplace_back(common_adaptation_evidence_source_name(source));
     return {
         {"learning_domain", view.learning_domain},
         {"tool_family", view.tool_family},
         {"provider_kinds", std::vector<std::string>(view.provider_kinds.begin(), view.provider_kinds.end())},
+        {"sources", sources},
     };
 }
 
@@ -76,6 +80,7 @@ bool common_learning_corpus_view_matches(
     if (!view.learning_domain.empty() && candidate.learning_domain != view.learning_domain) return false;
     if (!view.tool_family.empty() && candidate.tool_family != view.tool_family) return false;
     if (!view.provider_kinds.empty() && !contains(view.provider_kinds, candidate.provider_kind)) return false;
+    if (!view.sources.empty() && view.sources.find(candidate.source) == view.sources.end()) return false;
     return true;
 }
 
@@ -178,6 +183,7 @@ bool common_learning_build_corpus(
         ++split_counts[split];
         const auto line = json{
             {"candidate_id", candidate->id},
+            {"source", common_adaptation_evidence_source_name(candidate->source)},
             {"split", split},
             {"replay", contains(replay, candidate->id)},
             {"transaction_ids", candidate_transaction_ids},

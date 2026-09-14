@@ -16,6 +16,7 @@ struct common_learning_corpus_view {
     std::string learning_domain;
     std::string tool_family;
     std::set<std::string> provider_kinds;
+    std::set<common_adaptation_evidence_source> sources;
 };
 
 bool common_learning_corpus_view_matches(

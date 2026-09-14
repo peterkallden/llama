@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/agent-scope.h"
+#include "agent/adaptation/adaptation-evidence.h"
 
 #include <cstddef>
 #include <string>
@@ -18,6 +19,7 @@ struct common_learning_case {
     int schema_version = 1;
     std::string id;
     std::string observation_id;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     common_agent_scope scope;
     std::vector<std::string> evidence_ids;
     std::string schema_fingerprint;

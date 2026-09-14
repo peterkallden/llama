@@ -30,6 +30,7 @@ const char * common_training_candidate_status_name(common_training_candidate_sta
 struct common_training_candidate {
     int schema_version = 1;
     std::string id;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     std::vector<std::string> transaction_ids;
     common_learning_cause cause = common_learning_cause::unknown;
     std::string hypothesis;

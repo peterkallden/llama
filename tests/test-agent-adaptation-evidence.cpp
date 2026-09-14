@@ -28,6 +28,9 @@ int main() {
     common_adaptation_evidence decoded;
     assert(common_adaptation_evidence_from_json(encoded, decoded, error));
     assert(decoded.source == common_adaptation_evidence_source::reflection_alternative);
+    assert(common_adaptation_evidence_source_for_signal(
+        common_learning_signal_type::research_verification).value() ==
+        common_adaptation_evidence_source::research_alternative);
     assert(decoded.cause == common_learning_cause::model_behavior);
     assert(decoded.transaction_ids.size() == 2);
 

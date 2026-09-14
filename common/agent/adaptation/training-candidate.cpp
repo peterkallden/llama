@@ -106,6 +106,7 @@ bool common_training_candidate_from_approved_case(
 
     candidate = {};
     candidate.id = "learning://candidate/" + learning_case.id;
+    candidate.source = learning_case.source;
     candidate.transaction_ids = {transaction.id};
     candidate.cause = transaction.observation.cause;
     candidate.hypothesis = promotion.hypothesis;

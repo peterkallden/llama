@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 #include <nlohmann/json.hpp>
 
@@ -193,6 +194,7 @@ bool common_flydelta_candidate_from_transactions(
     candidate = {};
     candidate.id = "learning://flydelta/candidate/" + transactions.front().id;
     candidate.scope = first.scope;
+    std::optional<common_adaptation_evidence_source> candidate_source;
     candidate.cause = first.cause;
     candidate.verification = first.verification;
     candidate.status = common_flydelta_candidate_status::eligible;
@@ -218,6 +220,15 @@ bool common_flydelta_candidate_from_transactions(
             candidate.verification = observation.verification;
         }
         candidate.transaction_ids.push_back(transaction.id);
+        for (const auto & signal : observation.signals) {
+            const auto source = common_adaptation_evidence_source_for_signal(signal.type);
+            if (!source) continue;
+            if (candidate_source && *candidate_source != *source) {
+                error = "FlyDelta candidate mixes incompatible adaptation sources";
+                return false;
+            }
+            candidate_source = source;
+        }
         ++candidate.observed_occurrences;
         if (!observation.recovery_of_signal_id.empty() || std::any_of(
                     observation.signals.begin(), observation.signals.end(), [](const auto & signal) {
@@ -233,6 +244,7 @@ bool common_flydelta_candidate_from_transactions(
     }
     candidate.confidence = std::min(1.0f, static_cast<float>(candidate.verified_recoveries) /
         static_cast<float>(std::max<size_t>(1, candidate.observed_occurrences)));
+    if (candidate_source) candidate.source = *candidate_source;
     if (!common_flydelta_candidate_validate(candidate, policy, error)) return false;
     return true;
 }

@@ -79,6 +79,10 @@ int main() {
         scoped_candidate("learning://candidate/openapi", "openapi tool", "tool_use", "diagnostics", "openapi"),
         scoped_candidate("learning://candidate/research", "research", "research", "web", "mcp"),
     };
+    shared.back().source = common_adaptation_evidence_source::research_alternative;
+    shared[0].source = common_adaptation_evidence_source::tool_repair;
+    shared[1].source = common_adaptation_evidence_source::tool_repair;
+    shared[2].source = common_adaptation_evidence_source::tool_repair;
     common_learning_corpus_policy shared_policy;
     shared_policy.view.learning_domain = "tool_use";
     shared_policy.view.tool_family = "diagnostics";
@@ -96,6 +100,14 @@ int main() {
             "MCP provenance is missing from shared corpus row");
     require(shared_revision.jsonl.find("\"provider_kind\":\"openapi\"") != std::string::npos,
             "OpenAPI provenance is missing from shared corpus row");
+    common_learning_corpus_policy source_policy;
+    source_policy.view.sources = {common_adaptation_evidence_source::tool_repair};
+    common_learning_corpus_revision source_revision;
+    require(common_learning_build_corpus(shared, source_policy, source_revision, error),
+            "source view build failed");
+    require(source_revision.candidate_ids.size() == 3 &&
+            source_revision.jsonl.find("research_alternative") == std::string::npos,
+            "source view did not isolate tool-repair candidates");
     common_learning_corpus_policy research_policy;
     research_policy.view.learning_domain = "research";
     common_learning_corpus_revision research_revision;

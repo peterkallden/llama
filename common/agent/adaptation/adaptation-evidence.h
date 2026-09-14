@@ -4,6 +4,7 @@
 #include "agent/adaptation/learning-observation.h"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,13 @@ enum class common_adaptation_evidence_source {
 
 const char * common_adaptation_evidence_source_name(
         common_adaptation_evidence_source source);
+
+// Maps a host-owned learning signal to its canonical adaptation source. A
+// missing value means that the signal is not sufficient to identify a source
+// on its own; callers must not guess from transport names or free text.
+std::optional<common_adaptation_evidence_source>
+common_adaptation_evidence_source_for_signal(
+        common_learning_signal_type type);
 
 // A derived, reference-only relation over existing learning transactions and
 // host evidence.  It is deliberately not another store and contains no raw

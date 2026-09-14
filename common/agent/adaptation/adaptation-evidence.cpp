@@ -55,6 +55,28 @@ const char * common_adaptation_evidence_source_name(
     return "tool_repair";
 }
 
+std::optional<common_adaptation_evidence_source>
+common_adaptation_evidence_source_for_signal(
+        common_learning_signal_type type) {
+    switch (type) {
+        case common_learning_signal_type::tool_failure:
+        case common_learning_signal_type::successful_recovery:
+            return common_adaptation_evidence_source::tool_repair;
+        case common_learning_signal_type::reflection_hint:
+            return common_adaptation_evidence_source::reflection_alternative;
+        case common_learning_signal_type::user_correction:
+            return common_adaptation_evidence_source::user_correction;
+        case common_learning_signal_type::planning_revision:
+            return common_adaptation_evidence_source::planning_revision;
+        case common_learning_signal_type::research_verification:
+            return common_adaptation_evidence_source::research_alternative;
+        case common_learning_signal_type::procedure_verification:
+        case common_learning_signal_type::blueprint_verification:
+            return common_adaptation_evidence_source::procedure_blueprint;
+    }
+    return std::nullopt;
+}
+
 bool common_adaptation_evidence_validate(
         const common_adaptation_evidence & evidence,
         size_t max_transactions,

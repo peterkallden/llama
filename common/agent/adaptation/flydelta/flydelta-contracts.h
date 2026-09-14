@@ -72,6 +72,7 @@ bool common_flydelta_static_overlay_validate(
 struct common_flydelta_candidate {
     int schema_version = 1;
     std::string id;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     common_agent_scope scope;
     std::vector<std::string> transaction_ids;
     std::vector<std::string> capture_manifest_ids;

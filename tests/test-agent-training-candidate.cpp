@@ -73,11 +73,13 @@ int main() {
     learning_case.learning_domain = "tool_use";
     learning_case.tool_family = "diagnostics";
     learning_case.provider_kind = "openapi";
+    learning_case.source = common_adaptation_evidence_source::tool_repair;
     common_training_candidate promoted;
     assert(common_training_candidate_from_approved_case(
         learning_case, transaction,
         {"stable diagnostics binding behavior", 3, 2, 0, 0.95f}, promoted, error));
     assert(promoted.status == common_training_candidate_status::approved);
+    assert(promoted.source == common_adaptation_evidence_source::tool_repair);
     assert(promoted.tool_family == "diagnostics" && promoted.provider_kind == "openapi");
     assert(common_training_candidate_qualifies(promoted, {}, error));
 

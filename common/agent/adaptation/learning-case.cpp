@@ -60,6 +60,7 @@ std::string common_learning_case_to_json(const common_learning_case & value) {
     return json{
         {"schema_version", value.schema_version}, {"id", value.id},
         {"observation_id", value.observation_id},
+        {"source", common_adaptation_evidence_source_name(value.source)},
         {"scope", {{"namespace_id", value.scope.namespace_id}, {"session_id", value.scope.session_id},
                     {"project_id", value.scope.project_id}, {"turn_id", value.scope.turn_id}}},
         {"evidence_ids", value.evidence_ids}, {"schema_fingerprint", value.schema_fingerprint},
