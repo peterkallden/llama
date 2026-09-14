@@ -109,6 +109,15 @@ given a FlyDelta job or be taught to guess FlyDelta semantics. The two paths
 share evidence, lifecycle and host-promotion principles, while keeping their
 artifacts and evaluators separate.
 
+The distinction also applies to workers. The existing
+`llama-agent-adaptation-worker` consumes corpus-backed training jobs and
+produces trainer artifacts. It must not consume a FlyDelta envelope. FlyDelta
+currently has only a queue lifecycle worker with a typed evaluator callback;
+that worker validates job identity and bounded outcome reports but does not
+train, promote or activate anything by itself. A future controller may
+schedule both workers, but it must retain separate job schemas, artifact
+registries and promotion gates.
+
 The lifecycle stores share one persistence contract: the `payload_json` column
 contains the record payload, not the serialized lifecycle envelope. JSONL,
 SQLite and Cozo must therefore produce the same idempotent read-back; the

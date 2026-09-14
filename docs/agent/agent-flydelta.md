@@ -309,6 +309,70 @@ The contract tests cover scope-preserving job JSON round-trips and the queue
 rejection. They do not claim that a queue entry has produced a useful model
 intervention.
 
+#### Host collection, worker execution and promotion seam
+
+The collection bridge is intentionally a host operation, not a direct hook
+from the runtime observer. The observer can report a learning signal and
+transaction IDs, but it cannot invent the immutable baseline, repaired
+candidate, verifier, capture or delta references required by an experiment.
+The host therefore fills a
+`common_flydelta_experiment_collection_request` only after verification has
+produced those references. With `enabled: false` the bridge is a no-op. With
+`enabled: true` it validates the evidence, scope, fingerprints, split and
+reference kind, builds the typed job and enqueues it. A repeated
+evidence/kind request returns `already_present`; it does not create another
+job. This is the same conservative idempotency rule as the learning stores.
+
+The bridge accepts only reference IDs and bounded configuration. It must never
+place prompts, raw responses, tool payloads, credentials or activation
+tensors in the queue. A job may be `basis`, `counterfactual` or
+`delta_memory`; the reference fields must match that kind and a job may not
+mix incompatible scopes or model/layout identities.
+
+`common_flydelta_experiment_worker_run_once()` owns one queue transition:
+
+```text
+pending -> running -> succeeded | failed | cancelled
+```
+
+It claims at most one job. The callback is host/evaluator-owned: it resolves
+the already-authorized references, performs bounded inference/evaluation or
+learning work, and returns typed reports. The worker validates the result and
+requires every counterfactual report to carry the claimed job ID. Callback
+diagnostics are reduced to a safe summary in queue state. The current worker
+does not resolve arbitrary paths, run a trainer by inference, or activate a
+sideband; a separate operator-controlled evaluator can be added later.
+
+For counterfactual reports, promotion classification is deliberately four
+valued: `helped`, `neutral`, `harmed` and `unknown` (described as HELPED,
+NEUTRAL, HARMED and UNKNOWN). A passing overlay without
+a comparable passing/failing baseline is not `HELPED`. The promotion helper
+can produce an `eligible` summary only when the bounded policy thresholds and
+host evaluation report pass. Even then, explicit host approval is required;
+approval admits and stages the manifest as `canary`, while activation remains
+a separate reversible registry operation. No queue completion or successful
+worker callback mutates the live model or makes an overlay active.
+
+The complete current contract is therefore:
+
+```text
+host verifier
+  -> collection request (references only)
+  -> idempotent FlyDelta queue
+  -> one-job worker/evaluator callback
+  -> typed outcome reports
+  -> eligible summary + passed evaluation
+  -> explicit host approval
+  -> canary
+  -> separate activation decision
+```
+
+The model-free pipeline test covers this sequence, including a mixed outcome
+set and the final canary transition. It is a contract test, not evidence that
+Qwen has learned a useful correction. Automatic observer-to-queue wiring,
+real capture/delta materialization from a model repair, and an actual
+baseline-fails/candidate-helps Qwen case remain follow-up work.
+
 ### Promotion: parallel sideband registry
 
 `common_learning_adapter_registry` is LoRA-specific. FlyDelta should use a
