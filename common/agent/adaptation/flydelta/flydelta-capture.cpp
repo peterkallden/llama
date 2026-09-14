@@ -46,10 +46,6 @@ bool common_flydelta_capture_candidate_collector::observe(
         std::string & error) {
     error.clear();
     if (!match.candidate_ready) return true;
-    if (max_candidates == 0 || queue.size() >= max_candidates) {
-        error = "FlyDelta capture candidate queue is full";
-        return false;
-    }
     common_flydelta_capture_candidate candidate;
     // A turn may expose more than one qualified source. Include the source
     // in the identity so a reflection relation cannot collide with a tool
@@ -66,7 +62,13 @@ bool common_flydelta_capture_candidate_collector::observe(
     const auto duplicate = std::find_if(queue.begin(), queue.end(), [&](const auto & item) {
         return item.id == candidate.id;
     });
-    if (duplicate == queue.end()) queue.push_back(std::move(candidate));
+    // Retries remain idempotent even after the bounded queue is full.
+    if (duplicate != queue.end()) return true;
+    if (max_candidates == 0 || queue.size() >= max_candidates) {
+        error = "FlyDelta capture candidate queue is full";
+        return false;
+    }
+    queue.push_back(std::move(candidate));
     return true;
 }
 

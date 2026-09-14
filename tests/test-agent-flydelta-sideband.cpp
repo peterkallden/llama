@@ -70,6 +70,16 @@ int main() {
     CHECK(collector.candidates().size() == 1);
     CHECK(collector.candidates().front().model_profile_fingerprint == "profile:qwen");
 
+    common_flydelta_capture_candidate_collector full_collector(
+        "profile:qwen", "layout:cvec-v1", 1);
+    CHECK(full_collector.observe(ready, transaction, error));
+    CHECK(!full_collector.observe(
+        common_adaptation_evidence_source_match{
+            common_adaptation_evidence_source::reflection_alternative,
+            {"evidence:other"}, true}, transaction, error));
+    CHECK(full_collector.observe(ready, transaction, error));
+    CHECK(full_collector.candidates().size() == 1);
+
     common_adaptation_evidence_relation reflection_relation;
     reflection_relation.source = common_adaptation_evidence_source::reflection_alternative;
     reflection_relation.host_verified = true;
