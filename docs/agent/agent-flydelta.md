@@ -416,6 +416,18 @@ OpenAPI and dataset projections, this list/inspect chain and these malformed
 repair cases. Native, MCP and OpenAPI providers share the same host repair and
 verification boundary; only provider provenance differs.
 
+When a mandatory tool step fails while later steps are still pending, the
+runtime gives the failed step precedence: it enters reflection instead of
+deferring the whole plan as an incomplete continuation. The CLI reflection
+contract exposes `reset`, `retry` and `replace_steps`, and removes `accept`
+from the decision enum while a mandatory failure remains. Reflection also
+receives a bounded copy of the host failure and its `repair_context`; ordinary
+successful observations continue to use the smaller completed-result view.
+For built-in materializing data tools, the host may remove a leaked
+step-level `mode:"tool"` from the argument object before strict validation.
+This is a narrow structural canonicalization, not permission to ignore
+arbitrary unknown tool arguments.
+
 ### Promotion: parallel sideband registry
 
 `common_learning_adapter_registry` is LoRA-specific. FlyDelta should use a

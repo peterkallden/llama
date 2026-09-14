@@ -110,6 +110,39 @@ std::string render_reflection_plan_context(
     return rendered + common_plan_render_tool_observations(plan, {observation_budget});
 }
 
+std::string render_reflection_failed_tool_observations(
+        const common_plan_state & plan,
+        size_t char_budget) {
+    if (!char_budget) return {};
+    std::ostringstream out;
+    out << "<failed_tool_observations>\n"
+        << "Host-verified failed tool results. Use the repair_context and registered contract as evidence.\n";
+    size_t remaining = char_budget;
+    for (const auto & observation : plan.observations) {
+        if (observation.source.empty() || observation.id.rfind("tool:", 0) != 0) continue;
+        const auto begin = observation.id.size() > 5 ? 5 : observation.id.size();
+        const auto end = observation.id.find(':', begin);
+        if (end == std::string::npos) continue;
+        const auto step_id = observation.id.substr(begin, end - begin);
+        const auto step = std::find_if(plan.steps.begin(), plan.steps.end(), [&](const common_plan_step & candidate) {
+            return candidate.id == step_id;
+        });
+        if (step == plan.steps.end() || step->status != common_plan_step_status::failed) continue;
+        std::string line = "- " + observation.source + " [failed] result=" +
+            reflection_bounded_text(common_plan_escape_context_text(observation.summary), 900) + "\n";
+        if (line.size() >= remaining) {
+            if (remaining > 32) out << line.substr(0, remaining - 16) << "...\n";
+            break;
+        }
+        out << line;
+        remaining -= line.size();
+    }
+    out << "</failed_tool_observations>\n";
+    auto rendered = out.str();
+    if (rendered.size() > char_budget) rendered.resize(char_budget);
+    return rendered;
+}
+
 std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
     std::string names;
     for (const auto & tool : tools) {
@@ -359,6 +392,17 @@ bool normalize_planner_host_dataset_references(
             // canonicalize it before the normal tool schema validation.
             for (size_t index = 0; index < document["steps"].size(); ++index) {
                 auto & step = document["steps"][index];
+                if (step.is_object() && is_materializable_data_tool(step.value("tool", std::string())) &&
+                        step.contains("args") && step["args"].is_object() &&
+                        step["args"].value("mode", std::string()) == "tool") {
+                    // Compact models occasionally leak the step-level mode
+                    // into a data tool's argument object. It is structural
+                    // plan metadata, not a data.query/data.join parameter;
+                    // remove only this unambiguous built-in leakage before
+                    // strict tool-contract validation.
+                    step["args"].erase("mode");
+                    changed = true;
+                }
                 if (step.is_object() && step.value("tool", std::string()) == "data.query" &&
                         step.contains("args") && step["args"].is_object() &&
                         step["args"].value("where", std::string()) == "true") {
@@ -929,10 +973,26 @@ public:
         common_chat_msg user;
         user.role = "user";
         user.content = render_reflection_plan_context(plan, 1400, 1200) +
+            render_reflection_failed_tool_observations(plan, 1200) +
             "\n[User request]\n" + reflection_bounded_text(request.prompt, 2048) +
             common_agent_render_input_resource_context(request.input_resources, 768, request.available_resources) +
             "\n[Draft]\n" + reflection_bounded_text(draft, 2048);
-        const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":["accept","revise","abort"]},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
+        const bool failed_mandatory_tool_step = std::any_of(plan.steps.begin(), plan.steps.end(), [](const common_plan_step & step) {
+            return common_plan_step_effective_mode(step) == common_plan_step_mode::tool &&
+                !step.optional && step.status == common_plan_step_status::failed;
+        });
+        const std::string decision_enum = failed_mandatory_tool_step
+            ? R"(["revise","abort"])"
+            : R"(["accept","revise","abort"])";
+        const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":)" +
+            decision_enum +
+            R"(},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"reset":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"retry":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}},"replace_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
+        if (failed_mandatory_tool_step) {
+            system.content +=
+                " A mandatory tool step is failed. The decision must be revise or abort, never accept. "
+                "For a repair, use reset or retry with the failed step id, or replace_steps with a corrected "
+                "registered tool call and exact arguments. Do not add an unrelated pending step.";
+        }
         auto generate_reflection = [&](bool regeneration) {
             common_chat_msg attempt = user;
             if (regeneration) {

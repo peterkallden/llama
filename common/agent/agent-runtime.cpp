@@ -1321,7 +1321,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     plan.id);
                 return result;
             }
-            if (plan_has_pending_mandatory_tool_step(plan)) {
+            // A failed mandatory tool step has priority over unrelated
+            // pending steps: reflection must get a chance to repair it
+            // before the continuation guard defers the whole tool chain.
+            // Otherwise a plan containing step_1=failed and step_2=pending
+            // can loop through bounded continuations without ever invoking
+            // the model-facing repair path.
+            if (plan_has_pending_mandatory_tool_step(plan) &&
+                    !plan_has_failed_mandatory_tool_step(plan)) {
                 result.limit_reached = true;
                 result.response_generation_status = common_agent_generation_status::completed;
                 result.response_stop_reason = common_agent_generation_stop_reason::limit;

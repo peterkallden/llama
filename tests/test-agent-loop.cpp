@@ -176,6 +176,32 @@ public:
     }
 };
 
+class failed_then_pending_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "failed-with-pending";
+        proposal.plan.session_id = request.session_id;
+        proposal.plan.goal = request.prompt;
+        proposal.plan.success_criteria = "answer";
+
+        common_plan_step failed{"lookup", "Lookup", "Get facts"};
+        failed.status = common_plan_step_status::active;
+        failed.selected_tool = "lookup";
+        failed.tool_call = common_plan_tool_call{"lookup", R"({"id":"missing"})"};
+
+        common_plan_step pending{"follow-up", "Follow up", "Continue after lookup"};
+        pending.selected_tool = "lookup";
+        pending.tool_call = common_plan_tool_call{"lookup", R"({"id":"status"})"};
+
+        proposal.plan.steps = {std::move(failed), std::move(pending)};
+        proposal.plan.active_step_id = "lookup";
+        proposal.plan.status = common_plan_status::active;
+        return proposal;
+    }
+};
+
 class unstructured_reasoning_executor final : public common_action_executor {
 public:
     std::string generate_draft(const common_agent_request &, const common_plan_state &, const std::vector<std::string> &, std::string & error) override {
@@ -191,6 +217,20 @@ public:
 class reflector final : public common_reflection_engine {
 public:
     common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        result.decision = common_reflection_decision::accept;
+        result.ready_to_answer = true;
+        return result;
+    }
+};
+
+class counting_reflector final : public common_reflection_engine {
+public:
+    int calls = 0;
+
+    common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
+        ++calls;
         error.clear();
         common_reflection_result result;
         result.decision = common_reflection_decision::accept;
@@ -424,6 +464,19 @@ int main() {
     assert(failed_plan && failed_plan->observations.size() == 1);
     assert(failed_plan->observations.front().summary.find("tool.lookup.not_found") != std::string::npos);
     assert(failed_plan->observations.front().summary.find("\"failure\"") != std::string::npos);
+
+    common_plan_in_memory_store failed_pending_store;
+    assert(failed_pending_store.open("", error));
+    failed_then_pending_planner failed_pending_p;
+    counting_reflector counting_r;
+    common_agent_runtime failed_pending_runtime(
+        failed_pending_store, failed_pending_p, e, counting_r, &failing_tool_runtime);
+    common_agent_request failed_pending_request = failure_request;
+    failed_pending_request.require_tool_execution = true;
+    const auto failed_pending_run = failed_pending_runtime.run(failed_pending_request);
+    assert(counting_r.calls == 1);
+    assert(failed_pending_run.response.empty());
+    assert(failed_pending_run.error == "final synthesis is blocked by an unrepaired failed tool step: lookup");
 
     common_plan_in_memory_store reflection_failure_store;
     assert(reflection_failure_store.open("", error));
