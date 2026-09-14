@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-contracts.h"
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
+#include "agent/adaptation/flydelta/flydelta-sideband-registry.h"
 
 #include <cstddef>
 #include <string>
@@ -50,4 +51,16 @@ bool common_flydelta_promotion_summary_from_reports(
         const std::vector<common_flydelta_counterfactual_report> & reports,
         const common_flydelta_promotion_policy & policy,
         common_flydelta_promotion_summary & summary,
+        std::string & error);
+
+// Moves a candidate through the host-owned promotion boundary. All evidence
+// and evaluation gates are checked before registry mutation. Success admits
+// the artifact and stages it as canary; activation remains a separate call.
+bool common_flydelta_promote_verified_sideband(
+        common_flydelta_sideband_registry & registry,
+        const common_flydelta_sideband_manifest & manifest,
+        const common_flydelta_promotion_summary & summary,
+        const common_flydelta_evaluation_report & evaluation,
+        const common_flydelta_promotion_policy & policy,
+        bool explicit_host_approval,
         std::string & error);

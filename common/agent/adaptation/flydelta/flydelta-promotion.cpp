@@ -126,3 +126,40 @@ bool common_flydelta_promotion_summary_from_reports(
     }
     return common_flydelta_promotion_summary_validate(summary, policy, error);
 }
+
+bool common_flydelta_promote_verified_sideband(
+        common_flydelta_sideband_registry & registry,
+        const common_flydelta_sideband_manifest & manifest,
+        const common_flydelta_promotion_summary & summary,
+        const common_flydelta_evaluation_report & evaluation,
+        const common_flydelta_promotion_policy & policy,
+        bool explicit_host_approval,
+        std::string & error) {
+    error.clear();
+    if (!explicit_host_approval) {
+        error = "FlyDelta promotion requires explicit host approval";
+        return false;
+    }
+    if (!common_flydelta_promotion_summary_validate(summary, policy, error) ||
+            summary.status != common_flydelta_candidate_status::eligible) {
+        if (error.empty()) error = "FlyDelta promotion requires an eligible summary";
+        return false;
+    }
+    if (!common_flydelta_evaluation_report_validate(evaluation, error) ||
+            evaluation.status != "passed" ||
+            !evaluation.intended_behavior_passed ||
+            !evaluation.retention_passed ||
+            !evaluation.agent_regression_passed) {
+        if (error.empty()) error = "FlyDelta promotion requires a passed evaluation";
+        return false;
+    }
+    if (!common_flydelta_sideband_manifest_validate(manifest, error) ||
+            manifest.status != common_flydelta_sideband_status::candidate ||
+            summary.candidate_id != manifest.id ||
+            evaluation.candidate_id != manifest.id) {
+        if (error.empty()) error = "FlyDelta promotion identities are incompatible";
+        return false;
+    }
+    if (!registry.admit(manifest, error)) return false;
+    return registry.stage_canary(manifest.id, evaluation.revision_id, error);
+}
