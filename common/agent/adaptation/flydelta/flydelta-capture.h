@@ -1,6 +1,8 @@
 #pragma once
 
 #include "agent/adaptation/adaptation-evidence-routing.h"
+#include "agent/adaptation/flydelta/flydelta-contracts.h"
+#include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 #include "agent/adaptation/learning-transaction.h"
 
 #include <cstddef>
@@ -23,6 +25,19 @@ struct common_flydelta_capture_candidate {
 
 bool common_flydelta_capture_candidate_validate(
         const common_flydelta_capture_candidate & candidate,
+        std::string & error);
+
+// Builds a manifest only after the host has supplied matching, verified
+// evidence and an explicit redaction attestation. captured_bytes describes
+// the already bounded capture payload; this helper does not capture data.
+bool common_flydelta_capture_manifest_from_candidate(
+        const common_flydelta_capture_candidate & candidate,
+        const common_adaptation_evidence & evidence,
+        const std::string & template_fingerprint,
+        const std::string & evidence_hash,
+        size_t captured_bytes,
+        bool redaction_attested,
+        common_flydelta_capture_manifest & manifest,
         std::string & error);
 
 // Bridges the generic learning observer's source callback to a bounded

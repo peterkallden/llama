@@ -393,6 +393,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-overlay.cpp
         test-agent-flydelta-activation.cpp
         test-agent-flydelta-sideband.cpp
+        test-agent-flydelta-capture-manifest.cpp
         test-agent-flydelta-hidden-state-hook.cpp
         test-agent-flydelta-two-pass.cpp
         test-memory-policy.cpp

@@ -9,6 +9,10 @@ bool bounded(const std::string & value) {
     return !value.empty() && value.size() <= 512;
 }
 
+bool contains(const std::vector<std::string> & values, const std::string & value) {
+    return std::find(values.begin(), values.end(), value) != values.end();
+}
+
 } // namespace
 
 bool common_flydelta_capture_candidate_validate(
@@ -30,6 +34,42 @@ bool common_flydelta_capture_candidate_validate(
         }
     }
     return true;
+}
+
+bool common_flydelta_capture_manifest_from_candidate(
+        const common_flydelta_capture_candidate & candidate,
+        const common_adaptation_evidence & evidence,
+        const std::string & template_fingerprint,
+        const std::string & evidence_hash,
+        size_t captured_bytes,
+        bool redaction_attested,
+        common_flydelta_capture_manifest & manifest,
+        std::string & error) {
+    error.clear();
+    if (!common_flydelta_capture_candidate_validate(candidate, error)) return false;
+    if (!common_adaptation_evidence_validate(evidence, 64, error)) return false;
+    if (!candidate.candidate_ready || candidate.source != evidence.source ||
+            !contains(evidence.transaction_ids, candidate.transaction_id) ||
+            !bounded(template_fingerprint) || !bounded(evidence_hash) ||
+            captured_bytes == 0 || !redaction_attested ||
+            candidate.model_profile_fingerprint.empty() ||
+            candidate.capture_layout_revision.empty()) {
+        error = "FlyDelta capture manifest requires aligned verified candidate evidence";
+        return false;
+    }
+    manifest = {};
+    manifest.id = candidate.id + "/manifest";
+    manifest.observation_id = candidate.transaction_id;
+    manifest.model_profile_fingerprint = candidate.model_profile_fingerprint;
+    manifest.template_fingerprint = template_fingerprint;
+    manifest.positive_execution_ref = evidence.candidate_ref;
+    manifest.negative_execution_ref = evidence.baseline_ref;
+    manifest.capture_layout_revision = candidate.capture_layout_revision;
+    manifest.evidence_hash = evidence_hash;
+    manifest.redaction_attested = redaction_attested;
+    manifest.captured_bytes = captured_bytes;
+    return common_flydelta_capture_manifest_validate(
+        manifest, 4U * 1024U * 1024U, error);
 }
 
 common_flydelta_capture_candidate_collector::common_flydelta_capture_candidate_collector(
