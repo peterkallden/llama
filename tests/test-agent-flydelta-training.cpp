@@ -67,6 +67,17 @@ int main() {
     CHECK(generated_selection.selected && std::fabs(generated_selection.alpha - 0.1f) < 1e-6f);
 
     common_flydelta_delta_memory memory({8, 2, 0.5f});
+    common_flydelta_sparse_code selected_context;
+    selected_context.expansion_dim = 8;
+    selected_context.indices = {1};
+    selected_context.values = {1.0f};
+    common_flydelta_training_example selected_example;
+    CHECK(common_flydelta_training_example_from_alpha_selection(
+        "flydelta://training/selected", "tool_use/diagnostics/missing-argument",
+        "sha256:context", "flydelta://basis/selected", selected_context,
+        {0.25f, -0.1f}, "", common_flydelta_training_split::train, 1.0f,
+        memory.config(), generated_trials, generated_selection, selected_example, error));
+    CHECK(selected_example.evidence_ref == "evidence:alpha");
     auto train = example(common_flydelta_training_split::train,
             common_flydelta_counterfactual_outcome::helped);
     CHECK(common_flydelta_training_example_validate(train, memory.config(), error));

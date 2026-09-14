@@ -44,6 +44,8 @@ struct common_flydelta_alpha_selection {
     size_t trial_index = 0;
 };
 
+struct common_flydelta_training_example;
+
 bool common_flydelta_alpha_search_config_validate(
         const common_flydelta_alpha_search_config & config,
         std::string & error);
@@ -77,6 +79,25 @@ bool common_flydelta_run_alpha_search(
         const common_flydelta_alpha_runner & runner,
         std::vector<common_flydelta_alpha_trial> & trials,
         common_flydelta_alpha_selection & selection,
+        std::string & error);
+
+// Materializes a selected, host-verified HELPED alpha trial into the typed
+// DeltaMemory input contract. The target coefficients are supplied by the
+// host basis/evaluator and are validated before the example is returned.
+bool common_flydelta_training_example_from_alpha_selection(
+        const std::string & id,
+        const std::string & behavior_key,
+        const std::string & context_fingerprint,
+        const std::string & basis_revision,
+        const common_flydelta_sparse_code & context,
+        const std::vector<float> & target_coefficients,
+        const std::string & evidence_ref,
+        common_flydelta_training_split split,
+        float confidence,
+        const common_flydelta_memory_config & memory,
+        const std::vector<common_flydelta_alpha_trial> & trials,
+        const common_flydelta_alpha_selection & selection,
+        common_flydelta_training_example & example,
         std::string & error);
 
 struct common_flydelta_training_example {

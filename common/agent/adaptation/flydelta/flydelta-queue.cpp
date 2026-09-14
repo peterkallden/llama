@@ -219,6 +219,7 @@ bool common_flydelta_experiment_queue_complete(
         std::string & error) {
     error.clear();
     if (claimed.queue_key.empty() || claimed.job.id.empty() ||
+            claimed.queue_key != queue_key(claimed.job.id) ||
             state == common_flydelta_experiment_queue_state::pending ||
             state == common_flydelta_experiment_queue_state::running) {
         error = "FlyDelta completion requires a claimed job and terminal state";

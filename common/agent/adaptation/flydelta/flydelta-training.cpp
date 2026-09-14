@@ -174,6 +174,46 @@ bool common_flydelta_run_alpha_search(
     return common_flydelta_select_alpha(config, trials, selection, error);
 }
 
+bool common_flydelta_training_example_from_alpha_selection(
+        const std::string & id,
+        const std::string & behavior_key,
+        const std::string & context_fingerprint,
+        const std::string & basis_revision,
+        const common_flydelta_sparse_code & context,
+        const std::vector<float> & target_coefficients,
+        const std::string & evidence_ref,
+        common_flydelta_training_split split,
+        float confidence,
+        const common_flydelta_memory_config & memory,
+        const std::vector<common_flydelta_alpha_trial> & trials,
+        const common_flydelta_alpha_selection & selection,
+        common_flydelta_training_example & example,
+        std::string & error) {
+    error.clear();
+    example = {};
+    if (!selection.selected || selection.trial_index >= trials.size() ||
+            trials[selection.trial_index].alpha != selection.alpha ||
+            trials[selection.trial_index].outcome != common_flydelta_counterfactual_outcome::helped ||
+            !trials[selection.trial_index].executed ||
+            !trials[selection.trial_index].verifier_known) {
+        error = "FlyDelta training example requires a selected verified HELPED alpha trial";
+        return false;
+    }
+    example.schema_version = 1;
+    example.id = id;
+    example.behavior_key = behavior_key;
+    example.context_fingerprint = context_fingerprint;
+    example.basis_revision = basis_revision;
+    example.evidence_ref = evidence_ref.empty()
+        ? trials[selection.trial_index].evidence_ref : evidence_ref;
+    example.split = split;
+    example.context = context;
+    example.target_coefficients = target_coefficients;
+    example.outcome = common_flydelta_counterfactual_outcome::helped;
+    example.confidence = confidence;
+    return common_flydelta_training_example_validate(example, memory, error);
+}
+
 bool common_flydelta_training_example_validate(
         const common_flydelta_training_example & example,
         const common_flydelta_memory_config & memory,
