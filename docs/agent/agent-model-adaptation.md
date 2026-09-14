@@ -249,6 +249,43 @@ ledger append or the user-facing turn. The callback is a hand-off point only;
 it does not create a comparison relation, training pair, basis update or
 active adapter.
 
+### One ledger, explicit source adapters
+
+The source is preserved through the derived path
+`host signal -> adaptation evidence -> learning case -> training candidate ->
+corpus view`. One shared corpus can therefore contain tool-repair, planning,
+research and procedure/blueprint experience while a worker or evaluator
+selects a bounded source view. These are not separate learning systems: they
+share scope, idempotency, redaction, lifecycle and promotion contracts.
+
+The source-specific signal mapping is explicit:
+
+| signal | source | intended consumer |
+| --- | --- | --- |
+| `tool_failure` / `successful_recovery` | `tool_repair` | tool-repair candidate or FlyDelta experiment |
+| `reflection_hint` | `reflection_alternative` | curator/evaluator; never self-certifying |
+| `planning_revision` | `planning_revision` | planning adapter/corpus view |
+| `research_verification` | `research_alternative` | research evaluator or memory/procedure path |
+| `procedure_verification` / `blueprint_verification` | `procedure_blueprint` | procedure/blueprint learner |
+| `user_correction` | `user_correction` | host-curated memory or adaptation case |
+
+Enabling a domain does not collect every turn that happens to have a plan or
+every recovery. The corresponding host-owned signal and verifier must be
+present. A source may be retained in the shared ledger without being eligible
+for FlyDelta capture, SFT, or an activation overlay.
+
+### Versioned overlays
+
+An overlay is a versioned candidate artifact, not a mutable extension of the
+base model. A later learning sweep can produce `adapter-v2` or a new FlyDelta
+sideband from additional certified evidence. Each revision keeps its base,
+source/corpus and evaluation fingerprints, is evaluated against the prior
+active revision and can be promoted, canaried, retired or rolled back. The
+runtime should select one explicitly approved active revision per profile;
+silently stacking multiple unvalidated overlays would make attribution and
+rollback ambiguous. Consolidation or merging is a later, separately gated
+operation.
+
 FlyDelta uses this same opt-in boundary. Set
 `enable_flydelta_capture_candidates` only together with
 `enable_adaptation_capture=true` and

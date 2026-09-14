@@ -200,6 +200,12 @@ be created by a host integration that knows the exact baseline, alternative and
 verifier. The router must not treat `result.revised` alone as proof of a plan
 revision, because that flag can also describe a response revision.
 
+The shared ledger also names explicit `research_verification`,
+`procedure_verification` and `blueprint_verification` signals. These are useful
+for routing one corpus into different source views, but they do not make those
+sources FlyDelta-eligible. FlyDelta remains a narrower adapter with explicit
+capture and counterfactual requirements.
+
 The completion helper enforces the seam in this order:
 
 ```text

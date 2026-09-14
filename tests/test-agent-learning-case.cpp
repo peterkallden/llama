@@ -25,7 +25,9 @@ int main() {
     assert(!common_learning_case_validate(value, 4, 128, error));
     value.status = common_learning_case_status::redacted;
     assert(common_learning_case_validate(value, 4, 128, error));
-    assert(common_learning_case_to_json(value).find("rejected_action") != std::string::npos);
+    const auto encoded = common_learning_case_to_json(value);
+    assert(encoded.find("rejected_action") != std::string::npos);
+    assert(encoded.find("tool_repair") != std::string::npos);
     value.status = common_learning_case_status::revoked;
     assert(!common_learning_case_validate(value, 4, 128, error));
     return 0;

@@ -73,7 +73,12 @@ int main() {
     common_flydelta_candidate candidate;
     CHECK(common_flydelta_candidate_from_transactions(transactions, policy, candidate, error));
     CHECK(candidate.verified_recoveries == 4);
+    CHECK(candidate.source == common_adaptation_evidence_source::tool_repair);
     CHECK(candidate.tool_family == "diagnostics");
+    auto mixed_sources = transactions;
+    mixed_sources.front().observation.signals.push_back({common_learning_signal_type::planning_revision,
+        "plan", "step", {}, "planning-evidence", "revised"});
+    CHECK(!common_flydelta_candidate_from_transactions(mixed_sources, policy, candidate, error));
     transactions[0].observation.cause = common_learning_cause::host_contract;
     CHECK(!common_flydelta_candidate_from_transactions(transactions, policy, candidate, error));
 
