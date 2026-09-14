@@ -2,6 +2,7 @@
 #include "agent/adaptation/flydelta/flydelta-basis.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
+#include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-training.h"
 #include "agent/adaptation/flydelta/flydelta.h"
 #include "tools/agent/cli/agent-cli-inference.h"
@@ -13,7 +14,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
-#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -82,23 +82,6 @@ std::string output_preview(const common_agent_generation_result & result) {
     constexpr size_t max_preview = 512;
     if (preview.size() > max_preview) preview.resize(max_preview);
     return preview;
-}
-
-float cosine_similarity(
-        const std::vector<float> & left,
-        const std::vector<float> & right) {
-    if (left.size() != right.size() || left.empty()) return 0.0f;
-    float dot = 0.0f;
-    float left_norm = 0.0f;
-    float right_norm = 0.0f;
-    for (size_t i = 0; i < left.size(); ++i) {
-        dot += left[i] * right[i];
-        left_norm += left[i] * left[i];
-        right_norm += right[i] * right[i];
-    }
-    const float denominator = std::sqrt(left_norm * right_norm);
-    return denominator > std::numeric_limits<float>::epsilon()
-        ? dot / denominator : 0.0f;
 }
 
 common_agent_generation_request make_request(
@@ -334,8 +317,14 @@ int main(int argc, char ** argv) {
 
     // The layer-2 behavior delta is the reference for the post-layer-1
     // representation shift measured in each counterfactual arm.
-    const std::vector<float> & repair_direction = deltas.back().values;
     std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_arm_capture;
+    struct arm_diagnostic {
+        float alpha = 0.0f;
+        common_flydelta_representation_diagnostics values;
+        bool available = false;
+        std::string error;
+    };
+    std::vector<arm_diagnostic> arm_diagnostics;
 
     const auto prepare_activation = [&](float scale,
             common_flydelta_activation_result & activation) {
@@ -401,20 +390,13 @@ int main(int argc, char ** argv) {
                     runner_error = "FlyDelta unknown arm has no baseline capture";
                     return false;
                 } else if (apply_overlay && !trial.passed && baseline_arm_capture &&
-                        result.flydelta_capture &&
-                        result.flydelta_capture->values.size() ==
-                            baseline_arm_capture->values.size()) {
-                    std::vector<float> arm_shift(model_n_embd);
-                    const size_t layer_offset = model_n_embd;
-                    for (size_t i = 0; i < arm_shift.size(); ++i) {
-                        arm_shift[i] = result.flydelta_capture->values[layer_offset + i] -
-                            baseline_arm_capture->values[layer_offset + i];
-                    }
-                    const float alignment = cosine_similarity(arm_shift, repair_direction);
-                    std::cout << "unknown_representation_cosine alpha=" << alpha
-                              << " value=" << alignment
-                              << " signal=" << (alignment > 0.0f ? "aligned" : "not_aligned")
-                              << " promotion=no next_action=extended_tuning\n";
+                        result.flydelta_capture) {
+                    arm_diagnostic diagnostic;
+                    diagnostic.alpha = alpha;
+                    diagnostic.available = common_flydelta_representation_diagnostics_from_captures(
+                        *baseline_arm_capture, *result.flydelta_capture, deltas.back(),
+                        64U * 1024U * 1024U, diagnostic.values, diagnostic.error);
+                    arm_diagnostics.push_back(std::move(diagnostic));
                 }
                 std::cout << "arm_model_output alpha=" << alpha
                           << " overlay=" << (apply_overlay ? "yes" : "no")
@@ -448,6 +430,21 @@ int main(int argc, char ** argv) {
         std::cout << "arm alpha=" << trial.alpha
                   << " outcome=" << common_flydelta_counterfactual_outcome_name(trial.outcome)
                   << " host_verified=" << (trial.verifier_known ? "yes" : "no") << '\n';
+        if (trial.outcome == common_flydelta_counterfactual_outcome::unknown) {
+            const auto diagnostic = std::find_if(arm_diagnostics.begin(), arm_diagnostics.end(),
+                [&](const auto & value) { return value.alpha == trial.alpha; });
+            if (diagnostic != arm_diagnostics.end() && diagnostic->available) {
+                std::cout << "unknown_representation_diagnostics alpha=" << trial.alpha
+                          << " cosine=" << diagnostic->values.cosine
+                          << " progress=" << diagnostic->values.progress
+                          << " leakage=" << diagnostic->values.leakage
+                          << " shift_norm=" << diagnostic->values.shift_norm
+                          << " promotion=no next_action=extended_tuning\n";
+            } else {
+                std::cout << "unknown_representation_diagnostics alpha=" << trial.alpha
+                          << " available=no promotion=no next_action=extended_tuning\n";
+            }
+        }
     }
     return 0;
 }

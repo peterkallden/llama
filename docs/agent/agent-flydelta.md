@@ -1025,12 +1025,24 @@ The model-backed test skips without a model and is capped at three CPU
 threads. It complements, rather than replaces, the model-free repair smoke
 and the public session-host runtime smoke. When an overlay arm remains
 `UNKNOWN` because it fails like the baseline, the smoke additionally reports
-the cosine similarity between that arm's hidden-state shift and the
-host-certified behavior delta. A positive value is an `aligned` diagnostic
-signal, not a successful outcome: it may justify extended tuning or a later
-experiment, but it cannot update DeltaMemory or promote an artifact by
-itself. Cosine is omitted from promotion decisions and is only used to triage
-otherwise unknown samples.
+the geometry between that arm's hidden-state shift and the host-certified
+behavior delta. The diagnostic fields are:
+
+```text
+cosine    direction of the arm shift relative to the behavior delta
+progress  projection onto the behavior delta, normalized by delta length²
+leakage   orthogonal residual relative to delta length
+shift_norm length of the arm's hidden-state shift
+```
+
+These values are calculated per matching captured layer by
+`flydelta-representation-diagnostics.*`. They are emitted only after the
+counterfactual classifier has identified an `UNKNOWN` arm. A positive cosine
+or progress is an `aligned` diagnostic signal, not a successful outcome: it
+may justify extended tuning or a later experiment, but it cannot update
+DeltaMemory or promote an artifact by itself. The diagnostics are deliberately
+outside the counterfactual outcome and promotion contracts; they never create
+`HELPED`, select an alpha, or serve as learning evidence.
 
 ### 4I. Source-neutral behavior transitions — implemented
 
