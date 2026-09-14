@@ -2,8 +2,8 @@
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
-static common_flydelta_repair_delta delta(const std::vector<float> & values) {
-    common_flydelta_repair_delta value;
+static common_flydelta_behavior_delta delta(const std::vector<float> & values) {
+    common_flydelta_behavior_delta value;
     value.id = "flydelta://delta/1";
     value.capture_manifest_id = "flydelta://capture/1";
     value.host_evidence_ref = "evidence:repair";
@@ -60,6 +60,6 @@ int main() {
     unknown.layer_index = 13;
     CHECK(builder.add(unknown, credit(common_flydelta_counterfactual_outcome::unknown), error));
     CHECK(builder.directions().size() == 2);
-    CHECK(!common_flydelta_repair_delta_validate(delta({0.0f, 0.0f, 0.0f}), 3, 1024, error));
+    CHECK(!common_flydelta_behavior_delta_validate(delta({0.0f, 0.0f, 0.0f}), 3, 1024, error));
     return 0;
 }

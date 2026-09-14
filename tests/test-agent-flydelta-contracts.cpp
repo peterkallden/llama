@@ -62,7 +62,7 @@ int main() {
 
     common_flydelta_candidate_policy policy;
     policy.min_observations = 3;
-    policy.min_verified_recoveries = 2;
+    policy.min_verified_observations = 2;
     std::vector<common_learning_transaction> transactions = {
         transaction("learning://transaction/1", common_learning_signal_type::successful_recovery),
         transaction("learning://transaction/2", common_learning_signal_type::successful_recovery),
@@ -72,9 +72,20 @@ int main() {
     };
     common_flydelta_candidate candidate;
     CHECK(common_flydelta_candidate_from_transactions(transactions, policy, candidate, error));
-    CHECK(candidate.verified_recoveries == 4);
+    CHECK(candidate.verified_observations == 5);
     CHECK(candidate.source == common_adaptation_evidence_source::tool_repair);
     CHECK(candidate.tool_family == "diagnostics");
+
+    auto planning = transactions;
+    for (auto & value : planning) {
+        value.observation.signals.clear();
+        value.observation.signals.push_back({common_learning_signal_type::planning_revision,
+            value.observation.source_plan_id, "step", {}, value.id + ":planning-evidence",
+            "verified"});
+    }
+    CHECK(common_flydelta_candidate_from_transactions(planning, policy, candidate, error));
+    CHECK(candidate.source == common_adaptation_evidence_source::planning_revision);
+    CHECK(candidate.verified_observations == planning.size());
     auto mixed_sources = transactions;
     mixed_sources.front().observation.signals.push_back({common_learning_signal_type::planning_revision,
         "plan", "step", {}, "planning-evidence", "revised"});

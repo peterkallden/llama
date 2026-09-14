@@ -45,16 +45,16 @@ bool common_flydelta_evaluate_job(
             return true;
         }
         case common_flydelta_experiment_job_kind::basis: {
-            if (!callbacks.resolve_repair_delta ||
+            if (!callbacks.resolve_behavior_delta ||
                     !common_flydelta_basis_config_validate(config.basis, error)) {
                 if (error.empty()) error = "FlyDelta basis evaluator requires a resolver and basis config";
                 return false;
             }
             common_flydelta_basis_builder builder(config.basis);
-            for (const auto & id : job.repair_delta_ids) {
-                common_flydelta_repair_delta delta;
+            for (const auto & id : job.behavior_delta_ids) {
+                common_flydelta_behavior_delta delta;
                 common_flydelta_intervention_credit credit;
-                if (!callbacks.resolve_repair_delta(id, delta, credit, error) ||
+                if (!callbacks.resolve_behavior_delta(id, delta, credit, error) ||
                         !builder.add(delta, credit, error)) return false;
                 ++result.processed_references;
             }

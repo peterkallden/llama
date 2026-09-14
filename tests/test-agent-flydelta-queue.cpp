@@ -24,7 +24,7 @@ static common_flydelta_experiment_job make_job() {
     job.seed.verifier_ref = "verifier:v1";
     job.seed.evidence_ref = "evidence://repair/queue-1";
     job.seed.transaction_ids = {"learning://failed", "learning://repaired"};
-    job.repair_delta_ids = {"flydelta://delta/queue-1"};
+    job.behavior_delta_ids = {"flydelta://delta/queue-1"};
     job.code_revision = "test:v1";
     return job;
 }

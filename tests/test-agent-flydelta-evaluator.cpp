@@ -52,9 +52,9 @@ static common_flydelta_counterfactual_report report(const std::string & id) {
     return value;
 }
 
-static common_flydelta_repair_delta repair_delta() {
-    common_flydelta_repair_delta value;
-    value.id = "flydelta://repair/evaluator";
+static common_flydelta_behavior_delta behavior_delta() {
+    common_flydelta_behavior_delta value;
+    value.id = "flydelta://behavior/evaluator";
     value.capture_manifest_id = "flydelta://capture/evaluator";
     value.host_evidence_ref = "evidence://repair/evaluator";
     value.model_profile_fingerprint = "sha256:model";
@@ -108,10 +108,10 @@ int main() {
 
     auto basis = base_job(common_flydelta_experiment_job_kind::basis,
             "flydelta://job/basis");
-    basis.repair_delta_ids = {"flydelta://repair/evaluator"};
+    basis.behavior_delta_ids = {"flydelta://behavior/evaluator"};
     callbacks = {};
-    callbacks.resolve_repair_delta = [](const auto &, auto & delta, auto & credit, std::string &) {
-        delta = repair_delta();
+    callbacks.resolve_behavior_delta = [](const auto &, auto & delta, auto & credit, std::string &) {
+        delta = behavior_delta();
         credit.experiment_id = "flydelta://experiment/evaluator";
         credit.candidate_id = "flydelta://candidate/evaluator";
         credit.fixture_id = "flydelta://fixture/evaluator";

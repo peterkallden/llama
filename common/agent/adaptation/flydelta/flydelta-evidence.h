@@ -8,32 +8,43 @@
 #include <string>
 #include <vector>
 
-// A bounded relation between one host-verified failed attempt and its
-// host-verified repair. Raw prompts and outputs remain in the normal evidence
-// store; FlyDelta keeps references and fingerprints only.
-struct common_flydelta_repair_transition {
+// A bounded relation between one host-verified baseline attempt and one
+// host-verified alternative. Raw prompts and outputs remain in the normal
+// evidence store; FlyDelta keeps references and fingerprints only.
+struct common_flydelta_behavior_transition {
     int schema_version = 1;
     std::string id;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     common_agent_scope scope;
     std::string task_fingerprint;
-    std::string failed_transaction_id;
-    std::string repaired_transaction_id;
-    std::string failed_execution_ref;
-    std::string repaired_execution_ref;
+    std::string baseline_transaction_id;
+    std::string candidate_transaction_id;
+    std::string baseline_execution_ref;
+    std::string candidate_execution_ref;
     std::string host_verifier_ref;
 };
 
-bool common_flydelta_repair_transition_validate(
-        const common_flydelta_repair_transition & transition,
+bool common_flydelta_behavior_transition_validate(
+        const common_flydelta_behavior_transition & transition,
         std::string & error);
-bool common_flydelta_repair_transition_from_transactions(
+// Convenience adapter for the existing tool failure/recovery signals.
+bool common_flydelta_tool_repair_transition_from_transactions(
         const common_learning_transaction & failed,
         const common_learning_transaction & repaired,
         const std::string & task_fingerprint,
         const std::string & failed_execution_ref,
         const std::string & repaired_execution_ref,
         const std::string & host_verifier_ref,
-        common_flydelta_repair_transition & transition,
+        common_flydelta_behavior_transition & transition,
+        std::string & error);
+// Generic adapter for any host-verified baseline/candidate relation. Both
+// transaction IDs must be present in the evidence relation; the host decides
+// what the candidate means and which verifier produced the evidence.
+bool common_flydelta_behavior_transition_from_evidence(
+        const common_adaptation_evidence & evidence,
+        const std::string & baseline_transaction_id,
+        const std::string & candidate_transaction_id,
+        common_flydelta_behavior_transition & transition,
         std::string & error);
 
 struct common_flydelta_contrast_set {
@@ -41,7 +52,7 @@ struct common_flydelta_contrast_set {
     std::string id;
     std::string behavior_key;
     common_agent_scope scope;
-    std::vector<std::string> repair_transition_ids;
+    std::vector<std::string> transition_ids;
     std::vector<std::string> positive_transaction_ids;
     std::vector<std::string> negative_transaction_ids;
 };
@@ -53,7 +64,7 @@ bool common_flydelta_contrast_set_validate(
 bool common_flydelta_contrast_set_from_transitions(
         const std::string & id,
         const std::string & behavior_key,
-        const std::vector<common_flydelta_repair_transition> & transitions,
+        const std::vector<common_flydelta_behavior_transition> & transitions,
         size_t max_transitions,
         common_flydelta_contrast_set & contrast_set,
         std::string & error);

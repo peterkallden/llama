@@ -60,6 +60,7 @@ bool common_flydelta_capture_manifest_from_candidate(
     manifest = {};
     manifest.id = candidate.id + "/manifest";
     manifest.observation_id = candidate.transaction_id;
+    manifest.source = candidate.source;
     manifest.model_profile_fingerprint = candidate.model_profile_fingerprint;
     manifest.template_fingerprint = template_fingerprint;
     manifest.positive_execution_ref = evidence.candidate_ref;

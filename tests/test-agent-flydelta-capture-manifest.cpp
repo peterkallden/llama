@@ -30,11 +30,19 @@ int main() {
         candidate, evidence, "sha256:template", "sha256:evidence", 128, true,
         manifest, error));
     CHECK(manifest.observation_id == candidate.transaction_id);
+    CHECK(manifest.source == candidate.source);
     CHECK(manifest.positive_execution_ref == evidence.candidate_ref);
     CHECK(manifest.negative_execution_ref == evidence.baseline_ref);
     CHECK(common_flydelta_capture_manifest_validate(manifest, 1024, error));
 
-    evidence.source = common_adaptation_evidence_source::reflection_alternative;
+    candidate.source = common_adaptation_evidence_source::reflection_alternative;
+    evidence.source = candidate.source;
+    CHECK(common_flydelta_capture_manifest_from_candidate(
+        candidate, evidence, "sha256:template", "sha256:evidence", 128, true,
+        manifest, error));
+    CHECK(manifest.source == common_adaptation_evidence_source::reflection_alternative);
+
+    evidence.source = common_adaptation_evidence_source::tool_repair;
     CHECK(!common_flydelta_capture_manifest_from_candidate(
         candidate, evidence, "sha256:template", "sha256:evidence", 128, true,
         manifest, error));

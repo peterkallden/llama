@@ -29,7 +29,7 @@ int main() {
     job.id = "flydelta://job/basis-1";
     job.kind = common_flydelta_experiment_job_kind::basis;
     job.seed = seed();
-    job.repair_delta_ids = {"flydelta://delta/1"};
+    job.behavior_delta_ids = {"flydelta://delta/1"};
     job.code_revision = "test:v1";
     CHECK(common_flydelta_experiment_job_validate(job, 8, error));
     const auto text = common_flydelta_experiment_job_to_json(job);

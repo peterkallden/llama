@@ -52,8 +52,8 @@ bool common_flydelta_experiment_job_validate(
         return true;
     };
     if (job.kind == common_flydelta_experiment_job_kind::basis &&
-            !check_refs(job.repair_delta_ids)) {
-        error = "FlyDelta basis job requires bounded repair-delta references";
+            !check_refs(job.behavior_delta_ids)) {
+        error = "FlyDelta basis job requires bounded behavior-delta references";
         return false;
     }
     if (job.kind == common_flydelta_experiment_job_kind::counterfactual) {
@@ -101,7 +101,7 @@ std::string common_flydelta_experiment_job_to_json(
             {"transaction_ids", job.seed.transaction_ids},
         }},
         {"capture_manifest_ids", job.capture_manifest_ids},
-        {"repair_delta_ids", job.repair_delta_ids},
+        {"behavior_delta_ids", job.behavior_delta_ids},
         {"training_example_ids", job.training_example_ids},
         {"alpha_search", {
             {"candidates", job.alpha_search.candidates},
@@ -155,7 +155,7 @@ bool common_flydelta_experiment_job_from_json(
         job.seed.evidence_ref = seed.value("evidence_ref", "");
         job.seed.transaction_ids = seed.value("transaction_ids", std::vector<std::string>{});
         job.capture_manifest_ids = value.value("capture_manifest_ids", std::vector<std::string>{});
-        job.repair_delta_ids = value.value("repair_delta_ids", std::vector<std::string>{});
+        job.behavior_delta_ids = value.value("behavior_delta_ids", std::vector<std::string>{});
         job.training_example_ids = value.value("training_example_ids", std::vector<std::string>{});
         const auto alpha = value.value("alpha_search", json::object());
         job.alpha_search.candidates = alpha.value("candidates", std::vector<float>{});

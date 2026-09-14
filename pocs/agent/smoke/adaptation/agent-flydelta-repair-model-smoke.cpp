@@ -198,7 +198,7 @@ int main(int argc, char ** argv) {
     capture_request->layer_indices = {1, 2};
     // Capture the final prompt row. The two controlled prompts have the same
     // token length, and this row is after the tool-selection instruction;
-    // token zero would be identical and produce a zero repair delta.
+    // token zero would be identical and produce a zero behavior delta.
     capture_request->token_index = -1;
     capture_request->max_bytes = 4U * 1024U * 1024U;
     capture_request->model_profile_fingerprint = profile;
@@ -254,12 +254,12 @@ int main(int argc, char ** argv) {
     manifest.redaction_attested = true;
     manifest.captured_bytes = (failed.flydelta_capture->values.size() +
         repaired.flydelta_capture->values.size()) * sizeof(float);
-    std::vector<common_flydelta_repair_delta> deltas;
-    if (!common_flydelta_repair_deltas_from_captures(
+    std::vector<common_flydelta_behavior_delta> deltas;
+    if (!common_flydelta_behavior_deltas_from_captures(
             manifest, *failed.flydelta_capture, *repaired.flydelta_capture,
             "evidence:model-repair-e2e", 64U * 1024U * 1024U,
             64U * 1024U * 1024U, deltas, error) || deltas.size() != 2) {
-        std::cerr << "FlyDelta repair delta construction failed: " << error << '\n';
+        std::cerr << "FlyDelta behavior delta construction failed: " << error << '\n';
         return 1;
     }
 
@@ -324,7 +324,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // The layer-2 repair delta is the reference for the post-layer-1
+    // The layer-2 behavior delta is the reference for the post-layer-1
     // representation shift measured in each counterfactual arm.
     const std::vector<float> & repair_direction = deltas.back().values;
     std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_arm_capture;

@@ -28,8 +28,8 @@ int main() {
     manifest.redaction_attested = true;
     manifest.captured_bytes = 2 * 2 * 2 * sizeof(float);
 
-    std::vector<common_flydelta_repair_delta> deltas;
-    CHECK(common_flydelta_repair_deltas_from_captures(
+    std::vector<common_flydelta_behavior_delta> deltas;
+    CHECK(common_flydelta_behavior_deltas_from_captures(
         manifest, capture(1.0f, 3.0f), capture(2.5f, 2.0f),
         "verifier:repair", 1024, 1024, deltas, error));
     CHECK(deltas.size() == 2);
@@ -39,12 +39,12 @@ int main() {
 
     auto misaligned = capture(2.5f, 2.0f);
     misaligned.layer_indices = {2, 5};
-    CHECK(!common_flydelta_repair_deltas_from_captures(
+    CHECK(!common_flydelta_behavior_deltas_from_captures(
         manifest, capture(1.0f, 3.0f), misaligned,
         "verifier:repair", 1024, 1024, deltas, error));
 
     auto zero = capture(1.0f, 3.0f);
-    CHECK(!common_flydelta_repair_deltas_from_captures(
+    CHECK(!common_flydelta_behavior_deltas_from_captures(
         manifest, capture(1.0f, 3.0f), zero,
         "verifier:repair", 1024, 1024, deltas, error));
     return 0;

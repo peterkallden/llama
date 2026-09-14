@@ -95,8 +95,8 @@ int main() {
     CHECK(common_learning_transaction_validate(failed, 16, error));
     CHECK(common_learning_transaction_validate(repaired, 16, error));
 
-    common_flydelta_repair_transition transition;
-    CHECK(common_flydelta_repair_transition_from_transactions(
+    common_flydelta_behavior_transition transition;
+    CHECK(common_flydelta_tool_repair_transition_from_transactions(
         failed, repaired, "sha256:inspect-selected-dataset",
         "execution:wrong-tool", "execution:repaired-tool", "verifier:tool-contract-v1",
         transition, error));
@@ -158,14 +158,14 @@ int main() {
     failed_capture.values = {0.0f, 0.0f, 0.0f, 0.0f};
     common_flydelta_hidden_state_capture repaired_capture = failed_capture;
     repaired_capture.values = {1.0f, 0.0f, 0.0f, 0.0f};
-    std::vector<common_flydelta_repair_delta> repair_deltas;
-    CHECK(common_flydelta_repair_deltas_from_captures(
+    std::vector<common_flydelta_behavior_delta> behavior_deltas;
+    CHECK(common_flydelta_behavior_deltas_from_captures(
         manifest, failed_capture, repaired_capture, "evidence:repaired-tool",
-        64 * 1024, 64 * 1024, repair_deltas, error));
-    CHECK(repair_deltas.size() == 1 && repair_deltas.front().layer_index == 2);
+        64 * 1024, 64 * 1024, behavior_deltas, error));
+    CHECK(behavior_deltas.size() == 1 && behavior_deltas.front().layer_index == 2);
     common_flydelta_basis_builder basis({
         4, 4, 0.85f, fixture().model_profile_fingerprint, "layout:cvec-v1"});
-    CHECK(basis.add(repair_deltas.front(), credit, error));
+    CHECK(basis.add(behavior_deltas.front(), credit, error));
     CHECK(basis.directions().size() == 1);
 
     common_flydelta_promotion_policy promotion_policy;

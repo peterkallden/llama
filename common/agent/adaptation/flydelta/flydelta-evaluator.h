@@ -18,13 +18,13 @@ struct common_flydelta_evaluator_config {
 };
 
 struct common_flydelta_evaluator_callbacks {
-    // Resolves one immutable repair delta and its host-derived intervention
+    // Resolves one immutable behavior delta and its host-derived intervention
     // credit. The callback owns the evidence/artifact store.
     std::function<bool(
             const std::string & id,
-            common_flydelta_repair_delta & delta,
+            common_flydelta_behavior_delta & delta,
             common_flydelta_intervention_credit & credit,
-            std::string & error)> resolve_repair_delta;
+            std::string & error)> resolve_behavior_delta;
 
     // Resolves one bounded training example. The evaluator enforces that it
     // is a train split example before passing it to DeltaMemory.

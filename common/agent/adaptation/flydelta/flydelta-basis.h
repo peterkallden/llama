@@ -9,10 +9,10 @@
 #include <string>
 #include <vector>
 
-// A host-captured, redacted difference between aligned failed and repaired
+// A host-captured, redacted difference between aligned baseline and candidate
 // activations. This is an input contract for an offline basis builder, not a
 // dynamic llama.cpp hook.
-struct common_flydelta_repair_delta {
+struct common_flydelta_behavior_delta {
     int schema_version = 1;
     std::string id;
     std::string capture_manifest_id;
@@ -23,23 +23,23 @@ struct common_flydelta_repair_delta {
     std::vector<float> values;
 };
 
-bool common_flydelta_repair_delta_validate(
-        const common_flydelta_repair_delta & delta,
+bool common_flydelta_behavior_delta_validate(
+        const common_flydelta_behavior_delta & delta,
         size_t expected_dimension,
         size_t max_bytes,
         std::string & error);
 
-// Produces one repaired-minus-failed delta per aligned captured layer. Both
-// captures must belong to the manifest's verified execution pair and must
+// Produces one candidate-minus-baseline delta per aligned captured layer.
+// Both captures must belong to the manifest's verified execution pair and must
 // have identical layout, token and dimensions. No model inference occurs.
-bool common_flydelta_repair_deltas_from_captures(
+bool common_flydelta_behavior_deltas_from_captures(
         const common_flydelta_capture_manifest & manifest,
         const common_flydelta_hidden_state_capture & failed,
         const common_flydelta_hidden_state_capture & repaired,
         const std::string & host_evidence_ref,
         size_t max_capture_bytes,
         size_t max_delta_bytes,
-        std::vector<common_flydelta_repair_delta> & deltas,
+        std::vector<common_flydelta_behavior_delta> & deltas,
         std::string & error);
 
 struct common_flydelta_basis_config {
@@ -70,7 +70,7 @@ public:
     // existing sufficiently similar direction. UNKNOWN is intentionally a
     // no-op and cannot affect the basis.
     bool add(
-            const common_flydelta_repair_delta & delta,
+            const common_flydelta_behavior_delta & delta,
             const common_flydelta_intervention_credit & credit,
             std::string & error);
 

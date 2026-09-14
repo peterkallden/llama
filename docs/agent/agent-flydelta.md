@@ -247,7 +247,7 @@ The seed is wrapped in a typed `common_flydelta_experiment_job`. V1 has three
 explicit job kinds:
 
 ```text
-basis            repair-delta references -> candidate steering basis
+        basis            behavior-delta references -> candidate steering basis
 counterfactual   capture references + alpha grid -> host-evaluated trials
 delta_memory     train split examples -> DeltaMemory update
 ```
@@ -314,7 +314,7 @@ This separation is intentional: the existing
 `llama-agent-adaptation-worker` understands corpus-backed SFT/QLoRA jobs and
 must not infer FlyDelta semantics from a different JSON shape.
 `common_flydelta_evaluate_job()` now provides the one-job evaluator seam: it
-resolves only typed host callbacks for counterfactual reports, repair deltas or
+resolves only typed host callbacks for counterfactual reports, behavior deltas or
 train examples, validates the returned contracts, and returns typed results.
 It never reads paths, sees raw prompt/tool data, performs model-side
 verification or activates an artifact. The queue worker remains the lifecycle
@@ -673,7 +673,8 @@ treated as proof that a future overlay caused the improvement.
 
 ### 4C. Capture and bounded basis — implemented
 
-`flydelta-basis.*` accepts a bounded, host-captured and redacted repair delta.
+`flydelta-basis.*` accepts a bounded, host-captured and redacted behavior
+delta. A tool repair is only one possible source of that delta.
 The builder normalizes and clusters similar directions. `HELPED` may create or
 update a direction; `HARMED` and `NEUTRAL` can only add evidence to an existing
 similar direction; `UNKNOWN` is a no-op. This makes `WHAT` (basis) separate from
@@ -702,10 +703,10 @@ capture tensors, copy prompts or tool results, or make the candidate eligible
 for activation. The byte count is supplied by the host for the already
 bounded capture payload and is checked again by the manifest validator.
 
-`common_flydelta_repair_deltas_from_captures()` is the next pure materializer:
-it accepts the manifest's failed and repaired hidden-state captures, verifies
+`common_flydelta_behavior_deltas_from_captures()` is the next pure materializer:
+it accepts the manifest's baseline and candidate hidden-state captures, verifies
 the exact model/layout/token/layer/dimension alignment and pair byte count,
-then emits one `repaired - failed` delta per layer. The existing repair-delta
+then emits one `candidate - baseline` delta per layer. The existing behavior-delta
 validator rejects non-finite and zero deltas. The helper does not run
 inference, infer which arm was correct, persist an artifact or update a basis;
 the host must first provide the verified relation and counterfactual credit,
@@ -716,13 +717,14 @@ The current host-level repair smoke covers this complete bounded seam:
 ```text
 verified repair relation
   -> capture manifest
-  -> failed/repaired captures
-  -> per-layer repair delta
+  -> baseline/candidate captures
+  -> per-layer behavior delta
   -> HELPED credit
   -> basis direction and gated overlay
 ```
 
-This is still preparation, not automatic learning. Capture-manifest scope,
+This is still preparation, not automatic learning. Capture-manifest source,
+scope,
 TTL, artifact persistence and revocation remain lifecycle work; the current
 manifest uses observation/transaction and execution references but does not
 claim to implement those policies by itself.
@@ -982,7 +984,7 @@ and exercises the complete model-backed bridge:
 host-controlled failed selection (data.describe)
   -> host-controlled repaired selection (data.inspect)
   -> aligned hidden-state capture pair
-  -> repaired-minus-failed repair delta
+  -> candidate-minus-baseline behavior delta
   -> host-approved basis direction
   -> one train-split DeltaMemory example
   -> three fresh inference arms
@@ -1012,11 +1014,34 @@ threads. It complements, rather than replaces, the model-free repair smoke
 and the public session-host runtime smoke. When an overlay arm remains
 `UNKNOWN` because it fails like the baseline, the smoke additionally reports
 the cosine similarity between that arm's hidden-state shift and the
-host-certified repair delta. A positive value is an `aligned` diagnostic
+host-certified behavior delta. A positive value is an `aligned` diagnostic
 signal, not a successful outcome: it may justify extended tuning or a later
 experiment, but it cannot update DeltaMemory or promote an artifact by
 itself. Cosine is omitted from promotion decisions and is only used to triage
 otherwise unknown samples.
+
+### 4I. Source-neutral behavior transitions — implemented
+
+The shared evidence contract and FlyDelta job envelope are source-neutral.
+They can carry host-certified relations from tool repair, reflection
+alternatives, planning revisions, research alternatives, dataset/resource
+handling, workflow/code validation, procedure/blueprint learning and explicit
+user corrections. `common_flydelta_behavior_transition_from_evidence()` is the
+generic adapter; the longer-named tool-repair helper is retained only as a
+strict convenience adapter for the existing failure/recovery signals.
+
+This does not mean every source is automatically captured or activated. The
+runtime collector only queues sources explicitly marked as candidate-ready.
+Other sources must arrive through an explicit host-verified relation. The
+source is copied into the capture manifest and remains part of the evidence,
+job and artifact provenance. Callers should partition their basis and
+behavior key by the learned behavior so unrelated corrections cannot be
+clustered into one direction.
+
+The model-facing roles remain unchanged: the model may produce alternatives
+and representations, while the host verifier decides whether an outcome is
+valid. Facts, provider failures and unverified model self-descriptions are not
+FlyDelta evidence.
 
 ### 5. Optional dynamic hook
 

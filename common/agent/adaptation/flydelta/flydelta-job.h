@@ -26,7 +26,7 @@ struct common_flydelta_experiment_job {
     common_flydelta_experiment_job_kind kind = common_flydelta_experiment_job_kind::basis;
     common_flydelta_experiment_seed seed;
     std::vector<std::string> capture_manifest_ids;
-    std::vector<std::string> repair_delta_ids;
+    std::vector<std::string> behavior_delta_ids;
     std::vector<std::string> training_example_ids;
     common_flydelta_alpha_search_config alpha_search;
     float learning_rate = 0.1f;

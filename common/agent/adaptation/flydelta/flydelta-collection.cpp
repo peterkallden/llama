@@ -16,7 +16,7 @@ bool references_empty_except(
     if (kind != common_flydelta_experiment_job_kind::counterfactual &&
             !request.capture_manifest_ids.empty()) return false;
     if (kind != common_flydelta_experiment_job_kind::basis &&
-            !request.repair_delta_ids.empty()) return false;
+            !request.behavior_delta_ids.empty()) return false;
     if (kind != common_flydelta_experiment_job_kind::delta_memory &&
             !request.training_example_ids.empty()) return false;
     return true;
@@ -57,7 +57,7 @@ bool common_flydelta_collect_experiment_job(
     job.kind = request.kind;
     job.seed = std::move(seed);
     job.capture_manifest_ids = request.capture_manifest_ids;
-    job.repair_delta_ids = request.repair_delta_ids;
+    job.behavior_delta_ids = request.behavior_delta_ids;
     job.training_example_ids = request.training_example_ids;
     job.alpha_search = request.alpha_search;
     job.learning_rate = request.learning_rate;

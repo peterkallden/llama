@@ -25,8 +25,8 @@ float similarity(const std::vector<float> & left, const std::vector<float> & rig
 
 } // namespace
 
-bool common_flydelta_repair_delta_validate(
-        const common_flydelta_repair_delta & delta,
+bool common_flydelta_behavior_delta_validate(
+        const common_flydelta_behavior_delta & delta,
         size_t expected_dimension,
         size_t max_bytes,
         std::string & error) {
@@ -38,32 +38,32 @@ bool common_flydelta_repair_delta_validate(
             !nonempty_bounded(delta.capture_layout_revision) || delta.layer_index < 0 ||
             delta.values.size() != expected_dimension ||
             (max_bytes != 0 && delta.values.size() * sizeof(float) > max_bytes)) {
-        error = "FlyDelta repair delta identity or bounds are invalid";
+        error = "FlyDelta behavior delta identity or bounds are invalid";
         return false;
     }
     float squared = 0.0f;
     for (const float value : delta.values) {
         if (!std::isfinite(value)) {
-            error = "FlyDelta repair delta contains a non-finite value";
+            error = "FlyDelta behavior delta contains a non-finite value";
             return false;
         }
         squared += value * value;
     }
     if (squared <= std::numeric_limits<float>::epsilon()) {
-        error = "FlyDelta repair delta must not be zero";
+        error = "FlyDelta behavior delta must not be zero";
         return false;
     }
     return true;
 }
 
-bool common_flydelta_repair_deltas_from_captures(
+bool common_flydelta_behavior_deltas_from_captures(
         const common_flydelta_capture_manifest & manifest,
         const common_flydelta_hidden_state_capture & failed,
         const common_flydelta_hidden_state_capture & repaired,
         const std::string & host_evidence_ref,
         size_t max_capture_bytes,
         size_t max_delta_bytes,
-        std::vector<common_flydelta_repair_delta> & deltas,
+        std::vector<common_flydelta_behavior_delta> & deltas,
         std::string & error) {
     error.clear();
     deltas.clear();
@@ -74,7 +74,7 @@ bool common_flydelta_repair_deltas_from_captures(
             !common_flydelta_hidden_state_capture_validate(
                 repaired, max_capture_bytes, error) ||
             !nonempty_bounded(host_evidence_ref)) {
-        if (error.empty()) error = "FlyDelta repair captures have invalid identity";
+        if (error.empty()) error = "FlyDelta behavior captures have invalid identity";
         return false;
     }
     if (manifest.negative_execution_ref.empty() ||
@@ -87,7 +87,7 @@ bool common_flydelta_repair_deltas_from_captures(
             failed.n_embd != repaired.n_embd ||
             failed.token_index != repaired.token_index ||
             failed.values.size() != repaired.values.size()) {
-        error = "FlyDelta failed and repaired captures are not aligned";
+        error = "FlyDelta baseline and candidate captures are not aligned";
         return false;
     }
 
@@ -106,8 +106,8 @@ bool common_flydelta_repair_deltas_from_captures(
 
     deltas.reserve(failed.layer_indices.size());
     for (size_t layer = 0; layer < failed.layer_indices.size(); ++layer) {
-        common_flydelta_repair_delta delta;
-        delta.id = manifest.id + "/repair-delta/layer-" +
+        common_flydelta_behavior_delta delta;
+        delta.id = manifest.id + "/behavior-delta/layer-" +
             std::to_string(failed.layer_indices[layer]);
         delta.capture_manifest_id = manifest.id;
         delta.host_evidence_ref = host_evidence_ref;
@@ -119,7 +119,7 @@ bool common_flydelta_repair_deltas_from_captures(
         for (size_t i = 0; i < values_per_layer; ++i) {
             delta.values[i] = repaired.values[offset + i] - failed.values[offset + i];
         }
-        if (!common_flydelta_repair_delta_validate(
+        if (!common_flydelta_behavior_delta_validate(
                 delta, values_per_layer, max_delta_bytes, error)) {
             deltas.clear();
             return false;
@@ -149,18 +149,18 @@ common_flydelta_basis_builder::common_flydelta_basis_builder(
     : config_(config) {}
 
 bool common_flydelta_basis_builder::add(
-        const common_flydelta_repair_delta & delta,
+        const common_flydelta_behavior_delta & delta,
         const common_flydelta_intervention_credit & credit,
         std::string & error) {
     error.clear();
     if (!common_flydelta_basis_config_validate(config_, error) ||
-            !common_flydelta_repair_delta_validate(delta, config_.dimension, 64U * 1024U * 1024U, error) ||
+            !common_flydelta_behavior_delta_validate(delta, config_.dimension, 64U * 1024U * 1024U, error) ||
             !common_flydelta_intervention_credit_validate(credit, error)) {
         return false;
     }
     if (delta.model_profile_fingerprint != config_.model_profile_fingerprint ||
             delta.capture_layout_revision != config_.capture_layout_revision) {
-        error = "FlyDelta repair delta is incompatible with basis configuration";
+        error = "FlyDelta behavior delta is incompatible with basis configuration";
         return false;
     }
     if (credit.outcome == common_flydelta_counterfactual_outcome::unknown) return true;

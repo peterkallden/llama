@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta.h"
+#include "agent/adaptation/adaptation-evidence.h"
 #include "agent/adaptation/learning-transaction.h"
 
 #include <cstddef>
@@ -17,6 +18,7 @@ struct common_flydelta_capture_manifest {
     int schema_version = 1;
     std::string id;
     std::string observation_id;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     std::string model_profile_fingerprint;
     std::string template_fingerprint;
     std::string positive_execution_ref;
@@ -41,7 +43,10 @@ bool common_flydelta_capture_manifest_from_json(
 
 struct common_flydelta_candidate_policy {
     size_t min_observations = 3;
-    size_t min_verified_recoveries = 2;
+    // Every observation in a FlyDelta candidate must already be host
+    // verified. This is deliberately source-neutral: a tool recovery is one
+    // kind of observation, not the qualification primitive itself.
+    size_t min_verified_observations = 2;
     size_t max_observations = 64;
     size_t max_capture_manifests = 64;
     float min_confidence = 0.80f;
@@ -82,7 +87,7 @@ struct common_flydelta_candidate {
     std::string tool_family;
     std::string provider_kind;
     size_t observed_occurrences = 0;
-    size_t verified_recoveries = 0;
+    size_t verified_observations = 0;
     size_t contradictions = 0;
     float confidence = 0.0f;
     common_flydelta_candidate_status status = common_flydelta_candidate_status::observed;

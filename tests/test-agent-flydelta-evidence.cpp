@@ -29,8 +29,8 @@ int main() {
     std::string error;
     auto failed = transaction("learning://transaction/failed", common_learning_signal_type::tool_failure);
     auto repaired = transaction("learning://transaction/repaired", common_learning_signal_type::successful_recovery);
-    common_flydelta_repair_transition transition;
-    CHECK(common_flydelta_repair_transition_from_transactions(
+    common_flydelta_behavior_transition transition;
+    CHECK(common_flydelta_tool_repair_transition_from_transactions(
         failed, repaired, "sha256:task", "execution:failed", "execution:repaired",
         "verifier:v1", transition, error));
 
@@ -93,6 +93,20 @@ int main() {
         source, "tool_use/diagnostics/missing-argument", "sha256:model",
         "sha256:tokenizer", "sha256:template", "sha256:tool-resource-context",
         common_flydelta_training_split::holdout, seed, error));
+
+    common_flydelta_behavior_transition generic_transition;
+    CHECK(common_flydelta_behavior_transition_from_evidence(
+        source, failed.id, repaired.id, generic_transition, error));
+    CHECK(generic_transition.source == common_adaptation_evidence_source::tool_repair);
+    CHECK(generic_transition.baseline_transaction_id == failed.id);
+    CHECK(generic_transition.candidate_transaction_id == repaired.id);
+
+    auto planning_evidence = source;
+    planning_evidence.id = "evidence://planning/1";
+    planning_evidence.source = common_adaptation_evidence_source::planning_revision;
+    CHECK(common_flydelta_behavior_transition_from_evidence(
+        planning_evidence, failed.id, repaired.id, generic_transition, error));
+    CHECK(generic_transition.source == common_adaptation_evidence_source::planning_revision);
     CHECK(seed.split == common_flydelta_training_split::holdout);
     common_flydelta_experiment_fixture seed_fixture;
     CHECK(common_flydelta_experiment_fixture_from_seed(seed, seed_fixture, error));

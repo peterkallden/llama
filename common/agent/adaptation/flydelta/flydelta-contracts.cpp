@@ -103,6 +103,7 @@ std::string common_flydelta_capture_manifest_to_json(
         {"schema_version", manifest.schema_version},
         {"id", manifest.id},
         {"observation_id", manifest.observation_id},
+        {"source", common_adaptation_evidence_source_name(manifest.source)},
         {"model_profile_fingerprint", manifest.model_profile_fingerprint},
         {"template_fingerprint", manifest.template_fingerprint},
         {"positive_execution_ref", manifest.positive_execution_ref},
@@ -126,6 +127,13 @@ bool common_flydelta_capture_manifest_from_json(
         manifest.schema_version = value.value("schema_version", 0);
         manifest.id = value.value("id", "");
         manifest.observation_id = value.value("observation_id", "");
+        const auto source = common_adaptation_evidence_source_from_name(
+            value.value("source", ""));
+        if (!source) {
+            error = "FlyDelta capture manifest source is unknown";
+            return false;
+        }
+        manifest.source = *source;
         manifest.model_profile_fingerprint = value.value("model_profile_fingerprint", "");
         manifest.template_fingerprint = value.value("template_fingerprint", "");
         manifest.positive_execution_ref = value.value("positive_execution_ref", "");
@@ -162,8 +170,8 @@ bool common_flydelta_candidate_validate(
         return false;
     }
     if (candidate.observed_occurrences < policy.min_observations ||
-            candidate.verified_recoveries < policy.min_verified_recoveries ||
-            candidate.verified_recoveries > candidate.observed_occurrences || candidate.contradictions != 0 ||
+            candidate.verified_observations < policy.min_verified_observations ||
+            candidate.verified_observations > candidate.observed_occurrences || candidate.contradictions != 0 ||
             !std::isfinite(candidate.confidence) || candidate.confidence < policy.min_confidence || candidate.confidence > 1.0f) {
         error = "FlyDelta candidate has insufficient or inconsistent qualification evidence";
         return false;
@@ -230,19 +238,14 @@ bool common_flydelta_candidate_from_transactions(
             candidate_source = source;
         }
         ++candidate.observed_occurrences;
-        if (!observation.recovery_of_signal_id.empty() || std::any_of(
-                    observation.signals.begin(), observation.signals.end(), [](const auto & signal) {
-                        return signal.type == common_learning_signal_type::successful_recovery;
-                    })) {
-            ++candidate.verified_recoveries;
-        }
+        ++candidate.verified_observations;
         for (const auto & signal : observation.signals) {
             if (candidate.tool_family.empty()) candidate.tool_family = signal.tool_family;
             if (candidate.provider_kind.empty()) candidate.provider_kind = signal.provider_kind;
             if (candidate.learning_domain.empty()) candidate.learning_domain = signal.tool_family.empty() ? "agent_behavior" : signal.tool_family;
         }
     }
-    candidate.confidence = std::min(1.0f, static_cast<float>(candidate.verified_recoveries) /
+    candidate.confidence = std::min(1.0f, static_cast<float>(candidate.verified_observations) /
         static_cast<float>(std::max<size_t>(1, candidate.observed_occurrences)));
     if (candidate_source) candidate.source = *candidate_source;
     if (!common_flydelta_candidate_validate(candidate, policy, error)) return false;
