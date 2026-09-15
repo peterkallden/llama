@@ -118,8 +118,18 @@ for different kinds of work so the expected tool is not always
 | numeric summary | Count, min, max, mean and standard deviation | `statistics.describe` |
 | region distribution | Frequency of values in one column | `statistics.value_counts` |
 | regional sales summary | Grouped sum and average | `data.aggregate` |
+| filtered north orders | Declarative region filter | `data.filter` |
+| largest orders | Projection, sort and bounded limit | `data.query` |
+| report column shape | Rename and drop host-approved columns | `data.transform` |
+| required fields check | Not-null and uniqueness validation | `dataset.validate` |
+| amount outliers | Bounded IQR outlier detection | `statistics.outliers` |
+| regional numeric profile | Numeric statistics grouped by region | `statistics.describe` |
 
-Each scenario includes a host-readable plan using the canonical
+The suite intentionally contains twelve scenarios: the first six cover the
+basic dataset inspection path, while the next six exercise data operations in
+slightly different ways. That gives the optional model smoke roughly twice as
+many natural selection attempts without changing the model-facing seam or
+adding a second prompt format. Each scenario includes a host-readable plan using the canonical
 `dataset://local/sales` reference. The contract smoke validates the JSON,
 catalog membership, plan shape and dataset bindings. The optional model smoke
 uses the same file and the real compact tool descriptions, captures a bounded

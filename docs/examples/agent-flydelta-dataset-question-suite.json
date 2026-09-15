@@ -4,7 +4,7 @@
   "language": "en",
   "dataset": "dataset://local/sales",
   "dataset_name": "Sales",
-  "purpose": "Natural English dataset questions for model-facing tool selection and optional FlyDelta observation.",
+  "purpose": "Host-certified dataset tool-selection observations for FlyDelta repair and counterfactual search.",
   "model_contract": {
     "selection": "Choose exactly one most-specific read-only dataset tool. Return only {\"name\":\"tool.name\",\"arguments\":{...}}.",
     "dataset_rule": "Use the canonical dataset reference dataset://local/sales when a dataset argument is required.",
@@ -74,6 +74,72 @@
         "goal": "Aggregate sales by region",
         "steps": [
           {"tool": "data.aggregate", "args": {"dataset": "dataset://local/sales", "group_by": ["region"], "measures": [{"function": "sum", "column": "amount", "as": "total_amount"}, {"function": "avg", "column": "amount", "as": "average_amount"}]}}
+        ]
+      }
+    },
+    {
+      "id": "filtered-north-orders",
+      "question": "Return only the records from the north region and preserve the original columns. Keep the result bounded.",
+      "expected_tool": "data.filter",
+      "plan": {
+        "goal": "Filter the dataset to one region",
+        "steps": [
+          {"tool": "data.filter", "args": {"dataset": "dataset://local/sales", "conditions": [{"field": "region", "operator": "=", "value": "north"}], "limit": 100}}
+        ]
+      }
+    },
+    {
+      "id": "largest-orders",
+      "question": "Show the two largest orders by amount, returning only order_id, region, and amount in descending amount order.",
+      "expected_tool": "data.query",
+      "plan": {
+        "goal": "Project and sort a bounded result",
+        "steps": [
+          {"tool": "data.query", "args": {"dataset": "dataset://local/sales", "select": ["order_id", "region", "amount"], "order_by": [{"field": "amount", "direction": "desc"}], "limit": 2}}
+        ]
+      }
+    },
+    {
+      "id": "report-column-shape",
+      "question": "Prepare this dataset for a report by renaming the amount column to total_amount and dropping customer_id. Return the transformed rows.",
+      "expected_tool": "data.transform",
+      "plan": {
+        "goal": "Create a bounded report-shaped dataset",
+        "steps": [
+          {"tool": "data.transform", "args": {"dataset": "dataset://local/sales", "operations": [{"type": "rename", "from": "amount", "to": "total_amount"}, {"type": "drop", "column": "customer_id"}]}}
+        ]
+      }
+    },
+    {
+      "id": "required-fields-check",
+      "question": "Check whether every record has an order_id and a region, and whether order_id is unique. Report valid and any violations.",
+      "expected_tool": "dataset.validate",
+      "plan": {
+        "goal": "Validate required and unique fields",
+        "steps": [
+          {"tool": "dataset.validate", "args": {"dataset": "dataset://local/sales", "rules": [{"type": "not_null", "column": "order_id"}, {"type": "not_null", "column": "region"}, {"type": "unique", "column": "order_id"}]}}
+        ]
+      }
+    },
+    {
+      "id": "amount-outliers",
+      "question": "Check the amount column for bounded IQR outliers. Use the default IQR method and report the thresholds and outlier rows.",
+      "expected_tool": "statistics.outliers",
+      "plan": {
+        "goal": "Detect numeric outliers with the host-owned IQR method",
+        "steps": [
+          {"tool": "statistics.outliers", "args": {"dataset": "dataset://local/sales", "columns": ["amount"], "method": "iqr", "multiplier": 1.5}}
+        ]
+      }
+    },
+    {
+      "id": "regional-numeric-profile",
+      "question": "Describe amount separately for each region, including count, null count, minimum, maximum, mean, and population standard deviation.",
+      "expected_tool": "statistics.describe",
+      "plan": {
+        "goal": "Describe a numeric column within each region",
+        "steps": [
+          {"tool": "statistics.describe", "args": {"dataset": "dataset://local/sales", "columns": ["amount"], "group_by": ["region"]}}
         ]
       }
     }
