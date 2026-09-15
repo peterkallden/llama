@@ -22,6 +22,11 @@ bool better_selection(float score, size_t layer_count, float scale,
     return scale < current.scale;
 }
 
+std::string arm_suffix(size_t direction_index, size_t layer_index, size_t scale_index) {
+    return "/d" + std::to_string(direction_index) + "/l" +
+        std::to_string(layer_index) + "/s" + std::to_string(scale_index);
+}
+
 } // namespace
 
 bool common_flydelta_search_pipeline_config_validate(
@@ -154,6 +159,81 @@ bool common_flydelta_run_search_pipeline(
             }
         }
         result.directions.push_back(std::move(direction_result));
+    }
+    return true;
+}
+
+bool common_flydelta_append_search_pipeline_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_search_pipeline_result & result,
+        const std::string & experimental_artifact_id,
+        std::string & error) {
+    error.clear();
+    if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
+            experimental_artifact_id.empty() || experimental_artifact_id.size() > 512) {
+        if (error.empty()) error = "FlyDelta pipeline lifecycle artifact identity is invalid";
+        return false;
+    }
+
+    for (size_t direction_index = 0; direction_index < result.directions.size(); ++direction_index) {
+        const auto & direction = result.directions[direction_index];
+        for (size_t layer_index = 0; layer_index < direction.layer_results.size(); ++layer_index) {
+            const auto & layer = direction.layer_results[layer_index];
+            for (size_t scale_index = 0; scale_index < layer.scale_trials.size(); ++scale_index) {
+                const auto & scale = layer.scale_trials[scale_index];
+                if (!common_flydelta_scale_trial_validate(scale, error)) return false;
+                if (!scale.executed) continue;
+
+                const std::string suffix = arm_suffix(direction_index, layer_index, scale_index);
+                common_flydelta_search_observation observation;
+                observation.experiment_id = fixture.id;
+                observation.candidate_id = experimental_artifact_id + suffix;
+                observation.search_kind = "direction-layer-scale";
+                observation.experimental_artifact_id = experimental_artifact_id;
+                observation.outcome = scale.outcome;
+                // This flag means that the host ran/classified the arm. The
+                // outcome may still be UNKNOWN when the verifier had no fact.
+                observation.host_verified = true;
+                observation.diagnostics_available = scale.geometry_available;
+                if (scale.geometry_available) {
+                    observation.diagnostics = {
+                        1,
+                        layer.candidate.anchor_layer_index,
+                        scale.geometry.cosine,
+                        scale.geometry.progress,
+                        scale.geometry.leakage,
+                        scale.geometry.shift_norm,
+                    };
+                }
+                observation.budget_remaining = scale.safe_to_escalate;
+
+                common_flydelta_search_decision decision;
+                if (!common_flydelta_decide_search_disposition(
+                        observation, decision, error)) return false;
+
+                common_flydelta_candidate_lineage lineage;
+                lineage.candidate_id = observation.candidate_id;
+                lineage.parent_candidate_id = experimental_artifact_id;
+                lineage.mutation_kind = scale.refinement ? "scale_refinement" : "search_arm";
+                lineage.generation = scale.refinement ? 1 : 0;
+                lineage.direction_id = experimental_artifact_id + "/direction-" +
+                    std::to_string(direction_index);
+                lineage.layer_indices = layer.candidate.layer_indices;
+                lineage.scale = scale.scale;
+                lineage.intervention_budget = scale.scale;
+
+                common_flydelta_lifecycle_event_context arm_context = context;
+                arm_context.event_id = context.event_id + suffix;
+                arm_context.idempotency_key = context.idempotency_key + suffix;
+                arm_context.source_id = context.source_id + suffix;
+                if (!common_flydelta_append_search_lifecycle(
+                        store, arm_context, observation, decision, &lineage, error)) {
+                    return false;
+                }
+            }
+        }
     }
     return true;
 }

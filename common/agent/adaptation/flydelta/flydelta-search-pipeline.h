@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-scale-search.h"
+#include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 
 #include <cstddef>
 #include <functional>
@@ -88,4 +89,17 @@ bool common_flydelta_run_search_pipeline(
         const std::vector<common_flydelta_search_pipeline_direction> & directions,
         const common_flydelta_search_pipeline_runner & runner,
         common_flydelta_search_pipeline_result & result,
+        std::string & error);
+
+// Appends every executed scale arm as an experimental lifecycle result. The
+// caller supplies the immutable experimental artifact id; this helper only
+// records search state and never admits, activates or promotes that artifact.
+// A host-classified UNKNOWN is valid here: host_verified means that the host
+// evaluated the arm, not that it could prove the behavior.
+bool common_flydelta_append_search_pipeline_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_search_pipeline_result & result,
+        const std::string & experimental_artifact_id,
         std::string & error);

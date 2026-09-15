@@ -84,6 +84,25 @@ int main() {
     CHECK(std::fabs(direction.layer_results[2].scale_selection.scale - 0.08f) < 0.00001f);
     CHECK(result.selection.scale == direction.layer_results[2].scale_selection.scale);
 
+    common_learning_in_memory_lifecycle_store lifecycle;
+    common_flydelta_lifecycle_event_context lifecycle_context;
+    lifecycle_context.event_id = "event:search-pipeline";
+    lifecycle_context.idempotency_key = "idempotency:search-pipeline";
+    lifecycle_context.source_id = "source:search-pipeline";
+    lifecycle_context.scope.namespace_id = "local";
+    lifecycle_context.scope.project_id = "agent-tests";
+    lifecycle_context.scope.session_id = "session-1";
+    lifecycle_context.content_hash = "sha256:search-pipeline";
+    lifecycle_context.created_at = "2026-09-15T00:00:00Z";
+    CHECK(common_flydelta_append_search_pipeline_lifecycle(
+        lifecycle, lifecycle_context, make_fixture(), result,
+        "flydelta://sideband/search-pipeline", error));
+    auto records = lifecycle.list(error);
+    CHECK(error.empty() && records.size() == 12);
+    CHECK(records.front().kind == common_learning_lifecycle_kind::flydelta_result);
+    CHECK(records.front().payload_json.find("direction-layer-scale") != std::string::npos);
+    CHECK(records.front().payload_json.find("artifact_status") != std::string::npos);
+
     // A diagnostic-only direction still produces a bounded plan and retains
     // UNKNOWN/NEUTRAL scale trials, but cannot populate the HELPED selection.
     result = {};
