@@ -625,6 +625,70 @@ No gradient, SFT, LoRA or RFM path is hidden behind this component. A future
 multi-layer or model-specific adapter can compose the same coefficient vector
 with the existing `B_l * c` overlay contract.
 
+### TFO-lite coefficient search — implemented experimental seam
+
+The coefficient seam now has two explicit strategies:
+
+```text
+coordinate (default)
+    no-op plus bounded +/- coordinate arms
+
+tfo_lite (opt-in)
+    small seeded population, bounded local perturbations and a fixed
+    evaluation budget for mixed coefficient vectors
+```
+
+TFO-lite is an alternative to enumerating a coefficient grid. It does not
+replace direction or layer search and it never searches all three dimensions
+at once. The host first selects a compatible low-rank basis and layer; the
+population then searches only the coefficient vector inside that basis.
+
+Every arm is identified by its coefficients, iteration, parent trial and
+mutation kind. The baseline is always a separate no-op arm. The population is
+deduplicated, seeded for reproducibility and clipped to the configured L2
+trust region. The default bounds are intentionally small: this is an
+experiment helper, not a background optimizer.
+
+The margin/quality score is only a search signal:
+
+```text
+diagnostic fitness
+    = decision-margin delta
+    - coefficient-norm penalty
+    - harm penalty
+```
+
+If no decision margin is available, the host-provided quality delta is used.
+The host may use this score to retain or refine `UNKNOWN` and `NEUTRAL` arms,
+but it cannot create `HELPED`. Only a host-verified baseline-fail /
+candidate-pass result can request repeatability review or later promotion.
+
+TFO-lite arms are written through the existing experimental lifecycle store.
+They remain `experimental` and keep their lineage; they do not update
+DeltaMemory, change the active sideband or bypass the champion/holdout gates.
+The same seam is source-neutral and can later be used for planning, research,
+procedure and other verified behaviors by supplying a different host fitness
+and verifier callback.
+
+The intended evaluation sequence is:
+
+```text
+direction candidates
+        -> layer plan
+        -> compatible low-rank basis
+        -> coordinate baseline / TFO-lite challenger arms
+        -> decision-margin ranking
+        -> bounded full generation for top candidates
+        -> host verification
+        -> experimental lifecycle / HELPED review
+```
+
+For small rank and a narrow grid, coordinate search remains the preferred
+cheap baseline. TFO-lite is useful when mixed coefficients would otherwise
+make the grid grow rapidly. Comparisons must use the same seed, bounds and
+evaluation budget; the implementation makes no assumption that TFO-lite is
+better than the baseline.
+
 ### Experimental artifact materialization — implemented seam
 
 `common_flydelta_build_experimental_artifact()` creates a schema-v2 artifact
