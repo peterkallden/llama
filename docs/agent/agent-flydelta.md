@@ -746,6 +746,14 @@ later be used for `reflection_alternative`, `planning_revision` or
 `research_alternative`; the behavior key and evidence source keep those
 domains separated.
 
+The Qwen model smoke is wired to this seam for its L2 scale experiment. Its
+current fixture contains one natural host-certified repair pair, so the smoke
+reports and evaluates only `raw_repair`; it does not manufacture additional
+contrast samples. Once more natural pairs are available, the same smoke seam
+can evaluate the aggregate candidates under the normal four-arm runtime scale
+bound. The CPU contract test exercises the multi-sample trimmed and whitened
+paths independently of model inference.
+
 ### 4H. Verified candidate-to-delta materialization — implemented
 
 `flydelta-capture.*` now has a reference-only factory from a qualified,

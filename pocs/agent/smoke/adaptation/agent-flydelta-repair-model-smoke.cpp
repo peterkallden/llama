@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-basis.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-direction-search.h"
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
@@ -512,7 +513,8 @@ int main(int argc, char ** argv) {
             }
             const auto prepare_layer_activation = [&](const common_flydelta_layer_candidate & candidate,
                     common_flydelta_activation_result & activation,
-                    float gate_max_scale = 0.25f) {
+                    float gate_max_scale = 0.25f,
+                    const common_flydelta_basis_direction * direction_override = nullptr) {
                 common_flydelta_gate_request gate_request;
                 if (!common_flydelta_gate_request_from_context(
                         recognition, code, true, common_flydelta_candidate_status::approved,
@@ -526,13 +528,17 @@ int main(int argc, char ** argv) {
                 request.model_n_layers = model_n_layers;
                 request.il_end = static_cast<int32_t>(model_n_layers - 1);
                 for (const uint32_t layer : candidate.layer_indices) {
-                    const auto direction = std::find_if(basis.directions().begin(), basis.directions().end(),
-                        [&](const auto & value) { return value.layer_index == static_cast<int32_t>(layer); });
-                    if (direction == basis.directions().end()) {
-                        error = "FlyDelta layer search candidate has no compatible basis direction";
-                        return false;
+                    if (direction_override && candidate.layer_indices.size() == 1 && layer == 2) {
+                        request.directions.push_back(*direction_override);
+                    } else {
+                        const auto direction = std::find_if(basis.directions().begin(), basis.directions().end(),
+                            [&](const auto & value) { return value.layer_index == static_cast<int32_t>(layer); });
+                        if (direction == basis.directions().end()) {
+                            error = "FlyDelta layer search candidate has no compatible basis direction";
+                            return false;
+                        }
+                        request.directions.push_back(*direction);
                     }
-                    request.directions.push_back(*direction);
                     request.coefficients.push_back(coefficients.front());
                 }
                 request.gate_request = gate_request;
@@ -602,6 +608,36 @@ int main(int argc, char ** argv) {
                 [](const auto & direction) { return direction.layer_index == 2; });
             if (layer2_injection != deltas.end() && layer2_effect != deltas.end() &&
                     layer2_direction != basis.directions().end()) {
+                common_flydelta_direction_search_config direction_config;
+                direction_config.dimension = model_n_embd;
+                direction_config.layer_index = 2;
+                direction_config.min_samples = 2;
+                direction_config.max_samples = 32;
+                direction_config.min_median_alignment = 0.25f;
+                direction_config.trim_fraction = 0.20f;
+                direction_config.variance_ridge = 0.001f;
+                direction_config.source = common_adaptation_evidence_source::tool_repair;
+                direction_config.behavior_key = "structured_tool_selection";
+                direction_config.model_profile_fingerprint = profile;
+                direction_config.capture_layout_revision = "layer-input:v1";
+                std::vector<common_flydelta_direction_candidate> direction_candidates;
+                if (!common_flydelta_build_direction_candidates(
+                        direction_config, {{*layer2_injection, repair_credit}},
+                        direction_candidates, error) || direction_candidates.empty()) {
+                    std::cerr << "FlyDelta direction search failed: " << error << '\n';
+                    return 1;
+                }
+                // The current model smoke has one natural host-certified pair,
+                // so only the raw control is eligible here. Aggregate
+                // candidates become available when more certified pairs are
+                // supplied; they are covered by the CPU contract test.
+                common_flydelta_basis_direction scale_direction;
+                scale_direction.layer_index = direction_candidates.front().layer_index;
+                scale_direction.values = direction_candidates.front().values;
+                scale_direction.helped_observations = 1;
+                std::cout << "l2_direction_search_candidates=" << direction_candidates.size()
+                          << " raw_control=" << common_flydelta_direction_kind_name(
+                              direction_candidates.front().kind) << '\n';
                 common_flydelta_scale_search_config scale_config;
                 scale_config.initial_scale = 0.02f;
                 scale_config.growth_factor = 2.0f;
@@ -634,7 +670,7 @@ int main(int argc, char ** argv) {
                                 candidate.per_layer_scale = scale;
                                 candidate.source = common_flydelta_layer_search_candidate_source::diagnostic_singleton;
                                 common_flydelta_activation_result activation;
-                                if (!prepare_layer_activation(candidate, activation, 1.0f)) {
+                                if (!prepare_layer_activation(candidate, activation, 1.0f, &scale_direction)) {
                                     runner_error = error;
                                     return false;
                                 }
