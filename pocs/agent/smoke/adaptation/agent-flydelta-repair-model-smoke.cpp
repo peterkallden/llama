@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-artifact-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-basis.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
@@ -352,6 +353,50 @@ int main(int argc, char ** argv) {
         std::cerr << "FlyDelta DeltaMemory prediction failed: " << error << '\n';
         return 1;
     }
+
+    std::vector<common_flydelta_artifact_direction> artifact_basis;
+    const auto artifact_direction = std::find_if(basis.directions().begin(),
+        basis.directions().end(), [](const auto & direction) {
+            return direction.layer_index == 2;
+        });
+    if (artifact_direction == basis.directions().end()) {
+        std::cerr << "FlyDelta experimental artifact has no selected layer direction\n";
+        return 1;
+    }
+    // A v2 artifact stores one steering vector per DeltaMemory target
+    // coefficient. This candidate is deliberately the selected L2 arm;
+    // the other captured layers remain experiment diagnostics, not active
+    // artifact basis entries.
+    artifact_basis.push_back({artifact_direction->layer_index, artifact_direction->values});
+    common_flydelta_compatibility compatibility;
+    compatibility.base_model_fingerprint = profile;
+    compatibility.tokenizer_fingerprint = experiment_fixture.tokenizer_fingerprint;
+    compatibility.template_fingerprint = experiment_fixture.template_fingerprint;
+    compatibility.architecture = "qwen2";
+    compatibility.inference_layout_revision = "layer-input:v1";
+    common_flydelta_artifact experimental_artifact;
+    const auto artifact_root = std::filesystem::temp_directory_path() /
+        "llama-agent-flydelta-model-smoke-artifacts";
+    std::error_code artifact_cleanup_error;
+    std::filesystem::remove_all(artifact_root, artifact_cleanup_error);
+    common_flydelta_artifact_store artifact_store(artifact_root);
+    common_flydelta_sideband_registry artifact_registry;
+    common_flydelta_sideband_manifest experimental_manifest;
+    if (!common_flydelta_build_experimental_artifact(
+            "flydelta://artifact/model-repair-e2e", 1, encoder.config(),
+            memory.config(), compatibility, memory.weights(), model_n_embd,
+            model_n_layers, 1, static_cast<int32_t>(model_n_layers - 1),
+            artifact_basis, experimental_artifact, error) ||
+            !common_flydelta_persist_experimental_artifact(
+                artifact_store, "experiments/model-repair-e2e.flyd", artifact_registry,
+                "local", "flydelta-model-smoke", 0, experimental_artifact,
+                experimental_manifest, error) ||
+            experimental_manifest.status != common_flydelta_sideband_status::experimental) {
+        std::cerr << "FlyDelta experimental artifact persistence failed: " << error << '\n';
+        return 1;
+    }
+    std::cout << "experimental_artifact_hash=" << experimental_artifact.content_hash << '\n'
+              << "experimental_artifact_status=experimental\n";
 
     // Each captured layer gets its own diagnostic. Layer-search later uses
     // the most informative unknown arm to rank locations; diagnostics never
@@ -756,7 +801,7 @@ int main(int argc, char ** argv) {
                           << " l2_scale_search_model_calls=" << (scale_trials.size() + 1)
                           << " l2_scale_search_elapsed_ms=" << scale_search_elapsed_ms
                           << " l2_scale_search_selected=" << (scale_selection.selected ? "yes" : "no") << '\n';
-                for (const auto & trial : scale_trials) {
+    for (const auto & trial : scale_trials) {
                     std::cout << "l2_scale_trial scale=" << trial.scale
                               << " outcome=" << common_flydelta_counterfactual_outcome_name(trial.outcome)
                               << " safe_to_escalate=" << (trial.safe_to_escalate ? "yes" : "no")
@@ -772,5 +817,6 @@ int main(int argc, char ** argv) {
             }
         }
     }
+    std::filesystem::remove_all(artifact_root, artifact_cleanup_error);
     return 0;
 }

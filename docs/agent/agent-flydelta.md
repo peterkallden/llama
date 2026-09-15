@@ -636,6 +636,11 @@ store; registry admission remains explicit. Experimental entries are not
 profile-resolvable or active. They must still pass review, canary evaluation
 and separate host approval before activation.
 
+This also applies when a model-backed search is `NEUTRAL` or `UNKNOWN`: the
+candidate and its diagnostics may be retained as an experimental challenger
+for later inputs/refinement, but they cannot update the active sideband,
+DeltaMemory or promotion state without a host-verified `HELPED` result.
+
 The remaining model-backed work is intentionally outside these CPU contracts:
 provide a production callback that resolves capture/delta references, runs the
 two-pass model context and verifier, and then invoke the existing optional
