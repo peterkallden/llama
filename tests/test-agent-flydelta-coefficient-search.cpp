@@ -137,5 +137,21 @@ int main() {
     CHECK(error.empty() && records.size() == tfo_trials.size());
     CHECK(records.front().payload_json.find("coefficient-tfo") != std::string::npos);
     CHECK(records.front().payload_json.find("coefficients") != std::string::npos);
+
+    common_flydelta_coefficient_search_config coordinate_config = tfo_config;
+    coordinate_config.strategy = common_flydelta_coefficient_search_strategy::coordinate;
+    coordinate_config.max_candidates = tfo_trials.size();
+    std::vector<std::vector<float>> coordinate_proposals;
+    CHECK(common_flydelta_propose_low_rank_coefficients(
+        coordinate_config, basis.vectors.size(), coordinate_proposals, error));
+    CHECK(!coordinate_proposals.empty() &&
+          coordinate_proposals.size() <= coordinate_config.max_candidates);
+    // The strategies share the same bounded arm contract, but TFO-lite may
+    // use mixed coefficients where the coordinate stencil cannot.
+    for (const auto & trial : tfo_trials) {
+        CHECK(std::sqrt(trial.coefficients[0] * trial.coefficients[0] +
+            trial.coefficients[1] * trial.coefficients[1]) <=
+            tfo_config.max_l2_norm + 0.0001f);
+    }
     return 0;
 }
