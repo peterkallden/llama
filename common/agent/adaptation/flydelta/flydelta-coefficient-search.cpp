@@ -34,6 +34,51 @@ bool valid_outcome(common_flydelta_counterfactual_outcome outcome) {
     return false;
 }
 
+bool same_coefficients(const std::vector<float> & left, const std::vector<float> & right) {
+    return left == right;
+}
+
+std::vector<float> bound_coefficients(
+        std::vector<float> coefficients, float max_l2_norm) {
+    const float value = norm(coefficients);
+    if (value > max_l2_norm && value > std::numeric_limits<float>::epsilon()) {
+        const float scale = max_l2_norm / value;
+        for (float & coefficient : coefficients) coefficient *= scale;
+    }
+    return coefficients;
+}
+
+float diagnostic_fitness(
+        const common_flydelta_coefficient_trial & trial,
+        const common_flydelta_decision_margin & baseline_margin,
+        const common_flydelta_decision_margin & margin,
+        const common_flydelta_coefficient_search_config & config) {
+    float score = trial.quality_delta;
+    if (baseline_margin.available && margin.available) {
+        score = margin.normalized_delta() - baseline_margin.normalized_delta();
+    }
+    score -= config.norm_penalty * norm(trial.coefficients);
+    if (trial.outcome == common_flydelta_counterfactual_outcome::harmed) score -= 1.0f;
+    return score;
+}
+
+bool contains_coefficients(
+        const std::vector<std::vector<float>> & values,
+        const std::vector<float> & candidate) {
+    return std::any_of(values.begin(), values.end(), [&](const auto & value) {
+        return same_coefficients(value, candidate);
+    });
+}
+
+bool better_diagnostic_trial(
+        const common_flydelta_coefficient_trial & candidate,
+        const common_flydelta_coefficient_trial & current) {
+    if (candidate.search_fitness != current.search_fitness) {
+        return candidate.search_fitness > current.search_fitness;
+    }
+    return norm(candidate.coefficients) < norm(current.coefficients);
+}
+
 } // namespace
 
 const char * common_flydelta_coefficient_search_strategy_name(
@@ -182,6 +227,137 @@ bool common_flydelta_propose_low_rank_coefficients(
     return true;
 }
 
+static bool run_tfo_lite_coefficient_search(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_low_rank_basis & basis,
+        const common_flydelta_coefficient_search_config & config,
+        const common_flydelta_coefficient_search_runner & runner,
+        std::vector<common_flydelta_coefficient_trial> & trials,
+        common_flydelta_coefficient_selection & selection,
+        std::string & error) {
+    trials.clear();
+    selection = {};
+
+    std::vector<float> zero(basis.vectors.size(), 0.0f);
+    common_flydelta_counterfactual_trial baseline;
+    common_flydelta_decision_margin baseline_margin;
+    if (!runner(fixture, basis, zero, false, baseline, baseline_margin, error) ||
+            !common_flydelta_counterfactual_trial_validate(baseline, error) ||
+            !common_flydelta_decision_margin_validate(baseline_margin, error)) {
+        return false;
+    }
+
+    std::mt19937_64 generator(config.seed);
+    std::uniform_real_distribution<float> distribution(-config.step, config.step);
+    std::vector<std::vector<float>> population;
+    std::vector<size_t> population_parents;
+    std::vector<std::string> population_mutations;
+    const size_t candidate_limit = std::min(config.max_candidates,
+        config.population_size * config.iterations);
+
+    for (size_t index = 0; index < config.population_size && population.size() < candidate_limit;
+            ++index) {
+        std::vector<float> coefficients(basis.vectors.size(), 0.0f);
+        const size_t coordinate_count = config.population_size > 1
+            ? std::min(config.population_size - 1, basis.vectors.size() * 2)
+            : 0;
+        if (index < coordinate_count) {
+            coefficients[index / 2] = index % 2 == 0 ? config.step : -config.step;
+        } else {
+            for (float & coefficient : coefficients) coefficient = distribution(generator);
+        }
+        coefficients = bound_coefficients(std::move(coefficients), config.max_l2_norm);
+        if (!contains_coefficients(population, coefficients)) {
+            population.push_back(std::move(coefficients));
+            population_parents.push_back(static_cast<size_t>(-1));
+            population_mutations.push_back(index < coordinate_count
+                ? "initial_coordinate" : "initial_mixed");
+        }
+    }
+
+    size_t evaluated = 0;
+    std::vector<std::vector<float>> evaluated_coefficients;
+    for (size_t iteration = 0; iteration < config.iterations && evaluated < candidate_limit;
+            ++iteration) {
+        for (size_t population_index = 0; population_index < population.size(); ++population_index) {
+            const auto & coefficients = population[population_index];
+            if (evaluated >= candidate_limit || contains_coefficients(
+                    evaluated_coefficients, coefficients)) {
+                continue;
+            }
+            common_flydelta_counterfactual_trial candidate;
+            common_flydelta_decision_margin margin;
+            if (!runner(fixture, basis, coefficients, true, candidate, margin, error) ||
+                    !common_flydelta_counterfactual_trial_validate(candidate, error) ||
+                    !common_flydelta_decision_margin_validate(margin, error)) {
+                return false;
+            }
+            common_flydelta_coefficient_trial trial;
+            trial.coefficients = coefficients;
+            trial.margin = margin;
+            trial.outcome = common_flydelta_classify_counterfactual(baseline, candidate);
+            trial.quality_delta = candidate.quality - baseline.quality;
+            trial.executed = candidate.executed;
+            trial.verifier_known = baseline.verifier_known && candidate.verifier_known;
+            trial.iteration = iteration;
+            trial.parent_trial_index = population_parents[population_index];
+            trial.mutation_kind = population_mutations[population_index];
+            trial.search_fitness = diagnostic_fitness(
+                trial, baseline_margin, margin, config);
+            evaluated_coefficients.push_back(coefficients);
+            trials.push_back(std::move(trial));
+            ++evaluated;
+        }
+        if (evaluated >= candidate_limit || iteration + 1 >= config.iterations) break;
+
+        const common_flydelta_coefficient_trial * best = nullptr;
+        for (size_t index = 0; index < trials.size(); ++index) {
+            const auto & trial = trials[index];
+            if (trial.iteration != iteration ||
+                    trial.outcome == common_flydelta_counterfactual_outcome::harmed) continue;
+            if (best == nullptr || better_diagnostic_trial(trial, *best)) {
+                best = &trial;
+            }
+        }
+        const std::vector<float> anchor = best == nullptr ? zero : best->coefficients;
+        const size_t anchor_index = best == nullptr ? static_cast<size_t>(-1) :
+            static_cast<size_t>(best - trials.data());
+        const float radius = config.step * config.exploration_scale /
+            static_cast<float>(iteration + 2);
+        std::uniform_real_distribution<float> local_distribution(-radius, radius);
+        population.clear();
+        population_parents.clear();
+        population_mutations.clear();
+        population.push_back(anchor);
+        population_parents.push_back(anchor_index);
+        population_mutations.push_back("forage_anchor");
+        for (size_t index = 1; index < config.population_size; ++index) {
+            std::vector<float> coefficients = anchor;
+            for (float & coefficient : coefficients) coefficient += local_distribution(generator);
+            coefficients = bound_coefficients(std::move(coefficients), config.max_l2_norm);
+            if (!contains_coefficients(population, coefficients)) {
+                population.push_back(std::move(coefficients));
+                population_parents.push_back(anchor_index);
+                population_mutations.push_back("forage_perturbation");
+            }
+        }
+    }
+
+    for (size_t index = 0; index < trials.size(); ++index) {
+        const auto & trial = trials[index];
+        if (!valid_outcome(trial.outcome) || trial.outcome != common_flydelta_counterfactual_outcome::helped ||
+                !trial.executed || !trial.verifier_known) continue;
+        if (!selection.selected || trial.quality_delta > selection.score ||
+                (trial.quality_delta == selection.score &&
+                 norm(trial.coefficients) < norm(trials[selection.trial_index].coefficients))) {
+            selection.selected = true;
+            selection.trial_index = index;
+            selection.score = trial.quality_delta;
+        }
+    }
+    return true;
+}
+
 bool common_flydelta_run_low_rank_coefficient_search(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_low_rank_basis & basis,
@@ -196,9 +372,13 @@ bool common_flydelta_run_low_rank_coefficient_search(
     if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
             !common_flydelta_low_rank_basis_validate(basis, 16, error) ||
             !common_flydelta_coefficient_search_config_validate(
-                config, basis.vectors.size(), error) || !runner) {
+            config, basis.vectors.size(), error) || !runner) {
         if (error.empty()) error = "FlyDelta coefficient search input is invalid";
         return false;
+    }
+    if (config.strategy == common_flydelta_coefficient_search_strategy::tfo_lite) {
+        return run_tfo_lite_coefficient_search(
+            fixture, basis, config, runner, trials, selection, error);
     }
     std::vector<std::vector<float>> proposals;
     if (!common_flydelta_propose_low_rank_coefficients(

@@ -80,5 +80,44 @@ int main() {
         }, trials, selection, error));
     CHECK(selection.selected);
     CHECK(trials[selection.trial_index].outcome == common_flydelta_counterfactual_outcome::helped);
+
+    common_flydelta_coefficient_search_config tfo_config;
+    tfo_config.strategy = common_flydelta_coefficient_search_strategy::tfo_lite;
+    tfo_config.step = 0.05f;
+    tfo_config.max_candidates = 6;
+    tfo_config.population_size = 3;
+    tfo_config.iterations = 2;
+    tfo_config.seed = 23;
+    std::vector<common_flydelta_coefficient_trial> tfo_trials;
+    common_flydelta_coefficient_selection tfo_selection;
+    CHECK(common_flydelta_run_low_rank_coefficient_search(
+        fixture(), basis, tfo_config,
+        [](const auto &, const auto &, const auto & coefficients, bool apply,
+                auto & trial, auto & result, std::string &) {
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.evidence_ref = "evidence://coefficient-tfo-trial";
+            trial.passed = apply && coefficients[0] > 0.0f;
+            trial.quality = trial.passed ? 1.0f : 0.0f;
+            result.available = true;
+            result.positive_total_logprob = coefficients[0] + coefficients[1];
+            result.negative_total_logprob = 0.0f;
+            result.positive_token_count = 1;
+            result.negative_token_count = 1;
+            return true;
+        }, tfo_trials, tfo_selection, error));
+    CHECK(tfo_trials.size() >= 3 && tfo_trials.size() <= 6);
+    CHECK(tfo_selection.selected);
+    bool found_mixed_arm = false;
+    for (const auto & trial : tfo_trials) {
+        found_mixed_arm = found_mixed_arm ||
+            (std::fabs(trial.coefficients[0]) > 0.0001f &&
+             std::fabs(trial.coefficients[1]) > 0.0001f);
+        CHECK(trial.mutation_kind == "initial_coordinate" ||
+              trial.mutation_kind == "initial_mixed" ||
+              trial.mutation_kind == "forage_anchor" ||
+              trial.mutation_kind == "forage_perturbation");
+    }
+    CHECK(found_mixed_arm);
     return 0;
 }
