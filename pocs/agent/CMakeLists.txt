@@ -1051,6 +1051,23 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# The repair contract uses the same native data adapters and Cozo-backed
+# fixture as a host turn. Keep it conditional because Android intentionally
+# omits Cozo from its reduced agent build.
+if (LLAMA_MEMORY_COZO)
+    set(TARGET llama-agent-flydelta-dataset-question-repair-contract-smoke)
+    add_executable(${TARGET}
+        smoke/adaptation/agent-flydelta-dataset-question-repair-contract-smoke.cpp
+    )
+    target_include_directories(${TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+    )
+    target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+endif()
+
 set(TARGET llama-agent-tool-provider-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-tool-provider-smoke.cpp
@@ -2134,7 +2151,9 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-research-csv-smoke
 )
 if (LLAMA_MEMORY_COZO)
-    list(APPEND AGENT_TEST_BUILD_TARGETS llama-agent-data-manipulation-smoke)
+    list(APPEND AGENT_TEST_BUILD_TARGETS
+        llama-agent-data-manipulation-smoke
+        llama-agent-flydelta-dataset-question-repair-contract-smoke)
 endif()
 
 set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
@@ -2267,6 +2286,13 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-contract-smoke>
             ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json)
     set_property(TEST llama-agent-flydelta-dataset-question-contract-ctest PROPERTY LABELS agent-adaptation)
+
+    if (LLAMA_MEMORY_COZO)
+        add_test(NAME llama-agent-flydelta-dataset-question-repair-contract-ctest
+            COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-repair-contract-smoke>
+                ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json)
+        set_property(TEST llama-agent-flydelta-dataset-question-repair-contract-ctest PROPERTY LABELS agent-adaptation)
+    endif()
 
     add_test(NAME llama-agent-flydelta-dataset-question-model-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-model-smoke>
