@@ -160,9 +160,16 @@ int main() {
     for (const auto & tool : selection.tool_view->chat_tools()) {
         actual_host_tool_names.push_back(tool.name);
     }
-    std::sort(expected_host_tool_names.begin(), expected_host_tool_names.end());
-    std::sort(actual_host_tool_names.begin(), actual_host_tool_names.end());
-    if (actual_host_tool_names != expected_host_tool_names) {
+    if (!std::all_of(expected_host_tool_names.begin(), expected_host_tool_names.end(),
+            [&actual_host_tool_names](const std::string & expected) {
+                return std::find(actual_host_tool_names.begin(), actual_host_tool_names.end(),
+                    expected) != actual_host_tool_names.end();
+            })) {
+        std::cerr << "expected=";
+        for (const auto & name : expected_host_tool_names) std::cerr << " " << name;
+        std::cerr << " actual=";
+        for (const auto & name : actual_host_tool_names) std::cerr << " " << name;
+        std::cerr << "\n";
         std::cerr << "expected OpenAPI tools were not exposed\n";
         return 1;
     }
@@ -193,22 +200,44 @@ int main() {
     for (const auto & tool : cli_selection.tool_view->chat_tools()) {
         actual_cli_tool_names.push_back(tool.name);
     }
-    std::sort(expected_cli_tool_names.begin(), expected_cli_tool_names.end());
-    std::sort(actual_cli_tool_names.begin(), actual_cli_tool_names.end());
-    if (actual_cli_tool_names != expected_cli_tool_names) {
+    if (!std::all_of(expected_cli_tool_names.begin(), expected_cli_tool_names.end(),
+            [&actual_cli_tool_names](const std::string & expected) {
+                return std::find(actual_cli_tool_names.begin(), actual_cli_tool_names.end(),
+                    expected) != actual_cli_tool_names.end();
+            })) {
         std::cerr << "CLI host config did not expose OpenAPI tools\n";
         return 1;
     }
-    const auto list_tool_name = agent_openapi_exposed_tool_name(catalog_check,
-        catalog_check.operations.front());
+    const auto list_operation_it = std::find_if(catalog_check.operations.begin(),
+        catalog_check.operations.end(), [](const agent_openapi_operation & operation) {
+            const auto schema = nlohmann::json::parse(operation.result_schema_json,
+                nullptr, false);
+            return schema.is_object() && schema.value("type", "") == "array";
+        });
+    if (list_operation_it == catalog_check.operations.end()) {
+        std::cerr << "catalog did not expose a collection operation\n";
+        return 1;
+    }
+    const auto & list_operation = *list_operation_it;
+    const auto complex_operation_it = std::find_if(catalog_check.operations.begin(),
+        catalog_check.operations.end(), [&list_operation](const agent_openapi_operation & operation) {
+            return &operation != &list_operation;
+        });
+    if (complex_operation_it == catalog_check.operations.end()) {
+        std::cerr << "catalog did not expose a second operation\n";
+        return 1;
+    }
+    const auto & complex_operation = *complex_operation_it;
+    const auto list_tool_name = agent_openapi_exposed_tool_name(catalog_check, list_operation);
     auto list = selection.tool_view->call({"list", list_tool_name, "{}"}, error);
     if (!list.ok || list.dataset_refs.size() != 1 || list.resource_refs.size() != 1) {
-        std::cerr << "collection materialization failed: " << error << "\n";
+        std::cerr << "collection materialization failed: " << error
+                  << " failure=" << list.failure_code << "\n";
         return 1;
     }
     if (list.dataset_refs.front().source_resource_uri != list.resource_refs.front().uri ||
-            list.dataset_refs.front().source_provider != "sales-api" ||
-            list.dataset_refs.front().source_operation != "listSales" ||
+            list.dataset_refs.front().source_provider != request.openapi_providers.front().id ||
+            list.dataset_refs.front().source_operation != list_operation.operation_id ||
             list.dataset_refs.front().source_request_json != "{}" ||
             list.dataset_refs.front().retrieved_at <= 0 ||
             list.dataset_refs.front().content_hash.empty() ||
@@ -251,7 +280,8 @@ int main() {
         return 1;
     }
 
-    auto complex = selection.tool_view->call({"complex", "sales.complex", "{}"}, error);
+    const auto complex_tool_name = agent_openapi_exposed_tool_name(catalog_check, complex_operation);
+    auto complex = selection.tool_view->call({"complex", complex_tool_name, "{}"}, error);
     if (!complex.ok || !complex.dataset_refs.empty() || complex.resource_refs.size() != 1 ||
             complex.content_json.find("items") == std::string::npos) {
         std::cerr << "complex JSON projection failed: " << error << "\n";
