@@ -9,6 +9,9 @@
 #include <string>
 
 enum class common_flydelta_sideband_status {
+    // Immutable offline-search revision. It may contain a basis and an
+    // experimental DeltaMemory, but can never be selected by a model profile.
+    experimental,
     candidate,
     canary,
     active,
@@ -53,6 +56,10 @@ bool common_flydelta_sideband_manifest_from_json(
 class common_flydelta_sideband_registry {
 public:
     bool admit(const common_flydelta_sideband_manifest & manifest, std::string & error);
+    // Explicitly graduates an offline-search revision into the normal
+    // candidate lifecycle. Canary evaluation is still required afterwards.
+    bool promote_experimental(const std::string & id, const std::string & evaluation_revision,
+            std::string & error);
     bool stage_canary(const std::string & id, const std::string & evaluation_revision,
             std::string & error);
     bool activate(const std::string & id, std::string & error);

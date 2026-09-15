@@ -861,6 +861,21 @@ choose what is correct: the host must produce a valid capture manifest and
 counterfactual report first. The objective remains minimum intervention,
 repeatable verified lift and minimum collateral change.
 
+### Experimental artifact revisions
+
+An offline FlyDelta search may retain an immutable `.flyd` revision in the
+normal artifact store and sideband registry before it has promotion evidence.
+Its payload can contain a candidate steering basis and an experimental
+DeltaMemory. The append-only search lifecycle records lineage, geometry,
+decision-margin diagnostics and host outcomes by reference.
+
+Such a manifest has status `experimental`. It is searchable by the host but is
+never resolvable by a model profile, cannot enter canary directly and cannot
+become active. A host must explicitly call `promote_experimental` after an
+experimental evaluation; the revision then becomes `candidate` and must still
+pass the ordinary canary and activation gates. This keeps deliberately
+overfit two-pair experiments useful without giving them serving authority.
+
 ### 4D. CPU direction search — implemented
 
 `flydelta-direction-search.*` is the inexpensive `WHAT` search between

@@ -30,6 +30,7 @@ bool same(const std::string & actual, const std::string & expected, const char *
 
 const char * common_flydelta_sideband_status_name(common_flydelta_sideband_status status) {
     switch (status) {
+        case common_flydelta_sideband_status::experimental: return "experimental";
         case common_flydelta_sideband_status::candidate: return "candidate";
         case common_flydelta_sideband_status::canary: return "canary";
         case common_flydelta_sideband_status::active: return "active";
@@ -136,7 +137,8 @@ bool common_flydelta_sideband_manifest_from_json(
         manifest.evaluation_revision = value.value("evaluation_revision", "");
         manifest.evaluation_passed = value.value("evaluation_passed", false);
         const auto status = value.value("status", "candidate");
-        if (status == "candidate") manifest.status = common_flydelta_sideband_status::candidate;
+        if (status == "experimental") manifest.status = common_flydelta_sideband_status::experimental;
+        else if (status == "candidate") manifest.status = common_flydelta_sideband_status::candidate;
         else if (status == "canary") manifest.status = common_flydelta_sideband_status::canary;
         else if (status == "active") manifest.status = common_flydelta_sideband_status::active;
         else if (status == "retired") manifest.status = common_flydelta_sideband_status::retired;
@@ -158,8 +160,9 @@ static uint64_t current_epoch_ms() {
 bool common_flydelta_sideband_registry::admit(
         const common_flydelta_sideband_manifest & manifest, std::string & error) {
     if (!common_flydelta_sideband_manifest_validate(manifest, error)) return false;
-    if (manifest.status != common_flydelta_sideband_status::candidate) {
-        error = "new FlyDelta sideband must enter registry as candidate";
+    if (manifest.status != common_flydelta_sideband_status::candidate &&
+            manifest.status != common_flydelta_sideband_status::experimental) {
+        error = "new FlyDelta sideband must enter registry as candidate or experimental";
         return false;
     }
     if (manifests.find(manifest.id) != manifests.end()) {
@@ -167,6 +170,25 @@ bool common_flydelta_sideband_registry::admit(
         return false;
     }
     manifests.emplace(manifest.id, manifest);
+    return true;
+}
+
+bool common_flydelta_sideband_registry::promote_experimental(
+        const std::string & id, const std::string & evaluation_revision, std::string & error) {
+    const auto it = manifests.find(id);
+    if (it == manifests.end()) { error = "FlyDelta sideband is unavailable: " + id; return false; }
+    if (it->second.status != common_flydelta_sideband_status::experimental) {
+        error = "only an experimental FlyDelta sideband can enter candidate lifecycle";
+        return false;
+    }
+    if (!bounded(evaluation_revision)) {
+        error = "FlyDelta experimental evaluation revision is invalid";
+        return false;
+    }
+    it->second.status = common_flydelta_sideband_status::candidate;
+    it->second.evaluation_revision = evaluation_revision;
+    it->second.evaluation_passed = true;
+    error.clear();
     return true;
 }
 
