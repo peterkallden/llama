@@ -163,6 +163,29 @@ int main() {
     CHECK(common_flydelta_evaluate_job(direction, config, callbacks, result, error));
     CHECK(result.processed_references == 1 && result.direction_candidates.size() == 3);
 
+    // Queue execution can explicitly opt into experimental direction search
+    // without weakening the strict learning-mode job above.
+    auto experimental_direction = direction;
+    experimental_direction.id = "flydelta://job/experimental-direction";
+    config.direction.mode = common_flydelta_direction_search_mode::experimental;
+    callbacks.resolve_behavior_delta = [](const auto &, auto & delta, auto & credit, std::string &) {
+        delta = behavior_delta();
+        delta.id = "flydelta://behavior/experimental";
+        credit.experiment_id = "flydelta://experiment/experimental";
+        credit.candidate_id = "flydelta://candidate/experimental";
+        credit.fixture_id = "flydelta://fixture/experimental";
+        credit.outcome = common_flydelta_counterfactual_outcome::unknown;
+        credit.quality_delta = 0.0f;
+        credit.eligible_for_learning = false;
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(
+        experimental_direction, config, callbacks, result, error));
+    CHECK(result.processed_references == 1 && result.direction_candidates.size() == 3);
+    CHECK(result.direction_candidates.front().experimental_only);
+    CHECK(result.direction_candidates[1].experimental_only &&
+        result.direction_candidates[2].experimental_only);
+
     auto pipeline = base_job(common_flydelta_experiment_job_kind::search_pipeline,
             "flydelta://job/search-pipeline");
     pipeline.capture_manifest_ids = {"flydelta://capture/evaluator"};

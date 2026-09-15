@@ -53,7 +53,7 @@ bool supported_kind(common_flydelta_direction_kind kind) {
 common_flydelta_direction_candidate make_candidate(
         common_flydelta_direction_kind kind, int32_t layer_index,
         std::vector<float> values, size_t source_samples, size_t retained_samples,
-        float median_alignment) {
+        float median_alignment, bool experimental_only = false) {
     common_flydelta_direction_candidate result;
     result.kind = kind;
     result.layer_index = layer_index;
@@ -61,6 +61,7 @@ common_flydelta_direction_candidate make_candidate(
     result.source_samples = source_samples;
     result.retained_samples = retained_samples;
     result.median_alignment = median_alignment;
+    result.experimental_only = experimental_only;
     return result;
 }
 
@@ -78,10 +79,22 @@ const char * common_flydelta_direction_kind_name(
     return "unknown";
 }
 
+const char * common_flydelta_direction_search_mode_name(
+        common_flydelta_direction_search_mode mode) {
+    switch (mode) {
+        case common_flydelta_direction_search_mode::learning: return "learning";
+        case common_flydelta_direction_search_mode::experimental: return "experimental";
+    }
+    return "unknown";
+}
+
 bool common_flydelta_direction_search_config_validate(
         const common_flydelta_direction_search_config & config,
         std::string & error) {
     error.clear();
+    const bool valid_mode =
+        config.mode == common_flydelta_direction_search_mode::learning ||
+        config.mode == common_flydelta_direction_search_mode::experimental;
     if (config.schema_version != 1 || config.dimension == 0 || config.dimension > (1U << 20) ||
             config.layer_index < 0 || config.min_samples == 0 ||
             config.max_samples < config.min_samples || config.max_samples > 256 ||
@@ -89,6 +102,7 @@ bool common_flydelta_direction_search_config_validate(
             config.min_median_alignment > 1.0f || !std::isfinite(config.trim_fraction) ||
             config.trim_fraction < 0.0f || config.trim_fraction >= 0.5f ||
             !std::isfinite(config.variance_ridge) || config.variance_ridge <= 0.0f ||
+            !valid_mode ||
             !nonempty_bounded(config.behavior_key) ||
             !nonempty_bounded(config.model_profile_fingerprint) ||
             !nonempty_bounded(config.execution_context_fingerprint) ||
@@ -123,7 +137,8 @@ bool common_flydelta_build_token_margin_candidate(
     }
     candidate = make_candidate(
         common_flydelta_direction_kind::token_margin_direction,
-        config.layer_index, std::move(normalized), 1, 1, 1.0f);
+        config.layer_index, std::move(normalized), 1, 1, 1.0f,
+        config.mode == common_flydelta_direction_search_mode::experimental);
     return common_flydelta_direction_candidate_validate(candidate, config.dimension, error);
 }
 
@@ -176,7 +191,8 @@ bool common_flydelta_build_boundary_prototype_candidate(
     candidate = make_candidate(
         common_flydelta_direction_kind::execution_boundary_prototype,
         config.layer_index, std::move(normalized), samples.size(),
-        samples.size(), 1.0f);
+        samples.size(), 1.0f,
+        config.mode == common_flydelta_direction_search_mode::experimental);
     return common_flydelta_direction_candidate_validate(candidate, config.dimension, error);
 }
 
@@ -229,14 +245,19 @@ bool common_flydelta_build_direction_candidates(
     std::vector<normalized_sample> normalized;
     normalized.reserve(samples.size());
     std::unordered_set<std::string> ids;
+    const bool experimental_mode =
+        config.mode == common_flydelta_direction_search_mode::experimental;
     for (const auto & sample : samples) {
         if (!common_flydelta_behavior_delta_validate(
                     sample.delta, config.dimension, 64U * 1024U * 1024U, error) ||
                 !common_flydelta_intervention_credit_validate(sample.credit, error)) {
             return false;
         }
-        if (sample.credit.outcome != common_flydelta_counterfactual_outcome::helped ||
-                !sample.credit.eligible_for_learning ||
+        const bool outcome_allowed = experimental_mode
+            ? sample.credit.outcome != common_flydelta_counterfactual_outcome::harmed
+            : sample.credit.outcome == common_flydelta_counterfactual_outcome::helped &&
+                sample.credit.eligible_for_learning;
+        if (!outcome_allowed ||
                 sample.delta.source != config.source ||
                 sample.delta.behavior_key != config.behavior_key ||
                 sample.delta.model_profile_fingerprint != config.model_profile_fingerprint ||
@@ -244,7 +265,9 @@ bool common_flydelta_build_direction_candidates(
                 sample.delta.capture_layout_revision != config.capture_layout_revision ||
                 sample.delta.layer_index != config.layer_index ||
                 !ids.insert(sample.delta.id).second) {
-            error = "FlyDelta direction search samples are incompatible or not host-helped";
+            error = experimental_mode
+                ? "FlyDelta experimental direction search samples are incompatible or harmed"
+                : "FlyDelta direction search samples are incompatible or not host-helped";
             return false;
         }
         normalized_sample value;
@@ -266,7 +289,8 @@ bool common_flydelta_build_direction_candidates(
 
     candidates.push_back(make_candidate(
         common_flydelta_direction_kind::raw_repair, config.layer_index,
-        normalized.front().values, samples.size(), 1, normalized.front().median_alignment));
+        normalized.front().values, samples.size(), 1, normalized.front().median_alignment,
+        experimental_mode));
     if (samples.size() < config.min_samples) return true;
 
     std::vector<size_t> retained;
@@ -299,7 +323,8 @@ bool common_flydelta_build_direction_candidates(
     if (!normalize(mean, normalized_mean)) return true;
     candidates.push_back(make_candidate(
         common_flydelta_direction_kind::normalized_trimmed_mean, config.layer_index,
-        normalized_mean, samples.size(), retained.size(), retained_alignment));
+        normalized_mean, samples.size(), retained.size(), retained_alignment,
+        experimental_mode));
 
     std::vector<float> whitened(config.dimension, 0.0f);
     for (size_t dimension = 0; dimension < config.dimension; ++dimension) {
@@ -315,7 +340,8 @@ bool common_flydelta_build_direction_candidates(
     if (normalize(whitened, normalized_whitened)) {
         candidates.push_back(make_candidate(
             common_flydelta_direction_kind::diagonal_whitened_mean, config.layer_index,
-            normalized_whitened, samples.size(), retained.size(), retained_alignment));
+            normalized_whitened, samples.size(), retained.size(), retained_alignment,
+            experimental_mode));
     }
     for (const auto & value : candidates) {
         if (!common_flydelta_direction_candidate_validate(value, config.dimension, error)) {

@@ -82,6 +82,29 @@ int main() {
     unknown.credit.eligible_for_learning = false;
     CHECK(!common_flydelta_build_direction_candidates(config, {unknown}, raw_only, error));
 
+    // Experimental direction search may use UNKNOWN/NEUTRAL observations to
+    // propose a challenger, but the result is explicitly experimental-only.
+    auto neutral = samples[1];
+    neutral.delta.id = "flydelta://delta/neutral";
+    neutral.credit.outcome = common_flydelta_counterfactual_outcome::neutral;
+    neutral.credit.eligible_for_learning = true;
+    config.mode = common_flydelta_direction_search_mode::experimental;
+    config.min_samples = 1;
+    CHECK(common_flydelta_build_direction_candidates(
+        config, {unknown, neutral}, raw_only, error));
+    CHECK(raw_only.size() == 3);
+    CHECK(raw_only.front().experimental_only);
+    CHECK(raw_only[1].experimental_only && raw_only[2].experimental_only);
+    CHECK(std::string(common_flydelta_direction_search_mode_name(
+        common_flydelta_direction_search_mode::experimental)) == "experimental");
+
+    auto harmed = samples.front();
+    harmed.delta.id = "flydelta://delta/harmed";
+    harmed.credit.outcome = common_flydelta_counterfactual_outcome::harmed;
+    harmed.credit.eligible_for_learning = true;
+    CHECK(!common_flydelta_build_direction_candidates(
+        config, {harmed}, raw_only, error));
+
     common_flydelta_token_margin_material margin;
     margin.positive_output_row = {0.0f, 2.0f, 0.0f, 0.0f};
     margin.negative_output_row = {0.0f, 0.0f, 0.0f, 0.0f};

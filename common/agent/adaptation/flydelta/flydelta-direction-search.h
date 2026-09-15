@@ -18,6 +18,18 @@ enum class common_flydelta_direction_kind {
     execution_boundary_prototype,
 };
 
+// Direction construction has two deliberately separate policies. Learning
+// mode only consumes positive host evidence. Experimental mode may use
+// bounded UNKNOWN/NEUTRAL observations to propose challengers, but those
+// candidates remain experimental-only until a later host-verified trial.
+enum class common_flydelta_direction_search_mode {
+    learning,
+    experimental,
+};
+
+const char * common_flydelta_direction_search_mode_name(
+        common_flydelta_direction_search_mode mode);
+
 const char * common_flydelta_direction_kind_name(
         common_flydelta_direction_kind kind);
 
@@ -50,6 +62,8 @@ struct common_flydelta_direction_search_config {
     float min_median_alignment = 0.25f;
     float trim_fraction = 0.20f;
     float variance_ridge = 0.001f;
+    common_flydelta_direction_search_mode mode =
+        common_flydelta_direction_search_mode::learning;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     std::string behavior_key;
     std::string model_profile_fingerprint;
@@ -65,6 +79,9 @@ struct common_flydelta_direction_candidate {
     size_t source_samples = 0;
     size_t retained_samples = 0;
     float median_alignment = 0.0f;
+    // Experimental candidates can guide search but must not be treated as
+    // learned or promotion-eligible basis directions.
+    bool experimental_only = false;
 };
 
 bool common_flydelta_direction_search_config_validate(
@@ -81,10 +98,13 @@ bool common_flydelta_direction_candidate_validate(
 //   diagonal_whitened_mean  the same mean weighted by inverse per-dimension
 //                           variance plus variance_ridge.
 //
-// Only HELPED, learning-eligible samples are accepted. The host must already
-// have certified the repair relation; this function never infers correctness.
-// If there are too few compatible samples, the raw control is still returned
-// and the aggregate candidates are omitted.
+// In learning mode only HELPED, learning-eligible samples are accepted. In
+// experimental mode valid HELPED, NEUTRAL and UNKNOWN samples may seed
+// bounded challenger directions; HARMED samples remain rejected. The host
+// must provide the outcome/credit and this function never infers correctness.
+// Experimental candidates are marked experimental_only and cannot be used as
+// learning or promotion evidence. If there are too few compatible samples,
+// the raw control is still returned and aggregate candidates are omitted.
 bool common_flydelta_build_direction_candidates(
         const common_flydelta_direction_search_config & config,
         const std::vector<common_flydelta_contrast_sample> & samples,

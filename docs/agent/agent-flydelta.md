@@ -965,9 +965,24 @@ overfit two-pair experiments useful without giving them serving authority.
 `flydelta-direction-search.*` is the inexpensive `WHAT` search between
 host-certified capture materialization and model-side counterfactual
 evaluation. It accepts a bounded set of aligned behavior deltas for one
-behavior, model profile, capture layout and layer. Every sample must carry
-`HELPED` intervention credit and be learning-eligible; `UNKNOWN` or
-uncertified material is rejected rather than silently becoming training data.
+behavior, model profile, capture layout and layer. It has two explicit modes:
+
+```text
+learning
+    only HELPED + learning-eligible samples
+
+experimental
+    HELPED, NEUTRAL and UNKNOWN samples may propose bounded challengers;
+    HARMED samples remain rejected
+```
+
+Learning mode is the default and keeps the strict promotion boundary. The
+experimental mode exists for search, so a valid delta does not need to have
+already earned `HELPED` intervention credit. Every candidate emitted in that
+mode is marked `experimental_only`; it may be evaluated, retained and refined
+by the existing lifecycle, but it cannot update DeltaMemory or become
+promotion evidence. The host still supplies the outcome/credit and this
+builder never infers correctness.
 
 The component emits up to three comparable candidates:
 
@@ -1003,6 +1018,13 @@ inference, inspect tool choice, create `HELPED`, update `DeltaMemory`, write a
 sideband or activate an overlay. The next host step must evaluate the emitted
 directions with the normal bounded scale/layer search. Only a host-verified
 baseline-fail/candidate-pass result can produce intervention credit.
+
+The same separation applies when the input is `UNKNOWN` or `NEUTRAL`: those
+observations can seed an experimental direction search and its lineage, but
+they remain search material until a later host counterfactual establishes a
+causal outcome. A strict learning job continues to reject them. This lets the
+cheap search use information already collected without confusing “worth
+trying” with “proved helpful”.
 
 The raw candidate remains important as a control. A direction that looks good
 under CPU alignment but does not improve the host-verified tool-choice result
