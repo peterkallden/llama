@@ -117,3 +117,33 @@ bool common_flydelta_collect_refinement_job(
     return common_flydelta_collect_experiment_job(
         queue_root, queue_limits, refinement, result, error);
 }
+
+bool common_flydelta_collect_search_pipeline_refinement_job(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        const common_flydelta_experiment_collection_request & request,
+        const common_flydelta_search_observation & observation,
+        const common_flydelta_search_decision & decision,
+        const common_flydelta_candidate_lineage & lineage,
+        common_flydelta_experiment_collection_result & result,
+        std::string & error) {
+    error.clear();
+    result = common_flydelta_experiment_collection_result::disabled;
+    if (!request.enabled) return true;
+    common_flydelta_search_decision expected;
+    if (request.kind != common_flydelta_experiment_job_kind::search_pipeline ||
+            !common_flydelta_search_observation_validate(observation, error) ||
+            !common_flydelta_decide_search_disposition(observation, expected, error) ||
+            decision.disposition != expected.disposition ||
+            decision.disposition != common_flydelta_search_disposition::refine ||
+            !common_flydelta_candidate_lineage_validate(lineage, 64, error) ||
+            lineage.candidate_id != observation.candidate_id) {
+        if (error.empty()) error = "FlyDelta pipeline refinement requires a valid refine disposition";
+        return false;
+    }
+    auto refinement = request;
+    refinement.job_variant_id = lineage.candidate_id + "/generation/" +
+        std::to_string(lineage.generation);
+    return common_flydelta_collect_experiment_job(
+        queue_root, queue_limits, refinement, result, error);
+}

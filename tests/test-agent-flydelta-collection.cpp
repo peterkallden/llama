@@ -123,6 +123,20 @@ int main() {
     CHECK(refined.job.kind == common_flydelta_experiment_job_kind::counterfactual);
     CHECK(refined.job.id.find("/generation/2") != std::string::npos);
 
+    auto pipeline_refine_request = request();
+    pipeline_refine_request.kind = common_flydelta_experiment_job_kind::search_pipeline;
+    pipeline_refine_request.behavior_delta_ids = {"flydelta://delta/pipeline-refine"};
+    const auto pipeline_refine_root = root / "pipeline-refine";
+    CHECK(common_flydelta_collect_search_pipeline_refinement_job(
+        pipeline_refine_root, {}, pipeline_refine_request, observation, decision, lineage,
+        result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::enqueued);
+    common_flydelta_claimed_experiment_job pipeline_refined;
+    CHECK(common_flydelta_experiment_queue_claim_next(
+        pipeline_refine_root, {}, pipeline_refined, error));
+    CHECK(pipeline_refined.job.kind == common_flydelta_experiment_job_kind::search_pipeline);
+    CHECK(pipeline_refined.job.behavior_delta_ids.size() == 1);
+
     std::filesystem::remove_all(root, ignored);
     return 0;
 }

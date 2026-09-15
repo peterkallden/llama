@@ -63,3 +63,16 @@ bool common_flydelta_collect_refinement_job(
         const common_flydelta_candidate_lineage & lineage,
         common_flydelta_experiment_collection_result & result,
         std::string & error);
+
+// Enqueues a bounded follow-up while retaining the composed search pipeline
+// job kind. This is used after a pipeline arm has useful UNKNOWN/NEUTRAL
+// diagnostics; the queue still contains references and bounds only.
+bool common_flydelta_collect_search_pipeline_refinement_job(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        const common_flydelta_experiment_collection_request & request,
+        const common_flydelta_search_observation & observation,
+        const common_flydelta_search_decision & decision,
+        const common_flydelta_candidate_lineage & lineage,
+        common_flydelta_experiment_collection_result & result,
+        std::string & error);
