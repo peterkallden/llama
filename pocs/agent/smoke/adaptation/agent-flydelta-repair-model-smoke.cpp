@@ -4,6 +4,7 @@
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
+#include "agent/adaptation/flydelta/flydelta-scale-search.h"
 #include "agent/adaptation/flydelta/flydelta-training.h"
 #include "agent/adaptation/flydelta/flydelta.h"
 #include "tools/agent/cli/agent-cli-inference.h"
@@ -583,6 +584,110 @@ int main(int argc, char ** argv) {
                       << " layer_search_neighborhoods=" << layer_plan.neighborhood_candidates.size()
                       << " layer_search_trials=" << layer_trials.size()
                       << " layer_search_selected=" << (layer_selection.selected ? "yes" : "no") << '\n';
+
+            // L2 was the only layer that passed the diagnostic cosine gate in
+            // the previous smoke. Keep the next experiment narrow and search
+            // scale there before widening the layer mask again.
+            // Captures are layer-input samples, before that layer's own cvec
+            // addition. Measure an L2 injection at the next captured layer so
+            // a same-layer zero is not mistaken for saturation.
+            const auto layer2_injection = std::find_if(deltas.begin(), deltas.end(),
+                [](const auto & delta) { return delta.layer_index == 2; });
+            const auto layer2_effect = std::find_if(deltas.begin(), deltas.end(),
+                [](const auto & delta) { return delta.layer_index > 2; });
+            const auto layer2_direction = std::find_if(basis.directions().begin(), basis.directions().end(),
+                [](const auto & direction) { return direction.layer_index == 2; });
+            if (layer2_injection != deltas.end() && layer2_effect != deltas.end() &&
+                    layer2_direction != basis.directions().end()) {
+                common_flydelta_scale_search_config scale_config;
+                scale_config.initial_scale = 0.02f;
+                scale_config.growth_factor = 2.0f;
+                scale_config.max_scale = 0.32f;
+                scale_config.max_geometric_trials = 4;
+                scale_config.max_refinement_trials = 1;
+                scale_config.min_cosine = 0.3f;
+                scale_config.max_leakage = 1.0f;
+                scale_config.max_shift_norm = 1.0f;
+                std::vector<common_flydelta_scale_trial> scale_trials;
+                common_flydelta_scale_selection scale_selection;
+                if (!common_flydelta_run_scale_search(
+                        experiment_fixture, scale_config,
+                        [&](const common_flydelta_experiment_fixture &, float scale,
+                                bool apply_overlay,
+                                common_flydelta_counterfactual_trial & trial,
+                                common_flydelta_scale_geometry & geometry,
+                                std::string & runner_error) {
+                            common_agent_generation_result result;
+                            std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
+                            common_flydelta_layer_candidate candidate;
+                            if (apply_overlay) {
+                                candidate.layer_indices = {2};
+                                candidate.anchor_layer_index = 2;
+                                candidate.diagnostic_score = 1.0f;
+                                candidate.total_scale = scale;
+                                candidate.per_layer_scale = scale;
+                                candidate.source = common_flydelta_layer_search_candidate_source::diagnostic_singleton;
+                                common_flydelta_activation_result activation;
+                                if (!prepare_layer_activation(candidate, activation)) {
+                                    runner_error = error;
+                                    return false;
+                                }
+                                activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                                    std::move(activation));
+                            }
+                            const bool executed = generate(*inference, value, failed_instruction, result,
+                                activation_ptr, capture_request);
+                            trial = {};
+                            trial.executed = executed;
+                            trial.verifier_known = executed;
+                            trial.passed = executed && contains_tool(result, "data.inspect");
+                            trial.quality = trial.passed ? 1.0f : 0.0f;
+                            trial.overlay_applied = apply_overlay;
+                            trial.intervention_count = apply_overlay ? 1 : 0;
+                            trial.evidence_ref = apply_overlay
+                                ? "evidence:model-repair-l2-scale-search"
+                                : "evidence:model-repair-l2-scale-baseline";
+                            if (apply_overlay && result.flydelta_capture) {
+                                common_flydelta_representation_diagnostics values;
+                                if (!common_flydelta_representation_diagnostics_from_captures(
+                                        *baseline_arm_capture, *result.flydelta_capture, *layer2_effect,
+                                        64U * 1024U * 1024U, values, runner_error)) {
+                                    return false;
+                                }
+                                geometry.available = true;
+                                geometry.cosine = values.cosine;
+                                geometry.progress = values.progress;
+                                geometry.leakage = values.leakage;
+                                geometry.shift_norm = values.shift_norm;
+                            }
+                            std::cout << "l2_scale_model_output scale=" << scale
+                                      << " overlay=" << (apply_overlay ? "yes" : "no")
+                                      << " output=" << output_preview(result) << '\n';
+                            if (!executed && !result.error_message.empty()) runner_error = result.error_message;
+                            return executed;
+                        }, scale_trials, scale_selection, error)) {
+                    std::cerr << "FlyDelta L2 scale search failed: " << error << '\n';
+                    return 1;
+                }
+                std::cout << "l2_scale_search_injection_layer=2"
+                          << " l2_scale_search_measurement_layer=" << layer2_effect->layer_index << '\n'
+                          << "l2_scale_search_trials=" << scale_trials.size()
+                          << " l2_scale_search_model_calls=" << (scale_trials.size() + 1)
+                          << " l2_scale_search_selected=" << (scale_selection.selected ? "yes" : "no") << '\n';
+                for (const auto & trial : scale_trials) {
+                    std::cout << "l2_scale_trial scale=" << trial.scale
+                              << " outcome=" << common_flydelta_counterfactual_outcome_name(trial.outcome)
+                              << " safe_to_escalate=" << (trial.safe_to_escalate ? "yes" : "no")
+                              << " refinement=" << (trial.refinement ? "yes" : "no");
+                    if (trial.geometry_available) {
+                        std::cout << " cosine=" << trial.geometry.cosine
+                                  << " progress=" << trial.geometry.progress
+                                  << " leakage=" << trial.geometry.leakage
+                                  << " shift_norm=" << trial.geometry.shift_norm;
+                    }
+                    std::cout << '\n';
+                }
+            }
         }
     }
     return 0;

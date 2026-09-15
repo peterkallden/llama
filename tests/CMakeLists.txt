@@ -404,7 +404,8 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-capture-manifest.cpp
         test-agent-flydelta-repair-deltas.cpp
         test-agent-flydelta-representation-diagnostics.cpp
-        test-agent-flydelta-layer-search.cpp
+test-agent-flydelta-layer-search.cpp
+test-agent-flydelta-scale-search.cpp
         test-agent-flydelta-hidden-state-hook.cpp
         test-agent-flydelta-two-pass.cpp
         test-agent-flydelta-artifact-store.cpp

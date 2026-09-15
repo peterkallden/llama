@@ -1,0 +1,81 @@
+#pragma once
+
+#include "agent/adaptation/flydelta/flydelta-experiment.h"
+
+#include <cstddef>
+#include <functional>
+#include <string>
+#include <vector>
+
+// Generic host-side scale search for an already selected overlay direction or
+// layer mask. Geometry is a safety/prioritization signal only; host
+// verification remains the sole source of HELPED.
+struct common_flydelta_scale_search_config {
+    int schema_version = 1;
+    float initial_scale = 0.02f;
+    float growth_factor = 2.0f;
+    float max_scale = 0.32f;
+    size_t max_geometric_trials = 4;
+    size_t max_refinement_trials = 1;
+    float min_cosine = 0.3f;
+    float max_leakage = 1.0f;
+    float max_shift_norm = 1.0f;
+    float saturation_epsilon = 0.00001f;
+};
+
+struct common_flydelta_scale_geometry {
+    bool available = false;
+    float cosine = 0.0f;
+    float progress = 0.0f;
+    float leakage = 0.0f;
+    float shift_norm = 0.0f;
+};
+
+struct common_flydelta_scale_trial {
+    float scale = 0.0f;
+    common_flydelta_counterfactual_outcome outcome =
+        common_flydelta_counterfactual_outcome::unknown;
+    float quality_delta = 0.0f;
+    bool executed = false;
+    bool verifier_known = false;
+    bool geometry_available = false;
+    bool safe_to_escalate = false;
+    bool refinement = false;
+    common_flydelta_scale_geometry geometry;
+    std::string evidence_ref;
+};
+
+struct common_flydelta_scale_selection {
+    bool selected = false;
+    float scale = 0.0f;
+    float score = 0.0f;
+    size_t trial_index = 0;
+};
+
+bool common_flydelta_scale_search_config_validate(
+        const common_flydelta_scale_search_config & config,
+        std::string & error);
+bool common_flydelta_scale_trial_validate(
+        const common_flydelta_scale_trial & trial,
+        std::string & error);
+
+using common_flydelta_scale_search_runner = std::function<bool(
+        const common_flydelta_experiment_fixture & fixture,
+        float scale,
+        bool apply_overlay,
+        common_flydelta_counterfactual_trial & trial,
+        common_flydelta_scale_geometry & geometry,
+        std::string & error)>;
+
+// Runs one baseline, then a bounded geometric scale sequence. Escalation stops
+// when geometry is unavailable/unsafe. After the first verified HELPED arm,
+// at most max_refinement_trials midpoint(s) are tested between that arm and
+// the latest smaller attempted scale. The helper never turns geometry into a
+// verdict or learning signal.
+bool common_flydelta_run_scale_search(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_scale_search_config & config,
+        const common_flydelta_scale_search_runner & runner,
+        std::vector<common_flydelta_scale_trial> & trials,
+        common_flydelta_scale_selection & selection,
+        std::string & error);

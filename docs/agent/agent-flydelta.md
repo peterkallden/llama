@@ -1082,6 +1082,28 @@ captures a small layer window and exercises this path after its existing
 three-arm alpha search; it reports the selected mask and trial count without
 claiming that the model learned a repair.
 
+The model smoke uses `layer-input` captures. Consequently, a candidate injected
+at layer `L` must be diagnosed at a later captured layer; measuring the same
+layer would only observe the state before its own injection and can produce a
+misleading zero shift. The current L2 scale experiment therefore injects at L2
+and measures the propagated effect at L3.
+
+After layer search has identified a narrow candidate, the host can run a
+separate trust-region scale search. The current model smoke uses L2 and the
+geometric sequence `0.02, 0.04, 0.08, 0.16`, bounded by cosine, leakage and
+shift-norm checks. If an arm becomes host-verified `HELPED`, one midpoint is
+tested between that arm and the last smaller attempted scale; this is a small
+bracket refinement intended to find a sufficient minimum without turning the
+smoke into an unbounded strength search. Geometry can stop escalation, but it
+cannot create `HELPED`.
+
+In the latest local Qwen run all four L2 scale arms remained `UNKNOWN`. The
+measured L3 progress increased from approximately `0.0032` to `0.0254`, while
+leakage remained below `0.06` and shift-norm below `0.09`. The search therefore
+completed all four geometric arms without refinement or selection. This is a
+useful result: the L2 signal remains aligned and unsaturated, but the overlay
+has not yet crossed the model's tool-choice boundary.
+
 ### 4J. Source-neutral behavior transitions — implemented
 
 The shared evidence contract and FlyDelta job envelope are source-neutral.
