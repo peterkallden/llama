@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -38,12 +39,49 @@ struct common_flydelta_contrast_sample {
     common_flydelta_intervention_credit credit;
 };
 
+// A generic model-facing choice. The alternatives may be tool calls, plan
+// operations, research actions, procedure steps or structured-output values.
+// Raw text stays in the host evidence store; this contract keeps only the
+// bounded token identity needed for a decision-boundary probe.
+struct common_flydelta_decision_pair {
+    int schema_version = 1;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    std::string behavior_key;
+    std::vector<int32_t> positive_tokens;
+    std::vector<int32_t> negative_tokens;
+    int32_t first_divergence_index = -1;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+};
+
+bool common_flydelta_decision_pair_validate(
+        const common_flydelta_decision_pair & pair,
+        std::string & error);
+
+// Finds the first divergent token in two host-tokenized alternatives. The
+// caller supplies the fingerprints and semantic behavior identity; this
+// helper remains independent of tokenizer and llama.cpp internals.
+bool common_flydelta_decision_pair_from_tokens(
+        common_adaptation_evidence_source source,
+        const std::string & behavior_key,
+        const std::string & tokenizer_fingerprint,
+        const std::string & template_fingerprint,
+        const std::vector<int32_t> & positive_tokens,
+        const std::vector<int32_t> & negative_tokens,
+        common_flydelta_decision_pair & pair,
+        std::string & error);
+
 // Generic forward-only decision material. The caller owns tokenization and
 // unembedding; this contract only receives the two comparable output rows.
 struct common_flydelta_token_margin_material {
     std::vector<float> positive_output_row;
     std::vector<float> negative_output_row;
 };
+
+using common_flydelta_output_head_row_resolver = std::function<bool(
+        int32_t token,
+        std::vector<float> & row,
+        std::string & error)>;
 
 // Generic host/model boundary material. A positive and negative capture may
 // represent tool choice, planning, research, structured output or another
@@ -117,6 +155,16 @@ bool common_flydelta_build_direction_candidates(
 bool common_flydelta_build_token_margin_candidate(
         const common_flydelta_direction_search_config & config,
         const common_flydelta_token_margin_material & material,
+        common_flydelta_direction_candidate & candidate,
+        std::string & error);
+
+// Resolves the two tokens at the first decision divergence and builds the
+// exact output-head row difference U[t+] - U[t-]. The host owns the resolver;
+// this keeps model access out of the CPU direction-search implementation.
+bool common_flydelta_build_decision_output_margin_candidate(
+        const common_flydelta_direction_search_config & config,
+        const common_flydelta_decision_pair & pair,
+        const common_flydelta_output_head_row_resolver & resolve_row,
         common_flydelta_direction_candidate & candidate,
         std::string & error);
 

@@ -105,6 +105,37 @@ int main() {
     CHECK(!common_flydelta_build_direction_candidates(
         config, {harmed}, raw_only, error));
 
+    common_flydelta_decision_pair decision_pair;
+    CHECK(common_flydelta_decision_pair_from_tokens(
+        common_adaptation_evidence_source::tool_repair,
+        config.behavior_key, "sha256:tokenizer", "sha256:template",
+        {10, 11, 101, 102}, {10, 11, 202, 102}, decision_pair, error));
+    CHECK(decision_pair.first_divergence_index == 2);
+    CHECK(common_flydelta_decision_pair_validate(decision_pair, error));
+    common_flydelta_decision_pair planning_pair;
+    CHECK(common_flydelta_decision_pair_from_tokens(
+        common_adaptation_evidence_source::planning_revision,
+        "planning/next-action", "sha256:tokenizer", "sha256:template",
+        {30, 31, 301}, {30, 31, 302}, planning_pair, error));
+    CHECK(planning_pair.source == common_adaptation_evidence_source::planning_revision &&
+        planning_pair.first_divergence_index == 2);
+    common_flydelta_decision_pair invalid_decision_pair;
+    CHECK(!common_flydelta_decision_pair_from_tokens(
+        common_adaptation_evidence_source::tool_repair,
+        config.behavior_key, "sha256:tokenizer", "sha256:template",
+        {10, 11}, {10, 11}, invalid_decision_pair, error));
+
+    common_flydelta_direction_candidate output_candidate;
+    CHECK(common_flydelta_build_decision_output_margin_candidate(
+        config, decision_pair,
+        [](int32_t token, std::vector<float> & row, std::string &) {
+            row = token == 101 ? std::vector<float>{0.0f, 2.0f, 0.0f, 0.0f}
+                               : std::vector<float>{0.0f, 0.0f, 0.0f, 0.0f};
+            return true;
+        }, output_candidate, error));
+    CHECK(output_candidate.kind == common_flydelta_direction_kind::token_margin_direction);
+    CHECK(output_candidate.experimental_only && output_candidate.values[1] == 1.0f);
+
     common_flydelta_token_margin_material margin;
     margin.positive_output_row = {0.0f, 2.0f, 0.0f, 0.0f};
     margin.negative_output_row = {0.0f, 0.0f, 0.0f, 0.0f};

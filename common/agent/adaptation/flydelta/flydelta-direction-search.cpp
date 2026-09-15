@@ -88,6 +88,76 @@ const char * common_flydelta_direction_search_mode_name(
     return "unknown";
 }
 
+bool common_flydelta_decision_pair_validate(
+        const common_flydelta_decision_pair & pair,
+        std::string & error) {
+    error.clear();
+    const char * source = common_adaptation_evidence_source_name(pair.source);
+    if (pair.schema_version != 1 || !source || std::string(source) == "unknown" ||
+            !nonempty_bounded(pair.behavior_key) || pair.positive_tokens.empty() ||
+            pair.negative_tokens.empty() || pair.positive_tokens.size() > 8192 ||
+            pair.negative_tokens.size() > 8192 || pair.first_divergence_index < 0 ||
+            static_cast<size_t>(pair.first_divergence_index) >= pair.positive_tokens.size() ||
+            static_cast<size_t>(pair.first_divergence_index) >= pair.negative_tokens.size() ||
+            pair.positive_tokens[pair.first_divergence_index] ==
+                pair.negative_tokens[pair.first_divergence_index] ||
+            !nonempty_bounded(pair.tokenizer_fingerprint) ||
+            !nonempty_bounded(pair.template_fingerprint)) {
+        error = "FlyDelta decision pair identity or divergence is invalid";
+        return false;
+    }
+    for (size_t i = 0; i < pair.positive_tokens.size(); ++i) {
+        if (pair.positive_tokens[i] < 0) {
+            error = "FlyDelta decision pair contains an invalid positive token";
+            return false;
+        }
+    }
+    for (size_t i = 0; i < pair.negative_tokens.size(); ++i) {
+        if (pair.negative_tokens[i] < 0) {
+            error = "FlyDelta decision pair contains an invalid negative token";
+            return false;
+        }
+    }
+    for (int32_t i = 0; i < pair.first_divergence_index; ++i) {
+        if (pair.positive_tokens[static_cast<size_t>(i)] !=
+                pair.negative_tokens[static_cast<size_t>(i)]) {
+            error = "FlyDelta decision pair divergence index is not the first divergence";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool common_flydelta_decision_pair_from_tokens(
+        common_adaptation_evidence_source source,
+        const std::string & behavior_key,
+        const std::string & tokenizer_fingerprint,
+        const std::string & template_fingerprint,
+        const std::vector<int32_t> & positive_tokens,
+        const std::vector<int32_t> & negative_tokens,
+        common_flydelta_decision_pair & pair,
+        std::string & error) {
+    error.clear();
+    pair = {};
+    const size_t common_size = std::min(positive_tokens.size(), negative_tokens.size());
+    size_t divergence = 0;
+    while (divergence < common_size && positive_tokens[divergence] == negative_tokens[divergence]) {
+        ++divergence;
+    }
+    if (divergence == common_size || divergence > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+        error = "FlyDelta decision alternatives have no bounded first divergence";
+        return false;
+    }
+    pair.source = source;
+    pair.behavior_key = behavior_key;
+    pair.positive_tokens = positive_tokens;
+    pair.negative_tokens = negative_tokens;
+    pair.first_divergence_index = static_cast<int32_t>(divergence);
+    pair.tokenizer_fingerprint = tokenizer_fingerprint;
+    pair.template_fingerprint = template_fingerprint;
+    return common_flydelta_decision_pair_validate(pair, error);
+}
+
 bool common_flydelta_direction_search_config_validate(
         const common_flydelta_direction_search_config & config,
         std::string & error) {
@@ -140,6 +210,33 @@ bool common_flydelta_build_token_margin_candidate(
         config.layer_index, std::move(normalized), 1, 1, 1.0f,
         config.mode == common_flydelta_direction_search_mode::experimental);
     return common_flydelta_direction_candidate_validate(candidate, config.dimension, error);
+}
+
+bool common_flydelta_build_decision_output_margin_candidate(
+        const common_flydelta_direction_search_config & config,
+        const common_flydelta_decision_pair & pair,
+        const common_flydelta_output_head_row_resolver & resolve_row,
+        common_flydelta_direction_candidate & candidate,
+        std::string & error) {
+    error.clear();
+    candidate = {};
+    if (!common_flydelta_direction_search_config_validate(config, error) ||
+            !common_flydelta_decision_pair_validate(pair, error) || !resolve_row) {
+        if (error.empty()) error = "FlyDelta output-margin decision input is invalid";
+        return false;
+    }
+    if (pair.source != config.source || pair.behavior_key != config.behavior_key) {
+        error = "FlyDelta decision pair is incompatible with direction configuration";
+        return false;
+    }
+    const size_t divergence = static_cast<size_t>(pair.first_divergence_index);
+    common_flydelta_token_margin_material material;
+    if (!resolve_row(pair.positive_tokens[divergence], material.positive_output_row, error) ||
+            !resolve_row(pair.negative_tokens[divergence], material.negative_output_row, error)) {
+        if (error.empty()) error = "FlyDelta output-head row resolution failed";
+        return false;
+    }
+    return common_flydelta_build_token_margin_candidate(config, material, candidate, error);
 }
 
 bool common_flydelta_build_boundary_prototype_candidate(

@@ -1066,6 +1066,24 @@ procedure behavior. They are still only direction material: the existing
 layer search, scale search and host verifier decide whether a direction is
 useful. No margin or geometric signal can create `HELPED` on its own.
 
+The model-facing decision boundary uses the same generic seam. A bounded
+`decision_pair` contains two host-selected alternatives plus tokenizer and
+template fingerprints; it is not limited to tool names. The host adapter finds
+the first divergent token and may resolve the corresponding output-head rows
+through a callback. The existing `token_margin_direction` then computes:
+
+```text
+normalize(U[positive_token] - U[negative_token])
+```
+
+This is an output-space decision signal, not automatically an intermediate
+layer injection. It can rank or guide the existing layer/coefficient/scale
+search. The existing `execution_boundary_prototype` remains the generic
+positive-minus-negative capture direction, and coefficient search can combine
+it with another direction without introducing a tool-specific candidate type.
+A missing common prefix, ambiguous divergence or incompatible fingerprint
+fails closed.
+
 ### 4H. Verified candidate-to-delta materialization — implemented
 
 `flydelta-capture.*` now has a reference-only factory from a qualified,
