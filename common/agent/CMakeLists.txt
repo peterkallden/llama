@@ -72,6 +72,7 @@ add_library(${TARGET}
     adaptation/adaptation-evidence.cpp adaptation/adaptation-evidence.h
     adaptation/adaptation-evidence-routing.cpp adaptation/adaptation-evidence-routing.h
     adaptation/training-candidate.cpp adaptation/training-candidate.h
+    adaptation/auto-training-trigger.cpp adaptation/auto-training-trigger.h
     adaptation/corpus-builder.cpp adaptation/corpus-builder.h
     adaptation/trainer-protocol.cpp adaptation/trainer-protocol.h
     adaptation/adapter-registry.cpp adaptation/adapter-registry.h

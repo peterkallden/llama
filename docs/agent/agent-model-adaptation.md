@@ -1518,6 +1518,43 @@ and recomputes the manifest's SHA-256. Successful verification returns only a
 safe resolved path; the caller must still admit the adapter as `candidate` and
 must perform evaluation before any explicit activation.
 
+### Sweep 4b — opt-in automatic training threshold (contract slice)
+
+The first automatic-training seam is intentionally small and host-level. A
+maintenance pass may set `auto_train: true` and a minimum of six qualified
+examples. The default remains disabled. The threshold counts distinct,
+approved `common_training_candidate` records that pass the existing candidate
+qualification policy in one explicit `(learning_domain, tool_family,
+provider_kind)` group. It does not count ordinary metrics, raw observations,
+capture candidates, UNKNOWN/NEUTRAL FlyDelta trials, or six repeated
+occurrences represented by one aggregate candidate. Duplicate candidate ids
+are counted once.
+
+The trigger only returns `not_ready` or `ready` with a bounded count and a
+stable group key. It does not build a corpus, start a worker, modify model
+weights, activate an adapter, or alter a live turn. The host maintenance layer
+may use `ready` to call the existing corpus/worker orchestrator. The selected
+serving model, tokenizer, chat-template and capture layout are bound when that
+job is created; they are not silently inferred by this threshold helper.
+
+Conceptually:
+
+```text
+turn observation
+  -> host-approved learning case
+  -> qualified training candidate
+  -> six distinct candidates in one group
+  -> queue one corpus/training job
+  -> evaluate candidate
+  -> explicit canary/activation decision
+```
+
+The trigger is deliberately separate from FlyDelta's six-repair deep-search
+gate. Six host-certified repair transitions may open a FlyDelta contrast-set
+experiment, while six approved generic training candidates may open an
+external training job. Neither number is a universal truth threshold, and
+neither path activates a result automatically.
+
 ### Sweep 5 — adapter registry and single-profile inference (contract slice in place)
 
 Deliverables:
