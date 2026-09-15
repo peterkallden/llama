@@ -125,11 +125,12 @@ for different kinds of work so the expected tool is not always
 | amount outliers | Bounded IQR outlier detection | `statistics.outliers` |
 | regional numeric profile | Numeric statistics grouped by region | `statistics.describe` |
 
-The suite intentionally contains twelve scenarios: the first six cover the
+The suite intentionally contains sixteen scenarios: the first six cover the
 basic dataset inspection path, while the next six exercise data operations in
-slightly different ways. That gives the optional model smoke roughly twice as
-many natural selection attempts without changing the model-facing seam or
-adding a second prompt format. Each scenario includes a host-readable plan using the canonical
+slightly different ways and the final four add distinct projections, grouped
+counts and integrity checks. That gives the optional model smoke more natural
+selection attempts without changing the model-facing seam or adding a second
+prompt format. Each scenario includes a host-readable plan using the canonical
 `dataset://local/sales` reference. The contract smoke validates the JSON,
 catalog membership, plan shape and dataset bindings. The optional model smoke
 uses the same file and the real compact tool descriptions, captures a bounded
