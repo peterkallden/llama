@@ -102,6 +102,56 @@ research, procedure or dataset observation from being accidentally compared
 with a different behavior. Capture manifests use the same explicit
 source/behavior identity when they become activation material.
 
+## Natural dataset-question smoke
+
+`docs/examples/agent-flydelta-dataset-question-suite.json` is a small,
+host-owned English scenario suite for exercising model-facing dataset tool
+selection with a compact model such as Qwen. The questions deliberately ask
+for different kinds of work so the expected tool is not always
+`dataset.inspect`:
+
+| Scenario | User intent | Expected tool |
+| --- | --- | --- |
+| content overview | What the dataset contains at a high level | `dataset.inspect` |
+| schema description | Column names, types and nullability | `dataset.schema` |
+| representative rows | A bounded view of actual records | `dataset.sample` |
+| numeric summary | Count, min, max, mean and standard deviation | `statistics.describe` |
+| region distribution | Frequency of values in one column | `statistics.value_counts` |
+| regional sales summary | Grouped sum and average | `data.aggregate` |
+
+Each scenario includes a host-readable plan using the canonical
+`dataset://local/sales` reference. The contract smoke validates the JSON,
+catalog membership, plan shape and dataset bindings. The optional model smoke
+uses the same file and the real compact tool descriptions, captures a bounded
+layer-input window, and prints the selected tool and model output for every
+question. It is observational by design: a mismatch is a repair observation,
+not a HELPED result and not training evidence. A separate host execution and
+verification step is required before a failed selection, repaired selection or
+counterfactual can enter FlyDelta.
+
+Run the always-safe contract check with:
+
+```text
+llama-agent-flydelta-dataset-question-contract-smoke \
+  docs/examples/agent-flydelta-dataset-question-suite.json
+```
+
+Run the optional model-facing check by providing a model explicitly:
+
+```text
+LLAMA_AGENT_THREADS=3 \
+llama-agent-flydelta-dataset-question-model-smoke \
+  --model /path/to/model.gguf \
+  --suite docs/examples/agent-flydelta-dataset-question-suite.json
+```
+
+`--strict` makes a non-matching model selection return failure; without it,
+the smoke completes and reports mismatches so they can be inspected and fed
+into the normal host-controlled repair path. The suite contains no Swedish
+prompts and no synthetic “choose the wrong tool, then choose the right tool”
+instruction. That keeps natural model mistakes separate from the real
+host-certified corpus.
+
 ## Intended mechanism
 
 The full research hypothesis is a sparse contextual association:

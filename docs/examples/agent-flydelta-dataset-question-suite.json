@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "id": "flydelta://fixture/dataset-question-suite-v1",
+  "language": "en",
+  "dataset": "dataset://local/sales",
+  "dataset_name": "Sales",
+  "purpose": "Natural English dataset questions for model-facing tool selection and optional FlyDelta observation.",
+  "model_contract": {
+    "selection": "Choose exactly one most-specific read-only dataset tool. Return only {\"name\":\"tool.name\",\"arguments\":{...}}.",
+    "dataset_rule": "Use the canonical dataset reference dataset://local/sales when a dataset argument is required.",
+    "learning_rule": "A model selection is only an observation. A FlyDelta learning example requires a separate host-verified repair or counterfactual."
+  },
+  "scenarios": [
+    {
+      "id": "content-overview",
+      "question": "What does this dataset contain at a high level? Identify the kind of records, the row count, and the main fields.",
+      "expected_tool": "dataset.inspect",
+      "plan": {
+        "goal": "Inspect the dataset contents at a high level",
+        "steps": [
+          {"tool": "dataset.inspect", "args": {"dataset": "dataset://local/sales"}}
+        ]
+      }
+    },
+    {
+      "id": "schema-description",
+      "question": "Describe the structure of this dataset. List every column, its type, and whether it can be null.",
+      "expected_tool": "dataset.schema",
+      "plan": {
+        "goal": "Describe the dataset schema",
+        "steps": [
+          {"tool": "dataset.schema", "args": {"dataset": "dataset://local/sales"}}
+        ]
+      }
+    },
+    {
+      "id": "representative-rows",
+      "question": "Show three representative records from this dataset so I can see what an individual row looks like.",
+      "expected_tool": "dataset.sample",
+      "plan": {
+        "goal": "Show a bounded sample of the dataset",
+        "steps": [
+          {"tool": "dataset.sample", "args": {"dataset": "dataset://local/sales", "rows": 3}}
+        ]
+      }
+    },
+    {
+      "id": "numeric-summary",
+      "question": "For the amount and units columns, report count, minimum, maximum, mean, and population standard deviation.",
+      "expected_tool": "statistics.describe",
+      "plan": {
+        "goal": "Summarize numeric columns",
+        "steps": [
+          {"tool": "statistics.describe", "args": {"dataset": "dataset://local/sales", "columns": ["amount", "units"]}}
+        ]
+      }
+    },
+    {
+      "id": "region-distribution",
+      "question": "How many records belong to each region? Return the frequency of every region value.",
+      "expected_tool": "statistics.value_counts",
+      "plan": {
+        "goal": "Count the distinct region values",
+        "steps": [
+          {"tool": "statistics.value_counts", "args": {"dataset": "dataset://local/sales", "column": "region"}}
+        ]
+      }
+    },
+    {
+      "id": "regional-sales-summary",
+      "question": "Calculate the total amount and average amount for each region.",
+      "expected_tool": "data.aggregate",
+      "plan": {
+        "goal": "Aggregate sales by region",
+        "steps": [
+          {"tool": "data.aggregate", "args": {"dataset": "dataset://local/sales", "group_by": ["region"], "measures": [{"function": "sum", "column": "amount", "as": "total_amount"}, {"function": "avg", "column": "amount", "as": "average_amount"}]}}
+        ]
+      }
+    }
+  ]
+}

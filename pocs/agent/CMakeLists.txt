@@ -1022,6 +1022,35 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Optional natural-language dataset question smoke. It uses the same compact
+# model-facing contract as the host, captures bounded hidden states, and
+# reports mismatches as repair observations. It never promotes a mismatch to
+# FlyDelta evidence without a separate host verifier.
+set(TARGET llama-agent-flydelta-dataset-question-model-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-dataset-question-model-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+# Always-runnable contract smoke for the checked-in suite and its plans.
+set(TARGET llama-agent-flydelta-dataset-question-contract-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-dataset-question-contract-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-tool-provider-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-tool-provider-smoke.cpp
@@ -1987,7 +2016,8 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/eurostat-statistics-openapi.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-openalex.json
         ${PROJECT_SOURCE_DIR}/docs/examples/openalex-works-openapi.json
-        ${PROJECT_SOURCE_DIR}/docs/examples/openapi-openalex-generated.json)
+        ${PROJECT_SOURCE_DIR}/docs/examples/openapi-openalex-generated.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json)
     install(FILES
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-config.example.json
         ${AGENT_HOST_CONFIG_EXAMPLES}
@@ -2040,6 +2070,8 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-model-adaptation-smoke
     llama-agent-flydelta-tool-repair-smoke
     llama-agent-flydelta-model-ab-smoke
+    llama-agent-flydelta-dataset-question-model-smoke
+    llama-agent-flydelta-dataset-question-contract-smoke
     llama-agent-resident-smoke
     llama-agent-model-residency-smoke
     llama-agent-two-model-smoke
@@ -2108,6 +2140,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-model-adaptation-smoke
     llama-agent-flydelta-tool-repair-smoke
     llama-agent-flydelta-model-ab-smoke
+    llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-resident-smoke
     llama-agent-model-residency-smoke
     llama-agent-tool-provider-smoke
@@ -2226,6 +2259,18 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-flydelta-repair-model-smoke>)
     set_property(TEST llama-agent-flydelta-repair-model-ctest PROPERTY LABELS agent-adaptation)
     set_tests_properties(llama-agent-flydelta-repair-model-ctest PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 420)
+
+    add_test(NAME llama-agent-flydelta-dataset-question-contract-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-contract-smoke>
+            ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json)
+    set_property(TEST llama-agent-flydelta-dataset-question-contract-ctest PROPERTY LABELS agent-adaptation)
+
+    add_test(NAME llama-agent-flydelta-dataset-question-model-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-model-smoke>
+            --suite ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json)
+    set_property(TEST llama-agent-flydelta-dataset-question-model-ctest PROPERTY LABELS agent-adaptation)
+    set_tests_properties(llama-agent-flydelta-dataset-question-model-ctest PROPERTIES
         SKIP_RETURN_CODE 77 TIMEOUT 420)
 
     add_test(NAME llama-agent-tool-runtime-ctest
