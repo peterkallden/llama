@@ -104,8 +104,8 @@ source/behavior identity when they become activation material.
 
 ## Natural dataset-question smoke
 
-`docs/examples/agent-flydelta-dataset-question-suite.json` is a small,
-host-owned English scenario suite for exercising model-facing dataset tool
+`docs/examples/agent-flydelta-dataset-question-suite.json` is the stable,
+host-owned English regression suite for exercising model-facing dataset tool
 selection with a compact model such as Qwen. The questions deliberately ask
 for different kinds of work so the expected tool is not always
 `dataset.inspect`:
@@ -125,12 +125,13 @@ for different kinds of work so the expected tool is not always
 | amount outliers | Bounded IQR outlier detection | `statistics.outliers` |
 | regional numeric profile | Numeric statistics grouped by region | `statistics.describe` |
 
-The suite intentionally contains sixteen scenarios: the first six cover the
-basic dataset inspection path, while the next six exercise data operations in
-slightly different ways and the final four add distinct projections, grouped
-counts and integrity checks. That gives the optional model smoke more natural
-selection attempts without changing the model-facing seam or adding a second
-prompt format. Each scenario includes a host-readable plan using the canonical
+The stable suite contains twelve scenarios: the first six cover the basic
+dataset inspection path and the next six exercise data operations. New cases
+are kept in `docs/examples/agent-flydelta-dataset-question-suite-incremental.json`
+until they have been reviewed and host-verified; it currently contains four
+additional projection, grouped-count and integrity scenarios. This keeps an
+incremental model run from repeating the full suite while preserving the same
+model-facing seam and prompt format. Each scenario includes a host-readable plan using the canonical
 `dataset://local/sales` reference. The contract smoke validates the JSON,
 catalog membership, plan shape and dataset bindings. The optional model smoke
 uses the same file and the real compact tool descriptions, captures a bounded
@@ -145,6 +146,13 @@ Run the always-safe contract check with:
 ```text
 llama-agent-flydelta-dataset-question-contract-smoke \
   docs/examples/agent-flydelta-dataset-question-suite.json
+```
+
+Validate the incremental cases independently with:
+
+```text
+llama-agent-flydelta-dataset-question-contract-smoke \
+  docs/examples/agent-flydelta-dataset-question-suite-incremental.json
 ```
 
 The repository wrapper uses the same model default, timeout handling and
@@ -176,6 +184,21 @@ into the normal host-controlled repair path. The suite contains no Swedish
 prompts and no synthetic “choose the wrong tool, then choose the right tool”
 instruction. That keeps natural model mistakes separate from the real
 host-certified corpus.
+
+For an incremental model run, point the existing wrapper at the supplement
+instead of the stable suite:
+
+```text
+LLAMA_AGENT_MODEL=/path/to/model.gguf \
+LLAMA_AGENT_DATASET_QUESTION_SUITE=docs/examples/agent-flydelta-dataset-question-suite-incremental.json \
+LLAMA_AGENT_THREADS=3 \
+scripts/test-agent-flydelta-dataset-question-model-smoke.sh
+```
+
+When the supplement is mature, append its scenarios to the stable suite in a
+reviewed change and replace it with the next increment. Do not treat a
+model-only mismatch as learning evidence; the host-certified repair/e2e smoke
+remains the step that creates FlyDelta data.
 
 ## Intended mechanism
 

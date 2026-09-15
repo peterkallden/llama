@@ -87,8 +87,9 @@ int main(int argc, char ** argv) {
         }
         if (!found_expected) return fail(id + ": expected tool is not present in plan");
     }
-    if (suite["scenarios"].size() < 6 || expected_tools.size() < 6) {
-        return fail("suite must cover six distinct dataset operations");
+    const auto minimum_distinct_tools = suite.value("minimum_distinct_tools", 6U);
+    if (suite["scenarios"].size() < minimum_distinct_tools || expected_tools.size() < minimum_distinct_tools) {
+        return fail("suite does not cover its minimum distinct dataset operations");
     }
     std::cout << "flydelta_dataset_question_suite=passed scenarios=" << suite["scenarios"].size()
               << " distinct_tools=" << expected_tools.size() << "\n";

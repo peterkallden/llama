@@ -142,50 +142,6 @@
           {"tool": "statistics.describe", "args": {"dataset": "dataset://local/sales", "columns": ["amount"], "group_by": ["region"]}}
         ]
       }
-    },
-    {
-      "id": "distinct-regions",
-      "question": "List each distinct region value once, without returning the other columns or duplicate rows.",
-      "expected_tool": "data.query",
-      "plan": {
-        "goal": "Return a bounded distinct projection",
-        "steps": [
-          {"tool": "data.query", "args": {"dataset": "dataset://local/sales", "select": ["region"], "distinct": true, "limit": 100}}
-        ]
-      }
-    },
-    {
-      "id": "orders-per-customer",
-      "question": "Count how many orders belong to each customer_id. Return one row per customer with the count.",
-      "expected_tool": "data.aggregate",
-      "plan": {
-        "goal": "Count records by customer",
-        "steps": [
-          {"tool": "data.aggregate", "args": {"dataset": "dataset://local/sales", "group_by": ["customer_id"], "measures": [{"function": "count", "column": "*", "as": "order_count"}]}}
-        ]
-      }
-    },
-    {
-      "id": "positive-amount-orders",
-      "question": "Keep only orders whose amount is greater than zero and return the bounded matching records.",
-      "expected_tool": "data.filter",
-      "plan": {
-        "goal": "Filter out non-positive amounts",
-        "steps": [
-          {"tool": "data.filter", "args": {"dataset": "dataset://local/sales", "conditions": [{"field": "amount", "operator": ">", "value": 0}], "limit": 100}}
-        ]
-      }
-    },
-    {
-      "id": "customer-id-integrity",
-      "question": "Check whether customer_id is present on every record. Report missing values, but do not require customer_id to be unique because customers may place multiple orders.",
-      "expected_tool": "dataset.validate",
-      "plan": {
-        "goal": "Validate presence of a repeating foreign key",
-        "steps": [
-          {"tool": "dataset.validate", "args": {"dataset": "dataset://local/sales", "rules": [{"type": "not_null", "column": "customer_id"}]}}
-        ]
-      }
     }
   ]
 }
