@@ -2,6 +2,7 @@
 #include "agent/adaptation/flydelta/flydelta-artifact-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-basis.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
@@ -801,7 +802,7 @@ int main(int argc, char ** argv) {
                           << " l2_scale_search_model_calls=" << (scale_trials.size() + 1)
                           << " l2_scale_search_elapsed_ms=" << scale_search_elapsed_ms
                           << " l2_scale_search_selected=" << (scale_selection.selected ? "yes" : "no") << '\n';
-    for (const auto & trial : scale_trials) {
+                for (const auto & trial : scale_trials) {
                     std::cout << "l2_scale_trial scale=" << trial.scale
                               << " outcome=" << common_flydelta_counterfactual_outcome_name(trial.outcome)
                               << " safe_to_escalate=" << (trial.safe_to_escalate ? "yes" : "no")
@@ -813,6 +814,123 @@ int main(int argc, char ** argv) {
                                   << " shift_norm=" << trial.geometry.shift_norm;
                     }
                     std::cout << '\n';
+                }
+
+                // Exercise the optional TFO-lite coefficient strategy through
+                // the same model-facing seam. The layer and WHAT direction
+                // are fixed by the preceding searches; only WHEN/HOW MUCH is
+                // explored here. This remains experimental and host verdicts
+                // are the only source of HELPED evidence.
+                common_flydelta_low_rank_basis coefficient_basis;
+                if (!common_flydelta_build_low_rank_basis(
+                        model_n_embd, 4, direction_candidates,
+                        coefficient_basis, error)) {
+                    std::cerr << "FlyDelta TFO-lite basis construction failed: " << error << '\n';
+                    return 1;
+                }
+                common_flydelta_coefficient_search_config tfo_config;
+                tfo_config.strategy = common_flydelta_coefficient_search_strategy::tfo_lite;
+                tfo_config.step = 0.04f;
+                tfo_config.max_candidates = 6;
+                tfo_config.max_l2_norm = 0.32f;
+                tfo_config.seed = 0x464c5944454c5441ULL;
+                tfo_config.population_size = 3;
+                tfo_config.iterations = 2;
+                tfo_config.exploration_scale = 1.0f;
+                tfo_config.norm_penalty = 0.05f;
+                std::vector<common_flydelta_coefficient_trial> tfo_trials;
+                common_flydelta_coefficient_selection tfo_selection;
+                const auto tfo_started = std::chrono::steady_clock::now();
+                if (!common_flydelta_run_low_rank_coefficient_search(
+                        experiment_fixture, coefficient_basis, tfo_config,
+                        [&](const common_flydelta_experiment_fixture &,
+                                const common_flydelta_low_rank_basis &,
+                                const std::vector<float> & tfo_coefficients,
+                                bool apply_overlay,
+                                common_flydelta_counterfactual_trial & trial,
+                                common_flydelta_decision_margin & margin,
+                                std::string & runner_error) {
+                            common_agent_generation_result result;
+                            std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
+                            if (apply_overlay) {
+                                common_flydelta_activation_result activation;
+                                common_flydelta_gate_request gate_request;
+                                if (!common_flydelta_gate_request_from_context(
+                                        recognition, code, true,
+                                        common_flydelta_candidate_status::approved,
+                                        true, 1.0f, gate_request, error)) {
+                                    runner_error = error;
+                                    return false;
+                                }
+                                common_flydelta_activation_request request;
+                                request.candidate_id = "flydelta://candidate/model-repair-tfo-lite";
+                                request.artifact_id = "flydelta://artifact/model-repair-e2e";
+                                request.model_profile_fingerprint = profile;
+                                request.capture_layout_revision = "layer-input:v1";
+                                request.model_n_embd = model_n_embd;
+                                request.model_n_layers = model_n_layers;
+                                request.il_end = static_cast<int32_t>(model_n_layers - 1);
+                                request.directions.push_back({coefficient_basis.layer_index,
+                                    coefficient_basis.vectors.front()});
+                                request.coefficients = tfo_coefficients;
+                                request.gate_request = gate_request;
+                                common_flydelta_gate_config gate_config;
+                                gate_config.enabled = true;
+                                gate_config.max_scale = 1.0f;
+                                if (!common_flydelta_prepare_activation(
+                                        gate_config, request, 64U * 1024U * 1024U,
+                                        activation, error)) {
+                                    runner_error = error;
+                                    return false;
+                                }
+                                activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                                    std::move(activation));
+                            }
+                            const bool executed = generate(
+                                *inference, value, failed_instruction, result,
+                                activation_ptr, capture_request);
+                            trial = {};
+                            trial.executed = executed;
+                            trial.verifier_known = executed;
+                            trial.passed = executed && contains_tool(result, "data.inspect");
+                            trial.quality = trial.passed ? 1.0f : 0.0f;
+                            trial.overlay_applied = apply_overlay;
+                            trial.intervention_count = apply_overlay ? 1 : 0;
+                            trial.evidence_ref = apply_overlay
+                                ? "evidence:model-repair-tfo-lite-overlay"
+                                : "evidence:model-repair-tfo-lite-baseline";
+                            margin = {};
+                            std::cout << "tfo_lite_model_output coefficients=";
+                            for (size_t index = 0; index < tfo_coefficients.size(); ++index) {
+                                if (index != 0) std::cout << ',';
+                                std::cout << tfo_coefficients[index];
+                            }
+                            std::cout << " overlay=" << (apply_overlay ? "yes" : "no")
+                                      << " output=" << output_preview(result) << '\n';
+                            if (!executed && !result.error_message.empty()) {
+                                runner_error = result.error_message;
+                            }
+                            return executed;
+                        }, tfo_trials, tfo_selection, error)) {
+                    std::cerr << "FlyDelta TFO-lite model search failed: " << error << '\n';
+                    return 1;
+                }
+                std::cout << "tfo_lite_search_strategy=tfo_lite"
+                          << " tfo_lite_trials=" << tfo_trials.size()
+                          << " tfo_lite_model_calls=" << (tfo_trials.size() + 1)
+                          << " tfo_lite_elapsed_ms="
+                          << std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - tfo_started).count()
+                          << " tfo_lite_selected=" << (tfo_selection.selected ? "yes" : "no")
+                          << '\n';
+                for (const auto & trial : tfo_trials) {
+                    std::cout << "tfo_lite_trial iteration=" << trial.iteration
+                              << " mutation=" << trial.mutation_kind
+                              << " search_fitness=" << trial.search_fitness
+                              << " outcome=" << common_flydelta_counterfactual_outcome_name(
+                                  trial.outcome)
+                              << " host_verified=" << (trial.verifier_known ? "yes" : "no")
+                              << '\n';
                 }
             }
         }

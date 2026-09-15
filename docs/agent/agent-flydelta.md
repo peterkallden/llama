@@ -705,11 +705,15 @@ candidate and its diagnostics may be retained as an experimental challenger
 for later inputs/refinement, but they cannot update the active sideband,
 DeltaMemory or promotion state without a host-verified `HELPED` result.
 
-The remaining model-backed work is intentionally outside these CPU contracts:
-provide a production callback that resolves capture/delta references, runs the
-two-pass model context and verifier, and then invoke the existing optional
-Qwen/Phi smoke. The model smoke is evidence collection and regression
-measurement; a model-only mismatch is never promoted automatically.
+The model-backed smoke now exercises the same experimental seam with a real
+model: after the existing direction, layer and geometric scale diagnostics it
+runs a bounded TFO-lite coefficient search on the selected layer/basis. The
+smoke reports every coefficient arm, mutation lineage and elapsed time. This
+is still evidence collection and regression measurement; a model-only
+mismatch, `UNKNOWN` or `NEUTRAL` result is never promoted automatically.
+The remaining work is production wiring for persisted capture/delta references
+and a host callback that can supply a real decision-margin signal before
+ranking expensive generation arms.
 
 ### Model-facing tool repair and dataflow contract
 
