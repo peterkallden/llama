@@ -16,6 +16,7 @@ bool references_empty_except(
     if (kind != common_flydelta_experiment_job_kind::counterfactual &&
             !request.capture_manifest_ids.empty()) return false;
     if (kind != common_flydelta_experiment_job_kind::basis &&
+            kind != common_flydelta_experiment_job_kind::direction &&
             !request.behavior_delta_ids.empty()) return false;
     if (kind != common_flydelta_experiment_job_kind::delta_memory &&
             !request.training_example_ids.empty()) return false;

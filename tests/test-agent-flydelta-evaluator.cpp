@@ -93,6 +93,14 @@ int main() {
     config.basis.behavior_key = "tool_use/diagnostics/missing-argument";
     config.basis.model_profile_fingerprint = "sha256:model";
     config.basis.capture_layout_revision = "layout:v1";
+    config.direction.dimension = 3;
+    config.direction.layer_index = 4;
+    config.direction.min_samples = 1;
+    config.direction.max_samples = 4;
+    config.direction.source = common_adaptation_evidence_source::tool_repair;
+    config.direction.behavior_key = "tool_use/diagnostics/missing-argument";
+    config.direction.model_profile_fingerprint = "sha256:model";
+    config.direction.capture_layout_revision = "layout:v1";
     config.memory = {8, 2, 1.0f};
 
     common_flydelta_evaluator_result result;
@@ -126,6 +134,12 @@ int main() {
     };
     CHECK(common_flydelta_evaluate_job(basis, config, callbacks, result, error));
     CHECK(result.processed_references == 1 && result.basis_directions.size() == 1);
+
+    auto direction = base_job(common_flydelta_experiment_job_kind::direction,
+            "flydelta://job/direction");
+    direction.behavior_delta_ids = {"flydelta://behavior/evaluator"};
+    CHECK(common_flydelta_evaluate_job(direction, config, callbacks, result, error));
+    CHECK(result.processed_references == 1 && result.direction_candidates.size() == 3);
 
     auto memory = base_job(common_flydelta_experiment_job_kind::delta_memory,
             "flydelta://job/memory");

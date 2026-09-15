@@ -8,6 +8,7 @@
 
 enum class common_flydelta_experiment_job_kind {
     basis,
+    direction,
     counterfactual,
     delta_memory,
 };

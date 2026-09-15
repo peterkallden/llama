@@ -14,6 +14,8 @@ enum class common_flydelta_direction_kind {
     raw_repair,
     normalized_trimmed_mean,
     diagonal_whitened_mean,
+    token_margin_direction,
+    execution_boundary_prototype,
 };
 
 const char * common_flydelta_direction_kind_name(
@@ -22,6 +24,21 @@ const char * common_flydelta_direction_kind_name(
 struct common_flydelta_contrast_sample {
     common_flydelta_behavior_delta delta;
     common_flydelta_intervention_credit credit;
+};
+
+// Generic forward-only decision material. The caller owns tokenization and
+// unembedding; this contract only receives the two comparable output rows.
+struct common_flydelta_token_margin_material {
+    std::vector<float> positive_output_row;
+    std::vector<float> negative_output_row;
+};
+
+// Generic host/model boundary material. A positive and negative capture may
+// represent tool choice, planning, research, structured output or another
+// host-verifiable behavior; no tool-specific semantics are stored here.
+struct common_flydelta_boundary_sample {
+    bool positive = false;
+    std::vector<float> values;
 };
 
 struct common_flydelta_direction_search_config {
@@ -71,4 +88,22 @@ bool common_flydelta_build_direction_candidates(
         const common_flydelta_direction_search_config & config,
         const std::vector<common_flydelta_contrast_sample> & samples,
         std::vector<common_flydelta_direction_candidate> & candidates,
+        std::string & error);
+
+// Builds one direct direction from a positive-vs-negative output margin.
+// Output rows are supplied by the host/model adapter so this module remains
+// independent of tokenizer and llama.cpp internals.
+bool common_flydelta_build_token_margin_candidate(
+        const common_flydelta_direction_search_config & config,
+        const common_flydelta_token_margin_material & material,
+        common_flydelta_direction_candidate & candidate,
+        std::string & error);
+
+// Builds one robust, normalized prototype direction from multiple positive
+// and negative boundary captures. This is intentionally the same candidate
+// format used by repair directions and is not restricted to tool use.
+bool common_flydelta_build_boundary_prototype_candidate(
+        const common_flydelta_direction_search_config & config,
+        const std::vector<common_flydelta_boundary_sample> & samples,
+        common_flydelta_direction_candidate & candidate,
         std::string & error);

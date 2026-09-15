@@ -18,6 +18,7 @@ const char * common_flydelta_experiment_job_kind_name(
         common_flydelta_experiment_job_kind kind) {
     switch (kind) {
         case common_flydelta_experiment_job_kind::basis: return "basis";
+        case common_flydelta_experiment_job_kind::direction: return "direction";
         case common_flydelta_experiment_job_kind::counterfactual: return "counterfactual";
         case common_flydelta_experiment_job_kind::delta_memory: return "delta_memory";
     }
@@ -28,6 +29,7 @@ bool common_flydelta_experiment_job_kind_from_name(
         const std::string & value,
         common_flydelta_experiment_job_kind & kind) {
     if (value == "basis") kind = common_flydelta_experiment_job_kind::basis;
+    else if (value == "direction") kind = common_flydelta_experiment_job_kind::direction;
     else if (value == "counterfactual") kind = common_flydelta_experiment_job_kind::counterfactual;
     else if (value == "delta_memory") kind = common_flydelta_experiment_job_kind::delta_memory;
     else return false;
@@ -51,9 +53,10 @@ bool common_flydelta_experiment_job_validate(
         for (const auto & ref : refs) if (!bounded(ref)) return false;
         return true;
     };
-    if (job.kind == common_flydelta_experiment_job_kind::basis &&
+    if ((job.kind == common_flydelta_experiment_job_kind::basis ||
+         job.kind == common_flydelta_experiment_job_kind::direction) &&
             !check_refs(job.behavior_delta_ids)) {
-        error = "FlyDelta basis job requires bounded behavior-delta references";
+        error = "FlyDelta direction/basis job requires bounded behavior-delta references";
         return false;
     }
     if (job.kind == common_flydelta_experiment_job_kind::counterfactual) {

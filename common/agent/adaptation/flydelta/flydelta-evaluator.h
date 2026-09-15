@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-basis.h"
 #include "agent/adaptation/flydelta/flydelta-job.h"
 #include "agent/adaptation/flydelta/flydelta-training.h"
+#include "agent/adaptation/flydelta/flydelta-direction-search.h"
 
 #include <cstddef>
 #include <functional>
@@ -13,6 +14,7 @@
 // resolves paths or reads raw prompt/tool data itself.
 struct common_flydelta_evaluator_config {
     common_flydelta_basis_config basis;
+    common_flydelta_direction_search_config direction;
     common_flydelta_memory_config memory;
     size_t max_references = 128;
 };
@@ -44,6 +46,7 @@ struct common_flydelta_evaluator_callbacks {
 struct common_flydelta_evaluator_result {
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
     std::vector<common_flydelta_basis_direction> basis_directions;
+    std::vector<common_flydelta_direction_candidate> direction_candidates;
     std::vector<float> delta_memory_weights;
     size_t processed_references = 0;
 };

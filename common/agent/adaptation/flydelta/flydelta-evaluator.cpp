@@ -61,6 +61,25 @@ bool common_flydelta_evaluate_job(
             result.basis_directions = builder.directions();
             return true;
         }
+        case common_flydelta_experiment_job_kind::direction: {
+            if (!callbacks.resolve_behavior_delta ||
+                    !common_flydelta_direction_search_config_validate(config.direction, error)) {
+                if (error.empty()) error = "FlyDelta direction evaluator requires a resolver and direction config";
+                return false;
+            }
+            std::vector<common_flydelta_contrast_sample> samples;
+            samples.reserve(job.behavior_delta_ids.size());
+            for (const auto & id : job.behavior_delta_ids) {
+                common_flydelta_contrast_sample sample;
+                if (!callbacks.resolve_behavior_delta(
+                        id, sample.delta, sample.credit, error)) return false;
+                samples.push_back(std::move(sample));
+            }
+            if (!common_flydelta_build_direction_candidates(
+                    config.direction, samples, result.direction_candidates, error)) return false;
+            result.processed_references = samples.size();
+            return true;
+        }
         case common_flydelta_experiment_job_kind::delta_memory: {
             if (!callbacks.resolve_training_example ||
                     !common_flydelta_validate_memory_config(config.memory, error)) {

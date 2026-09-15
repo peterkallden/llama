@@ -56,6 +56,14 @@ int main() {
         CHECK(source_parsed.seed.source == source);
     }
 
+    job.id = "flydelta://job/direction-1";
+    job.kind = common_flydelta_experiment_job_kind::direction;
+    CHECK(common_flydelta_experiment_job_validate(job, 8, error));
+    const auto direction_text = common_flydelta_experiment_job_to_json(job);
+    common_flydelta_experiment_job direction_parsed;
+    CHECK(common_flydelta_experiment_job_from_json(direction_text, direction_parsed, error));
+    CHECK(direction_parsed.kind == common_flydelta_experiment_job_kind::direction);
+
     job.kind = common_flydelta_experiment_job_kind::counterfactual;
     job.capture_manifest_ids = {"flydelta://capture/1"};
     job.alpha_search.candidates = {0.05f, 0.1f};

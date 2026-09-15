@@ -43,12 +43,14 @@ bool supported_kind(common_flydelta_direction_kind kind) {
         case common_flydelta_direction_kind::raw_repair:
         case common_flydelta_direction_kind::normalized_trimmed_mean:
         case common_flydelta_direction_kind::diagonal_whitened_mean:
+        case common_flydelta_direction_kind::token_margin_direction:
+        case common_flydelta_direction_kind::execution_boundary_prototype:
             return true;
     }
     return false;
 }
 
-common_flydelta_direction_candidate candidate(
+common_flydelta_direction_candidate make_candidate(
         common_flydelta_direction_kind kind, int32_t layer_index,
         std::vector<float> values, size_t source_samples, size_t retained_samples,
         float median_alignment) {
@@ -70,6 +72,8 @@ const char * common_flydelta_direction_kind_name(
         case common_flydelta_direction_kind::raw_repair: return "raw_repair";
         case common_flydelta_direction_kind::normalized_trimmed_mean: return "normalized_trimmed_mean";
         case common_flydelta_direction_kind::diagonal_whitened_mean: return "diagonal_whitened_mean";
+        case common_flydelta_direction_kind::token_margin_direction: return "token_margin_direction";
+        case common_flydelta_direction_kind::execution_boundary_prototype: return "execution_boundary_prototype";
     }
     return "unknown";
 }
@@ -92,6 +96,87 @@ bool common_flydelta_direction_search_config_validate(
         return false;
     }
     return true;
+}
+
+bool common_flydelta_build_token_margin_candidate(
+        const common_flydelta_direction_search_config & config,
+        const common_flydelta_token_margin_material & material,
+        common_flydelta_direction_candidate & candidate,
+        std::string & error) {
+    error.clear();
+    candidate = {};
+    if (!common_flydelta_direction_search_config_validate(config, error) ||
+            material.positive_output_row.size() != config.dimension ||
+            material.negative_output_row.size() != config.dimension) {
+        if (error.empty()) error = "FlyDelta token-margin material dimension is invalid";
+        return false;
+    }
+    std::vector<float> difference(config.dimension);
+    for (size_t i = 0; i < config.dimension; ++i) {
+        difference[i] = material.positive_output_row[i] - material.negative_output_row[i];
+    }
+    std::vector<float> normalized;
+    if (!normalize(difference, normalized)) {
+        error = "FlyDelta token-margin direction must not be zero";
+        return false;
+    }
+    candidate = make_candidate(
+        common_flydelta_direction_kind::token_margin_direction,
+        config.layer_index, std::move(normalized), 1, 1, 1.0f);
+    return common_flydelta_direction_candidate_validate(candidate, config.dimension, error);
+}
+
+bool common_flydelta_build_boundary_prototype_candidate(
+        const common_flydelta_direction_search_config & config,
+        const std::vector<common_flydelta_boundary_sample> & samples,
+        common_flydelta_direction_candidate & candidate,
+        std::string & error) {
+    error.clear();
+    candidate = {};
+    if (!common_flydelta_direction_search_config_validate(config, error) ||
+            samples.empty() || samples.size() > config.max_samples) {
+        if (error.empty()) error = "FlyDelta boundary-prototype sample bounds are invalid";
+        return false;
+    }
+    size_t positives = 0;
+    size_t negatives = 0;
+    std::vector<float> positive_mean(config.dimension, 0.0f);
+    std::vector<float> negative_mean(config.dimension, 0.0f);
+    for (const auto & sample : samples) {
+        if (sample.values.size() != config.dimension) {
+            error = "FlyDelta boundary-prototype sample dimension is invalid";
+            return false;
+        }
+        for (const float value : sample.values) {
+            if (!std::isfinite(value)) {
+                error = "FlyDelta boundary-prototype sample contains a non-finite value";
+                return false;
+            }
+        }
+        auto & mean = sample.positive ? positive_mean : negative_mean;
+        for (size_t i = 0; i < config.dimension; ++i) mean[i] += sample.values[i];
+        if (sample.positive) ++positives; else ++negatives;
+    }
+    if (positives == 0 || negatives == 0) {
+        error = "FlyDelta boundary prototype requires positive and negative samples";
+        return false;
+    }
+    for (float & value : positive_mean) value /= static_cast<float>(positives);
+    for (float & value : negative_mean) value /= static_cast<float>(negatives);
+    std::vector<float> difference(config.dimension);
+    for (size_t i = 0; i < config.dimension; ++i) {
+        difference[i] = positive_mean[i] - negative_mean[i];
+    }
+    std::vector<float> normalized;
+    if (!normalize(difference, normalized)) {
+        error = "FlyDelta boundary prototype must not be zero";
+        return false;
+    }
+    candidate = make_candidate(
+        common_flydelta_direction_kind::execution_boundary_prototype,
+        config.layer_index, std::move(normalized), samples.size(),
+        samples.size(), 1.0f);
+    return common_flydelta_direction_candidate_validate(candidate, config.dimension, error);
 }
 
 bool common_flydelta_direction_candidate_validate(
@@ -177,7 +262,7 @@ bool common_flydelta_build_direction_candidates(
         normalized[i].median_alignment = similarities.empty() ? 1.0f : median(std::move(similarities));
     }
 
-    candidates.push_back(candidate(
+    candidates.push_back(make_candidate(
         common_flydelta_direction_kind::raw_repair, config.layer_index,
         normalized.front().values, samples.size(), 1, normalized.front().median_alignment));
     if (samples.size() < config.min_samples) return true;
@@ -210,7 +295,7 @@ bool common_flydelta_build_direction_candidates(
     for (float & value : mean) value /= static_cast<float>(retained.size());
     std::vector<float> normalized_mean;
     if (!normalize(mean, normalized_mean)) return true;
-    candidates.push_back(candidate(
+    candidates.push_back(make_candidate(
         common_flydelta_direction_kind::normalized_trimmed_mean, config.layer_index,
         normalized_mean, samples.size(), retained.size(), retained_alignment));
 
@@ -226,7 +311,7 @@ bool common_flydelta_build_direction_candidates(
     }
     std::vector<float> normalized_whitened;
     if (normalize(whitened, normalized_whitened)) {
-        candidates.push_back(candidate(
+        candidates.push_back(make_candidate(
             common_flydelta_direction_kind::diagonal_whitened_mean, config.layer_index,
             normalized_whitened, samples.size(), retained.size(), retained_alignment));
     }

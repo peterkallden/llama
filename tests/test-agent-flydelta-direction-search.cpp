@@ -79,5 +79,30 @@ int main() {
     unknown.credit.outcome = common_flydelta_counterfactual_outcome::unknown;
     unknown.credit.eligible_for_learning = false;
     CHECK(!common_flydelta_build_direction_candidates(config, {unknown}, raw_only, error));
+
+    common_flydelta_token_margin_material margin;
+    margin.positive_output_row = {0.0f, 2.0f, 0.0f, 0.0f};
+    margin.negative_output_row = {0.0f, 0.0f, 0.0f, 0.0f};
+    common_flydelta_direction_candidate margin_candidate;
+    CHECK(common_flydelta_build_token_margin_candidate(
+        config, margin, margin_candidate, error));
+    CHECK(margin_candidate.kind == common_flydelta_direction_kind::token_margin_direction);
+    CHECK(margin_candidate.values[1] == 1.0f);
+
+    const std::vector<common_flydelta_boundary_sample> boundary = {
+        {true, {1.0f, 0.0f, 0.0f, 0.0f}},
+        {true, {0.9f, 0.1f, 0.0f, 0.0f}},
+        {false, {0.0f, 1.0f, 0.0f, 0.0f}},
+        {false, {0.1f, 0.9f, 0.0f, 0.0f}},
+    };
+    common_flydelta_direction_candidate prototype;
+    CHECK(common_flydelta_build_boundary_prototype_candidate(
+        config, boundary, prototype, error));
+    CHECK(prototype.kind == common_flydelta_direction_kind::execution_boundary_prototype);
+    CHECK(prototype.source_samples == 4 && prototype.retained_samples == 4);
+    CHECK(prototype.values[0] > 0.6f && prototype.values[1] < -0.6f);
+
+    CHECK(!common_flydelta_build_boundary_prototype_candidate(
+        config, {{true, {1.0f, 0.0f, 0.0f, 0.0f}}}, prototype, error));
     return 0;
 }
