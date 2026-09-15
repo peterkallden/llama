@@ -54,6 +54,9 @@ int main() {
     CHECK(proposals.size() == 5 && proposals[0][0] == 0.0f);
     CHECK(std::string(common_flydelta_coefficient_search_strategy_name(
         common_flydelta_coefficient_search_strategy::coordinate)) == "coordinate");
+    config.population_size = 0;
+    config.iterations = 0;
+    CHECK(common_flydelta_coefficient_search_config_validate(config, 2, error));
     config.strategy = common_flydelta_coefficient_search_strategy::tfo_lite;
     config.population_size = 3;
     config.iterations = 2;

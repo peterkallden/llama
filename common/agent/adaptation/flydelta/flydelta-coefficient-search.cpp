@@ -187,12 +187,7 @@ bool common_flydelta_coefficient_search_config_validate(
     if (config.schema_version != 1 || rank == 0 || rank > 16 || !finite(config.step) ||
             config.step <= 0.0f || config.step > 1.0f || config.max_candidates == 0 ||
             config.max_candidates > 64 || !finite(config.max_l2_norm) ||
-            config.max_l2_norm <= 0.0f || config.max_l2_norm > 1.0f ||
-            config.population_size == 0 || config.population_size > 16 ||
-            config.iterations == 0 || config.iterations > 16 ||
-            !finite(config.exploration_scale) || config.exploration_scale <= 0.0f ||
-            config.exploration_scale > 2.0f || !finite(config.norm_penalty) ||
-            config.norm_penalty < 0.0f || config.norm_penalty > 1.0f) {
+            config.max_l2_norm <= 0.0f || config.max_l2_norm > 1.0f) {
         error = "FlyDelta coefficient search configuration is invalid";
         return false;
     }
@@ -203,6 +198,15 @@ bool common_flydelta_coefficient_search_config_validate(
         default:
             error = "FlyDelta coefficient search strategy is invalid";
             return false;
+    }
+    if (config.strategy == common_flydelta_coefficient_search_strategy::tfo_lite &&
+            (config.population_size == 0 || config.population_size > 16 ||
+             config.iterations == 0 || config.iterations > 16 ||
+             !finite(config.exploration_scale) || config.exploration_scale <= 0.0f ||
+             config.exploration_scale > 2.0f || !finite(config.norm_penalty) ||
+             config.norm_penalty < 0.0f || config.norm_penalty > 1.0f)) {
+        error = "FlyDelta TFO-lite configuration is invalid";
+        return false;
     }
     return true;
 }
