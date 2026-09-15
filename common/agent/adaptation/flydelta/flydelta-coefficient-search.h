@@ -4,6 +4,7 @@
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -50,11 +51,31 @@ bool common_flydelta_decision_margin_validate(
         const common_flydelta_decision_margin & margin,
         std::string & error);
 
+// Coefficient search remains a host-side experiment strategy. The default
+// coordinate stencil is deliberately retained; tfo_lite is an optional,
+// bounded population search for mixed coefficients inside the same basis.
+enum class common_flydelta_coefficient_search_strategy {
+    coordinate,
+    tfo_lite,
+};
+
+const char * common_flydelta_coefficient_search_strategy_name(
+        common_flydelta_coefficient_search_strategy strategy);
+
 struct common_flydelta_coefficient_search_config {
     int schema_version = 1;
+    common_flydelta_coefficient_search_strategy strategy =
+        common_flydelta_coefficient_search_strategy::coordinate;
     float step = 0.05f;
     size_t max_candidates = 16;
     float max_l2_norm = 0.32f;
+    // TFO-lite only. These limits are intentionally small so the strategy
+    // remains a bounded experiment rather than a background optimizer.
+    uint64_t seed = 0x464c5944454c5441ULL;
+    size_t population_size = 4;
+    size_t iterations = 2;
+    float exploration_scale = 1.0f;
+    float norm_penalty = 0.05f;
 };
 
 bool common_flydelta_coefficient_search_config_validate(
@@ -68,8 +89,12 @@ struct common_flydelta_coefficient_trial {
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
     float quality_delta = 0.0f;
+    float search_fitness = 0.0f;
     bool executed = false;
     bool verifier_known = false;
+    size_t iteration = 0;
+    size_t parent_trial_index = static_cast<size_t>(-1);
+    std::string mutation_kind;
 };
 
 struct common_flydelta_coefficient_selection {
@@ -80,7 +105,7 @@ struct common_flydelta_coefficient_selection {
 
 // Generates a no-op plus a bounded +/- coordinate stencil. The caller may
 // use the margins to choose which proposals deserve full generation. This
-// helper never makes a host verdict.
+// helper never makes a host verdict and remains the default strategy.
 bool common_flydelta_propose_low_rank_coefficients(
         const common_flydelta_coefficient_search_config & config,
         size_t rank,
