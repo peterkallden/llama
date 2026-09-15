@@ -75,11 +75,12 @@ bool common_flydelta_capture_manifest_validate(
         size_t max_captured_bytes,
         std::string & error) {
     error.clear();
-    if (manifest.schema_version != 2 || !nonempty_bounded(manifest.id) ||
+    if (manifest.schema_version != 3 || !nonempty_bounded(manifest.id) ||
             !nonempty_bounded(manifest.observation_id) ||
             !nonempty_bounded(manifest.behavior_key) ||
             !nonempty_bounded(manifest.model_profile_fingerprint) ||
             !nonempty_bounded(manifest.template_fingerprint) ||
+            !nonempty_bounded(manifest.execution_context_fingerprint) ||
             !nonempty_bounded(manifest.positive_execution_ref) ||
             !nonempty_bounded(manifest.negative_execution_ref) ||
             !nonempty_bounded(manifest.capture_layout_revision) ||
@@ -108,6 +109,7 @@ std::string common_flydelta_capture_manifest_to_json(
         {"behavior_key", manifest.behavior_key},
         {"model_profile_fingerprint", manifest.model_profile_fingerprint},
         {"template_fingerprint", manifest.template_fingerprint},
+        {"execution_context_fingerprint", manifest.execution_context_fingerprint},
         {"positive_execution_ref", manifest.positive_execution_ref},
         {"negative_execution_ref", manifest.negative_execution_ref},
         {"capture_layout_revision", manifest.capture_layout_revision},
@@ -139,6 +141,7 @@ bool common_flydelta_capture_manifest_from_json(
         manifest.behavior_key = value.value("behavior_key", "");
         manifest.model_profile_fingerprint = value.value("model_profile_fingerprint", "");
         manifest.template_fingerprint = value.value("template_fingerprint", "");
+        manifest.execution_context_fingerprint = value.value("execution_context_fingerprint", "");
         manifest.positive_execution_ref = value.value("positive_execution_ref", "");
         manifest.negative_execution_ref = value.value("negative_execution_ref", "");
         manifest.capture_layout_revision = value.value("capture_layout_revision", "");

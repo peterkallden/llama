@@ -44,6 +44,7 @@ bool common_flydelta_behavior_delta_validate(
             !nonempty_bounded(delta.capture_manifest_id) ||
             !nonempty_bounded(delta.host_evidence_ref) || expected_dimension == 0 ||
             !nonempty_bounded(delta.model_profile_fingerprint) ||
+            !nonempty_bounded(delta.execution_context_fingerprint) ||
             !nonempty_bounded(delta.capture_layout_revision) || delta.layer_index < 0 ||
             delta.values.size() != expected_dimension ||
             (max_bytes != 0 && delta.values.size() * sizeof(float) > max_bytes)) {
@@ -123,6 +124,7 @@ bool common_flydelta_behavior_deltas_from_captures(
         delta.capture_manifest_id = manifest.id;
         delta.host_evidence_ref = host_evidence_ref;
         delta.model_profile_fingerprint = manifest.model_profile_fingerprint;
+        delta.execution_context_fingerprint = manifest.execution_context_fingerprint;
         delta.capture_layout_revision = manifest.capture_layout_revision;
         delta.layer_index = static_cast<int32_t>(failed.layer_indices[layer]);
         delta.values.resize(values_per_layer);
@@ -149,6 +151,7 @@ bool common_flydelta_basis_config_validate(
             config.cluster_similarity < 0.0f || config.cluster_similarity > 1.0f ||
             !nonempty_bounded(config.behavior_key) ||
             !nonempty_bounded(config.model_profile_fingerprint) ||
+            !nonempty_bounded(config.execution_context_fingerprint) ||
             !nonempty_bounded(config.capture_layout_revision)) {
         error = "FlyDelta basis configuration is invalid";
         return false;
@@ -172,6 +175,7 @@ bool common_flydelta_basis_builder::add(
     }
     if (delta.source != config_.source || delta.behavior_key != config_.behavior_key ||
             delta.model_profile_fingerprint != config_.model_profile_fingerprint ||
+            delta.execution_context_fingerprint != config_.execution_context_fingerprint ||
             delta.capture_layout_revision != config_.capture_layout_revision) {
         error = "FlyDelta behavior delta is incompatible with basis configuration";
         return false;

@@ -28,7 +28,8 @@ int main() {
 
     common_flydelta_capture_manifest manifest;
     CHECK(common_flydelta_capture_manifest_from_candidate(
-        candidate, evidence, "sha256:template", "sha256:evidence", 128, true,
+        candidate, evidence, "sha256:template", "sha256:execution-context",
+        "sha256:evidence", 128, true,
         manifest, error));
     CHECK(manifest.observation_id == candidate.transaction_id);
     CHECK(manifest.source == candidate.source);
@@ -39,7 +40,8 @@ int main() {
 
     candidate.behavior_key = "tool_use/diagnostics/other";
     CHECK(!common_flydelta_capture_manifest_from_candidate(
-        candidate, evidence, "sha256:template", "sha256:evidence", 128, true,
+        candidate, evidence, "sha256:template", "sha256:execution-context",
+        "sha256:evidence", 128, true,
         manifest, error));
     candidate.behavior_key = evidence.behavior_key;
 
@@ -48,17 +50,20 @@ int main() {
     candidate.behavior_key = "reflection/alternative";
     evidence.behavior_key = candidate.behavior_key;
     CHECK(common_flydelta_capture_manifest_from_candidate(
-        candidate, evidence, "sha256:template", "sha256:evidence", 128, true,
+        candidate, evidence, "sha256:template", "sha256:execution-context",
+        "sha256:evidence", 128, true,
         manifest, error));
     CHECK(manifest.source == common_adaptation_evidence_source::reflection_alternative);
 
     evidence.source = common_adaptation_evidence_source::tool_repair;
     CHECK(!common_flydelta_capture_manifest_from_candidate(
-        candidate, evidence, "sha256:template", "sha256:evidence", 128, true,
+        candidate, evidence, "sha256:template", "sha256:execution-context",
+        "sha256:evidence", 128, true,
         manifest, error));
     evidence.source = candidate.source;
     CHECK(!common_flydelta_capture_manifest_from_candidate(
-        candidate, evidence, "sha256:template", "sha256:evidence", 128, false,
+        candidate, evidence, "sha256:template", "sha256:execution-context",
+        "sha256:evidence", 128, false,
         manifest, error));
     return 0;
 }

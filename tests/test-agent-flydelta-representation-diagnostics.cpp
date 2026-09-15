@@ -26,6 +26,7 @@ static common_flydelta_behavior_delta delta(
     value.capture_manifest_id = "flydelta://capture/diagnostics";
     value.host_evidence_ref = "evidence:diagnostics";
     value.model_profile_fingerprint = "sha256:model";
+    value.execution_context_fingerprint = "sha256:execution-context";
     value.capture_layout_revision = "layer-input:v1";
     value.layer_index = layer;
     value.values = values;

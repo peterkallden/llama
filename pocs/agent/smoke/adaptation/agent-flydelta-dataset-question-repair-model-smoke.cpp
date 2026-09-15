@@ -274,6 +274,7 @@ int main(int argc, char ** argv) {
         manifest.behavior_key = transition.behavior_key;
         manifest.model_profile_fingerprint = capture->model_profile_fingerprint;
         manifest.template_fingerprint = "template:dataset-question-compact-v1";
+        manifest.execution_context_fingerprint = "sha256:dataset-question-context-v1";
         manifest.positive_execution_ref = transition.candidate_execution_ref;
         manifest.negative_execution_ref = transition.baseline_execution_ref;
         manifest.capture_layout_revision = capture->capture_layout_revision;
@@ -313,7 +314,9 @@ int main(int argc, char ** argv) {
     direction_config.variance_ridge = 0.001f;
     direction_config.source = common_adaptation_evidence_source::tool_repair;
     direction_config.behavior_key = "tool_use/dataset/structured_call_repair";
-    direction_config.model_profile_fingerprint = capture->model_profile_fingerprint;
+        direction_config.model_profile_fingerprint = capture->model_profile_fingerprint;
+        direction_config.execution_context_fingerprint =
+            "sha256:dataset-question-context-v1";
     direction_config.capture_layout_revision = capture->capture_layout_revision;
     std::vector<common_flydelta_direction_candidate> directions;
     if (!samples.empty() && !common_flydelta_build_direction_candidates(direction_config, samples, directions, error)) {

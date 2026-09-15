@@ -849,10 +849,13 @@ update a direction; `HARMED` and `NEUTRAL` can only add evidence to an existing
 similar direction; `UNKNOWN` is a no-op. This makes `WHAT` (basis) separate from
 `WHEN/HOW MUCH` (recognition and delta memory).
 
-Each delta carries its model-profile fingerprint, capture-layout revision and
-layer index. A basis builder is configured for one model/layout pair and never
-clusters vectors from different layers. This is a compatibility guard, not a
-substitute for the later runtime artifact validation.
+Each delta carries its model-profile fingerprint, execution-context
+fingerprint, capture-layout revision and layer index. A basis builder is
+configured for one model/layout/context tuple and never clusters vectors from
+different layers. This is a compatibility guard, not a substitute for the
+later runtime artifact validation. The capture manifest is schema version 3;
+the context fingerprint is required so dynamic MCP/OpenAPI catalogs and other
+host execution contexts cannot be mixed accidentally.
 
 The CLI capture hook and two-pass host helper now provide a bounded way to
 produce the activation inputs for a manifest on supported graph

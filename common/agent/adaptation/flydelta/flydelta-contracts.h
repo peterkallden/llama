@@ -15,13 +15,14 @@ const char * common_flydelta_candidate_status_name(common_flydelta_candidate_sta
 // A capture manifest references bounded, already verified evidence. It does
 // not contain raw prompts, tool output, credentials or activation tensors.
 struct common_flydelta_capture_manifest {
-    int schema_version = 2;
+    int schema_version = 3;
     std::string id;
     std::string observation_id;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     std::string behavior_key;
     std::string model_profile_fingerprint;
     std::string template_fingerprint;
+    std::string execution_context_fingerprint;
     std::string positive_execution_ref;
     std::string negative_execution_ref;
     std::string capture_layout_revision;

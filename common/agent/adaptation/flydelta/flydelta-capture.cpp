@@ -41,6 +41,7 @@ bool common_flydelta_capture_manifest_from_candidate(
         const common_flydelta_capture_candidate & candidate,
         const common_adaptation_evidence & evidence,
         const std::string & template_fingerprint,
+        const std::string & execution_context_fingerprint,
         const std::string & evidence_hash,
         size_t captured_bytes,
         bool redaction_attested,
@@ -52,7 +53,8 @@ bool common_flydelta_capture_manifest_from_candidate(
     if (!candidate.candidate_ready || candidate.source != evidence.source ||
             (!candidate.behavior_key.empty() && candidate.behavior_key != evidence.behavior_key) ||
             !contains(evidence.transaction_ids, candidate.transaction_id) ||
-            !bounded(template_fingerprint) || !bounded(evidence_hash) ||
+            !bounded(template_fingerprint) || !bounded(execution_context_fingerprint) ||
+            !bounded(evidence_hash) ||
             captured_bytes == 0 || !redaction_attested ||
             candidate.model_profile_fingerprint.empty() ||
             candidate.capture_layout_revision.empty()) {
@@ -66,6 +68,7 @@ bool common_flydelta_capture_manifest_from_candidate(
     manifest.behavior_key = evidence.behavior_key;
     manifest.model_profile_fingerprint = candidate.model_profile_fingerprint;
     manifest.template_fingerprint = template_fingerprint;
+    manifest.execution_context_fingerprint = execution_context_fingerprint;
     manifest.positive_execution_ref = evidence.candidate_ref;
     manifest.negative_execution_ref = evidence.baseline_ref;
     manifest.capture_layout_revision = candidate.capture_layout_revision;

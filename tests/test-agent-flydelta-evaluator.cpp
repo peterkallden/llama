@@ -60,6 +60,7 @@ static common_flydelta_behavior_delta behavior_delta() {
     value.capture_manifest_id = "flydelta://capture/evaluator";
     value.host_evidence_ref = "evidence://repair/evaluator";
     value.model_profile_fingerprint = "sha256:model";
+    value.execution_context_fingerprint = "sha256:execution-context";
     value.capture_layout_revision = "layout:v1";
     value.layer_index = 4;
     value.values = {1.0f, 0.0f, 0.0f};
@@ -93,6 +94,7 @@ int main() {
     config.basis.behavior_key = "tool_use/diagnostics/missing-argument";
     config.basis.model_profile_fingerprint = "sha256:model";
     config.basis.capture_layout_revision = "layout:v1";
+    config.basis.execution_context_fingerprint = "sha256:execution-context";
     config.direction.dimension = 3;
     config.direction.layer_index = 4;
     config.direction.min_samples = 1;
@@ -100,6 +102,7 @@ int main() {
     config.direction.source = common_adaptation_evidence_source::tool_repair;
     config.direction.behavior_key = "tool_use/diagnostics/missing-argument";
     config.direction.model_profile_fingerprint = "sha256:model";
+    config.direction.execution_context_fingerprint = "sha256:execution-context";
     config.direction.capture_layout_revision = "layout:v1";
     config.memory = {8, 2, 1.0f};
 

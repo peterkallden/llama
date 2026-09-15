@@ -237,6 +237,7 @@ int main(int argc, char ** argv) {
     manifest.behavior_key = "structured_tool_selection";
     manifest.model_profile_fingerprint = profile;
     manifest.template_fingerprint = experiment_fixture.template_fingerprint;
+    manifest.execution_context_fingerprint = experiment_fixture.execution_context_fingerprint;
     manifest.positive_execution_ref = "execution:model-repaired";
     manifest.negative_execution_ref = "execution:model-failed";
     manifest.capture_layout_revision = "layer-input:v1";
@@ -621,7 +622,8 @@ int main(int argc, char ** argv) {
                 direction_config.variance_ridge = 0.001f;
                 direction_config.source = common_adaptation_evidence_source::tool_repair;
                 direction_config.behavior_key = "structured_tool_selection";
-                direction_config.model_profile_fingerprint = profile;
+    direction_config.model_profile_fingerprint = profile;
+    direction_config.execution_context_fingerprint = experiment_fixture.execution_context_fingerprint;
                 direction_config.capture_layout_revision = "layer-input:v1";
                 std::vector<common_flydelta_direction_candidate> direction_candidates;
                 if (!common_flydelta_build_direction_candidates(

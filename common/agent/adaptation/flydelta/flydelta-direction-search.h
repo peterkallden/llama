@@ -53,6 +53,7 @@ struct common_flydelta_direction_search_config {
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     std::string behavior_key;
     std::string model_profile_fingerprint;
+    std::string execution_context_fingerprint;
     std::string capture_layout_revision;
 };
 

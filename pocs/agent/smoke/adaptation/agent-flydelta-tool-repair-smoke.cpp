@@ -143,6 +143,7 @@ int main() {
     manifest.behavior_key = "tool_use/diagnostics/missing-argument";
     manifest.model_profile_fingerprint = fixture().model_profile_fingerprint;
     manifest.template_fingerprint = fixture().template_fingerprint;
+    manifest.execution_context_fingerprint = fixture().execution_context_fingerprint;
     manifest.positive_execution_ref = "execution:repaired-tool";
     manifest.negative_execution_ref = "execution:wrong-tool";
     manifest.capture_layout_revision = "layout:cvec-v1";
@@ -190,6 +191,7 @@ int main() {
     basis_config.source = common_adaptation_evidence_source::tool_repair;
     basis_config.behavior_key = "tool_use/diagnostics/missing-argument";
     basis_config.model_profile_fingerprint = fixture().model_profile_fingerprint;
+    basis_config.execution_context_fingerprint = fixture().execution_context_fingerprint;
     basis_config.capture_layout_revision = "layout:cvec-v1";
     common_flydelta_basis_builder basis(basis_config);
     CHECK(basis.add(behavior_deltas.front(), credit, error));

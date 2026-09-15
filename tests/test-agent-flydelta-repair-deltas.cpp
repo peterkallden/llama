@@ -22,6 +22,7 @@ int main() {
     manifest.behavior_key = "tool_use/diagnostics/missing-argument";
     manifest.model_profile_fingerprint = "sha256:model";
     manifest.template_fingerprint = "sha256:template";
+    manifest.execution_context_fingerprint = "sha256:execution-context";
     manifest.positive_execution_ref = "execution:repaired";
     manifest.negative_execution_ref = "execution:failed";
     manifest.capture_layout_revision = "l_out:v1";

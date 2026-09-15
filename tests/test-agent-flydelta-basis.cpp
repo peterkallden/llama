@@ -10,6 +10,7 @@ static common_flydelta_behavior_delta delta(const std::vector<float> & values) {
     value.capture_manifest_id = "flydelta://capture/1";
     value.host_evidence_ref = "evidence:repair";
     value.model_profile_fingerprint = "sha256:model";
+    value.execution_context_fingerprint = "sha256:execution-context";
     value.capture_layout_revision = "layout:v1";
     value.layer_index = 12;
     value.values = values;
@@ -35,6 +36,7 @@ int main() {
     config.source = common_adaptation_evidence_source::tool_repair;
     config.behavior_key = "tool_use/diagnostics/missing-argument";
     config.model_profile_fingerprint = "sha256:model";
+    config.execution_context_fingerprint = "sha256:execution-context";
     config.capture_layout_revision = "layout:v1";
     common_flydelta_basis_builder builder(config);
 

@@ -20,6 +20,7 @@ struct common_flydelta_behavior_delta {
     std::string capture_manifest_id;
     std::string host_evidence_ref;
     std::string model_profile_fingerprint;
+    std::string execution_context_fingerprint;
     std::string capture_layout_revision;
     int32_t layer_index = -1;
     std::vector<float> values;
@@ -51,6 +52,7 @@ struct common_flydelta_basis_config {
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     std::string behavior_key;
     std::string model_profile_fingerprint;
+    std::string execution_context_fingerprint;
     std::string capture_layout_revision;
 };
 

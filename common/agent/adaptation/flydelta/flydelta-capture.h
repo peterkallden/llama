@@ -35,6 +35,7 @@ bool common_flydelta_capture_manifest_from_candidate(
         const common_flydelta_capture_candidate & candidate,
         const common_adaptation_evidence & evidence,
         const std::string & template_fingerprint,
+        const std::string & execution_context_fingerprint,
         const std::string & evidence_hash,
         size_t captured_bytes,
         bool redaction_attested,

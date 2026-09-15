@@ -91,6 +91,7 @@ bool common_flydelta_direction_search_config_validate(
             !std::isfinite(config.variance_ridge) || config.variance_ridge <= 0.0f ||
             !nonempty_bounded(config.behavior_key) ||
             !nonempty_bounded(config.model_profile_fingerprint) ||
+            !nonempty_bounded(config.execution_context_fingerprint) ||
             !nonempty_bounded(config.capture_layout_revision)) {
         error = "FlyDelta direction search configuration is invalid";
         return false;
@@ -239,6 +240,7 @@ bool common_flydelta_build_direction_candidates(
                 sample.delta.source != config.source ||
                 sample.delta.behavior_key != config.behavior_key ||
                 sample.delta.model_profile_fingerprint != config.model_profile_fingerprint ||
+                sample.delta.execution_context_fingerprint != config.execution_context_fingerprint ||
                 sample.delta.capture_layout_revision != config.capture_layout_revision ||
                 sample.delta.layer_index != config.layer_index ||
                 !ids.insert(sample.delta.id).second) {

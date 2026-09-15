@@ -50,6 +50,11 @@ bool common_flydelta_evaluate_job(
                 if (error.empty()) error = "FlyDelta basis evaluator requires a resolver and basis config";
                 return false;
             }
+            if (config.basis.execution_context_fingerprint !=
+                    job.seed.execution_context_fingerprint) {
+                error = "FlyDelta basis evaluator context fingerprint does not match job";
+                return false;
+            }
             common_flydelta_basis_builder builder(config.basis);
             for (const auto & id : job.behavior_delta_ids) {
                 common_flydelta_behavior_delta delta;
@@ -65,6 +70,11 @@ bool common_flydelta_evaluate_job(
             if (!callbacks.resolve_behavior_delta ||
                     !common_flydelta_direction_search_config_validate(config.direction, error)) {
                 if (error.empty()) error = "FlyDelta direction evaluator requires a resolver and direction config";
+                return false;
+            }
+            if (config.direction.execution_context_fingerprint !=
+                    job.seed.execution_context_fingerprint) {
+                error = "FlyDelta direction evaluator context fingerprint does not match job";
                 return false;
             }
             std::vector<common_flydelta_contrast_sample> samples;

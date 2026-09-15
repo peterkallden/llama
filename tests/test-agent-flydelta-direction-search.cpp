@@ -15,6 +15,7 @@ static common_flydelta_contrast_sample sample(
     result.delta.capture_manifest_id = "flydelta://capture/contrast";
     result.delta.host_evidence_ref = "evidence:contrast";
     result.delta.model_profile_fingerprint = "sha256:model";
+    result.delta.execution_context_fingerprint = "sha256:execution-context";
     result.delta.capture_layout_revision = "layer-input:v1";
     result.delta.layer_index = 2;
     result.delta.values = values;
@@ -40,6 +41,7 @@ int main() {
     config.source = common_adaptation_evidence_source::tool_repair;
     config.behavior_key = "tool_use/diagnostics/wrong-tool";
     config.model_profile_fingerprint = "sha256:model";
+    config.execution_context_fingerprint = "sha256:execution-context";
     config.capture_layout_revision = "layer-input:v1";
 
     const std::vector<common_flydelta_contrast_sample> samples = {
