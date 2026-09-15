@@ -101,6 +101,8 @@ agent_host_tool_selection_request make_agent_cli_tool_selection_request(
     request.tool_profiles = options.tool_profiles;
     request.sandbox = options.sandbox;
     request.resource_processor_policies = options.resource_processor_policies;
+    append_configured_stdio_mcp_providers(options.mcp_providers, request.mcp_providers);
+    request.openapi_providers = options.openapi_providers;
     append_legacy_stdio_mcp_provider(
         options.mcp_tool_command,
         options.mcp_tool_args,

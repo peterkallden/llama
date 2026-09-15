@@ -1,4 +1,5 @@
 #include "tools/agent/cli/agent-cli-host-adapter.h"
+#include "tools/agent/host/agent-host-config.h"
 #include "tools/agent/resource/agent-resource-store.h"
 
 #include "memory/memory-in-memory.h"
@@ -6,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <fstream>
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 
@@ -76,6 +78,7 @@ int main() {
     common_tool_profile profile;
     profile.id = "openapi-host-smoke";
     profile.members = {{"data.query", 1, true, "{}"}};
+    profile.allow_network = true;
     request.tool_profiles.emplace(profile.id, profile);
     agent_host_openapi_provider_config openapi;
     openapi.id = "sales-api";
@@ -90,6 +93,10 @@ int main() {
     openapi.connect_timeout_ms = 1000;
     openapi.request_timeout_ms = 2000;
     openapi.max_result_bytes = 1024 * 1024;
+    agent_host_config cli_host_config;
+    cli_host_config.tool_profile = profile.id;
+    cli_host_config.tool_profiles = request.tool_profiles;
+    cli_host_config.openapi_providers.push_back(openapi);
     request.openapi_providers.push_back(std::move(openapi));
     request.openapi_executor_overrides.emplace("sales-api", [](
             const agent_tool_context &, const agent_openapi_operation & operation,
@@ -144,17 +151,57 @@ int main() {
         std::cerr << "host selection returned no tools\n";
         return 1;
     }
-    bool has_list = false;
-    bool has_complex = false;
-    for (const auto & tool : selection.tool_view->chat_tools()) {
-        has_list = has_list || tool.name == "sales.listSales";
-        has_complex = has_complex || tool.name == "sales.complex";
+    std::vector<std::string> expected_host_tool_names;
+    for (const auto & operation : catalog_check.operations) {
+        expected_host_tool_names.push_back(
+            agent_openapi_exposed_tool_name(catalog_check, operation));
     }
-    if (!has_list || !has_complex) {
+    std::vector<std::string> actual_host_tool_names;
+    for (const auto & tool : selection.tool_view->chat_tools()) {
+        actual_host_tool_names.push_back(tool.name);
+    }
+    std::sort(expected_host_tool_names.begin(), expected_host_tool_names.end());
+    std::sort(actual_host_tool_names.begin(), actual_host_tool_names.end());
+    if (actual_host_tool_names != expected_host_tool_names) {
         std::cerr << "expected OpenAPI tools were not exposed\n";
         return 1;
     }
-    auto list = selection.tool_view->call({"list", "sales.listSales", "{}"}, error);
+
+    // Exercise the production config path as well as the direct host request
+    // above.  The CLI must carry providers loaded from host config into the
+    // same selection seam; otherwise the model sees tools=0 even though the
+    // lower-level OpenAPI host smoke passes.
+    args cli_options;
+    apply_agent_host_config_to_args(cli_host_config, cli_options);
+    if (cli_options.openapi_providers.size() != 1 || cli_options.tool_profile != profile.id) {
+        std::cerr << "host config was not copied into CLI options\n";
+        return 1;
+    }
+    common_agent_cli_tool_selection cli_selection;
+    if (!resolve_agent_cli_tool_selection(memory, nullptr, &resource_store, nullptr,
+            cli_options, query, false, cli_selection, error) ||
+            !cli_selection.tool_view) {
+        std::cerr << "CLI host-config selection failed: " << error << "\n";
+        return 1;
+    }
+    std::vector<std::string> expected_cli_tool_names;
+    for (const auto & operation : catalog_check.operations) {
+        expected_cli_tool_names.push_back(
+            agent_openapi_exposed_tool_name(catalog_check, operation));
+    }
+    std::vector<std::string> actual_cli_tool_names;
+    for (const auto & tool : cli_selection.tool_view->chat_tools()) {
+        actual_cli_tool_names.push_back(tool.name);
+    }
+    std::sort(expected_cli_tool_names.begin(), expected_cli_tool_names.end());
+    std::sort(actual_cli_tool_names.begin(), actual_cli_tool_names.end());
+    if (actual_cli_tool_names != expected_cli_tool_names) {
+        std::cerr << "CLI host config did not expose OpenAPI tools\n";
+        return 1;
+    }
+    const auto list_tool_name = agent_openapi_exposed_tool_name(catalog_check,
+        catalog_check.operations.front());
+    auto list = selection.tool_view->call({"list", list_tool_name, "{}"}, error);
     if (!list.ok || list.dataset_refs.size() != 1 || list.resource_refs.size() != 1) {
         std::cerr << "collection materialization failed: " << error << "\n";
         return 1;

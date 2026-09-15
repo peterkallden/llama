@@ -19,6 +19,7 @@ agent_smoke_build_if_requested
 config="$work_dir/openalex-host-config.json"
 python3 - "$config" "$model" "$spec" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
@@ -50,6 +51,12 @@ pathlib.Path(output).write_text(json.dumps({
             "policy": {"access": "read_only", "exposure": "auto"},
             "auth": {"type": "none"},
         }],
+    },
+    # The generic CLI default is intentionally short for local tools.  Make
+    # the network smoke's budget explicit so the OpenAPI request timeout is
+    # not defeated by the outer tool-execution deadline.
+    "limits": {
+        "tool_timeout_ms": int(os.environ.get("LLAMA_AGENT_TOOL_TIMEOUT_MS", "18000"))
     },
 }) + "\n", encoding="utf-8")
 PY

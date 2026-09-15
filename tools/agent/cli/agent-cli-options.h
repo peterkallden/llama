@@ -4,6 +4,8 @@
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/agent-context-budgets.h"
 #include "agent/sandbox/sandbox-host-config.h"
+#include "tools/agent/host/agent-host-mcp-provider-config.h"
+#include "tools/agent/host/agent-host-openapi-provider-config.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "plan/plan-store.h"
@@ -58,6 +60,8 @@ struct args {
     std::vector<std::string> mcp_tool_args;
     std::string mcp_tool_server_name = "mcp";
     std::string mcp_tool_prefix;
+    std::vector<agent_host_mcp_provider_config> mcp_providers;
+    std::vector<agent_host_openapi_provider_config> openapi_providers;
     std::string resource_blob_backend = "auto";
     std::string resource_blob_root;
     std::string resource_metadata_backend = "auto";
