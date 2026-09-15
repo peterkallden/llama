@@ -1193,6 +1193,39 @@ and representations, while the host verifier decides whether an outcome is
 valid. Facts, provider failures and unverified model self-descriptions are not
 FlyDelta evidence.
 
+### 4K. Candidate search lifecycle — contract slice implemented
+
+FlyDelta keeps three independent concepts separate:
+
+```text
+outcome       = what the host established
+disposition   = what the bounded search should do next
+champion      = best verified candidate in this experiment population
+active        = sideband currently approved for runtime use
+```
+
+`HELPED` produces `validate_repeatability`; it does not activate a sideband.
+`HARMED` produces `reject`. `UNKNOWN` and `NEUTRAL` produce `refine` only
+when bounded geometry or sequence-margin diagnostics provide a useful search
+signal and budget remains. Otherwise they are retained as unproven history,
+never as positive learning evidence.
+
+Candidate lineage records the parent, mutation kind, generation, direction,
+layer mask, scale and intervention budget. This makes alpha, layer and
+direction refinements traceable without rewriting the original observation.
+
+The experiment champion is distinct from the active sideband. A challenger
+must use the same model profile, fixture-set revision and verifier revision;
+it must have host-verified lift, pass holdout/no-regression gates and strictly
+beat the current experiment champion. The active sideband registry and its
+explicit `candidate -> canary -> active` transition remain unchanged.
+
+The current C++ contract covers the disposition and champion decisions. The
+next integration step is to append those decisions to the existing
+`common_learning_lifecycle_store` and let a `refine` decision create the next
+bounded queue job. No model self-claim, diagnostic score or experiment
+champion may bypass host verification or mutate active runtime state.
+
 ### 5. Optional dynamic hook
 
 Only propose an upstream-quality llama.cpp hook if the evidence warrants it.

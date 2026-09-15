@@ -1,0 +1,106 @@
+#pragma once
+
+#include "agent/adaptation/flydelta/flydelta-experiment.h"
+#include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+// Outcome answers what the host could establish. Disposition answers what the
+// bounded experiment loop should do next; the two must not be conflated.
+enum class common_flydelta_search_disposition {
+    none,
+    retain,
+    refine,
+    validate_repeatability,
+    reject,
+};
+
+const char * common_flydelta_search_disposition_name(
+        common_flydelta_search_disposition disposition);
+
+struct common_flydelta_candidate_lineage {
+    int schema_version = 1;
+    std::string candidate_id;
+    std::string parent_candidate_id;
+    std::string mutation_kind;
+    uint32_t generation = 0;
+    std::string direction_id;
+    std::vector<uint32_t> layer_indices;
+    float scale = 0.0f;
+    float intervention_budget = 0.0f;
+};
+
+bool common_flydelta_candidate_lineage_validate(
+        const common_flydelta_candidate_lineage & lineage,
+        size_t max_layers,
+        std::string & error);
+
+// This is deliberately a search record, not an evidence record. The host has
+// already classified the outcome, while geometry and sequence margin only
+// decide whether a bounded follow-up is worthwhile.
+struct common_flydelta_search_observation {
+    int schema_version = 1;
+    std::string experiment_id;
+    std::string candidate_id;
+    common_flydelta_counterfactual_outcome outcome =
+        common_flydelta_counterfactual_outcome::unknown;
+    bool host_verified = false;
+    bool diagnostics_available = false;
+    common_flydelta_representation_diagnostics diagnostics;
+    bool sequence_margin_available = false;
+    float sequence_margin_delta = 0.0f;
+    bool budget_remaining = false;
+};
+
+bool common_flydelta_search_observation_validate(
+        const common_flydelta_search_observation & observation,
+        std::string & error);
+
+struct common_flydelta_search_decision {
+    int schema_version = 1;
+    std::string candidate_id;
+    common_flydelta_search_disposition disposition =
+        common_flydelta_search_disposition::none;
+    float search_priority = 0.0f;
+    float evidence_score = 0.0f;
+    std::string reason;
+};
+
+bool common_flydelta_decide_search_disposition(
+        const common_flydelta_search_observation & observation,
+        common_flydelta_search_decision & decision,
+        std::string & error);
+
+// The experiment champion is not necessarily the active sideband. It is the
+// best verified candidate in one isolated experiment population.
+struct common_flydelta_experiment_champion {
+    int schema_version = 1;
+    std::string experiment_id;
+    std::string candidate_id;
+    std::string model_profile_id;
+    std::string fixture_set_revision;
+    std::string verifier_revision;
+    float objective_score = 0.0f;
+    size_t evaluated_turns = 0;
+    size_t helped_trials = 0;
+    size_t harmed_trials = 0;
+    bool host_verified = false;
+    bool holdout_passed = false;
+    bool no_regression = false;
+};
+
+bool common_flydelta_experiment_champion_validate(
+        const common_flydelta_experiment_champion & champion,
+        std::string & error);
+
+// Selects a challenger only when it is host-verified, has a positive verified
+// lift, passes holdout/no-regression gates and strictly beats the current
+// experiment champion. The active sideband registry is not touched here.
+bool common_flydelta_select_experiment_champion(
+        const common_flydelta_experiment_champion & current,
+        const common_flydelta_experiment_champion & challenger,
+        common_flydelta_experiment_champion & selected,
+        std::string & error);

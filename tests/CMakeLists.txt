@@ -405,6 +405,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-repair-deltas.cpp
         test-agent-flydelta-representation-diagnostics.cpp
         test-agent-flydelta-direction-search.cpp
+        test-agent-flydelta-candidate-lifecycle.cpp
 test-agent-flydelta-layer-search.cpp
 test-agent-flydelta-scale-search.cpp
         test-agent-flydelta-hidden-state-hook.cpp
