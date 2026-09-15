@@ -128,7 +128,7 @@ struct agent_host_config {
     size_t max_turn_seconds = 0;
     size_t turn_timeout_ms = 0;
     uint32_t inference_step_timeout_ms = 0;
-    uint32_t tool_timeout_ms = 1000;
+    uint32_t tool_timeout_ms = 18000;
     uint32_t mcp_connect_timeout_ms = 0;
     uint32_t mcp_request_timeout_ms = 0;
     uint32_t mcp_shutdown_timeout_ms = 0;

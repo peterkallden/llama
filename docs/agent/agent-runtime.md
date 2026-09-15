@@ -3852,6 +3852,17 @@ The new host-config slice is intentionally modest. It currently models:
 - tool profile, repository root, and a list of configured MCP providers
 - a few daemon-style limits such as queue capacity and max turn seconds
 
+The host/CLI/daemon default for `limits.tool_timeout_ms` is 18 seconds. This
+is the outer execution budget for one tool call, including provider startup
+and result normalization. MCP and OpenAPI transports retain their own
+provider-level defaults of 5 seconds for connection setup and 30 seconds for
+the request itself; the effective timeout is the smallest applicable host,
+turn, provider, or request deadline. A caller can still choose a shorter
+budget for fast local tools or a longer explicitly bounded budget for a slow
+provider. The bootstrap scripts and checked-in JSON/Docker examples emit the
+same 18-second outer budget, while keeping the 30-second provider request
+budget visible where network providers are configured.
+
 Adaptation capture remains explicitly opt-in. `enable_adaptation_capture`
 enables the host learning transaction observer, while
 `adaptation_config.collection_allowed` is the collection permission. FlyDelta
@@ -4036,7 +4047,7 @@ One concrete "full current functionality" foreground run looks like this on Wind
     "max_turn_seconds": 120,
     "turn_timeout_ms": 120000,
     "inference_step_timeout_ms": 30000,
-    "tool_timeout_ms": 5000,
+    "tool_timeout_ms": 18000,
     "mcp_connect_timeout_ms": 3000,
     "mcp_request_timeout_ms": 10000,
     "mcp_shutdown_timeout_ms": 1000

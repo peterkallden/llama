@@ -179,7 +179,7 @@ $config = [ordered]@{
     limits = [ordered]@{
         queue_capacity = $QueueCapacity; worker_count = $WorkerCount
         inference_max_active = $InferenceMaxActive; turn_timeout_ms = 120000
-        inference_step_timeout_ms = 0; tool_timeout_ms = 30000
+        inference_step_timeout_ms = 0; tool_timeout_ms = 18000
         mcp_connect_timeout_ms = 5000; mcp_request_timeout_ms = 30000
         mcp_shutdown_timeout_ms = 2000; max_tool_rounds = 0
     }

@@ -390,7 +390,7 @@ cat > "$output" <<EOF
   "diagnostics": {"semantic_backend":"auto","clang_executable":"clang","clangd_executable":"clangd","compile_commands":"auto"},
   "mcp": {"inbound":{"enabled":$inbound,"listen":"$listen","port":$port,"path":"/mcp","agent_tools":false,"max_delegation_depth":1,$authorization}},
   "jsonl": {"tcp":{"enabled":$jsonl_tcp,"listen":"$listen","port":$port,"max_line_bytes":1048576,"idle_timeout_seconds":300},"unix_socket":{"enabled":$jsonl_unix,"path":"$unix_socket","mode":432}},
-  "limits": {"queue_capacity":$queue_capacity,"worker_count":$worker_count,"inference_max_active":$inference_max_active,"turn_timeout_ms":120000,"inference_step_timeout_ms":0,"tool_timeout_ms":30000,"mcp_connect_timeout_ms":5000,"mcp_request_timeout_ms":30000,"mcp_shutdown_timeout_ms":2000,"max_tool_rounds":0}
+  "limits": {"queue_capacity":$queue_capacity,"worker_count":$worker_count,"inference_max_active":$inference_max_active,"turn_timeout_ms":120000,"inference_step_timeout_ms":0,"tool_timeout_ms":18000,"mcp_connect_timeout_ms":5000,"mcp_request_timeout_ms":30000,"mcp_shutdown_timeout_ms":2000,"max_tool_rounds":0}
 }
 EOF
 echo "Wrote $output"

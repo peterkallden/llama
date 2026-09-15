@@ -69,6 +69,14 @@ bool expect_path(
 
 int main() {
     environment_guard guard;
+    agent_host_config default_config;
+    std::string default_error;
+    if (!parse_agent_host_config_json(nlohmann::ordered_json::object(),
+            default_config, default_error) || default_config.tool_timeout_ms != 18000) {
+        std::fprintf(stderr, "unexpected default tool timeout: %u (%s)\n",
+            default_config.tool_timeout_ms, default_error.c_str());
+        return 1;
+    }
     const auto root = std::filesystem::temp_directory_path() / "llama-agent-config-discovery-smoke";
     std::error_code cleanup_error;
     std::filesystem::remove_all(root, cleanup_error);
