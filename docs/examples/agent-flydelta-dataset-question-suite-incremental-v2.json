@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "id": "flydelta://fixture/dataset-question-suite-incremental-v2",
+  "suite_role": "incremental",
+  "minimum_distinct_tools": 8,
+  "language": "en",
+  "dataset": "dataset://local/sales",
+  "dataset_name": "Sales",
+  "purpose": "Second incremental batch of host-certified dataset tool-selection observations for FlyDelta repair and counterfactual search.",
+  "model_contract": {
+    "selection": "Choose exactly one most-specific read-only dataset tool. Return only {\"name\":\"tool.name\",\"arguments\":{...}}.",
+    "dataset_rule": "Use the canonical dataset reference dataset://local/sales when a dataset argument is required.",
+    "learning_rule": "A model selection is only an observation. A FlyDelta learning example requires a separate host-verified repair or counterfactual."
+  },
+  "scenarios": [
+    {
+      "id": "list-available-datasets",
+      "question": "Which datasets are currently available to the host? Return the bounded list of registered dataset names.",
+      "expected_tool": "dataset.list",
+      "plan": {
+        "goal": "Discover registered datasets",
+        "steps": [
+          {"tool": "dataset.list", "args": {"max_results": 16}}
+        ]
+      }
+    },
+    {
+      "id": "select-sales-dataset",
+      "question": "Select the registered Sales dataset by its host-visible name so the next step can use it.",
+      "expected_tool": "dataset.select",
+      "plan": {
+        "goal": "Select the Sales dataset",
+        "steps": [
+          {"tool": "dataset.select", "args": {"name": "Sales"}}
+        ]
+      }
+    },
+    {
+      "id": "inspect-row-count",
+      "question": "How many rows and columns does the Sales dataset contain? Return bounded metadata only.",
+      "expected_tool": "dataset.inspect",
+      "plan": {
+        "goal": "Inspect bounded dataset metadata",
+        "steps": [
+          {"tool": "dataset.inspect", "args": {"dataset": "dataset://local/sales"}}
+        ]
+      }
+    },
+    {
+      "id": "schema-numeric-columns",
+      "question": "Return the typed schema for Sales so I can identify the numeric columns. Do not return data rows.",
+      "expected_tool": "dataset.schema",
+      "plan": {
+        "goal": "Read the typed dataset schema",
+        "steps": [
+          {"tool": "dataset.schema", "args": {"dataset": "dataset://local/sales", "max_rows": 1000}}
+        ]
+      }
+    },
+    {
+      "id": "sample-five-orders",
+      "question": "Show five bounded example orders from Sales, including the available columns.",
+      "expected_tool": "dataset.sample",
+      "plan": {
+        "goal": "Read a bounded sample",
+        "steps": [
+          {"tool": "dataset.sample", "args": {"dataset": "dataset://local/sales", "rows": 5}}
+        ]
+      }
+    },
+    {
+      "id": "highest-amount-order",
+      "question": "Return the single order with the highest amount, including order_id, customer_id and amount.",
+      "expected_tool": "data.query",
+      "plan": {
+        "goal": "Find the maximum amount order",
+        "steps": [
+          {"tool": "data.query", "args": {"dataset": "dataset://local/sales", "select": ["order_id", "customer_id", "amount"], "order_by": [{"field": "amount", "direction": "desc"}], "limit": 1}}
+        ]
+      }
+    },
+    {
+      "id": "orders-by-region",
+      "question": "Count the orders in each region and return one row per region.",
+      "expected_tool": "data.aggregate",
+      "plan": {
+        "goal": "Count orders grouped by region",
+        "steps": [
+          {"tool": "data.aggregate", "args": {"dataset": "dataset://local/sales", "group_by": ["region"], "measures": [{"function": "count", "column": "*", "as": "order_count"}]}}
+        ]
+      }
+    },
+    {
+      "id": "product-distribution",
+      "question": "How many records belong to each product_id? Include the frequency of every product value.",
+      "expected_tool": "statistics.value_counts",
+      "plan": {
+        "goal": "Count product values",
+        "steps": [
+          {"tool": "statistics.value_counts", "args": {"dataset": "dataset://local/sales", "column": "product_id", "limit": 1000}}
+        ]
+      }
+    }
+  ]
+}

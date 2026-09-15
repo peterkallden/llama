@@ -2018,7 +2018,8 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/openalex-works-openapi.json
         ${PROJECT_SOURCE_DIR}/docs/examples/openapi-openalex-generated.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json
-        ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite-incremental.json)
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite-incremental.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite-incremental-v2.json)
     install(FILES
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-config.example.json
         ${AGENT_HOST_CONFIG_EXAMPLES}

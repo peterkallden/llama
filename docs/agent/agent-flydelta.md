@@ -155,6 +155,18 @@ llama-agent-flydelta-dataset-question-contract-smoke \
   docs/examples/agent-flydelta-dataset-question-suite-incremental.json
 ```
 
+The second working batch is in
+`docs/examples/agent-flydelta-dataset-question-suite-incremental-v2.json` and
+contains eight additional discovery, inspection, query, aggregation and
+statistics cases. Run it independently while collecting candidates:
+
+```text
+LLAMA_AGENT_MODEL=/path/to/model.gguf \
+LLAMA_AGENT_DATASET_QUESTION_SUITE=docs/examples/agent-flydelta-dataset-question-suite-incremental-v2.json \
+LLAMA_AGENT_THREADS=3 \
+scripts/test-agent-flydelta-dataset-question-model-smoke.sh
+```
+
 The repository wrapper uses the same model default, timeout handling and
 three-thread limit as the other model smokes:
 
