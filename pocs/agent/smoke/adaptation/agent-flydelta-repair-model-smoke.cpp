@@ -611,7 +611,10 @@ int main(int argc, char ** argv) {
                 common_flydelta_direction_search_config direction_config;
                 direction_config.dimension = model_n_embd;
                 direction_config.layer_index = 2;
-                direction_config.min_samples = 2;
+                // Fewer samples remain useful for CPU diagnostics, but the
+                // model-facing aggregate search is not ready until six
+                // natural host-certified repair pairs exist.
+                direction_config.min_samples = 6;
                 direction_config.max_samples = 32;
                 direction_config.min_median_alignment = 0.25f;
                 direction_config.trim_fraction = 0.20f;
@@ -637,7 +640,9 @@ int main(int argc, char ** argv) {
                 scale_direction.helped_observations = 1;
                 std::cout << "l2_direction_search_candidates=" << direction_candidates.size()
                           << " raw_control=" << common_flydelta_direction_kind_name(
-                              direction_candidates.front().kind) << '\n';
+                              direction_candidates.front().kind)
+                          << " deep_ready=" << (direction_candidates.front().source_samples >= direction_config.min_samples ? "yes" : "no")
+                          << " sample_count=" << direction_candidates.front().source_samples << '\n';
                 common_flydelta_scale_search_config scale_config;
                 scale_config.initial_scale = 0.02f;
                 scale_config.growth_factor = 2.0f;

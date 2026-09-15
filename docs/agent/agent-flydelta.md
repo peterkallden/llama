@@ -733,6 +733,15 @@ full covariance LDA implementation: it is deterministic, bounded and cheap
 enough for the host, while avoiding an unstable dense matrix for small sample
 sets.
 
+The host uses six natural host-certified repair pairs as the first
+model-facing deep-search threshold. Below six, the builder may still be used
+for cheap CPU diagnostics or an explicitly configured CPU study, but the
+runtime must not spend model inference on aggregate direction evaluation. At
+six pairs, the host may compare the aggregate candidates on a holdout and
+then use the normal layer search and four-arm scale search. The threshold is a
+cost/evidence gate, not a claim that six examples are sufficient for
+promotion.
+
 This is a candidate builder, not a verifier or learner. It does not run model
 inference, inspect tool choice, create `HELPED`, update `DeltaMemory`, write a
 sideband or activate an overlay. The next host step must evaluate the emitted
@@ -748,11 +757,11 @@ domains separated.
 
 The Qwen model smoke is wired to this seam for its L2 scale experiment. Its
 current fixture contains one natural host-certified repair pair, so the smoke
-reports and evaluates only `raw_repair`; it does not manufacture additional
-contrast samples. Once more natural pairs are available, the same smoke seam
-can evaluate the aggregate candidates under the normal four-arm runtime scale
-bound. The CPU contract test exercises the multi-sample trimmed and whitened
-paths independently of model inference.
+reports and evaluates only `raw_repair` and marks `deep_ready=no`; it does not
+manufacture additional contrast samples. Once six natural pairs are
+available, the same smoke seam can evaluate the aggregate candidates under the
+normal four-arm runtime scale bound. The CPU contract test exercises the
+multi-sample trimmed and whitened paths independently of model inference.
 
 ### 4H. Verified candidate-to-delta materialization — implemented
 

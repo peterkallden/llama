@@ -68,6 +68,12 @@ int main() {
         config, {samples.front()}, raw_only, error));
     CHECK(raw_only.size() == 1 && raw_only.front().retained_samples == 1);
 
+    // Six samples is the model-facing deep-search threshold. The same
+    // builder can still be used with a lower threshold for CPU-only studies.
+    config.min_samples = 6;
+    CHECK(common_flydelta_build_direction_candidates(config, samples, raw_only, error));
+    CHECK(raw_only.size() == 1 && raw_only.front().source_samples == 4);
+
     auto unknown = samples.front();
     unknown.delta.id = "flydelta://delta/unknown";
     unknown.credit.outcome = common_flydelta_counterfactual_outcome::unknown;
