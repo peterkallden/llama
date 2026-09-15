@@ -38,7 +38,8 @@ bool common_flydelta_collect_experiment_job(
             !bounded(request.tokenizer_fingerprint) ||
             !bounded(request.template_fingerprint) ||
             !bounded(request.execution_context_fingerprint) ||
-            !bounded(request.code_revision) || !references_empty_except(request, request.kind)) {
+            !bounded(request.code_revision) || request.job_variant_id.size() > 512 ||
+            !references_empty_except(request, request.kind)) {
         error = "FlyDelta experiment collection request is incomplete or mixes job references";
         return false;
     }
@@ -59,6 +60,7 @@ bool common_flydelta_collect_experiment_job(
 
     common_flydelta_experiment_job job;
     job.id = seed.id + "/job/" + common_flydelta_experiment_job_kind_name(request.kind);
+    if (!request.job_variant_id.empty()) job.id += "/" + request.job_variant_id;
     job.kind = request.kind;
     job.seed = std::move(seed);
     job.capture_manifest_ids = request.capture_manifest_ids;
@@ -79,4 +81,36 @@ bool common_flydelta_collect_experiment_job(
     if (!common_flydelta_experiment_queue_enqueue(queue_root, job, queue_limits, error)) return false;
     result = common_flydelta_experiment_collection_result::enqueued;
     return true;
+}
+
+bool common_flydelta_collect_refinement_job(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        const common_flydelta_experiment_collection_request & request,
+        const common_flydelta_search_observation & observation,
+        const common_flydelta_search_decision & decision,
+        const common_flydelta_candidate_lineage & lineage,
+        common_flydelta_experiment_collection_result & result,
+        std::string & error) {
+    error.clear();
+    result = common_flydelta_experiment_collection_result::disabled;
+    if (!request.enabled) return true;
+    common_flydelta_search_decision expected;
+    if (!common_flydelta_search_observation_validate(observation, error) ||
+            !common_flydelta_decide_search_disposition(observation, expected, error) ||
+            decision.disposition != expected.disposition ||
+            decision.disposition != common_flydelta_search_disposition::refine ||
+            !common_flydelta_candidate_lineage_validate(lineage, 64, error) ||
+            lineage.candidate_id != observation.candidate_id) {
+        if (error.empty()) error = "FlyDelta refinement requires a valid refine disposition";
+        return false;
+    }
+    auto refinement = request;
+    refinement.kind = common_flydelta_experiment_job_kind::counterfactual;
+    refinement.behavior_delta_ids.clear();
+    refinement.training_example_ids.clear();
+    refinement.job_variant_id = lineage.candidate_id + "/generation/" +
+        std::to_string(lineage.generation);
+    return common_flydelta_collect_experiment_job(
+        queue_root, queue_limits, refinement, result, error);
 }

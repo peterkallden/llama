@@ -79,6 +79,37 @@ int main() {
     value.behavior_key = "tool_use/diagnostics/wrong-tool";
     CHECK(!common_flydelta_collect_experiment_job(root, {}, value, result, error));
 
+    auto refine_request = request();
+    common_flydelta_search_observation observation;
+    observation.experiment_id = "flydelta://experiment/collector-refine";
+    observation.candidate_id = "flydelta://candidate/refine";
+    observation.outcome = common_flydelta_counterfactual_outcome::unknown;
+    observation.host_verified = true;
+    observation.diagnostics_available = true;
+    observation.diagnostics = {1, 2, 0.5f, 0.2f, 0.1f};
+    observation.budget_remaining = true;
+    common_flydelta_search_decision decision;
+    CHECK(common_flydelta_decide_search_disposition(observation, decision, error));
+    common_flydelta_candidate_lineage lineage;
+    lineage.candidate_id = observation.candidate_id;
+    lineage.mutation_kind = "scale_refinement";
+    lineage.generation = 2;
+    lineage.direction_id = "flydelta://direction/raw";
+    lineage.layer_indices = {2};
+    lineage.scale = 0.08f;
+    lineage.intervention_budget = 0.08f;
+    const auto refine_root = root / "refine";
+    CHECK(common_flydelta_collect_refinement_job(
+        refine_root, {}, refine_request, observation, decision, lineage, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::enqueued);
+    CHECK(common_flydelta_collect_refinement_job(
+        refine_root, {}, refine_request, observation, decision, lineage, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::already_present);
+    common_flydelta_claimed_experiment_job refined;
+    CHECK(common_flydelta_experiment_queue_claim_next(refine_root, {}, refined, error));
+    CHECK(refined.job.kind == common_flydelta_experiment_job_kind::counterfactual);
+    CHECK(refined.job.id.find("/generation/2") != std::string::npos);
+
     std::filesystem::remove_all(root, ignored);
     return 0;
 }

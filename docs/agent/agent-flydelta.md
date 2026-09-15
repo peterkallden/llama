@@ -1220,11 +1220,14 @@ it must have host-verified lift, pass holdout/no-regression gates and strictly
 beat the current experiment champion. The active sideband registry and its
 explicit `candidate -> canary -> active` transition remain unchanged.
 
-The current C++ contract covers the disposition and champion decisions. The
-next integration step is to append those decisions to the existing
-`common_learning_lifecycle_store` and let a `refine` decision create the next
-bounded queue job. No model self-claim, diagnostic score or experiment
-champion may bypass host verification or mutate active runtime state.
+The current C++ contract covers the disposition and champion decisions. A
+`refine` disposition can now create the next bounded counterfactual queue job
+through the existing collection seam; the candidate lineage generation is
+included in the job variant so successive refinements do not collide. The
+decision and lineage can also be appended to the existing
+`common_learning_lifecycle_store`. No model self-claim, diagnostic score or
+experiment champion may bypass host verification or mutate active runtime
+state.
 
 ### 5. Optional dynamic hook
 

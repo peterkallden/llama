@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-queue.h"
+#include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -28,6 +29,9 @@ struct common_flydelta_experiment_collection_request {
     float learning_rate = 0.1f;
     float decay = 1.0f;
     std::string code_revision;
+    // Optional variant identity for a follow-up search. It is part of the
+    // job id only; it does not carry raw prompt or tool data.
+    std::string job_variant_id;
 };
 
 enum class common_flydelta_experiment_collection_result {
@@ -43,5 +47,19 @@ bool common_flydelta_collect_experiment_job(
         const std::filesystem::path & queue_root,
         const common_flydelta_experiment_queue_limits & queue_limits,
         const common_flydelta_experiment_collection_request & request,
+        common_flydelta_experiment_collection_result & result,
+        std::string & error);
+
+// Enqueues one bounded follow-up only after the host-side disposition has
+// selected refine. The request supplies the same evidence and capture
+// references as the original experiment; the variant prevents queue-id
+// collisions between successive candidates.
+bool common_flydelta_collect_refinement_job(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        const common_flydelta_experiment_collection_request & request,
+        const common_flydelta_search_observation & observation,
+        const common_flydelta_search_decision & decision,
+        const common_flydelta_candidate_lineage & lineage,
         common_flydelta_experiment_collection_result & result,
         std::string & error);
