@@ -1066,6 +1066,23 @@ if (LLAMA_MEMORY_COZO)
     )
     target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+    # Optional real-model companion to the contract smoke. It captures a
+    # natural failed generation and a host-guided repaired generation, then
+    # feeds only host-certified pairs into the existing direction search.
+    set(TARGET llama-agent-flydelta-dataset-question-repair-model-smoke)
+    add_executable(${TARGET}
+        smoke/adaptation/agent-flydelta-dataset-question-repair-model-smoke.cpp
+    )
+    target_include_directories(${TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+    )
+    target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
 endif()
 
 set(TARGET llama-agent-tool-provider-smoke)
@@ -2153,7 +2170,8 @@ set(AGENT_TEST_BUILD_TARGETS
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_TEST_BUILD_TARGETS
         llama-agent-data-manipulation-smoke
-        llama-agent-flydelta-dataset-question-repair-contract-smoke)
+        llama-agent-flydelta-dataset-question-repair-contract-smoke
+        llama-agent-flydelta-dataset-question-repair-model-smoke)
 endif()
 
 set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
@@ -2162,6 +2180,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-flydelta-tool-repair-smoke
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-dataset-question-model-smoke
+    llama-agent-flydelta-dataset-question-repair-model-smoke
     llama-agent-resident-smoke
     llama-agent-model-residency-smoke
     llama-agent-tool-provider-smoke
@@ -2292,6 +2311,13 @@ if (BUILD_TESTING)
             COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-repair-contract-smoke>
                 ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json)
         set_property(TEST llama-agent-flydelta-dataset-question-repair-contract-ctest PROPERTY LABELS agent-adaptation)
+
+        add_test(NAME llama-agent-flydelta-dataset-question-repair-model-ctest
+            COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-repair-model-smoke>
+                --suite ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json)
+        set_property(TEST llama-agent-flydelta-dataset-question-repair-model-ctest PROPERTY LABELS agent-adaptation)
+        set_tests_properties(llama-agent-flydelta-dataset-question-repair-model-ctest PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 900)
     endif()
 
     add_test(NAME llama-agent-flydelta-dataset-question-model-ctest
