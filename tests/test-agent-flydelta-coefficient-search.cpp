@@ -119,5 +119,23 @@ int main() {
               trial.mutation_kind == "forage_perturbation");
     }
     CHECK(found_mixed_arm);
+
+    common_learning_in_memory_lifecycle_store lifecycle;
+    common_flydelta_lifecycle_event_context lifecycle_context;
+    lifecycle_context.event_id = "event:coefficient-search";
+    lifecycle_context.idempotency_key = "idempotency:coefficient-search";
+    lifecycle_context.source_id = "source:coefficient-search";
+    lifecycle_context.scope.namespace_id = "local";
+    lifecycle_context.scope.project_id = "agent-tests";
+    lifecycle_context.scope.session_id = "session-1";
+    lifecycle_context.content_hash = "sha256:coefficient-search";
+    lifecycle_context.created_at = "2026-09-15T00:00:00Z";
+    CHECK(common_flydelta_append_coefficient_search_lifecycle(
+        lifecycle, lifecycle_context, fixture(), basis, tfo_config, tfo_trials,
+        "flydelta://sideband/coefficient-search", error));
+    const auto records = lifecycle.list(error);
+    CHECK(error.empty() && records.size() == tfo_trials.size());
+    CHECK(records.front().payload_json.find("coefficient-tfo") != std::string::npos);
+    CHECK(records.front().payload_json.find("coefficients") != std::string::npos);
     return 0;
 }

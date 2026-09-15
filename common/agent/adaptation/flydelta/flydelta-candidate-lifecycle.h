@@ -72,6 +72,10 @@ struct common_flydelta_search_observation {
     bool host_verified = false;
     bool diagnostics_available = false;
     common_flydelta_representation_diagnostics diagnostics;
+    // Optional bounded arm parameters. Coefficient search uses this field;
+    // direction/layer/scale searches keep their parameters in lineage.
+    std::vector<float> coefficients;
+    float search_fitness = 0.0f;
     bool sequence_margin_available = false;
     float sequence_margin_delta = 0.0f;
     bool budget_remaining = false;

@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -81,6 +82,10 @@ bool common_flydelta_search_observation_validate(
             observation.experimental_artifact_id.size() > 512 || !observation.host_verified ||
             (observation.diagnostics_available &&
                 !common_flydelta_representation_diagnostics_validate(observation.diagnostics, error)) ||
+            observation.coefficients.size() > 16 ||
+            !std::all_of(observation.coefficients.begin(), observation.coefficients.end(),
+                [](float value) { return std::isfinite(value); }) ||
+            !std::isfinite(observation.search_fitness) ||
             (observation.sequence_margin_available &&
                 !std::isfinite(observation.sequence_margin_delta))) {
         if (error.empty()) error = "FlyDelta search observation is invalid";
@@ -241,6 +246,10 @@ bool common_flydelta_append_search_lifecycle(
             {"leakage", observation.diagnostics.leakage},
             {"shift_norm", observation.diagnostics.shift_norm},
         };
+    }
+    if (!observation.coefficients.empty()) {
+        payload["coefficients"] = observation.coefficients;
+        payload["search_fitness"] = observation.search_fitness;
     }
     if (observation.sequence_margin_available) {
         payload["sequence_margin_delta"] = observation.sequence_margin_delta;

@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
+#include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -89,6 +90,7 @@ struct common_flydelta_coefficient_trial {
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
     float quality_delta = 0.0f;
+    float sequence_margin_delta = 0.0f;
     float search_fitness = 0.0f;
     bool executed = false;
     bool verifier_known = false;
@@ -131,4 +133,17 @@ bool common_flydelta_run_low_rank_coefficient_search(
         const common_flydelta_coefficient_search_runner & runner,
         std::vector<common_flydelta_coefficient_trial> & trials,
         common_flydelta_coefficient_selection & selection,
+        std::string & error);
+
+// Records all executed coefficient arms as experimental lifecycle entries.
+// The helper is deliberately reference-only: it never updates DeltaMemory,
+// changes the active registry or turns a diagnostic margin into HELPED.
+bool common_flydelta_append_coefficient_search_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_low_rank_basis & basis,
+        const common_flydelta_coefficient_search_config & config,
+        const std::vector<common_flydelta_coefficient_trial> & trials,
+        const std::string & experimental_artifact_id,
         std::string & error);
