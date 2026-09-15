@@ -236,10 +236,11 @@ int main(int argc, char ** argv) {
             continue;
         }
         ++failures;
+        const json canonical_repair = {{"name", expected}, {"arguments", steps.front()["args"]}};
         const std::string repair_request = "The host rejected the prior tool-call attempt (" +
-            failed_verdict.diagnostic + "). Retry the same request using the canonical contract. " +
-            "The host-verified repair tool is " + expected + ". Return only its canonical JSON call. Request: " +
-            scenario.value("question", "");
+            failed_verdict.diagnostic + "). The host constructed the canonical repair below. " +
+            "Return this JSON object unchanged, including both name and arguments, with no markdown or explanation: " +
+            canonical_repair.dump();
         common_agent_generation_result repaired_result;
         const bool repair_generated = inference->generate(make_request(value, contract, repair_request, capture), repaired_result);
         const auto repaired_verdict = verify_model_call(repaired_result, expected, host);
