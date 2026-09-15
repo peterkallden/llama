@@ -53,10 +53,12 @@ bool common_learning_auto_training_ready(
         if (!common_training_candidate_qualifies(candidate, candidate_policy, qualification_error)) continue;
         if (!candidate_ids.insert(candidate.id).second) continue;
         ++result.qualified_examples;
+        result.qualified_candidate_ids.push_back(candidate.id);
         for (const auto & transaction_id : candidate.transaction_ids) {
             if (!transaction_id.empty()) transaction_ids.insert(transaction_id);
         }
     }
+    std::sort(result.qualified_candidate_ids.begin(), result.qualified_candidate_ids.end());
     result.distinct_transaction_ids = transaction_ids.size();
     result.ready = result.qualified_examples >= policy.min_qualified_examples;
     result.reason = result.ready

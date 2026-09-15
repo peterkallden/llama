@@ -25,6 +25,10 @@ struct common_learning_auto_training_result {
     bool ready = false;
     size_t qualified_examples = 0;
     size_t distinct_transaction_ids = 0;
+    // The exact approved rows selected for the next corpus build. This is
+    // deliberately candidate-based: transaction_ids are provenance and do
+    // not turn one prompt/target row into several training rows.
+    std::vector<std::string> qualified_candidate_ids;
     std::string group_key;
     std::string reason;
 };

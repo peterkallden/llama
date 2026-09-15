@@ -41,9 +41,19 @@ int main() {
     candidates.push_back(candidate("learning://candidate/6", 6));
     assert(common_learning_auto_training_ready(candidates, group, policy, result, error));
     assert(result.ready && result.qualified_examples == 6 && result.distinct_transaction_ids == 6);
+    assert(result.qualified_candidate_ids.size() == 6 &&
+        result.qualified_candidate_ids.front() == "learning://candidate/1");
     candidates.push_back(candidates.back());
     assert(common_learning_auto_training_ready(candidates, group, policy, result, error));
-    assert(result.qualified_examples == 6);
+    assert(result.qualified_examples == 6 && result.qualified_candidate_ids.size() == 6);
+    auto aggregate = candidate("learning://candidate/aggregate", 100);
+    aggregate.transaction_ids = {"learning://transaction/100", "learning://transaction/101",
+        "learning://transaction/102", "learning://transaction/103", "learning://transaction/104",
+        "learning://transaction/105"};
+    auto aggregate_only = std::vector<common_training_candidate>{aggregate};
+    assert(common_learning_auto_training_ready(aggregate_only, group, policy, result, error));
+    assert(!result.ready && result.qualified_examples == 1 && result.distinct_transaction_ids == 6);
+    assert(result.qualified_candidate_ids.size() == 1);
     auto mismatch = candidates;
     mismatch.front().tool_family = "memory";
     assert(common_learning_auto_training_ready(mismatch, group, policy, result, error));

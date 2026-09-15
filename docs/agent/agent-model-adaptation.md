@@ -1528,7 +1528,11 @@ qualification policy in one explicit `(learning_domain, tool_family,
 provider_kind)` group. It does not count ordinary metrics, raw observations,
 capture candidates, UNKNOWN/NEUTRAL FlyDelta trials, or six repeated
 occurrences represented by one aggregate candidate. Duplicate candidate ids
-are counted once.
+are counted once. The trigger returns the exact approved candidate ids for the
+next corpus build; a candidate's transaction ids remain provenance and do not
+silently expand one prompt/target row into several training rows. Repeated
+repairs can therefore count toward the threshold when the host has promoted
+them as separate approved candidate rows.
 
 The trigger only returns `not_ready` or `ready` with a bounded count and a
 stable group key. It does not build a corpus, start a worker, modify model
