@@ -1,0 +1,51 @@
+#include "agent/adaptation/flydelta/flydelta-runtime-observer.h"
+
+#include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
+
+#include <algorithm>
+
+common_flydelta_runtime_candidate_observer::common_flydelta_runtime_candidate_observer(
+        common_flydelta_capture_candidate_collector & value,
+        common_learning_lifecycle_store * store)
+    : collector(value), lifecycle_store(store) {}
+
+bool common_flydelta_runtime_candidate_observer::observe(
+        const common_adaptation_evidence_source_match & match,
+        const common_learning_transaction & transaction,
+        std::string & error) {
+    error.clear();
+    if (!collector.observe(match, transaction, error)) return false;
+    if (!lifecycle_store || !match.candidate_ready) return true;
+
+    const auto candidate = std::find_if(
+        collector.candidates().begin(), collector.candidates().end(),
+        [&](const auto & value) {
+            return value.transaction_id == transaction.id &&
+                value.source == match.source &&
+                value.behavior_key == match.behavior_key;
+        });
+    if (candidate == collector.candidates().end()) {
+        error = "FlyDelta runtime observer could not resolve its capture candidate";
+        return false;
+    }
+
+    common_flydelta_lifecycle_event_context context;
+    context.event_id = candidate->id;
+    context.idempotency_key = candidate->id;
+    context.source_id = transaction.id;
+    context.scope = transaction.observation.scope;
+    context.content_hash = transaction.observation.content_hash;
+    context.created_at = transaction.created_at;
+    return common_flydelta_append_capture_candidate_lifecycle(
+        *lifecycle_store, context, *candidate, transaction, error);
+}
+
+std::function<bool(
+        const common_adaptation_evidence_source_match &,
+        const common_learning_transaction &,
+        std::string &)>
+common_flydelta_runtime_candidate_observer::source_observer() {
+    return [this](const auto & match, const auto & transaction, std::string & error) {
+        return observe(match, transaction, error);
+    };
+}

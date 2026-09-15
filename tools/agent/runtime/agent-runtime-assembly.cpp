@@ -2,6 +2,7 @@
 
 #include "../cli/agent-cli-runtime.h"
 #include "../tooling/agent-tool-runtime-adapter.h"
+#include "../adaptation/agent-learning-lifecycle-store.h"
 
 #include <algorithm>
 
@@ -23,6 +24,9 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.adaptation_config = std::move(build_config.adaptation_config);
     config.adaptation_transaction_backend = std::move(build_config.adaptation_transaction_backend);
     config.adaptation_transaction_path = std::move(build_config.adaptation_transaction_path);
+    config.enable_flydelta_candidate_lifecycle = build_config.enable_flydelta_candidate_lifecycle;
+    config.flydelta_lifecycle_backend = std::move(build_config.flydelta_lifecycle_backend);
+    config.flydelta_lifecycle_path = std::move(build_config.flydelta_lifecycle_path);
     config.enable_flydelta_capture_candidates = build_config.enable_flydelta_capture_candidates;
     config.flydelta_model_profile_fingerprint = std::move(build_config.flydelta_model_profile_fingerprint);
     config.flydelta_capture_layout_revision = std::move(build_config.flydelta_capture_layout_revision);
@@ -82,7 +86,26 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                     runtime_config.flydelta_model_profile_fingerprint,
                     runtime_config.flydelta_capture_layout_revision,
                     runtime_config.flydelta_max_capture_candidates);
-                adaptation_config.source_observer = assembly.flydelta_capture_collector->source_observer();
+                if (runtime_config.enable_flydelta_candidate_lifecycle) {
+                    std::string lifecycle_error;
+                    assembly.flydelta_lifecycle_store = make_agent_learning_lifecycle_store(
+                        runtime_config.flydelta_lifecycle_backend,
+                        runtime_config.flydelta_lifecycle_path,
+                        lifecycle_error);
+                    if (!assembly.flydelta_lifecycle_store) {
+                        assembly.adaptation_error = std::move(lifecycle_error);
+                    }
+                }
+                if (assembly.flydelta_lifecycle_store) {
+                    assembly.flydelta_runtime_candidate_observer =
+                        std::make_unique<common_flydelta_runtime_candidate_observer>(
+                            *assembly.flydelta_capture_collector,
+                            assembly.flydelta_lifecycle_store.get());
+                    adaptation_config.source_observer =
+                        assembly.flydelta_runtime_candidate_observer->source_observer();
+                } else {
+                    adaptation_config.source_observer = assembly.flydelta_capture_collector->source_observer();
+                }
             }
             assembly.adaptation_observer = std::make_unique<common_learning_transaction_observer>(
                 *assembly.adaptation_store, std::move(adaptation_config));

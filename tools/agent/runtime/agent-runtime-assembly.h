@@ -7,6 +7,7 @@
 #include "agent/learning/memory-learning.h"
 #include "agent/adaptation/learning-transaction.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-runtime-observer.h"
 #include "../adaptation/agent-learning-transaction-store.h"
 #include "agent/runtime/agent-inference-contracts.h"
 
@@ -54,6 +55,9 @@ struct common_agent_runtime_config {
     common_learning_transaction_observer_config adaptation_config;
     std::string adaptation_transaction_backend = "auto";
     std::string adaptation_transaction_path;
+    bool enable_flydelta_candidate_lifecycle = false;
+    std::string flydelta_lifecycle_backend = "auto";
+    std::string flydelta_lifecycle_path;
     bool enable_flydelta_capture_candidates = false;
     std::string flydelta_model_profile_fingerprint;
     std::string flydelta_capture_layout_revision;
@@ -72,6 +76,9 @@ struct common_agent_runtime_build_config {
     common_learning_transaction_observer_config adaptation_config;
     std::string adaptation_transaction_backend = "auto";
     std::string adaptation_transaction_path;
+    bool enable_flydelta_candidate_lifecycle = false;
+    std::string flydelta_lifecycle_backend = "auto";
+    std::string flydelta_lifecycle_path;
     bool enable_flydelta_capture_candidates = false;
     std::string flydelta_model_profile_fingerprint;
     std::string flydelta_capture_layout_revision;
@@ -104,8 +111,10 @@ struct common_agent_runtime_assembly {
     std::unique_ptr<common_memory_candidate_extractor> candidate_extractor;
     std::unique_ptr<common_memory_post_turn_learner> memory_learner;
     std::unique_ptr<common_learning_transaction_store> adaptation_store;
+    std::unique_ptr<common_learning_lifecycle_store> flydelta_lifecycle_store;
     std::unique_ptr<common_learning_transaction_observer> adaptation_observer;
     std::unique_ptr<common_flydelta_capture_candidate_collector> flydelta_capture_collector;
+    std::unique_ptr<common_flydelta_runtime_candidate_observer> flydelta_runtime_candidate_observer;
     std::string adaptation_error;
     std::unique_ptr<common_agent_tool_runtime> tool_runtime;
     std::unique_ptr<common_agent_runtime> runtime;

@@ -245,6 +245,50 @@ bool common_flydelta_append_search_lifecycle(
     return store.append(record, error);
 }
 
+bool common_flydelta_append_capture_candidate_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_capture_candidate & candidate,
+        const common_learning_transaction & transaction,
+        std::string & error) {
+    error.clear();
+    if (!lifecycle_context_valid(context, error) ||
+            !common_flydelta_capture_candidate_validate(candidate, error) ||
+            !common_learning_transaction_validate(transaction, 64, error) ||
+            candidate.transaction_id != transaction.id ||
+            context.source_id != transaction.id ||
+            context.content_hash != transaction.observation.content_hash) {
+        if (error.empty()) error = "FlyDelta capture candidate lifecycle payload is invalid";
+        return false;
+    }
+    using json = nlohmann::ordered_json;
+    const json payload = {
+        {"record_type", "capture_candidate_discovered"},
+        {"candidate_id", candidate.id},
+        {"transaction_id", candidate.transaction_id},
+        {"source", common_adaptation_evidence_source_name(candidate.source)},
+        {"behavior_key", candidate.behavior_key},
+        {"evidence_refs", candidate.evidence_refs},
+        {"model_profile_fingerprint", candidate.model_profile_fingerprint},
+        {"capture_layout_revision", candidate.capture_layout_revision},
+        {"candidate_ready", candidate.candidate_ready},
+    };
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = candidate.id;
+    record.kind = common_learning_lifecycle_kind::candidate;
+    record.status = common_learning_lifecycle_status::observed;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
 bool common_flydelta_append_champion_lifecycle(
         common_learning_lifecycle_store & store,
         const common_flydelta_lifecycle_event_context & context,

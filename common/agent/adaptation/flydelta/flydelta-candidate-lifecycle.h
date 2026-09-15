@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
+#include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/lifecycle-store.h"
 
 #include <cstddef>
@@ -124,6 +125,16 @@ bool common_flydelta_append_search_lifecycle(
         const common_flydelta_search_observation & observation,
         const common_flydelta_search_decision & decision,
         const common_flydelta_candidate_lineage * lineage,
+        std::string & error);
+
+// Records runtime discovery of a host-qualified capture candidate. Discovery
+// is deliberately only an observed candidate lifecycle state; it is not a
+// search result, training example, promotion decision or active overlay.
+bool common_flydelta_append_capture_candidate_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_capture_candidate & candidate,
+        const common_learning_transaction & transaction,
         std::string & error);
 
 bool common_flydelta_append_champion_lifecycle(

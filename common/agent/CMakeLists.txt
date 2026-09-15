@@ -100,6 +100,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-representation-diagnostics.cpp adaptation/flydelta/flydelta-representation-diagnostics.h
     adaptation/flydelta/flydelta-direction-search.cpp adaptation/flydelta/flydelta-direction-search.h
     adaptation/flydelta/flydelta-candidate-lifecycle.cpp adaptation/flydelta/flydelta-candidate-lifecycle.h
+    adaptation/flydelta/flydelta-runtime-observer.cpp adaptation/flydelta/flydelta-runtime-observer.h
 adaptation/flydelta/flydelta-layer-search.cpp adaptation/flydelta/flydelta-layer-search.h
 adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale-search.h
     adaptation/flydelta/flydelta-artifact-store.cpp adaptation/flydelta/flydelta-artifact-store.h

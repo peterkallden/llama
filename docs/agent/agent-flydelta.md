@@ -1229,6 +1229,59 @@ decision and lineage can also be appended to the existing
 experiment champion may bypass host verification or mutate active runtime
 state.
 
+### 4L. Runtime candidate journal bridge
+
+The normal runtime path now has an optional journal bridge next to the capture
+collector. When adaptation capture, capture-candidate collection and
+`enable_flydelta_candidate_lifecycle` are enabled, the host assembly creates a
+separate lifecycle store and routes the existing source observer through
+`common_flydelta_runtime_candidate_observer`.
+
+For a completed host-visible tool repair the bridge performs this sequence:
+
+```text
+learning transaction accepted
+        ↓
+source routing sees failure + successful recovery
+        ↓
+bounded capture candidate queued
+        ↓
+candidate lifecycle record: observed
+```
+
+The lifecycle record is reference-only. It contains candidate and transaction
+identities, source/behavior metadata, model/capture fingerprints and evidence
+references; it does not contain prompts, tool output, hidden states or
+credentials. The candidate is still only `observed`: no outcome is inferred,
+no `refine` job is scheduled, no training target is made and no sideband is
+activated. A later host-owned capture/evaluation step must supply aligned
+evidence and diagnostics before the candidate search lifecycle can choose
+`refine` or `validate_repeatability`.
+
+The bridge uses the same idempotent candidate identity as the bounded capture
+queue. Repeated observer callbacks therefore do not duplicate either the
+candidate or its journal record. If the lifecycle store is disabled, the
+capture queue continues to work exactly as before. If the optional lifecycle
+store cannot be opened, the assembly keeps the runtime usable and exposes the
+failure through its existing adaptation error surface; ordinary user turns
+are not failed by this auxiliary path.
+
+The runtime assembly options are host-facing rather than model-facing:
+
+```text
+enable_adaptation_capture = true
+enable_flydelta_capture_candidates = true
+enable_flydelta_candidate_lifecycle = true
+flydelta_lifecycle_backend = auto | in_memory | cozo | sqlite | jsonl
+flydelta_lifecycle_path = <required for persistent backends>
+```
+
+`auto` follows the existing adaptation-store backend order: in-memory when no
+path is supplied, otherwise Cozo, then SQLite when compiled. JSONL is explicit
+and portable. The lifecycle journal is separate from the learning transaction
+ledger; a JSONL lifecycle path must not be the same file as the transaction
+JSONL path.
+
 ### 5. Optional dynamic hook
 
 Only propose an upstream-quality llama.cpp hook if the evidence warrants it.
