@@ -136,7 +136,21 @@ llama-agent-flydelta-dataset-question-contract-smoke \
   docs/examples/agent-flydelta-dataset-question-suite.json
 ```
 
-Run the optional model-facing check by providing a model explicitly:
+The repository wrapper uses the same model default, timeout handling and
+three-thread limit as the other model smokes:
+
+```text
+LLAMA_AGENT_BUILD_DIR=build-agent-cozo \
+LLAMA_AGENT_THREADS=3 \
+scripts/test-agent-flydelta-dataset-question-model-smoke.sh
+```
+
+Use `LLAMA_AGENT_MODEL=/path/to/model.gguf` to select another model. The
+underlying model-backed CTest is registered separately and has
+`SKIP_RETURN_CODE 77`: it is intentionally optional when no model is present.
+The contract CTest always runs and does not load a model.
+
+The binary can still be invoked directly when a custom suite is needed:
 
 ```text
 LLAMA_AGENT_THREADS=3 \
