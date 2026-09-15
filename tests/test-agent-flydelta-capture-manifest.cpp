@@ -95,5 +95,38 @@ int main() {
         candidate, evidence, "sha256:template", "sha256:execution-context",
         "sha256:evidence", 128, false,
         manifest, error));
+
+    // The adapter is intentionally transport/source neutral. Exercise the
+    // same verified transition -> candidate -> manifest path for sources
+    // which do not originate in tool repair.
+    const common_adaptation_evidence_source generic_sources[] = {
+        common_adaptation_evidence_source::planning_revision,
+        common_adaptation_evidence_source::research_alternative,
+        common_adaptation_evidence_source::dataset_resource,
+        common_adaptation_evidence_source::user_correction,
+    };
+    for (const auto source : generic_sources) {
+        common_adaptation_evidence generic = evidence;
+        generic.id = std::string("evidence://generic/") +
+            common_adaptation_evidence_source_name(source);
+        generic.source = source;
+        generic.behavior_key = std::string("verified/") +
+            common_adaptation_evidence_source_name(source);
+        generic.transaction_ids = {"generic-baseline", "generic-candidate"};
+        common_flydelta_behavior_transition generic_transition;
+        CHECK(common_flydelta_behavior_transition_from_evidence(
+            generic, generic.transaction_ids[0], generic.transaction_ids[1],
+            generic_transition, error));
+        common_flydelta_capture_candidate generic_candidate;
+        CHECK(common_flydelta_capture_candidate_from_transition(
+            generic_transition, generic, "sha256:model", "l_out:v1",
+            generic_candidate, error));
+        common_flydelta_capture_manifest generic_manifest;
+        CHECK(common_flydelta_capture_manifest_from_candidate(
+            generic_candidate, generic, "sha256:template", "sha256:execution-context",
+            "sha256:generic-evidence", 128, true, generic_manifest, error));
+        CHECK(generic_manifest.source == source &&
+            generic_manifest.behavior_key == generic.behavior_key);
+    }
     return 0;
 }

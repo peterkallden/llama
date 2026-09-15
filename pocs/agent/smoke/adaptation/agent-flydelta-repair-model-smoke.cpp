@@ -231,24 +231,48 @@ int main(int argc, char ** argv) {
               << "repaired_model_output=" << output_preview(repaired) << '\n';
 
     const common_flydelta_experiment_fixture experiment_fixture = fixture(profile);
+    common_adaptation_evidence evidence;
+    evidence.id = "evidence://flydelta/model-repair-e2e";
+    evidence.source = common_adaptation_evidence_source::tool_repair;
+    evidence.scope.namespace_id = "local";
+    evidence.scope.project_id = "flydelta-model-smoke";
+    evidence.scope.session_id = "flydelta-model-repair-e2e";
+    evidence.behavior_key = "structured_tool_selection";
+    evidence.task_fingerprint = experiment_fixture.task_fingerprint;
+    evidence.baseline_ref = "execution:model-failed";
+    evidence.candidate_ref = "execution:model-repaired";
+    evidence.verifier_ref = experiment_fixture.verifier_revision;
+    evidence.transaction_ids = {
+        "transaction:model-failed", "transaction:model-repaired"};
+    evidence.cause = common_learning_cause::model_behavior;
+    evidence.host_verified = true;
+    common_flydelta_behavior_transition transition;
+    if (!common_flydelta_behavior_transition_from_evidence(
+            evidence, evidence.transaction_ids.front(), evidence.transaction_ids.back(),
+            transition, error)) {
+        std::cerr << "FlyDelta model repair transition construction failed: " << error << '\n';
+        return 1;
+    }
+    common_flydelta_capture_candidate capture_candidate;
+    if (!common_flydelta_capture_candidate_from_transition(
+            transition, evidence, profile, "layer-input:v1", capture_candidate, error)) {
+        std::cerr << "FlyDelta model repair capture candidate construction failed: " << error << '\n';
+        return 1;
+    }
     common_flydelta_capture_manifest manifest;
-    manifest.id = "flydelta://capture/model-repair-e2e";
-    manifest.observation_id = "learning://observation/model-repair-e2e";
-    manifest.behavior_key = "structured_tool_selection";
-    manifest.model_profile_fingerprint = profile;
-    manifest.template_fingerprint = experiment_fixture.template_fingerprint;
-    manifest.execution_context_fingerprint = experiment_fixture.execution_context_fingerprint;
-    manifest.positive_execution_ref = "execution:model-repaired";
-    manifest.negative_execution_ref = "execution:model-failed";
-    manifest.capture_layout_revision = "layer-input:v1";
-    manifest.evidence_hash = "sha256:model-repair-e2e-evidence";
-    manifest.redaction_attested = true;
-    manifest.captured_bytes = (failed.flydelta_capture->values.size() +
-        repaired.flydelta_capture->values.size()) * sizeof(float);
+    if (!common_flydelta_capture_manifest_from_candidate(
+            capture_candidate, evidence, experiment_fixture.template_fingerprint,
+            experiment_fixture.execution_context_fingerprint,
+            "sha256:model-repair-e2e-evidence",
+            (failed.flydelta_capture->values.size() + repaired.flydelta_capture->values.size()) *
+                sizeof(float), true, manifest, error)) {
+        std::cerr << "FlyDelta model repair capture manifest construction failed: " << error << '\n';
+        return 1;
+    }
     std::vector<common_flydelta_behavior_delta> deltas;
-    if (!common_flydelta_behavior_deltas_from_captures(
-            manifest, *failed.flydelta_capture, *repaired.flydelta_capture,
-            "evidence:model-repair-e2e", 64U * 1024U * 1024U,
+    if (!common_flydelta_behavior_deltas_from_verified_transition(
+            transition, evidence, manifest, *failed.flydelta_capture,
+            *repaired.flydelta_capture, 64U * 1024U * 1024U,
             64U * 1024U * 1024U, deltas, error) || deltas.size() < 2) {
         std::cerr << "FlyDelta behavior delta construction failed: " << error << '\n';
         return 1;
@@ -275,6 +299,7 @@ int main(int argc, char ** argv) {
     basis_config.source = common_adaptation_evidence_source::tool_repair;
     basis_config.behavior_key = "structured_tool_selection";
     basis_config.model_profile_fingerprint = profile;
+    basis_config.execution_context_fingerprint = experiment_fixture.execution_context_fingerprint;
     basis_config.capture_layout_revision = "layer-input:v1";
     common_flydelta_basis_builder basis(basis_config);
     for (const auto & delta : deltas) {
