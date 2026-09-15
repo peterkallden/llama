@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
+#include "agent/adaptation/lifecycle-store.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -103,4 +104,32 @@ bool common_flydelta_select_experiment_champion(
         const common_flydelta_experiment_champion & current,
         const common_flydelta_experiment_champion & challenger,
         common_flydelta_experiment_champion & selected,
+        std::string & error);
+
+// Common identity for append-only FlyDelta lifecycle records. The payload is
+// reference-only; raw prompts, tool output, captures and credentials remain
+// in their existing stores.
+struct common_flydelta_lifecycle_event_context {
+    std::string event_id;
+    std::string idempotency_key;
+    std::string source_id;
+    common_agent_scope scope;
+    std::string content_hash;
+    std::string created_at;
+};
+
+bool common_flydelta_append_search_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_search_observation & observation,
+        const common_flydelta_search_decision & decision,
+        const common_flydelta_candidate_lineage * lineage,
+        std::string & error);
+
+bool common_flydelta_append_champion_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_experiment_champion & current,
+        const common_flydelta_experiment_champion & challenger,
+        const common_flydelta_experiment_champion & selected,
         std::string & error);

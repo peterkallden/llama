@@ -41,7 +41,7 @@ static common_flydelta_experiment_champion champion(
 int main() {
     std::string error;
     common_flydelta_candidate_lineage lineage;
-    lineage.candidate_id = "flydelta://candidate/child";
+    lineage.candidate_id = "flydelta://candidate/1";
     lineage.parent_candidate_id = "flydelta://candidate/root";
     lineage.mutation_kind = "scale_refinement";
     lineage.generation = 1;
@@ -91,5 +91,39 @@ int main() {
     other_experiment.experiment_id =
         "flydelta://experiment/other";
     CHECK(!common_flydelta_select_experiment_champion(current, other_experiment, selected, error));
+
+    common_learning_in_memory_lifecycle_store lifecycle;
+    common_flydelta_lifecycle_event_context context;
+    context.event_id = "event:search-1";
+    context.idempotency_key = "flydelta:search-1";
+    context.source_id = "evidence:search-1";
+    context.scope.namespace_id = "local";
+    context.scope.project_id = "agent-tests";
+    context.scope.session_id = "session-1";
+    context.content_hash = "sha256:search-1";
+    context.created_at = "2026-09-15T00:00:00Z";
+    common_flydelta_search_decision unknown_decision;
+    CHECK(common_flydelta_decide_search_disposition(
+        observation(common_flydelta_counterfactual_outcome::unknown, true),
+        unknown_decision, error));
+    CHECK(common_flydelta_append_search_lifecycle(
+        lifecycle, context, observation(common_flydelta_counterfactual_outcome::unknown, true),
+        unknown_decision, &lineage, error));
+    CHECK(common_flydelta_append_search_lifecycle(
+        lifecycle, context, observation(common_flydelta_counterfactual_outcome::unknown, true),
+        unknown_decision, &lineage, error));
+    auto records = lifecycle.list(error);
+    CHECK(error.empty() && records.size() == 1);
+    CHECK(records.front().kind == common_learning_lifecycle_kind::flydelta_result);
+    CHECK(records.front().payload_json.find("candidate_search_decision") != std::string::npos);
+
+    context.event_id = "event:champion-1";
+    context.idempotency_key = "flydelta:champion-1";
+    context.source_id = "evidence:champion-1";
+    CHECK(common_flydelta_append_champion_lifecycle(
+        lifecycle, context, current, better, selected, error));
+    records = lifecycle.list(error);
+    CHECK(error.empty() && records.size() == 2);
+    CHECK(records.back().payload_json.find("experiment_champion_selection") != std::string::npos);
     return 0;
 }
