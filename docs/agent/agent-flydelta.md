@@ -572,6 +572,14 @@ and `common_flydelta_collect_search_pipeline_refinement_job()` can queue the
 next bounded search for an aligned UNKNOWN/NEUTRAL arm without changing the
 job kind or losing lineage. Only a host-verified HELPED arm can be selected.
 
+The queue/evaluator boundary is also connected by
+`common_flydelta_experiment_worker_run_evaluator_once()`. It claims at most
+one reference-only job, invokes the common evaluator, and copies its typed
+counterfactual, direction, basis, search-pipeline or DeltaMemory result into
+the worker result. The bridge does not resolve paths, create model contexts
+or make a promotion decision; those remain owned by the evaluator callbacks
+and the explicit lifecycle controller.
+
 ### Verified repair materialization — implemented adapters
 
 `common_flydelta_capture_candidate_from_transition()` is the narrow bridge

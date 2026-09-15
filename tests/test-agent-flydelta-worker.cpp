@@ -1,6 +1,8 @@
 #include "agent/adaptation/flydelta/flydelta-worker.h"
+#include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
 #include <filesystem>
+#include <utility>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -108,6 +110,49 @@ int main() {
     CHECK(common_flydelta_experiment_worker_run_once(root, {},
         [](const auto &, auto &, std::string &) { return false; }, worker_report, error));
     CHECK(worker_report.state == common_flydelta_experiment_queue_state::pending);
+
+    common_flydelta_evaluator_config evaluator_config;
+    evaluator_config.pipeline.dimension = 2;
+    evaluator_config.pipeline.layer.min_cosine = 0.0f;
+    evaluator_config.pipeline.scale.max_geometric_trials = 1;
+    common_flydelta_evaluator_callbacks evaluator_callbacks;
+    evaluator_callbacks.run_counterfactual = [](const auto &, auto &, auto &) { return false; };
+    evaluator_callbacks.resolve_behavior_delta = [](const auto &, auto & delta, auto & credit, auto &) {
+        delta = {};
+        delta.layer_index = 2;
+        delta.values = {1.0f, 0.0f};
+        credit = {};
+        return false;
+    };
+    evaluator_callbacks.run_search_pipeline = [](const auto &, auto & value, auto &) {
+        value = {};
+        common_flydelta_search_pipeline_direction_result direction;
+        direction.direction.layer_index = 2;
+        direction.direction.values = {1.0f, 0.0f};
+        direction.direction.source_samples = 1;
+        direction.direction.retained_samples = 1;
+        direction.direction.median_alignment = 1.0f;
+        common_flydelta_layer_candidate layer;
+        layer.layer_indices = {2};
+        layer.anchor_layer_index = 2;
+        layer.diagnostic_score = 1.0f;
+        layer.total_scale = 0.05f;
+        layer.per_layer_scale = 0.05f;
+        direction.layer_plan.singleton_candidates.push_back(std::move(layer));
+        value.directions.push_back(std::move(direction));
+        return true;
+    };
+    evaluator_callbacks.resolve_training_example = [](const auto &, auto &, auto &) { return false; };
+    common_flydelta_experiment_worker_report evaluator_report;
+    auto pipeline_job = job("flydelta://job/worker-evaluator");
+    pipeline_job.kind = common_flydelta_experiment_job_kind::search_pipeline;
+    pipeline_job.capture_manifest_ids = {"flydelta://capture/evaluator"};
+    pipeline_job.behavior_delta_ids = {"flydelta://delta/evaluator"};
+    CHECK(common_flydelta_experiment_queue_enqueue(root, pipeline_job, {}, error));
+    CHECK(common_flydelta_experiment_worker_run_evaluator_once(
+        root, {}, evaluator_config, evaluator_callbacks, evaluator_report, error));
+    CHECK(evaluator_report.state == common_flydelta_experiment_queue_state::succeeded);
+    CHECK(evaluator_report.report_count == 1);
     std::filesystem::remove_all(root, ignored);
     return 0;
 }

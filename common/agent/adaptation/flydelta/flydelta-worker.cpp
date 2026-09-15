@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-worker.h"
+#include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
 #include <algorithm>
 
@@ -39,6 +40,16 @@ bool validate_result(
         error = "FlyDelta direction worker result requires a candidate";
         return false;
     }
+    if (claimed.job.kind == common_flydelta_experiment_job_kind::basis &&
+            result.basis_directions.empty()) {
+        error = "FlyDelta basis worker result requires a direction";
+        return false;
+    }
+    if (claimed.job.kind == common_flydelta_experiment_job_kind::delta_memory &&
+            result.delta_memory_weights.empty()) {
+        error = "FlyDelta DeltaMemory worker result requires weights";
+        return false;
+    }
     return true;
 }
 
@@ -77,4 +88,35 @@ bool common_flydelta_experiment_worker_run_once(
     report.report_count = result.counterfactual_reports.size() +
         result.direction_candidates.size() + result.search_pipeline_results.size();
     return true;
+}
+
+bool common_flydelta_experiment_worker_run_evaluator_once(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & limits,
+        const common_flydelta_evaluator_config & config,
+        const common_flydelta_evaluator_callbacks & callbacks,
+        common_flydelta_experiment_worker_report & report,
+        std::string & error) {
+    return common_flydelta_experiment_worker_run_once(
+        queue_root, limits,
+        [&](const common_flydelta_experiment_job & job,
+                common_flydelta_experiment_worker_result & worker_result,
+                std::string & callback_error) {
+            common_flydelta_evaluator_result evaluator_result;
+            if (!common_flydelta_evaluate_job(
+                    job, config, callbacks, evaluator_result, callback_error)) return false;
+            worker_result.counterfactual_reports =
+                std::move(evaluator_result.counterfactual_reports);
+            worker_result.direction_candidates =
+                std::move(evaluator_result.direction_candidates);
+            worker_result.basis_directions =
+                std::move(evaluator_result.basis_directions);
+            worker_result.search_pipeline_results =
+                std::move(evaluator_result.search_pipeline_results);
+            worker_result.delta_memory_weights =
+                std::move(evaluator_result.delta_memory_weights);
+            worker_result.safe_summary = "FlyDelta evaluator processed " +
+                std::to_string(evaluator_result.processed_references) + " reference(s)";
+            return true;
+        }, report, error);
 }

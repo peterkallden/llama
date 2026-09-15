@@ -8,11 +8,16 @@
 #include <string>
 #include <vector>
 
+struct common_flydelta_evaluator_config;
+struct common_flydelta_evaluator_callbacks;
+
 struct common_flydelta_experiment_worker_result {
     std::string safe_summary;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
     std::vector<common_flydelta_direction_candidate> direction_candidates;
+    std::vector<common_flydelta_basis_direction> basis_directions;
     std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;
+    std::vector<float> delta_memory_weights;
 };
 
 struct common_flydelta_experiment_worker_report {
@@ -37,5 +42,16 @@ bool common_flydelta_experiment_worker_run_once(
         const std::filesystem::path & queue_root,
         const common_flydelta_experiment_queue_limits & limits,
         const common_flydelta_experiment_worker_callback & callback,
+        common_flydelta_experiment_worker_report & report,
+        std::string & error);
+
+// Adapts the queue worker to the common evaluator. The evaluator callbacks
+// still own reference resolution, fresh model contexts and host verification;
+// this bridge only transports typed evaluator results into the worker result.
+bool common_flydelta_experiment_worker_run_evaluator_once(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & limits,
+        const common_flydelta_evaluator_config & config,
+        const common_flydelta_evaluator_callbacks & callbacks,
         common_flydelta_experiment_worker_report & report,
         std::string & error);
