@@ -64,6 +64,11 @@ bool common_flydelta_sideband_manifest_validate(
         error = "revoked FlyDelta sideband requires a reason";
         return false;
     }
+    if (manifest.status == common_flydelta_sideband_status::experimental &&
+            manifest.evaluation_passed) {
+        error = "experimental FlyDelta sideband cannot have a passed activation evaluation";
+        return false;
+    }
     if (manifest.status == common_flydelta_sideband_status::active &&
             (!manifest.evaluation_passed || !bounded(manifest.evaluation_revision))) {
         error = "active FlyDelta sideband requires a passed evaluation";
@@ -173,6 +178,15 @@ bool common_flydelta_sideband_registry::admit(
     return true;
 }
 
+bool common_flydelta_sideband_registry::admit_experimental(
+        const common_flydelta_sideband_manifest & manifest, std::string & error) {
+    if (manifest.status != common_flydelta_sideband_status::experimental) {
+        error = "experimental FlyDelta sideband must be admitted with experimental status";
+        return false;
+    }
+    return admit(manifest, error);
+}
+
 bool common_flydelta_sideband_registry::promote_experimental(
         const std::string & id, const std::string & evaluation_revision, std::string & error) {
     const auto it = manifests.find(id);
@@ -187,7 +201,9 @@ bool common_flydelta_sideband_registry::promote_experimental(
     }
     it->second.status = common_flydelta_sideband_status::candidate;
     it->second.evaluation_revision = evaluation_revision;
-    it->second.evaluation_passed = true;
+    // This is the experimental review revision, not the canary evaluation
+    // required by the activation gate. stage_canary owns that gate.
+    it->second.evaluation_passed = false;
     error.clear();
     return true;
 }

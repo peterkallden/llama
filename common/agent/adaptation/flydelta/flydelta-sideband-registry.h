@@ -56,6 +56,11 @@ bool common_flydelta_sideband_manifest_from_json(
 class common_flydelta_sideband_registry {
 public:
     bool admit(const common_flydelta_sideband_manifest & manifest, std::string & error);
+    // Explicit entry point for a search artifact. It keeps callers from
+    // accidentally registering an experimental revision as a normal
+    // candidate. The artifact remains unresolvable until promoted explicitly.
+    bool admit_experimental(const common_flydelta_sideband_manifest & manifest,
+            std::string & error);
     // Explicitly graduates an offline-search revision into the normal
     // candidate lifecycle. Canary evaluation is still required afterwards.
     bool promote_experimental(const std::string & id, const std::string & evaluation_revision,

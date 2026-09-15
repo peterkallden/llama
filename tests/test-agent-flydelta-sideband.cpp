@@ -73,10 +73,13 @@ int main() {
     auto experimental = manifest();
     experimental.id = "flydelta://sideband/experiment-v1";
     experimental.status = common_flydelta_sideband_status::experimental;
+    auto invalid_experimental = experimental;
+    invalid_experimental.evaluation_passed = true;
+    CHECK(!common_flydelta_sideband_manifest_validate(invalid_experimental, error));
     CHECK(common_flydelta_sideband_manifest_from_json(
         common_flydelta_sideband_manifest_to_json(experimental), parsed, error));
     CHECK(parsed.status == common_flydelta_sideband_status::experimental);
-    CHECK(registry.admit(experimental, error));
+    CHECK(registry.admit_experimental(experimental, error));
     auto experimental_profile = profile();
     experimental_profile.sidebands.front().sideband_id = experimental.id;
     CHECK(!registry.resolve(experimental_profile, experimental.id, experimental.compatibility, 4, 3, resolved, scale, error));
@@ -84,6 +87,7 @@ int main() {
     CHECK(!registry.stage_canary(experimental.id, "eval:experiment", error));
     CHECK(error.find("candidate") != std::string::npos);
     CHECK(registry.promote_experimental(experimental.id, "eval:experiment-v1", error));
+    CHECK(!registry.list().at(experimental.id).evaluation_passed);
     CHECK(registry.stage_canary(experimental.id, "eval:canary-v1", error));
     CHECK(registry.activate(experimental.id, error));
 

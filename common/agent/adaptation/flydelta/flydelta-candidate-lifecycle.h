@@ -23,6 +23,18 @@ enum class common_flydelta_search_disposition {
 const char * common_flydelta_search_disposition_name(
         common_flydelta_search_disposition disposition);
 
+// Search trials are retained as experimental artifacts until the host has
+// explicitly reviewed their evidence. A HELPED result requests that review;
+// it does not mutate the active registry.
+enum class common_flydelta_experimental_artifact_action {
+    retain_experimental,
+    review_candidate,
+    reject,
+};
+
+const char * common_flydelta_experimental_artifact_action_name(
+        common_flydelta_experimental_artifact_action action);
+
 struct common_flydelta_candidate_lineage {
     int schema_version = 1;
     std::string candidate_id;
@@ -47,6 +59,14 @@ struct common_flydelta_search_observation {
     int schema_version = 1;
     std::string experiment_id;
     std::string candidate_id;
+    // alpha, layer, coefficient, direction or another host-defined bounded
+    // search kind. This keeps heterogeneous search records distinguishable
+    // without creating separate lifecycle stores.
+    std::string search_kind = "counterfactual";
+    // One immutable experimental sideband may own many trial records. The
+    // reference is optional for purely in-memory probes, but when present it
+    // must point at a registry entry with status=experimental.
+    std::string experimental_artifact_id;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
     bool host_verified = false;
@@ -68,6 +88,8 @@ struct common_flydelta_search_decision {
         common_flydelta_search_disposition::none;
     float search_priority = 0.0f;
     float evidence_score = 0.0f;
+    common_flydelta_experimental_artifact_action artifact_action =
+        common_flydelta_experimental_artifact_action::retain_experimental;
     std::string reason;
 };
 

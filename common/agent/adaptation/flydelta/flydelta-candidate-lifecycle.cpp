@@ -41,6 +41,19 @@ const char * common_flydelta_search_disposition_name(
     return "none";
 }
 
+const char * common_flydelta_experimental_artifact_action_name(
+        common_flydelta_experimental_artifact_action action) {
+    switch (action) {
+        case common_flydelta_experimental_artifact_action::retain_experimental:
+            return "retain_experimental";
+        case common_flydelta_experimental_artifact_action::review_candidate:
+            return "review_candidate";
+        case common_flydelta_experimental_artifact_action::reject:
+            return "reject";
+    }
+    return "retain_experimental";
+}
+
 bool common_flydelta_candidate_lineage_validate(
         const common_flydelta_candidate_lineage & lineage,
         size_t max_layers,
@@ -63,7 +76,9 @@ bool common_flydelta_search_observation_validate(
         std::string & error) {
     error.clear();
     if (observation.schema_version != 1 || !nonempty_bounded(observation.experiment_id) ||
-            !nonempty_bounded(observation.candidate_id) || !observation.host_verified ||
+            !nonempty_bounded(observation.candidate_id) ||
+            !nonempty_bounded(observation.search_kind) ||
+            observation.experimental_artifact_id.size() > 512 || !observation.host_verified ||
             (observation.diagnostics_available &&
                 !common_flydelta_representation_diagnostics_validate(observation.diagnostics, error)) ||
             (observation.sequence_margin_available &&
@@ -95,12 +110,15 @@ bool common_flydelta_decide_search_disposition(
             decision.disposition = common_flydelta_search_disposition::validate_repeatability;
             decision.search_priority = 0.5f;
             decision.evidence_score = 1.0f;
+            decision.artifact_action =
+                common_flydelta_experimental_artifact_action::review_candidate;
             decision.reason = "host verified HELPED; repeatability is the next gate";
             break;
         case common_flydelta_counterfactual_outcome::harmed:
             decision.disposition = common_flydelta_search_disposition::reject;
             decision.search_priority = 0.0f;
             decision.evidence_score = -1.0f;
+            decision.artifact_action = common_flydelta_experimental_artifact_action::reject;
             decision.reason = "host verified HARMED; reject candidate";
             break;
         case common_flydelta_counterfactual_outcome::neutral:
@@ -109,6 +127,8 @@ bool common_flydelta_decide_search_disposition(
                 : common_flydelta_search_disposition::retain;
             decision.search_priority = search_signal ? 0.6f : 0.2f;
             decision.evidence_score = 0.0f;
+            decision.artifact_action =
+                common_flydelta_experimental_artifact_action::retain_experimental;
             decision.reason = search_signal
                 ? "NEUTRAL has bounded diagnostic signal; refine candidate"
                 : "NEUTRAL has no bounded follow-up signal; retain without promotion";
@@ -119,6 +139,8 @@ bool common_flydelta_decide_search_disposition(
                 : common_flydelta_search_disposition::retain;
             decision.search_priority = search_signal ? 1.0f : 0.1f;
             decision.evidence_score = 0.0f;
+            decision.artifact_action =
+                common_flydelta_experimental_artifact_action::retain_experimental;
             decision.reason = search_signal
                 ? "UNKNOWN has bounded diagnostic signal; refine candidate"
                 : "UNKNOWN remains unproven; retain without promotion";
@@ -181,6 +203,7 @@ bool common_flydelta_append_search_lifecycle(
             !common_flydelta_decide_search_disposition(observation, expected, error) ||
             decision.schema_version != 1 || decision.candidate_id != observation.candidate_id ||
             decision.disposition != expected.disposition ||
+            decision.artifact_action != expected.artifact_action ||
             !nonempty_bounded(decision.reason) || !std::isfinite(decision.search_priority) ||
             decision.search_priority < 0.0f || decision.search_priority > 1.0f ||
             !std::isfinite(decision.evidence_score) || decision.evidence_score < -1.0f ||
@@ -196,6 +219,10 @@ bool common_flydelta_append_search_lifecycle(
         {"record_type", "candidate_search_decision"},
         {"experiment_id", observation.experiment_id},
         {"candidate_id", observation.candidate_id},
+        {"search_kind", observation.search_kind},
+        {"artifact_status", "experimental"},
+        {"artifact_action", common_flydelta_experimental_artifact_action_name(
+            decision.artifact_action)},
         {"outcome", common_flydelta_counterfactual_outcome_name(observation.outcome)},
         {"host_verified", observation.host_verified},
         {"disposition", common_flydelta_search_disposition_name(decision.disposition)},
@@ -203,6 +230,9 @@ bool common_flydelta_append_search_lifecycle(
         {"evidence_score", decision.evidence_score},
         {"reason", decision.reason},
     };
+    if (!observation.experimental_artifact_id.empty()) {
+        payload["experimental_artifact_id"] = observation.experimental_artifact_id;
+    }
     if (observation.diagnostics_available) {
         payload["diagnostics"] = {
             {"layer_index", observation.diagnostics.layer_index},

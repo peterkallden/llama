@@ -55,6 +55,8 @@ int main() {
     CHECK(common_flydelta_decide_search_disposition(
         observation(common_flydelta_counterfactual_outcome::unknown, true), decision, error));
     CHECK(decision.disposition == common_flydelta_search_disposition::refine);
+    CHECK(decision.artifact_action ==
+        common_flydelta_experimental_artifact_action::retain_experimental);
     CHECK(decision.evidence_score == 0.0f && decision.search_priority == 1.0f);
 
     CHECK(common_flydelta_decide_search_disposition(
@@ -68,9 +70,12 @@ int main() {
     CHECK(common_flydelta_decide_search_disposition(
         observation(common_flydelta_counterfactual_outcome::harmed, true), decision, error));
     CHECK(decision.disposition == common_flydelta_search_disposition::reject);
+    CHECK(decision.artifact_action == common_flydelta_experimental_artifact_action::reject);
     CHECK(common_flydelta_decide_search_disposition(
         observation(common_flydelta_counterfactual_outcome::helped, true), decision, error));
     CHECK(decision.disposition == common_flydelta_search_disposition::validate_repeatability);
+    CHECK(decision.artifact_action ==
+        common_flydelta_experimental_artifact_action::review_candidate);
 
     const auto current = champion("baseline", 0.70f, 0, true, true);
     const auto weaker = champion("challenger-weak", 0.80f, 1, false, true);
@@ -103,19 +108,26 @@ int main() {
     context.content_hash = "sha256:search-1";
     context.created_at = "2026-09-15T00:00:00Z";
     common_flydelta_search_decision unknown_decision;
+    auto unknown_observation = observation(common_flydelta_counterfactual_outcome::unknown, true);
+    unknown_observation.search_kind = "alpha";
+    unknown_observation.experimental_artifact_id = "flydelta://sideband/experiment-v1";
     CHECK(common_flydelta_decide_search_disposition(
-        observation(common_flydelta_counterfactual_outcome::unknown, true),
+        unknown_observation,
         unknown_decision, error));
     CHECK(common_flydelta_append_search_lifecycle(
-        lifecycle, context, observation(common_flydelta_counterfactual_outcome::unknown, true),
+        lifecycle, context, unknown_observation,
         unknown_decision, &lineage, error));
     CHECK(common_flydelta_append_search_lifecycle(
-        lifecycle, context, observation(common_flydelta_counterfactual_outcome::unknown, true),
+        lifecycle, context, unknown_observation,
         unknown_decision, &lineage, error));
     auto records = lifecycle.list(error);
     CHECK(error.empty() && records.size() == 1);
     CHECK(records.front().kind == common_learning_lifecycle_kind::flydelta_result);
     CHECK(records.front().payload_json.find("candidate_search_decision") != std::string::npos);
+    CHECK(records.front().payload_json.find("\"artifact_status\":\"experimental\"") !=
+        std::string::npos);
+    CHECK(records.front().payload_json.find("\"search_kind\":\"alpha\"") !=
+        std::string::npos);
 
     context.event_id = "event:champion-1";
     context.idempotency_key = "flydelta:champion-1";

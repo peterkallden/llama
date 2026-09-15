@@ -1376,11 +1376,20 @@ champion      = best verified candidate in this experiment population
 active        = sideband currently approved for runtime use
 ```
 
-`HELPED` produces `validate_repeatability`; it does not activate a sideband.
+Every alpha, layer and coefficient trial is written as an experimental search
+record. The record carries its bounded `search_kind`, optional associated
+`experimental_artifact_id` and the literal `artifact_status=experimental`.
+Several trials therefore share one immutable experimental `.flyd` revision;
+the search does not create or activate a new sideband for every arm.
+
+`HELPED` produces `validate_repeatability` and the separate
+`review_candidate` artifact action; it does not activate or silently promote a
+sideband. The host may explicitly move the referenced registry entry from
+`experimental` to `candidate` after the repeatability/holdout review.
 `HARMED` produces `reject`. `UNKNOWN` and `NEUTRAL` produce `refine` only
 when bounded geometry or sequence-margin diagnostics provide a useful search
-signal and budget remains. Otherwise they are retained as unproven history,
-never as positive learning evidence.
+signal and budget remains. Otherwise they remain retained experimental
+history, never positive learning evidence.
 
 Candidate lineage records the parent, mutation kind, generation, direction,
 layer mask, scale and intervention budget. This makes alpha, layer and
@@ -1392,8 +1401,9 @@ it must have host-verified lift, pass holdout/no-regression gates and strictly
 beat the current experiment champion. The active sideband registry and its
 explicit `candidate -> canary -> active` transition remain unchanged.
 
-The current C++ contract covers the disposition and champion decisions. A
-`refine` disposition can now create the next bounded counterfactual queue job
+The current C++ contract covers the disposition, artifact action and champion
+decisions. A `refine` disposition can now create the next bounded
+counterfactual queue job
 through the existing collection seam; the candidate lineage generation is
 included in the job variant so successive refinements do not collide. The
 decision and lineage can also be appended to the existing
