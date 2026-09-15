@@ -45,6 +45,20 @@ bool common_flydelta_behavior_deltas_from_captures(
         std::vector<common_flydelta_behavior_delta> & deltas,
         std::string & error);
 
+// Host-certified transition adapter. It checks that the manifest and both
+// captures describe the same baseline/candidate relation before delegating to
+// the bounded per-layer delta builder above.
+bool common_flydelta_behavior_deltas_from_verified_transition(
+        const common_flydelta_behavior_transition & transition,
+        const common_adaptation_evidence & evidence,
+        const common_flydelta_capture_manifest & manifest,
+        const common_flydelta_hidden_state_capture & failed,
+        const common_flydelta_hidden_state_capture & repaired,
+        size_t max_capture_bytes,
+        size_t max_delta_bytes,
+        std::vector<common_flydelta_behavior_delta> & deltas,
+        std::string & error);
+
 struct common_flydelta_basis_config {
     size_t dimension = 0;
     size_t max_directions = 16;

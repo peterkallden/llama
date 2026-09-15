@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+struct common_flydelta_behavior_transition;
+
 // A runtime-discovered, host-owned request to capture representations for a
 // verified transition. It is not an activation and contains no raw content.
 struct common_flydelta_capture_candidate {
@@ -26,6 +28,17 @@ struct common_flydelta_capture_candidate {
 
 bool common_flydelta_capture_candidate_validate(
         const common_flydelta_capture_candidate & candidate,
+        std::string & error);
+
+// Creates the reference-only capture candidate for a host-certified
+// baseline/repaired transition. The host still supplies the evidence and
+// transaction relation; no capture or inference is performed here.
+bool common_flydelta_capture_candidate_from_transition(
+        const common_flydelta_behavior_transition & transition,
+        const common_adaptation_evidence & evidence,
+        const std::string & model_profile_fingerprint,
+        const std::string & capture_layout_revision,
+        common_flydelta_capture_candidate & candidate,
         std::string & error);
 
 // Builds a manifest only after the host has supplied matching, verified

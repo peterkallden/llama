@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-evidence.h"
 
 #include <algorithm>
 #include <utility>
@@ -35,6 +36,47 @@ bool common_flydelta_capture_candidate_validate(
         }
     }
     return true;
+}
+
+bool common_flydelta_capture_candidate_from_transition(
+        const common_flydelta_behavior_transition & transition,
+        const common_adaptation_evidence & evidence,
+        const std::string & model_profile_fingerprint,
+        const std::string & capture_layout_revision,
+        common_flydelta_capture_candidate & candidate,
+        std::string & error) {
+    error.clear();
+    if (!common_flydelta_behavior_transition_validate(transition, error) ||
+            !common_adaptation_evidence_validate(evidence, 64, error) ||
+            !evidence.host_verified || transition.source != evidence.source ||
+            transition.behavior_key != evidence.behavior_key ||
+            transition.baseline_execution_ref != evidence.baseline_ref ||
+            transition.candidate_execution_ref != evidence.candidate_ref ||
+            transition.host_verifier_ref != evidence.verifier_ref ||
+            transition.scope.namespace_id != evidence.scope.namespace_id ||
+            transition.scope.project_id != evidence.scope.project_id ||
+            transition.scope.session_id != evidence.scope.session_id ||
+            std::find(evidence.transaction_ids.begin(), evidence.transaction_ids.end(),
+                transition.baseline_transaction_id) == evidence.transaction_ids.end() ||
+            std::find(evidence.transaction_ids.begin(), evidence.transaction_ids.end(),
+                transition.candidate_transaction_id) == evidence.transaction_ids.end() ||
+            !bounded(model_profile_fingerprint) || !bounded(capture_layout_revision)) {
+        if (error.empty()) error = "FlyDelta capture candidate transition is not host aligned";
+        return false;
+    }
+    candidate = {};
+    candidate.id = transition.id + "/capture-candidate";
+    candidate.transaction_id = transition.candidate_transaction_id;
+    candidate.source = transition.source;
+    candidate.behavior_key = transition.behavior_key;
+    candidate.evidence_refs = {
+        evidence.id, transition.baseline_transaction_id,
+        transition.candidate_transaction_id, evidence.verifier_ref,
+    };
+    candidate.model_profile_fingerprint = model_profile_fingerprint;
+    candidate.capture_layout_revision = capture_layout_revision;
+    candidate.candidate_ready = true;
+    return common_flydelta_capture_candidate_validate(candidate, error);
 }
 
 bool common_flydelta_capture_manifest_from_candidate(

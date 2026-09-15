@@ -1,9 +1,39 @@
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-evidence.h"
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
 int main() {
     std::string error;
+    common_adaptation_evidence transition_evidence;
+    transition_evidence.id = "evidence://repair/transition-1";
+    transition_evidence.source = common_adaptation_evidence_source::tool_repair;
+    transition_evidence.behavior_key = "tool_use/diagnostics/missing-argument";
+    transition_evidence.scope.namespace_id = "local";
+    transition_evidence.scope.project_id = "project";
+    transition_evidence.scope.session_id = "session";
+    transition_evidence.task_fingerprint = "sha256:task";
+    transition_evidence.baseline_ref = "execution:failed";
+    transition_evidence.candidate_ref = "execution:repaired";
+    transition_evidence.verifier_ref = "verifier:v1";
+    transition_evidence.transaction_ids = {"transaction-failed", "transaction-repaired"};
+    transition_evidence.host_verified = true;
+    common_flydelta_behavior_transition transition;
+    transition.id = "learning://flydelta/transition-1";
+    transition.source = transition_evidence.source;
+    transition.behavior_key = transition_evidence.behavior_key;
+    transition.scope = transition_evidence.scope;
+    transition.task_fingerprint = transition_evidence.task_fingerprint;
+    transition.baseline_transaction_id = "transaction-failed";
+    transition.candidate_transaction_id = "transaction-repaired";
+    transition.baseline_execution_ref = transition_evidence.baseline_ref;
+    transition.candidate_execution_ref = transition_evidence.candidate_ref;
+    transition.host_verifier_ref = transition_evidence.verifier_ref;
+    common_flydelta_capture_candidate generated;
+    CHECK(common_flydelta_capture_candidate_from_transition(
+        transition, transition_evidence, "sha256:model", "l_out:v1", generated, error));
+    CHECK(generated.transaction_id == transition.candidate_transaction_id);
+
     common_flydelta_capture_candidate candidate;
     candidate.id = "flydelta://capture-candidate/tool_repair/transaction-1";
     candidate.transaction_id = "transaction-1";

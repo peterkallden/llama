@@ -39,6 +39,37 @@ int main() {
     CHECK(deltas[1].layer_index == 4 && deltas[1].values[0] == -1.0f);
     CHECK(deltas[0].capture_manifest_id == manifest.id);
 
+    common_adaptation_evidence evidence;
+    evidence.id = "evidence://repair/repair-delta-1";
+    evidence.source = common_adaptation_evidence_source::tool_repair;
+    evidence.behavior_key = manifest.behavior_key;
+    evidence.scope.namespace_id = "local";
+    evidence.scope.project_id = "project";
+    evidence.scope.session_id = "session";
+    evidence.task_fingerprint = "sha256:task";
+    evidence.baseline_ref = manifest.negative_execution_ref;
+    evidence.candidate_ref = manifest.positive_execution_ref;
+    evidence.verifier_ref = "verifier:repair";
+    evidence.transaction_ids = {"failed-tx", "repaired-tx"};
+    evidence.host_verified = true;
+    common_flydelta_behavior_transition transition;
+    transition.id = "learning://flydelta/repair-transition";
+    transition.source = evidence.source;
+    transition.behavior_key = evidence.behavior_key;
+    transition.scope = evidence.scope;
+    transition.task_fingerprint = evidence.task_fingerprint;
+    transition.baseline_transaction_id = "failed-tx";
+    transition.candidate_transaction_id = "repaired-tx";
+    transition.baseline_execution_ref = evidence.baseline_ref;
+    transition.candidate_execution_ref = evidence.candidate_ref;
+    transition.host_verifier_ref = evidence.verifier_ref;
+    manifest.observation_id = transition.candidate_transaction_id;
+    std::vector<common_flydelta_behavior_delta> verified_deltas;
+    CHECK(common_flydelta_behavior_deltas_from_verified_transition(
+        transition, evidence, manifest, capture(1.0f, 3.0f), capture(2.5f, 2.0f),
+        1024, 1024, verified_deltas, error));
+    CHECK(verified_deltas.size() == 2);
+
     auto misaligned = capture(2.5f, 2.0f);
     misaligned.layer_indices = {2, 5};
     CHECK(!common_flydelta_behavior_deltas_from_captures(

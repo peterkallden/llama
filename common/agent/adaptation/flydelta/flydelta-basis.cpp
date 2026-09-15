@@ -142,6 +142,38 @@ bool common_flydelta_behavior_deltas_from_captures(
     return true;
 }
 
+bool common_flydelta_behavior_deltas_from_verified_transition(
+        const common_flydelta_behavior_transition & transition,
+        const common_adaptation_evidence & evidence,
+        const common_flydelta_capture_manifest & manifest,
+        const common_flydelta_hidden_state_capture & failed,
+        const common_flydelta_hidden_state_capture & repaired,
+        size_t max_capture_bytes,
+        size_t max_delta_bytes,
+        std::vector<common_flydelta_behavior_delta> & deltas,
+        std::string & error) {
+    error.clear();
+    if (!common_flydelta_behavior_transition_validate(transition, error) ||
+            !common_adaptation_evidence_validate(evidence, 64, error) ||
+            !evidence.host_verified || transition.source != evidence.source ||
+            transition.behavior_key != evidence.behavior_key ||
+            transition.baseline_execution_ref != manifest.negative_execution_ref ||
+            transition.candidate_execution_ref != manifest.positive_execution_ref ||
+            transition.baseline_execution_ref != evidence.baseline_ref ||
+            transition.candidate_execution_ref != evidence.candidate_ref ||
+            transition.host_verifier_ref != evidence.verifier_ref ||
+            manifest.observation_id != transition.candidate_transaction_id ||
+            manifest.source != transition.source ||
+            manifest.behavior_key != transition.behavior_key ||
+            manifest.evidence_hash.empty()) {
+        if (error.empty()) error = "FlyDelta verified transition and captures are not aligned";
+        return false;
+    }
+    return common_flydelta_behavior_deltas_from_captures(
+        manifest, failed, repaired, evidence.id, max_capture_bytes, max_delta_bytes,
+        deltas, error);
+}
+
 bool common_flydelta_basis_config_validate(
         const common_flydelta_basis_config & config,
         std::string & error) {
