@@ -70,6 +70,17 @@ int main() {
     job.alpha_search.max_candidates = 2;
     CHECK(common_flydelta_experiment_job_validate(job, 8, error));
 
+    job.id = "flydelta://job/search-pipeline-1";
+    job.kind = common_flydelta_experiment_job_kind::search_pipeline;
+    job.behavior_delta_ids = {"flydelta://delta/1"};
+    CHECK(common_flydelta_experiment_job_validate(job, 8, error));
+    const auto pipeline_text = common_flydelta_experiment_job_to_json(job);
+    common_flydelta_experiment_job pipeline_parsed;
+    CHECK(common_flydelta_experiment_job_from_json(pipeline_text, pipeline_parsed, error));
+    CHECK(pipeline_parsed.kind == common_flydelta_experiment_job_kind::search_pipeline);
+    CHECK(pipeline_parsed.capture_manifest_ids == job.capture_manifest_ids);
+    CHECK(pipeline_parsed.behavior_delta_ids == job.behavior_delta_ids);
+
     job.kind = common_flydelta_experiment_job_kind::delta_memory;
     job.seed.split = common_flydelta_training_split::validation;
     job.training_example_ids = {"flydelta://training/1"};

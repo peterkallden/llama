@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
 #include <cmath>
+#include <utility>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -85,6 +86,19 @@ static common_flydelta_training_example training_example(
     return value;
 }
 
+static common_flydelta_search_pipeline_result search_pipeline_result() {
+    common_flydelta_search_pipeline_result value;
+    common_flydelta_search_pipeline_direction_result direction;
+    direction.direction.kind = common_flydelta_direction_kind::token_margin_direction;
+    direction.direction.layer_index = 2;
+    direction.direction.values = {1.0f, 0.0f};
+    direction.direction.source_samples = 1;
+    direction.direction.retained_samples = 1;
+    direction.direction.median_alignment = 1.0f;
+    value.directions.push_back(std::move(direction));
+    return value;
+}
+
 int main() {
     std::string error;
     common_flydelta_evaluator_config config;
@@ -104,6 +118,11 @@ int main() {
     config.direction.model_profile_fingerprint = "sha256:model";
     config.direction.execution_context_fingerprint = "sha256:execution-context";
     config.direction.capture_layout_revision = "layout:v1";
+    config.pipeline.dimension = 2;
+    config.pipeline.layer.max_regions = 1;
+    config.pipeline.layer.max_singletons = 1;
+    config.pipeline.layer.max_neighborhoods = 0;
+    config.pipeline.layer.max_candidates = 1;
     config.memory = {8, 2, 1.0f};
 
     common_flydelta_evaluator_result result;
@@ -143,6 +162,20 @@ int main() {
     direction.behavior_delta_ids = {"flydelta://behavior/evaluator"};
     CHECK(common_flydelta_evaluate_job(direction, config, callbacks, result, error));
     CHECK(result.processed_references == 1 && result.direction_candidates.size() == 3);
+
+    auto pipeline = base_job(common_flydelta_experiment_job_kind::search_pipeline,
+            "flydelta://job/search-pipeline");
+    pipeline.capture_manifest_ids = {"flydelta://capture/evaluator"};
+    pipeline.behavior_delta_ids = {"flydelta://behavior/evaluator"};
+    pipeline.alpha_search.candidates = {0.02f};
+    pipeline.alpha_search.max_candidates = 1;
+    callbacks = {};
+    callbacks.run_search_pipeline = [](const auto &, auto & value, std::string &) {
+        value = search_pipeline_result();
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(pipeline, config, callbacks, result, error));
+    CHECK(result.processed_references == 1 && result.search_pipeline_results.size() == 1);
 
     auto memory = base_job(common_flydelta_experiment_job_kind::delta_memory,
             "flydelta://job/memory");

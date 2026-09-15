@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-queue.h"
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
+#include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 
 #include <functional>
 #include <string>
@@ -11,6 +12,7 @@ struct common_flydelta_experiment_worker_result {
     std::string safe_summary;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
     std::vector<common_flydelta_direction_candidate> direction_candidates;
+    std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;
 };
 
 struct common_flydelta_experiment_worker_report {

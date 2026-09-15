@@ -20,6 +20,7 @@ const char * common_flydelta_experiment_job_kind_name(
         case common_flydelta_experiment_job_kind::basis: return "basis";
         case common_flydelta_experiment_job_kind::direction: return "direction";
         case common_flydelta_experiment_job_kind::counterfactual: return "counterfactual";
+        case common_flydelta_experiment_job_kind::search_pipeline: return "search_pipeline";
         case common_flydelta_experiment_job_kind::delta_memory: return "delta_memory";
     }
     return "basis";
@@ -31,6 +32,7 @@ bool common_flydelta_experiment_job_kind_from_name(
     if (value == "basis") kind = common_flydelta_experiment_job_kind::basis;
     else if (value == "direction") kind = common_flydelta_experiment_job_kind::direction;
     else if (value == "counterfactual") kind = common_flydelta_experiment_job_kind::counterfactual;
+    else if (value == "search_pipeline") kind = common_flydelta_experiment_job_kind::search_pipeline;
     else if (value == "delta_memory") kind = common_flydelta_experiment_job_kind::delta_memory;
     else return false;
     return true;
@@ -65,6 +67,12 @@ bool common_flydelta_experiment_job_validate(
             if (error.empty()) error = "FlyDelta counterfactual job requires captures and alpha grid";
             return false;
         }
+    }
+    if (job.kind == common_flydelta_experiment_job_kind::search_pipeline &&
+            (!check_refs(job.capture_manifest_ids) || !check_refs(job.behavior_delta_ids) ||
+             !common_flydelta_alpha_search_config_validate(job.alpha_search, error))) {
+        if (error.empty()) error = "FlyDelta search pipeline job requires captures, deltas and bounds";
+        return false;
     }
     if (job.kind == common_flydelta_experiment_job_kind::delta_memory &&
             (!check_refs(job.training_example_ids) ||

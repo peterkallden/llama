@@ -27,6 +27,11 @@ bool validate_result(
     if (claimed.job.kind == common_flydelta_experiment_job_kind::counterfactual &&
             result.counterfactual_reports.empty()) {
         error = "FlyDelta counterfactual worker result requires a report";
+            return false;
+    }
+    if (claimed.job.kind == common_flydelta_experiment_job_kind::search_pipeline &&
+            result.search_pipeline_results.empty()) {
+        error = "FlyDelta search pipeline worker result requires a result";
         return false;
     }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::direction &&
@@ -70,6 +75,6 @@ bool common_flydelta_experiment_worker_run_once(
     report.state = state;
     report.safe_summary = safe_summary;
     report.report_count = result.counterfactual_reports.size() +
-        result.direction_candidates.size();
+        result.direction_candidates.size() + result.search_pipeline_results.size();
     return true;
 }

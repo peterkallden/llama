@@ -8,6 +8,44 @@ bool valid_reference_count(size_t count, size_t max_references) {
     return count != 0 && count <= max_references;
 }
 
+bool validate_search_pipeline_result(
+        const common_flydelta_search_pipeline_result & result,
+        const common_flydelta_search_pipeline_config & config,
+        std::string & error) {
+    if (result.directions.empty() || result.directions.size() > config.max_directions) {
+        error = "FlyDelta search pipeline result direction count is invalid";
+        return false;
+    }
+    for (const auto & direction : result.directions) {
+        if (!common_flydelta_direction_candidate_validate(
+                direction.direction, config.dimension, error) ||
+                !common_flydelta_layer_search_plan_validate(
+                    direction.layer_plan, config.layer, error)) return false;
+        for (const auto & trial : direction.layer_trials) {
+            if (!common_flydelta_layer_search_trial_validate(trial, error)) return false;
+        }
+        for (const auto & layer : direction.layer_results) {
+            if (!common_flydelta_layer_candidate_validate(layer.candidate, error)) return false;
+            if (layer.scale_selection.selected &&
+                    layer.scale_selection.trial_index >= layer.scale_trials.size()) {
+                error = "FlyDelta search pipeline selected scale trial is out of bounds";
+                return false;
+            }
+            for (const auto & trial : layer.scale_trials) {
+                if (!common_flydelta_scale_trial_validate(trial, error)) return false;
+            }
+        }
+    }
+    if (result.selection.selected &&
+            (result.selection.direction_index >= result.directions.size() ||
+             result.selection.layer_result_index >= result.directions[
+                 result.selection.direction_index].layer_results.size())) {
+        error = "FlyDelta search pipeline selection is out of bounds";
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool common_flydelta_evaluate_job(
@@ -88,6 +126,21 @@ bool common_flydelta_evaluate_job(
             if (!common_flydelta_build_direction_candidates(
                     config.direction, samples, result.direction_candidates, error)) return false;
             result.processed_references = samples.size();
+            return true;
+        }
+        case common_flydelta_experiment_job_kind::search_pipeline: {
+            if (!callbacks.run_search_pipeline ||
+                    !common_flydelta_search_pipeline_config_validate(config.pipeline, error)) {
+                if (error.empty()) error = "FlyDelta search pipeline evaluator requires a host runner and config";
+                return false;
+            }
+            common_flydelta_search_pipeline_result pipeline_result;
+            if (!callbacks.run_search_pipeline(job, pipeline_result, error) ||
+                    !validate_search_pipeline_result(pipeline_result, config.pipeline, error)) {
+                return false;
+            }
+            result.search_pipeline_results.push_back(std::move(pipeline_result));
+            result.processed_references = job.behavior_delta_ids.size();
             return true;
         }
         case common_flydelta_experiment_job_kind::delta_memory: {

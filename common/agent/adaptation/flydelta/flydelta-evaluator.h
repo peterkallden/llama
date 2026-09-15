@@ -4,6 +4,7 @@
 #include "agent/adaptation/flydelta/flydelta-job.h"
 #include "agent/adaptation/flydelta/flydelta-training.h"
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
+#include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 
 #include <cstddef>
 #include <functional>
@@ -15,6 +16,7 @@
 struct common_flydelta_evaluator_config {
     common_flydelta_basis_config basis;
     common_flydelta_direction_search_config direction;
+    common_flydelta_search_pipeline_config pipeline;
     common_flydelta_memory_config memory;
     size_t max_references = 128;
 };
@@ -41,12 +43,20 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_experiment_job & job,
             std::vector<common_flydelta_counterfactual_report> & reports,
             std::string & error)> run_counterfactual;
+
+    // Executes the composed direction/layer/scale search. The callback owns
+    // reference resolution, fresh inference contexts and host verification.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            common_flydelta_search_pipeline_result & result,
+            std::string & error)> run_search_pipeline;
 };
 
 struct common_flydelta_evaluator_result {
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
     std::vector<common_flydelta_basis_direction> basis_directions;
     std::vector<common_flydelta_direction_candidate> direction_candidates;
+    std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;
     std::vector<float> delta_memory_weights;
     size_t processed_references = 0;
 };

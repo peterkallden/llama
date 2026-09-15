@@ -63,6 +63,19 @@ int main() {
     CHECK(claimed.job.kind == common_flydelta_experiment_job_kind::counterfactual);
     CHECK(claimed.job.capture_manifest_ids.size() == 1);
 
+    auto pipeline_request = request();
+    pipeline_request.kind = common_flydelta_experiment_job_kind::search_pipeline;
+    pipeline_request.behavior_delta_ids = {"flydelta://delta/pipeline-1"};
+    const auto pipeline_root = root / "pipeline";
+    CHECK(common_flydelta_collect_experiment_job(
+        pipeline_root, {}, pipeline_request, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::enqueued);
+    common_flydelta_claimed_experiment_job pipeline_claimed;
+    CHECK(common_flydelta_experiment_queue_claim_next(pipeline_root, {}, pipeline_claimed, error));
+    CHECK(pipeline_claimed.job.kind == common_flydelta_experiment_job_kind::search_pipeline);
+    CHECK(pipeline_claimed.job.capture_manifest_ids.size() == 1);
+    CHECK(pipeline_claimed.job.behavior_delta_ids.size() == 1);
+
     value.enabled = false;
     CHECK(common_flydelta_collect_experiment_job(root, {}, value, result, error));
     CHECK(result == common_flydelta_experiment_collection_result::disabled);

@@ -14,9 +14,11 @@ bool references_empty_except(
         const common_flydelta_experiment_collection_request & request,
         common_flydelta_experiment_job_kind kind) {
     if (kind != common_flydelta_experiment_job_kind::counterfactual &&
+            kind != common_flydelta_experiment_job_kind::search_pipeline &&
             !request.capture_manifest_ids.empty()) return false;
     if (kind != common_flydelta_experiment_job_kind::basis &&
             kind != common_flydelta_experiment_job_kind::direction &&
+            kind != common_flydelta_experiment_job_kind::search_pipeline &&
             !request.behavior_delta_ids.empty()) return false;
     if (kind != common_flydelta_experiment_job_kind::delta_memory &&
             !request.training_example_ids.empty()) return false;
