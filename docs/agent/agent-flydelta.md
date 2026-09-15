@@ -1367,7 +1367,41 @@ be `1.28`, above the absolute scale limit of `1.0`), not because of saturation
 or an unsafe geometry. No midpoint or selection was produced. It still cannot
 cross the model's tool-choice boundary without a host-verified `HELPED` result.
 
-### 4J. Source-neutral behavior transitions — implemented
+### 4J. Composed direction/layer/scale search — implemented
+
+`common_flydelta_run_search_pipeline()` is the composition point for the
+existing searches. It does not introduce a second search algorithm or a new
+runtime path. For each already-built direction candidate it builds the
+coarse-to-fine layer plan, runs singleton layer candidates first, and invokes
+the existing bounded geometric scale search for each layer candidate. Adjacent
+layer neighborhoods are still considered only when no singleton produces a
+host-verified `HELPED` result.
+
+```text
+direction candidate
+        -> layer diagnostics and local-maxima plan
+        -> singleton layer arms
+        -> scale arms per layer candidate
+        -> optional adjacent layer pairs
+        -> host-classified outcome
+```
+
+The pipeline runner is the only model-facing seam. It receives the direction,
+layer mask and total scale budget and owns fresh contexts, overlay
+composition, activation capture and host verification. A two-layer mask must
+apply the existing `total_scale / sqrt(2)` per-layer budget rule. The runner
+may interpret one direction candidate across a selected mask; the host owns
+that mapping because the direction representation is deliberately independent
+of llama.cpp graph details.
+
+The result keeps the complete nested trace: layer plan and trials, scale trials
+per layer candidate, representative counterfactuals and the host-verified
+selection. Only a selected `HELPED` scale arm fills the pipeline selection;
+geometry, margin, `UNKNOWN` and `NEUTRAL` remain available for lifecycle
+refinement but cannot create evidence. This preserves the existing
+`geometry -> margin -> host outcome` decision order.
+
+### 4K. Source-neutral behavior transitions — implemented
 
 The shared evidence contract and FlyDelta job envelope are source-neutral.
 They can carry host-certified relations from tool repair, reflection
@@ -1393,7 +1427,7 @@ and representations, while the host verifier decides whether an outcome is
 valid. Facts, provider failures and unverified model self-descriptions are not
 FlyDelta evidence.
 
-### 4K. Candidate search lifecycle — contract slice implemented
+### 4L. Candidate search lifecycle — contract slice implemented
 
 FlyDelta keeps three independent concepts separate:
 
@@ -1420,8 +1454,11 @@ signal and budget remains. Otherwise they remain retained experimental
 history, never positive learning evidence.
 
 Candidate lineage records the parent, mutation kind, generation, direction,
-layer mask, scale and intervention budget. This makes alpha, layer and
-direction refinements traceable without rewriting the original observation.
+layer mask, scale and intervention budget. The composed pipeline can append
+every executed scale arm to the same lifecycle store with stable
+`direction/layer/scale` idempotency suffixes. This makes alpha, layer and
+direction refinements traceable without rewriting the original observation or
+creating a parallel experiment journal.
 
 The experiment champion is distinct from the active sideband. A challenger
 must use the same model profile, fixture-set revision and verifier revision;
@@ -1439,7 +1476,7 @@ decision and lineage can also be appended to the existing
 experiment champion may bypass host verification or mutate active runtime
 state.
 
-### 4L. Runtime candidate journal bridge
+### 4M. Runtime candidate journal bridge
 
 The normal runtime path now has an optional journal bridge next to the capture
 collector. When adaptation capture, capture-candidate collection and
