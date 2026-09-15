@@ -104,6 +104,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-runtime-observer.cpp adaptation/flydelta/flydelta-runtime-observer.h
 adaptation/flydelta/flydelta-layer-search.cpp adaptation/flydelta/flydelta-layer-search.h
 adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale-search.h
+    adaptation/flydelta/flydelta-search-pipeline.cpp adaptation/flydelta/flydelta-search-pipeline.h
     adaptation/flydelta/flydelta-artifact-store.cpp adaptation/flydelta/flydelta-artifact-store.h
     thinking/reflection-json.cpp thinking/reflection-json.h
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h

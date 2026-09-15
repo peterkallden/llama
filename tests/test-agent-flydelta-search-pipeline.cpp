@@ -1,0 +1,116 @@
+#include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
+
+#include <cmath>
+
+#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
+
+static common_flydelta_experiment_fixture make_fixture() {
+    return {
+        1, "fixture:search-pipeline", "task", "model", "tokenizer",
+        "template", "execution-context", "verifier"
+    };
+}
+
+int main() {
+    std::string error;
+    common_flydelta_search_pipeline_config config;
+    config.dimension = 2;
+    config.layer.max_regions = 1;
+    config.layer.max_singletons = 2;
+    config.layer.max_neighborhoods = 2;
+    config.layer.max_candidates = 4;
+    config.layer.min_cosine = 0.3f;
+    config.scale.initial_scale = 0.02f;
+    config.scale.growth_factor = 2.0f;
+    config.scale.max_scale = 0.16f;
+    config.scale.max_geometric_trials = 4;
+    config.scale.max_refinement_trials = 1;
+
+    common_flydelta_search_pipeline_direction input;
+    input.direction.layer_index = 2;
+    input.direction.values = {1.0f, 0.0f};
+    input.direction.source_samples = 2;
+    input.direction.retained_samples = 2;
+    input.direction.median_alignment = 0.9f;
+    input.layer_diagnostics = {
+        {1, 0.40f, 0.10f, 0.10f, 0.10f},
+        {2, 0.90f, 0.80f, 0.10f, 0.10f},
+        {3, 0.40f, 0.10f, 0.10f, 0.10f},
+    };
+    input.available_layers = {1, 2, 3, 4};
+
+    size_t calls = 0;
+    common_flydelta_search_pipeline_result result;
+    CHECK(common_flydelta_run_search_pipeline(
+        make_fixture(), config, {input},
+        [&](const common_flydelta_experiment_fixture &,
+                const common_flydelta_direction_candidate &,
+                const common_flydelta_layer_candidate * layer,
+                float scale, bool apply_overlay,
+                common_flydelta_counterfactual_trial & trial,
+                common_flydelta_scale_geometry & geometry,
+                std::string &) {
+            ++calls;
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.overlay_applied = apply_overlay;
+            trial.evidence_ref = "evidence:search-pipeline";
+            const bool pair = layer != nullptr && layer->layer_indices ==
+                std::vector<uint32_t>{2, 3};
+            trial.passed = apply_overlay && pair && scale >= 0.08f;
+            trial.quality = trial.passed ? 1.0f : 0.0f;
+            geometry = {};
+            geometry.available = apply_overlay;
+            geometry.cosine = 0.85f;
+            geometry.progress = scale;
+            geometry.leakage = 0.05f;
+            geometry.shift_norm = scale;
+            return true;
+        }, result, error));
+
+    CHECK(calls == 16); // baseline + 3 layer candidates × (baseline + 4 arms)
+    CHECK(result.directions.size() == 1);
+    const auto & direction = result.directions.front();
+    CHECK(direction.layer_plan.singleton_candidates.size() == 1);
+    CHECK(direction.layer_plan.neighborhood_candidates.size() == 2);
+    CHECK(direction.layer_trials.size() == 3);
+    CHECK(direction.layer_results.size() == 3);
+    CHECK(result.selection.selected);
+    CHECK(result.selection.layer_result_index == 2);
+    CHECK(direction.layer_results[2].candidate.layer_indices ==
+        std::vector<uint32_t>({2, 3}));
+    CHECK(direction.layer_results[2].scale_selection.selected);
+    CHECK(std::fabs(direction.layer_results[2].scale_selection.scale - 0.08f) < 0.00001f);
+    CHECK(result.selection.scale == direction.layer_results[2].scale_selection.scale);
+
+    // A diagnostic-only direction still produces a bounded plan and retains
+    // UNKNOWN/NEUTRAL scale trials, but cannot populate the HELPED selection.
+    result = {};
+    calls = 0;
+    input.layer_diagnostics[1].progress = 0.0f;
+    CHECK(common_flydelta_run_search_pipeline(
+        make_fixture(), config, {input},
+        [&](const common_flydelta_experiment_fixture &,
+                const common_flydelta_direction_candidate &,
+                const common_flydelta_layer_candidate *, float scale, bool apply_overlay,
+                common_flydelta_counterfactual_trial & trial,
+                common_flydelta_scale_geometry & geometry, std::string &) {
+            ++calls;
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = false;
+            trial.overlay_applied = apply_overlay;
+            geometry = {};
+            geometry.available = apply_overlay;
+            geometry.cosine = 0.8f;
+            geometry.progress = scale;
+            geometry.leakage = 0.1f;
+            geometry.shift_norm = scale;
+            return true;
+        }, result, error));
+    CHECK(!result.selection.selected);
+    CHECK(!result.directions.front().layer_results.empty());
+    CHECK(!result.directions.front().layer_results.front().scale_selection.selected);
+    return 0;
+}
