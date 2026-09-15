@@ -10,6 +10,14 @@ bool nonempty_bounded(const std::string & value, size_t max_size = 512) {
     return !value.empty() && value.size() <= max_size;
 }
 
+bool compatible_capture_position(
+        const common_flydelta_hidden_state_capture & failed,
+        const common_flydelta_hidden_state_capture & repaired) {
+    if (failed.position != repaired.position) return false;
+    return failed.position == common_flydelta_capture_position::generation_boundary ||
+        failed.token_index == repaired.token_index;
+}
+
 float norm(const std::vector<float> & values) {
     float squared = 0.0f;
     for (const float value : values) squared += value * value;
@@ -86,7 +94,7 @@ bool common_flydelta_behavior_deltas_from_captures(
             repaired.capture_layout_revision != manifest.capture_layout_revision ||
             failed.layer_indices != repaired.layer_indices ||
             failed.n_embd != repaired.n_embd ||
-            failed.token_index != repaired.token_index ||
+            !compatible_capture_position(failed, repaired) ||
             failed.values.size() != repaired.values.size()) {
         error = "FlyDelta baseline and candidate captures are not aligned";
         return false;

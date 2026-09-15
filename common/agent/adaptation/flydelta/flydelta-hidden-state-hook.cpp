@@ -13,6 +13,15 @@ bool nonempty_bounded(const std::string & value) {
 
 } // namespace
 
+const char * common_flydelta_capture_position_name(
+        common_flydelta_capture_position position) {
+    switch (position) {
+        case common_flydelta_capture_position::prompt_row: return "prompt_row";
+        case common_flydelta_capture_position::generation_boundary: return "generation_boundary";
+    }
+    return "prompt_row";
+}
+
 bool common_flydelta_hidden_state_capture_architecture_supported(
         std::string_view architecture) {
     // Keep this allow-list aligned with llama.cpp graph implementations that
@@ -61,6 +70,11 @@ bool common_flydelta_hidden_state_capture_request_validate(
     }
     if (request.token_index < -1) {
         error = "FlyDelta hidden-state capture token index is invalid";
+        return false;
+    }
+    if (request.position == common_flydelta_capture_position::generation_boundary &&
+            request.token_index != -1) {
+        error = "FlyDelta generation-boundary capture must select the last prompt row";
         return false;
     }
     if (request.max_bytes == 0 || request.max_bytes > max_bytes) {

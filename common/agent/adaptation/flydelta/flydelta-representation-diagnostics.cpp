@@ -57,7 +57,9 @@ bool common_flydelta_representation_diagnostics_from_captures(
             baseline.capture_layout_revision != overlay.capture_layout_revision ||
             baseline.layer_indices != overlay.layer_indices ||
             baseline.n_embd != overlay.n_embd ||
-            baseline.token_index != overlay.token_index) {
+            baseline.position != overlay.position ||
+            (baseline.position == common_flydelta_capture_position::prompt_row &&
+             baseline.token_index != overlay.token_index)) {
         error = "FlyDelta diagnostics captures are not aligned";
         return false;
     }

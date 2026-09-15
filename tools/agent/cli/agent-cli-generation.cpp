@@ -225,6 +225,7 @@ bool generate_chat_turn_result(
             capture->model_profile_fingerprint = flydelta_capture->model_profile_fingerprint;
             capture->capture_layout_revision = flydelta_capture->capture_layout_revision;
             capture->layer_indices = flydelta_capture->layer_indices;
+            capture->position = flydelta_capture->position;
             capture->token_index = flydelta_capture->token_index < 0
                 ? n_prompt - 1
                 : flydelta_capture->token_index;

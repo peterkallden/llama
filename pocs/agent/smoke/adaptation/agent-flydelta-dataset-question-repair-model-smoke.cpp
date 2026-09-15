@@ -203,9 +203,10 @@ int main(int argc, char ** argv) {
     capture->enabled = true;
     for (uint32_t layer = 1; layer < n_layers && layer <= 4; ++layer) capture->layer_indices.push_back(layer);
     capture->token_index = -1;
+    capture->position = common_flydelta_capture_position::generation_boundary;
     capture->max_bytes = 4U * 1024U * 1024U;
     capture->model_profile_fingerprint = "sha256:flydelta-dataset-question-repair";
-    capture->capture_layout_revision = "layer-input:v1";
+    capture->capture_layout_revision = "layer-input:generation-boundary:v1";
 
     std::vector<common_flydelta_contrast_sample> samples;
     size_t passed = 0, unresolved = 0, failures = 0, repaired = 0;

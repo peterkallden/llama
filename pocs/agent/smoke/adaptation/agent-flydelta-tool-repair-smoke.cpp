@@ -165,6 +165,24 @@ int main() {
         manifest, failed_capture, repaired_capture, "evidence:repaired-tool",
         64 * 1024, 64 * 1024, behavior_deltas, error));
     CHECK(behavior_deltas.size() == 1 && behavior_deltas.front().layer_index == 2);
+
+    auto repaired_boundary_capture = repaired_capture;
+    failed_capture.position = common_flydelta_capture_position::generation_boundary;
+    repaired_boundary_capture.position = common_flydelta_capture_position::generation_boundary;
+    repaired_boundary_capture.token_index = failed_capture.token_index + 3;
+    CHECK(common_flydelta_behavior_deltas_from_captures(
+        manifest, failed_capture, repaired_boundary_capture, "evidence:boundary-repaired-tool",
+        64 * 1024, 64 * 1024, behavior_deltas, error));
+    failed_capture.position = common_flydelta_capture_position::prompt_row;
+    repaired_boundary_capture.position = common_flydelta_capture_position::prompt_row;
+    CHECK(!common_flydelta_behavior_deltas_from_captures(
+        manifest, failed_capture, repaired_boundary_capture, "evidence:row-mismatch",
+        64 * 1024, 64 * 1024, behavior_deltas, error));
+    CHECK(error == "FlyDelta baseline and candidate captures are not aligned");
+    CHECK(common_flydelta_behavior_deltas_from_captures(
+        manifest, failed_capture, repaired_capture, "evidence:repaired-tool",
+        64 * 1024, 64 * 1024, behavior_deltas, error));
+
     common_flydelta_basis_config basis_config;
     basis_config.dimension = 4;
     basis_config.max_directions = 4;
