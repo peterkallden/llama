@@ -4,8 +4,10 @@
 
 **Status: V0 host seam, bounded CPU capture, two-pass experiment, explicit CLI
 activation and request-scoped server-context activation are implemented;
-the host evaluator, split validation and explicit sideband lifecycle are now
-implemented, while automatic runtime learning and activation are not.** FlyDelta is not enabled by default and is not a replacement for
+the host evaluator, split validation, search queue, verified transition
+adapters, low-rank coefficient search and experimental artifact materializer
+are now implemented, while automatic runtime learning and activation are not.**
+FlyDelta is not enabled by default and is not a replacement for
 the current model-adaptation path. It must not be activated until it has
 passed explicit evaluation and promotion gates.
 
@@ -410,12 +412,13 @@ the source evidence reference and transaction IDs. It carries no prompt,
 tool output, credential or activation tensor. The seed is the stable
 provenance boundary between the learning ledger and an experiment.
 
-The seed is wrapped in a typed `common_flydelta_experiment_job`. V1 has three
+The seed is wrapped in a typed `common_flydelta_experiment_job`. V1 has four
 explicit job kinds:
 
 ```text
         basis            behavior-delta references -> candidate steering basis
 counterfactual   capture references + alpha grid -> host-evaluated trials
+search_pipeline  capture + behavior-delta references -> composed direction/layer/scale search
 delta_memory     train split examples -> DeltaMemory update
 ```
 
@@ -511,7 +514,7 @@ source match alone is never enough to cross-wire two behaviors.
 
 The bridge accepts only reference IDs and bounded configuration. It must never
 place prompts, raw responses, tool payloads, credentials or activation
-tensors in the queue. A job may be `basis`, `counterfactual` or
+tensors in the queue. A job may be `basis`, `counterfactual`, `search_pipeline` or
 `delta_memory`; the reference fields must match that kind and a job may not
 mix incompatible scopes or model/layout identities.
 
@@ -562,9 +565,74 @@ registry; it does not discover a sideband or change the live model by itself.
 The model-free pipeline, evaluator, corpus and lifecycle tests cover this
 sequence, including a mixed outcome set, split-leakage rejection and the
 final canary/active transitions. They are contract tests, not evidence that
-Qwen has learned a useful correction. Automatic observer-to-queue wiring,
-real capture/delta materialization from a model repair, and an actual
-baseline-fails/candidate-helps Qwen case remain follow-up work.
+Qwen has learned a useful correction. The composed
+`search_pipeline` job now runs the existing direction → layer → scale
+helpers through a typed evaluator callback. Its result retains every arm,
+and `common_flydelta_collect_search_pipeline_refinement_job()` can queue the
+next bounded search for an aligned UNKNOWN/NEUTRAL arm without changing the
+job kind or losing lineage. Only a host-verified HELPED arm can be selected.
+
+### Verified repair materialization — implemented adapters
+
+`common_flydelta_capture_candidate_from_transition()` is the narrow bridge
+from a host-certified baseline/repaired relation to a capture candidate. It
+checks source, behavior key, scope, transaction IDs and execution/verifier
+references before producing a reference-only candidate. The existing manifest
+builder then adds template/execution fingerprints, evidence hash, byte bound
+and redaction attestation. No hidden state is captured by this adapter.
+
+`common_flydelta_behavior_deltas_from_verified_transition()` is the matching
+delta bridge. It requires the same transition, evidence, manifest and
+baseline/repaired captures to agree, then delegates to the existing aligned
+per-layer subtraction. This gives the host an explicit path:
+
+```text
+host repair + verification
+  -> transition
+  -> capture candidate / manifest
+  -> two fresh captures
+  -> per-layer behavior deltas
+  -> direction candidates
+```
+
+### Decision margin and low-rank search — implemented CPU seam
+
+`flydelta-coefficient-search` is a source-neutral, forward-only search helper.
+It stores total positive/negative logprob and token counts, and reports both
+the total and length-normalized margin. It also builds a small orthonormal
+per-layer basis with bounded Gram–Schmidt and proposes a no-op plus a bounded
+positive/negative coordinate stencil. The callback may use the margin to pick
+which proposals deserve full generation. The helper itself still derives
+`HELPED` only from the host-verified baseline/candidate result; margin,
+geometry and coefficient size cannot create evidence or promotion.
+
+The current order is deliberately cheap:
+
+```text
+geometry -> decision margin -> bounded coefficient proposals
+         -> full host generation for selected proposals -> outcome
+```
+
+No gradient, SFT, LoRA or RFM path is hidden behind this component. A future
+multi-layer or model-specific adapter can compose the same coefficient vector
+with the existing `B_l * c` overlay contract.
+
+### Experimental artifact materialization — implemented seam
+
+`common_flydelta_build_experimental_artifact()` creates a schema-v2 artifact
+from validated encoder/memory/compatibility data and a bounded steering basis.
+`common_flydelta_persist_experimental_artifact()` computes the canonical hash,
+writes the immutable `.flyd` through the existing artifact store and admits a
+matching metadata entry as `experimental`. A retry is idempotent at the file
+store; registry admission remains explicit. Experimental entries are not
+profile-resolvable or active. They must still pass review, canary evaluation
+and separate host approval before activation.
+
+The remaining model-backed work is intentionally outside these CPU contracts:
+provide a production callback that resolves capture/delta references, runs the
+two-pass model context and verifier, and then invoke the existing optional
+Qwen/Phi smoke. The model smoke is evidence collection and regression
+measurement; a model-only mismatch is never promoted automatically.
 
 ### Model-facing tool repair and dataflow contract
 
