@@ -52,6 +52,17 @@ static common_flydelta_counterfactual_report report(const std::string & job_id) 
     return value;
 }
 
+static common_flydelta_direction_candidate direction_candidate() {
+    common_flydelta_direction_candidate value;
+    value.kind = common_flydelta_direction_kind::token_margin_direction;
+    value.layer_index = 2;
+    value.values = {1.0f, 0.0f};
+    value.source_samples = 1;
+    value.retained_samples = 1;
+    value.median_alignment = 1.0f;
+    return value;
+}
+
 int main() {
     std::string error;
     const auto root = std::filesystem::temp_directory_path() /
@@ -71,6 +82,20 @@ int main() {
             return true;
         }, worker_report, error));
     CHECK(callback_received_expected_job);
+    CHECK(worker_report.state == common_flydelta_experiment_queue_state::succeeded);
+    CHECK(worker_report.report_count == 1);
+
+    auto direction_job = job("flydelta://job/worker-direction");
+    direction_job.kind = common_flydelta_experiment_job_kind::direction;
+    direction_job.capture_manifest_ids.clear();
+    direction_job.behavior_delta_ids = {"flydelta://delta/worker"};
+    CHECK(common_flydelta_experiment_queue_enqueue(root, direction_job, {}, error));
+    CHECK(common_flydelta_experiment_worker_run_once(root, {},
+        [&](const auto &, auto & result, std::string &) {
+            result.safe_summary = "direction search completed";
+            result.direction_candidates.push_back(direction_candidate());
+            return true;
+        }, worker_report, error));
     CHECK(worker_report.state == common_flydelta_experiment_queue_state::succeeded);
     CHECK(worker_report.report_count == 1);
 

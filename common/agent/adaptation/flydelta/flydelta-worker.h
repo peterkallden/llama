@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-queue.h"
+#include "agent/adaptation/flydelta/flydelta-direction-search.h"
 
 #include <functional>
 #include <string>
@@ -9,6 +10,7 @@
 struct common_flydelta_experiment_worker_result {
     std::string safe_summary;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
+    std::vector<common_flydelta_direction_candidate> direction_candidates;
 };
 
 struct common_flydelta_experiment_worker_report {
@@ -35,4 +37,3 @@ bool common_flydelta_experiment_worker_run_once(
         const common_flydelta_experiment_worker_callback & callback,
         common_flydelta_experiment_worker_report & report,
         std::string & error);
-

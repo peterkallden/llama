@@ -935,6 +935,31 @@ available, the same smoke seam can evaluate the aggregate candidates under the
 normal four-arm runtime scale bound. The CPU contract test exercises the
 multi-sample trimmed and whitened paths independently of model inference.
 
+The direction search is also available through the existing experiment queue
+as job kind `direction`. The job contains only bounded behavior-delta
+references; the evaluator resolves those references, builds the same WHAT
+candidates and returns them to the worker. A direction worker result must
+contain at least one validated candidate. This keeps queue execution,
+reference resolution and result validation on the same authority boundary as
+the existing basis, counterfactual and DeltaMemory jobs.
+
+Two generic candidate builders share the same candidate format:
+
+```text
+token_margin_direction
+    normalized positive-output minus negative-output row
+
+execution_boundary_prototype
+    normalized mean(positive captures) minus mean(negative captures)
+```
+
+The caller supplies tokenization/unembedding rows or host/model boundary
+captures. Consequently these builders are not OpenAPI- or tool-specific and
+can be used for tool choice, planning, research, structured output and
+procedure behavior. They are still only direction material: the existing
+layer search, scale search and host verifier decide whether a direction is
+useful. No margin or geometric signal can create `HELPED` on its own.
+
 ### 4H. Verified candidate-to-delta materialization — implemented
 
 `flydelta-capture.*` now has a reference-only factory from a qualified,

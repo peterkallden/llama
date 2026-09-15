@@ -20,9 +20,18 @@ bool validate_result(
             return false;
         }
     }
+    for (const auto & direction : result.direction_candidates) {
+        if (!common_flydelta_direction_candidate_validate(
+                direction, direction.values.size(), error)) return false;
+    }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::counterfactual &&
             result.counterfactual_reports.empty()) {
         error = "FlyDelta counterfactual worker result requires a report";
+        return false;
+    }
+    if (claimed.job.kind == common_flydelta_experiment_job_kind::direction &&
+            result.direction_candidates.empty()) {
+        error = "FlyDelta direction worker result requires a candidate";
         return false;
     }
     return true;
@@ -60,7 +69,7 @@ bool common_flydelta_experiment_worker_run_once(
             queue_root, claimed, state, safe_summary, limits, error)) return false;
     report.state = state;
     report.safe_summary = safe_summary;
-    report.report_count = result.counterfactual_reports.size();
+    report.report_count = result.counterfactual_reports.size() +
+        result.direction_candidates.size();
     return true;
 }
-
