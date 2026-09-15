@@ -164,6 +164,14 @@ original call followed by a host-executed canonical repair is recorded as
 the existing threshold for aggregate direction candidates; the bridge itself
 does not activate a `.flyd` artifact.
 
+The bridge uses the explicit `generation_boundary` capture position. It reads
+the final prompt row in each turn but identifies it as “immediately before the
+model generates the tool call”, rather than as an absolute prompt-row number.
+Repair prompts naturally contain more context, so their absolute lengths may
+differ. Ordinary `prompt_row` captures remain strict and must still have the
+same absolute token index; a generation-boundary request must use
+`token_index: -1`.
+
 Run the always-safe contract check with:
 
 ```text
