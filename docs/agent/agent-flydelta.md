@@ -183,8 +183,8 @@ Run the optional model repair bridge with:
 ```text
 LLAMA_AGENT_MODEL=/path/to/model.gguf \
 LLAMA_AGENT_THREADS=3 \
-llama-agent-flydelta-dataset-question-repair-model-smoke \
-  --suite docs/examples/agent-flydelta-dataset-question-suite-incremental-v2.json
+LLAMA_AGENT_DATASET_QUESTION_SUITE=docs/examples/agent-flydelta-dataset-question-suite-incremental-v2.json \
+scripts/test-agent-flydelta-dataset-question-repair-model-smoke.sh
 ```
 
 Validate the incremental cases independently with:
