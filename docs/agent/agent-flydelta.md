@@ -141,11 +141,50 @@ not a HELPED result and not training evidence. A separate host execution and
 verification step is required before a failed selection, repaired selection or
 counterfactual can enter FlyDelta.
 
+That host-execution bridge is now covered by a Cozo-backed companion smoke.
+It creates the same bounded `dataset://local/sales` fixture, registers the
+ordinary native `analysis` data adapters, and executes the canonical plan
+through the real tool registry. The optional model companion then performs:
+
+```text
+natural model selection
+  -> host parses, validates and executes it
+  -> host-certified malformed, unknown or invalid tool call
+  -> model retry with the host diagnostic and compact contract
+  -> host executes the repaired call
+  -> learning transactions + FlyDelta capture delta
+```
+
+An executable but different read-only tool remains `UNKNOWN` in this first
+fixture: a query may sometimes be an acceptable alternative to an aggregate,
+and this suite has no semantic-equivalence oracle. Such a result creates no
+failure transaction and no positive FlyDelta evidence. Only a host-rejected
+original call followed by a host-executed canonical repair is recorded as
+`tool_use/dataset/structured_call_repair`. Six compatible natural pairs are
+the existing threshold for aggregate direction candidates; the bridge itself
+does not activate a `.flyd` artifact.
+
 Run the always-safe contract check with:
 
 ```text
 llama-agent-flydelta-dataset-question-contract-smoke \
   docs/examples/agent-flydelta-dataset-question-suite.json
+```
+
+Run the matching host-only repair contract with:
+
+```text
+llama-agent-flydelta-dataset-question-repair-contract-smoke \
+  docs/examples/agent-flydelta-dataset-question-suite.json
+```
+
+Run the optional model repair bridge with:
+
+```text
+LLAMA_AGENT_MODEL=/path/to/model.gguf \
+LLAMA_AGENT_THREADS=3 \
+llama-agent-flydelta-dataset-question-repair-model-smoke \
+  --suite docs/examples/agent-flydelta-dataset-question-suite-incremental-v2.json
 ```
 
 Validate the incremental cases independently with:
