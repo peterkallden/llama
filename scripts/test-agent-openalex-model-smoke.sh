@@ -9,11 +9,7 @@ model="${LLAMA_AGENT_MODEL:-${HOME}/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf}"
 embedding_model="${LLAMA_AGENT_EMBEDDING_MODEL:-}"
 spec="${LLAMA_AGENT_OPENALEX_SPEC:-${repo_root}/docs/examples/openalex-works-openapi.json}"
 work_dir=$(agent_smoke_prepare_workdir openalex-model)
-if [[ "$build_dir" = /* ]]; then
-    agent_bin="${build_dir}/bin/llama-agent"
-else
-    agent_bin="${repo_root}/${build_dir}/bin/llama-agent"
-fi
+agent_bin=$(agent_smoke_binary "$build_dir" llama-agent)
 
 agent_smoke_require_file "$model" "chat model"
 agent_smoke_require_file "$spec" "OpenAlex OpenAPI smoke contract"

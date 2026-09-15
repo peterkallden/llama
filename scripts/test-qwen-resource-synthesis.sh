@@ -3,7 +3,7 @@ set -euo pipefail
 source "$(dirname "$0")/agent-model-smoke-common.sh"
 repo_root=$(agent_smoke_repo_root); build_dir=$(agent_smoke_build_dir); model=$(agent_smoke_model)
 fixture="${LLAMA_AGENT_RESOURCE_SYNTHESIS_FIXTURE:-${repo_root}/tests/data/agent-resource-synthesis.txt}"
-work_dir=$(agent_smoke_prepare_workdir qwen-resource-synthesis); agent_bin="${repo_root}/${build_dir}/bin/llama-agent"
+work_dir=$(agent_smoke_prepare_workdir qwen-resource-synthesis); agent_bin=$(agent_smoke_binary "$build_dir" llama-agent)
 agent_smoke_require_file "$model" "chat model"; agent_smoke_require_file "$fixture" "resource synthesis fixture"; agent_smoke_require_executable "$agent_bin" "llama-agent"
 agent_smoke_build_if_requested
 mapfile -t paragraphs < <(perl -0pe 's/\r\n/\n/g' "$fixture" | awk -v RS='\n\n' '{ gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print }')

@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname "$0")/agent-model-smoke-common.sh"
 repo_root=$(agent_smoke_repo_root); build_dir=$(agent_smoke_build_dir); model=$(agent_smoke_model)
-work_dir=$(agent_smoke_prepare_workdir server-context); agent_bin="${repo_root}/${build_dir}/bin/llama-agent"
+work_dir=$(agent_smoke_prepare_workdir server-context); agent_bin=$(agent_smoke_binary "$build_dir" llama-agent)
 resident_bin="${repo_root}/${build_dir}/bin/llama-agent-resident-smoke"
 agent_smoke_require_file "$model" "chat model"; agent_smoke_require_executable "$resident_bin" "resident smoke executable"
 agent_smoke_build_if_requested

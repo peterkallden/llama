@@ -4,6 +4,15 @@ set -euo pipefail
 agent_smoke_repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 agent_smoke_build_dir() { printf '%s\n' "${LLAMA_AGENT_BUILD_DIR:-build-agent-packaging}"; }
 agent_smoke_model() { printf '%s\n' "${LLAMA_AGENT_MODEL:-${HOME}/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf}"; }
+agent_smoke_binary() {
+    local build_dir="$1"
+    local binary_name="$2"
+    if [[ "$build_dir" = /* ]]; then
+        printf '%s/bin/%s\n' "$build_dir" "$binary_name"
+    else
+        printf '%s/%s/bin/%s\n' "$(agent_smoke_repo_root)" "$build_dir" "$binary_name"
+    fi
+}
 agent_smoke_require_file() {
     if [[ ! -f "$1" ]]; then echo "model smoke not-run: $2 not found: $1" >&2; exit 77; fi
 }

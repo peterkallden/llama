@@ -3,7 +3,7 @@ set -euo pipefail
 source "$(dirname "$0")/agent-model-smoke-common.sh"
 repo_root=$(agent_smoke_repo_root); build_dir=$(agent_smoke_build_dir); model=$(agent_smoke_model)
 embedding_model="${LLAMA_AGENT_EMBEDDING_MODEL:-${HOME}/models/nomic-embed-text-v1.5.Q4_K_M.gguf}"
-work_dir=$(agent_smoke_prepare_workdir qwen-nomic-data); agent_bin="${repo_root}/${build_dir}/bin/llama-agent"; seed_bin="${repo_root}/${build_dir}/bin/llama-agent-data-store-cozo-seed"
+work_dir=$(agent_smoke_prepare_workdir qwen-nomic-data); agent_bin=$(agent_smoke_binary "$build_dir" llama-agent); seed_bin=$(agent_smoke_binary "$build_dir" llama-agent-data-store-cozo-seed)
 agent_smoke_require_file "$model" "chat model"; agent_smoke_require_file "$embedding_model" "embedding model"; agent_smoke_require_executable "$agent_bin" "llama-agent"; agent_smoke_require_executable "$seed_bin" "Cozo seed executable"
 agent_smoke_build_if_requested
 orders="$work_dir/orders.csv"; customers="$work_dir/customers.csv"; data_db="$work_dir/data.cozo"

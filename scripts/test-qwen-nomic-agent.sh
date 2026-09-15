@@ -3,7 +3,7 @@ set -euo pipefail
 source "$(dirname "$0")/agent-model-smoke-common.sh"
 repo_root=$(agent_smoke_repo_root); build_dir=$(agent_smoke_build_dir); model=$(agent_smoke_model)
 embedding_model="${LLAMA_AGENT_EMBEDDING_MODEL:-${HOME}/models/nomic-embed-text-v1.5.Q4_K_M.gguf}"
-work_dir=$(agent_smoke_prepare_workdir qwen-nomic-agent); agent_bin="${repo_root}/${build_dir}/bin/llama-agent"
+work_dir=$(agent_smoke_prepare_workdir qwen-nomic-agent); agent_bin=$(agent_smoke_binary "$build_dir" llama-agent)
 agent_smoke_require_file "$model" "chat model"; agent_smoke_require_file "$embedding_model" "embedding model"; agent_smoke_require_executable "$agent_bin" "llama-agent"
 agent_smoke_build_if_requested
 log_path="${work_dir}/qwen-nomic-agent.log"
