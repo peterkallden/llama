@@ -704,6 +704,48 @@ choose what is correct: the host must produce a valid capture manifest and
 counterfactual report first. The objective remains minimum intervention,
 repeatable verified lift and minimum collateral change.
 
+### 4D. CPU direction search — implemented
+
+`flydelta-direction-search.*` is the inexpensive `WHAT` search between
+host-certified capture materialization and model-side counterfactual
+evaluation. It accepts a bounded set of aligned behavior deltas for one
+behavior, model profile, capture layout and layer. Every sample must carry
+`HELPED` intervention credit and be learning-eligible; `UNKNOWN` or
+uncertified material is rejected rather than silently becoming training data.
+
+The component emits up to three comparable candidates:
+
+```text
+raw_repair
+    first normalized delta; control candidate
+
+normalized_trimmed_mean
+    normalized deltas, low-centrality samples removed, then mean-normalized
+
+diagonal_whitened_mean
+    the retained mean weighted by inverse per-dimension variance plus ridge
+```
+
+Centrality is measured by each sample's median pairwise cosine. A configurable
+alignment threshold and trim fraction make the aggregate robust to one or a
+few anomalous repairs. The diagonal-whitened candidate is deliberately not a
+full covariance LDA implementation: it is deterministic, bounded and cheap
+enough for the host, while avoiding an unstable dense matrix for small sample
+sets.
+
+This is a candidate builder, not a verifier or learner. It does not run model
+inference, inspect tool choice, create `HELPED`, update `DeltaMemory`, write a
+sideband or activate an overlay. The next host step must evaluate the emitted
+directions with the normal bounded scale/layer search. Only a host-verified
+baseline-fail/candidate-pass result can produce intervention credit.
+
+The raw candidate remains important as a control. A direction that looks good
+under CPU alignment but does not improve the host-verified tool-choice result
+must remain an experiment result, not learning evidence. The same contract can
+later be used for `reflection_alternative`, `planning_revision` or
+`research_alternative`; the behavior key and evidence source keep those
+domains separated.
+
 ### 4H. Verified candidate-to-delta materialization — implemented
 
 `flydelta-capture.*` now has a reference-only factory from a qualified,
