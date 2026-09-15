@@ -1090,19 +1090,23 @@ and measures the propagated effect at L3.
 
 After layer search has identified a narrow candidate, the host can run a
 separate trust-region scale search. The current model smoke uses L2 and the
-geometric sequence `0.02, 0.04, 0.08, 0.16`, bounded by cosine, leakage and
-shift-norm checks. If an arm becomes host-verified `HELPED`, one midpoint is
+geometric sequence `0.02, 0.04, 0.08, 0.16, 0.32, 0.64`, bounded by cosine,
+leakage and shift-norm checks. If an arm becomes host-verified `HELPED`, one midpoint is
 tested between that arm and the last smaller attempted scale; this is a small
 bracket refinement intended to find a sufficient minimum without turning the
 smoke into an unbounded strength search. Geometry can stop escalation, but it
 cannot create `HELPED`.
 
-In the latest local Qwen run all four L2 scale arms remained `UNKNOWN`. The
-measured L3 progress increased from approximately `0.0032` to `0.0254`, while
-leakage remained below `0.06` and shift-norm below `0.09`. The search therefore
-completed all four geometric arms without refinement or selection. This is a
-useful result: the L2 signal remains aligned and unsaturated, but the overlay
-has not yet crossed the model's tool-choice boundary.
+In the latest local Qwen run all six L2 scale arms (`0.02, 0.04, 0.08, 0.16,
+0.32, 0.64`) remained `UNKNOWN`. The scale phase took `38.2 s` for seven model
+calls including its baseline; the complete smoke took `87.6 s` and 16 model
+calls. Progress increased approximately linearly from `0.0032` to `0.1017`,
+leakage from `0.0071` to `0.2281`, and the measured downstream shift norm from
+`0.0102` to `0.3274`. All arms stayed inside the trust region, so the search
+ended at the configured geometric-trial bound (the next doubled scale would
+be `1.28`, above the absolute scale limit of `1.0`), not because of saturation
+or an unsafe geometry. No midpoint or selection was produced. It still cannot
+cross the model's tool-choice boundary without a host-verified `HELPED` result.
 
 ### 4J. Source-neutral behavior transitions — implemented
 

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -510,7 +511,8 @@ int main(int argc, char ** argv) {
                 return 1;
             }
             const auto prepare_layer_activation = [&](const common_flydelta_layer_candidate & candidate,
-                    common_flydelta_activation_result & activation) {
+                    common_flydelta_activation_result & activation,
+                    float gate_max_scale = 0.25f) {
                 common_flydelta_gate_request gate_request;
                 if (!common_flydelta_gate_request_from_context(
                         recognition, code, true, common_flydelta_candidate_status::approved,
@@ -536,6 +538,7 @@ int main(int argc, char ** argv) {
                 request.gate_request = gate_request;
                 common_flydelta_gate_config gate_config;
                 gate_config.enabled = true;
+                gate_config.max_scale = gate_max_scale;
                 return common_flydelta_prepare_activation(
                     gate_config, request, 64U * 1024U * 1024U, activation, error);
             };
@@ -602,14 +605,16 @@ int main(int argc, char ** argv) {
                 common_flydelta_scale_search_config scale_config;
                 scale_config.initial_scale = 0.02f;
                 scale_config.growth_factor = 2.0f;
-                scale_config.max_scale = 0.32f;
-                scale_config.max_geometric_trials = 4;
+                scale_config.max_scale = 1.0f;
+                scale_config.max_geometric_trials = 6;
                 scale_config.max_refinement_trials = 1;
                 scale_config.min_cosine = 0.3f;
                 scale_config.max_leakage = 1.0f;
                 scale_config.max_shift_norm = 1.0f;
                 std::vector<common_flydelta_scale_trial> scale_trials;
                 common_flydelta_scale_selection scale_selection;
+                std::shared_ptr<const common_flydelta_hidden_state_capture> scale_baseline_capture;
+                const auto scale_search_started = std::chrono::steady_clock::now();
                 if (!common_flydelta_run_scale_search(
                         experiment_fixture, scale_config,
                         [&](const common_flydelta_experiment_fixture &, float scale,
@@ -618,6 +623,7 @@ int main(int argc, char ** argv) {
                                 common_flydelta_scale_geometry & geometry,
                                 std::string & runner_error) {
                             common_agent_generation_result result;
+                            const auto generation_started = std::chrono::steady_clock::now();
                             std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
                             common_flydelta_layer_candidate candidate;
                             if (apply_overlay) {
@@ -628,7 +634,7 @@ int main(int argc, char ** argv) {
                                 candidate.per_layer_scale = scale;
                                 candidate.source = common_flydelta_layer_search_candidate_source::diagnostic_singleton;
                                 common_flydelta_activation_result activation;
-                                if (!prepare_layer_activation(candidate, activation)) {
+                                if (!prepare_layer_activation(candidate, activation, 1.0f)) {
                                     runner_error = error;
                                     return false;
                                 }
@@ -647,10 +653,13 @@ int main(int argc, char ** argv) {
                             trial.evidence_ref = apply_overlay
                                 ? "evidence:model-repair-l2-scale-search"
                                 : "evidence:model-repair-l2-scale-baseline";
+                            if (!apply_overlay && result.flydelta_capture) {
+                                scale_baseline_capture = result.flydelta_capture;
+                            }
                             if (apply_overlay && result.flydelta_capture) {
                                 common_flydelta_representation_diagnostics values;
                                 if (!common_flydelta_representation_diagnostics_from_captures(
-                                        *baseline_arm_capture, *result.flydelta_capture, *layer2_effect,
+                                        *scale_baseline_capture, *result.flydelta_capture, *layer2_effect,
                                         64U * 1024U * 1024U, values, runner_error)) {
                                     return false;
                                 }
@@ -662,6 +671,8 @@ int main(int argc, char ** argv) {
                             }
                             std::cout << "l2_scale_model_output scale=" << scale
                                       << " overlay=" << (apply_overlay ? "yes" : "no")
+                                      << " elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now() - generation_started).count()
                                       << " output=" << output_preview(result) << '\n';
                             if (!executed && !result.error_message.empty()) runner_error = result.error_message;
                             return executed;
@@ -669,10 +680,13 @@ int main(int argc, char ** argv) {
                     std::cerr << "FlyDelta L2 scale search failed: " << error << '\n';
                     return 1;
                 }
+                const auto scale_search_elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - scale_search_started).count();
                 std::cout << "l2_scale_search_injection_layer=2"
                           << " l2_scale_search_measurement_layer=" << layer2_effect->layer_index << '\n'
                           << "l2_scale_search_trials=" << scale_trials.size()
                           << " l2_scale_search_model_calls=" << (scale_trials.size() + 1)
+                          << " l2_scale_search_elapsed_ms=" << scale_search_elapsed_ms
                           << " l2_scale_search_selected=" << (scale_selection.selected ? "yes" : "no") << '\n';
                 for (const auto & trial : scale_trials) {
                     std::cout << "l2_scale_trial scale=" << trial.scale
