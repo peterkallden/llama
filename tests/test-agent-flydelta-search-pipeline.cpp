@@ -49,6 +49,7 @@ int main() {
                 const common_flydelta_layer_candidate * layer,
                 float scale, bool apply_overlay,
                 common_flydelta_counterfactual_trial & trial,
+                common_flydelta_decision_margin &,
                 common_flydelta_scale_geometry & geometry,
                 std::string &) {
             ++calls;
@@ -120,6 +121,7 @@ int main() {
                 const common_flydelta_layer_candidate * layer,
                 float scale, bool apply_overlay,
                 common_flydelta_counterfactual_trial & trial,
+                common_flydelta_decision_margin & margin,
                 common_flydelta_scale_geometry & geometry,
                 std::string &) {
             ++calls;
@@ -138,6 +140,11 @@ int main() {
             geometry.progress = scale;
             geometry.leakage = 0.05f;
             geometry.shift_norm = scale;
+            margin.available = apply_overlay;
+            margin.positive_total_logprob = scale;
+            margin.negative_total_logprob = 0.0f;
+            margin.positive_token_count = 1;
+            margin.negative_token_count = 1;
             return true;
         }, region_result, error));
     CHECK(calls == 17); // baseline + 2×4 singleton + 2×4 adjacent pairs
@@ -172,6 +179,7 @@ int main() {
                 const common_flydelta_direction_candidate &,
                 const common_flydelta_layer_candidate *, float scale, bool apply_overlay,
                 common_flydelta_counterfactual_trial & trial,
+                common_flydelta_decision_margin &,
                 common_flydelta_scale_geometry & geometry, std::string &) {
             ++calls;
             trial = {};

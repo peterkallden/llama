@@ -163,8 +163,7 @@ bool common_flydelta_run_search_pipeline(
                     }
                     common_flydelta_scale_geometry geometry;
                     const bool ok = runner(current_fixture, input.direction, layer_ptr,
-                        scale, apply_overlay, trial, geometry, runner_error);
-                    margin = {};
+                        scale, apply_overlay, trial, margin, geometry, runner_error);
                     diagnostics = {};
                     diagnostics_available = ok && geometry.available;
                     if (diagnostics_available) {
@@ -222,9 +221,11 @@ bool common_flydelta_run_search_pipeline(
                 common_flydelta_counterfactual_trial & representative,
                 std::string & runner_error) {
                 common_flydelta_scale_geometry representative_geometry;
+                common_flydelta_decision_margin representative_margin;
                 if (layer == nullptr || !apply_overlay) {
                     return runner(current_fixture, input.direction, nullptr, 0.0f, false,
-                        representative, representative_geometry, runner_error);
+                        representative, representative_margin, representative_geometry,
+                        runner_error);
                 }
 
                 common_flydelta_search_pipeline_layer_result nested;
@@ -237,8 +238,9 @@ bool common_flydelta_run_search_pipeline(
                         common_flydelta_counterfactual_trial & trial,
                         common_flydelta_scale_geometry & geometry,
                         std::string & scale_error) {
+                        common_flydelta_decision_margin margin;
                         const bool ok = runner(scale_fixture, input.direction, layer, scale,
-                            scale_apply_overlay, trial, geometry, scale_error);
+                            scale_apply_overlay, trial, margin, geometry, scale_error);
                         if (ok && scale_apply_overlay) counterfactuals.push_back(trial);
                         return ok;
                     };

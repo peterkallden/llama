@@ -88,6 +88,7 @@ using common_flydelta_search_pipeline_runner = std::function<bool(
         float scale,
         bool apply_overlay,
         common_flydelta_counterfactual_trial & trial,
+        common_flydelta_decision_margin & margin,
         common_flydelta_scale_geometry & geometry,
         std::string & error)>;
 
