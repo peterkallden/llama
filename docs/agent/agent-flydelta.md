@@ -670,6 +670,40 @@ explicit lifecycle controller.
 
 #### Incremental aggregation and search depth
 
+Search sophistication follows both evidence depth and observed subspace
+utility. These are separate gates, not one combined score:
+
+```text
+evidence depth  -> which representation/search level is allowed
+observed utility -> whether additional search budget is earned
+```
+
+Evidence depth is established from compatible samples, effective rank,
+alignment, condition number and stability. Utility is observed from the
+region/arm diagnostics: decision-margin movement, safe geometry
+(`cosine`/`progress`/`leakage`/`shift_norm`) and, eventually, host-verified
+outcomes. `UNKNOWN` and `NEUTRAL` may earn search priority when these signals
+are useful, but they never earn learning or promotion authority.
+
+The current implementation is intentionally incremental. Whirlpool already
+uses `safe_to_continue`, `promising` and `search_score` to select a WHERE
+continuation, including a useful UNKNOWN arm. The subsequent
+`evidence_depth`/plan step currently derives Bootstrap/Shallow/Deep from the
+evidence result alone. A future refinement must add utility as an explicit
+escalation gate, with hysteresis so one weak arm does not immediately demote a
+previously justified search level:
+
+```text
+allowed_depth = evidence gate
+next_depth    = utility gate + evidence gate
+```
+
+Thus six nearly collinear samples do not automatically justify Deep, and a
+small independent set does not justify expensive search unless its shallow
+controls show useful margin/geometry. This distinction is a design invariant;
+the current gap is recorded here so the worker seam can be extended without
+changing host authority or lifecycle rules.
+
 The worker now carries an explicit reference-only continuation between the
 adaptive `WHERE` phase and evidence-driven `WHAT` work. Whirlpool may retain
 the safest/highest-scoring `UNKNOWN` region arm; that is a search decision,
