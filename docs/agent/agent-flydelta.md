@@ -1677,6 +1677,30 @@ through the existing experimental lifecycle helper, including UNKNOWN and
 NEUTRAL results with lineage. No arm is admitted to active state merely
 because its margin or geometry improved.
 
+The two-phase deep-search helper uses separate callbacks for these phases:
+
+```text
+diagnostic callback
+    -> bounded coefficient arms
+    -> margin/geometric ranking
+    -> top-K selection
+
+full-generation callback
+    -> fresh baseline
+    -> fresh generation of top-K arms
+    -> host counterfactual classification
+```
+
+`common_flydelta_append_deep_search_lifecycle()` records both phases through
+the same experimental lifecycle store. Full-generation records point back to
+their diagnostic parent through `parent_trial_index` and use the mutation kind
+`full_generation_top_arm`. `HELPED` is therefore possible only after the
+second callback and host comparison; margin, cosine, progress and leakage
+remain search diagnostics. The deep helper intentionally stays an explicit
+continuation after region search because it requires multiple compatible WHAT
+directions for one layer; it is not silently invoked when only one direction
+exists.
+
 ### 4K. Source-neutral behavior transitions — implemented
 
 The shared evidence contract and FlyDelta job envelope are source-neutral.
