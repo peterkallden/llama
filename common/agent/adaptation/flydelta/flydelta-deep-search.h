@@ -13,6 +13,7 @@ struct common_flydelta_deep_search_config {
     int schema_version = 1;
     size_t max_rank = 2;
     size_t max_directions = 4;
+    size_t full_generation_top_k = 3;
     common_flydelta_coefficient_search_config coefficients;
 };
 
@@ -54,7 +55,7 @@ bool common_flydelta_run_deep_search(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_deep_search_config & config,
         const std::vector<common_flydelta_deep_search_direction> & directions,
-        const common_flydelta_coefficient_search_runner & runner,
+        const common_flydelta_coefficient_search_runner & diagnostic_runner,
+        const common_flydelta_coefficient_search_runner & full_generation_runner,
         common_flydelta_deep_search_result & result,
         std::string & error);
-

@@ -27,6 +27,7 @@ int main() {
     common_flydelta_deep_search_config config;
     config.max_rank = 2;
     config.max_directions = 3;
+    config.full_generation_top_k = 2;
     config.coefficients.max_candidates = 8;
     config.coefficients.step = 0.1f;
     config.coefficients.max_l2_norm = 0.32f;
@@ -76,12 +77,31 @@ int main() {
             geometry.leakage = 0.05f;
             geometry.shift_norm = std::fabs(geometry.progress);
             return true;
+        },
+        [&](const common_flydelta_experiment_fixture &,
+                const common_flydelta_low_rank_basis & basis,
+                const std::vector<float> & coefficients, bool apply_overlay,
+                common_flydelta_counterfactual_trial & trial,
+                common_flydelta_decision_margin & margin,
+                common_flydelta_representation_diagnostics & geometry,
+                bool & geometry_available, std::string &) {
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.overlay_applied = apply_overlay;
+            trial.evidence_ref = "evidence:deep-search-full";
+            trial.passed = apply_overlay && coefficients.size() == 2 && coefficients[0] > 0.0f;
+            trial.quality = trial.passed ? 1.0f : 0.0f;
+            margin = {};
+            geometry = {};
+            geometry_available = false;
+            return true;
         }, result, error));
     CHECK(result.layer_index == 2);
     CHECK(result.basis.vectors.size() == 2);
-    CHECK(result.coefficient_trials.size() == 4); // +/- coordinate stencil; zero is baseline
+    CHECK(result.coefficient_trials.size() == 6); // four diagnostic + two full top arms
     CHECK(result.coefficient_selection.selected);
-    CHECK(calls == 5); // baseline plus four bounded coefficient arms
+    CHECK(calls == 5); // diagnostic baseline plus four bounded coefficient arms
     CHECK(result.coefficient_trials[result.coefficient_selection.trial_index].outcome ==
         common_flydelta_counterfactual_outcome::helped);
     return 0;
