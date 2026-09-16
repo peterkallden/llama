@@ -1586,11 +1586,11 @@ The bounded region search is now the default strategy of
 `common_flydelta_run_search_pipeline()`. The legacy layer-plan composition is
 still available only when `use_intervention_region_search=false`; it is kept
 as a migration/fallback seam, not as a second normal algorithm. The model
-smoke's `--region-scan` flag remains useful for explicitly exercising the
-standalone helper. Neither path updates `DeltaMemory` or promotes `UNKNOWN`
-or `NEUTRAL`. The typed pipeline runner now transports the optional
-teacher-forced decision margin alongside geometry, so a model adapter can rank
-arms without changing the host-verification rule.
+smoke's `--region-scan` flag now exercises this same default pipeline, rather
+than a parallel region implementation. Neither path updates `DeltaMemory` or
+promotes `UNKNOWN` or `NEUTRAL`. The typed pipeline runner transports the
+optional teacher-forced decision margin alongside geometry, so a model adapter
+can rank arms without changing the host-verification rule.
 
 In the latest local Qwen run all six L2 scale arms (`0.02, 0.04, 0.08, 0.16,
 0.32, 0.64`) remained `UNKNOWN`. The scale phase took `38.2 s` for seven model

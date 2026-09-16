@@ -9,6 +9,7 @@
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-scale-search.h"
+#include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-training.h"
 #include "agent/adaptation/flydelta/flydelta.h"
 #include "tools/agent/cli/agent-cli-generation.h"
@@ -553,44 +554,71 @@ int main(int argc, char ** argv) {
     }
 
     if (value.region_scan && !selected.selected) {
-        common_flydelta_intervention_region_search_config region_config;
-        region_config.available_layers = {1, 2, 3, 4};
-        region_config.scales = {0.02f, 0.04f, 0.08f, 0.16f};
-        region_config.max_singleton_layers = 4;
-        region_config.max_neighborhoods = 4;
-        region_config.max_trials = 32;
-        region_config.max_stalled_scales = 2;
-        region_config.min_cosine = 0.3f;
-        region_config.max_leakage = 1.0f;
-        region_config.max_shift_norm = 1.0f;
-        std::vector<common_flydelta_intervention_region_trial> region_trials;
-        common_flydelta_intervention_region_selection region_selection;
+        const auto anchor = std::find_if(basis.directions().begin(), basis.directions().end(),
+            [](const auto & direction) { return direction.layer_index == 2; });
+        if (anchor == basis.directions().end()) {
+            std::cerr << "FlyDelta region pipeline has no layer-2 direction\n";
+            return 1;
+        }
+
+        common_flydelta_search_pipeline_config pipeline_config;
+        pipeline_config.dimension = model_n_embd;
+        pipeline_config.max_directions = 1;
+        pipeline_config.scale.initial_scale = 0.02f;
+        pipeline_config.scale.growth_factor = 2.0f;
+        pipeline_config.scale.max_scale = 0.16f;
+        pipeline_config.scale.max_geometric_trials = 4;
+        pipeline_config.scale.max_refinement_trials = 0;
+        pipeline_config.scale.min_cosine = 0.3f;
+        pipeline_config.scale.max_leakage = 1.0f;
+        pipeline_config.scale.max_shift_norm = 1.0f;
+        pipeline_config.region_max_singleton_layers = 4;
+        pipeline_config.region_max_neighborhoods = 4;
+        pipeline_config.region_max_trials = 32;
+        pipeline_config.region_max_stalled_scales = 2;
+
+        common_flydelta_search_pipeline_direction pipeline_direction;
+        pipeline_direction.direction = {
+            1, common_flydelta_direction_kind::raw_repair, anchor->layer_index,
+            anchor->values, 1, 1, 1.0f, false};
+        for (const auto & delta : deltas) {
+            if (delta.layer_index > 0 && delta.layer_index <= 4) {
+                pipeline_direction.available_layers.push_back(
+                    static_cast<uint32_t>(delta.layer_index));
+            }
+        }
+        std::sort(pipeline_direction.available_layers.begin(),
+            pipeline_direction.available_layers.end());
+        pipeline_direction.available_layers.erase(std::unique(
+            pipeline_direction.available_layers.begin(),
+            pipeline_direction.available_layers.end()), pipeline_direction.available_layers.end());
+
         std::shared_ptr<const common_flydelta_hidden_state_capture> region_baseline_capture;
         const auto region_started = std::chrono::steady_clock::now();
-        if (!common_flydelta_run_intervention_region_search(
-                experiment_fixture, region_config,
+        common_flydelta_search_pipeline_result pipeline_result;
+        if (!common_flydelta_run_search_pipeline(
+                experiment_fixture, pipeline_config, {pipeline_direction},
                 [&](const common_flydelta_experiment_fixture &,
-                        const common_flydelta_intervention_region_candidate * candidate,
-                        bool apply_overlay,
+                        const common_flydelta_direction_candidate &,
+                        const common_flydelta_layer_candidate * candidate,
+                        float, bool apply_overlay,
                         common_flydelta_counterfactual_trial & trial,
                         common_flydelta_decision_margin & margin,
-                        common_flydelta_representation_diagnostics & geometry,
-                        bool & geometry_available,
+                        common_flydelta_scale_geometry & geometry,
                         std::string & runner_error) {
                     common_agent_generation_result result;
                     geometry = {};
-                    geometry_available = false;
                     std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
                     if (apply_overlay) {
                         if (!candidate) {
-                            runner_error = "region arm is missing candidate";
+                            runner_error = "region pipeline arm is missing candidate";
                             return false;
                         }
                         common_flydelta_gate_request gate_request;
                         if (!common_flydelta_gate_request_from_context(
                                 recognition, code, true,
-                                common_flydelta_candidate_status::approved,
-                                true, candidate->per_layer_scale, gate_request, runner_error)) {
+                                common_flydelta_candidate_status::approved, true,
+                                candidate->per_layer_scale, gate_request, runner_error)) {
                             return false;
                         }
                         common_flydelta_activation_request request;
@@ -607,7 +635,7 @@ int main(int argc, char ** argv) {
                                     return value.layer_index == static_cast<int32_t>(layer);
                                 });
                             if (direction == basis.directions().end()) {
-                                runner_error = "region arm has no layer-compatible direction";
+                                runner_error = "region pipeline arm has no layer-compatible direction";
                                 return false;
                             }
                             request.directions.push_back(*direction);
@@ -654,13 +682,19 @@ int main(int argc, char ** argv) {
                             region_baseline_capture) {
                         const auto measurement = std::find_if(deltas.begin(), deltas.end(),
                             [&](const auto & delta) {
-                                return delta.layer_index > static_cast<int>(candidate->layer_indices.back());
+                                return delta.layer_index == static_cast<int>(candidate->anchor_layer_index);
                             });
-                        if (measurement != deltas.end() &&
-                                !common_flydelta_representation_diagnostics_from_captures(
+                        if (measurement != deltas.end()) {
+                            common_flydelta_representation_diagnostics diagnostics;
+                            if (!common_flydelta_representation_diagnostics_from_captures(
                                     *region_baseline_capture, *result.flydelta_capture, *measurement,
-                                    64U * 1024U * 1024U, geometry, runner_error)) return false;
-                        if (measurement != deltas.end()) geometry_available = true;
+                                    64U * 1024U * 1024U, diagnostics, runner_error)) return false;
+                            geometry.available = true;
+                            geometry.cosine = diagnostics.cosine;
+                            geometry.progress = diagnostics.progress;
+                            geometry.leakage = diagnostics.leakage;
+                            geometry.shift_norm = diagnostics.shift_norm;
+                        }
                     }
                     std::cout << "region_model_output layers=";
                     if (candidate) {
@@ -675,11 +709,18 @@ int main(int argc, char ** argv) {
                               << " output=" << output_preview(result) << '\n';
                     if (!executed && !result.error_message.empty()) runner_error = result.error_message;
                     return executed;
-                }, region_trials, region_selection, error)) {
-            std::cerr << "FlyDelta intervention region search failed: " << error << '\n';
+                }, pipeline_result, error)) {
+            std::cerr << "FlyDelta search pipeline failed: " << error << '\n';
             return 1;
         }
+        if (pipeline_result.directions.empty()) {
+            std::cerr << "FlyDelta search pipeline produced no direction result\n";
+            return 1;
+        }
+        const auto & region_trials = pipeline_result.directions.front().region_trials;
+        const auto & region_selection = pipeline_result.directions.front().region_selection;
         std::cout << "intervention_region_search=completed"
+                  << " pipeline=default"
                   << " trials=" << region_trials.size()
                   << " model_calls=" << (region_trials.size() + 1)
                   << " elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
