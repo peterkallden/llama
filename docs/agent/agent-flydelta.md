@@ -576,9 +576,67 @@ The queue/evaluator boundary is also connected by
 `common_flydelta_experiment_worker_run_evaluator_once()`. It claims at most
 one reference-only job, invokes the common evaluator, and copies its typed
 counterfactual, direction, basis, search-pipeline or DeltaMemory result into
-the worker result. The bridge does not resolve paths, create model contexts
-or make a promotion decision; those remain owned by the evaluator callbacks
-and the explicit lifecycle controller.
+the worker result. Direction results additionally transport the bounded
+aggregation snapshot, evidence-depth assessment and the corresponding search
+budget. The bridge does not resolve paths, create model contexts or make a
+promotion decision; those remain owned by the evaluator callbacks and the
+explicit lifecycle controller.
+
+#### Incremental aggregation and search depth
+
+The direction worker is incremental at the evidence boundary, not a second
+durable corpus. A new host-certified relation appends its reference to the
+normal learning/evidence source. A subsequent direction job may contain that
+new reference together with the previously retained references. The evaluator
+ingests them one at a time through `common_flydelta_incremental_aggregation`
+and returns a bounded snapshot containing counts, retained sample IDs, a
+running mean and variance. The snapshot is derived worker output; the
+append-only learning ledger and corpus remain the source of truth. Rebuilding
+the snapshot is therefore safe and idempotent, and the worker does not need to
+hold the full corpus or all activation tensors in memory.
+
+Samples are first checked against one identity: source, behavior key, scope,
+model/profile, tokenizer/template, execution context, capture layout and
+layer. Incompatible or `HARMED` samples are rejected from the aggregate.
+`UNKNOWN` and `NEUTRAL` samples remain valid experimental material, but they
+cannot become positive learning or promotion evidence merely by being
+aggregated. Retention is bounded by `aggregation_max_retained_samples`; the
+configured bound must still allow the deep threshold to be reached.
+
+Search depth is assessed from compatible sample count and geometry before
+model-side search is expanded. Sample count alone is insufficient: effective
+rank, alignment stability and condition bounds prevent several near-duplicate
+samples from pretending to be a multidimensional basis.
+
+| Depth | Gate | Model/search budget | Diagnostic role |
+| --- | --- | --- | --- |
+| Bootstrap | one compatible sample or effective rank about one | up to 4 region arms, no coefficient search, top 1 full arm | run the smallest model experiment and collect cosine, progress, leakage and shift norm |
+| Shallow | at least 2 compatible samples and effective rank at least 2 | up to 8 region arms, up to 4 coefficient proposals, top 1 full arm | compare a small rank-2 basis and cheap margin/geometry controls |
+| Deep | at least 6 compatible samples, effective rank at least 2, stable geometry and valid condition bound | up to 32 region arms, up to 16 coefficient proposals, top 3 full arms; TFO-lite allowed | run aggregate WHAT builders and coefficient search |
+
+The depth result chooses a budget; it does not itself run a model or promote a
+candidate. Bootstrap therefore does perform diagnostics when its small model
+arms run, but those diagnostics are only search signals. The same rule holds
+at every depth: cosine, progress, leakage, shift norm and decision margin may
+rank or refine the next experiment, while only a host-verified baseline-fail /
+candidate-pass outcome can create `HELPED` evidence.
+
+This gives the worker a single evolving pipeline rather than three separate
+algorithms:
+
+```text
+new evidence reference
+  -> bounded re-aggregation
+  -> Bootstrap | Shallow | Deep budget
+  -> shallow model/geometry diagnostics
+  -> optional deeper arms when evidence supports them
+  -> host verification and experimental retention
+```
+
+The worker still processes one queue job per invocation. Spreading jobs over
+time is intentional: each turn pays only for evidence collection, while the
+worker performs the bounded re-aggregation and any model experiments later.
+No active sideband is mutated while this happens.
 
 ### Verified repair materialization — implemented adapters
 
