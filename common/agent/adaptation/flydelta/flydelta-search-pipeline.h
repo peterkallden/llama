@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-scale-search.h"
+#include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 
 #include <cstddef>
@@ -20,6 +21,14 @@ struct common_flydelta_search_pipeline_config {
     size_t max_directions = 8;
     common_flydelta_layer_search_config layer;
     common_flydelta_scale_search_config scale;
+    // The region scan is the normal bounded WHERE x HOW MUCH phase. The
+    // legacy layer planner remains available as an explicit fallback while
+    // callers migrate their pipeline configuration.
+    bool use_intervention_region_search = true;
+    size_t region_max_singleton_layers = 4;
+    size_t region_max_neighborhoods = 4;
+    size_t region_max_trials = 32;
+    size_t region_max_stalled_scales = 2;
 };
 
 struct common_flydelta_search_pipeline_direction {
@@ -41,12 +50,16 @@ struct common_flydelta_search_pipeline_direction_result {
     std::vector<common_flydelta_layer_search_trial> layer_trials;
     std::vector<common_flydelta_search_pipeline_layer_result> layer_results;
     common_flydelta_layer_search_selection layer_selection;
+    std::vector<common_flydelta_intervention_region_trial> region_trials;
+    common_flydelta_intervention_region_selection region_selection;
 };
 
 struct common_flydelta_search_pipeline_selection {
     bool selected = false;
+    bool intervention_region = false;
     size_t direction_index = 0;
     size_t layer_result_index = 0;
+    size_t region_trial_index = 0;
     float scale = 0.0f;
     float score = 0.0f;
 };

@@ -79,6 +79,33 @@ bool margin_promising(const common_flydelta_decision_margin & baseline,
 
 } // namespace
 
+bool common_flydelta_intervention_region_candidate_validate(
+        const common_flydelta_intervention_region_candidate & candidate,
+        std::string & error) {
+    return candidate_validate(candidate, error);
+}
+
+bool common_flydelta_intervention_region_trial_validate(
+        const common_flydelta_intervention_region_trial & trial,
+        std::string & error) {
+    error.clear();
+    if (!candidate_validate(trial.candidate, error) ||
+            !valid_outcome(trial.outcome) || !std::isfinite(trial.quality_delta) ||
+            !common_flydelta_decision_margin_validate(trial.margin, error)) {
+        if (error.empty()) error = "FlyDelta intervention region trial is invalid";
+        return false;
+    }
+    if (trial.geometry_available &&
+            !common_flydelta_representation_diagnostics_validate(trial.geometry, error)) {
+        return false;
+    }
+    if (trial.evidence_ref.size() > 512) {
+        error = "FlyDelta intervention region trial evidence reference is invalid";
+        return false;
+    }
+    return true;
+}
+
 bool common_flydelta_intervention_region_search_config_validate(
         const common_flydelta_intervention_region_search_config & config,
         std::string & error) {
@@ -151,7 +178,8 @@ bool common_flydelta_run_intervention_region_search(
         common_flydelta_decision_margin margin;
         common_flydelta_representation_diagnostics geometry;
         bool geometry_available = false;
-        if (!runner(fixture, &candidate, apply_overlay, counterfactual, margin, geometry,
+        if (!candidate_validate(candidate, error) ||
+                !runner(fixture, &candidate, apply_overlay, counterfactual, margin, geometry,
                     geometry_available, error) ||
                 !common_flydelta_counterfactual_trial_validate(counterfactual, error) ||
                 !common_flydelta_decision_margin_validate(margin, error)) {

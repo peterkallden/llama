@@ -25,6 +25,7 @@ int main() {
     config.scale.max_scale = 0.16f;
     config.scale.max_geometric_trials = 4;
     config.scale.max_refinement_trials = 1;
+    config.use_intervention_region_search = false;
 
     common_flydelta_search_pipeline_direction input;
     input.direction.layer_index = 2;
@@ -102,6 +103,63 @@ int main() {
     CHECK(records.front().kind == common_learning_lifecycle_kind::flydelta_result);
     CHECK(records.front().payload_json.find("direction-layer-scale") != std::string::npos);
     CHECK(records.front().payload_json.find("artifact_status") != std::string::npos);
+
+    // The normal pipeline path is the bounded layer x scale region search.
+    // It retains all executed arms and still selects only host-verified HELPED.
+    auto region_config = config;
+    region_config.use_intervention_region_search = true;
+    region_config.region_max_singleton_layers = 2;
+    region_config.region_max_neighborhoods = 2;
+    region_config.region_max_trials = 32;
+    common_flydelta_search_pipeline_result region_result;
+    calls = 0;
+    CHECK(common_flydelta_run_search_pipeline(
+        make_fixture(), region_config, {input},
+        [&](const common_flydelta_experiment_fixture &,
+                const common_flydelta_direction_candidate &,
+                const common_flydelta_layer_candidate * layer,
+                float scale, bool apply_overlay,
+                common_flydelta_counterfactual_trial & trial,
+                common_flydelta_scale_geometry & geometry,
+                std::string &) {
+            ++calls;
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.overlay_applied = apply_overlay;
+            trial.evidence_ref = "evidence:search-pipeline-region";
+            const bool pair = layer != nullptr && layer->layer_indices ==
+                std::vector<uint32_t>{2, 3};
+            trial.passed = apply_overlay && pair && scale >= 0.08f;
+            trial.quality = trial.passed ? 1.0f : 0.0f;
+            geometry = {};
+            geometry.available = apply_overlay;
+            geometry.cosine = 0.85f;
+            geometry.progress = scale;
+            geometry.leakage = 0.05f;
+            geometry.shift_norm = scale;
+            return true;
+        }, region_result, error));
+    CHECK(calls == 17); // baseline + 2×4 singleton + 2×4 adjacent pairs
+    CHECK(region_result.directions.size() == 1);
+    CHECK(region_result.directions.front().layer_results.empty());
+    CHECK(region_result.directions.front().region_trials.size() == 16);
+    CHECK(region_result.directions.front().region_selection.selected);
+    CHECK(region_result.selection.selected && region_result.selection.intervention_region);
+    CHECK(region_result.selection.region_trial_index ==
+        region_result.directions.front().region_selection.trial_index);
+    CHECK(region_result.directions.front().region_trials[
+        region_result.selection.region_trial_index].candidate.layer_indices ==
+        std::vector<uint32_t>({2, 3}));
+
+    common_learning_in_memory_lifecycle_store region_lifecycle;
+    CHECK(common_flydelta_append_search_pipeline_lifecycle(
+        region_lifecycle, lifecycle_context, make_fixture(), region_result,
+        "flydelta://sideband/search-pipeline-region", error));
+    auto region_records = region_lifecycle.list(error);
+    CHECK(error.empty() && region_records.size() == 16);
+    CHECK(region_records.front().payload_json.find("direction-layer-scale-region") !=
+        std::string::npos);
 
     // A diagnostic-only direction still produces a bounded plan and retains
     // UNKNOWN/NEUTRAL scale trials, but cannot populate the HELPED selection.

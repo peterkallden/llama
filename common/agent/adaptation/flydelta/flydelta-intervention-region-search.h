@@ -38,6 +38,10 @@ struct common_flydelta_intervention_region_candidate {
         common_flydelta_layer_search_candidate_source::diagnostic_singleton;
 };
 
+bool common_flydelta_intervention_region_candidate_validate(
+        const common_flydelta_intervention_region_candidate & candidate,
+        std::string & error);
+
 struct common_flydelta_intervention_region_trial {
     common_flydelta_intervention_region_candidate candidate;
     common_flydelta_counterfactual_outcome outcome =
@@ -52,6 +56,10 @@ struct common_flydelta_intervention_region_trial {
     bool safe_to_continue = false;
     std::string evidence_ref;
 };
+
+bool common_flydelta_intervention_region_trial_validate(
+        const common_flydelta_intervention_region_trial & trial,
+        std::string & error);
 
 struct common_flydelta_intervention_region_selection {
     bool selected = false;

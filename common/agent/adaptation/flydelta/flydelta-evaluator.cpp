@@ -35,11 +35,21 @@ bool validate_search_pipeline_result(
                 if (!common_flydelta_scale_trial_validate(trial, error)) return false;
             }
         }
+        for (const auto & trial : direction.region_trials) {
+            if (!common_flydelta_intervention_region_trial_validate(trial, error)) return false;
+        }
+        if (direction.region_selection.selected &&
+                direction.region_selection.trial_index >= direction.region_trials.size()) {
+            error = "FlyDelta search pipeline selected region trial is out of bounds";
+            return false;
+        }
     }
     if (result.selection.selected &&
             (result.selection.direction_index >= result.directions.size() ||
-             result.selection.layer_result_index >= result.directions[
-                 result.selection.direction_index].layer_results.size())) {
+             (result.selection.intervention_region && result.selection.region_trial_index >=
+                 result.directions[result.selection.direction_index].region_trials.size()) ||
+             (!result.selection.intervention_region && result.selection.layer_result_index >=
+                 result.directions[result.selection.direction_index].layer_results.size()))) {
         error = "FlyDelta search pipeline selection is out of bounds";
         return false;
     }
