@@ -682,7 +682,12 @@ int main(int argc, char ** argv) {
                             region_baseline_capture) {
                         const auto measurement = std::find_if(deltas.begin(), deltas.end(),
                             [&](const auto & delta) {
-                                return delta.layer_index == static_cast<int>(candidate->anchor_layer_index);
+                                // layer-input captures are taken before the
+                                // candidate layer's own injection. Measure
+                                // the first captured downstream layer so a
+                                // valid overlay is not reported as zero shift.
+                                return delta.layer_index > static_cast<int>(
+                                    candidate->layer_indices.back());
                             });
                         if (measurement != deltas.end()) {
                             common_flydelta_representation_diagnostics diagnostics;
