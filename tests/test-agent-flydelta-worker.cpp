@@ -66,6 +66,21 @@ static common_flydelta_direction_candidate direction_candidate() {
     return value;
 }
 
+static common_flydelta_behavior_delta behavior_delta() {
+    common_flydelta_behavior_delta value;
+    value.id = "flydelta://behavior/worker";
+    value.source = common_adaptation_evidence_source::tool_repair;
+    value.behavior_key = "tool_use/diagnostics/missing-argument";
+    value.capture_manifest_id = "flydelta://capture/worker";
+    value.host_evidence_ref = "evidence://repair/worker";
+    value.model_profile_fingerprint = "sha256:model";
+    value.execution_context_fingerprint = "sha256:execution-context";
+    value.capture_layout_revision = "layout:v1";
+    value.layer_index = 2;
+    value.values = {1.0f, 0.0f};
+    return value;
+}
+
 int main() {
     std::string error;
     const auto root = std::filesystem::temp_directory_path() /
@@ -124,6 +139,16 @@ int main() {
     evaluator_config.pipeline.layer.min_cosine = 0.0f;
     evaluator_config.pipeline.scale.max_geometric_trials = 1;
     evaluator_config.pipeline.region_max_stalled_scales = 1;
+    evaluator_config.direction.dimension = 2;
+    evaluator_config.direction.layer_index = 2;
+    evaluator_config.direction.min_samples = 1;
+    evaluator_config.direction.max_samples = 4;
+    evaluator_config.direction.mode = common_flydelta_direction_search_mode::experimental;
+    evaluator_config.direction.source = common_adaptation_evidence_source::tool_repair;
+    evaluator_config.direction.behavior_key = "tool_use/diagnostics/missing-argument";
+    evaluator_config.direction.model_profile_fingerprint = "sha256:model";
+    evaluator_config.direction.execution_context_fingerprint = "sha256:execution-context";
+    evaluator_config.direction.capture_layout_revision = "layout:v1";
     common_flydelta_evaluator_callbacks evaluator_callbacks;
     evaluator_callbacks.run_counterfactual = [](const auto &, auto &, auto &) { return false; };
     evaluator_callbacks.resolve_behavior_delta = [](const auto &, auto & delta, auto & credit, auto &) {
@@ -169,6 +194,30 @@ int main() {
     CHECK(evaluator_succeeded);
     CHECK(evaluator_report.state == common_flydelta_experiment_queue_state::succeeded);
     CHECK(evaluator_report.report_count == 1);
+
+    evaluator_callbacks = {};
+    evaluator_callbacks.resolve_behavior_delta = [](const auto &, auto & delta, auto & credit, auto &) {
+        delta = behavior_delta();
+        credit.experiment_id = "flydelta://experiment/worker";
+        credit.candidate_id = "flydelta://candidate/worker";
+        credit.fixture_id = "flydelta://fixture/worker";
+        credit.outcome = common_flydelta_counterfactual_outcome::unknown;
+        credit.quality_delta = 0.0f;
+        credit.eligible_for_learning = false;
+        return true;
+    };
+    auto evaluator_direction_job = job("flydelta://job/worker-evaluator-direction");
+    evaluator_direction_job.kind = common_flydelta_experiment_job_kind::direction;
+    evaluator_direction_job.capture_manifest_ids.clear();
+    evaluator_direction_job.behavior_delta_ids = {"flydelta://behavior/worker"};
+    CHECK(common_flydelta_experiment_queue_enqueue(root, evaluator_direction_job, {}, error));
+    CHECK(common_flydelta_experiment_worker_run_evaluator_once(
+        root, {}, evaluator_config, evaluator_callbacks, evaluator_report, error));
+    CHECK(evaluator_report.state == common_flydelta_experiment_queue_state::succeeded);
+    CHECK(evaluator_report.report_count == 3);
+    CHECK(evaluator_report.evidence_depth.depth == common_flydelta_search_depth::bootstrap);
+    CHECK(evaluator_report.evidence_depth.compatible_samples == 1);
+    CHECK(evaluator_report.search_budget.max_region_trials == 4);
     std::filesystem::remove_all(root, ignored);
     return 0;
 }
