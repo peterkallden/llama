@@ -30,6 +30,9 @@ struct common_flydelta_experiment_job {
     std::vector<std::string> capture_manifest_ids;
     std::vector<std::string> behavior_delta_ids;
     std::vector<std::string> training_example_ids;
+    // Reference to a host-persisted BootstrapZoom state. The queue carries
+    // only this opaque reference, never the state payload or activations.
+    std::string bootstrap_zoom_state_ref;
     common_flydelta_alpha_search_config alpha_search;
     float learning_rate = 0.1f;
     float decay = 1.0f;

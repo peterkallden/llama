@@ -249,6 +249,37 @@ bool common_flydelta_bootstrap_zoom_candidate_validate(
     return valid_zoom_candidate(candidate, error);
 }
 
+bool common_flydelta_bootstrap_zoom_state_validate(
+        const common_flydelta_bootstrap_zoom_state & state,
+        std::string & error) {
+    error.clear();
+    if (state.schema_version != 1 || state.state_ref.size() > 512 ||
+            state.behavior_key.empty() || state.behavior_key.size() > 512 ||
+            state.model_profile_fingerprint.empty() ||
+            state.model_profile_fingerprint.size() > 512 ||
+            state.capture_layout_revision.empty() || state.capture_layout_revision.size() > 512 ||
+            !valid_zoom_phase(state.phase) || state.anchor_layer == 0 ||
+            !finite(state.selected_scale) || state.selected_scale <= 0.0f ||
+            state.selected_scale > 1.0f || !finite(state.best_margin_delta) ||
+            !finite(state.best_search_score) || state.extra_model_trials > 10 ||
+            state.next_candidate_index > state.extra_model_trials ||
+            state.local_layers.size() > 3 ||
+            (!state.local_layers.empty() &&
+                (!std::is_sorted(state.local_layers.begin(), state.local_layers.end()) ||
+                 state.local_layers.front() == 0 ||
+                 std::adjacent_find(state.local_layers.begin(), state.local_layers.end()) !=
+                     state.local_layers.end()))) {
+        error = "FlyDelta BootstrapZoom state is invalid";
+        return false;
+    }
+    if (!state.local_layers.empty() && !std::binary_search(
+            state.local_layers.begin(), state.local_layers.end(), state.anchor_layer)) {
+        error = "FlyDelta BootstrapZoom state anchor is not local";
+        return false;
+    }
+    return true;
+}
+
 bool common_flydelta_propose_bootstrap_alpha_zoom(
         uint32_t anchor_layer,
         float base_scale,

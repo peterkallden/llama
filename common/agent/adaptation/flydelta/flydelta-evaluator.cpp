@@ -150,13 +150,43 @@ bool common_flydelta_evaluate_job(
             return true;
         }
         case common_flydelta_experiment_job_kind::search_pipeline: {
-            if (!callbacks.run_search_pipeline ||
+            if ((!callbacks.run_search_pipeline && !callbacks.run_search_pipeline_with_state) ||
                     !common_flydelta_search_pipeline_config_validate(config.pipeline, error)) {
                 if (error.empty()) error = "FlyDelta search pipeline evaluator requires a host runner and config";
                 return false;
             }
             common_flydelta_search_pipeline_result pipeline_result;
-            if (!callbacks.run_search_pipeline(job, pipeline_result, error) ||
+            if (callbacks.run_search_pipeline_with_state) {
+                common_flydelta_bootstrap_zoom_state resume_state;
+                const common_flydelta_bootstrap_zoom_state * resume = nullptr;
+                if (!job.bootstrap_zoom_state_ref.empty()) {
+                    if (!callbacks.resolve_bootstrap_zoom_state ||
+                            !callbacks.resolve_bootstrap_zoom_state(
+                                job.bootstrap_zoom_state_ref, resume_state, error) ||
+                            !common_flydelta_bootstrap_zoom_state_validate(resume_state, error)) {
+                        if (error.empty()) error = "FlyDelta BootstrapZoom resume state is invalid";
+                        return false;
+                    }
+                    resume = &resume_state;
+                }
+                common_flydelta_bootstrap_zoom_state next_state;
+                if (!callbacks.run_search_pipeline_with_state(
+                        job, resume, pipeline_result, next_state, error) ||
+                        !common_flydelta_bootstrap_zoom_state_validate(next_state, error) ||
+                        !validate_search_pipeline_result(pipeline_result, config.pipeline, error)) {
+                    return false;
+                }
+                if (!callbacks.persist_bootstrap_zoom_state) {
+                    error = "FlyDelta state-aware search requires a state persister";
+                    return false;
+                }
+                result.has_bootstrap_zoom_state = true;
+                result.bootstrap_zoom_state = std::move(next_state);
+                if (!callbacks.persist_bootstrap_zoom_state(
+                        result.bootstrap_zoom_state, result.bootstrap_zoom_state_ref, error) ||
+                        result.bootstrap_zoom_state_ref.empty() ||
+                        result.bootstrap_zoom_state_ref.size() > 512) return false;
+            } else if (!callbacks.run_search_pipeline(job, pipeline_result, error) ||
                     !validate_search_pipeline_result(pipeline_result, config.pipeline, error)) {
                 return false;
             }

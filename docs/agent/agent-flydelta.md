@@ -695,8 +695,16 @@ decision-margin movement and bounded geometry. A Deep evidence plan therefore re
 *permitted by evidence* and still requires the UtilityGate after rank-two
 controls.
 
-The worker does not yet invoke this decision automatically after model work;
-the host must persist the utility history and schedule the next bounded job.
+The worker does not invent a model context or invoke this decision without a
+host evaluator callback; the host still owns utility history and schedules the
+next bounded job. For resumable model-facing work, the evaluator now has an
+optional state-aware search callback. It receives the previous
+`bootstrap_zoom_state_ref`, advances only the remaining BootstrapZoom budget,
+and returns a new reference-safe state. A host-owned resolver/persister stores
+that state in the artifact/state registry; the queue carries only the opaque
+reference. This lets a later sample resume the local search without repeating
+completed arms while keeping activations, prompts and verifier payloads out of
+the worker envelope.
 That remaining integration is deliberate until Shallow controls have been
 observed on real fixtures. The intended invariant is:
 

@@ -44,6 +44,7 @@ bool common_flydelta_experiment_job_validate(
         std::string & error) {
     error.clear();
     if (job.schema_version != 1 || !bounded(job.id) || !bounded(job.code_revision) ||
+            (!job.bootstrap_zoom_state_ref.empty() && !bounded(job.bootstrap_zoom_state_ref)) ||
             max_references == 0 || !common_flydelta_experiment_seed_validate(job.seed, error) ||
             !std::isfinite(job.learning_rate) || job.learning_rate <= 0.0f ||
             !std::isfinite(job.decay) || job.decay < 0.0f || job.decay > 1.0f) {
@@ -114,6 +115,7 @@ std::string common_flydelta_experiment_job_to_json(
         {"capture_manifest_ids", job.capture_manifest_ids},
         {"behavior_delta_ids", job.behavior_delta_ids},
         {"training_example_ids", job.training_example_ids},
+        {"bootstrap_zoom_state_ref", job.bootstrap_zoom_state_ref},
         {"alpha_search", {
             {"candidates", job.alpha_search.candidates},
             {"magnitude_penalty", job.alpha_search.magnitude_penalty},
@@ -168,6 +170,7 @@ bool common_flydelta_experiment_job_from_json(
         job.capture_manifest_ids = value.value("capture_manifest_ids", std::vector<std::string>{});
         job.behavior_delta_ids = value.value("behavior_delta_ids", std::vector<std::string>{});
         job.training_example_ids = value.value("training_example_ids", std::vector<std::string>{});
+        job.bootstrap_zoom_state_ref = value.value("bootstrap_zoom_state_ref", "");
         const auto alpha = value.value("alpha_search", json::object());
         job.alpha_search.candidates = alpha.value("candidates", std::vector<float>{});
         job.alpha_search.magnitude_penalty = alpha.value("magnitude_penalty", 0.0f);

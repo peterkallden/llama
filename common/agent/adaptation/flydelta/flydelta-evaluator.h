@@ -55,6 +55,24 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_experiment_job & job,
             common_flydelta_search_pipeline_result & result,
             std::string & error)> run_search_pipeline;
+
+    // Optional state-aware variant used by the real worker to resume and
+    // advance BootstrapZoom without rerunning completed arms. The legacy
+    // callback above remains valid for callers that do not persist state.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const common_flydelta_bootstrap_zoom_state * resume_state,
+            common_flydelta_search_pipeline_result & result,
+            common_flydelta_bootstrap_zoom_state & next_state,
+            std::string & error)> run_search_pipeline_with_state;
+    std::function<bool(
+            const std::string & state_ref,
+            common_flydelta_bootstrap_zoom_state & state,
+            std::string & error)> resolve_bootstrap_zoom_state;
+    std::function<bool(
+            const common_flydelta_bootstrap_zoom_state & state,
+            std::string & state_ref,
+            std::string & error)> persist_bootstrap_zoom_state;
 };
 
 struct common_flydelta_evaluator_result {
@@ -68,6 +86,9 @@ struct common_flydelta_evaluator_result {
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;
     size_t processed_references = 0;
+    bool has_bootstrap_zoom_state = false;
+    common_flydelta_bootstrap_zoom_state bootstrap_zoom_state;
+    std::string bootstrap_zoom_state_ref;
 };
 
 // Evaluates exactly one already-validated job. This is an orchestration seam,

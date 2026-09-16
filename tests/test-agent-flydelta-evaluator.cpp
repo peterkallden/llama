@@ -219,6 +219,50 @@ int main() {
     CHECK(result.search_continuations.size() == 1);
     CHECK(result.search_continuations.front().region.anchor_layer_index == 24);
 
+    auto resumable_pipeline = pipeline;
+    resumable_pipeline.id = "flydelta://job/search-pipeline-resume";
+    resumable_pipeline.bootstrap_zoom_state_ref = "flydelta://state/bootstrap-1";
+    callbacks = {};
+    bool resumed = false;
+    bool persisted = false;
+    callbacks.resolve_bootstrap_zoom_state = [&](const auto & ref, auto & state, std::string &) {
+        if (ref != "flydelta://state/bootstrap-1") return false;
+        state.state_ref = ref;
+        state.behavior_key = resumable_pipeline.seed.behavior_key;
+        state.model_profile_fingerprint = resumable_pipeline.seed.model_profile_fingerprint;
+        state.capture_layout_revision = "layout:v1";
+        state.anchor_layer = 24;
+        state.selected_scale = 0.1f;
+        state.extra_model_trials = 3;
+        state.next_candidate_index = 2;
+        return true;
+    };
+    callbacks.run_search_pipeline_with_state = [&](const auto &, const auto * state,
+            auto & value, auto & next_state, std::string &) {
+        resumed = state != nullptr && state->next_candidate_index == 2;
+        value = search_pipeline_result();
+        next_state.state_ref.clear();
+        next_state.behavior_key = resumable_pipeline.seed.behavior_key;
+        next_state.model_profile_fingerprint = resumable_pipeline.seed.model_profile_fingerprint;
+        next_state.capture_layout_revision = "layout:v1";
+        next_state.anchor_layer = 24;
+        next_state.selected_scale = 0.15f;
+        next_state.best_margin_delta = 0.2f;
+        next_state.best_search_score = 0.7f;
+        next_state.extra_model_trials = 4;
+        next_state.next_candidate_index = 4;
+        return true;
+    };
+    callbacks.persist_bootstrap_zoom_state = [&](const auto & state, auto & ref, std::string &) {
+        persisted = state.next_candidate_index == 4;
+        ref = "flydelta://state/bootstrap-2";
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(resumable_pipeline, config, callbacks, result, error));
+    CHECK(resumed && persisted && result.has_bootstrap_zoom_state &&
+        result.bootstrap_zoom_state_ref == "flydelta://state/bootstrap-2" &&
+        result.bootstrap_zoom_state.next_candidate_index == 4);
+
     auto memory = base_job(common_flydelta_experiment_job_kind::delta_memory,
             "flydelta://job/memory");
     memory.training_example_ids = {"flydelta://training/evaluator"};

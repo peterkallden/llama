@@ -117,12 +117,26 @@ int main() {
             result.evidence_depth.depth = common_flydelta_search_depth::bootstrap;
             result.search_budget = common_flydelta_search_budget_for_depth(
                 common_flydelta_search_depth::bootstrap);
+            result.has_bootstrap_zoom_state = true;
+            result.bootstrap_zoom_state.state_ref = "flydelta://state/worker-bootstrap";
+            result.bootstrap_zoom_state.behavior_key = direction_job.seed.behavior_key;
+            result.bootstrap_zoom_state.model_profile_fingerprint =
+                direction_job.seed.model_profile_fingerprint;
+            result.bootstrap_zoom_state.capture_layout_revision = "layout:v1";
+            result.bootstrap_zoom_state.anchor_layer = 2;
+            result.bootstrap_zoom_state.selected_scale = 0.05f;
+            result.bootstrap_zoom_state.extra_model_trials = 3;
+            result.bootstrap_zoom_state.next_candidate_index = 2;
+            result.bootstrap_zoom_state_ref = result.bootstrap_zoom_state.state_ref;
             return true;
         }, worker_report, error));
     CHECK(worker_report.state == common_flydelta_experiment_queue_state::succeeded);
     CHECK(worker_report.report_count == 1);
     CHECK(worker_report.evidence_depth.depth == common_flydelta_search_depth::bootstrap);
     CHECK(worker_report.search_budget.max_region_trials == 4);
+    CHECK(worker_report.has_bootstrap_zoom_state &&
+        worker_report.bootstrap_zoom_state_ref == "flydelta://state/worker-bootstrap" &&
+        worker_report.bootstrap_zoom_state.next_candidate_index == 2);
 
     const auto second = job("flydelta://job/worker-2");
     CHECK(common_flydelta_experiment_queue_enqueue(root, second, {}, error));

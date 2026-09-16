@@ -142,6 +142,31 @@ struct common_flydelta_bootstrap_zoom_candidate {
     bool opposite_sign_control = false;
 };
 
+// Reference-safe resume state for the real worker. It contains only search
+// position and diagnostics; activation tensors and raw model material stay in
+// their existing stores. The host persists this state under state_ref and may
+// attach the reference to the next queued job.
+struct common_flydelta_bootstrap_zoom_state {
+    int schema_version = 1;
+    std::string state_ref;
+    std::string behavior_key;
+    std::string model_profile_fingerprint;
+    std::string capture_layout_revision;
+    common_flydelta_bootstrap_zoom_phase phase =
+        common_flydelta_bootstrap_zoom_phase::alpha_zoom;
+    uint32_t anchor_layer = 0;
+    float selected_scale = 0.0f;
+    float best_margin_delta = 0.0f;
+    float best_search_score = 0.0f;
+    size_t extra_model_trials = 0;
+    size_t next_candidate_index = 0;
+    std::vector<uint32_t> local_layers;
+};
+
+bool common_flydelta_bootstrap_zoom_state_validate(
+        const common_flydelta_bootstrap_zoom_state & state,
+        std::string & error);
+
 bool common_flydelta_bootstrap_zoom_config_validate(
         const common_flydelta_bootstrap_zoom_config & config,
         std::string & error);

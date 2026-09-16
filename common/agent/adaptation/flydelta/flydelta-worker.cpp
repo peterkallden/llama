@@ -14,6 +14,14 @@ bool validate_result(
         error = "FlyDelta worker result summary exceeds bound";
         return false;
     }
+    if (result.has_bootstrap_zoom_state &&
+            !common_flydelta_bootstrap_zoom_state_validate(result.bootstrap_zoom_state, error)) {
+        return false;
+    }
+    if (result.bootstrap_zoom_state_ref.size() > 512) {
+        error = "FlyDelta worker BootstrapZoom state reference is invalid";
+        return false;
+    }
     for (const auto & counterfactual : result.counterfactual_reports) {
         if (!common_flydelta_counterfactual_report_validate(counterfactual, error)) return false;
         if (counterfactual.experiment_id != claimed.job.id) {
@@ -96,6 +104,9 @@ bool common_flydelta_experiment_worker_run_once(
         result.direction_candidates.size() + result.search_pipeline_results.size();
     report.evidence_depth = result.evidence_depth;
     report.search_budget = result.search_budget;
+    report.has_bootstrap_zoom_state = result.has_bootstrap_zoom_state;
+    report.bootstrap_zoom_state = std::move(result.bootstrap_zoom_state);
+    report.bootstrap_zoom_state_ref = std::move(result.bootstrap_zoom_state_ref);
     return true;
 }
 
@@ -129,6 +140,10 @@ bool common_flydelta_experiment_worker_run_evaluator_once(
             worker_result.aggregation = std::move(evaluator_result.aggregation);
             worker_result.evidence_depth = evaluator_result.evidence_depth;
             worker_result.search_budget = evaluator_result.search_budget;
+            worker_result.has_bootstrap_zoom_state = evaluator_result.has_bootstrap_zoom_state;
+            worker_result.bootstrap_zoom_state = std::move(evaluator_result.bootstrap_zoom_state);
+            worker_result.bootstrap_zoom_state_ref = std::move(
+                evaluator_result.bootstrap_zoom_state_ref);
             worker_result.safe_summary = "FlyDelta evaluator processed " +
                 std::to_string(evaluator_result.processed_references) + " reference(s)";
             return true;
