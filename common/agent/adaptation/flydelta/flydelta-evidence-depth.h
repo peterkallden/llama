@@ -1,0 +1,58 @@
+#pragma once
+
+#include "agent/adaptation/flydelta/flydelta-direction-search.h"
+
+#include <cstddef>
+#include <string>
+#include <vector>
+
+// Search depth is a bounded worker budget, not a second learning algorithm.
+// The underlying direction, overlay and host-verification seams are shared by
+// all three levels.
+enum class common_flydelta_search_depth {
+    bootstrap,
+    shallow,
+    deep,
+};
+
+const char * common_flydelta_search_depth_name(common_flydelta_search_depth depth);
+
+struct common_flydelta_evidence_depth_config {
+    int schema_version = 1;
+    size_t min_shallow_samples = 2;
+    size_t min_deep_samples = 6;
+    size_t max_samples = 32;
+    float rank_relative_tolerance = 0.10f;
+    float min_median_alignment = 0.25f;
+    float max_condition_number = 100.0f;
+};
+
+struct common_flydelta_evidence_depth_result {
+    common_flydelta_search_depth depth = common_flydelta_search_depth::bootstrap;
+    size_t compatible_samples = 0;
+    size_t incompatible_samples = 0;
+    size_t effective_rank = 0;
+    float stable_rank = 0.0f;
+    float median_alignment = 0.0f;
+    float condition_number = 0.0f;
+    bool basis_condition_ok = false;
+    bool geometry_stable = false;
+    bool shallow_ready = false;
+    bool deep_ready = false;
+};
+
+bool common_flydelta_evidence_depth_config_validate(
+        const common_flydelta_evidence_depth_config & config,
+        std::string & error);
+
+// Assesses only compatible, non-HARMED contrast samples for one direction
+// identity. UNKNOWN and NEUTRAL are valid experimental material; they do not
+// become learning evidence merely by being counted here. The rank is computed
+// from the small sample Gram matrix, so the cost is bounded by sample count and
+// does not require a dimension-sized covariance matrix.
+bool common_flydelta_assess_evidence_depth(
+        const common_flydelta_direction_search_config & identity,
+        const common_flydelta_evidence_depth_config & config,
+        const std::vector<common_flydelta_contrast_sample> & samples,
+        common_flydelta_evidence_depth_result & result,
+        std::string & error);

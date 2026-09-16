@@ -109,6 +109,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/flydelta-coefficient-search.cpp adaptation/flydelta/flydelta-coefficient-search.h
     adaptation/flydelta/flydelta-decision-margin.cpp adaptation/flydelta/flydelta-decision-margin.h
     adaptation/flydelta/flydelta-deep-search.cpp adaptation/flydelta/flydelta-deep-search.h
+    adaptation/flydelta/flydelta-evidence-depth.cpp adaptation/flydelta/flydelta-evidence-depth.h
     adaptation/flydelta/flydelta-artifact-lifecycle.cpp adaptation/flydelta/flydelta-artifact-lifecycle.h
     adaptation/flydelta/flydelta-artifact-store.cpp adaptation/flydelta/flydelta-artifact-store.h
     thinking/reflection-json.cpp thinking/reflection-json.h
