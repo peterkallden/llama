@@ -1593,7 +1593,7 @@ Only a host-certified `HELPED` trial may be selected. `UNKNOWN`, `NEUTRAL` and
 `HARMED` remain diagnostics or retention evidence and cannot promote a layer
 mask, update `DeltaMemory` or create a training example. If the baseline already
 passes, neighborhood expansion is skipped. The model-backed repair smoke
-captures a small layer window and exercises this path after its existing
+captures a bounded dense layer profile and exercises this path after its existing
 three-arm alpha search; it reports the selected mask and trial count without
 claiming that the model learned a repair.
 
@@ -1684,7 +1684,7 @@ be `1.28`, above the absolute scale limit of `1.0`), not because of saturation
 or an unsafe geometry. No midpoint or selection was produced. It still cannot
 cross the model's tool-choice boundary without a host-verified `HELPED` result.
 
-The corrected local Qwen region run then exercised the composed pipeline with
+The corrected pre-discovery local Qwen region run then exercised the composed pipeline with
 28 overlay trials plus a baseline (29 model calls, about 337 seconds with
 three threads). All singleton scales on layers 1--4 remained `UNKNOWN` and
 the model continued to emit `data.describe`; no candidate was selected. The
