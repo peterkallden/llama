@@ -2,6 +2,7 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
 #include <filesystem>
+#include <iostream>
 #include <utility>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
@@ -96,10 +97,17 @@ int main() {
         [&](const auto &, auto & result, std::string &) {
             result.safe_summary = "direction search completed";
             result.direction_candidates.push_back(direction_candidate());
+            result.aggregation.compatible_samples = 1;
+            result.evidence_depth.compatible_samples = 1;
+            result.evidence_depth.depth = common_flydelta_search_depth::bootstrap;
+            result.search_budget = common_flydelta_search_budget_for_depth(
+                common_flydelta_search_depth::bootstrap);
             return true;
         }, worker_report, error));
     CHECK(worker_report.state == common_flydelta_experiment_queue_state::succeeded);
     CHECK(worker_report.report_count == 1);
+    CHECK(worker_report.evidence_depth.depth == common_flydelta_search_depth::bootstrap);
+    CHECK(worker_report.search_budget.max_region_trials == 4);
 
     const auto second = job("flydelta://job/worker-2");
     CHECK(common_flydelta_experiment_queue_enqueue(root, second, {}, error));
@@ -115,6 +123,7 @@ int main() {
     evaluator_config.pipeline.dimension = 2;
     evaluator_config.pipeline.layer.min_cosine = 0.0f;
     evaluator_config.pipeline.scale.max_geometric_trials = 1;
+    evaluator_config.pipeline.region_max_stalled_scales = 1;
     common_flydelta_evaluator_callbacks evaluator_callbacks;
     evaluator_callbacks.run_counterfactual = [](const auto &, auto &, auto &) { return false; };
     evaluator_callbacks.resolve_behavior_delta = [](const auto &, auto & delta, auto & credit, auto &) {
@@ -148,9 +157,16 @@ int main() {
     pipeline_job.kind = common_flydelta_experiment_job_kind::search_pipeline;
     pipeline_job.capture_manifest_ids = {"flydelta://capture/evaluator"};
     pipeline_job.behavior_delta_ids = {"flydelta://delta/evaluator"};
+    common_flydelta_evaluator_result direct_evaluator_result;
+    const bool direct_evaluator_succeeded = common_flydelta_evaluate_job(
+        pipeline_job, evaluator_config, evaluator_callbacks, direct_evaluator_result, error);
+    if (!direct_evaluator_succeeded) std::cerr << "direct evaluator error: " << error << "\n";
+    CHECK(direct_evaluator_succeeded);
     CHECK(common_flydelta_experiment_queue_enqueue(root, pipeline_job, {}, error));
-    CHECK(common_flydelta_experiment_worker_run_evaluator_once(
-        root, {}, evaluator_config, evaluator_callbacks, evaluator_report, error));
+    const bool evaluator_succeeded = common_flydelta_experiment_worker_run_evaluator_once(
+        root, {}, evaluator_config, evaluator_callbacks, evaluator_report, error);
+    if (!evaluator_succeeded) std::cerr << "evaluator worker error: " << error << "\n";
+    CHECK(evaluator_succeeded);
     CHECK(evaluator_report.state == common_flydelta_experiment_queue_state::succeeded);
     CHECK(evaluator_report.report_count == 1);
     std::filesystem::remove_all(root, ignored);

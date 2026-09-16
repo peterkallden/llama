@@ -145,6 +145,7 @@ bool common_flydelta_evaluate_job(
             if (!common_flydelta_build_direction_candidates(
                     config.direction, aggregation.snapshot().retained_samples,
                     result.direction_candidates, error)) return false;
+            result.aggregation = aggregation.snapshot();
             result.processed_references = samples.size();
             return true;
         }

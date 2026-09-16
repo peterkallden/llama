@@ -2,6 +2,8 @@
 
 #include "agent/adaptation/flydelta/flydelta-queue.h"
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
+#include "agent/adaptation/flydelta/flydelta-evidence-depth.h"
+#include "agent/adaptation/flydelta/flydelta-aggregation.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 
 #include <functional>
@@ -18,6 +20,9 @@ struct common_flydelta_experiment_worker_result {
     std::vector<common_flydelta_basis_direction> basis_directions;
     std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;
     std::vector<float> delta_memory_weights;
+    common_flydelta_aggregation_snapshot aggregation;
+    common_flydelta_evidence_depth_result evidence_depth;
+    common_flydelta_search_budget search_budget;
 };
 
 struct common_flydelta_experiment_worker_report {
@@ -25,6 +30,8 @@ struct common_flydelta_experiment_worker_report {
     std::string job_id;
     std::string safe_summary;
     size_t report_count = 0;
+    common_flydelta_evidence_depth_result evidence_depth;
+    common_flydelta_search_budget search_budget;
 };
 
 // The worker owns queue lifecycle and result validation. The callback owns

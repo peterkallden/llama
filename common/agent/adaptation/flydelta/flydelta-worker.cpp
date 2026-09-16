@@ -25,6 +25,13 @@ bool validate_result(
         if (!common_flydelta_direction_candidate_validate(
                 direction, direction.values.size(), error)) return false;
     }
+    if (!result.direction_candidates.empty()) {
+        if (!common_flydelta_search_budget_validate(result.search_budget, error)) return false;
+        if (result.evidence_depth.compatible_samples != result.aggregation.compatible_samples) {
+            error = "FlyDelta worker evidence depth and aggregation counts differ";
+            return false;
+        }
+    }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::counterfactual &&
             result.counterfactual_reports.empty()) {
         error = "FlyDelta counterfactual worker result requires a report";
@@ -87,6 +94,8 @@ bool common_flydelta_experiment_worker_run_once(
     report.safe_summary = safe_summary;
     report.report_count = result.counterfactual_reports.size() +
         result.direction_candidates.size() + result.search_pipeline_results.size();
+    report.evidence_depth = result.evidence_depth;
+    report.search_budget = result.search_budget;
     return true;
 }
 
@@ -115,6 +124,9 @@ bool common_flydelta_experiment_worker_run_evaluator_once(
                 std::move(evaluator_result.search_pipeline_results);
             worker_result.delta_memory_weights =
                 std::move(evaluator_result.delta_memory_weights);
+            worker_result.aggregation = std::move(evaluator_result.aggregation);
+            worker_result.evidence_depth = evaluator_result.evidence_depth;
+            worker_result.search_budget = evaluator_result.search_budget;
             worker_result.safe_summary = "FlyDelta evaluator processed " +
                 std::to_string(evaluator_result.processed_references) + " reference(s)";
             return true;
