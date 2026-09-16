@@ -122,16 +122,47 @@ bool common_flydelta_whirlpool_search_config_validate(
     return true;
 }
 
+bool common_flydelta_whirlpool_trace_validate(
+        const common_flydelta_whirlpool_trace & trace,
+        const common_flydelta_whirlpool_search_config & config,
+        size_t trial_count,
+        std::string & error) {
+    error.clear();
+    if (trace.schema_version != 1 || trace.model_evaluations != trial_count + 1 ||
+            trace.rounds.size() > config.max_rounds ||
+            (trace.best_trial_index != static_cast<size_t>(-1) &&
+                trace.best_trial_index >= trial_count) ||
+            !std::isfinite(trace.best_search_score) || trace.final_centre == 0 ||
+            trace.final_radius == 0) {
+        error = "FlyDelta Whirlpool trace is invalid";
+        return false;
+    }
+    for (const auto & round : trace.rounds) {
+        if (round.round >= config.max_rounds || round.centre_before == 0 ||
+                round.radius_before == 0 || round.probed_layers.empty() ||
+                round.probed_layers.size() > config.probes_per_round ||
+                round.best_probe_layer == 0 ||
+                !std::isfinite(round.best_probe_score) || round.centre_after == 0 ||
+                round.radius_after == 0) {
+            error = "FlyDelta Whirlpool round trace is invalid";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool common_flydelta_run_whirlpool_search(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_whirlpool_search_config & config,
         const common_flydelta_whirlpool_search_runner & runner,
         std::vector<common_flydelta_intervention_region_trial> & trials,
         common_flydelta_intervention_region_selection & selection,
+        common_flydelta_whirlpool_trace & trace,
         std::string & error) {
     error.clear();
     trials.clear();
     selection = {};
+    trace = {};
     if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
             !common_flydelta_whirlpool_search_config_validate(config, error) || !runner) {
         if (error.empty()) error = "FlyDelta Whirlpool runner is invalid";
@@ -148,6 +179,7 @@ bool common_flydelta_run_whirlpool_search(
             !common_flydelta_decision_margin_validate(baseline_margin, error)) {
         return false;
     }
+    trace.model_evaluations = 1;
 
     uint32_t centre = initial_centre(config);
     uint32_t radius = config.initial_radius;
@@ -157,6 +189,10 @@ bool common_flydelta_run_whirlpool_search(
 
     for (size_t round = 0; round < config.max_rounds && trials.size() < config.max_trials;
             ++round) {
+        common_flydelta_whirlpool_round_trace round_trace;
+        round_trace.round = round;
+        round_trace.centre_before = centre;
+        round_trace.radius_before = radius;
         const auto round_probes = probes(centre, radius, config.available_layers,
             std::min(config.probes_per_round, config.max_trials - trials.size()));
         bool found_round_candidate = false;
@@ -165,6 +201,7 @@ bool common_flydelta_run_whirlpool_search(
         for (const uint32_t layer : round_probes) {
             if (contains(visited, layer) || trials.size() >= config.max_trials) continue;
             visited.push_back(layer);
+            round_trace.probed_layers.push_back(layer);
             common_flydelta_intervention_region_candidate candidate;
             candidate.layer_indices = {layer};
             candidate.anchor_layer_index = layer;
@@ -206,6 +243,7 @@ bool common_flydelta_run_whirlpool_search(
                 margin, geometry, geometry_available, config);
             region_trial.evidence_ref = counterfactual.evidence_ref;
             trials.push_back(std::move(region_trial));
+            ++trace.model_evaluations;
             const auto & stored = trials.back();
             if (stored.search_score > best_objective) {
                 best_objective = stored.search_score;
@@ -217,11 +255,19 @@ bool common_flydelta_run_whirlpool_search(
                 found_round_candidate = true;
             }
         }
-        if (found_round_candidate) centre = round_centre;
+        // Never recede from the best observed point. A later local round may
+        // be noisier than the previous one; it can still shrink the trust
+        // region without moving the centre to a worse probe.
+        if (found_round_candidate && round_best >= best_objective) centre = round_centre;
         if (radius > 1) {
             radius = std::max<uint32_t>(1, static_cast<uint32_t>(
                 std::floor(static_cast<float>(radius) * config.shrink_factor)));
         }
+        round_trace.best_probe_layer = found_round_candidate ? round_centre : 0;
+        round_trace.best_probe_score = found_round_candidate ? round_best : 0.0f;
+        round_trace.centre_after = centre;
+        round_trace.radius_after = radius;
+        if (!round_trace.probed_layers.empty()) trace.rounds.push_back(std::move(round_trace));
         if (radius == 1 && round + 1 >= config.max_rounds) break;
         if (best_trial >= trials.size()) break;
     }
@@ -239,6 +285,13 @@ bool common_flydelta_run_whirlpool_search(
             selection.score = trial.quality_delta;
             best_helped_score = trial.quality_delta;
         }
+    }
+    trace.best_trial_index = best_trial;
+    trace.best_search_score = best_objective;
+    trace.final_centre = centre;
+    trace.final_radius = radius;
+    if (!common_flydelta_whirlpool_trace_validate(trace, config, trials.size(), error)) {
+        return false;
     }
     return true;
 }

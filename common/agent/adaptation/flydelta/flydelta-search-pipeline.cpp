@@ -235,7 +235,8 @@ bool common_flydelta_run_search_pipeline(
                             }
                             return ok;
                         }, direction_result.region_trials,
-                        direction_result.region_selection, error)) return false;
+                        direction_result.region_selection,
+                        direction_result.whirlpool_trace, error)) return false;
             } else if (!common_flydelta_run_intervention_region_search(
                     fixture, region_config, region_runner,
                     direction_result.region_trials, direction_result.region_selection, error)) {

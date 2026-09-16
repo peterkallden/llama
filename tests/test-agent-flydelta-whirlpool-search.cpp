@@ -32,6 +32,7 @@ int main() {
 
     std::vector<common_flydelta_intervention_region_trial> trials;
     common_flydelta_intervention_region_selection selection;
+    common_flydelta_whirlpool_trace trace;
     CHECK(common_flydelta_run_whirlpool_search(
         fixture(), config,
         [](const auto &, const auto * candidate, auto & trial, auto & margin,
@@ -56,7 +57,7 @@ int main() {
             geometry.shift_norm = candidate->total_scale;
             margin = {};
             return true;
-        }, trials, selection, error));
+        }, trials, selection, trace, error));
     CHECK(error.empty());
     CHECK(!trials.empty());
     CHECK(selection.selected);
@@ -66,6 +67,13 @@ int main() {
     CHECK(std::any_of(trials.begin(), trials.end(), [](const auto & trial) {
         return trial.candidate.anchor_layer_index == 5;
     }));
+    CHECK(trace.model_evaluations == trials.size() + 1);
+    CHECK(trace.best_trial_index < trials.size());
+    CHECK(trace.rounds.size() == 2);
+    CHECK(trace.rounds.front().centre_before == 5);
+    CHECK(trace.rounds.front().centre_after == 5);
+    CHECK(trace.final_centre == 5);
+    CHECK(common_flydelta_whirlpool_trace_validate(trace, config, trials.size(), error));
 
     common_flydelta_whirlpool_search_config invalid = config;
     invalid.probes_per_round = 1;

@@ -38,6 +38,33 @@ bool common_flydelta_whirlpool_search_config_validate(
         const common_flydelta_whirlpool_search_config & config,
         std::string & error);
 
+struct common_flydelta_whirlpool_round_trace {
+    size_t round = 0;
+    uint32_t centre_before = 0;
+    uint32_t radius_before = 0;
+    std::vector<uint32_t> probed_layers;
+    uint32_t best_probe_layer = 0;
+    float best_probe_score = 0.0f;
+    uint32_t centre_after = 0;
+    uint32_t radius_after = 0;
+};
+
+struct common_flydelta_whirlpool_trace {
+    int schema_version = 1;
+    size_t model_evaluations = 0;
+    size_t best_trial_index = static_cast<size_t>(-1);
+    float best_search_score = 0.0f;
+    uint32_t final_centre = 0;
+    uint32_t final_radius = 0;
+    std::vector<common_flydelta_whirlpool_round_trace> rounds;
+};
+
+bool common_flydelta_whirlpool_trace_validate(
+        const common_flydelta_whirlpool_trace & trace,
+        const common_flydelta_whirlpool_search_config & config,
+        size_t trial_count,
+        std::string & error);
+
 using common_flydelta_whirlpool_search_runner = std::function<bool(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_intervention_region_candidate * candidate,
@@ -57,4 +84,5 @@ bool common_flydelta_run_whirlpool_search(
         const common_flydelta_whirlpool_search_runner & runner,
         std::vector<common_flydelta_intervention_region_trial> & trials,
         common_flydelta_intervention_region_selection & selection,
+        common_flydelta_whirlpool_trace & trace,
         std::string & error);

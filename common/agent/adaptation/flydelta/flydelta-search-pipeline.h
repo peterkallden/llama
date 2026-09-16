@@ -66,6 +66,7 @@ struct common_flydelta_search_pipeline_direction_result {
     common_flydelta_layer_search_selection layer_selection;
     std::vector<common_flydelta_intervention_region_trial> region_trials;
     common_flydelta_intervention_region_selection region_selection;
+    common_flydelta_whirlpool_trace whirlpool_trace;
 };
 
 struct common_flydelta_search_pipeline_selection {
