@@ -186,6 +186,7 @@ bool common_flydelta_evaluate_job(
                         result.bootstrap_zoom_state, result.bootstrap_zoom_state_ref, error) ||
                         result.bootstrap_zoom_state_ref.empty() ||
                         result.bootstrap_zoom_state_ref.size() > 512) return false;
+                result.bootstrap_zoom_state.state_ref = result.bootstrap_zoom_state_ref;
             } else if (!callbacks.run_search_pipeline(job, pipeline_result, error) ||
                     !validate_search_pipeline_result(pipeline_result, config.pipeline, error)) {
                 return false;

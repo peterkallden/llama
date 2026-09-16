@@ -32,6 +32,9 @@ struct common_flydelta_experiment_collection_request {
     // Optional variant identity for a follow-up search. It is part of the
     // job id only; it does not carry raw prompt or tool data.
     std::string job_variant_id;
+    // Opaque host-owned resume reference. Collection transports it to the
+    // next search-pipeline job; it never reads or writes the state payload.
+    std::string bootstrap_zoom_state_ref;
 };
 
 enum class common_flydelta_experiment_collection_result {

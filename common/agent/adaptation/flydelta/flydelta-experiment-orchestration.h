@@ -142,6 +142,26 @@ struct common_flydelta_bootstrap_zoom_candidate {
     bool opposite_sign_control = false;
 };
 
+// One host-evaluated BootstrapZoom arm. This is experimental search state:
+// UNKNOWN may be retained when its diagnostic signal is useful, but it has
+// no learning or promotion authority.
+struct common_flydelta_bootstrap_zoom_trial {
+    common_flydelta_bootstrap_zoom_candidate candidate;
+    common_flydelta_counterfactual_outcome outcome =
+        common_flydelta_counterfactual_outcome::unknown;
+    bool host_verified = false;
+    bool margin_available = false;
+    float margin_delta = 0.0f;
+    bool diagnostics_available = false;
+    common_flydelta_representation_diagnostics diagnostics;
+};
+
+struct common_flydelta_bootstrap_zoom_selection {
+    bool selected = false;
+    size_t trial_index = 0;
+    float search_score = 0.0f;
+};
+
 // Reference-safe resume state for the real worker. It contains only search
 // position and diagnostics; activation tensors and raw model material stay in
 // their existing stores. The host persists this state under state_ref and may
@@ -161,6 +181,10 @@ struct common_flydelta_bootstrap_zoom_state {
     size_t extra_model_trials = 0;
     size_t next_candidate_index = 0;
     std::vector<uint32_t> local_layers;
+    // The best safe experimental arm so far. This is persisted with resume
+    // state so a later worker slice can retain/refine the same candidate.
+    std::vector<common_flydelta_bootstrap_zoom_trial> completed_trials;
+    common_flydelta_bootstrap_zoom_selection selection;
 };
 
 bool common_flydelta_bootstrap_zoom_state_validate(
@@ -172,6 +196,21 @@ bool common_flydelta_bootstrap_zoom_config_validate(
         std::string & error);
 bool common_flydelta_bootstrap_zoom_candidate_validate(
         const common_flydelta_bootstrap_zoom_candidate & candidate,
+        std::string & error);
+bool common_flydelta_bootstrap_zoom_trial_validate(
+        const common_flydelta_bootstrap_zoom_trial & trial,
+        std::string & error);
+bool common_flydelta_bootstrap_zoom_selection_validate(
+        const common_flydelta_bootstrap_zoom_selection & selection,
+        size_t trial_count,
+        std::string & error);
+
+// Chooses a retained experimental arm. HELPED wins when present; otherwise a
+// host-classified safe UNKNOWN/NEUTRAL arm with the strongest margin signal
+// wins. This selection does not award learning credit or promotion.
+bool common_flydelta_select_bootstrap_zoom_trial(
+        const std::vector<common_flydelta_bootstrap_zoom_trial> & trials,
+        common_flydelta_bootstrap_zoom_selection & selection,
         std::string & error);
 
 // Deterministic, bounded proposal helpers. Alpha probes are emitted first.

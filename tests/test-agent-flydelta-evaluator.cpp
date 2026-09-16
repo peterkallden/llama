@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "agent/adaptation/flydelta/flydelta-bootstrap-zoom-state-store.h"
 
 #include <cmath>
 #include <utility>
@@ -261,7 +262,57 @@ int main() {
     CHECK(common_flydelta_evaluate_job(resumable_pipeline, config, callbacks, result, error));
     CHECK(resumed && persisted && result.has_bootstrap_zoom_state &&
         result.bootstrap_zoom_state_ref == "flydelta://state/bootstrap-2" &&
+        result.bootstrap_zoom_state.state_ref == "flydelta://state/bootstrap-2" &&
         result.bootstrap_zoom_state.next_candidate_index == 4);
+
+    // The production-facing adapter persists only immutable state metadata in
+    // the host lifecycle store. It can be attached without replacing the
+    // host's model runner callback.
+    common_learning_in_memory_lifecycle_store lifecycle_store;
+    common_flydelta_bootstrap_zoom_lifecycle_context lifecycle_context;
+    lifecycle_context.project_id = "project";
+    lifecycle_context.session_id = "session";
+    lifecycle_context.source_id = "host://agent";
+    lifecycle_context.created_at = "2026-09-16T00:00:00Z";
+    common_flydelta_evaluator_callbacks lifecycle_callbacks;
+    CHECK(common_flydelta_configure_bootstrap_zoom_lifecycle_callbacks(
+        lifecycle_store, lifecycle_context, lifecycle_callbacks, error));
+    common_flydelta_bootstrap_zoom_state persisted_state;
+    persisted_state.behavior_key = pipeline.seed.behavior_key;
+    persisted_state.model_profile_fingerprint = pipeline.seed.model_profile_fingerprint;
+    persisted_state.capture_layout_revision = "layout:v1";
+    persisted_state.anchor_layer = 24;
+    persisted_state.selected_scale = 0.1f;
+    persisted_state.local_layers = {23, 24, 25};
+    common_flydelta_bootstrap_zoom_candidate selected_arm;
+    selected_arm.phase = common_flydelta_bootstrap_zoom_phase::profile_zoom;
+    selected_arm.layer_indices = {24, 25};
+    selected_arm.layer_weights = {0.70710678f, 0.70710678f};
+    selected_arm.total_scale = 0.1f;
+    common_flydelta_bootstrap_zoom_trial selected_trial;
+    selected_trial.candidate = selected_arm;
+    selected_trial.host_verified = true;
+    selected_trial.margin_available = true;
+    selected_trial.margin_delta = 0.2f;
+    selected_trial.diagnostics_available = true;
+    selected_trial.diagnostics = {1, 25, 0.8f, 0.2f, 0.1f, 0.2f};
+    persisted_state.completed_trials = {selected_trial};
+    CHECK(common_flydelta_select_bootstrap_zoom_trial(
+        persisted_state.completed_trials, persisted_state.selection, error));
+    std::string lifecycle_ref;
+    CHECK(lifecycle_callbacks.persist_bootstrap_zoom_state(
+        persisted_state, lifecycle_ref, error));
+    CHECK(!lifecycle_ref.empty());
+    common_flydelta_bootstrap_zoom_state resolved_state;
+    CHECK(lifecycle_callbacks.resolve_bootstrap_zoom_state(
+        lifecycle_ref, resolved_state, error));
+    CHECK(resolved_state.state_ref == lifecycle_ref);
+    CHECK(resolved_state.anchor_layer == 24);
+    CHECK(resolved_state.local_layers == std::vector<uint32_t>({23, 24, 25}));
+    CHECK(resolved_state.selection.selected &&
+        resolved_state.completed_trials.size() == 1 &&
+        resolved_state.completed_trials.front().candidate.layer_indices ==
+            std::vector<uint32_t>({24, 25}));
 
     auto memory = base_job(common_flydelta_experiment_job_kind::delta_memory,
             "flydelta://job/memory");

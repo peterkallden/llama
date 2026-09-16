@@ -42,6 +42,8 @@ bool common_flydelta_collect_experiment_job(
             !bounded(request.template_fingerprint) ||
             !bounded(request.execution_context_fingerprint) ||
             !bounded(request.code_revision) || request.job_variant_id.size() > 512 ||
+            (!request.bootstrap_zoom_state_ref.empty() &&
+                !bounded(request.bootstrap_zoom_state_ref)) ||
             !references_empty_except(request, request.kind)) {
         error = "FlyDelta experiment collection request is incomplete or mixes job references";
         return false;
@@ -69,6 +71,7 @@ bool common_flydelta_collect_experiment_job(
     job.capture_manifest_ids = request.capture_manifest_ids;
     job.behavior_delta_ids = request.behavior_delta_ids;
     job.training_example_ids = request.training_example_ids;
+    job.bootstrap_zoom_state_ref = request.bootstrap_zoom_state_ref;
     job.alpha_search = request.alpha_search;
     job.learning_rate = request.learning_rate;
     job.decay = request.decay;

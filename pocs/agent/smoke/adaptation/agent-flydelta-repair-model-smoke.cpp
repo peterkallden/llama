@@ -972,6 +972,7 @@ int main(int argc, char ** argv) {
         if (utility_decision.action ==
                 common_flydelta_utility_gate_action::refine_bootstrap) {
             common_flydelta_bootstrap_zoom_config zoom_config;
+            std::vector<common_flydelta_bootstrap_zoom_trial> zoom_trials;
             std::vector<common_flydelta_bootstrap_zoom_candidate> alpha_candidates;
             if (!common_flydelta_propose_bootstrap_alpha_zoom(
                     continuation.region.anchor_layer_index,
@@ -1087,6 +1088,27 @@ int main(int argc, char ** argv) {
                 return true;
             };
 
+            const auto retain_zoom_trial = [&](const common_flydelta_bootstrap_zoom_candidate & candidate,
+                    common_flydelta_counterfactual_outcome outcome,
+                    const common_flydelta_decision_margin & margin,
+                    const common_flydelta_representation_diagnostics & diagnostics,
+                    bool diagnostics_available) {
+                common_flydelta_bootstrap_zoom_trial trial;
+                trial.candidate = candidate;
+                // The smoke host executed and classified every arm; UNKNOWN
+                // remains experimental search evidence rather than learning
+                // credit.
+                trial.outcome = outcome;
+                trial.host_verified = true;
+                trial.margin_available = margin.available && region_baseline_margin.available;
+                trial.margin_delta = trial.margin_available
+                    ? margin.normalized_delta() - region_baseline_margin.normalized_delta()
+                    : 0.0f;
+                trial.diagnostics_available = diagnostics_available;
+                if (diagnostics_available) trial.diagnostics = diagnostics;
+                zoom_trials.push_back(std::move(trial));
+            };
+
             std::cout << "bootstrap_zoom=started max_extra_model_trials="
                       << zoom_config.max_extra_model_trials << " stage=alpha\n";
             float selected_zoom_scale = continuation.region.total_scale;
@@ -1100,6 +1122,7 @@ int main(int argc, char ** argv) {
                     std::cerr << "FlyDelta BootstrapZoom alpha execution failed: " << error << '\n';
                     return 1;
                 }
+                retain_zoom_trial(candidate, outcome, margin, diagnostics, diagnostics_available);
                 const float margin_delta = margin.available && region_baseline_margin.available
                     ? margin.normalized_delta() - region_baseline_margin.normalized_delta() : 0.0f;
                 const bool geometry_safe = !diagnostics_available ||
@@ -1141,7 +1164,29 @@ int main(int argc, char ** argv) {
                     std::cerr << "FlyDelta BootstrapZoom profile execution failed: " << error << '\n';
                     return 1;
                 }
+                retain_zoom_trial(candidate, outcome, margin, diagnostics, diagnostics_available);
             }
+            common_flydelta_bootstrap_zoom_selection zoom_selection;
+            if (!common_flydelta_select_bootstrap_zoom_trial(
+                    zoom_trials, zoom_selection, error)) {
+                std::cerr << "FlyDelta BootstrapZoom candidate selection failed: " << error << '\n';
+                return 1;
+            }
+            const auto & retained = zoom_trials[zoom_selection.trial_index];
+            std::cout << "bootstrap_zoom_selected trial=" << zoom_selection.trial_index
+                      << " phase=" << common_flydelta_bootstrap_zoom_phase_name(
+                          retained.candidate.phase)
+                      << " scale=" << retained.candidate.total_scale
+                      << " layers=";
+            for (size_t index = 0; index < retained.candidate.layer_indices.size(); ++index) {
+                if (index != 0) std::cout << ',';
+                std::cout << retained.candidate.layer_indices[index] << ':'
+                          << retained.candidate.layer_weights[index];
+            }
+            std::cout << " outcome=" << common_flydelta_counterfactual_outcome_name(
+                              retained.outcome)
+                      << " margin_delta=" << retained.margin_delta
+                      << " search_score=" << zoom_selection.search_score << '\n';
         }
     }
 

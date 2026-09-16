@@ -249,6 +249,76 @@ bool common_flydelta_bootstrap_zoom_candidate_validate(
     return valid_zoom_candidate(candidate, error);
 }
 
+bool common_flydelta_bootstrap_zoom_trial_validate(
+        const common_flydelta_bootstrap_zoom_trial & trial,
+        std::string & error) {
+    error.clear();
+    if (!valid_zoom_candidate(trial.candidate, error) || !trial.host_verified ||
+            !finite(trial.margin_delta) ||
+            (trial.diagnostics_available &&
+                !common_flydelta_representation_diagnostics_validate(
+                    trial.diagnostics, error))) {
+        if (error.empty()) error = "FlyDelta BootstrapZoom trial is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_bootstrap_zoom_selection_validate(
+        const common_flydelta_bootstrap_zoom_selection & selection,
+        size_t trial_count,
+        std::string & error) {
+    error.clear();
+    if (!finite(selection.search_score) ||
+            (selection.selected && selection.trial_index >= trial_count) ||
+            (!selection.selected && selection.trial_index != 0)) {
+        error = "FlyDelta BootstrapZoom selection is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_select_bootstrap_zoom_trial(
+        const std::vector<common_flydelta_bootstrap_zoom_trial> & trials,
+        common_flydelta_bootstrap_zoom_selection & selection,
+        std::string & error) {
+    error.clear();
+    selection = {};
+    if (trials.empty() || trials.size() > 8) {
+        error = "FlyDelta BootstrapZoom trial set is empty or exceeds its bound";
+        return false;
+    }
+    for (size_t index = 0; index < trials.size(); ++index) {
+        const auto & trial = trials[index];
+        if (!common_flydelta_bootstrap_zoom_trial_validate(trial, error)) return false;
+        if (trial.outcome == common_flydelta_counterfactual_outcome::harmed) continue;
+        const bool geometry_safe = !trial.diagnostics_available ||
+            (trial.diagnostics.cosine >= 0.3f && trial.diagnostics.progress > 0.0f &&
+             trial.diagnostics.leakage <= 1.0f && trial.diagnostics.shift_norm <= 1.0f);
+        const bool helped = trial.outcome == common_flydelta_counterfactual_outcome::helped;
+        if (!helped && !geometry_safe) continue;
+        const float score = trial.margin_available ? trial.margin_delta : 0.0f;
+        if (!selection.selected) {
+            selection = {true, index, score};
+            continue;
+        }
+        const auto & best = trials[selection.trial_index];
+        const bool best_helped = best.outcome == common_flydelta_counterfactual_outcome::helped;
+        if ((helped && !best_helped) ||
+                (helped == best_helped &&
+                    (score > selection.search_score ||
+                     (score == selection.search_score &&
+                      trial.candidate.total_scale < best.candidate.total_scale)))) {
+            selection = {true, index, score};
+        }
+    }
+    if (!selection.selected) {
+        error = "FlyDelta BootstrapZoom has no safe retained trial";
+        return false;
+    }
+    return true;
+}
+
 bool common_flydelta_bootstrap_zoom_state_validate(
         const common_flydelta_bootstrap_zoom_state & state,
         std::string & error) {
@@ -264,6 +334,7 @@ bool common_flydelta_bootstrap_zoom_state_validate(
             !finite(state.best_search_score) || state.extra_model_trials > 10 ||
             state.next_candidate_index > state.extra_model_trials ||
             state.local_layers.size() > 3 ||
+            state.completed_trials.size() > 8 ||
             (!state.local_layers.empty() &&
                 (!std::is_sorted(state.local_layers.begin(), state.local_layers.end()) ||
                  state.local_layers.front() == 0 ||
@@ -277,6 +348,11 @@ bool common_flydelta_bootstrap_zoom_state_validate(
         error = "FlyDelta BootstrapZoom state anchor is not local";
         return false;
     }
+    for (const auto & trial : state.completed_trials) {
+        if (!common_flydelta_bootstrap_zoom_trial_validate(trial, error)) return false;
+    }
+    if (!common_flydelta_bootstrap_zoom_selection_validate(
+            state.selection, state.completed_trials.size(), error)) return false;
     return true;
 }
 

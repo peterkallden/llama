@@ -95,5 +95,24 @@ int main() {
     CHECK(zoom[2].layer_indices == std::vector<uint32_t>({24, 25}));
     CHECK(zoom[3].layer_indices == std::vector<uint32_t>({23, 24, 25}));
     CHECK(zoom[4].opposite_sign_control);
+
+    common_flydelta_bootstrap_zoom_trial first_trial;
+    first_trial.candidate = zoom[0];
+    first_trial.host_verified = true;
+    first_trial.margin_available = true;
+    first_trial.margin_delta = 0.1f;
+    first_trial.diagnostics_available = true;
+    first_trial.diagnostics = {1, 24, 0.7f, 0.2f, 0.1f, 0.2f};
+    common_flydelta_bootstrap_zoom_trial best_trial = first_trial;
+    best_trial.candidate = zoom[2];
+    best_trial.margin_delta = 0.2f;
+    std::vector<common_flydelta_bootstrap_zoom_trial> zoom_trials = {
+        first_trial, best_trial,
+    };
+    common_flydelta_bootstrap_zoom_selection zoom_selection;
+    CHECK(common_flydelta_select_bootstrap_zoom_trial(
+        zoom_trials, zoom_selection, error));
+    CHECK(zoom_selection.selected && zoom_selection.trial_index == 1 &&
+        zoom_selection.search_score == 0.2f);
     return 0;
 }

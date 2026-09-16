@@ -668,6 +668,21 @@ budget. The bridge does not resolve paths, create model contexts or make a
 promotion decision; those remain owned by the evaluator callbacks and the
 explicit lifecycle controller.
 
+For resumable rank-one BootstrapZoom work, the queue transports only
+`bootstrap_zoom_state_ref`. The evaluator's state-aware callback resolves
+that opaque reference before the next bounded slice and persists a new,
+immutable reference after it. `common_flydelta_configure_bootstrap_zoom_lifecycle_callbacks()` binds those two callbacks to the existing host lifecycle
+store; it stores bounded phase/progress metadata, never captures, prompts or
+model state. The state also retains every host-classified BootstrapZoom arm
+and its selected best safe arm (layer profile, scale, decision-margin delta
+and optional geometry). Thus an aligned `UNKNOWN` is retained as an
+experimental candidate for later refinement rather than lost after a worker
+slice. This remains search state only: `UNKNOWN`/`NEUTRAL` grant neither
+DeltaMemory learning credit nor promotion. Collection preserves the reference when it enqueues a
+`search_pipeline` refinement. The host still owns the runner callback and
+the scheduling decision to enqueue that follow-up job—there is deliberately
+no hidden worker-local state store or autonomous daemon loop.
+
 #### Incremental aggregation and search depth
 
 Search sophistication follows both evidence depth and observed subspace
