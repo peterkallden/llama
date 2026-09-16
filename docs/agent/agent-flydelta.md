@@ -1675,11 +1675,11 @@ can rank arms without changing the host-verification rule.
 
 #### 4I.2. Adaptive Whirlpool WHERE search — implemented
 
-The fixed region scan remains the compatibility default. Callers that have a
-small evidence-depth budget may explicitly enable
-`common_flydelta_whirlpool_search` in the same pipeline. Whirlpool is a cheap,
-derivative-free adaptive search provider for `WHERE`; it is not another
-direction builder, learner or promotion path.
+Whirlpool is now the normal adaptive `WHERE` strategy in the composed pipeline.
+The fixed region scan remains available as an explicit comparison mode and
+compatibility fallback. Whirlpool is a cheap, derivative-free adaptive search
+provider for `WHERE`; it is not another direction builder, learner or
+promotion path.
 
 Its first implementation is layer-only. It consumes the dense discovery
 profile and/or retained layer anchors as an initial prior, evaluates a small
@@ -1719,9 +1719,10 @@ Shallow   -> one or two local rounds, then small rank-2/margin controls
 Deep      -> bounded multi-round refinement, then coefficient/TFO search
 ```
 
-The generic pipeline keeps Whirlpool opt-in so existing callers do not
-silently change from the fixed region strategy. A worker can select it from
-its evidence-depth budget while retaining the same fresh-context,
+The generic pipeline enables Whirlpool by default. Callers and tests may set
+`use_whirlpool_search=false` when they need the fixed region strategy for an
+explicit comparison or fallback. A worker can still tune its round/probe
+budget from evidence depth while retaining the same fresh-context,
 experimental-lifecycle and promotion boundaries.
 
 Whirlpool evaluation is not judged by immediate `HELPED`. Its trace reports

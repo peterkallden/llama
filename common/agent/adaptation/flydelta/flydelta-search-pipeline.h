@@ -30,10 +30,10 @@ struct common_flydelta_search_pipeline_config {
     size_t region_max_neighborhoods = 4;
     size_t region_max_trials = 32;
     size_t region_max_stalled_scales = 2;
-    // Explicit opt-in: callers choose Whirlpool when their evidence-depth
-    // budget permits adaptive WHERE refinement. The bounded region scan stays
-    // the compatibility default.
-    bool use_whirlpool_search = false;
+    // Whirlpool is the normal adaptive WHERE strategy. Set this to false for
+    // the fixed region scan when comparing strategies or using it as a
+    // compatibility fallback.
+    bool use_whirlpool_search = true;
     size_t whirlpool_max_rounds = 2;
     size_t whirlpool_probes_per_round = 4;
     size_t whirlpool_max_trials = 8;

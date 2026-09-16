@@ -109,6 +109,7 @@ int main() {
     // It retains all executed arms and still selects only host-verified HELPED.
     auto region_config = config;
     region_config.use_intervention_region_search = true;
+    region_config.use_whirlpool_search = false;
     region_config.region_max_singleton_layers = 2;
     region_config.region_max_neighborhoods = 2;
     region_config.region_max_trials = 32;
