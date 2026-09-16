@@ -111,7 +111,7 @@ bool common_flydelta_intervention_region_search_config_validate(
         std::string & error) {
     error.clear();
     if (config.schema_version != 1 || config.available_layers.empty() ||
-            config.available_layers.size() > 16 ||
+            config.available_layers.size() > 64 ||
             !std::is_sorted(config.available_layers.begin(), config.available_layers.end()) ||
             config.available_layers.front() == 0 ||
             std::adjacent_find(config.available_layers.begin(), config.available_layers.end()) !=
@@ -129,6 +129,19 @@ bool common_flydelta_intervention_region_search_config_validate(
             config.max_shift_norm <= 0.0f) {
         error = "FlyDelta intervention region search configuration is invalid";
         return false;
+    }
+    if (!std::is_sorted(config.singleton_layers.begin(), config.singleton_layers.end()) ||
+            std::adjacent_find(config.singleton_layers.begin(), config.singleton_layers.end()) !=
+                config.singleton_layers.end()) {
+        error = "FlyDelta intervention singleton anchors are invalid";
+        return false;
+    }
+    for (const uint32_t layer : config.singleton_layers) {
+        if (layer == 0 || !std::binary_search(
+                config.available_layers.begin(), config.available_layers.end(), layer)) {
+            error = "FlyDelta intervention singleton anchor is unavailable";
+            return false;
+        }
     }
     for (size_t index = 0; index < config.scales.size(); ++index) {
         if (!std::isfinite(config.scales[index]) || config.scales[index] <= 0.0f ||
@@ -208,10 +221,12 @@ bool common_flydelta_run_intervention_region_search(
         return true;
     };
 
+    const auto & singleton_layers = config.singleton_layers.empty()
+        ? config.available_layers : config.singleton_layers;
     for (size_t layer_index = 0;
-            layer_index < config.max_singleton_layers && trials.size() < config.max_trials;
-            ++layer_index) {
-        const uint32_t layer = config.available_layers[layer_index];
+            layer_index < config.max_singleton_layers && layer_index < singleton_layers.size() &&
+            trials.size() < config.max_trials; ++layer_index) {
+        const uint32_t layer = singleton_layers[layer_index];
         size_t stalled = 0;
         for (const float scale : config.scales) {
             if (trials.size() >= config.max_trials) break;

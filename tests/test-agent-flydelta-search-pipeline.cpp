@@ -159,6 +159,48 @@ int main() {
         region_result.selection.region_trial_index].candidate.layer_indices ==
         std::vector<uint32_t>({2, 3}));
 
+    // Dense discovery may provide anchors that are not the first available
+    // layers. Region search must honor those anchors while retaining the full
+    // layer set for any future adjacent-neighborhood expansion.
+    auto anchored_region_config = region_config;
+    anchored_region_config.region_max_singleton_layers = 1;
+    anchored_region_config.region_max_neighborhoods = 0;
+    common_flydelta_search_pipeline_direction anchored_input = input;
+    anchored_input.layer_anchors = {3};
+    common_flydelta_search_pipeline_result anchored_result;
+    calls = 0;
+    CHECK(common_flydelta_run_search_pipeline(
+        make_fixture(), anchored_region_config, {anchored_input},
+        [&](const common_flydelta_experiment_fixture &,
+                const common_flydelta_direction_candidate &,
+                const common_flydelta_layer_candidate * layer,
+                float, bool apply_overlay,
+                common_flydelta_counterfactual_trial & trial,
+                common_flydelta_decision_margin &,
+                common_flydelta_scale_geometry & geometry,
+                std::string &) {
+            ++calls;
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.overlay_applied = apply_overlay;
+            trial.passed = false;
+            trial.evidence_ref = "evidence:search-pipeline-anchors";
+            geometry = {};
+            geometry.available = apply_overlay;
+            geometry.cosine = 0.8f;
+            geometry.progress = 0.1f;
+            geometry.leakage = 0.1f;
+            geometry.shift_norm = 0.1f;
+            if (layer != nullptr) trial.quality = 0.0f;
+            return true;
+        }, anchored_result, error));
+    CHECK(calls == 5); // baseline + one anchored singleton × four scales
+    CHECK(anchored_result.directions.front().region_trials.size() == 4);
+    for (const auto & trial : anchored_result.directions.front().region_trials) {
+        CHECK(trial.candidate.layer_indices == std::vector<uint32_t>({3}));
+    }
+
     common_learning_in_memory_lifecycle_store region_lifecycle;
     CHECK(common_flydelta_append_search_pipeline_lifecycle(
         region_lifecycle, lifecycle_context, make_fixture(), region_result,

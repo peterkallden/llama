@@ -6,6 +6,7 @@
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
 #include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
+#include "agent/adaptation/flydelta/flydelta-layer-discovery.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-scale-search.h"
@@ -189,9 +190,9 @@ int main(int argc, char ** argv) {
     auto capture_request = std::make_shared<common_flydelta_hidden_state_capture_request>();
     capture_request->enabled = true;
     // layer-input is sampled before that layer's cvec addition. Capture a
-    // small contiguous window so the host can rank actual layer locations and
-    // test adjacent neighborhoods without inventing uncaptured layers.
-    for (uint32_t layer = 1; layer < model_n_layers && layer <= 5; ++layer) {
+    // bounded dense profile so host-side discovery can find the useful region
+    // from activation separation instead of assuming that early layers win.
+    for (uint32_t layer = 1; layer < model_n_layers && layer <= 64; ++layer) {
         capture_request->layer_indices.push_back(layer);
     }
     // Capture the final prompt row. The two controlled prompts have the same
@@ -287,6 +288,26 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    common_flydelta_layer_discovery_config discovery_config;
+    discovery_config.max_layers = 64;
+    discovery_config.max_anchors = 6;
+    discovery_config.min_anchor_separation = 2;
+    discovery_config.max_capture_bytes = 64U * 1024U * 1024U;
+    common_flydelta_layer_discovery_result discovery;
+    if (!common_flydelta_discover_layer_regions(
+            {*repaired.flydelta_capture}, {*failed.flydelta_capture},
+            discovery_config, discovery, error)) {
+        std::cerr << "FlyDelta model layer discovery failed: " << error << '\n';
+        return 1;
+    }
+    std::cout << "layer_discovery_layers=" << discovery.scores.size()
+              << " layer_discovery_anchors=";
+    for (size_t index = 0; index < discovery.anchor_layers.size(); ++index) {
+        if (index != 0) std::cout << ',';
+        std::cout << discovery.anchor_layers[index];
+    }
+    std::cout << '\n';
+
     // This credit is for the host-certified repair relation. It makes the
     // basis usable for the following counterfactual; the three-arm result
     // below remains the separate causal verdict for the generated overlay.
@@ -303,7 +324,7 @@ int main(int argc, char ** argv) {
     }
     common_flydelta_basis_config basis_config;
     basis_config.dimension = model_n_embd;
-    basis_config.max_directions = 4;
+    basis_config.max_directions = 64;
     basis_config.cluster_similarity = 0.85f;
     basis_config.source = common_adaptation_evidence_source::tool_repair;
     basis_config.behavior_key = "structured_tool_selection";
@@ -312,9 +333,6 @@ int main(int argc, char ** argv) {
     basis_config.capture_layout_revision = "layer-input:v1";
     common_flydelta_basis_builder basis(basis_config);
     for (const auto & delta : deltas) {
-        // Layer 5 is captured only as a downstream measurement point for a
-        // layer-4 intervention. It is not part of the searched basis window.
-        if (delta.layer_index > 4) continue;
         if (!basis.add(delta, repair_credit, error)) {
             std::cerr << "FlyDelta repair basis construction failed: " << error << '\n';
             return 1;
@@ -572,7 +590,7 @@ int main(int argc, char ** argv) {
         pipeline_config.scale.min_cosine = 0.3f;
         pipeline_config.scale.max_leakage = 1.0f;
         pipeline_config.scale.max_shift_norm = 1.0f;
-        pipeline_config.region_max_singleton_layers = 4;
+        pipeline_config.region_max_singleton_layers = 6;
         pipeline_config.region_max_neighborhoods = 4;
         pipeline_config.region_max_trials = 32;
         pipeline_config.region_max_stalled_scales = 2;
@@ -582,11 +600,10 @@ int main(int argc, char ** argv) {
             1, common_flydelta_direction_kind::raw_repair, anchor->layer_index,
             anchor->values, 1, 1, 1.0f, false};
         for (const auto & delta : deltas) {
-            if (delta.layer_index > 0 && delta.layer_index <= 4) {
-                pipeline_direction.available_layers.push_back(
-                    static_cast<uint32_t>(delta.layer_index));
-            }
+            if (delta.layer_index > 0) pipeline_direction.available_layers.push_back(
+                static_cast<uint32_t>(delta.layer_index));
         }
+        pipeline_direction.layer_anchors = discovery.anchor_layers;
         std::sort(pipeline_direction.available_layers.begin(),
             pipeline_direction.available_layers.end());
         pipeline_direction.available_layers.erase(std::unique(
@@ -930,6 +947,16 @@ int main(int argc, char ** argv) {
                 scale_config.min_cosine = 0.3f;
                 scale_config.max_leakage = 1.0f;
                 scale_config.max_shift_norm = 1.0f;
+                const auto layer2_separation = std::find_if(discovery.scores.begin(),
+                    discovery.scores.end(), [](const auto & score) {
+                        return score.layer_index == 2;
+                    });
+                if (layer2_separation != discovery.scores.end() &&
+                        layer2_separation->separation > 0.0f) {
+                    scale_config.separation_calibrated = true;
+                    scale_config.reference_separation = layer2_separation->separation;
+                    scale_config.max_resolved_scale = 1.0f;
+                }
                 std::vector<common_flydelta_scale_trial> scale_trials;
                 common_flydelta_scale_selection scale_selection;
                 std::shared_ptr<const common_flydelta_hidden_state_capture> scale_baseline_capture;
@@ -1009,6 +1036,10 @@ int main(int argc, char ** argv) {
                           << " l2_scale_search_selected=" << (scale_selection.selected ? "yes" : "no") << '\n';
                 for (const auto & trial : scale_trials) {
                     std::cout << "l2_scale_trial scale=" << trial.scale
+                              << " requested_scale=" << trial.requested_scale
+                              << " separation_calibrated="
+                              << (trial.separation_calibrated ? "yes" : "no")
+                              << " scale_clamped=" << (trial.scale_clamped ? "yes" : "no")
                               << " outcome=" << common_flydelta_counterfactual_outcome_name(trial.outcome)
                               << " safe_to_escalate=" << (trial.safe_to_escalate ? "yes" : "no")
                               << " refinement=" << (trial.refinement ? "yes" : "no");

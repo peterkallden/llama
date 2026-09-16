@@ -1136,12 +1136,12 @@ full covariance LDA implementation: it is deterministic, bounded and cheap
 enough for the host, while avoiding an unstable dense matrix for small sample
 sets.
 
-The host uses six natural host-certified repair pairs as the first
-model-facing deep-search threshold. Below six, the builder may still be used
-for cheap CPU diagnostics or an explicitly configured CPU study, but the
-runtime must not spend model inference on aggregate direction evaluation. At
-six pairs, the host may compare the aggregate candidates on a holdout and
-then use the normal layer search and four-arm scale search. The threshold is a
+The host uses six natural host-certified repair pairs as the Deep aggregate
+threshold. It is not a blanket ban on model-facing experiments below six
+pairs. Bootstrap may run a bounded rank-1 arm from one compatible sample, and
+Shallow may run a bounded rank-2 experiment when two to five samples are
+actually independent enough. The six-pair threshold applies when the host
+wants the larger aggregate WHAT builders and Deep coefficient search; it is a
 cost/evidence gate, not a claim that six examples are sufficient for
 promotion.
 
@@ -1168,10 +1168,13 @@ domains separated.
 The Qwen model smoke is wired to this seam for its L2 scale experiment. Its
 current fixture contains one natural host-certified repair pair, so the smoke
 reports and evaluates only `raw_repair` and marks `deep_ready=no`; it does not
-manufacture additional contrast samples. Once six natural pairs are
-available, the same smoke seam can evaluate the aggregate candidates under the
-normal four-arm runtime scale bound. The CPU contract test exercises the
-multi-sample trimmed and whitened paths independently of model inference.
+manufacture additional contrast samples. This is the Bootstrap path, not an
+exception to the model-facing contract. Once two sufficiently independent
+pairs are available, the same smoke seam may evaluate the Shallow rank-2
+path; once six stable natural pairs are available, it may evaluate the Deep
+aggregate candidates under the normal bounded scale budget. The CPU contract
+test exercises the multi-sample trimmed and whitened paths independently of
+model inference.
 
 The direction search is also available through the existing experiment queue
 as job kind `direction`. The job contains only bounded behavior-delta
@@ -1618,13 +1621,24 @@ opt-in `--region-scan` path that treats layer and scale as a small interacting
 search region:
 
 ```text
-captured/basis-compatible layers 1..4
+all dense-captured basis-compatible layers
+        -> cheap separation/Fisher/slope profile
+        -> signal-driven anchors (bounded to 4--6)
         ×
-scales 0.02, 0.04, 0.08, 0.16
+relative scales 0.02, 0.04, 0.08, 0.16
         -> bounded singleton trials
         -> retain active local regions
         -> adjacent pair trials around those regions
 ```
+
+The dense discovery pass is capture-only: it computes per-layer separation,
+projected variance, Fisher-like score and local slope from matched
+model-facing captures. It selects a bounded set of signal-driven anchors.
+Those anchors constrain the first singleton region arms; the complete dense
+layer set remains available so adjacent numeric neighbors can still be
+validated. If no anchors are supplied, the helper retains its legacy first-N
+singleton behavior. This keeps the discovery result as a search hint rather
+than learning evidence.
 
 The region helper runs one no-overlay baseline, evaluates singleton layers
 first, and uses the existing geometry safety checks (`cosine`, `progress`,
@@ -1635,6 +1649,15 @@ singleton is host-verified `HELPED`, only adjacent numeric layer pairs around
 active singleton regions are considered. The helper has a hard trial budget;
 the model smoke's configured maximum is 32 overlay trials plus the baseline,
 although early stopping normally makes the run smaller.
+
+When separation calibration is enabled in the scale-search configuration,
+the scale ladder is interpreted as a relative fraction of a measured
+positive/negative activation separation. The runner receives the resolved
+bounded scale, while the trial keeps the requested relative scale and reports
+whether the resolved value was clamped. Refinement brackets the requested
+relative values, so calibration does not distort the search interval. The
+existing geometry bounds can stop escalation, and a clamped arm is never
+treated as safe to escalate.
 
 The smoke captures through the layer after the candidate window so an
 injection at layer `L` is measured downstream rather than at its own

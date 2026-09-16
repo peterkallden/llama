@@ -35,6 +35,10 @@ struct common_flydelta_search_pipeline_direction {
     common_flydelta_direction_candidate direction;
     std::vector<common_flydelta_layer_diagnostic> layer_diagnostics;
     std::vector<uint32_t> available_layers;
+    // Optional anchors emitted by dense layer discovery. They constrain only
+    // the first singleton region arms; available_layers still supplies valid
+    // neighbors for local expansion.
+    std::vector<uint32_t> layer_anchors;
 };
 
 struct common_flydelta_search_pipeline_layer_result {

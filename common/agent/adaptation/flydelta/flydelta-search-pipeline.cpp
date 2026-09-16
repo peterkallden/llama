@@ -127,12 +127,13 @@ bool common_flydelta_run_search_pipeline(
         direction_result.direction = input.direction;
 
         if (config.use_intervention_region_search) {
-            if (input.available_layers.size() > 16) {
+            if (input.available_layers.size() > 64) {
                 error = "FlyDelta intervention region pipeline layer count is invalid";
                 return false;
             }
             common_flydelta_intervention_region_search_config region_config;
             region_config.available_layers = input.available_layers;
+            region_config.singleton_layers = input.layer_anchors;
             region_config.scales = region_scales(config.scale);
             region_config.max_singleton_layers = std::min(
                 config.region_max_singleton_layers, input.available_layers.size());

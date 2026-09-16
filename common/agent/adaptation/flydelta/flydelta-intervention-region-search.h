@@ -14,6 +14,9 @@
 struct common_flydelta_intervention_region_search_config {
     int schema_version = 1;
     std::vector<uint32_t> available_layers;
+    // Optional signal-driven singleton anchors. When empty, the first
+    // max_singleton_layers available layers retain the legacy behavior.
+    std::vector<uint32_t> singleton_layers;
     std::vector<float> scales;
     size_t max_singleton_layers = 4;
     size_t max_neighborhoods = 4;
