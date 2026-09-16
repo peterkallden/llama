@@ -267,19 +267,28 @@ purpose is to test the Bootstrap/Shallow/Deep evidence gate. A separate
 process per scenario is useful for isolated logs but cannot by itself reach
 the aggregate deep threshold.
 
-The repair model smoke accepts an optional exact family selector through
-`--behavior-key` or `LLAMA_AGENT_FLYDELTA_BEHAVIOR_KEY`. When present, only
-scenarios with that key are included in the model-facing contract, repair
-collection and aggregation. This makes it possible to focus an expensive
-model run on one correction family, for example:
+The repair model smoke uses the same host configuration and learning-domain
+policy as `llama-agent`. Pass the existing `--config` path (or set
+`LLAMA_AGENT_CONFIG`) to apply `runtime.adaptation.collection_allowed` and
+`runtime.adaptation.domains.families`; no FlyDelta-specific family define is
+needed. The policy is applied to the canonical tool family (`data` for
+`data.aggregate`), while the suite's full `behavior_key` remains the
+aggregation identity. This makes it possible to focus an expensive model run
+on one enabled correction family, for example:
 
 ```text
 LLAMA_AGENT_MODEL=/path/to/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf \
 LLAMA_AGENT_DATASET_QUESTION_SUITE=docs/examples/agent-flydelta-dataset-question-suite-incremental-v3.json \
-LLAMA_AGENT_FLYDELTA_BEHAVIOR_KEY=tool_use/dataset/data_aggregate \
+LLAMA_AGENT_CONFIG=examples/agent-host-config-adaptation.json \
 LLAMA_AGENT_THREADS=3 \
 scripts/test-agent-flydelta-dataset-question-repair-model-smoke.sh
 ```
+
+Without `--config`, the model smoke keeps its previous all-family behavior;
+this preserves its role as an isolated experimental harness. With a config,
+the host policy is authoritative: collection disabled means no selected
+families, `tool_use: true` enables all tool families, and an entry under
+`families` overrides the default for that family.
 
 For a Bootstrap group, the same smoke now also exercises the worker seam:
 one retained raw direction is placed in a bounded counterfactual job, then

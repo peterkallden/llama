@@ -28,8 +28,8 @@ args=(
     --n-predict "${LLAMA_AGENT_N_PREDICT:-128}"
     --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-0}"
 )
-if [[ -n "${LLAMA_AGENT_FLYDELTA_BEHAVIOR_KEY:-}" ]]; then
-    args+=(--behavior-key "$LLAMA_AGENT_FLYDELTA_BEHAVIOR_KEY")
+if [[ -n "${LLAMA_AGENT_CONFIG:-}" ]]; then
+    args+=(--config "$LLAMA_AGENT_CONFIG")
 fi
 
 log_path="$work_dir/dataset-question-repair-model.log"

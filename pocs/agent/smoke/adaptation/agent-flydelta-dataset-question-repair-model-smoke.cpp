@@ -11,6 +11,7 @@
 #include "agent/adaptation/flydelta/flydelta-worker.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "tools/agent/cli/agent-cli-inference.h"
+#include "tools/agent/host/agent-host-config.h"
 #include "tools/agent/runtime/agent-model-loaders.h"
 
 #include <nlohmann/json.hpp>
@@ -22,6 +23,7 @@
 #include <iostream>
 #include <memory>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -32,7 +34,7 @@ using json = nlohmann::ordered_json;
 struct options {
     std::string model;
     std::string suite;
-    std::string behavior_key;
+    std::string config;
     int n_predict = 128;
     int n_threads = 3;
     int n_gpu_layers = 0;
@@ -47,7 +49,7 @@ struct host_verdict {
 bool parse_args(int argc, char ** argv, options & value) {
     if (const char * model = std::getenv("LLAMA_AGENT_MODEL")) value.model = model;
     if (const char * suite = std::getenv("LLAMA_AGENT_DATASET_QUESTION_SUITE")) value.suite = suite;
-    if (const char * behavior = std::getenv("LLAMA_AGENT_FLYDELTA_BEHAVIOR_KEY")) value.behavior_key = behavior;
+    if (const char * config = std::getenv("LLAMA_AGENT_CONFIG")) value.config = config;
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
@@ -57,7 +59,7 @@ bool parse_args(int argc, char ** argv, options & value) {
         };
         if (argument == "--model") { const auto v = next("--model"); if (!v) return false; value.model = v; }
         else if (argument == "--suite") { const auto v = next("--suite"); if (!v) return false; value.suite = v; }
-        else if (argument == "--behavior-key") { const auto v = next("--behavior-key"); if (!v) return false; value.behavior_key = v; }
+        else if (argument == "--config") { const auto v = next("--config"); if (!v) return false; value.config = v; }
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
         else if (argument == "--n-gpu-layers") { const auto v = next("--n-gpu-layers"); if (!v) return false; value.n_gpu_layers = std::stoi(v); }
@@ -75,6 +77,21 @@ struct bootstrap_case {
     std::string capture_manifest_id;
     std::string delta_id;
 };
+
+std::string tool_family(const std::string & tool_name) {
+    const auto separator = tool_name.find_first_of("._");
+    return separator == std::string::npos ? tool_name : tool_name.substr(0, separator);
+}
+
+bool policy_allows_tool_family(const agent_host_config * config, const std::string & tool_name) {
+    if (config == nullptr) return true;
+    if (!config->adaptation_collection_allowed) return false;
+    const auto & policy = config->adaptation_domains;
+    if (!policy.configured) return true;
+    const auto family = tool_family(tool_name);
+    const auto override = policy.tool_use_families.find(family);
+    return override == policy.tool_use_families.end() ? policy.tool_use : override->second;
+}
 
 bool read_json(const std::string & path, json & value, std::string & error) {
     std::ifstream input(path, std::ios::binary);
@@ -173,7 +190,7 @@ int main(int argc, char ** argv) {
     options value;
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
-                  << " --model MODEL --suite SUITE_JSON [--behavior-key KEY]"
+                  << " --model MODEL --suite SUITE_JSON [--config AGENT_CONFIG]"
                   << " [--threads N] [--n-gpu-layers N]\n";
         return 2;
     }
@@ -187,6 +204,14 @@ int main(int argc, char ** argv) {
     json suite;
     std::string error;
     if (!read_json(value.suite, suite, error)) { std::cerr << error << '\n'; return 1; }
+    std::optional<agent_host_config> host_config;
+    if (!value.config.empty()) {
+        host_config.emplace();
+        if (!load_agent_host_config(value.config, *host_config, error)) {
+            std::cerr << "could not load agent config: " << error << '\n';
+            return 1;
+        }
+    }
     agent_flydelta_dataset_repair_host host;
     if (!host.open("model", error)) { std::cerr << error << '\n'; return 1; }
 
@@ -196,11 +221,9 @@ int main(int argc, char ** argv) {
     std::string contract = "Available read-only tools:\n";
     size_t selected_scenarios = 0;
     for (const auto & scenario : suite["scenarios"]) {
-        const auto behavior_key = scenario.value(
-            "behavior_key", "tool_use/dataset/structured_call_repair");
-        if (!value.behavior_key.empty() && behavior_key != value.behavior_key) continue;
-        ++selected_scenarios;
         const auto expected = scenario.value("expected_tool", "");
+        if (!policy_allows_tool_family(host_config ? &*host_config : nullptr, expected)) continue;
+        ++selected_scenarios;
         const auto * definition = catalog.find_definition(expected);
         if (!definition) { host.close(); std::cerr << "unknown expected tool: " << expected << '\n'; return 1; }
         std::string compact_error;
@@ -211,7 +234,7 @@ int main(int argc, char ** argv) {
     }
     if (selected_scenarios == 0) {
         host.close();
-        std::cerr << "no scenarios matched behavior key: " << value.behavior_key << '\n';
+        std::cerr << "no scenarios enabled by agent learning policy\n";
         return 2;
     }
 
@@ -249,7 +272,7 @@ int main(int argc, char ** argv) {
         const auto expected = scenario.value("expected_tool", "");
         const auto behavior_key = scenario.value(
             "behavior_key", "tool_use/dataset/structured_call_repair");
-        if (!value.behavior_key.empty() && behavior_key != value.behavior_key) continue;
+        if (!policy_allows_tool_family(host_config ? &*host_config : nullptr, expected)) continue;
         const auto steps = scenario.value("plan", json::object()).value("steps", json::array());
         if (steps.size() != 1) { host.close(); std::cerr << "scenario has invalid plan: " << id << '\n'; return 1; }
         common_tool_execution_result canonical_execution;
@@ -359,7 +382,7 @@ int main(int argc, char ** argv) {
     std::filesystem::remove_all(worker_root, ignored);
     std::cout << "flydelta_dataset_question_repair_model_smoke"
               << " passed=" << passed << " failures=" << failures << " unresolved=" << unresolved
-              << " behavior_filter=" << (value.behavior_key.empty() ? "all" : value.behavior_key)
+              << " config=" << (value.config.empty() ? "none" : value.config)
               << " selected_scenarios=" << selected_scenarios
               << " host_certified_repairs=" << repaired << '\n';
     for (const auto & entry : samples_by_behavior) {
