@@ -4,6 +4,7 @@
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-scale-search.h"
 #include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
+#include "agent/adaptation/flydelta/flydelta-whirlpool-search.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 
 #include <cstddef>
@@ -29,6 +30,15 @@ struct common_flydelta_search_pipeline_config {
     size_t region_max_neighborhoods = 4;
     size_t region_max_trials = 32;
     size_t region_max_stalled_scales = 2;
+    // Explicit opt-in: callers choose Whirlpool when their evidence-depth
+    // budget permits adaptive WHERE refinement. The bounded region scan stays
+    // the compatibility default.
+    bool use_whirlpool_search = false;
+    size_t whirlpool_max_rounds = 2;
+    size_t whirlpool_probes_per_round = 4;
+    size_t whirlpool_max_trials = 8;
+    uint32_t whirlpool_initial_radius = 2;
+    float whirlpool_shrink_factor = 0.5f;
 };
 
 struct common_flydelta_search_pipeline_direction {

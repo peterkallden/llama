@@ -55,6 +55,9 @@ struct common_flydelta_intervention_region_trial {
     bool verifier_known = false;
     bool geometry_available = false;
     common_flydelta_representation_diagnostics geometry;
+    // Continuous diagnostic objective used by adaptive experiment search.
+    // It is never a host verdict and cannot select/promote a candidate.
+    float search_score = 0.0f;
     bool promising = false;
     bool safe_to_continue = false;
     std::string evidence_ref;

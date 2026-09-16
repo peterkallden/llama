@@ -1,0 +1,244 @@
+#include "agent/adaptation/flydelta/flydelta-whirlpool-search.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+namespace {
+
+float diagnostic_score(const common_flydelta_layer_diagnostic & value) {
+    return value.progress * std::max(0.0f, value.cosine) /
+        (1.0f + std::max(0.0f, value.leakage));
+}
+
+bool contains(const std::vector<uint32_t> & values, uint32_t value) {
+    return std::find(values.begin(), values.end(), value) != values.end();
+}
+
+bool safe_geometry(const common_flydelta_representation_diagnostics & geometry,
+        bool available, const common_flydelta_whirlpool_search_config & config) {
+    return !available || (geometry.cosine >= config.min_cosine &&
+        geometry.leakage <= config.max_leakage &&
+        geometry.shift_norm <= config.max_shift_norm);
+}
+
+float objective(const common_flydelta_counterfactual_trial & baseline,
+        const common_flydelta_decision_margin & baseline_margin,
+        const common_flydelta_counterfactual_trial & trial,
+        const common_flydelta_decision_margin & margin,
+        const common_flydelta_representation_diagnostics & geometry,
+        bool geometry_available,
+        const common_flydelta_whirlpool_search_config & config) {
+    float value = trial.quality - baseline.quality;
+    if (baseline_margin.available && margin.available) {
+        value += config.margin_weight *
+            (margin.normalized_delta() - baseline_margin.normalized_delta());
+    }
+    if (geometry_available) {
+        value += config.geometry_weight * geometry.progress *
+            std::max(0.0f, geometry.cosine);
+        value -= config.leakage_penalty * geometry.leakage;
+    }
+    return std::isfinite(value) ? value : -std::numeric_limits<float>::infinity();
+}
+
+uint32_t initial_centre(const common_flydelta_whirlpool_search_config & config) {
+    float best_score = -std::numeric_limits<float>::infinity();
+    uint32_t best_layer = 0;
+    for (const auto & diagnostic : config.layer_diagnostics) {
+        if (diagnostic.layer_index == 0 || !contains(config.available_layers,
+                diagnostic.layer_index)) continue;
+        const float score = diagnostic_score(diagnostic);
+        if (score > best_score) {
+            best_score = score;
+            best_layer = diagnostic.layer_index;
+        }
+    }
+    if (best_layer != 0) return best_layer;
+    if (!config.seed_layers.empty()) return config.seed_layers[config.seed_layers.size() / 2];
+    return config.available_layers[config.available_layers.size() / 2];
+}
+
+std::vector<uint32_t> probes(uint32_t centre, uint32_t radius,
+        const std::vector<uint32_t> & available, size_t limit) {
+    std::vector<uint32_t> result;
+    const uint32_t half = std::max<uint32_t>(1, radius / 2);
+    const std::vector<int64_t> offsets = {
+        0, -static_cast<int64_t>(radius), static_cast<int64_t>(radius),
+        -static_cast<int64_t>(half), static_cast<int64_t>(half)};
+    for (const int64_t offset : offsets) {
+        const int64_t candidate = static_cast<int64_t>(centre) + offset;
+        if (candidate <= 0 || candidate > std::numeric_limits<uint32_t>::max()) continue;
+        const uint32_t layer = static_cast<uint32_t>(candidate);
+        if (!contains(available, layer) || contains(result, layer)) continue;
+        result.push_back(layer);
+        if (result.size() >= limit) break;
+    }
+    return result;
+}
+
+} // namespace
+
+bool common_flydelta_whirlpool_search_config_validate(
+        const common_flydelta_whirlpool_search_config & config,
+        std::string & error) {
+    error.clear();
+    if (config.schema_version != 1 || config.available_layers.empty() ||
+            config.available_layers.size() > 64 ||
+            !std::is_sorted(config.available_layers.begin(), config.available_layers.end()) ||
+            config.available_layers.front() == 0 ||
+            std::adjacent_find(config.available_layers.begin(), config.available_layers.end()) !=
+                config.available_layers.end() || config.max_rounds == 0 ||
+            config.max_rounds > 16 || config.probes_per_round < 2 ||
+            config.probes_per_round > 8 || config.max_trials == 0 || config.max_trials > 64 ||
+            config.initial_radius == 0 || !std::isfinite(config.total_scale) ||
+            config.total_scale <= 0.0f || config.total_scale > 1.0f ||
+            !std::isfinite(config.shrink_factor) || config.shrink_factor <= 0.0f ||
+            config.shrink_factor >= 1.0f || !std::isfinite(config.margin_weight) ||
+            config.margin_weight < 0.0f || !std::isfinite(config.geometry_weight) ||
+            config.geometry_weight < 0.0f || !std::isfinite(config.leakage_penalty) ||
+            config.leakage_penalty < 0.0f || !std::isfinite(config.max_leakage) ||
+            config.max_leakage < 0.0f || !std::isfinite(config.max_shift_norm) ||
+            config.max_shift_norm <= 0.0f || !std::isfinite(config.min_cosine) ||
+            config.min_cosine < -1.0f || config.min_cosine > 1.0f) {
+        error = "FlyDelta Whirlpool search configuration is invalid";
+        return false;
+    }
+    for (const uint32_t layer : config.seed_layers) {
+        if (layer == 0 || !contains(config.available_layers, layer)) {
+            error = "FlyDelta Whirlpool seed layer is unavailable";
+            return false;
+        }
+    }
+    for (const auto & diagnostic : config.layer_diagnostics) {
+        if (diagnostic.layer_index == 0 || !contains(config.available_layers,
+                diagnostic.layer_index) || !std::isfinite(diagnostic.cosine) ||
+                !std::isfinite(diagnostic.progress) || !std::isfinite(diagnostic.leakage) ||
+                !std::isfinite(diagnostic.shift_norm)) {
+            error = "FlyDelta Whirlpool layer diagnostic is invalid";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool common_flydelta_run_whirlpool_search(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_whirlpool_search_config & config,
+        const common_flydelta_whirlpool_search_runner & runner,
+        std::vector<common_flydelta_intervention_region_trial> & trials,
+        common_flydelta_intervention_region_selection & selection,
+        std::string & error) {
+    error.clear();
+    trials.clear();
+    selection = {};
+    if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
+            !common_flydelta_whirlpool_search_config_validate(config, error) || !runner) {
+        if (error.empty()) error = "FlyDelta Whirlpool runner is invalid";
+        return false;
+    }
+
+    common_flydelta_counterfactual_trial baseline;
+    common_flydelta_decision_margin baseline_margin;
+    common_flydelta_representation_diagnostics baseline_geometry;
+    bool baseline_geometry_available = false;
+    if (!runner(fixture, nullptr, baseline, baseline_margin,
+                baseline_geometry, baseline_geometry_available, error) ||
+            !common_flydelta_counterfactual_trial_validate(baseline, error) ||
+            !common_flydelta_decision_margin_validate(baseline_margin, error)) {
+        return false;
+    }
+
+    uint32_t centre = initial_centre(config);
+    uint32_t radius = config.initial_radius;
+    std::vector<uint32_t> visited;
+    float best_objective = -std::numeric_limits<float>::infinity();
+    size_t best_trial = 0;
+
+    for (size_t round = 0; round < config.max_rounds && trials.size() < config.max_trials;
+            ++round) {
+        const auto round_probes = probes(centre, radius, config.available_layers,
+            std::min(config.probes_per_round, config.max_trials - trials.size()));
+        bool found_round_candidate = false;
+        float round_best = -std::numeric_limits<float>::infinity();
+        uint32_t round_centre = centre;
+        for (const uint32_t layer : round_probes) {
+            if (contains(visited, layer) || trials.size() >= config.max_trials) continue;
+            visited.push_back(layer);
+            common_flydelta_intervention_region_candidate candidate;
+            candidate.layer_indices = {layer};
+            candidate.anchor_layer_index = layer;
+            candidate.total_scale = config.total_scale;
+            candidate.per_layer_scale = config.total_scale;
+            candidate.source = common_flydelta_layer_search_candidate_source::diagnostic_singleton;
+
+            common_flydelta_counterfactual_trial counterfactual;
+            common_flydelta_decision_margin margin;
+            common_flydelta_representation_diagnostics geometry;
+            bool geometry_available = false;
+            if (!runner(fixture, &candidate, counterfactual, margin, geometry,
+                    geometry_available, error) ||
+                    !common_flydelta_counterfactual_trial_validate(counterfactual, error) ||
+                    !common_flydelta_decision_margin_validate(margin, error)) return false;
+            if (geometry_available &&
+                    !common_flydelta_representation_diagnostics_validate(geometry, error)) {
+                return false;
+            }
+
+            common_flydelta_intervention_region_trial region_trial;
+            region_trial.candidate = candidate;
+            region_trial.outcome = common_flydelta_classify_counterfactual(
+                baseline, counterfactual);
+            region_trial.quality_delta = counterfactual.quality - baseline.quality;
+            region_trial.margin = margin;
+            region_trial.executed = counterfactual.executed;
+            region_trial.verifier_known = baseline.verifier_known && counterfactual.verifier_known;
+            region_trial.geometry_available = geometry_available;
+            region_trial.geometry = geometry;
+            region_trial.safe_to_continue = safe_geometry(
+                geometry, geometry_available, config);
+            region_trial.promising = region_trial.outcome ==
+                common_flydelta_counterfactual_outcome::helped ||
+                (region_trial.safe_to_continue && geometry_available && geometry.progress > 0.0f) ||
+                (baseline_margin.available && margin.available &&
+                    margin.normalized_delta() > baseline_margin.normalized_delta());
+            region_trial.search_score = objective(baseline, baseline_margin, counterfactual,
+                margin, geometry, geometry_available, config);
+            region_trial.evidence_ref = counterfactual.evidence_ref;
+            trials.push_back(std::move(region_trial));
+            const auto & stored = trials.back();
+            if (stored.search_score > best_objective) {
+                best_objective = stored.search_score;
+                best_trial = trials.size() - 1;
+            }
+            if (stored.search_score > round_best) {
+                round_best = stored.search_score;
+                round_centre = layer;
+                found_round_candidate = true;
+            }
+        }
+        if (found_round_candidate) centre = round_centre;
+        if (radius > 1) {
+            radius = std::max<uint32_t>(1, static_cast<uint32_t>(
+                std::floor(static_cast<float>(radius) * config.shrink_factor)));
+        }
+        if (radius == 1 && round + 1 >= config.max_rounds) break;
+        if (best_trial >= trials.size()) break;
+    }
+
+    float best_helped_score = -std::numeric_limits<float>::infinity();
+    for (size_t index = 0; index < trials.size(); ++index) {
+        const auto & trial = trials[index];
+        if (trial.outcome != common_flydelta_counterfactual_outcome::helped ||
+                !trial.executed || !trial.verifier_known) continue;
+        if (!selection.selected || trial.quality_delta > best_helped_score ||
+                (trial.quality_delta == best_helped_score &&
+                 trial.candidate.total_scale < trials[selection.trial_index].candidate.total_scale)) {
+            selection.selected = true;
+            selection.trial_index = index;
+            selection.score = trial.quality_delta;
+            best_helped_score = trial.quality_delta;
+        }
+    }
+    return true;
+}

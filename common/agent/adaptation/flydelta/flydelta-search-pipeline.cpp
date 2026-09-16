@@ -81,7 +81,14 @@ bool common_flydelta_search_pipeline_config_validate(
             config.region_max_singleton_layers > 16 ||
             config.region_max_neighborhoods > 16 || config.region_max_trials == 0 ||
             config.region_max_trials > 64 || config.region_max_stalled_scales == 0 ||
-            config.region_max_stalled_scales > config.scale.max_geometric_trials) {
+            config.region_max_stalled_scales > config.scale.max_geometric_trials ||
+            (config.use_whirlpool_search && (config.whirlpool_max_rounds == 0 ||
+                config.whirlpool_max_rounds > 16 || config.whirlpool_probes_per_round < 2 ||
+                config.whirlpool_probes_per_round > 8 || config.whirlpool_max_trials == 0 ||
+                config.whirlpool_max_trials > 64 || config.whirlpool_initial_radius == 0 ||
+                !std::isfinite(config.whirlpool_shrink_factor) ||
+                config.whirlpool_shrink_factor <= 0.0f ||
+                config.whirlpool_shrink_factor >= 1.0f))) {
         if (error.empty()) error = "FlyDelta search pipeline configuration is invalid";
         return false;
     }
@@ -180,7 +187,56 @@ bool common_flydelta_run_search_pipeline(
                     return ok;
                 };
 
-            if (!common_flydelta_run_intervention_region_search(
+            if (config.use_whirlpool_search) {
+                common_flydelta_whirlpool_search_config whirlpool_config;
+                whirlpool_config.available_layers = input.available_layers;
+                whirlpool_config.seed_layers = input.layer_anchors;
+                whirlpool_config.layer_diagnostics = input.layer_diagnostics;
+                whirlpool_config.total_scale = config.scale.initial_scale;
+                whirlpool_config.max_rounds = config.whirlpool_max_rounds;
+                whirlpool_config.probes_per_round = config.whirlpool_probes_per_round;
+                whirlpool_config.max_trials = config.whirlpool_max_trials;
+                whirlpool_config.initial_radius = config.whirlpool_initial_radius;
+                whirlpool_config.shrink_factor = config.whirlpool_shrink_factor;
+                whirlpool_config.min_cosine = config.scale.min_cosine;
+                whirlpool_config.max_leakage = config.scale.max_leakage;
+                whirlpool_config.max_shift_norm = config.scale.max_shift_norm;
+                if (!common_flydelta_run_whirlpool_search(
+                        fixture, whirlpool_config,
+                        [&](const common_flydelta_experiment_fixture & current_fixture,
+                            const common_flydelta_intervention_region_candidate * region,
+                            common_flydelta_counterfactual_trial & trial,
+                            common_flydelta_decision_margin & margin,
+                            common_flydelta_representation_diagnostics & diagnostics,
+                            bool & diagnostics_available,
+                            std::string & runner_error) {
+                            common_flydelta_layer_candidate layer;
+                            const common_flydelta_layer_candidate * layer_ptr = nullptr;
+                            float scale = 0.0f;
+                            if (region != nullptr) {
+                                layer = to_layer_candidate(*region);
+                                layer_ptr = &layer;
+                                scale = region->total_scale;
+                            }
+                            common_flydelta_scale_geometry geometry;
+                            const bool ok = runner(current_fixture, input.direction, layer_ptr,
+                                scale, region != nullptr, trial, margin, geometry, runner_error);
+                            diagnostics = {};
+                            diagnostics_available = ok && geometry.available;
+                            if (diagnostics_available) {
+                                diagnostics = {
+                                    1,
+                                    region == nullptr ? 0 : region->anchor_layer_index,
+                                    geometry.cosine,
+                                    geometry.progress,
+                                    geometry.leakage,
+                                    geometry.shift_norm,
+                                };
+                            }
+                            return ok;
+                        }, direction_result.region_trials,
+                        direction_result.region_selection, error)) return false;
+            } else if (!common_flydelta_run_intervention_region_search(
                     fixture, region_config, region_runner,
                     direction_result.region_trials, direction_result.region_selection, error)) {
                 return false;

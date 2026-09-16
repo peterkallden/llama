@@ -91,6 +91,7 @@ bool common_flydelta_intervention_region_trial_validate(
     error.clear();
     if (!candidate_validate(trial.candidate, error) ||
             !valid_outcome(trial.outcome) || !std::isfinite(trial.quality_delta) ||
+            !std::isfinite(trial.search_score) ||
             !common_flydelta_decision_margin_validate(trial.margin, error)) {
         if (error.empty()) error = "FlyDelta intervention region trial is invalid";
         return false;

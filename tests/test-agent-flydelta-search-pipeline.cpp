@@ -201,6 +201,53 @@ int main() {
         CHECK(trial.candidate.layer_indices == std::vector<uint32_t>({3}));
     }
 
+    // Whirlpool is an explicit adaptive WHERE strategy. Diagnostics choose
+    // the initial centre; the pipeline runner still owns inference and host
+    // verification, and only HELPED may be selected.
+    auto whirlpool_config = region_config;
+    whirlpool_config.use_whirlpool_search = true;
+    whirlpool_config.whirlpool_max_rounds = 1;
+    whirlpool_config.whirlpool_probes_per_round = 4;
+    whirlpool_config.whirlpool_max_trials = 4;
+    whirlpool_config.whirlpool_initial_radius = 2;
+    common_flydelta_search_pipeline_result whirlpool_result;
+    calls = 0;
+    CHECK(common_flydelta_run_search_pipeline(
+        make_fixture(), whirlpool_config, {input},
+        [&](const common_flydelta_experiment_fixture &,
+                const common_flydelta_direction_candidate &,
+                const common_flydelta_layer_candidate * layer,
+                float scale, bool apply_overlay,
+                common_flydelta_counterfactual_trial & trial,
+                common_flydelta_decision_margin & margin,
+                common_flydelta_scale_geometry & geometry,
+                std::string &) {
+            ++calls;
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.overlay_applied = apply_overlay;
+            trial.evidence_ref = "evidence:search-pipeline-whirlpool";
+            const bool layer_two = layer != nullptr &&
+                layer->anchor_layer_index == 2;
+            trial.passed = apply_overlay && layer_two;
+            trial.quality = trial.passed ? 1.0f : 0.0f;
+            margin = {};
+            geometry = {};
+            geometry.available = apply_overlay;
+            geometry.cosine = layer_two ? 0.9f : 0.4f;
+            geometry.progress = layer_two ? 0.8f : 0.1f;
+            geometry.leakage = 0.05f;
+            geometry.shift_norm = scale;
+            return true;
+        }, whirlpool_result, error));
+    CHECK(calls == 5); // baseline + four probes in one round
+    CHECK(whirlpool_result.directions.front().region_trials.size() == 4);
+    CHECK(whirlpool_result.selection.selected);
+    CHECK(whirlpool_result.selection.intervention_region);
+    CHECK(whirlpool_result.directions.front().region_trials[
+        whirlpool_result.selection.region_trial_index].candidate.anchor_layer_index == 2);
+
     common_learning_in_memory_lifecycle_store region_lifecycle;
     CHECK(common_flydelta_append_search_pipeline_lifecycle(
         region_lifecycle, lifecycle_context, make_fixture(), region_result,

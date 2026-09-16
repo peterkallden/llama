@@ -1,0 +1,60 @@
+#pragma once
+
+#include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <vector>
+
+// Whirlpool is a bounded, derivative-free WHERE search. It uses a small set
+// of probes around a discrete layer centre, estimates which probe is more
+// promising from the existing diagnostics, then recentres and shrinks the
+// neighbourhood. It does not build directions, update DeltaMemory or make a
+// host verdict.
+struct common_flydelta_whirlpool_search_config {
+    int schema_version = 1;
+    std::vector<uint32_t> available_layers;
+    // Dense discovery/previous search anchors are priors, not evidence. They
+    // are used only to choose the initial centre and are never promoted.
+    std::vector<uint32_t> seed_layers;
+    std::vector<common_flydelta_layer_diagnostic> layer_diagnostics;
+    float total_scale = 0.02f;
+    size_t max_rounds = 2;
+    size_t probes_per_round = 4;
+    size_t max_trials = 8;
+    uint32_t initial_radius = 2;
+    float shrink_factor = 0.5f;
+    float margin_weight = 1.0f;
+    float geometry_weight = 0.25f;
+    float leakage_penalty = 0.10f;
+    float max_leakage = 1.0f;
+    float max_shift_norm = 1.0f;
+    float min_cosine = 0.3f;
+};
+
+bool common_flydelta_whirlpool_search_config_validate(
+        const common_flydelta_whirlpool_search_config & config,
+        std::string & error);
+
+using common_flydelta_whirlpool_search_runner = std::function<bool(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_intervention_region_candidate * candidate,
+        common_flydelta_counterfactual_trial & trial,
+        common_flydelta_decision_margin & margin,
+        common_flydelta_representation_diagnostics & geometry,
+        bool & geometry_available,
+        std::string & error)>;
+
+// Runs a bounded layer-only Whirlpool search. The baseline is evaluated once;
+// every other arm uses the existing candidate/overlay runner. UNKNOWN and
+// NEUTRAL may guide later probes through diagnostics, but only a host-known
+// HELPED trial is returned as selected.
+bool common_flydelta_run_whirlpool_search(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_whirlpool_search_config & config,
+        const common_flydelta_whirlpool_search_runner & runner,
+        std::vector<common_flydelta_intervention_region_trial> & trials,
+        common_flydelta_intervention_region_selection & selection,
+        std::string & error);

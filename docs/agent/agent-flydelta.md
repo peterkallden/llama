@@ -1673,6 +1673,57 @@ promotes `UNKNOWN` or `NEUTRAL`. The typed pipeline runner transports the
 optional teacher-forced decision margin alongside geometry, so a model adapter
 can rank arms without changing the host-verification rule.
 
+#### 4I.2. Adaptive Whirlpool WHERE search — implemented
+
+The fixed region scan remains the compatibility default. Callers that have a
+small evidence-depth budget may explicitly enable
+`common_flydelta_whirlpool_search` in the same pipeline. Whirlpool is a cheap,
+derivative-free adaptive search provider for `WHERE`; it is not another
+direction builder, learner or promotion path.
+
+Its first implementation is layer-only. It consumes the dense discovery
+profile and/or retained layer anchors as an initial prior, evaluates a small
+set of discrete probes around a centre, moves the centre toward the best
+diagnostic result and shrinks the neighbourhood for the next round:
+
+```text
+dense all-layer capture
+  -> separation/Fisher/geometry prior
+  -> initial layer centre
+  -> local layer probes
+  -> margin + geometry objective
+  -> recentre and shrink
+  -> bounded host-verified arms
+```
+
+When a teacher-forced decision margin is available, its change is the primary
+search signal. Geometry contributes a bounded secondary signal and leakage is
+a penalty. Without margin, the provider falls back to quality and the existing
+geometry signals. `cosine`, `progress`, `leakage` and `shift_norm` remain
+diagnostics only. `UNKNOWN` and `NEUTRAL` may guide later probes, but only a
+host-known baseline-fail / candidate-pass trial can be selected as `HELPED`.
+
+Whirlpool does not mix activation spaces. Samples and directions remain
+partitioned by layer/region, model profile, execution context and capture
+layout. Its output is a proposed layer region; the existing pipeline then
+continues to scale search, low-rank coefficient search and lifecycle recording
+through the same runner. A future `layer x capture-position` variant must
+extend the capture contract first; the current last-prompt-token capture does
+not contain a position search dimension.
+
+The evidence-depth budgets keep the search cheap:
+
+```text
+Bootstrap -> one small probe round, layer-only, fixed WHAT and scale
+Shallow   -> one or two local rounds, then small rank-2/margin controls
+Deep      -> bounded multi-round refinement, then coefficient/TFO search
+```
+
+The generic pipeline keeps Whirlpool opt-in so existing callers do not
+silently change from the fixed region strategy. A worker can select it from
+its evidence-depth budget while retaining the same fresh-context,
+experimental-lifecycle and promotion boundaries.
+
 In the latest local Qwen run all six L2 scale arms (`0.02, 0.04, 0.08, 0.16,
 0.32, 0.64`) remained `UNKNOWN`. The scale phase took `38.2 s` for seven model
 calls including its baseline; the complete smoke took `87.6 s` and 16 model
