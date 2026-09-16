@@ -2619,6 +2619,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-capture-manifest
     test-agent-flydelta-repair-deltas
     test-agent-flydelta-evidence-depth
+    test-agent-flydelta-aggregation
     test-agent-flydelta-direction-search
     test-agent-flydelta-candidate-lifecycle
     test-agent-flydelta-hidden-state-hook
