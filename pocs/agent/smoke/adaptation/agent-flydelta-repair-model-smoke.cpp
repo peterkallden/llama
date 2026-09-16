@@ -1076,8 +1076,9 @@ int main(int argc, char ** argv) {
                                 request.model_n_embd = model_n_embd;
                                 request.model_n_layers = model_n_layers;
                                 request.il_end = static_cast<int32_t>(model_n_layers - 1);
-                                request.directions.push_back({coefficient_basis.layer_index,
-                                    coefficient_basis.vectors.front()});
+                                for (const auto & vector : coefficient_basis.vectors) {
+                                    request.directions.push_back({coefficient_basis.layer_index, vector});
+                                }
                                 request.coefficients = tfo_coefficients;
                                 request.gate_request = gate_request;
                                 common_flydelta_gate_config gate_config;
@@ -1101,7 +1102,8 @@ int main(int argc, char ** argv) {
                             trial.passed = executed && contains_tool(result, "data.inspect");
                             trial.quality = trial.passed ? 1.0f : 0.0f;
                             trial.overlay_applied = apply_overlay;
-                            trial.intervention_count = apply_overlay ? 1 : 0;
+                            trial.intervention_count = apply_overlay
+                                ? coefficient_basis.vectors.size() : 0;
                             trial.evidence_ref = apply_overlay
                                 ? "evidence:model-repair-tfo-lite-overlay"
                                 : "evidence:model-repair-tfo-lite-baseline";
@@ -1134,6 +1136,7 @@ int main(int argc, char ** argv) {
                     return 1;
                 }
                 std::cout << "tfo_lite_search_strategy=tfo_lite"
+                          << " tfo_lite_basis_rank=" << coefficient_basis.vectors.size()
                           << " tfo_lite_trials=" << tfo_trials.size()
                           << " tfo_lite_model_calls=" << (tfo_trials.size() + 1)
                           << " tfo_lite_elapsed_ms="
