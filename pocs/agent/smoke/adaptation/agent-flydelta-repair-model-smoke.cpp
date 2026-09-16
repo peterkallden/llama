@@ -4,7 +4,9 @@
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
+#include "agent/adaptation/flydelta/flydelta-evidence-depth.h"
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
+#include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
 #include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
 #include "agent/adaptation/flydelta/flydelta-layer-discovery.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
@@ -690,6 +692,7 @@ int main(int argc, char ** argv) {
         }
 
         std::shared_ptr<const common_flydelta_hidden_state_capture> region_baseline_capture;
+        common_flydelta_decision_margin region_baseline_margin;
         const auto region_started = std::chrono::steady_clock::now();
         common_flydelta_search_pipeline_result pipeline_result;
         if (!common_flydelta_run_search_pipeline(
@@ -773,6 +776,7 @@ int main(int argc, char ** argv) {
                     }
                     if (!apply_overlay && result.flydelta_capture) {
                         region_baseline_capture = result.flydelta_capture;
+                        region_baseline_margin = margin;
                     }
                     if (apply_overlay && candidate && result.flydelta_capture &&
                             region_baseline_capture) {
@@ -864,6 +868,101 @@ int main(int argc, char ** argv) {
             }
             std::cout << '\n';
         }
+
+        // Adapt the legacy model smoke to the current host orchestration. The
+        // model smoke has one natural repair pair, so this deliberately ends
+        // at Bootstrap; it must not manufacture a rank-two basis. The
+        // dataset-question smoke supplies the real two-sample continuation.
+        common_flydelta_search_continuation continuation;
+        common_flydelta_evidence_depth_result evidence_depth;
+        common_flydelta_experiment_plan continuation_plan;
+        if (!common_flydelta_select_search_continuation(
+                pipeline_result, continuation, error)) {
+            std::cerr << "FlyDelta continuation selection failed: " << error << '\n';
+            return 1;
+        }
+        const auto continuation_delta = std::find_if(deltas.begin(), deltas.end(),
+            [&](const auto & delta) {
+                return delta.layer_index == static_cast<int32_t>(
+                    continuation.region.anchor_layer_index);
+            });
+        if (continuation_delta == deltas.end()) {
+            std::cerr << "FlyDelta continuation has no compatible anchor delta\n";
+            return 1;
+        }
+        common_flydelta_direction_search_config evidence_identity;
+        evidence_identity.dimension = model_n_embd;
+        evidence_identity.layer_index = continuation_delta->layer_index;
+        evidence_identity.min_samples = 2;
+        evidence_identity.max_samples = 32;
+        evidence_identity.min_median_alignment = 0.25f;
+        evidence_identity.source = common_adaptation_evidence_source::tool_repair;
+        evidence_identity.behavior_key = "structured_tool_selection";
+        evidence_identity.model_profile_fingerprint = profile;
+        evidence_identity.execution_context_fingerprint =
+            experiment_fixture.execution_context_fingerprint;
+        evidence_identity.capture_layout_revision = "layer-input:v1";
+        common_flydelta_evidence_depth_config evidence_config;
+        if (!common_flydelta_assess_evidence_depth(
+                evidence_identity, evidence_config,
+                {{*continuation_delta, repair_credit}}, evidence_depth, error) ||
+                !common_flydelta_plan_search_continuation(
+                    continuation, evidence_depth, continuation_plan, error)) {
+            std::cerr << "FlyDelta continuation planning failed: " << error << '\n';
+            return 1;
+        }
+        std::cout << "flydelta_orchestration continuation=yes"
+                  << " layer=" << continuation.region.anchor_layer_index
+                  << " search_score=" << continuation.search_score
+                  << " host_helped=" << (continuation.host_helped ? "yes" : "no")
+                  << " evidence_depth=" << common_flydelta_search_depth_name(
+                      evidence_depth.depth)
+                  << " compatible_samples=" << evidence_depth.compatible_samples
+                  << " effective_rank=" << evidence_depth.effective_rank
+                  << " phase=" << common_flydelta_experiment_phase_name(
+                      continuation_plan.phase)
+                  << " shallow_allowed=" << (evidence_depth.shallow_ready ? "yes" : "no")
+                  << " deep_allowed=" << (evidence_depth.deep_ready ? "yes" : "no")
+                  << " tfo_allowed_by_evidence="
+                  << (continuation_plan.tfo_lite_permitted_by_evidence ? "yes" : "no")
+                  << '\n';
+
+        const auto selected_region_trial = continuation.region_trial_index < region_trials.size()
+            ? &region_trials[continuation.region_trial_index] : nullptr;
+        common_flydelta_subspace_utility_observation utility_observation;
+        if (selected_region_trial != nullptr) {
+            utility_observation.safe_to_continue = selected_region_trial->safe_to_continue;
+            utility_observation.decision_margin_available =
+                selected_region_trial->margin.available && region_baseline_margin.available;
+            utility_observation.decision_margin_delta =
+                utility_observation.decision_margin_available
+                ? selected_region_trial->margin.normalized_delta() -
+                    region_baseline_margin.normalized_delta() : 0.0f;
+            utility_observation.geometry_available = selected_region_trial->geometry_available;
+            if (utility_observation.geometry_available) {
+                utility_observation.geometry.cosine = selected_region_trial->geometry.cosine;
+                utility_observation.geometry.progress = selected_region_trial->geometry.progress;
+                utility_observation.geometry.leakage = selected_region_trial->geometry.leakage;
+                utility_observation.geometry.shift_norm = selected_region_trial->geometry.shift_norm;
+            }
+        }
+        common_flydelta_utility_gate_config utility_config;
+        common_flydelta_utility_gate_decision utility_decision;
+        if (!common_flydelta_decide_subspace_utility(
+                utility_config, continuation_plan.depth, continuation_plan.phase,
+                {utility_observation}, {}, utility_decision, error)) {
+            std::cerr << "FlyDelta continuation utility decision failed: " << error << '\n';
+            return 1;
+        }
+        std::cout << "flydelta_utility_gate phase="
+                  << common_flydelta_experiment_phase_name(continuation_plan.phase)
+                  << " qualified=" << (utility_decision.utility_qualified ? "yes" : "no")
+                  << " action=" << common_flydelta_utility_gate_action_name(
+                      utility_decision.action)
+                  << " margin_delta=" << utility_observation.decision_margin_delta
+                  << " qualifying_streak=" << utility_decision.history.qualifying_streak
+                  << " nonqualifying_streak=" << utility_decision.history.nonqualifying_streak
+                  << "\n";
     }
 
     common_flydelta_layer_search_selection layer_selection;

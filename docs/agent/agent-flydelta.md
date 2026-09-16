@@ -1760,6 +1760,32 @@ bracket refinement intended to find a sufficient minimum without turning the
 smoke into an unbounded strength search. Geometry can stop escalation, but it
 cannot create `HELPED`.
 
+The model-backed region mode also exercises the current orchestration
+boundary after Whirlpool has finished. It selects the safest/promising region
+continuation, resolves the matching behavior delta, assesses evidence depth,
+builds the Bootstrap/Shallow/Deep plan and evaluates the host-neutral
+UtilityGate. A single natural repair pair therefore reports `Bootstrap` and
+may be retained when its margin/geometry is useful, but cannot enter Shallow,
+Deep or TFO-lite. The smoke does not manufacture a second WHAT direction just
+to force a rank-2 result; the two-sample dataset-question smoke is the
+model-facing path for that continuation.
+
+The observed order is:
+
+```text
+Whirlpool region result
+  -> continuation selection (UNKNOWN may continue)
+  -> compatible behavior evidence
+  -> evidence-depth plan
+  -> UtilityGate (margin + geometry)
+  -> Bootstrap, or later Shallow/Deep when evidence permits
+```
+
+A positive margin movement can make an UNKNOWN continuation worth retaining,
+but it cannot authorize a deeper phase or create `HELPED`. Deep/TFO
+evaluation requires the separately aggregated compatible sample set and its
+rank/depth gate.
+
 ### 4I.1. Layer×scale intervention-region scan — implemented
 
 The earlier layer experiment used one very small scale while ranking layers.
