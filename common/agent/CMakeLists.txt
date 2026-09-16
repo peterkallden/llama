@@ -97,6 +97,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-sideband-registry.cpp adaptation/flydelta/flydelta-sideband-registry.h
     adaptation/flydelta/flydelta-capture.cpp adaptation/flydelta/flydelta-capture.h
     adaptation/flydelta/flydelta-hidden-state-hook.cpp adaptation/flydelta/flydelta-hidden-state-hook.h
+    adaptation/flydelta/flydelta-layer-discovery.cpp adaptation/flydelta/flydelta-layer-discovery.h
     adaptation/flydelta/flydelta-two-pass.cpp adaptation/flydelta/flydelta-two-pass.h
     adaptation/flydelta/flydelta-representation-diagnostics.cpp adaptation/flydelta/flydelta-representation-diagnostics.h
     adaptation/flydelta/flydelta-direction-search.cpp adaptation/flydelta/flydelta-direction-search.h

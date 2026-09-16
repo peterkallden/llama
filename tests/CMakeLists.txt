@@ -418,6 +418,7 @@ test-agent-flydelta-scale-search.cpp
         test-agent-flydelta-deep-search.cpp
         test-agent-flydelta-artifact-lifecycle.cpp
         test-agent-flydelta-hidden-state-hook.cpp
+        test-agent-flydelta-layer-discovery.cpp
         test-agent-flydelta-two-pass.cpp
         test-agent-flydelta-artifact-store.cpp
         test-agent-flydelta-evaluator.cpp

@@ -4,7 +4,10 @@
 
 namespace {
 
-constexpr size_t MAX_CAPTURE_LAYERS = 8;
+// Standard runtime captures remain byte-bounded. The larger bound allows a
+// dense layer-discovery observation to inspect a model's depth in one pass;
+// result validation still enforces the total capture byte limit.
+constexpr size_t MAX_CAPTURE_LAYERS = 64;
 constexpr size_t MAX_STRING_SIZE = 512;
 
 bool nonempty_bounded(const std::string & value) {

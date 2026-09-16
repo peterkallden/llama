@@ -22,6 +22,11 @@ int main() {
     request.layer_indices = {1, 4};
     request.max_bytes = 8192;
     CHECK(!common_flydelta_hidden_state_capture_request_validate(request, 8, 4096, error));
+    request.max_bytes = 4096;
+    request.layer_indices.clear();
+    for (uint32_t layer = 0; layer < 16; ++layer) request.layer_indices.push_back(layer);
+    CHECK(common_flydelta_hidden_state_capture_request_validate(request, 16, 4096, error));
+    request.layer_indices = {1, 4};
 
     common_flydelta_hidden_state_capture capture;
     capture.captured = true;

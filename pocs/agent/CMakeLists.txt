@@ -2623,6 +2623,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-direction-search
     test-agent-flydelta-candidate-lifecycle
     test-agent-flydelta-hidden-state-hook
+    test-agent-flydelta-layer-discovery
     test-agent-flydelta-two-pass
     test-agent-flydelta-artifact-store
     test-agent-flydelta-evaluator
