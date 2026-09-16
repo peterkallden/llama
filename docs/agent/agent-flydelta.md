@@ -1551,7 +1551,7 @@ bracket refinement intended to find a sufficient minimum without turning the
 smoke into an unbounded strength search. Geometry can stop escalation, but it
 cannot create `HELPED`.
 
-### 4I.1. Layer×scale intervention-region scan — implemented, opt-in
+### 4I.1. Layer×scale intervention-region scan — implemented
 
 The earlier layer experiment used one very small scale while ranking layers.
 That is useful as a cheap probe, but it must not exclude a layer whose signal
@@ -1582,11 +1582,15 @@ The smoke captures through the layer after the candidate window so an
 injection at layer `L` is measured downstream rather than at its own
 pre-injection input. Pair candidates divide one total intervention budget by
 `sqrt(2)` per layer, preserving comparability with singleton candidates.
-`--region-scan` is experimental and does not change the default smoke path,
-does not update `DeltaMemory`, and does not promote `UNKNOWN` or `NEUTRAL`.
-The runner currently reports geometry and host output; decision-margin data can
-be supplied through the same typed runner when that model-facing scorer is
-available.
+The bounded region search is now the default strategy of
+`common_flydelta_run_search_pipeline()`. The legacy layer-plan composition is
+still available only when `use_intervention_region_search=false`; it is kept
+as a migration/fallback seam, not as a second normal algorithm. The model
+smoke's `--region-scan` flag remains useful for explicitly exercising the
+standalone helper. Neither path updates `DeltaMemory` or promotes `UNKNOWN`
+or `NEUTRAL`. The typed pipeline runner now transports the optional
+teacher-forced decision margin alongside geometry, so a model adapter can rank
+arms without changing the host-verification rule.
 
 In the latest local Qwen run all six L2 scale arms (`0.02, 0.04, 0.08, 0.16,
 0.32, 0.64`) remained `UNKNOWN`. The scale phase took `38.2 s` for seven model
@@ -1601,13 +1605,13 @@ cross the model's tool-choice boundary without a host-verified `HELPED` result.
 
 ### 4J. Composed direction/layer/scale search — implemented
 
-`common_flydelta_run_search_pipeline()` is the composition point for the
-existing searches. It does not introduce a second search algorithm or a new
-runtime path. For each already-built direction candidate it builds the
-coarse-to-fine layer plan, runs singleton layer candidates first, and invokes
-the existing bounded geometric scale search for each layer candidate. Adjacent
-layer neighborhoods are still considered only when no singleton produces a
-host-verified `HELPED` result.
+`common_flydelta_run_search_pipeline()` is the normal composition point for
+the existing searches. For each already-built direction candidate it now runs
+the bounded layer×scale intervention-region scan: singleton layer candidates
+are tried over the configured scale ladder, and adjacent neighborhoods are
+expanded only when no singleton produces a host-verified `HELPED` result.
+The older diagnostic layer planner remains an explicit fallback for callers
+that set `use_intervention_region_search=false`.
 
 ```text
 direction candidate
@@ -1626,12 +1630,52 @@ may interpret one direction candidate across a selected mask; the host owns
 that mapping because the direction representation is deliberately independent
 of llama.cpp graph details.
 
-The result keeps the complete nested trace: layer plan and trials, scale trials
-per layer candidate, representative counterfactuals and the host-verified
-selection. Only a selected `HELPED` scale arm fills the pipeline selection;
-geometry, margin, `UNKNOWN` and `NEUTRAL` remain available for lifecycle
-refinement but cannot create evidence. This preserves the existing
-`geometry -> margin -> host outcome` decision order.
+The result keeps the complete trace for either strategy. Region mode stores
+each region arm and its optional decision margin directly; fallback mode keeps
+the legacy nested layer/scale trace. Only a selected `HELPED` arm fills the
+pipeline selection; geometry, margin, `UNKNOWN` and `NEUTRAL` remain available
+for lifecycle refinement but cannot create evidence. This preserves the
+decision order:
+
+```text
+geometry -> decision margin -> full generation -> host outcome
+```
+
+The margin is a ranking signal only. It may choose which arm receives full
+generation, but it can never manufacture `HELPED`.
+
+### 4K. Rank-2 WHAT and MIX search — implemented seam
+
+After a region scan has identified a useful layer, the host may pass the
+compatible WHAT candidates for that same layer to
+`common_flydelta_run_deep_search()`. The helper ranks candidates by the
+model-facing margin when available, otherwise by their existing alignment,
+keeps a bounded rank (two by default), and builds the existing orthogonal
+low-rank basis. It does not mix directions from unrelated layers.
+
+```text
+region arms
+    -> margin/geometric ranking
+    -> compatible directions on one layer
+    -> rank-2 basis B_L
+    -> coordinate or TFO-lite coefficients c
+    -> fresh full-generation arms
+    -> host verification
+```
+
+The runtime overlay contract is unchanged:
+
+```text
+delta_h[L] = B_L * c
+```
+
+`common_flydelta_run_low_rank_coefficient_search()` owns the bounded
+coordinate/TFO-lite proposals. Its fitness may use decision margin, leakage
+and intervention norm, but only the host-classified counterfactual outcome
+can select a coefficient arm. All executed coefficient arms can be recorded
+through the existing experimental lifecycle helper, including UNKNOWN and
+NEUTRAL results with lineage. No arm is admitted to active state merely
+because its margin or geometry improved.
 
 ### 4K. Source-neutral behavior transitions — implemented
 
