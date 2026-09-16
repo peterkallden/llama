@@ -310,6 +310,9 @@ int main(int argc, char ** argv) {
     basis_config.capture_layout_revision = "layer-input:v1";
     common_flydelta_basis_builder basis(basis_config);
     for (const auto & delta : deltas) {
+        // Layer 5 is captured only as a downstream measurement point for a
+        // layer-4 intervention. It is not part of the searched basis window.
+        if (delta.layer_index > 4) continue;
         if (!basis.add(delta, repair_credit, error)) {
             std::cerr << "FlyDelta repair basis construction failed: " << error << '\n';
             return 1;
