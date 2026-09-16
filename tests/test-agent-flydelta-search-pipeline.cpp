@@ -168,6 +168,48 @@ int main() {
     CHECK(region_records.front().payload_json.find("direction-layer-scale-region") !=
         std::string::npos);
 
+    // A model-facing margin is enough to keep a region in the experimental
+    // search population even when no hidden-state geometry is available.
+    auto margin_region_config = region_config;
+    margin_region_config.region_max_singleton_layers = 2;
+    margin_region_config.region_max_neighborhoods = 2;
+    common_flydelta_search_pipeline_result margin_region_result;
+    calls = 0;
+    CHECK(common_flydelta_run_search_pipeline(
+        make_fixture(), margin_region_config, {input},
+        [&](const common_flydelta_experiment_fixture &,
+                const common_flydelta_direction_candidate &,
+                const common_flydelta_layer_candidate *,
+                float scale, bool apply_overlay,
+                common_flydelta_counterfactual_trial & trial,
+                common_flydelta_decision_margin & margin,
+                common_flydelta_scale_geometry & geometry,
+                std::string &) {
+            ++calls;
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.overlay_applied = apply_overlay;
+            trial.evidence_ref = "evidence:search-pipeline-margin";
+            trial.passed = false;
+            trial.quality = 0.0f;
+            margin = {};
+            margin.available = true;
+            margin.positive_total_logprob = apply_overlay ? scale : 0.0f;
+            margin.negative_total_logprob = 0.0f;
+            margin.positive_token_count = 1;
+            margin.negative_token_count = 1;
+            geometry = {};
+            return true;
+        }, margin_region_result, error));
+    CHECK(calls == 17); // margin keeps both singleton regions eligible for pairs
+    CHECK(!margin_region_result.selection.selected);
+    CHECK(margin_region_result.directions.front().region_trials.size() == 16);
+    CHECK(std::any_of(
+        margin_region_result.directions.front().region_trials.begin(),
+        margin_region_result.directions.front().region_trials.end(),
+        [](const auto & trial) { return trial.promising && !trial.geometry_available; }));
+
     // A diagnostic-only direction still produces a bounded plan and retains
     // UNKNOWN/NEUTRAL scale trials, but cannot populate the HELPED selection.
     result = {};
