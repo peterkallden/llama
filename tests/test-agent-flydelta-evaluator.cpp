@@ -162,6 +162,11 @@ int main() {
     direction.behavior_delta_ids = {"flydelta://behavior/evaluator"};
     CHECK(common_flydelta_evaluate_job(direction, config, callbacks, result, error));
     CHECK(result.processed_references == 1 && result.direction_candidates.size() == 3);
+    CHECK(result.evidence_depth.depth == common_flydelta_search_depth::bootstrap);
+    CHECK(result.search_budget.depth == common_flydelta_search_depth::bootstrap);
+    CHECK(result.search_budget.max_region_trials == 4);
+    CHECK(!result.search_budget.build_aggregate_directions &&
+        !result.search_budget.allow_tfo_lite);
 
     // Queue execution can explicitly opt into experimental direction search
     // without weakening the strict learning-mode job above.

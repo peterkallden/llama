@@ -89,6 +89,56 @@ const char * common_flydelta_search_depth_name(common_flydelta_search_depth dept
     return "unknown";
 }
 
+bool common_flydelta_search_budget_validate(
+        const common_flydelta_search_budget & budget,
+        std::string & error) {
+    error.clear();
+    const bool valid_depth = budget.depth == common_flydelta_search_depth::bootstrap ||
+        budget.depth == common_flydelta_search_depth::shallow ||
+        budget.depth == common_flydelta_search_depth::deep;
+    if (!valid_depth || budget.max_region_trials == 0 || budget.max_region_trials > 64 ||
+            budget.max_coefficient_trials > 64 || budget.full_generation_top_k == 0 ||
+            budget.full_generation_top_k > 16 ||
+            (budget.allow_tfo_lite && budget.max_coefficient_trials == 0) ||
+            (budget.depth == common_flydelta_search_depth::bootstrap &&
+                (budget.build_aggregate_directions || budget.allow_tfo_lite))) {
+        error = "FlyDelta search budget is invalid";
+        return false;
+    }
+    return true;
+}
+
+common_flydelta_search_budget common_flydelta_search_budget_for_depth(
+        common_flydelta_search_depth depth) {
+    common_flydelta_search_budget result;
+    result.depth = depth;
+    switch (depth) {
+        case common_flydelta_search_depth::bootstrap:
+            result.max_region_trials = 4;
+            result.max_coefficient_trials = 0;
+            result.full_generation_top_k = 1;
+            break;
+        case common_flydelta_search_depth::shallow:
+            result.max_region_trials = 8;
+            result.max_coefficient_trials = 4;
+            result.full_generation_top_k = 1;
+            result.build_aggregate_directions = true;
+            result.require_decision_margin = true;
+            result.include_opposite_control = true;
+            break;
+        case common_flydelta_search_depth::deep:
+            result.max_region_trials = 32;
+            result.max_coefficient_trials = 16;
+            result.full_generation_top_k = 3;
+            result.build_aggregate_directions = true;
+            result.require_decision_margin = true;
+            result.allow_tfo_lite = true;
+            result.include_opposite_control = true;
+            break;
+    }
+    return result;
+}
+
 bool common_flydelta_evidence_depth_config_validate(
         const common_flydelta_evidence_depth_config & config,
         std::string & error) {

@@ -41,6 +41,27 @@ struct common_flydelta_evidence_depth_result {
     bool deep_ready = false;
 };
 
+// A budget profile keeps Bootstrap/Shallow/Deep as policies over the common
+// search pipeline. It is intentionally descriptive; the model callback still
+// owns execution and host verification.
+struct common_flydelta_search_budget {
+    common_flydelta_search_depth depth = common_flydelta_search_depth::bootstrap;
+    size_t max_region_trials = 4;
+    size_t max_coefficient_trials = 0;
+    size_t full_generation_top_k = 1;
+    bool build_aggregate_directions = false;
+    bool require_decision_margin = false;
+    bool allow_tfo_lite = false;
+    bool include_opposite_control = false;
+};
+
+bool common_flydelta_search_budget_validate(
+        const common_flydelta_search_budget & budget,
+        std::string & error);
+
+common_flydelta_search_budget common_flydelta_search_budget_for_depth(
+        common_flydelta_search_depth depth);
+
 bool common_flydelta_evidence_depth_config_validate(
         const common_flydelta_evidence_depth_config & config,
         std::string & error);

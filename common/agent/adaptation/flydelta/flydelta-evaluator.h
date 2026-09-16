@@ -4,6 +4,8 @@
 #include "agent/adaptation/flydelta/flydelta-job.h"
 #include "agent/adaptation/flydelta/flydelta-training.h"
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
+#include "agent/adaptation/flydelta/flydelta-evidence-depth.h"
+#include "agent/adaptation/flydelta/flydelta-aggregation.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 
 #include <cstddef>
@@ -18,6 +20,8 @@ struct common_flydelta_evaluator_config {
     common_flydelta_direction_search_config direction;
     common_flydelta_search_pipeline_config pipeline;
     common_flydelta_memory_config memory;
+    common_flydelta_evidence_depth_config evidence_depth;
+    size_t aggregation_max_retained_samples = 32;
     size_t max_references = 128;
 };
 
@@ -58,6 +62,8 @@ struct common_flydelta_evaluator_result {
     std::vector<common_flydelta_direction_candidate> direction_candidates;
     std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;
     std::vector<float> delta_memory_weights;
+    common_flydelta_evidence_depth_result evidence_depth;
+    common_flydelta_search_budget search_budget;
     size_t processed_references = 0;
 };
 

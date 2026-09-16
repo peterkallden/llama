@@ -125,16 +125,26 @@ bool common_flydelta_evaluate_job(
                 error = "FlyDelta direction evaluator context fingerprint does not match job";
                 return false;
             }
+            common_flydelta_aggregation_config aggregation_config;
+            aggregation_config.identity = config.direction;
+            aggregation_config.depth = config.evidence_depth;
+            aggregation_config.max_retained_samples = config.aggregation_max_retained_samples;
+            common_flydelta_incremental_aggregation aggregation(aggregation_config);
             std::vector<common_flydelta_contrast_sample> samples;
             samples.reserve(job.behavior_delta_ids.size());
             for (const auto & id : job.behavior_delta_ids) {
                 common_flydelta_contrast_sample sample;
                 if (!callbacks.resolve_behavior_delta(
                         id, sample.delta, sample.credit, error)) return false;
+                if (!aggregation.ingest(sample, error)) return false;
                 samples.push_back(std::move(sample));
             }
+            if (!aggregation.assess_depth(result.evidence_depth, error)) return false;
+            result.search_budget = common_flydelta_search_budget_for_depth(result.evidence_depth.depth);
+            if (!common_flydelta_search_budget_validate(result.search_budget, error)) return false;
             if (!common_flydelta_build_direction_candidates(
-                    config.direction, samples, result.direction_candidates, error)) return false;
+                    config.direction, aggregation.snapshot().retained_samples,
+                    result.direction_candidates, error)) return false;
             result.processed_references = samples.size();
             return true;
         }
