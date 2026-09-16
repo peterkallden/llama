@@ -32,6 +32,8 @@ const char * common_flydelta_experiment_phase_name(
 // runs this bounded plan. This carries no learning or promotion authority.
 struct common_flydelta_experiment_plan {
     common_flydelta_search_continuation continuation;
+    // Evidence depth is the maximum permitted search depth. The current
+    // phase always advances sequentially under UtilityGate control.
     common_flydelta_search_depth depth = common_flydelta_search_depth::bootstrap;
     common_flydelta_experiment_phase phase = common_flydelta_experiment_phase::bootstrap;
     common_flydelta_search_budget budget;
@@ -42,6 +44,8 @@ struct common_flydelta_experiment_plan {
     // must still approve TFO after rank-two controls.
     bool tfo_lite_permitted_by_evidence = false;
     bool tfo_lite_requires_utility_gate = false;
+    // Set only after Deep controls have earned a separate UtilityGate action.
+    bool run_tfo_lite = false;
 };
 
 // Evidence controls search capacity; this policy controls whether observed
@@ -243,4 +247,15 @@ bool common_flydelta_plan_search_continuation(
         const common_flydelta_search_continuation & continuation,
         const common_flydelta_evidence_depth_result & evidence_depth,
         common_flydelta_experiment_plan & plan,
+        std::string & error);
+
+// Advances one bounded phase after the host has evaluated that phase's arms.
+// Evidence depth limits the maximum phase; utility determines whether the
+// next phase earns model budget. BootstrapZoom is a same-phase refinement,
+// Shallow controls must precede Deep, and Deep controls must precede TFO.
+bool common_flydelta_advance_experiment_plan(
+        const common_flydelta_experiment_plan & current,
+        const common_flydelta_utility_gate_decision & utility,
+        common_flydelta_experiment_plan & next,
+        bool & advanced,
         std::string & error);

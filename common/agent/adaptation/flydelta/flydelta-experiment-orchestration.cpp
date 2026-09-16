@@ -493,32 +493,89 @@ bool common_flydelta_plan_search_continuation(
         return false;
     }
     plan.continuation = continuation;
+    // Start every retained region at Bootstrap. Depth expresses capacity, not
+    // permission to skip the rank-one/rank-two evidence chain.
     plan.depth = evidence_depth.depth;
-    plan.budget = common_flydelta_search_budget_for_depth(evidence_depth.depth);
+    plan.phase = common_flydelta_experiment_phase::bootstrap;
+    plan.budget = common_flydelta_search_budget_for_depth(
+        common_flydelta_search_depth::bootstrap);
     if (!common_flydelta_search_budget_validate(plan.budget, error)) return false;
-    switch (evidence_depth.depth) {
-        case common_flydelta_search_depth::bootstrap:
-            plan.phase = common_flydelta_experiment_phase::bootstrap;
-            break;
-        case common_flydelta_search_depth::shallow:
-            plan.phase = common_flydelta_experiment_phase::shallow_controls;
-            plan.required_compatible_directions = 2;
-            plan.require_decision_margin = true;
-            plan.run_rank_two_controls_first = true;
-            break;
-        case common_flydelta_search_depth::deep:
-            plan.phase = common_flydelta_experiment_phase::deep_controls;
-            plan.required_compatible_directions = 2;
-            plan.require_decision_margin = true;
-            plan.run_rank_two_controls_first = true;
-            plan.tfo_lite_permitted_by_evidence = true;
-            plan.tfo_lite_requires_utility_gate = true;
-            break;
-    }
-    if ((plan.required_compatible_directions == 2 && evidence_depth.effective_rank < 2) ||
-            (plan.tfo_lite_permitted_by_evidence && !plan.budget.allow_tfo_lite)) {
-        error = "FlyDelta evidence depth does not support its continuation plan";
+    plan.tfo_lite_permitted_by_evidence = evidence_depth.depth ==
+        common_flydelta_search_depth::deep;
+    plan.tfo_lite_requires_utility_gate = plan.tfo_lite_permitted_by_evidence;
+    return true;
+}
+
+bool common_flydelta_advance_experiment_plan(
+        const common_flydelta_experiment_plan & current,
+        const common_flydelta_utility_gate_decision & utility,
+        common_flydelta_experiment_plan & next,
+        bool & advanced,
+        std::string & error) {
+    error.clear();
+    next = current;
+    advanced = false;
+    if (current.continuation.region.layer_indices.empty() ||
+            !valid_depth_value(current.depth) ||
+            !common_flydelta_search_budget_validate(current.budget, error)) {
+        if (error.empty()) error = "FlyDelta experiment plan transition input is invalid";
         return false;
     }
-    return true;
+    const auto configure_phase = [&](common_flydelta_experiment_phase phase,
+            common_flydelta_search_depth budget_depth) {
+        next.phase = phase;
+        next.budget = common_flydelta_search_budget_for_depth(budget_depth);
+        next.required_compatible_directions = phase == common_flydelta_experiment_phase::bootstrap
+            ? 1 : 2;
+        next.require_decision_margin = phase != common_flydelta_experiment_phase::bootstrap;
+        next.run_rank_two_controls_first = phase != common_flydelta_experiment_phase::bootstrap;
+        next.run_tfo_lite = false;
+    };
+    switch (utility.action) {
+        case common_flydelta_utility_gate_action::stop:
+        case common_flydelta_utility_gate_action::retain:
+            return true;
+        case common_flydelta_utility_gate_action::refine_bootstrap:
+            if (current.phase != common_flydelta_experiment_phase::bootstrap ||
+                    current.depth != common_flydelta_search_depth::bootstrap) {
+                error = "FlyDelta BootstrapZoom refinement is not permitted by the current plan";
+                return false;
+            }
+            configure_phase(common_flydelta_experiment_phase::bootstrap,
+                common_flydelta_search_depth::bootstrap);
+            advanced = true;
+            break;
+        case common_flydelta_utility_gate_action::escalate_shallow:
+            if (current.phase != common_flydelta_experiment_phase::bootstrap ||
+                    current.depth == common_flydelta_search_depth::bootstrap) {
+                error = "FlyDelta Shallow escalation is not permitted by the current plan";
+                return false;
+            }
+            configure_phase(common_flydelta_experiment_phase::shallow_controls,
+                common_flydelta_search_depth::shallow);
+            advanced = true;
+            break;
+        case common_flydelta_utility_gate_action::escalate_deep:
+            if (current.phase != common_flydelta_experiment_phase::shallow_controls ||
+                    current.depth != common_flydelta_search_depth::deep) {
+                error = "FlyDelta Deep escalation requires successful Shallow controls";
+                return false;
+            }
+            configure_phase(common_flydelta_experiment_phase::deep_controls,
+                common_flydelta_search_depth::deep);
+            advanced = true;
+            break;
+        case common_flydelta_utility_gate_action::allow_tfo_lite:
+            if (current.phase != common_flydelta_experiment_phase::deep_controls ||
+                    current.depth != common_flydelta_search_depth::deep ||
+                    !current.tfo_lite_permitted_by_evidence ||
+                    !current.tfo_lite_requires_utility_gate) {
+                error = "FlyDelta TFO-lite requires Deep controls and evidence permission";
+                return false;
+            }
+            next.run_tfo_lite = true;
+            advanced = true;
+            break;
+    }
+    return common_flydelta_search_budget_validate(next.budget, error);
 }

@@ -42,12 +42,14 @@ int main() {
     depth.effective_rank = 2;
     depth.depth = common_flydelta_search_depth::shallow;
     CHECK(common_flydelta_plan_search_continuation(continuation, depth, plan, error));
-    CHECK(plan.run_rank_two_controls_first && !plan.tfo_lite_permitted_by_evidence);
+    CHECK(plan.phase == common_flydelta_experiment_phase::bootstrap &&
+        !plan.run_rank_two_controls_first && !plan.tfo_lite_permitted_by_evidence);
     depth.compatible_samples = 6;
     depth.depth = common_flydelta_search_depth::deep;
     CHECK(common_flydelta_plan_search_continuation(continuation, depth, plan, error));
-    CHECK(plan.run_rank_two_controls_first && plan.tfo_lite_permitted_by_evidence &&
-        plan.tfo_lite_requires_utility_gate);
+    CHECK(plan.phase == common_flydelta_experiment_phase::bootstrap &&
+        !plan.run_rank_two_controls_first && plan.tfo_lite_permitted_by_evidence &&
+        plan.tfo_lite_requires_utility_gate && !plan.run_tfo_lite);
 
     common_flydelta_utility_gate_config utility_config;
     common_flydelta_subspace_utility_observation utility;
@@ -76,6 +78,38 @@ int main() {
         utility_config, common_flydelta_search_depth::deep,
         common_flydelta_experiment_phase::deep_controls, {utility}, {}, utility_decision, error));
     CHECK(utility_decision.action == common_flydelta_utility_gate_action::allow_tfo_lite);
+
+    // Capacity may be Deep, but the execution path remains ordered:
+    // Bootstrap/Whirlpool -> Shallow controls -> Deep controls -> TFO-lite.
+    CHECK(common_flydelta_plan_search_continuation(continuation, depth, plan, error));
+    bool advanced = false;
+    CHECK(common_flydelta_decide_subspace_utility(
+        utility_config, plan.depth, plan.phase, {utility}, {}, utility_decision, error));
+    CHECK(utility_decision.action == common_flydelta_utility_gate_action::escalate_shallow);
+    common_flydelta_experiment_plan shallow_plan;
+    CHECK(common_flydelta_advance_experiment_plan(
+        plan, utility_decision, shallow_plan, advanced, error));
+    CHECK(advanced && shallow_plan.phase == common_flydelta_experiment_phase::shallow_controls &&
+        shallow_plan.run_rank_two_controls_first && shallow_plan.required_compatible_directions == 2 &&
+        !shallow_plan.run_tfo_lite);
+    CHECK(common_flydelta_decide_subspace_utility(
+        utility_config, shallow_plan.depth, shallow_plan.phase,
+        {utility}, {}, utility_decision, error));
+    CHECK(utility_decision.action == common_flydelta_utility_gate_action::escalate_deep);
+    common_flydelta_experiment_plan deep_plan;
+    CHECK(common_flydelta_advance_experiment_plan(
+        shallow_plan, utility_decision, deep_plan, advanced, error));
+    CHECK(advanced && deep_plan.phase == common_flydelta_experiment_phase::deep_controls &&
+        deep_plan.run_rank_two_controls_first && !deep_plan.run_tfo_lite);
+    CHECK(common_flydelta_decide_subspace_utility(
+        utility_config, deep_plan.depth, deep_plan.phase,
+        {utility}, {}, utility_decision, error));
+    CHECK(utility_decision.action == common_flydelta_utility_gate_action::allow_tfo_lite);
+    common_flydelta_experiment_plan tfo_plan;
+    CHECK(common_flydelta_advance_experiment_plan(
+        deep_plan, utility_decision, tfo_plan, advanced, error));
+    CHECK(advanced && tfo_plan.phase == common_flydelta_experiment_phase::deep_controls &&
+        tfo_plan.run_tfo_lite);
     utility.safe_to_continue = false;
     CHECK(common_flydelta_decide_subspace_utility(
         utility_config, common_flydelta_search_depth::deep,

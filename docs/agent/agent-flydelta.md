@@ -706,9 +706,12 @@ continuation, including a useful UNKNOWN arm. The common orchestration seam
 now also provides a host-neutral UtilityGate with asymmetric qualifying and
 non-qualifying streaks. It decides `stop`, `retain`, `refine_bootstrap`,
 `escalate_shallow`, `escalate_deep`, or `allow_tfo_lite` from normalized
-decision-margin movement and bounded geometry. A Deep evidence plan therefore records only that TFO is
-*permitted by evidence* and still requires the UtilityGate after rank-two
-controls.
+decision-margin movement and bounded geometry. Evidence depth is a capacity
+ceiling, not permission to skip stages: every retained region begins with
+Bootstrap; a qualifying Bootstrap result may enter Shallow, qualifying
+Shallow controls may enter Deep, and only qualifying Deep controls may enable
+TFO-lite. A Deep evidence plan therefore records only that TFO is *permitted
+by evidence* and still requires the UtilityGate after rank-two controls.
 
 The worker does not invent a model context or invoke this decision without a
 host evaluator callback; the host still owns utility history and schedules the
@@ -732,7 +735,9 @@ Thus six nearly collinear samples do not automatically justify Deep, and a
 small independent set does not justify expensive search unless its shallow
 controls show useful margin/geometry. This distinction is a design invariant;
 the remaining worker scheduling gap can be filled without changing host
-authority or lifecycle rules.
+authority or lifecycle rules. The host must advance only one plan transition
+at a time, so it cannot invoke TFO directly from a Whirlpool result or skip
+the rank-two control stencil.
 
 The worker now carries an explicit reference-only continuation between the
 adaptive `WHERE` phase and evidence-driven `WHAT` work. Whirlpool may retain
@@ -745,8 +750,11 @@ the resulting plan:
 Whirlpool / region result
   -> selected WHERE continuation (HELPED preferred; otherwise safe promising arm)
   -> compatible WHAT samples for behavior + model/context + capture layout + layer
-  -> evidence depth
-  -> Bootstrap rank-1 | Shallow rank-2 controls | Deep controls then TFO-lite
+  -> evidence depth (maximum allowed depth)
+  -> Bootstrap rank-1
+  -> UtilityGate -> Shallow rank-2 controls, when capacity and utility allow
+  -> UtilityGate -> Deep aggregate controls, when capacity and utility allow
+  -> UtilityGate -> TFO-lite, when Deep controls justify it
   -> margin/geometry ranking -> bounded full generation -> host verifier
 ```
 
@@ -798,9 +806,9 @@ algorithms:
 ```text
 new evidence reference
   -> bounded re-aggregation
-  -> Bootstrap | Shallow | Deep budget
-  -> shallow model/geometry diagnostics
-  -> optional deeper arms when evidence supports them
+  -> evidence capacity: Bootstrap | Shallow | Deep
+  -> Bootstrap model/geometry diagnostics
+  -> optional Shallow -> Deep -> TFO transitions when both capacity and utility support them
   -> host verification and experimental retention
 ```
 
