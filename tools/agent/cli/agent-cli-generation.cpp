@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <array>
+#include <algorithm>
 #include <string_view>
 #include <vector>
 
@@ -28,6 +29,123 @@ bool budget_exceeded(
     const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         steady_clock::now() - started_at).count();
     return elapsed_ms > *budget_ms;
+}
+
+} // namespace
+
+namespace {
+
+bool tokenize_text(const llama_vocab * vocab, const std::string & text,
+        bool add_special, std::vector<llama_token> & tokens, std::string & error) {
+    const int n_tokens = -llama_tokenize(vocab, text.c_str(), text.size(), nullptr, 0,
+        add_special, true);
+    if (n_tokens <= 0) {
+        error = "failed to tokenize FlyDelta choice material";
+        return false;
+    }
+    tokens.resize(static_cast<size_t>(n_tokens));
+    if (llama_tokenize(vocab, text.c_str(), text.size(), tokens.data(), tokens.size(),
+            add_special, true) < 0) {
+        error = "failed to tokenize FlyDelta choice material";
+        return false;
+    }
+    return true;
+}
+
+float sequence_logprob(llama_context * ctx, const std::vector<llama_token> & tokens,
+        size_t vocabulary_size, std::string & error) {
+    float total = 0.0f;
+    for (const llama_token token : tokens) {
+        const float * logits = llama_get_logits_ith(ctx, -1);
+        if (logits == nullptr || token < 0 || static_cast<size_t>(token) >= vocabulary_size) {
+            error = "FlyDelta choice scoring did not return logits";
+            return 0.0f;
+        }
+        float maximum = logits[0];
+        for (size_t index = 1; index < vocabulary_size; ++index) {
+            maximum = std::max(maximum, logits[index]);
+        }
+        float normalizer = 0.0f;
+        for (size_t index = 0; index < vocabulary_size; ++index) {
+            normalizer += std::exp(logits[index] - maximum);
+        }
+        if (!std::isfinite(normalizer) || normalizer <= 0.0f) {
+            error = "FlyDelta choice scoring received invalid logits";
+            return 0.0f;
+        }
+        total += logits[token] - maximum - std::log(normalizer);
+        llama_batch batch = llama_batch_get_one(const_cast<llama_token *>(&token), 1);
+        if (llama_decode(ctx, batch) != 0) {
+            error = "FlyDelta choice scoring decode failed";
+            return 0.0f;
+        }
+    }
+    return total;
+}
+
+bool score_choice_sequence(
+        llama_model * model,
+        const std::vector<llama_token> & prompt_tokens,
+        const std::vector<llama_token> & choice_tokens,
+        const common_agent_generation_options & options,
+        const common_flydelta_static_overlay & flydelta_overlay,
+        const std::vector<llama_adapter_lora *> & adapters,
+        const std::vector<float> & adapter_scales,
+        float & score,
+        std::string & error) {
+    llama_context_params ctx_params = llama_context_default_params();
+    ctx_params.n_ctx = prompt_tokens.size() + choice_tokens.size() + 8;
+    ctx_params.n_batch = prompt_tokens.size();
+    ctx_params.n_threads = options.n_threads;
+    ctx_params.n_threads_batch = options.n_threads;
+    llama_context * ctx = llama_init_from_model(model, ctx_params);
+    if (ctx == nullptr) {
+        error = "failed to create FlyDelta choice scoring context";
+        return false;
+    }
+    if (adapters.size() != adapter_scales.size()) {
+        llama_free(ctx);
+        error = "adapter and scale counts differ";
+        return false;
+    }
+    if (!adapters.empty() && llama_set_adapters_lora(
+            ctx, const_cast<llama_adapter_lora **>(adapters.data()), adapters.size(),
+            const_cast<float *>(adapter_scales.data())) < 0) {
+        llama_free(ctx);
+        error = "failed to apply model adapters for FlyDelta choice scoring";
+        return false;
+    }
+    std::string overlay_error;
+    if (!common_flydelta_static_overlay_validate(
+            flydelta_overlay, static_cast<size_t>(llama_model_n_embd(model)),
+            static_cast<size_t>(llama_model_n_layer(model)), 64U * 1024U * 1024U,
+            overlay_error)) {
+        llama_free(ctx);
+        error = "invalid FlyDelta choice scoring overlay: " + overlay_error;
+        return false;
+    }
+    if (flydelta_overlay.enabled) {
+        std::vector<float> scaled = flydelta_overlay.data;
+        for (float & value : scaled) value *= flydelta_overlay.scale;
+        if (llama_set_adapter_cvec(ctx, scaled.data(), scaled.size(),
+                flydelta_overlay.n_embd, flydelta_overlay.il_start,
+                flydelta_overlay.il_end) != 0) {
+            llama_free(ctx);
+            error = "failed to apply FlyDelta choice scoring overlay";
+            return false;
+        }
+    }
+    llama_batch prompt_batch = llama_batch_get_one(
+        const_cast<llama_token *>(prompt_tokens.data()), prompt_tokens.size());
+    if (llama_decode(ctx, prompt_batch) != 0) {
+        llama_free(ctx);
+        error = "FlyDelta choice scoring prompt decode failed";
+        return false;
+    }
+    score = sequence_logprob(ctx, choice_tokens,
+        static_cast<size_t>(llama_vocab_n_tokens(llama_model_get_vocab(model))), error);
+    llama_free(ctx);
+    return error.empty();
 }
 
 } // namespace
@@ -326,6 +444,71 @@ bool generate_chat_turn_result(
             common_agent_generation_stop_reason_name(result.stop_reason),
             preview.c_str());
     }
+    return true;
+}
+
+bool score_chat_choice_margin(
+    llama_model * model,
+    const common_chat_templates * chat_templates,
+    const std::vector<common_chat_msg> & messages,
+    const std::vector<common_chat_tool> & tools,
+    common_chat_tool_choice tool_choice,
+    const common_agent_generation_options & options,
+    const std::string & choice_prefix,
+    const std::string & positive_choice,
+    const std::string & negative_choice,
+    common_flydelta_decision_margin & margin,
+    common_chat_params * chat_params,
+    const std::string & json_schema,
+    const std::vector<llama_adapter_lora *> & adapters,
+    const std::vector<float> & adapter_scales,
+    const common_flydelta_static_overlay & flydelta_overlay,
+    std::string * error) {
+    margin = {};
+    std::string local_error;
+    if (model == nullptr || chat_templates == nullptr || choice_prefix.empty() ||
+            positive_choice.empty() || negative_choice.empty()) {
+        local_error = "FlyDelta choice scoring input is invalid";
+    }
+    common_agent_generation_request request;
+    request.messages = messages;
+    request.tools = tools;
+    request.tool_choice = tool_choice;
+    request.options = options;
+    request.json_schema = json_schema;
+    common_agent_prepared_generation prepared;
+    if (local_error.empty() && !common_agent_prepare_chat_generation(
+            chat_templates, request, prepared, chat_params)) {
+        local_error = "failed to prepare FlyDelta choice scoring prompt";
+    }
+    std::vector<llama_token> prompt_tokens;
+    std::vector<llama_token> positive_tokens;
+    std::vector<llama_token> negative_tokens;
+    const llama_vocab * vocab = model == nullptr ? nullptr : llama_model_get_vocab(model);
+    if (local_error.empty() && !tokenize_text(
+            vocab, prepared.prompt + choice_prefix, true, prompt_tokens, local_error)) {}
+    if (local_error.empty() && !tokenize_text(
+            vocab, positive_choice, false, positive_tokens, local_error)) {}
+    if (local_error.empty() && !tokenize_text(
+            vocab, negative_choice, false, negative_tokens, local_error)) {}
+    float positive_score = 0.0f;
+    float negative_score = 0.0f;
+    if (local_error.empty() && !score_choice_sequence(
+            model, prompt_tokens, positive_tokens, options, flydelta_overlay,
+            adapters, adapter_scales, positive_score, local_error)) {}
+    if (local_error.empty() && !score_choice_sequence(
+            model, prompt_tokens, negative_tokens, options, flydelta_overlay,
+            adapters, adapter_scales, negative_score, local_error)) {}
+    if (!local_error.empty()) {
+        if (error != nullptr) *error = local_error;
+        return false;
+    }
+    margin.available = true;
+    margin.positive_total_logprob = positive_score;
+    margin.negative_total_logprob = negative_score;
+    margin.positive_token_count = positive_tokens.size();
+    margin.negative_token_count = negative_tokens.size();
+    if (error != nullptr) error->clear();
     return true;
 }
 

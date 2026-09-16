@@ -176,26 +176,6 @@ bool common_flydelta_build_low_rank_basis(
     return common_flydelta_low_rank_basis_validate(basis, max_rank, error);
 }
 
-float common_flydelta_decision_margin::normalized_delta() const {
-    if (positive_token_count == 0 || negative_token_count == 0) return 0.0f;
-    return positive_total_logprob / static_cast<float>(positive_token_count) -
-        negative_total_logprob / static_cast<float>(negative_token_count);
-}
-
-bool common_flydelta_decision_margin_validate(
-        const common_flydelta_decision_margin & margin,
-        std::string & error) {
-    error.clear();
-    if (!margin.available) return true;
-    if (!finite(margin.positive_total_logprob) || !finite(margin.negative_total_logprob) ||
-            margin.positive_token_count == 0 || margin.negative_token_count == 0 ||
-            !finite(margin.total_delta()) || !finite(margin.normalized_delta())) {
-        error = "FlyDelta decision margin is invalid";
-        return false;
-    }
-    return true;
-}
-
 bool common_flydelta_coefficient_search_config_validate(
         const common_flydelta_coefficient_search_config & config,
         size_t rank,

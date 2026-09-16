@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
+#include "agent/adaptation/flydelta/flydelta-decision-margin.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 
@@ -34,23 +35,6 @@ bool common_flydelta_build_low_rank_basis(
         size_t max_rank,
         const std::vector<common_flydelta_direction_candidate> & candidates,
         common_flydelta_low_rank_basis & basis,
-        std::string & error);
-
-struct common_flydelta_decision_margin {
-    bool available = false;
-    float positive_total_logprob = 0.0f;
-    float negative_total_logprob = 0.0f;
-    size_t positive_token_count = 0;
-    size_t negative_token_count = 0;
-
-    float total_delta() const {
-        return positive_total_logprob - negative_total_logprob;
-    }
-    float normalized_delta() const;
-};
-
-bool common_flydelta_decision_margin_validate(
-        const common_flydelta_decision_margin & margin,
         std::string & error);
 
 // Coefficient search remains a host-side experiment strategy. The default

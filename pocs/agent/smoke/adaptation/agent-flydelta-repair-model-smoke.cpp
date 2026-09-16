@@ -11,6 +11,7 @@
 #include "agent/adaptation/flydelta/flydelta-scale-search.h"
 #include "agent/adaptation/flydelta/flydelta-training.h"
 #include "agent/adaptation/flydelta/flydelta.h"
+#include "tools/agent/cli/agent-cli-generation.h"
 #include "tools/agent/cli/agent-cli-inference.h"
 #include "tools/agent/runtime/agent-model-loaders.h"
 
@@ -636,7 +637,16 @@ int main(int argc, char ** argv) {
                     trial.evidence_ref = apply_overlay
                         ? "evidence:model-repair-intervention-region"
                         : "evidence:model-repair-intervention-region-baseline";
-                    margin = {};
+                    const auto scoring_request = make_request(value, failed_instruction);
+                    if (!score_chat_choice_margin(
+                            loaded->model, loaded->chat_templates.get(), scoring_request.messages,
+                            scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
+                            "{\"name\":\"", "data.inspect", "data.describe", margin,
+                            nullptr, scoring_request.json_schema, {}, {},
+                            apply_overlay && activation_ptr ? activation_ptr->overlay
+                                : common_flydelta_static_overlay{}, &runner_error)) {
+                        return false;
+                    }
                     if (!apply_overlay && result.flydelta_capture) {
                         region_baseline_capture = result.flydelta_capture;
                     }
