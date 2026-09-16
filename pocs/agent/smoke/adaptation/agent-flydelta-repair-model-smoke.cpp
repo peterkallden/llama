@@ -132,6 +132,23 @@ std::string output_preview(const common_agent_generation_result & result) {
     return preview;
 }
 
+void print_margin(const char * prefix,
+        const common_flydelta_decision_margin & margin,
+        const common_flydelta_decision_margin * baseline = nullptr) {
+    std::cout << ' ' << prefix << "_available=" << (margin.available ? "yes" : "no");
+    if (!margin.available) return;
+    std::cout << ' ' << prefix << "_total_delta=" << margin.total_delta()
+              << ' ' << prefix << "_normalized_delta=" << margin.normalized_delta()
+              << ' ' << prefix << "_positive_logprob=" << margin.positive_total_logprob
+              << ' ' << prefix << "_negative_logprob=" << margin.negative_total_logprob
+              << ' ' << prefix << "_positive_tokens=" << margin.positive_token_count
+              << ' ' << prefix << "_negative_tokens=" << margin.negative_token_count;
+    if (baseline && baseline->available) {
+        std::cout << ' ' << prefix << "_delta_from_baseline="
+                  << margin.normalized_delta() - baseline->normalized_delta();
+    }
+}
+
 common_agent_generation_request make_request(
         const options & value,
         const char * instruction,
@@ -803,6 +820,7 @@ int main(int argc, char ** argv) {
         }
         const auto & region_trials = pipeline_result.directions.front().region_trials;
         const auto & region_selection = pipeline_result.directions.front().region_selection;
+        const auto & whirlpool = pipeline_result.directions.front().whirlpool_trace;
         std::cout << "intervention_region_search=completed"
                   << " pipeline=default"
                   << " trials=" << region_trials.size()
@@ -810,7 +828,6 @@ int main(int argc, char ** argv) {
                   << " elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
                       std::chrono::steady_clock::now() - region_started).count()
                   << " selected=" << (region_selection.selected ? "yes" : "no") << '\n';
-        const auto & whirlpool = pipeline_result.directions.front().whirlpool_trace;
         std::cout << "whirlpool_search=completed"
                   << " model_evaluations=" << whirlpool.model_evaluations
                   << " best_trial_index=" << whirlpool.best_trial_index
@@ -838,6 +855,7 @@ int main(int argc, char ** argv) {
                       << " outcome=" << common_flydelta_counterfactual_outcome_name(trial.outcome)
                       << " promising=" << (trial.promising ? "yes" : "no")
                       << " safe_to_continue=" << (trial.safe_to_continue ? "yes" : "no");
+            print_margin("margin", trial.margin);
             if (trial.geometry_available) {
                 std::cout << " cosine=" << trial.geometry.cosine
                           << " progress=" << trial.geometry.progress
@@ -1226,7 +1244,16 @@ int main(int argc, char ** argv) {
                             trial.evidence_ref = apply_overlay
                                 ? "evidence:model-repair-tfo-lite-overlay"
                                 : "evidence:model-repair-tfo-lite-baseline";
-                            margin = {};
+                            const auto scoring_request = make_request(value, failed_instruction);
+                            if (!score_chat_choice_margin(
+                                    loaded->model, loaded->chat_templates.get(), scoring_request.messages,
+                                    scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
+                                    "{\"name\":\"", "data.inspect", "data.describe", margin,
+                                    nullptr, scoring_request.json_schema, {}, {},
+                                    apply_overlay && activation_ptr ? activation_ptr->overlay
+                                        : common_flydelta_static_overlay{}, &runner_error)) {
+                                return false;
+                            }
                             std::cout << "tfo_lite_model_output coefficients=";
                             for (size_t index = 0; index < tfo_coefficients.size(); ++index) {
                                 if (index != 0) std::cout << ',';
@@ -1270,6 +1297,7 @@ int main(int argc, char ** argv) {
                               << " outcome=" << common_flydelta_counterfactual_outcome_name(
                                   trial.outcome)
                               << " host_verified=" << (trial.verifier_known ? "yes" : "no");
+                    print_margin("margin", trial.margin);
                     if (trial.geometry_available) {
                         std::cout << " cosine=" << trial.geometry.cosine
                                   << " progress=" << trial.geometry.progress

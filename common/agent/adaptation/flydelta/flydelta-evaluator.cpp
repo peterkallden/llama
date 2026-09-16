@@ -160,7 +160,11 @@ bool common_flydelta_evaluate_job(
                     !validate_search_pipeline_result(pipeline_result, config.pipeline, error)) {
                 return false;
             }
+            common_flydelta_search_continuation continuation;
+            if (!common_flydelta_select_search_continuation(
+                    pipeline_result, continuation, error)) return false;
             result.search_pipeline_results.push_back(std::move(pipeline_result));
+            result.search_continuations.push_back(std::move(continuation));
             result.processed_references = job.behavior_delta_ids.size();
             return true;
         }

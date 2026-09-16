@@ -38,8 +38,8 @@ bool validate_result(
             return false;
     }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::search_pipeline &&
-            result.search_pipeline_results.empty()) {
-        error = "FlyDelta search pipeline worker result requires a result";
+            (result.search_pipeline_results.empty() || result.search_continuations.empty())) {
+        error = "FlyDelta search pipeline worker result requires a result and continuation";
         return false;
     }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::direction &&
@@ -122,6 +122,8 @@ bool common_flydelta_experiment_worker_run_evaluator_once(
                 std::move(evaluator_result.basis_directions);
             worker_result.search_pipeline_results =
                 std::move(evaluator_result.search_pipeline_results);
+            worker_result.search_continuations =
+                std::move(evaluator_result.search_continuations);
             worker_result.delta_memory_weights =
                 std::move(evaluator_result.delta_memory_weights);
             worker_result.aggregation = std::move(evaluator_result.aggregation);

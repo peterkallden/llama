@@ -7,6 +7,7 @@
 #include "agent/adaptation/flydelta/flydelta-evidence-depth.h"
 #include "agent/adaptation/flydelta/flydelta-aggregation.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
+#include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
 
 #include <cstddef>
 #include <functional>
@@ -61,6 +62,7 @@ struct common_flydelta_evaluator_result {
     std::vector<common_flydelta_basis_direction> basis_directions;
     std::vector<common_flydelta_direction_candidate> direction_candidates;
     std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;
+    std::vector<common_flydelta_search_continuation> search_continuations;
     std::vector<float> delta_memory_weights;
     common_flydelta_aggregation_snapshot aggregation;
     common_flydelta_evidence_depth_result evidence_depth;

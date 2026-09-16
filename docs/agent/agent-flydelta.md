@@ -670,6 +670,27 @@ explicit lifecycle controller.
 
 #### Incremental aggregation and search depth
 
+The worker now carries an explicit reference-only continuation between the
+adaptive `WHERE` phase and evidence-driven `WHAT` work. Whirlpool may retain
+the safest/highest-scoring `UNKNOWN` region arm; that is a search decision,
+not a learning verdict. The host then resolves compatible samples for the
+same behavior identity and selected layer, assesses evidence depth, and uses
+the resulting plan:
+
+```text
+Whirlpool / region result
+  -> selected WHERE continuation (HELPED preferred; otherwise safe promising arm)
+  -> compatible WHAT samples for behavior + model/context + capture layout + layer
+  -> evidence depth
+  -> Bootstrap rank-1 | Shallow rank-2 controls | Deep controls then TFO-lite
+  -> margin/geometry ranking -> bounded full generation -> host verifier
+```
+
+`Shallow` and `Deep` always run the small rank-2 controls before TFO-lite.
+Whirlpool therefore never supplies a coefficient basis itself: it selects
+*where* compatible directions are evaluated. `UNKNOWN` may guide this hand-off
+but cannot update DeltaMemory, activate a sideband, or promote an artifact.
+
 The direction worker is incremental at the evidence boundary, not a second
 durable corpus. A new host-certified relation appends its reference to the
 normal learning/evidence source. A subsequent direction job may contain that

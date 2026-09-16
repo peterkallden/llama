@@ -173,6 +173,18 @@ int main() {
         layer.total_scale = 0.05f;
         layer.per_layer_scale = 0.05f;
         direction.layer_plan.singleton_candidates.push_back(std::move(layer));
+        common_flydelta_intervention_region_trial region;
+        region.candidate.layer_indices = {2};
+        region.candidate.anchor_layer_index = 2;
+        region.candidate.total_scale = 0.05f;
+        region.candidate.per_layer_scale = 0.05f;
+        region.executed = true;
+        region.verifier_known = true;
+        region.search_score = 0.5f;
+        region.promising = true;
+        region.safe_to_continue = true;
+        region.evidence_ref = "evidence:worker-where";
+        direction.region_trials.push_back(std::move(region));
         value.directions.push_back(std::move(direction));
         return true;
     };

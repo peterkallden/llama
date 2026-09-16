@@ -2627,6 +2627,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-two-pass
     test-agent-flydelta-artifact-store
     test-agent-flydelta-evaluator
+    test-agent-flydelta-experiment-orchestration
     test-agent-flydelta-sideband-controller
     test-agent-learning-transaction-backends
     test-agent-clangd-protocol

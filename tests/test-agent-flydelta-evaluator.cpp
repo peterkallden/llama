@@ -95,6 +95,18 @@ static common_flydelta_search_pipeline_result search_pipeline_result() {
     direction.direction.source_samples = 1;
     direction.direction.retained_samples = 1;
     direction.direction.median_alignment = 1.0f;
+    common_flydelta_intervention_region_trial trial;
+    trial.candidate.layer_indices = {24};
+    trial.candidate.anchor_layer_index = 24;
+    trial.candidate.total_scale = 0.1f;
+    trial.candidate.per_layer_scale = 0.1f;
+    trial.executed = true;
+    trial.verifier_known = true;
+    trial.search_score = 0.5f;
+    trial.promising = true;
+    trial.safe_to_continue = true;
+    trial.evidence_ref = "evidence:where";
+    direction.region_trials.push_back(std::move(trial));
     value.directions.push_back(std::move(direction));
     return value;
 }
@@ -204,6 +216,8 @@ int main() {
     };
     CHECK(common_flydelta_evaluate_job(pipeline, config, callbacks, result, error));
     CHECK(result.processed_references == 1 && result.search_pipeline_results.size() == 1);
+    CHECK(result.search_continuations.size() == 1);
+    CHECK(result.search_continuations.front().region.anchor_layer_index == 24);
 
     auto memory = base_job(common_flydelta_experiment_job_kind::delta_memory,
             "flydelta://job/memory");
