@@ -413,6 +413,7 @@ test-agent-flydelta-scale-search.cpp
         test-agent-flydelta-intervention-region-search.cpp
         test-agent-flydelta-search-pipeline.cpp
         test-agent-flydelta-coefficient-search.cpp
+        test-agent-flydelta-deep-search.cpp
         test-agent-flydelta-artifact-lifecycle.cpp
         test-agent-flydelta-hidden-state-hook.cpp
         test-agent-flydelta-two-pass.cpp
