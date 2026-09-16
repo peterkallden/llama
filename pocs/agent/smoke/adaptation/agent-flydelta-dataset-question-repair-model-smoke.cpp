@@ -7,6 +7,7 @@
 #include "agent/adaptation/flydelta/flydelta-evidence-depth.h"
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "agent/adaptation/flydelta/flydelta-deep-search.h"
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-worker.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
@@ -17,6 +18,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -35,6 +37,7 @@ struct options {
     std::string model;
     std::string suite;
     std::string config;
+    bool force_deep = false;
     int n_predict = 128;
     int n_threads = 3;
     int n_gpu_layers = 0;
@@ -50,6 +53,9 @@ bool parse_args(int argc, char ** argv, options & value) {
     if (const char * model = std::getenv("LLAMA_AGENT_MODEL")) value.model = model;
     if (const char * suite = std::getenv("LLAMA_AGENT_DATASET_QUESTION_SUITE")) value.suite = suite;
     if (const char * config = std::getenv("LLAMA_AGENT_CONFIG")) value.config = config;
+    if (const char * force_deep = std::getenv("LLAMA_AGENT_FORCE_DEEP")) {
+        value.force_deep = std::string(force_deep) == "1" || std::string(force_deep) == "true";
+    }
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
@@ -60,6 +66,7 @@ bool parse_args(int argc, char ** argv, options & value) {
         if (argument == "--model") { const auto v = next("--model"); if (!v) return false; value.model = v; }
         else if (argument == "--suite") { const auto v = next("--suite"); if (!v) return false; value.suite = v; }
         else if (argument == "--config") { const auto v = next("--config"); if (!v) return false; value.config = v; }
+        else if (argument == "--force-deep") value.force_deep = true;
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
         else if (argument == "--n-gpu-layers") { const auto v = next("--n-gpu-layers"); if (!v) return false; value.n_gpu_layers = std::stoi(v); }
@@ -191,6 +198,7 @@ int main(int argc, char ** argv) {
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL --suite SUITE_JSON [--config AGENT_CONFIG]"
+                  << " [--force-deep]"
                   << " [--threads N] [--n-gpu-layers N]\n";
         return 2;
     }
@@ -375,6 +383,9 @@ int main(int argc, char ** argv) {
     depth_config.max_condition_number = 100.0f;
     size_t layer2_samples = 0;
     size_t deep_groups = 0;
+    size_t deep_search_executed = 0;
+    size_t deep_diagnostic_trials = 0;
+    size_t deep_full_generation_trials = 0;
     size_t direction_candidates = 0;
     const auto worker_root = std::filesystem::temp_directory_path() /
         "llama-agent-flydelta-dataset-question-bootstrap-worker";
@@ -451,6 +462,215 @@ int main(int argc, char ** argv) {
                       << " median_alignment=" << direction.median_alignment
                       << " experimental_only=" << (direction.experimental_only ? "yes" : "no")
                       << '\n';
+        }
+
+        // The normal evidence gate remains authoritative. This explicit
+        // smoke-only override evaluates Deep on a smaller group so the
+        // algorithm and model-facing arm diagnostics can be inspected before
+        // enough production evidence has accumulated.
+        if (value.force_deep && evidence_depth.depth != common_flydelta_search_depth::deep &&
+                entry.second.size() >= 2 && directions.size() >= 2) {
+            const auto aggregation_snapshot_for_deep = aggregation.snapshot();
+            if (aggregation_snapshot_for_deep.retained_samples.size() < 2) {
+                std::cerr << "forced Deep requires two retained samples for " << entry.first << '\n';
+                host.close();
+                return 1;
+            }
+            const auto deep_case_it = bootstrap_cases_by_delta.find(
+                aggregation_snapshot_for_deep.retained_samples.front().delta.id);
+            if (deep_case_it == bootstrap_cases_by_delta.end()) {
+                std::cerr << "forced Deep sample has no model-facing fixture: " << entry.first << '\n';
+                host.close();
+                return 1;
+            }
+            const auto deep_case = deep_case_it->second;
+            const auto deep_delta = aggregation_snapshot_for_deep.retained_samples.front().delta;
+            common_flydelta_experiment_fixture deep_fixture;
+            deep_fixture.id = "flydelta://fixture/deep/" + deep_case.id;
+            deep_fixture.task_fingerprint = "sha256:dataset-question:" + deep_case.id;
+            deep_fixture.model_profile_fingerprint = capture->model_profile_fingerprint;
+            deep_fixture.tokenizer_fingerprint = "sha256:dataset-question-tokenizer-v1";
+            deep_fixture.template_fingerprint = "template:dataset-question-compact-v1";
+            deep_fixture.execution_context_fingerprint = "sha256:dataset-question-context-v1";
+            deep_fixture.verifier_revision = "verifier:cozo-native-data-adapter-v1";
+
+            common_flydelta_deep_search_config deep_config;
+            deep_config.max_rank = 2;
+            deep_config.max_directions = 4;
+            deep_config.full_generation_top_k = 3;
+            deep_config.coefficients.strategy = common_flydelta_coefficient_search_strategy::coordinate;
+            deep_config.coefficients.step = 0.05f;
+            deep_config.coefficients.max_candidates = 8;
+            deep_config.coefficients.max_l2_norm = 0.32f;
+            deep_config.coefficients.norm_penalty = 0.05f;
+            deep_config.coefficients.leakage_penalty = 0.10f;
+
+            std::vector<common_flydelta_deep_search_direction> deep_directions;
+            for (const auto & direction : directions) {
+                deep_directions.push_back({direction, false, 0.0f});
+            }
+            std::shared_ptr<const common_flydelta_hidden_state_capture> deep_baseline_capture;
+            auto run_deep_arm = [&](const common_flydelta_low_rank_basis & basis,
+                    const std::vector<float> & coefficients, bool apply_overlay,
+                    common_flydelta_counterfactual_trial & trial,
+                    common_flydelta_decision_margin & margin,
+                    common_flydelta_representation_diagnostics & geometry,
+                    bool & geometry_available, std::string & runner_error) {
+                common_agent_generation_result generated_result;
+                geometry = {};
+                geometry_available = false;
+                std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
+                if (apply_overlay) {
+                    common_flydelta_gate_request gate_request;
+                    // The model smoke has no persisted recognition artifact.
+                    // It uses the same explicit opt-in gate as the existing
+                    // Bootstrap worker with a known familiar context.
+                    gate_request.explicit_opt_in = true;
+                    gate_request.candidate_status = common_flydelta_candidate_status::approved;
+                    gate_request.basis_available = true;
+                    gate_request.familiarity = 1.0f;
+                    gate_request.novelty = 0.0f;
+                    gate_request.requested_scale = 1.0f;
+                    common_flydelta_activation_request activation_request;
+                    activation_request.candidate_id = "flydelta://candidate/deep/" + deep_case.id;
+                    activation_request.artifact_id = "flydelta://experimental/deep/" + deep_case.id;
+                    activation_request.model_profile_fingerprint = capture->model_profile_fingerprint;
+                    activation_request.capture_layout_revision = capture->capture_layout_revision;
+                    activation_request.model_n_embd = n_embd;
+                    activation_request.model_n_layers = n_layers;
+                    activation_request.il_start = 1;
+                    activation_request.il_end = static_cast<int32_t>(n_layers - 1);
+                    for (const auto & vector : basis.vectors) {
+                        activation_request.directions.push_back({basis.layer_index, vector});
+                    }
+                    activation_request.coefficients = coefficients;
+                    gate_request.requested_scale = 1.0f;
+                    activation_request.gate_request = gate_request;
+                    common_flydelta_gate_config gate_config;
+                    gate_config.enabled = true;
+                    gate_config.max_scale = 1.0f;
+                    common_flydelta_activation_result activation;
+                    if (!common_flydelta_prepare_activation(
+                            gate_config, activation_request, 64U * 1024U * 1024U,
+                            activation, runner_error)) return false;
+                    activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                        std::move(activation));
+                }
+                generated_result = {};
+                const bool generated = inference->generate(make_request(
+                    value, contract, deep_case.question, capture, activation_ptr), generated_result);
+                const auto verdict = verify_model_call(generated_result, deep_case.expected_tool, host);
+                trial = {};
+                trial.executed = generated;
+                trial.verifier_known = generated &&
+                    verdict.value != host_verdict::kind::unresolved_alternative;
+                trial.passed = generated && verdict.value == host_verdict::kind::passed;
+                trial.quality = trial.passed ? 1.0f : 0.0f;
+                trial.overlay_applied = apply_overlay;
+                trial.intervention_count = apply_overlay ? basis.vectors.size() : 0;
+                trial.evidence_ref = apply_overlay
+                    ? "evidence:flydelta-deep-overlay" : "evidence:flydelta-deep-baseline";
+                margin = {};
+                if (!apply_overlay && generated_result.flydelta_capture) {
+                    deep_baseline_capture = generated_result.flydelta_capture;
+                }
+                if (apply_overlay && generated_result.flydelta_capture && deep_baseline_capture) {
+                    if (!common_flydelta_representation_diagnostics_from_captures(
+                            *deep_baseline_capture, *generated_result.flydelta_capture, deep_delta,
+                            64U * 1024U * 1024U, geometry, runner_error)) return false;
+                    geometry_available = true;
+                }
+                std::cout << "flydelta_deep_model_output group=" << entry.first
+                          << " overlay=" << (apply_overlay ? "yes" : "no")
+                          << " output=" << preview(generated_result) << '\n';
+                if (!generated && !generated_result.error_message.empty()) {
+                    runner_error = generated_result.error_message;
+                }
+                return generated;
+            };
+
+            common_flydelta_deep_search_result deep_result;
+            const auto deep_started = std::chrono::steady_clock::now();
+            if (!common_flydelta_run_deep_search(
+                    deep_fixture, deep_config, deep_directions,
+                    [&](const common_flydelta_experiment_fixture & fixture,
+                            const common_flydelta_low_rank_basis & basis,
+                            const std::vector<float> & coefficients,
+                            bool apply_overlay, common_flydelta_counterfactual_trial & trial,
+                            common_flydelta_decision_margin & margin,
+                            common_flydelta_representation_diagnostics & geometry,
+                            bool & geometry_available, std::string & runner_error) {
+                        const bool executed = run_deep_arm(basis, coefficients, apply_overlay,
+                            trial, margin, geometry, geometry_available, runner_error);
+                        if (apply_overlay) {
+                            std::cout << "flydelta_deep_diagnostic group=" << entry.first
+                                      << " coefficients=";
+                            for (size_t index = 0; index < coefficients.size(); ++index) {
+                                if (index != 0) std::cout << ',';
+                                std::cout << coefficients[index];
+                            }
+                            std::cout << " executed=" << (executed ? "yes" : "no")
+                                      << " outcome=diagnostic";
+                            if (geometry_available) {
+                                std::cout << " cosine=" << geometry.cosine
+                                          << " progress=" << geometry.progress
+                                          << " leakage=" << geometry.leakage
+                                          << " shift_norm=" << geometry.shift_norm;
+                            }
+                            std::cout << '\n';
+                        }
+                        return executed;
+                    },
+                    [&](const common_flydelta_experiment_fixture & fixture,
+                            const common_flydelta_low_rank_basis & basis,
+                            const std::vector<float> & coefficients,
+                            bool apply_overlay, common_flydelta_counterfactual_trial & trial,
+                            common_flydelta_decision_margin & margin,
+                            common_flydelta_representation_diagnostics & geometry,
+                            bool & geometry_available, std::string & runner_error) {
+                        return run_deep_arm(basis, coefficients, apply_overlay, trial, margin,
+                            geometry, geometry_available, runner_error);
+                    }, deep_result, error)) {
+                host.close();
+                std::cerr << "forced Deep search failed for " << entry.first << ": " << error << '\n';
+                return 1;
+            }
+            ++deep_search_executed;
+            size_t deep_group_full_generation_trials = 0;
+            for (const auto & trial : deep_result.coefficient_trials) {
+                if (trial.mutation_kind == "full_generation_top_arm") {
+                    ++deep_group_full_generation_trials;
+                    ++deep_full_generation_trials;
+                }
+            }
+            const size_t deep_group_diagnostic_trials =
+                deep_result.coefficient_trials.size() - deep_group_full_generation_trials;
+            deep_diagnostic_trials += deep_group_diagnostic_trials;
+            std::cout << "flydelta_deep_search group=" << entry.first
+                      << " forced=yes basis_rank=" << deep_result.basis.vectors.size()
+                      << " diagnostic_trials=" << deep_group_diagnostic_trials
+                      << " full_generation_trials=" << deep_group_full_generation_trials
+                      << " selected=" << (deep_result.coefficient_selection.selected ? "yes" : "no")
+                      << " elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - deep_started).count() << '\n';
+            for (const auto & trial : deep_result.coefficient_trials) {
+                std::cout << "flydelta_deep_arm group=" << entry.first << " coefficients=";
+                for (size_t index = 0; index < trial.coefficients.size(); ++index) {
+                    if (index != 0) std::cout << ',';
+                    std::cout << trial.coefficients[index];
+                }
+                std::cout << " mutation=" << trial.mutation_kind
+                          << " outcome=" << common_flydelta_counterfactual_outcome_name(trial.outcome)
+                          << " host_verified=" << (trial.verifier_known ? "yes" : "no")
+                          << " search_fitness=" << trial.search_fitness;
+                if (trial.geometry_available) {
+                    std::cout << " cosine=" << trial.geometry.cosine
+                              << " progress=" << trial.geometry.progress
+                              << " leakage=" << trial.geometry.leakage
+                              << " shift_norm=" << trial.geometry.shift_norm;
+                }
+                std::cout << '\n';
+            }
         }
 
         // Bootstrap deliberately evaluates only the first retained raw
@@ -610,7 +830,9 @@ int main(int argc, char ** argv) {
               << " groups=" << samples_by_behavior.size()
               << " deep_groups=" << deep_groups
               << " direction_candidates=" << direction_candidates
+              << " forced_deep_searches=" << deep_search_executed
+              << " forced_deep_full_generation_trials=" << deep_full_generation_trials
               << " bootstrap_overlay_evaluated=yes"
-              << " deep_search_executed=no" << '\n';
+              << " deep_search_executed=" << (deep_search_executed != 0 ? "yes" : "no") << '\n';
     return 0;
 }

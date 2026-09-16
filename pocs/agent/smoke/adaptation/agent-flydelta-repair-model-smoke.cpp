@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -36,11 +37,39 @@ struct options {
     int n_threads = 3;
     int n_gpu_layers = 0;
     bool region_scan = false;
+    std::vector<uint32_t> region_layers;
 };
+
+bool parse_layer_list(const std::string & text, std::vector<uint32_t> & layers) {
+    layers.clear();
+    std::stringstream stream(text);
+    std::string item;
+    while (std::getline(stream, item, ',')) {
+        if (item.empty()) return false;
+        size_t consumed = 0;
+        unsigned long value = 0;
+        try {
+            value = std::stoul(item, &consumed);
+        } catch (...) {
+            return false;
+        }
+        if (consumed != item.size() || value == 0 || value > 64) return false;
+        layers.push_back(static_cast<uint32_t>(value));
+    }
+    std::sort(layers.begin(), layers.end());
+    layers.erase(std::unique(layers.begin(), layers.end()), layers.end());
+    return !layers.empty();
+}
 
 bool parse_args(int argc, char ** argv, options & value) {
     if (const char * model = std::getenv("LLAMA_AGENT_MODEL")) value.model = model;
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
+    if (const char * layers = std::getenv("LLAMA_AGENT_REGION_LAYERS")) {
+        if (!parse_layer_list(layers, value.region_layers)) {
+            std::cerr << "invalid LLAMA_AGENT_REGION_LAYERS\n";
+            return false;
+        }
+    }
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         auto next = [&](const char * name) -> const char * {
@@ -68,6 +97,12 @@ bool parse_args(int argc, char ** argv, options & value) {
             value.n_gpu_layers = std::stoi(count);
         } else if (arg == "--region-scan") {
             value.region_scan = true;
+        } else if (arg == "--region-layers") {
+            const char * layers = next("--region-layers");
+            if (!layers || !parse_layer_list(layers, value.region_layers)) {
+                std::cerr << "invalid --region-layers list\n";
+                return false;
+            }
         } else if (arg == "--help" || arg == "-h") {
             return false;
         } else {
@@ -145,7 +180,7 @@ int main(int argc, char ** argv) {
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N]"
-                  << " [--region-scan]\n";
+                  << " [--region-scan] [--region-layers L1,L2,...]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -609,6 +644,33 @@ int main(int argc, char ** argv) {
         pipeline_direction.available_layers.erase(std::unique(
             pipeline_direction.available_layers.begin(),
             pipeline_direction.available_layers.end()), pipeline_direction.available_layers.end());
+        if (!value.region_layers.empty()) {
+            for (const uint32_t layer : value.region_layers) {
+                if (!std::binary_search(pipeline_direction.available_layers.begin(),
+                            pipeline_direction.available_layers.end(), layer)) {
+                    std::cerr << "FlyDelta region pipeline layer is unavailable: "
+                              << layer << '\n';
+                    return 1;
+                }
+            }
+            pipeline_direction.available_layers = value.region_layers;
+            pipeline_direction.layer_anchors.clear();
+            for (const uint32_t layer : value.region_layers) {
+                if (std::binary_search(discovery.anchor_layers.begin(),
+                            discovery.anchor_layers.end(), layer)) {
+                    pipeline_direction.layer_anchors.push_back(layer);
+                }
+            }
+            if (pipeline_direction.layer_anchors.empty()) {
+                pipeline_direction.layer_anchors = value.region_layers;
+            }
+            std::cout << "region_layer_override=";
+            for (size_t index = 0; index < value.region_layers.size(); ++index) {
+                if (index != 0) std::cout << ',';
+                std::cout << value.region_layers[index];
+            }
+            std::cout << '\n';
+        }
 
         std::shared_ptr<const common_flydelta_hidden_state_capture> region_baseline_capture;
         const auto region_started = std::chrono::steady_clock::now();
@@ -748,6 +810,27 @@ int main(int argc, char ** argv) {
                   << " elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
                       std::chrono::steady_clock::now() - region_started).count()
                   << " selected=" << (region_selection.selected ? "yes" : "no") << '\n';
+        const auto & whirlpool = pipeline_result.directions.front().whirlpool_trace;
+        std::cout << "whirlpool_search=completed"
+                  << " model_evaluations=" << whirlpool.model_evaluations
+                  << " best_trial_index=" << whirlpool.best_trial_index
+                  << " best_search_score=" << whirlpool.best_search_score
+                  << " final_centre=" << whirlpool.final_centre
+                  << " final_radius=" << whirlpool.final_radius << '\n';
+        for (const auto & round : whirlpool.rounds) {
+            std::cout << "whirlpool_round round=" << round.round
+                      << " centre_before=" << round.centre_before
+                      << " radius_before=" << round.radius_before
+                      << " probed_layers=";
+            for (size_t index = 0; index < round.probed_layers.size(); ++index) {
+                if (index != 0) std::cout << ',';
+                std::cout << round.probed_layers[index];
+            }
+            std::cout << " best_probe_layer=" << round.best_probe_layer
+                      << " best_probe_score=" << round.best_probe_score
+                      << " centre_after=" << round.centre_after
+                      << " radius_after=" << round.radius_after << '\n';
+        }
         for (const auto & trial : region_trials) {
             std::cout << "region_trial layers=";
             for (const uint32_t layer : trial.candidate.layer_indices) std::cout << layer << ',';

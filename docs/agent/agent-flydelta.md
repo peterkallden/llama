@@ -1821,6 +1821,27 @@ its original meaning and is populated only by a host-known `HELPED` result.
 This prevents a search accelerator from being incorrectly evaluated as a
 promotion mechanism.
 
+The model smoke prints the trace as machine-readable lines after a
+`--region-scan` run:
+
+```text
+whirlpool_search=completed model_evaluations=... best_trial_index=...
+whirlpool_round round=0 centre_before=... radius_before=...
+    probed_layers=... best_probe_layer=... centre_after=... radius_after=...
+```
+
+The `region_trial` lines that follow contain the corresponding layer mask,
+scale, host outcome and geometry (`cosine`, `progress`, `leakage` and
+`shift_norm`). This makes the selected search region reusable by a later
+shallow/deep smoke without repeating the discovery pass. Pass an explicit
+comma-separated layer list with `--region-layers 22,24,25` (or
+`LLAMA_AGENT_REGION_LAYERS=22,24,25`) to constrain the next region search to
+those layers. The override is a search input only; it does not create
+learning evidence or bypass host verification. The current smoke still uses
+the same fixed WHAT direction and scale for both modes, so a later deep run
+can compare Whirlpool with coefficient/TFO search from this saved layer
+region.
+
 The deterministic contract test `test-agent-flydelta-whirlpool-ab` compares
 the fixed region scan and Whirlpool on the same host-verifier landscape and
 with the same maximum arm budget. It verifies the measurable search property:
