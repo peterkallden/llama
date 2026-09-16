@@ -53,6 +53,12 @@ int main() {
     std::vector<std::vector<float>> proposals;
     CHECK(common_flydelta_propose_low_rank_coefficients(config, 2, proposals, error));
     CHECK(proposals.size() == 5 && proposals[0][0] == 0.0f);
+    CHECK(common_flydelta_propose_shallow_rank_two_controls(config, true, proposals, error));
+    CHECK(proposals.size() == 4);
+    CHECK(std::fabs(proposals[0][0] - config.step) < 0.0001f && proposals[0][1] == 0.0f);
+    CHECK(proposals[1][0] == 0.0f && std::fabs(proposals[1][1] - config.step) < 0.0001f);
+    CHECK(std::fabs(proposals[2][0] - proposals[2][1]) < 0.0001f);
+    CHECK(std::fabs(proposals[3][0] + proposals[3][1]) < 0.0001f);
     CHECK(std::string(common_flydelta_coefficient_search_strategy_name(
         common_flydelta_coefficient_search_strategy::coordinate)) == "coordinate");
     config.population_size = 0;

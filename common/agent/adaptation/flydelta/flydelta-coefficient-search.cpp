@@ -233,6 +233,28 @@ bool common_flydelta_propose_low_rank_coefficients(
     return true;
 }
 
+bool common_flydelta_propose_shallow_rank_two_controls(
+        const common_flydelta_coefficient_search_config & config,
+        bool include_opposite_control,
+        std::vector<std::vector<float>> & proposals,
+        std::string & error) {
+    error.clear();
+    proposals.clear();
+    if (!common_flydelta_coefficient_search_config_validate(config, 2, error)) return false;
+    const size_t required = include_opposite_control ? 4 : 3;
+    if (config.max_candidates < required) {
+        error = "FlyDelta Shallow controls exceed coefficient candidate bound";
+        return false;
+    }
+    const float diagonal = config.step / std::sqrt(2.0f);
+    proposals = {{config.step, 0.0f}, {0.0f, config.step}, {diagonal, diagonal}};
+    if (include_opposite_control) proposals.push_back({diagonal, -diagonal});
+    for (auto & proposal : proposals) {
+        proposal = bound_coefficients(std::move(proposal), config.max_l2_norm);
+    }
+    return true;
+}
+
 static bool run_tfo_lite_coefficient_search(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_low_rank_basis & basis,

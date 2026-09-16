@@ -687,11 +687,18 @@ are useful, but they never earn learning or promotion authority.
 
 The current implementation is intentionally incremental. Whirlpool already
 uses `safe_to_continue`, `promising` and `search_score` to select a WHERE
-continuation, including a useful UNKNOWN arm. The subsequent
-`evidence_depth`/plan step currently derives Bootstrap/Shallow/Deep from the
-evidence result alone. A future refinement must add utility as an explicit
-escalation gate, with hysteresis so one weak arm does not immediately demote a
-previously justified search level:
+continuation, including a useful UNKNOWN arm. The common orchestration seam
+now also provides a host-neutral UtilityGate with asymmetric qualifying and
+non-qualifying streaks. It decides `stop`, `retain`, `escalate_shallow`,
+`escalate_deep`, or `allow_tfo_lite` from normalized decision-margin movement
+and bounded geometry. A Deep evidence plan therefore records only that TFO is
+*permitted by evidence* and still requires the UtilityGate after rank-two
+controls.
+
+The worker does not yet invoke this decision automatically after model work;
+the host must persist the utility history and schedule the next bounded job.
+That remaining integration is deliberate until Shallow controls have been
+observed on real fixtures. The intended invariant is:
 
 ```text
 allowed_depth = evidence gate
@@ -701,8 +708,8 @@ next_depth    = utility gate + evidence gate
 Thus six nearly collinear samples do not automatically justify Deep, and a
 small independent set does not justify expensive search unless its shallow
 controls show useful margin/geometry. This distinction is a design invariant;
-the current gap is recorded here so the worker seam can be extended without
-changing host authority or lifecycle rules.
+the remaining worker scheduling gap can be filled without changing host
+authority or lifecycle rules.
 
 The worker now carries an explicit reference-only continuation between the
 adaptive `WHERE` phase and evidence-driven `WHAT` work. Whirlpool may retain

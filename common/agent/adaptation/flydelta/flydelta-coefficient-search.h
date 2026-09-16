@@ -104,6 +104,15 @@ bool common_flydelta_propose_low_rank_coefficients(
         std::vector<std::vector<float>> & proposals,
         std::string & error);
 
+// Deterministic rank-two controls used before a coefficient optimizer. Every
+// non-zero arm has equal L2 budget: [1,0], [0,1], [1,1]/sqrt(2), and optionally
+// [1,-1]/sqrt(2), all scaled by config.step. The runner owns the no-op arm.
+bool common_flydelta_propose_shallow_rank_two_controls(
+        const common_flydelta_coefficient_search_config & config,
+        bool include_opposite_control,
+        std::vector<std::vector<float>> & proposals,
+        std::string & error);
+
 using common_flydelta_coefficient_search_runner = std::function<bool(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_low_rank_basis & basis,

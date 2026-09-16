@@ -42,10 +42,40 @@ int main() {
     depth.effective_rank = 2;
     depth.depth = common_flydelta_search_depth::shallow;
     CHECK(common_flydelta_plan_search_continuation(continuation, depth, plan, error));
-    CHECK(plan.run_rank_two_controls_first && !plan.allow_tfo_lite_after_controls);
+    CHECK(plan.run_rank_two_controls_first && !plan.tfo_lite_permitted_by_evidence);
     depth.compatible_samples = 6;
     depth.depth = common_flydelta_search_depth::deep;
     CHECK(common_flydelta_plan_search_continuation(continuation, depth, plan, error));
-    CHECK(plan.run_rank_two_controls_first && plan.allow_tfo_lite_after_controls);
+    CHECK(plan.run_rank_two_controls_first && plan.tfo_lite_permitted_by_evidence &&
+        plan.tfo_lite_requires_utility_gate);
+
+    common_flydelta_utility_gate_config utility_config;
+    common_flydelta_subspace_utility_observation utility;
+    utility.safe_to_continue = true;
+    utility.decision_margin_available = true;
+    utility.decision_margin_delta = 0.2f;
+    utility.geometry_available = true;
+    utility.geometry.cosine = 0.8f;
+    utility.geometry.progress = 0.2f;
+    utility.geometry.leakage = 0.1f;
+    utility.geometry.shift_norm = 0.2f;
+    common_flydelta_utility_gate_decision utility_decision;
+    CHECK(common_flydelta_decide_subspace_utility(
+        utility_config, common_flydelta_search_depth::shallow,
+        common_flydelta_experiment_phase::bootstrap, {utility}, {}, utility_decision, error));
+    CHECK(utility_decision.action == common_flydelta_utility_gate_action::escalate_shallow);
+    CHECK(common_flydelta_decide_subspace_utility(
+        utility_config, common_flydelta_search_depth::deep,
+        common_flydelta_experiment_phase::shallow_controls, {utility}, {}, utility_decision, error));
+    CHECK(utility_decision.action == common_flydelta_utility_gate_action::escalate_deep);
+    CHECK(common_flydelta_decide_subspace_utility(
+        utility_config, common_flydelta_search_depth::deep,
+        common_flydelta_experiment_phase::deep_controls, {utility}, {}, utility_decision, error));
+    CHECK(utility_decision.action == common_flydelta_utility_gate_action::allow_tfo_lite);
+    utility.safe_to_continue = false;
+    CHECK(common_flydelta_decide_subspace_utility(
+        utility_config, common_flydelta_search_depth::deep,
+        common_flydelta_experiment_phase::deep_controls, {utility}, {}, utility_decision, error));
+    CHECK(utility_decision.action == common_flydelta_utility_gate_action::stop);
     return 0;
 }

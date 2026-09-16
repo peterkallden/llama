@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 // A WHERE result is not evidence. This reference-only continuation bridges
 // bounded region search and later per-behavior WHAT aggregation. UNKNOWN arms
@@ -37,8 +38,72 @@ struct common_flydelta_experiment_plan {
     size_t required_compatible_directions = 1;
     bool require_decision_margin = false;
     bool run_rank_two_controls_first = false;
-    bool allow_tfo_lite_after_controls = false;
+    // Evidence capacity only. This is not runtime permission: UtilityGate
+    // must still approve TFO after rank-two controls.
+    bool tfo_lite_permitted_by_evidence = false;
+    bool tfo_lite_requires_utility_gate = false;
 };
+
+// Evidence controls search capacity; this policy controls whether observed
+// subspace utility has earned more model work inside that capacity. It carries
+// no host outcome or learning credit.
+struct common_flydelta_utility_gate_config {
+    int schema_version = 1;
+    float shallow_enter_margin = 0.0f;
+    float deep_enter_margin = 0.0f;
+    float tfo_enter_margin = 0.0f;
+    size_t shallow_enter_observations = 1;
+    size_t deep_enter_observations = 1;
+    size_t tfo_enter_observations = 1;
+    size_t exit_nonqualifying_observations = 2;
+    float min_cosine = 0.3f;
+    float max_leakage = 1.0f;
+    float max_shift_norm = 1.0f;
+};
+
+struct common_flydelta_subspace_utility_observation {
+    bool safe_to_continue = false;
+    bool decision_margin_available = false;
+    float decision_margin_delta = 0.0f;
+    bool geometry_available = false;
+    common_flydelta_representation_diagnostics geometry;
+};
+
+struct common_flydelta_utility_history {
+    size_t qualifying_streak = 0;
+    size_t nonqualifying_streak = 0;
+};
+
+enum class common_flydelta_utility_gate_action {
+    stop,
+    retain,
+    escalate_shallow,
+    escalate_deep,
+    allow_tfo_lite,
+};
+
+struct common_flydelta_utility_gate_decision {
+    bool utility_qualified = false;
+    common_flydelta_utility_gate_action action = common_flydelta_utility_gate_action::retain;
+    common_flydelta_utility_history history;
+};
+
+const char * common_flydelta_utility_gate_action_name(
+        common_flydelta_utility_gate_action action);
+bool common_flydelta_utility_gate_config_validate(
+        const common_flydelta_utility_gate_config & config,
+        std::string & error);
+bool common_flydelta_subspace_utility_observation_validate(
+        const common_flydelta_subspace_utility_observation & observation,
+        std::string & error);
+bool common_flydelta_decide_subspace_utility(
+        const common_flydelta_utility_gate_config & config,
+        common_flydelta_search_depth max_allowed_depth,
+        common_flydelta_experiment_phase current_phase,
+        const std::vector<common_flydelta_subspace_utility_observation> & observations,
+        const common_flydelta_utility_history & history,
+        common_flydelta_utility_gate_decision & decision,
+        std::string & error);
 
 // Selects the best diagnostic WHERE arm. HELPED is preferred; otherwise the
 // best safe/promising UNKNOWN or NEUTRAL arm wins by search score.
