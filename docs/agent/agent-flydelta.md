@@ -239,6 +239,34 @@ llama-agent-flydelta-dataset-question-model-smoke \
   --suite docs/examples/agent-flydelta-dataset-question-suite.json
 ```
 
+The third incremental batch is in
+`docs/examples/agent-flydelta-dataset-question-suite-incremental-v3.json`.
+It adds twelve new model-facing questions without reusing the earlier
+mechanical choose-wrong/choose-right prompt. The cases vary projections,
+multiple predicates, membership filtering, two-dimensional grouping,
+multi-measure aggregation, grouped numeric descriptions, grouped outlier
+analysis, ordered distinct results, alternate transform order and bounded
+schema inspection. All twelve canonical plans execute against the shared
+Cozo sales fixture, so this batch is suitable for collecting additional
+host-certified repair transitions.
+
+Validate and run the batch independently with:
+
+```text
+llama-agent-flydelta-dataset-question-contract-smoke \
+  docs/examples/agent-flydelta-dataset-question-suite-incremental-v3.json
+
+llama-agent-flydelta-dataset-question-repair-contract-smoke \
+  docs/examples/agent-flydelta-dataset-question-suite-incremental-v3.json
+```
+
+The model smoke still evaluates each scenario as its own model turn. The
+repair model smoke keeps those turns separate while aggregating compatible
+layer-2 captures within the one worker invocation; use that form when the
+purpose is to test the Bootstrap/Shallow/Deep evidence gate. A separate
+process per scenario is useful for isolated logs but cannot by itself reach
+the aggregate deep threshold.
+
 `--strict` makes a non-matching model selection return failure; without it,
 the smoke completes and reports mismatches so they can be inspected and fed
 into the normal host-controlled repair path. The suite contains no Swedish
