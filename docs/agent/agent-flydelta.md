@@ -1840,7 +1840,9 @@ those layers. The override is a search input only; it does not create
 learning evidence or bypass host verification. The current smoke still uses
 the same fixed WHAT direction and scale for both modes, so a later deep run
 can compare Whirlpool with coefficient/TFO search from this saved layer
-region.
+region. The smoke still performs its normal model-load and capture preparation
+before entering the constrained region phase; skipping that preparation
+requires a future persisted search-state input.
 
 The deterministic contract test `test-agent-flydelta-whirlpool-ab` compares
 the fixed region scan and Whirlpool on the same host-verifier landscape and
