@@ -5,6 +5,10 @@
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
 #include "agent/adaptation/flydelta/flydelta-aggregation.h"
 #include "agent/adaptation/flydelta/flydelta-evidence-depth.h"
+#include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "agent/adaptation/flydelta/flydelta-experiment.h"
+#include "agent/adaptation/flydelta/flydelta-worker.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "tools/agent/cli/agent-cli-inference.h"
 #include "tools/agent/runtime/agent-model-loaders.h"
@@ -28,6 +32,7 @@ using json = nlohmann::ordered_json;
 struct options {
     std::string model;
     std::string suite;
+    std::string behavior_key;
     int n_predict = 128;
     int n_threads = 3;
     int n_gpu_layers = 0;
@@ -42,6 +47,7 @@ struct host_verdict {
 bool parse_args(int argc, char ** argv, options & value) {
     if (const char * model = std::getenv("LLAMA_AGENT_MODEL")) value.model = model;
     if (const char * suite = std::getenv("LLAMA_AGENT_DATASET_QUESTION_SUITE")) value.suite = suite;
+    if (const char * behavior = std::getenv("LLAMA_AGENT_FLYDELTA_BEHAVIOR_KEY")) value.behavior_key = behavior;
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
@@ -51,6 +57,7 @@ bool parse_args(int argc, char ** argv, options & value) {
         };
         if (argument == "--model") { const auto v = next("--model"); if (!v) return false; value.model = v; }
         else if (argument == "--suite") { const auto v = next("--suite"); if (!v) return false; value.suite = v; }
+        else if (argument == "--behavior-key") { const auto v = next("--behavior-key"); if (!v) return false; value.behavior_key = v; }
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
         else if (argument == "--n-gpu-layers") { const auto v = next("--n-gpu-layers"); if (!v) return false; value.n_gpu_layers = std::stoi(v); }
@@ -59,6 +66,15 @@ bool parse_args(int argc, char ** argv, options & value) {
     }
     return true;
 }
+
+struct bootstrap_case {
+    std::string id;
+    std::string behavior_key;
+    std::string expected_tool;
+    std::string question;
+    std::string capture_manifest_id;
+    std::string delta_id;
+};
 
 bool read_json(const std::string & path, json & value, std::string & error) {
     std::ifstream input(path, std::ios::binary);
@@ -140,13 +156,15 @@ common_learning_transaction transaction(const std::string & id, const std::strin
 }
 
 common_agent_generation_request make_request(const options & value, const std::string & contract,
-        const std::string & user, const std::shared_ptr<const common_flydelta_hidden_state_capture_request> & capture) {
+        const std::string & user, const std::shared_ptr<const common_flydelta_hidden_state_capture_request> & capture,
+        std::shared_ptr<const common_flydelta_activation_result> activation = {}) {
     common_agent_generation_request request;
     request.purpose = common_agent_generation_purpose::tool_followup;
     request.options.n_predict = value.n_predict;
     request.options.n_threads = value.n_threads;
     request.messages = {{"system", "You are a host-controlled dataset tool selector. Return only one canonical JSON object with name and arguments, no markdown.\n" + contract}, {"user", user}};
     request.flydelta_capture = capture;
+    request.flydelta_activation = std::move(activation);
     return request;
 }
 }
@@ -154,7 +172,9 @@ common_agent_generation_request make_request(const options & value, const std::s
 int main(int argc, char ** argv) {
     options value;
     if (!parse_args(argc, argv, value)) {
-        std::cerr << "usage: " << argv[0] << " --model MODEL --suite SUITE_JSON [--threads N] [--n-gpu-layers N]\n";
+        std::cerr << "usage: " << argv[0]
+                  << " --model MODEL --suite SUITE_JSON [--behavior-key KEY]"
+                  << " [--threads N] [--n-gpu-layers N]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -174,7 +194,12 @@ int main(int argc, char ** argv) {
     common_tool_bootstrap_result bootstrap;
     if (!catalog.bootstrap("analysis", bootstrap, error)) { host.close(); std::cerr << error << '\n'; return 1; }
     std::string contract = "Available read-only tools:\n";
+    size_t selected_scenarios = 0;
     for (const auto & scenario : suite["scenarios"]) {
+        const auto behavior_key = scenario.value(
+            "behavior_key", "tool_use/dataset/structured_call_repair");
+        if (!value.behavior_key.empty() && behavior_key != value.behavior_key) continue;
+        ++selected_scenarios;
         const auto expected = scenario.value("expected_tool", "");
         const auto * definition = catalog.find_definition(expected);
         if (!definition) { host.close(); std::cerr << "unknown expected tool: " << expected << '\n'; return 1; }
@@ -183,6 +208,11 @@ int main(int argc, char ** argv) {
             common_tool_model_input_schema(*definition), common_tool_model_result_schema(*definition), compact_error);
         if (!compact_error.empty()) { host.close(); std::cerr << compact_error << '\n'; return 1; }
         if (contract.find("\n- " + expected + "\n") == std::string::npos) contract += "- " + description + "\n";
+    }
+    if (selected_scenarios == 0) {
+        host.close();
+        std::cerr << "no scenarios matched behavior key: " << value.behavior_key << '\n';
+        return 2;
     }
 
     common_agent_model_selection selection;
@@ -212,12 +242,14 @@ int main(int argc, char ** argv) {
     capture->capture_layout_revision = "layer-input:generation-boundary:v1";
 
     std::map<std::string, std::vector<common_flydelta_contrast_sample>> samples_by_behavior;
+    std::map<std::string, bootstrap_case> bootstrap_cases_by_delta;
     size_t passed = 0, unresolved = 0, failures = 0, repaired = 0;
     for (const auto & scenario : suite["scenarios"]) {
         const auto id = scenario.value("id", "unnamed");
         const auto expected = scenario.value("expected_tool", "");
         const auto behavior_key = scenario.value(
             "behavior_key", "tool_use/dataset/structured_call_repair");
+        if (!value.behavior_key.empty() && behavior_key != value.behavior_key) continue;
         const auto steps = scenario.value("plan", json::object()).value("steps", json::array());
         if (steps.size() != 1) { host.close(); std::cerr << "scenario has invalid plan: " << id << '\n'; return 1; }
         common_tool_execution_result canonical_execution;
@@ -302,6 +334,8 @@ int main(int argc, char ** argv) {
         credit.eligible_for_learning = true;
         for (const auto & delta : deltas) if (delta.layer_index == 2) {
             samples_by_behavior[behavior_key].push_back({delta, credit});
+            bootstrap_cases_by_delta[delta.id] = {
+                id, behavior_key, expected, scenario.value("question", ""), manifest.id, delta.id};
         }
         ++repaired;
         std::cout << "scenario=" << id << " host_outcome=host_certified_repair"
@@ -309,8 +343,6 @@ int main(int argc, char ** argv) {
                   << " failed_output=" << preview(failed_result)
                   << " repaired_output=" << preview(repaired_result) << '\n';
     }
-    host.close();
-
     common_flydelta_evidence_depth_config depth_config;
     depth_config.min_shallow_samples = 2;
     depth_config.min_deep_samples = 6;
@@ -321,8 +353,14 @@ int main(int argc, char ** argv) {
     size_t layer2_samples = 0;
     size_t deep_groups = 0;
     size_t direction_candidates = 0;
+    const auto worker_root = std::filesystem::temp_directory_path() /
+        "llama-agent-flydelta-dataset-question-bootstrap-worker";
+    std::error_code ignored;
+    std::filesystem::remove_all(worker_root, ignored);
     std::cout << "flydelta_dataset_question_repair_model_smoke"
               << " passed=" << passed << " failures=" << failures << " unresolved=" << unresolved
+              << " behavior_filter=" << (value.behavior_key.empty() ? "all" : value.behavior_key)
+              << " selected_scenarios=" << selected_scenarios
               << " host_certified_repairs=" << repaired << '\n';
     for (const auto & entry : samples_by_behavior) {
         common_flydelta_direction_search_config direction_config;
@@ -391,11 +429,165 @@ int main(int argc, char ** argv) {
                       << " experimental_only=" << (direction.experimental_only ? "yes" : "no")
                       << '\n';
         }
+
+        // Bootstrap deliberately evaluates only the first retained raw
+        // direction. The evaluator/worker still owns the counterfactual
+        // lifecycle; this smoke supplies the model and host callbacks.
+        const auto aggregation_snapshot = aggregation.snapshot();
+        if (evidence_depth.depth == common_flydelta_search_depth::bootstrap &&
+                !directions.empty() && !aggregation_snapshot.retained_samples.empty()) {
+            const auto & sample = aggregation_snapshot.retained_samples.front();
+            const auto case_it = bootstrap_cases_by_delta.find(sample.delta.id);
+            if (case_it == bootstrap_cases_by_delta.end()) {
+                host.close();
+                std::cerr << "Bootstrap sample has no model-facing fixture: " << sample.delta.id << '\n';
+                return 1;
+            }
+            const auto bootstrap_case = case_it->second;
+            const auto bootstrap_direction = directions.front();
+            common_flydelta_experiment_job job;
+            job.id = "flydelta://job/bootstrap/" + bootstrap_case.id;
+            job.kind = common_flydelta_experiment_job_kind::counterfactual;
+            job.seed.id = "evidence://dataset-repair/" + bootstrap_case.id;
+            job.seed.behavior_key = bootstrap_case.behavior_key;
+            job.seed.source = common_adaptation_evidence_source::tool_repair;
+            job.seed.scope.namespace_id = "local";
+            job.seed.scope.project_id = "dataset-question-suite";
+            job.seed.scope.session_id = "flydelta-dataset-repair";
+            job.seed.scope.turn_id = "turn:dataset-repair:" + bootstrap_case.id;
+            job.seed.task_fingerprint = "sha256:dataset-question:" + bootstrap_case.id;
+            job.seed.model_profile_fingerprint = capture->model_profile_fingerprint;
+            job.seed.tokenizer_fingerprint = "sha256:dataset-question-tokenizer-v1";
+            job.seed.template_fingerprint = "template:dataset-question-compact-v1";
+            job.seed.execution_context_fingerprint = "sha256:dataset-question-context-v1";
+            job.seed.baseline_ref = "execution:dataset-repair:" + bootstrap_case.id + ":failed";
+            job.seed.candidate_ref = "execution:dataset-repair:" + bootstrap_case.id + ":repaired";
+            job.seed.verifier_ref = "verifier:cozo-native-data-adapter-v1";
+            job.seed.evidence_ref = "evidence:dataset-repair:" + bootstrap_case.id;
+            job.seed.transaction_ids = {
+                "learning://dataset-repair/" + bootstrap_case.id + "/failed",
+                "learning://dataset-repair/" + bootstrap_case.id + "/repaired"};
+            job.capture_manifest_ids = {bootstrap_case.capture_manifest_id};
+            job.behavior_delta_ids = {bootstrap_case.delta_id};
+            job.alpha_search.candidates = {0.02f};
+            job.alpha_search.max_candidates = 1;
+            job.code_revision = "flydelta-dataset-question-bootstrap:v1";
+
+            common_flydelta_evaluator_config evaluator_config;
+            common_flydelta_evaluator_callbacks evaluator_callbacks;
+            std::vector<common_flydelta_counterfactual_report> reports;
+            std::string baseline_tool;
+            std::string candidate_tool;
+            evaluator_callbacks.run_counterfactual = [&](const auto & queued_job,
+                    auto & output, std::string & runner_error) {
+                if (queued_job.behavior_delta_ids.size() != 1 ||
+                        queued_job.behavior_delta_ids.front() != bootstrap_case.delta_id) {
+                    runner_error = "Bootstrap worker received an unexpected behavior delta";
+                    return false;
+                }
+                common_flydelta_experiment_fixture fixture;
+                fixture.id = "flydelta://fixture/bootstrap/" + bootstrap_case.id;
+                fixture.task_fingerprint = queued_job.seed.task_fingerprint;
+                fixture.model_profile_fingerprint = queued_job.seed.model_profile_fingerprint;
+                fixture.tokenizer_fingerprint = queued_job.seed.tokenizer_fingerprint;
+                fixture.template_fingerprint = queued_job.seed.template_fingerprint;
+                fixture.execution_context_fingerprint = queued_job.seed.execution_context_fingerprint;
+                fixture.verifier_revision = queued_job.seed.verifier_ref;
+
+                common_flydelta_gate_config gate_config;
+                gate_config.enabled = true;
+                gate_config.max_scale = 0.25f;
+                common_flydelta_activation_request activation_request;
+                activation_request.candidate_id = "flydelta://candidate/bootstrap/" + bootstrap_case.id;
+                activation_request.artifact_id = "flydelta://experimental/bootstrap/" + bootstrap_case.id;
+                activation_request.model_profile_fingerprint = capture->model_profile_fingerprint;
+                activation_request.capture_layout_revision = capture->capture_layout_revision;
+                activation_request.model_n_embd = n_embd;
+                activation_request.model_n_layers = n_layers;
+                activation_request.il_end = static_cast<int32_t>(n_layers - 1);
+                common_flydelta_basis_direction overlay_direction;
+                overlay_direction.layer_index = bootstrap_direction.layer_index;
+                overlay_direction.values = bootstrap_direction.values;
+                activation_request.directions.push_back(std::move(overlay_direction));
+                activation_request.coefficients = {1.0f};
+                activation_request.gate_request.explicit_opt_in = true;
+                activation_request.gate_request.candidate_status = common_flydelta_candidate_status::approved;
+                activation_request.gate_request.basis_available = true;
+                activation_request.gate_request.familiarity = 1.0f;
+                activation_request.gate_request.novelty = 0.0f;
+                activation_request.gate_request.requested_scale = 0.02f;
+                common_flydelta_activation_result activation;
+                if (!common_flydelta_prepare_activation(
+                        gate_config, activation_request, 64U * 1024U * 1024U,
+                        activation, runner_error)) return false;
+                const auto activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                    std::move(activation));
+
+                const auto runner = [&](const common_flydelta_experiment_fixture &,
+                        bool apply_overlay, common_flydelta_counterfactual_trial & trial,
+                        std::string &) {
+                    common_agent_generation_result generated_result;
+                    const bool generated = inference->generate(make_request(
+                        value, contract, bootstrap_case.question,
+                        {}, apply_overlay ? activation_ptr : std::shared_ptr<const common_flydelta_activation_result>{}),
+                        generated_result);
+                    const auto verdict = verify_model_call(generated_result,
+                        bootstrap_case.expected_tool, host);
+                    if (apply_overlay) candidate_tool = verdict.selected_tool;
+                    else baseline_tool = verdict.selected_tool;
+                    trial.executed = generated;
+                    trial.verifier_known = generated &&
+                        verdict.value != host_verdict::kind::unresolved_alternative;
+                    trial.passed = generated && verdict.value == host_verdict::kind::passed;
+                    trial.quality = trial.passed ? 1.0f : 0.0f;
+                    trial.overlay_applied = apply_overlay;
+                    trial.intervention_count = apply_overlay ? 1 : 0;
+                    trial.evidence_ref = apply_overlay
+                        ? "evidence:flydelta-bootstrap-overlay"
+                        : "evidence:flydelta-bootstrap-baseline";
+                    return true;
+                };
+                common_flydelta_counterfactual_report report;
+                if (!common_flydelta_run_counterfactual(
+                        queued_job.id, activation_request.candidate_id,
+                        "flydelta://profile/bootstrap-baseline",
+                        "flydelta://profile/bootstrap-overlay", fixture, runner,
+                        report, runner_error)) return false;
+                output.push_back(report);
+                reports.push_back(report);
+                return true;
+            };
+            common_flydelta_experiment_worker_report worker_report;
+            const bool enqueued = common_flydelta_experiment_queue_enqueue(worker_root, job, {}, error);
+            if (!enqueued ||
+                    !common_flydelta_experiment_worker_run_evaluator_once(
+                        worker_root, {}, evaluator_config, evaluator_callbacks,
+                        worker_report, error) ||
+                    worker_report.state != common_flydelta_experiment_queue_state::succeeded ||
+                    reports.size() != 1) {
+                host.close();
+                std::cerr << "Bootstrap worker failed for " << entry.first << ": " << error << '\n';
+                return 1;
+            }
+            const auto & report = reports.front();
+            std::cout << "flydelta_bootstrap_worker group=" << entry.first
+                      << " state=" << common_flydelta_experiment_queue_state_name(worker_report.state)
+                      << " outcome=" << common_flydelta_counterfactual_outcome_name(report.outcome)
+                      << " baseline_tool=" << baseline_tool
+                      << " candidate_tool=" << candidate_tool
+                      << " baseline_passed=" << (report.baseline.passed ? "yes" : "no")
+                      << " candidate_passed=" << (report.candidate.passed ? "yes" : "no")
+                      << " candidate_overlay_applied=" << (report.candidate.overlay_applied ? "yes" : "no")
+                      << '\n';
+        }
     }
+    host.close();
+    std::filesystem::remove_all(worker_root, ignored);
     std::cout << "flydelta_depth_summary layer2_samples=" << layer2_samples
               << " groups=" << samples_by_behavior.size()
               << " deep_groups=" << deep_groups
               << " direction_candidates=" << direction_candidates
+              << " bootstrap_overlay_evaluated=yes"
               << " deep_search_executed=no" << '\n';
     return 0;
 }

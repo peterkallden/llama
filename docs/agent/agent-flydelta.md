@@ -267,6 +267,29 @@ purpose is to test the Bootstrap/Shallow/Deep evidence gate. A separate
 process per scenario is useful for isolated logs but cannot by itself reach
 the aggregate deep threshold.
 
+The repair model smoke accepts an optional exact family selector through
+`--behavior-key` or `LLAMA_AGENT_FLYDELTA_BEHAVIOR_KEY`. When present, only
+scenarios with that key are included in the model-facing contract, repair
+collection and aggregation. This makes it possible to focus an expensive
+model run on one correction family, for example:
+
+```text
+LLAMA_AGENT_MODEL=/path/to/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf \
+LLAMA_AGENT_DATASET_QUESTION_SUITE=docs/examples/agent-flydelta-dataset-question-suite-incremental-v3.json \
+LLAMA_AGENT_FLYDELTA_BEHAVIOR_KEY=tool_use/dataset/data_aggregate \
+LLAMA_AGENT_THREADS=3 \
+scripts/test-agent-flydelta-dataset-question-repair-model-smoke.sh
+```
+
+For a Bootstrap group, the same smoke now also exercises the worker seam:
+one retained raw direction is placed in a bounded counterfactual job, then
+the worker runs a fresh baseline and a fresh overlay generation and sends
+both through the host verifier. This is an experimental arm, not activation
+of an artifact. `HELPED` requires a host-known baseline failure and a
+host-known candidate pass; `UNKNOWN` and `NEUTRAL` remain searchable
+diagnostics only. Shallow and Deep continue to select larger budgets, while
+the current dataset smoke does not execute Deep search yet.
+
 The repair smoke partitions its captures by the scenario's explicit
 `behavior_key` before assessing depth. The key describes the behavior being
 learned, not merely the fact that a tool was used. Samples from
