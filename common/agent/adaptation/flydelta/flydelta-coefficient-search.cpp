@@ -58,8 +58,25 @@ float diagnostic_fitness(
         score = margin.normalized_delta() - baseline_margin.normalized_delta();
     }
     score -= config.norm_penalty * norm(trial.coefficients);
+    if (trial.geometry_available) {
+        score -= config.leakage_penalty * trial.geometry.leakage;
+    }
     if (trial.outcome == common_flydelta_counterfactual_outcome::harmed) score -= 1.0f;
     return score;
+}
+
+bool copy_geometry(
+        const common_flydelta_representation_diagnostics & geometry,
+        bool geometry_available,
+        common_flydelta_coefficient_trial & trial,
+        std::string & error) {
+    trial.geometry_available = geometry_available;
+    if (!geometry_available) return true;
+    if (!common_flydelta_representation_diagnostics_validate(geometry, error)) {
+        return false;
+    }
+    trial.geometry = geometry;
+    return true;
 }
 
 bool contains_coefficients(
@@ -199,12 +216,17 @@ bool common_flydelta_coefficient_search_config_validate(
             error = "FlyDelta coefficient search strategy is invalid";
             return false;
     }
+    if (!finite(config.norm_penalty) || config.norm_penalty < 0.0f ||
+            config.norm_penalty > 1.0f || !finite(config.leakage_penalty) ||
+            config.leakage_penalty < 0.0f || config.leakage_penalty > 1.0f) {
+        error = "FlyDelta coefficient search penalties are invalid";
+        return false;
+    }
     if (config.strategy == common_flydelta_coefficient_search_strategy::tfo_lite &&
             (config.population_size == 0 || config.population_size > 16 ||
              config.iterations == 0 || config.iterations > 16 ||
              !finite(config.exploration_scale) || config.exploration_scale <= 0.0f ||
-             config.exploration_scale > 2.0f || !finite(config.norm_penalty) ||
-             config.norm_penalty < 0.0f || config.norm_penalty > 1.0f)) {
+             config.exploration_scale > 2.0f)) {
         error = "FlyDelta TFO-lite configuration is invalid";
         return false;
     }
@@ -245,9 +267,14 @@ static bool run_tfo_lite_coefficient_search(
     std::vector<float> zero(basis.vectors.size(), 0.0f);
     common_flydelta_counterfactual_trial baseline;
     common_flydelta_decision_margin baseline_margin;
-    if (!runner(fixture, basis, zero, false, baseline, baseline_margin, error) ||
+    common_flydelta_representation_diagnostics baseline_geometry;
+    bool baseline_geometry_available = false;
+    if (!runner(fixture, basis, zero, false, baseline, baseline_margin,
+                baseline_geometry, baseline_geometry_available, error) ||
             !common_flydelta_counterfactual_trial_validate(baseline, error) ||
-            !common_flydelta_decision_margin_validate(baseline_margin, error)) {
+            !common_flydelta_decision_margin_validate(baseline_margin, error) ||
+            (baseline_geometry_available &&
+             !common_flydelta_representation_diagnostics_validate(baseline_geometry, error))) {
         return false;
     }
 
@@ -291,7 +318,10 @@ static bool run_tfo_lite_coefficient_search(
             }
             common_flydelta_counterfactual_trial candidate;
             common_flydelta_decision_margin margin;
-            if (!runner(fixture, basis, coefficients, true, candidate, margin, error) ||
+            common_flydelta_representation_diagnostics geometry;
+            bool geometry_available = false;
+            if (!runner(fixture, basis, coefficients, true, candidate, margin,
+                        geometry, geometry_available, error) ||
                     !common_flydelta_counterfactual_trial_validate(candidate, error) ||
                     !common_flydelta_decision_margin_validate(margin, error)) {
                 return false;
@@ -305,6 +335,7 @@ static bool run_tfo_lite_coefficient_search(
                 ? margin.normalized_delta() - baseline_margin.normalized_delta() : 0.0f;
             trial.executed = candidate.executed;
             trial.verifier_known = baseline.verifier_known && candidate.verifier_known;
+            if (!copy_geometry(geometry, geometry_available, trial, error)) return false;
             trial.iteration = iteration;
             trial.parent_trial_index = population_parents[population_index];
             trial.mutation_kind = population_mutations[population_index];
@@ -391,15 +422,23 @@ bool common_flydelta_run_low_rank_coefficient_search(
             config, basis.vectors.size(), proposals, error)) return false;
     common_flydelta_counterfactual_trial baseline;
     common_flydelta_decision_margin baseline_margin;
-    if (!runner(fixture, basis, proposals.front(), false, baseline, baseline_margin, error) ||
+    common_flydelta_representation_diagnostics baseline_geometry;
+    bool baseline_geometry_available = false;
+    if (!runner(fixture, basis, proposals.front(), false, baseline, baseline_margin,
+                baseline_geometry, baseline_geometry_available, error) ||
             !common_flydelta_counterfactual_trial_validate(baseline, error) ||
-            !common_flydelta_decision_margin_validate(baseline_margin, error)) return false;
+            !common_flydelta_decision_margin_validate(baseline_margin, error) ||
+            (baseline_geometry_available &&
+             !common_flydelta_representation_diagnostics_validate(baseline_geometry, error))) return false;
     for (size_t index = 1; index < proposals.size(); ++index) {
         const auto & coefficients = proposals[index];
         if (norm(coefficients) > config.max_l2_norm) continue;
         common_flydelta_counterfactual_trial candidate;
         common_flydelta_decision_margin margin;
-        if (!runner(fixture, basis, coefficients, true, candidate, margin, error) ||
+        common_flydelta_representation_diagnostics geometry;
+        bool geometry_available = false;
+        if (!runner(fixture, basis, coefficients, true, candidate, margin,
+                    geometry, geometry_available, error) ||
                 !common_flydelta_counterfactual_trial_validate(candidate, error) ||
                 !common_flydelta_decision_margin_validate(margin, error)) return false;
         common_flydelta_coefficient_trial trial;
@@ -411,6 +450,8 @@ bool common_flydelta_run_low_rank_coefficient_search(
             ? margin.normalized_delta() - baseline_margin.normalized_delta() : 0.0f;
         trial.executed = candidate.executed;
         trial.verifier_known = baseline.verifier_known && candidate.verifier_known;
+        if (!copy_geometry(geometry, geometry_available, trial, error)) return false;
+        trial.search_fitness = diagnostic_fitness(trial, baseline_margin, margin, config);
         trials.push_back(std::move(trial));
     }
     for (size_t index = 0; index < trials.size(); ++index) {
@@ -459,6 +500,10 @@ bool common_flydelta_append_coefficient_search_lifecycle(
         observation.experimental_artifact_id = experimental_artifact_id;
         observation.outcome = trial.outcome;
         observation.host_verified = true;
+        observation.diagnostics_available = trial.geometry_available;
+        if (trial.geometry_available) {
+            observation.diagnostics = trial.geometry;
+        }
         observation.coefficients = trial.coefficients;
         observation.search_fitness = trial.search_fitness;
         observation.sequence_margin_available = trial.margin.available;

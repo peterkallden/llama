@@ -655,10 +655,16 @@ The margin/quality score is only a search signal:
 diagnostic fitness
     = decision-margin delta
     - coefficient-norm penalty
+    - orthogonal-leakage penalty (when geometry is available)
     - harm penalty
 ```
 
 If no decision margin is available, the host-provided quality delta is used.
+Coefficient arms reuse the same `cosine`, `progress`, `leakage` and
+`shift_norm` object produced by representation diagnostics; the coefficient
+search does not define a second leakage metric. These values are copied into
+the experimental lifecycle record, while leakage affects only diagnostic
+fitness and follow-up ordering.
 The host may use this score to retain or refine `UNKNOWN` and `NEUTRAL` arms,
 but it cannot create `HELPED`. Only a host-verified baseline-fail /
 candidate-pass result can request repeatability review or later promotion.
@@ -1544,6 +1550,43 @@ tested between that arm and the last smaller attempted scale; this is a small
 bracket refinement intended to find a sufficient minimum without turning the
 smoke into an unbounded strength search. Geometry can stop escalation, but it
 cannot create `HELPED`.
+
+### 4I.1. Layer×scale intervention-region scan — implemented, opt-in
+
+The earlier layer experiment used one very small scale while ranking layers.
+That is useful as a cheap probe, but it must not exclude a layer whose signal
+only becomes visible at a larger safe scale. The model smoke therefore has an
+opt-in `--region-scan` path that treats layer and scale as a small interacting
+search region:
+
+```text
+captured/basis-compatible layers 1..4
+        ×
+scales 0.02, 0.04, 0.08, 0.16
+        -> bounded singleton trials
+        -> retain active local regions
+        -> adjacent pair trials around those regions
+```
+
+The region helper runs one no-overlay baseline, evaluates singleton layers
+first, and uses the existing geometry safety checks (`cosine`, `progress`,
+`leakage` and `shift_norm`) to decide whether a layer should continue up the
+scale ladder. A layer with no useful signal can be stopped after the configured
+number of stalled scales; unsafe geometry stops it immediately. If no
+singleton is host-verified `HELPED`, only adjacent numeric layer pairs around
+active singleton regions are considered. The helper has a hard trial budget;
+the model smoke's configured maximum is 32 overlay trials plus the baseline,
+although early stopping normally makes the run smaller.
+
+The smoke captures through the layer after the candidate window so an
+injection at layer `L` is measured downstream rather than at its own
+pre-injection input. Pair candidates divide one total intervention budget by
+`sqrt(2)` per layer, preserving comparability with singleton candidates.
+`--region-scan` is experimental and does not change the default smoke path,
+does not update `DeltaMemory`, and does not promote `UNKNOWN` or `NEUTRAL`.
+The runner currently reports geometry and host output; decision-margin data can
+be supplied through the same typed runner when that model-facing scorer is
+available.
 
 In the latest local Qwen run all six L2 scale arms (`0.02, 0.04, 0.08, 0.16,
 0.32, 0.64`) remained `UNKNOWN`. The scale phase took `38.2 s` for seven model

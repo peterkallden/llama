@@ -1,5 +1,6 @@
 #include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
 
+#include <algorithm>
 #include <cmath>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
@@ -68,7 +69,7 @@ int main() {
     CHECK(common_flydelta_run_low_rank_coefficient_search(
         fixture(), basis, config,
         [](const auto &, const auto &, const auto & coefficients, bool apply,
-                auto & trial, auto & result, std::string &) {
+                auto & trial, auto & result, auto &, auto &, std::string &) {
             trial.executed = true;
             trial.verifier_known = true;
             trial.evidence_ref = "evidence://coefficient-trial";
@@ -96,12 +97,19 @@ int main() {
     CHECK(common_flydelta_run_low_rank_coefficient_search(
         fixture(), basis, tfo_config,
         [](const auto &, const auto &, const auto & coefficients, bool apply,
-                auto & trial, auto & result, std::string &) {
+                auto & trial, auto & result, auto & geometry, auto & geometry_available,
+                std::string &) {
             trial.executed = true;
             trial.verifier_known = true;
             trial.evidence_ref = "evidence://coefficient-tfo-trial";
             trial.passed = apply && coefficients[0] > 0.0f;
             trial.quality = trial.passed ? 1.0f : 0.0f;
+            geometry_available = apply;
+            geometry.layer_index = 2;
+            geometry.cosine = 0.8f;
+            geometry.progress = 0.3f;
+            geometry.leakage = std::fabs(coefficients[1]);
+            geometry.shift_norm = std::fabs(coefficients[0]);
             result.available = true;
             result.positive_total_logprob = coefficients[0] + coefficients[1];
             result.negative_total_logprob = 0.0f;
@@ -122,6 +130,9 @@ int main() {
               trial.mutation_kind == "forage_perturbation");
     }
     CHECK(found_mixed_arm);
+    CHECK(std::any_of(tfo_trials.begin(), tfo_trials.end(), [](const auto & trial) {
+        return trial.geometry_available && trial.geometry.leakage >= 0.0f;
+    }));
 
     common_learning_in_memory_lifecycle_store lifecycle;
     common_flydelta_lifecycle_event_context lifecycle_context;
@@ -140,6 +151,8 @@ int main() {
     CHECK(error.empty() && records.size() == tfo_trials.size());
     CHECK(records.front().payload_json.find("coefficient-tfo") != std::string::npos);
     CHECK(records.front().payload_json.find("coefficients") != std::string::npos);
+    CHECK(records.front().payload_json.find("diagnostics") != std::string::npos);
+    CHECK(records.front().payload_json.find("leakage") != std::string::npos);
 
     common_flydelta_coefficient_search_config coordinate_config = tfo_config;
     coordinate_config.strategy = common_flydelta_coefficient_search_strategy::coordinate;

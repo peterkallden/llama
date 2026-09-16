@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
+#include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 
 #include <cstddef>
@@ -77,6 +78,9 @@ struct common_flydelta_coefficient_search_config {
     size_t iterations = 2;
     float exploration_scale = 1.0f;
     float norm_penalty = 0.05f;
+    // Applied only when the existing representation diagnostics are
+    // available for an arm. No second leakage calculation is introduced.
+    float leakage_penalty = 0.10f;
 };
 
 bool common_flydelta_coefficient_search_config_validate(
@@ -92,6 +96,8 @@ struct common_flydelta_coefficient_trial {
     float quality_delta = 0.0f;
     float sequence_margin_delta = 0.0f;
     float search_fitness = 0.0f;
+    bool geometry_available = false;
+    common_flydelta_representation_diagnostics geometry;
     bool executed = false;
     bool verifier_known = false;
     size_t iteration = 0;
@@ -121,6 +127,8 @@ using common_flydelta_coefficient_search_runner = std::function<bool(
         bool apply_overlay,
         common_flydelta_counterfactual_trial & trial,
         common_flydelta_decision_margin & margin,
+        common_flydelta_representation_diagnostics & geometry,
+        bool & geometry_available,
         std::string & error)>;
 
 // Runs the cheap bounded coefficient stencil. Decision margin is diagnostic
