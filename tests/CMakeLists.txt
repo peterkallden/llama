@@ -414,6 +414,7 @@ test-agent-flydelta-layer-search.cpp
 test-agent-flydelta-scale-search.cpp
         test-agent-flydelta-intervention-region-search.cpp
         test-agent-flydelta-whirlpool-search.cpp
+        test-agent-flydelta-whirlpool-ab.cpp
         test-agent-flydelta-search-pipeline.cpp
         test-agent-flydelta-coefficient-search.cpp
         test-agent-flydelta-deep-search.cpp

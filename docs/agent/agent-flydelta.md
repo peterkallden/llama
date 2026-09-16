@@ -1734,6 +1734,14 @@ its original meaning and is populated only by a host-known `HELPED` result.
 This prevents a search accelerator from being incorrectly evaluated as a
 promotion mechanism.
 
+The deterministic contract test `test-agent-flydelta-whirlpool-ab` compares
+the fixed region scan and Whirlpool on the same host-verifier landscape and
+with the same maximum arm budget. It verifies the measurable search property:
+a diagnostic prior can make Whirlpool reach the useful region earlier while
+both strategies still select only a host-known `HELPED` trial. This is not a
+claim that Whirlpool always wins; the real-model A/B comparison remains an
+explicit smoke experiment.
+
 In the latest local Qwen run all six L2 scale arms (`0.02, 0.04, 0.08, 0.16,
 0.32, 0.64`) remained `UNKNOWN`. The scale phase took `38.2 s` for seven model
 calls including its baseline; the complete smoke took `87.6 s` and 16 model
