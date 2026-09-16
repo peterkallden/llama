@@ -1603,6 +1603,17 @@ be `1.28`, above the absolute scale limit of `1.0`), not because of saturation
 or an unsafe geometry. No midpoint or selection was produced. It still cannot
 cross the model's tool-choice boundary without a host-verified `HELPED` result.
 
+The corrected local Qwen region run then exercised the composed pipeline with
+28 overlay trials plus a baseline (29 model calls, about 337 seconds with
+three threads). All singleton scales on layers 1--4 remained `UNKNOWN` and
+the model continued to emit `data.describe`; no candidate was selected. The
+downstream measurements were no longer zero: singleton alignment stayed
+roughly between `0.407` and `0.499`, while progress increased with scale. The
+adjacent layer-pair arms reduced alignment and were not promising at the
+configured geometry bounds. This is an evaluation result, not training
+evidence: the run confirms that the region pipeline and downstream capture
+work, but it does not yet demonstrate a behavioral flip.
+
 ### 4J. Composed direction/layer/scale search — implemented
 
 `common_flydelta_run_search_pipeline()` is the normal composition point for
