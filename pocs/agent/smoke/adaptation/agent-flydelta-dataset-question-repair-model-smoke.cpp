@@ -3,6 +3,8 @@
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
+#include "agent/adaptation/flydelta/flydelta-aggregation.h"
+#include "agent/adaptation/flydelta/flydelta-evidence-depth.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "tools/agent/cli/agent-cli-inference.h"
 #include "tools/agent/runtime/agent-model-loaders.h"
@@ -15,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -208,11 +211,13 @@ int main(int argc, char ** argv) {
     capture->model_profile_fingerprint = "sha256:flydelta-dataset-question-repair";
     capture->capture_layout_revision = "layer-input:generation-boundary:v1";
 
-    std::vector<common_flydelta_contrast_sample> samples;
+    std::map<std::string, std::vector<common_flydelta_contrast_sample>> samples_by_behavior;
     size_t passed = 0, unresolved = 0, failures = 0, repaired = 0;
     for (const auto & scenario : suite["scenarios"]) {
         const auto id = scenario.value("id", "unnamed");
         const auto expected = scenario.value("expected_tool", "");
+        const auto behavior_key = scenario.value(
+            "behavior_key", "tool_use/dataset/structured_call_repair");
         const auto steps = scenario.value("plan", json::object()).value("steps", json::array());
         if (steps.size() != 1) { host.close(); std::cerr << "scenario has invalid plan: " << id << '\n'; return 1; }
         common_tool_execution_result canonical_execution;
@@ -263,7 +268,7 @@ int main(int argc, char ** argv) {
             "evidence:dataset-repair:" + id + ":repaired");
         common_flydelta_behavior_transition transition;
         if (!common_flydelta_tool_repair_transition_from_transactions(failed_transaction, repaired_transaction,
-                "sha256:dataset-question:" + id, "tool_use/dataset/structured_call_repair",
+                "sha256:dataset-question:" + id, behavior_key,
                 "execution:dataset-repair:" + id + ":failed", "execution:dataset-repair:" + id + ":repaired",
                 "verifier:cozo-native-data-adapter-v1", transition, error)) {
             host.close(); std::cerr << "transition failed: " << error << '\n'; return 1;
@@ -295,7 +300,9 @@ int main(int argc, char ** argv) {
         credit.outcome = common_flydelta_counterfactual_outcome::helped;
         credit.quality_delta = 1.0f;
         credit.eligible_for_learning = true;
-        for (const auto & delta : deltas) if (delta.layer_index == 2) samples.push_back({delta, credit});
+        for (const auto & delta : deltas) if (delta.layer_index == 2) {
+            samples_by_behavior[behavior_key].push_back({delta, credit});
+        }
         ++repaired;
         std::cout << "scenario=" << id << " host_outcome=host_certified_repair"
                   << " transition=" << transition.id << " selected=" << repaired_verdict.selected_tool
@@ -304,29 +311,91 @@ int main(int argc, char ** argv) {
     }
     host.close();
 
-    common_flydelta_direction_search_config direction_config;
-    direction_config.dimension = n_embd;
-    direction_config.layer_index = 2;
-    direction_config.min_samples = 6;
-    direction_config.max_samples = 32;
-    direction_config.min_median_alignment = 0.25f;
-    direction_config.trim_fraction = 0.20f;
-    direction_config.variance_ridge = 0.001f;
-    direction_config.source = common_adaptation_evidence_source::tool_repair;
-    direction_config.behavior_key = "tool_use/dataset/structured_call_repair";
+    common_flydelta_evidence_depth_config depth_config;
+    depth_config.min_shallow_samples = 2;
+    depth_config.min_deep_samples = 6;
+    depth_config.max_samples = 32;
+    depth_config.rank_relative_tolerance = 0.10f;
+    depth_config.min_median_alignment = 0.25f;
+    depth_config.max_condition_number = 100.0f;
+    size_t layer2_samples = 0;
+    size_t deep_groups = 0;
+    size_t direction_candidates = 0;
+    std::cout << "flydelta_dataset_question_repair_model_smoke"
+              << " passed=" << passed << " failures=" << failures << " unresolved=" << unresolved
+              << " host_certified_repairs=" << repaired << '\n';
+    for (const auto & entry : samples_by_behavior) {
+        common_flydelta_direction_search_config direction_config;
+        direction_config.dimension = n_embd;
+        direction_config.layer_index = 2;
+        direction_config.min_samples = 2;
+        direction_config.max_samples = depth_config.max_samples;
+        direction_config.min_median_alignment = depth_config.min_median_alignment;
+        direction_config.trim_fraction = 0.20f;
+        direction_config.variance_ridge = 0.001f;
+        direction_config.source = common_adaptation_evidence_source::tool_repair;
+        direction_config.behavior_key = entry.first;
         direction_config.model_profile_fingerprint = capture->model_profile_fingerprint;
         direction_config.execution_context_fingerprint =
             "sha256:dataset-question-context-v1";
-    direction_config.capture_layout_revision = capture->capture_layout_revision;
-    std::vector<common_flydelta_direction_candidate> directions;
-    if (!samples.empty() && !common_flydelta_build_direction_candidates(direction_config, samples, directions, error)) {
-        std::cerr << "direction search failed: " << error << '\n';
-        return 1;
+        direction_config.capture_layout_revision = capture->capture_layout_revision;
+
+        common_flydelta_aggregation_config aggregation_config;
+        aggregation_config.identity = direction_config;
+        aggregation_config.depth = depth_config;
+        aggregation_config.max_retained_samples = depth_config.max_samples;
+        common_flydelta_incremental_aggregation aggregation(aggregation_config);
+        for (const auto & sample : entry.second) {
+            if (!aggregation.ingest(sample, error)) {
+                std::cerr << "aggregation failed for " << entry.first << ": " << error << '\n';
+                return 1;
+            }
+        }
+        common_flydelta_evidence_depth_result evidence_depth;
+        if (!aggregation.assess_depth(evidence_depth, error)) {
+            std::cerr << "evidence depth failed for " << entry.first << ": " << error << '\n';
+            return 1;
+        }
+        const auto search_budget = common_flydelta_search_budget_for_depth(evidence_depth.depth);
+        std::vector<common_flydelta_direction_candidate> directions;
+        if (!common_flydelta_build_direction_candidates(
+                direction_config, aggregation.snapshot().retained_samples, directions, error)) {
+            std::cerr << "direction search failed for " << entry.first << ": " << error << '\n';
+            return 1;
+        }
+        layer2_samples += evidence_depth.compatible_samples;
+        if (evidence_depth.deep_ready) ++deep_groups;
+        direction_candidates += directions.size();
+        std::cout << "flydelta_partition group=" << entry.first
+                  << " observations=" << entry.second.size()
+                  << " compatible=" << evidence_depth.compatible_samples
+                  << " rejected=" << evidence_depth.incompatible_samples
+                  << " depth=" << common_flydelta_search_depth_name(evidence_depth.depth)
+                  << " shallow_ready=" << (evidence_depth.shallow_ready ? "yes" : "no")
+                  << " deep_ready=" << (evidence_depth.deep_ready ? "yes" : "no")
+                  << " effective_rank=" << evidence_depth.effective_rank
+                  << " stable_rank=" << evidence_depth.stable_rank
+                  << " median_alignment=" << evidence_depth.median_alignment
+                  << " condition_number=" << evidence_depth.condition_number
+                  << " geometry_stable=" << (evidence_depth.geometry_stable ? "yes" : "no")
+                  << " region_budget=" << search_budget.max_region_trials
+                  << " coefficient_budget=" << search_budget.max_coefficient_trials
+                  << " tfo_lite=" << (search_budget.allow_tfo_lite ? "yes" : "no")
+                  << " direction_candidates=" << directions.size() << '\n';
+        for (const auto & direction : directions) {
+            std::cout << "flydelta_direction group=" << entry.first
+                      << " kind=" << common_flydelta_direction_kind_name(direction.kind)
+                      << " source_samples=" << direction.source_samples
+                      << " retained_samples=" << direction.retained_samples
+                      << " median_alignment=" << direction.median_alignment
+                      << " experimental_only=" << (direction.experimental_only ? "yes" : "no")
+                      << '\n';
+        }
     }
-    std::cout << "flydelta_dataset_question_repair_model_smoke"
-              << " passed=" << passed << " failures=" << failures << " unresolved=" << unresolved
-              << " host_certified_repairs=" << repaired << " layer2_samples=" << samples.size()
-              << " deep_ready=" << (samples.size() >= direction_config.min_samples ? "yes" : "no")
-              << " direction_candidates=" << directions.size() << '\n';
+    std::cout << "flydelta_depth_summary layer2_samples=" << layer2_samples
+              << " groups=" << samples_by_behavior.size()
+              << " deep_groups=" << deep_groups
+              << " direction_candidates=" << direction_candidates
+              << " deep_search_executed=no" << '\n';
     return 0;
 }

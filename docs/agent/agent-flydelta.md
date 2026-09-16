@@ -267,6 +267,32 @@ purpose is to test the Bootstrap/Shallow/Deep evidence gate. A separate
 process per scenario is useful for isolated logs but cannot by itself reach
 the aggregate deep threshold.
 
+The repair smoke partitions its captures by the scenario's explicit
+`behavior_key` before assessing depth. The key describes the behavior being
+learned, not merely the fact that a tool was used. Samples from
+`data.query`, `data.filter`, `data.aggregate`, statistics and schema
+operations therefore cannot accidentally satisfy one another's deep gate.
+The current v3 supplement uses keys such as
+`tool_use/dataset/data_query` and
+`tool_use/dataset/statistics_describe`.
+
+For each group the smoke reports observation count, compatible and rejected
+samples, effective/stable rank, pairwise alignment, condition number,
+geometry stability, the selected search depth and its bounded search budget.
+Depth is incremental: Bootstrap starts with one compatible sample, Shallow
+requires a small geometrically independent set, and Deep additionally
+requires enough stable evidence for aggregate direction builders and
+TFO-lite. Sample count alone is never sufficient; a near-collinear group
+remains shallow.
+
+This report is an aggregation/depth test, not a claim that deep model search
+has run. The dataset repair smoke currently ends after producing retained
+direction candidates and prints `deep_search_executed=no`. A later worker
+stage can consume a Deep-ready group's retained samples and run margin,
+coefficient and full-generation searches without changing the partition or
+promotion rules. Only a host-verified improvement may leave the experimental
+state.
+
 `--strict` makes a non-matching model selection return failure; without it,
 the smoke completes and reports mismatches so they can be inspected and fed
 into the normal host-controlled repair path. The suite contains no Swedish

@@ -15,6 +15,7 @@
   "scenarios": [
     {
       "id": "north-high-value-window",
+      "behavior_key": "tool_use/dataset/data_query",
       "question": "Return order_id, region, and amount for north-region orders with amount at least 8. Sort by amount from low to high and keep at most two rows.",
       "expected_tool": "data.query",
       "plan": {
@@ -26,6 +27,7 @@
     },
     {
       "id": "non-south-multi-condition-filter",
+      "behavior_key": "tool_use/dataset/data_filter",
       "question": "Keep the records that are not from the south region and have at least two units. Preserve the original columns and return a bounded result.",
       "expected_tool": "data.filter",
       "plan": {
@@ -37,6 +39,7 @@
     },
     {
       "id": "customer-region-order-counts",
+      "behavior_key": "tool_use/dataset/data_aggregate",
       "question": "Count orders for each customer within each region. Return one row per customer and region.",
       "expected_tool": "data.aggregate",
       "plan": {
@@ -48,6 +51,7 @@
     },
     {
       "id": "regional-amount-range",
+      "behavior_key": "tool_use/dataset/data_aggregate",
       "question": "For every region, report the number of orders, the smallest amount, and the largest amount.",
       "expected_tool": "data.aggregate",
       "plan": {
@@ -59,6 +63,7 @@
     },
     {
       "id": "regional-amount-and-units-profile",
+      "behavior_key": "tool_use/dataset/statistics_describe",
       "question": "Describe both amount and units separately within each region, including counts and numeric ranges.",
       "expected_tool": "statistics.describe",
       "plan": {
@@ -70,6 +75,7 @@
     },
     {
       "id": "regional-amount-outliers",
+      "behavior_key": "tool_use/dataset/statistics_outliers",
       "question": "Find amount outliers independently inside each region using the IQR method with a multiplier of two.",
       "expected_tool": "statistics.outliers",
       "plan": {
@@ -81,6 +87,7 @@
     },
     {
       "id": "customer-frequency-table",
+      "behavior_key": "tool_use/dataset/statistics_value_counts",
       "question": "Return the frequency of each customer_id value, including the number of distinct customers.",
       "expected_tool": "statistics.value_counts",
       "plan": {
@@ -92,6 +99,7 @@
     },
     {
       "id": "ordered-distinct-regions",
+      "behavior_key": "tool_use/dataset/data_query",
       "question": "Return each region exactly once, sorted alphabetically, and do not include any other columns.",
       "expected_tool": "data.query",
       "plan": {
@@ -103,6 +111,7 @@
     },
     {
       "id": "bounded-schema-contract",
+      "behavior_key": "tool_use/dataset/dataset_schema",
       "question": "Confirm the typed column schema for Sales with a bounded host inspection. I need column definitions, not example rows.",
       "expected_tool": "dataset.schema",
       "plan": {
@@ -114,6 +123,7 @@
     },
     {
       "id": "report-quantity-column-shape",
+      "behavior_key": "tool_use/dataset/data_transform",
       "question": "Prepare a compact report by dropping region and renaming units to quantity. Return the transformed rows.",
       "expected_tool": "data.transform",
       "plan": {
@@ -125,6 +135,7 @@
     },
     {
       "id": "lowest-unit-orders",
+      "behavior_key": "tool_use/dataset/data_query",
       "question": "Show the two orders with the fewest units, returning only order_id, customer_id, and units in ascending units order.",
       "expected_tool": "data.query",
       "plan": {
@@ -136,6 +147,7 @@
     },
     {
       "id": "east-or-north-amount-filter",
+      "behavior_key": "tool_use/dataset/data_filter",
       "question": "Keep orders whose region is east or north and whose amount is greater than 3. Return the matching original records.",
       "expected_tool": "data.filter",
       "plan": {
