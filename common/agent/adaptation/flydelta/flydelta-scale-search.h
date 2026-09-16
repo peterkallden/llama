@@ -21,6 +21,12 @@ struct common_flydelta_scale_search_config {
     float max_leakage = 1.0f;
     float max_shift_norm = 1.0f;
     float saturation_epsilon = 0.00001f;
+    // When enabled, initial_scale/growth_factor/max_scale are relative to a
+    // measured positive/negative activation separation. The runner receives
+    // the resolved, bounded scale while trials retain both values.
+    bool separation_calibrated = false;
+    float reference_separation = 1.0f;
+    float max_resolved_scale = 1.0f;
 };
 
 struct common_flydelta_scale_geometry {
@@ -33,6 +39,7 @@ struct common_flydelta_scale_geometry {
 
 struct common_flydelta_scale_trial {
     float scale = 0.0f;
+    float requested_scale = 0.0f;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
     float quality_delta = 0.0f;
@@ -41,6 +48,8 @@ struct common_flydelta_scale_trial {
     bool geometry_available = false;
     bool safe_to_escalate = false;
     bool refinement = false;
+    bool separation_calibrated = false;
+    bool scale_clamped = false;
     common_flydelta_scale_geometry geometry;
     std::string evidence_ref;
 };
@@ -50,10 +59,21 @@ struct common_flydelta_scale_selection {
     float scale = 0.0f;
     float score = 0.0f;
     size_t trial_index = 0;
+    float requested_scale = 0.0f;
 };
 
 bool common_flydelta_scale_search_config_validate(
         const common_flydelta_scale_search_config & config,
+        std::string & error);
+
+// Resolves a relative scale against a measured layer separation. The result
+// is bounded by max_resolved_scale; clamping is reported so a caller can stop
+// geometric escalation rather than repeat the same arm.
+bool common_flydelta_resolve_scale(
+        const common_flydelta_scale_search_config & config,
+        float requested_scale,
+        float & resolved_scale,
+        bool & clamped,
         std::string & error);
 bool common_flydelta_scale_trial_validate(
         const common_flydelta_scale_trial & trial,

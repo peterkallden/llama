@@ -55,6 +55,41 @@ bool common_flydelta_scale_search_config_validate(
         error = "FlyDelta scale search configuration is invalid";
         return false;
     }
+    if (config.separation_calibrated &&
+            (!std::isfinite(config.reference_separation) ||
+             config.reference_separation <= 0.0f ||
+             !finite_scale(config.max_resolved_scale))) {
+        error = "FlyDelta separation calibration is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_resolve_scale(
+        const common_flydelta_scale_search_config & config,
+        float requested_scale,
+        float & resolved_scale,
+        bool & clamped,
+        std::string & error) {
+    error.clear();
+    resolved_scale = 0.0f;
+    clamped = false;
+    if (!common_flydelta_scale_search_config_validate(config, error) ||
+            !finite_scale(requested_scale)) {
+        if (error.empty()) error = "FlyDelta requested scale is invalid";
+        return false;
+    }
+    const float separation = config.separation_calibrated
+        ? config.reference_separation : 1.0f;
+    const float raw_scale = requested_scale * separation;
+    if (!std::isfinite(raw_scale) || raw_scale <= 0.0f) {
+        error = "FlyDelta resolved scale is invalid";
+        return false;
+    }
+    const float limit = config.separation_calibrated
+        ? config.max_resolved_scale : config.max_scale;
+    resolved_scale = std::min(raw_scale, limit);
+    clamped = resolved_scale < raw_scale;
     return true;
 }
 
@@ -62,7 +97,8 @@ bool common_flydelta_scale_trial_validate(
         const common_flydelta_scale_trial & trial,
         std::string & error) {
     error.clear();
-    if (!finite_scale(trial.scale) || !valid_outcome(trial.outcome) ||
+    if (!finite_scale(trial.scale) || !finite_scale(trial.requested_scale) ||
+            !valid_outcome(trial.outcome) ||
             !std::isfinite(trial.quality_delta) || trial.quality_delta < -1.0f ||
             trial.quality_delta > 1.0f || (trial.verifier_known && trial.evidence_ref.empty())) {
         error = "FlyDelta scale trial is invalid";
@@ -110,24 +146,32 @@ bool common_flydelta_run_scale_search(
             ? config.initial_scale : previous_scale * config.growth_factor;
         if (!finite_scale(scale) || scale > config.max_scale ||
                 (geometric_count != 0 && scale <= previous_scale)) break;
+        float resolved_scale = 0.0f;
+        bool scale_clamped = false;
+        if (!common_flydelta_resolve_scale(
+                config, scale, resolved_scale, scale_clamped, error)) return false;
         common_flydelta_counterfactual_trial candidate;
         common_flydelta_scale_geometry geometry;
-        if (!runner(fixture, scale, true, candidate, geometry, error) ||
+        if (!runner(fixture, resolved_scale, true, candidate, geometry, error) ||
                 !common_flydelta_counterfactual_trial_validate(candidate, error)) {
             return false;
         }
         common_flydelta_scale_trial trial;
-        trial.scale = scale;
+        trial.scale = resolved_scale;
+        trial.requested_scale = scale;
         trial.executed = candidate.executed;
         trial.verifier_known = baseline.verifier_known && candidate.verifier_known;
         trial.outcome = common_flydelta_classify_counterfactual(baseline, candidate);
         trial.quality_delta = candidate.quality - baseline.quality;
         trial.geometry = geometry;
         trial.geometry_available = geometry.available;
+        trial.separation_calibrated = config.separation_calibrated;
+        trial.scale_clamped = scale_clamped;
         trial.evidence_ref = candidate.evidence_ref;
         trial.safe_to_escalate = geometry.available && finite_geometry(geometry) &&
             geometry.cosine >= config.min_cosine && geometry.leakage <= config.max_leakage &&
             geometry.shift_norm <= config.max_shift_norm;
+        if (scale_clamped) trial.safe_to_escalate = false;
         if (trial.safe_to_escalate && previous_geometry_safe && previous_geometry.available &&
                 geometry.progress <= previous_geometry.progress + config.saturation_epsilon &&
                 geometry.shift_norm <= previous_geometry.shift_norm + config.saturation_epsilon) {
@@ -148,20 +192,28 @@ bool common_flydelta_run_scale_search(
     }
 
     if (first_helped_index != std::numeric_limits<size_t>::max()) {
-        const float upper_scale = trials[first_helped_index].scale;
+        // Refinement stays in the requested (relative) scale domain. Using
+        // resolved values here would distort the bracket when separation
+        // calibration has clamped an arm.
+        const float upper_scale = trials[first_helped_index].requested_scale;
         const float lower_scale = first_helped_index == 0
-            ? 0.0f : trials[first_helped_index - 1].scale;
+            ? 0.0f : trials[first_helped_index - 1].requested_scale;
         while (refinement_count < config.max_refinement_trials) {
             const float midpoint = lower_scale + (upper_scale - lower_scale) * 0.5f;
             if (!finite_scale(midpoint) || midpoint <= lower_scale || midpoint >= upper_scale) break;
+            float resolved_midpoint = 0.0f;
+            bool scale_clamped = false;
+            if (!common_flydelta_resolve_scale(
+                    config, midpoint, resolved_midpoint, scale_clamped, error)) return false;
             common_flydelta_counterfactual_trial candidate;
             common_flydelta_scale_geometry geometry;
-            if (!runner(fixture, midpoint, true, candidate, geometry, error) ||
+            if (!runner(fixture, resolved_midpoint, true, candidate, geometry, error) ||
                     !common_flydelta_counterfactual_trial_validate(candidate, error)) {
                 return false;
             }
             common_flydelta_scale_trial trial;
-            trial.scale = midpoint;
+            trial.scale = resolved_midpoint;
+            trial.requested_scale = midpoint;
             trial.executed = candidate.executed;
             trial.verifier_known = baseline.verifier_known && candidate.verifier_known;
             trial.outcome = common_flydelta_classify_counterfactual(baseline, candidate);
@@ -169,6 +221,8 @@ bool common_flydelta_run_scale_search(
             trial.geometry = geometry;
             trial.geometry_available = geometry.available;
             trial.refinement = true;
+            trial.separation_calibrated = config.separation_calibrated;
+            trial.scale_clamped = scale_clamped;
             trial.evidence_ref = candidate.evidence_ref;
             trial.safe_to_escalate = geometry.available && finite_geometry(geometry) &&
                 geometry.cosine >= config.min_cosine && geometry.leakage <= config.max_leakage &&
@@ -197,6 +251,7 @@ bool common_flydelta_run_scale_search(
         selection.scale = trials[best_index].scale;
         selection.score = best_score;
         selection.trial_index = best_index;
+        selection.requested_scale = trials[best_index].requested_scale;
     }
     return true;
 }
