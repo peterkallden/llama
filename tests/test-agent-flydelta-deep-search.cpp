@@ -48,7 +48,7 @@ int main() {
     CHECK(common_flydelta_run_deep_search(
         fixture(), config, input,
         [&](const common_flydelta_experiment_fixture &,
-                const common_flydelta_low_rank_basis & basis,
+                const common_flydelta_low_rank_basis &,
                 const std::vector<float> & coefficients, bool apply_overlay,
                 common_flydelta_counterfactual_trial & trial,
                 common_flydelta_decision_margin & margin,
@@ -104,5 +104,22 @@ int main() {
     CHECK(calls == 5); // diagnostic baseline plus four bounded coefficient arms
     CHECK(result.coefficient_trials[result.coefficient_selection.trial_index].outcome ==
         common_flydelta_counterfactual_outcome::helped);
+
+    common_learning_in_memory_lifecycle_store lifecycle;
+    common_flydelta_lifecycle_event_context context;
+    context.event_id = "event:deep-search";
+    context.idempotency_key = "idempotency:deep-search";
+    context.source_id = "source:deep-search";
+    context.scope.namespace_id = "local";
+    context.scope.project_id = "agent-tests";
+    context.scope.session_id = "session-deep-search";
+    context.content_hash = "sha256:deep-search";
+    context.created_at = "2026-09-16T00:00:00Z";
+    CHECK(common_flydelta_append_deep_search_lifecycle(
+        lifecycle, context, fixture(), config, result,
+        "flydelta://sideband/deep-search", error));
+    auto records = lifecycle.list(error);
+    CHECK(error.empty() && records.size() == result.coefficient_trials.size());
+    CHECK(records.back().payload_json.find("full_generation_top_arm") != std::string::npos);
     return 0;
 }

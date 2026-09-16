@@ -59,3 +59,15 @@ bool common_flydelta_run_deep_search(
         const common_flydelta_coefficient_search_runner & full_generation_runner,
         common_flydelta_deep_search_result & result,
         std::string & error);
+
+// Records the diagnostic and full-generation coefficient trials through the
+// existing experimental lifecycle. This is reference-only: it never updates
+// DeltaMemory, activates a sideband or promotes a challenger.
+bool common_flydelta_append_deep_search_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_deep_search_config & config,
+        const common_flydelta_deep_search_result & result,
+        const std::string & experimental_artifact_id,
+        std::string & error);

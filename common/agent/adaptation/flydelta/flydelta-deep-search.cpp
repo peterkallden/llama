@@ -167,3 +167,32 @@ bool common_flydelta_run_deep_search(
     }
     return true;
 }
+
+bool common_flydelta_append_deep_search_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_deep_search_config & config,
+        const common_flydelta_deep_search_result & result,
+        const std::string & experimental_artifact_id,
+        std::string & error) {
+    error.clear();
+    if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
+            !common_flydelta_deep_search_config_validate(config, error) ||
+            result.schema_version != 1 || result.layer_index < 0 ||
+            result.selected_directions.empty() ||
+            result.selected_directions.size() > config.max_rank ||
+            experimental_artifact_id.empty() || experimental_artifact_id.size() > 512) {
+        if (error.empty()) error = "FlyDelta deep search lifecycle input is invalid";
+        return false;
+    }
+    if (!common_flydelta_low_rank_basis_validate(result.basis, config.max_rank, error) ||
+            result.basis.layer_index != result.layer_index ||
+            result.basis.vectors.size() != result.selected_directions.size()) {
+        if (error.empty()) error = "FlyDelta deep search lifecycle basis is invalid";
+        return false;
+    }
+    return common_flydelta_append_coefficient_search_lifecycle(
+        store, context, fixture, result.basis, config.coefficients,
+        result.coefficient_trials, experimental_artifact_id, error);
+}
