@@ -6,6 +6,56 @@
 namespace {
 bool finite(float value) { return std::isfinite(value); }
 
+float l2_norm(const std::vector<float> & values) {
+    float total = 0.0f;
+    for (const float value : values) total += value * value;
+    return std::sqrt(total);
+}
+
+bool valid_zoom_phase(common_flydelta_bootstrap_zoom_phase phase) {
+    return phase == common_flydelta_bootstrap_zoom_phase::alpha_zoom ||
+        phase == common_flydelta_bootstrap_zoom_phase::profile_zoom ||
+        phase == common_flydelta_bootstrap_zoom_phase::sign_control;
+}
+
+bool valid_zoom_candidate(
+        const common_flydelta_bootstrap_zoom_candidate & candidate,
+        std::string & error) {
+    error.clear();
+    if (candidate.schema_version != 1 || !valid_zoom_phase(candidate.phase) ||
+            candidate.layer_indices.empty() || candidate.layer_indices.size() > 3 ||
+            candidate.layer_indices.size() != candidate.layer_weights.size() ||
+            !std::is_sorted(candidate.layer_indices.begin(), candidate.layer_indices.end()) ||
+            candidate.layer_indices.front() == 0 ||
+            std::adjacent_find(candidate.layer_indices.begin(), candidate.layer_indices.end()) !=
+                candidate.layer_indices.end() || !finite(candidate.total_scale) ||
+            candidate.total_scale <= 0.0f || candidate.total_scale > 1.0f) {
+        error = "FlyDelta BootstrapZoom candidate is invalid";
+        return false;
+    }
+    for (const float weight : candidate.layer_weights) {
+        if (!finite(weight)) {
+            error = "FlyDelta BootstrapZoom layer weight is invalid";
+            return false;
+        }
+    }
+    if (std::fabs(l2_norm(candidate.layer_weights) - 1.0f) > 0.0001f) {
+        error = "FlyDelta BootstrapZoom profile must have unit L2 energy";
+        return false;
+    }
+    if (candidate.phase == common_flydelta_bootstrap_zoom_phase::alpha_zoom &&
+            (candidate.layer_indices.size() != 1 || candidate.opposite_sign_control)) {
+        error = "FlyDelta BootstrapZoom alpha candidate must be a positive singleton";
+        return false;
+    }
+    if (candidate.phase == common_flydelta_bootstrap_zoom_phase::sign_control &&
+            !candidate.opposite_sign_control) {
+        error = "FlyDelta BootstrapZoom sign control must be marked";
+        return false;
+    }
+    return true;
+}
+
 bool valid_depth(const common_flydelta_evidence_depth_result & value) {
     return value.compatible_samples > 0 && value.effective_rank > 0 &&
         finite(value.stable_rank) && finite(value.median_alignment) &&
@@ -63,11 +113,22 @@ const char * common_flydelta_utility_gate_action_name(
     switch (action) {
         case common_flydelta_utility_gate_action::stop: return "stop";
         case common_flydelta_utility_gate_action::retain: return "retain";
+        case common_flydelta_utility_gate_action::refine_bootstrap: return "refine_bootstrap";
         case common_flydelta_utility_gate_action::escalate_shallow: return "escalate_shallow";
         case common_flydelta_utility_gate_action::escalate_deep: return "escalate_deep";
         case common_flydelta_utility_gate_action::allow_tfo_lite: return "allow_tfo_lite";
     }
     return "retain";
+}
+
+const char * common_flydelta_bootstrap_zoom_phase_name(
+        common_flydelta_bootstrap_zoom_phase phase) {
+    switch (phase) {
+        case common_flydelta_bootstrap_zoom_phase::alpha_zoom: return "alpha_zoom";
+        case common_flydelta_bootstrap_zoom_phase::profile_zoom: return "profile_zoom";
+        case common_flydelta_bootstrap_zoom_phase::sign_control: return "sign_control";
+    }
+    return "alpha_zoom";
 }
 
 bool common_flydelta_utility_gate_config_validate(
@@ -144,9 +205,10 @@ bool common_flydelta_decide_subspace_utility(
         decision.action = common_flydelta_utility_gate_action::retain;
         return true;
     }
-    if (current_phase == common_flydelta_experiment_phase::bootstrap &&
-            max_allowed_depth != common_flydelta_search_depth::bootstrap) {
-        decision.action = common_flydelta_utility_gate_action::escalate_shallow;
+    if (current_phase == common_flydelta_experiment_phase::bootstrap) {
+        decision.action = max_allowed_depth == common_flydelta_search_depth::bootstrap
+            ? common_flydelta_utility_gate_action::refine_bootstrap
+            : common_flydelta_utility_gate_action::escalate_shallow;
     } else if (current_phase == common_flydelta_experiment_phase::shallow_controls &&
             max_allowed_depth == common_flydelta_search_depth::deep) {
         decision.action = common_flydelta_utility_gate_action::escalate_deep;
@@ -155,6 +217,117 @@ bool common_flydelta_decide_subspace_utility(
         decision.action = common_flydelta_utility_gate_action::allow_tfo_lite;
     } else {
         decision.action = common_flydelta_utility_gate_action::retain;
+    }
+    return true;
+}
+
+bool common_flydelta_bootstrap_zoom_config_validate(
+        const common_flydelta_bootstrap_zoom_config & config,
+        std::string & error) {
+    error.clear();
+    if (config.schema_version != 1 || config.max_extra_model_trials == 0 ||
+            config.max_extra_model_trials > 10 || config.alpha_multipliers.empty() ||
+            config.alpha_multipliers.size() > 4 || !finite(config.min_margin_improvement) ||
+            config.min_margin_improvement < 0.0f) {
+        error = "FlyDelta BootstrapZoom configuration is invalid";
+        return false;
+    }
+    for (size_t index = 0; index < config.alpha_multipliers.size(); ++index) {
+        const float multiplier = config.alpha_multipliers[index];
+        if (!finite(multiplier) || multiplier <= 0.0f || multiplier > 4.0f ||
+                (index > 0 && multiplier <= config.alpha_multipliers[index - 1])) {
+            error = "FlyDelta BootstrapZoom alpha multipliers are invalid";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool common_flydelta_bootstrap_zoom_candidate_validate(
+        const common_flydelta_bootstrap_zoom_candidate & candidate,
+        std::string & error) {
+    return valid_zoom_candidate(candidate, error);
+}
+
+bool common_flydelta_propose_bootstrap_alpha_zoom(
+        uint32_t anchor_layer,
+        float base_scale,
+        const common_flydelta_bootstrap_zoom_config & config,
+        std::vector<common_flydelta_bootstrap_zoom_candidate> & candidates,
+        std::string & error) {
+    error.clear();
+    candidates.clear();
+    if (anchor_layer == 0 || !finite(base_scale) || base_scale <= 0.0f ||
+            !common_flydelta_bootstrap_zoom_config_validate(config, error)) {
+        if (error.empty()) error = "FlyDelta BootstrapZoom alpha input is invalid";
+        return false;
+    }
+    for (const float multiplier : config.alpha_multipliers) {
+        const float scale = base_scale * multiplier;
+        if (scale > 1.0f || candidates.size() >= config.max_extra_model_trials) continue;
+        common_flydelta_bootstrap_zoom_candidate candidate;
+        candidate.phase = common_flydelta_bootstrap_zoom_phase::alpha_zoom;
+        candidate.layer_indices = {anchor_layer};
+        candidate.layer_weights = {1.0f};
+        candidate.total_scale = scale;
+        if (!valid_zoom_candidate(candidate, error)) return false;
+        candidates.push_back(std::move(candidate));
+    }
+    if (candidates.empty()) {
+        error = "FlyDelta BootstrapZoom alpha probes exceed the intervention bound";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_propose_bootstrap_profile_zoom(
+        const std::vector<uint32_t> & local_layers,
+        uint32_t anchor_layer,
+        float selected_scale,
+        const common_flydelta_bootstrap_zoom_config & config,
+        std::vector<common_flydelta_bootstrap_zoom_candidate> & candidates,
+        std::string & error) {
+    error.clear();
+    candidates.clear();
+    if (local_layers.empty() || local_layers.size() > 3 || !std::is_sorted(
+                local_layers.begin(), local_layers.end()) || local_layers.front() == 0 ||
+            std::adjacent_find(local_layers.begin(), local_layers.end()) != local_layers.end() ||
+            !std::binary_search(local_layers.begin(), local_layers.end(), anchor_layer) ||
+            !finite(selected_scale) || selected_scale <= 0.0f || selected_scale > 1.0f ||
+            !common_flydelta_bootstrap_zoom_config_validate(config, error)) {
+        if (error.empty()) error = "FlyDelta BootstrapZoom profile input is invalid";
+        return false;
+    }
+    const auto append = [&](std::vector<uint32_t> layers, bool sign_control) {
+        common_flydelta_bootstrap_zoom_candidate candidate;
+        candidate.phase = sign_control ? common_flydelta_bootstrap_zoom_phase::sign_control :
+            common_flydelta_bootstrap_zoom_phase::profile_zoom;
+        candidate.layer_indices = std::move(layers);
+        candidate.layer_weights.assign(candidate.layer_indices.size(),
+            (sign_control ? -1.0f : 1.0f) / std::sqrt(static_cast<float>(candidate.layer_indices.size())));
+        candidate.total_scale = selected_scale;
+        candidate.opposite_sign_control = sign_control;
+        return candidate;
+    };
+    candidates.push_back(append({anchor_layer}, false));
+    if (local_layers.size() >= 2 && candidates.size() < config.max_extra_model_trials) {
+        const auto anchor = std::find(local_layers.begin(), local_layers.end(), anchor_layer);
+        if (anchor != local_layers.begin() && candidates.size() < config.max_extra_model_trials) {
+            candidates.push_back(append({*(anchor - 1), anchor_layer}, false));
+        }
+        if (anchor + 1 != local_layers.end() && candidates.size() < config.max_extra_model_trials) {
+            candidates.push_back(append({anchor_layer, *(anchor + 1)}, false));
+        }
+    }
+    if (config.include_triplet_profile && local_layers.size() == 3 &&
+            candidates.size() < config.max_extra_model_trials) {
+        candidates.push_back(append(local_layers, false));
+    }
+    if (config.include_opposite_sign_control && candidates.size() < config.max_extra_model_trials) {
+        candidates.push_back(append({anchor_layer}, true));
+    }
+    for (const auto & candidate : candidates) {
+        if (!valid_zoom_candidate(candidate, error)) return false;
     }
     return true;
 }

@@ -963,6 +963,186 @@ int main(int argc, char ** argv) {
                   << " qualifying_streak=" << utility_decision.history.qualifying_streak
                   << " nonqualifying_streak=" << utility_decision.history.nonqualifying_streak
                   << "\n";
+
+        // A Bootstrap-only evidence set may still have enough decision utility
+        // to spend a small, strictly rank-one local budget. This uses each
+        // layer's own repair direction; a profile never transports L24's
+        // representation to L25 and therefore does not accidentally become a
+        // different WHAT candidate.
+        if (utility_decision.action ==
+                common_flydelta_utility_gate_action::refine_bootstrap) {
+            common_flydelta_bootstrap_zoom_config zoom_config;
+            std::vector<common_flydelta_bootstrap_zoom_candidate> alpha_candidates;
+            if (!common_flydelta_propose_bootstrap_alpha_zoom(
+                    continuation.region.anchor_layer_index,
+                    continuation.region.total_scale, zoom_config,
+                    alpha_candidates, error)) {
+                std::cerr << "FlyDelta BootstrapZoom alpha planning failed: " << error << '\n';
+                return 1;
+            }
+
+            const auto run_zoom = [&](const common_flydelta_bootstrap_zoom_candidate & candidate,
+                    common_flydelta_counterfactual_outcome & outcome,
+                    common_flydelta_decision_margin & margin,
+                    common_flydelta_representation_diagnostics & diagnostics,
+                    bool & diagnostics_available) {
+                common_flydelta_gate_request gate_request;
+                if (!common_flydelta_gate_request_from_context(
+                        recognition, code, true,
+                        common_flydelta_candidate_status::approved, true,
+                        candidate.total_scale, gate_request, error)) return false;
+                common_flydelta_activation_request request;
+                request.candidate_id = "flydelta://candidate/model-repair-bootstrap-zoom";
+                request.artifact_id = "flydelta://artifact/model-repair-e2e";
+                request.model_profile_fingerprint = profile;
+                request.capture_layout_revision = "layer-input:v1";
+                request.model_n_embd = model_n_embd;
+                request.model_n_layers = model_n_layers;
+                request.il_end = static_cast<int32_t>(model_n_layers - 1);
+                for (size_t index = 0; index < candidate.layer_indices.size(); ++index) {
+                    const auto direction = std::find_if(basis.directions().begin(),
+                        basis.directions().end(), [&](const auto & value) {
+                            return value.layer_index == static_cast<int32_t>(
+                                candidate.layer_indices[index]);
+                        });
+                    if (direction == basis.directions().end()) {
+                        error = "FlyDelta BootstrapZoom profile has no layer-compatible direction";
+                        return false;
+                    }
+                    request.directions.push_back(*direction);
+                    request.coefficients.push_back(candidate.layer_weights[index]);
+                }
+                request.gate_request = gate_request;
+                common_flydelta_gate_config gate_config;
+                gate_config.enabled = true;
+                gate_config.max_scale = 1.0f;
+                common_flydelta_activation_result activation;
+                if (!common_flydelta_prepare_activation(
+                        gate_config, request, 64U * 1024U * 1024U, activation, error)) return false;
+                const auto activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                    std::move(activation));
+                common_agent_generation_result result;
+                const bool executed = generate(*inference, value, failed_instruction, result,
+                    activation_ptr, capture_request);
+                outcome = executed && contains_tool(result, "data.inspect")
+                    ? common_flydelta_counterfactual_outcome::helped
+                    : common_flydelta_counterfactual_outcome::unknown;
+                const auto scoring_request = make_request(value, failed_instruction);
+                if (!score_chat_choice_margin(
+                        loaded->model, loaded->chat_templates.get(), scoring_request.messages,
+                        scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
+                        "{\"name\":\"", "data.inspect", "data.describe", margin,
+                        nullptr, scoring_request.json_schema, {}, {}, activation_ptr->overlay, &error)) {
+                    return false;
+                }
+                diagnostics = {};
+                diagnostics_available = false;
+                if (result.flydelta_capture && region_baseline_capture) {
+                    const uint32_t measured_after = *std::max_element(
+                        candidate.layer_indices.begin(), candidate.layer_indices.end());
+                    const auto measurement = std::find_if(deltas.begin(), deltas.end(),
+                        [&](const auto & delta) {
+                            return delta.layer_index > static_cast<int>(measured_after);
+                        });
+                    if (measurement != deltas.end()) {
+                        if (!common_flydelta_representation_diagnostics_from_captures(
+                                *region_baseline_capture, *result.flydelta_capture, *measurement,
+                                64U * 1024U * 1024U, diagnostics, error)) return false;
+                        diagnostics_available = true;
+                    }
+                }
+                std::cout << "bootstrap_zoom_model_output phase="
+                          << common_flydelta_bootstrap_zoom_phase_name(candidate.phase)
+                          << " layers=";
+                for (size_t index = 0; index < candidate.layer_indices.size(); ++index) {
+                    if (index != 0) std::cout << ',';
+                    std::cout << candidate.layer_indices[index] << ':' << candidate.layer_weights[index];
+                }
+                std::cout << " scale=" << candidate.total_scale
+                          << " output=" << output_preview(result) << '\n';
+                if (!executed && !result.error_message.empty()) error = result.error_message;
+                return executed;
+            };
+
+            const auto evaluate_zoom = [&](const common_flydelta_bootstrap_zoom_candidate & candidate,
+                    common_flydelta_counterfactual_outcome & outcome,
+                    common_flydelta_decision_margin & margin,
+                    common_flydelta_representation_diagnostics & diagnostics,
+                    bool & diagnostics_available) {
+                if (!run_zoom(candidate, outcome, margin, diagnostics, diagnostics_available)) return false;
+                std::cout << "bootstrap_zoom_trial phase="
+                          << common_flydelta_bootstrap_zoom_phase_name(candidate.phase)
+                          << " scale=" << candidate.total_scale
+                          << " opposite_sign_control="
+                          << (candidate.opposite_sign_control ? "yes" : "no")
+                          << " outcome=" << common_flydelta_counterfactual_outcome_name(outcome);
+                print_margin("margin", margin, &region_baseline_margin);
+                if (diagnostics_available) {
+                    std::cout << " cosine=" << diagnostics.cosine
+                              << " progress=" << diagnostics.progress
+                              << " leakage=" << diagnostics.leakage
+                              << " shift_norm=" << diagnostics.shift_norm;
+                }
+                std::cout << '\n';
+                return true;
+            };
+
+            std::cout << "bootstrap_zoom=started max_extra_model_trials="
+                      << zoom_config.max_extra_model_trials << " stage=alpha\n";
+            float selected_zoom_scale = continuation.region.total_scale;
+            float best_zoom_margin = utility_observation.decision_margin_delta;
+            for (const auto & candidate : alpha_candidates) {
+                common_flydelta_counterfactual_outcome outcome;
+                common_flydelta_decision_margin margin;
+                common_flydelta_representation_diagnostics diagnostics;
+                bool diagnostics_available = false;
+                if (!evaluate_zoom(candidate, outcome, margin, diagnostics, diagnostics_available)) {
+                    std::cerr << "FlyDelta BootstrapZoom alpha execution failed: " << error << '\n';
+                    return 1;
+                }
+                const float margin_delta = margin.available && region_baseline_margin.available
+                    ? margin.normalized_delta() - region_baseline_margin.normalized_delta() : 0.0f;
+                const bool geometry_safe = !diagnostics_available ||
+                    (diagnostics.cosine >= utility_config.min_cosine && diagnostics.progress > 0.0f &&
+                     diagnostics.leakage <= utility_config.max_leakage &&
+                     diagnostics.shift_norm <= utility_config.max_shift_norm);
+                if (geometry_safe && margin_delta > best_zoom_margin +
+                        zoom_config.min_margin_improvement) {
+                    selected_zoom_scale = candidate.total_scale;
+                    best_zoom_margin = margin_delta;
+                }
+            }
+            std::vector<uint32_t> local_layers;
+            for (const int offset : {-1, 0, 1}) {
+                const int layer = static_cast<int>(continuation.region.anchor_layer_index) + offset;
+                if (layer > 0 && std::binary_search(pipeline_direction.available_layers.begin(),
+                        pipeline_direction.available_layers.end(), static_cast<uint32_t>(layer))) {
+                    local_layers.push_back(static_cast<uint32_t>(layer));
+                }
+            }
+            if (local_layers.empty()) local_layers.push_back(continuation.region.anchor_layer_index);
+            std::vector<common_flydelta_bootstrap_zoom_candidate> profile_candidates;
+            if (!common_flydelta_propose_bootstrap_profile_zoom(
+                    local_layers, continuation.region.anchor_layer_index,
+                    selected_zoom_scale, zoom_config, profile_candidates, error)) {
+                std::cerr << "FlyDelta BootstrapZoom profile planning failed: " << error << '\n';
+                return 1;
+            }
+            std::cout << "bootstrap_zoom=started max_extra_model_trials="
+                      << zoom_config.max_extra_model_trials << " stage=profile\n";
+            std::cout << "bootstrap_zoom_alpha_selection scale=" << selected_zoom_scale
+                      << " margin_delta=" << best_zoom_margin << '\n';
+            for (const auto & candidate : profile_candidates) {
+                common_flydelta_counterfactual_outcome outcome;
+                common_flydelta_decision_margin margin;
+                common_flydelta_representation_diagnostics diagnostics;
+                bool diagnostics_available = false;
+                if (!evaluate_zoom(candidate, outcome, margin, diagnostics, diagnostics_available)) {
+                    std::cerr << "FlyDelta BootstrapZoom profile execution failed: " << error << '\n';
+                    return 1;
+                }
+            }
+        }
     }
 
     common_flydelta_layer_search_selection layer_selection;

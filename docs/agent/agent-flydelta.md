@@ -689,9 +689,9 @@ The current implementation is intentionally incremental. Whirlpool already
 uses `safe_to_continue`, `promising` and `search_score` to select a WHERE
 continuation, including a useful UNKNOWN arm. The common orchestration seam
 now also provides a host-neutral UtilityGate with asymmetric qualifying and
-non-qualifying streaks. It decides `stop`, `retain`, `escalate_shallow`,
-`escalate_deep`, or `allow_tfo_lite` from normalized decision-margin movement
-and bounded geometry. A Deep evidence plan therefore records only that TFO is
+non-qualifying streaks. It decides `stop`, `retain`, `refine_bootstrap`,
+`escalate_shallow`, `escalate_deep`, or `allow_tfo_lite` from normalized
+decision-margin movement and bounded geometry. A Deep evidence plan therefore records only that TFO is
 *permitted by evidence* and still requires the UtilityGate after rank-two
 controls.
 
@@ -758,7 +758,7 @@ samples from pretending to be a multidimensional basis.
 
 | Depth | Gate | Model/search budget | Diagnostic role |
 | --- | --- | --- | --- |
-| Bootstrap | one compatible sample or effective rank about one | up to 4 region arms, no coefficient search, top 1 full arm | run the smallest model experiment and collect cosine, progress, leakage and shift norm |
+| Bootstrap | one compatible sample or effective rank about one | up to 4 region arms plus at most 8 local rank-1 BootstrapZoom arms; no coefficient search | run the smallest model experiment and collect cosine, progress, leakage, shift norm and decision margin; a useful signal may refine alpha/profile locally |
 | Shallow | at least 2 compatible samples and effective rank at least 2 | up to 8 region arms, up to 4 coefficient proposals, top 1 full arm | compare a small rank-2 basis and cheap margin/geometry controls |
 | Deep | at least 6 compatible samples, effective rank at least 2, stable geometry and valid condition bound | up to 32 region arms, up to 16 coefficient proposals, top 3 full arms; TFO-lite allowed | run aggregate WHAT builders and coefficient search |
 
@@ -1781,10 +1781,29 @@ Whirlpool region result
   -> Bootstrap, or later Shallow/Deep when evidence permits
 ```
 
-A positive margin movement can make an UNKNOWN continuation worth retaining,
-but it cannot authorize a deeper phase or create `HELPED`. Deep/TFO
-evaluation requires the separately aggregated compatible sample set and its
-rank/depth gate.
+A positive margin movement can make an UNKNOWN continuation worth retaining.
+For Bootstrap it may additionally authorize the bounded `refine_bootstrap`
+branch, but it cannot authorize Shallow/Deep or create `HELPED`. Deep/TFO
+evaluation still requires the separately aggregated compatible sample set and
+its rank/depth gate.
+
+`refine_bootstrap` is a rank-1 local optimizer, not a hidden Shallow path. It
+first probes the selected layer at `0.5x`, `1.0x` and `1.5x` of the selected
+scale, keeping only a safe normalized margin improvement above a small epsilon.
+It then probes local singleton/pair/triplet profiles and an optional
+opposite-sign singleton control. A profile always uses that layer's compatible
+direction:
+
+\[
+\Delta h_L = \alpha w_L d_L, \qquad \sum_L w_L^2 = 1.
+\]
+
+Thus `L24+L25` has the same total intervention-energy budget as `L24`; it uses
+`d_{24}` at layer 24 and `d_{25}` at layer 25, rather than transporting one
+representation into another layer. The deterministic smoke stencil is capped
+at eight extra model trials. It preserves fresh-context isolation, logs margin
+and geometry for each arm, and never grants learning credit without a
+host-verified baseline-fail / candidate-pass result.
 
 ### 4I.1. Layer×scale intervention-region scan — implemented
 

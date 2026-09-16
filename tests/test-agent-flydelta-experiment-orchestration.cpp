@@ -61,6 +61,10 @@ int main() {
     utility.geometry.shift_norm = 0.2f;
     common_flydelta_utility_gate_decision utility_decision;
     CHECK(common_flydelta_decide_subspace_utility(
+        utility_config, common_flydelta_search_depth::bootstrap,
+        common_flydelta_experiment_phase::bootstrap, {utility}, {}, utility_decision, error));
+    CHECK(utility_decision.action == common_flydelta_utility_gate_action::refine_bootstrap);
+    CHECK(common_flydelta_decide_subspace_utility(
         utility_config, common_flydelta_search_depth::shallow,
         common_flydelta_experiment_phase::bootstrap, {utility}, {}, utility_decision, error));
     CHECK(utility_decision.action == common_flydelta_utility_gate_action::escalate_shallow);
@@ -77,5 +81,19 @@ int main() {
         utility_config, common_flydelta_search_depth::deep,
         common_flydelta_experiment_phase::deep_controls, {utility}, {}, utility_decision, error));
     CHECK(utility_decision.action == common_flydelta_utility_gate_action::stop);
+
+    common_flydelta_bootstrap_zoom_config zoom_config;
+    std::vector<common_flydelta_bootstrap_zoom_candidate> zoom;
+    CHECK(common_flydelta_propose_bootstrap_alpha_zoom(24, 0.1f, zoom_config, zoom, error));
+    CHECK(zoom.size() == 3 && zoom[0].total_scale == 0.05f &&
+        zoom[1].total_scale == 0.1f && zoom[2].total_scale == 0.15f);
+    CHECK(common_flydelta_propose_bootstrap_profile_zoom(
+        {23, 24, 25}, 24, 0.1f, zoom_config, zoom, error));
+    CHECK(zoom.size() == 5);
+    CHECK(zoom[0].layer_indices == std::vector<uint32_t>{24});
+    CHECK(zoom[1].layer_indices == std::vector<uint32_t>({23, 24}));
+    CHECK(zoom[2].layer_indices == std::vector<uint32_t>({24, 25}));
+    CHECK(zoom[3].layer_indices == std::vector<uint32_t>({23, 24, 25}));
+    CHECK(zoom[4].opposite_sign_control);
     return 0;
 }
