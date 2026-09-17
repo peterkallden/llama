@@ -150,14 +150,21 @@ bool common_flydelta_evaluate_job(
             return true;
         }
         case common_flydelta_experiment_job_kind::search_pipeline: {
-            if ((!callbacks.run_search_pipeline && !callbacks.run_search_pipeline_with_state &&
-                    !callbacks.run_search_pipeline_with_search_state) ||
+            const bool has_post_bootstrap_state = !job.search_state_ref.empty();
+            // The generic state callback is the continuation seam after
+            // BootstrapZoom. It must never replace the initial Bootstrap
+            // runner merely because the callback happens to be configured.
+            const bool has_runner = has_post_bootstrap_state
+                ? static_cast<bool>(callbacks.run_search_pipeline_with_search_state)
+                : static_cast<bool>(callbacks.run_search_pipeline ||
+                    callbacks.run_search_pipeline_with_state);
+            if (!has_runner ||
                     !common_flydelta_search_pipeline_config_validate(config.pipeline, error)) {
                 if (error.empty()) error = "FlyDelta search pipeline evaluator requires a host runner and config";
                 return false;
             }
             common_flydelta_search_pipeline_result pipeline_result;
-            if (callbacks.run_search_pipeline_with_search_state) {
+            if (has_post_bootstrap_state) {
                 std::string next_state_ref;
                 if (!callbacks.run_search_pipeline_with_search_state(
                         job, job.search_state_ref, pipeline_result, next_state_ref, error) ||

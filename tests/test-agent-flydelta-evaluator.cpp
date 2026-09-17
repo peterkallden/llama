@@ -279,6 +279,37 @@ int main() {
         result.bootstrap_zoom_state.state_ref == "flydelta://state/bootstrap-2" &&
         result.bootstrap_zoom_state.next_candidate_index == 4);
 
+    // A configured post-Bootstrap callback must not hijack the initial
+    // Bootstrap/Whirlpool evaluation. It is selected only after the host has
+    // attached the separate opaque post-Bootstrap state reference.
+    auto initial_with_both_runners = pipeline;
+    initial_with_both_runners.id = "flydelta://job/search-pipeline-initial-runner-order";
+    callbacks = {};
+    callbacks.resolve_behavior_delta = [](const auto &, auto & delta, auto & credit, std::string &) {
+        delta = behavior_delta();
+        credit.experiment_id = "flydelta://experiment/search-order";
+        credit.candidate_id = "flydelta://candidate/search-order";
+        credit.fixture_id = "flydelta://fixture/search-order";
+        credit.outcome = common_flydelta_counterfactual_outcome::unknown;
+        credit.eligible_for_learning = false;
+        return true;
+    };
+    bool initial_runner_called = false;
+    bool post_bootstrap_runner_called = false;
+    callbacks.run_search_pipeline = [&](const auto &, auto & value, std::string &) {
+        initial_runner_called = true;
+        value = search_pipeline_result();
+        return true;
+    };
+    callbacks.run_search_pipeline_with_search_state =
+        [&](const auto &, const auto &, auto &, auto &, std::string &) {
+            post_bootstrap_runner_called = true;
+            return false;
+        };
+    CHECK(common_flydelta_evaluate_job(
+        initial_with_both_runners, config, callbacks, result, error));
+    CHECK(initial_runner_called && !post_bootstrap_runner_called);
+
     auto generic_resumable_pipeline = pipeline;
     generic_resumable_pipeline.id = "flydelta://job/search-pipeline-generic-resume";
     generic_resumable_pipeline.search_state_ref = "flydelta://state/search-1";
@@ -292,9 +323,15 @@ int main() {
         next_state_ref = "flydelta://state/search-2";
         return true;
     };
+    bool typed_bootstrap_called_for_post_state = false;
+    callbacks.run_search_pipeline_with_state = [&](const auto &, const auto *, auto &, auto &, std::string &) {
+        typed_bootstrap_called_for_post_state = true;
+        return false;
+    };
     CHECK(common_flydelta_evaluate_job(
         generic_resumable_pipeline, config, callbacks, result, error));
-    CHECK(generic_resumed && result.search_state_ref == "flydelta://state/search-2" &&
+    CHECK(generic_resumed && !typed_bootstrap_called_for_post_state &&
+        result.search_state_ref == "flydelta://state/search-2" &&
         result.search_pipeline_results.size() == 1);
 
     // The production-facing adapter persists only immutable state metadata in

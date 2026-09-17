@@ -729,7 +729,10 @@ The typed BootstrapZoom callback remains deliberately separate from the
 generic post-Bootstrap state reference: the latter is an ownership/transport
 seam for the host's plateau/orthogonal/augmentation state, not a claim that
 those model-facing phases run automatically in the legacy callback. The
-optional `run_search_pipeline_with_search_state` callback consumes the
+evaluator selects `run_search_pipeline_with_search_state` only when the job
+already carries that opaque reference. An initial job without it must use the
+typed BootstrapZoom callback or the legacy runner; a configured post-Bootstrap
+callback cannot bypass BootstrapZoom. The selected callback consumes the
 opaque reference for one bounded post-Bootstrap slice and returns the next
 reference through the evaluator/worker report. If it is not configured, the
 existing BootstrapZoom-aware or legacy runner remains unchanged.
