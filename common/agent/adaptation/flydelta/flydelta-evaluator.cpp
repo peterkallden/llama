@@ -217,7 +217,12 @@ bool common_flydelta_evaluate_job(
             // supplies its compatible evidence resolver. The plan starts at
             // Bootstrap even if the evidence ceiling is Deep; later phases
             // require explicit UtilityGate transitions by the host.
-            if (callbacks.resolve_behavior_delta) {
+            // Initial search jobs establish the evidence ceiling and the
+            // first Bootstrap plan. A post-Bootstrap slice already has its
+            // phase in the host-owned opaque state; rebuilding a fresh
+            // Bootstrap plan here would make the worker appear to restart
+            // after plateau/orthogonal/Shallow/Deep work.
+            if (!has_post_bootstrap_state && callbacks.resolve_behavior_delta) {
                 common_flydelta_aggregation_config aggregation_config;
                 aggregation_config.identity = config.direction;
                 aggregation_config.depth = config.evidence_depth;

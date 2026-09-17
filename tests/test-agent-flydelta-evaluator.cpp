@@ -332,6 +332,7 @@ int main() {
         generic_resumable_pipeline, config, callbacks, result, error));
     CHECK(generic_resumed && !typed_bootstrap_called_for_post_state &&
         result.search_state_ref == "flydelta://state/search-2" &&
+        !result.has_experiment_plan &&
         result.search_pipeline_results.size() == 1);
 
     // The production-facing adapter persists only immutable state metadata in
