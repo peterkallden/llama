@@ -123,12 +123,15 @@ artifacts and evaluators separate.
 The distinction also applies to workers. The existing
 `llama-agent-adaptation-worker` consumes corpus-backed training jobs and
 produces trainer artifacts. It must not consume a FlyDelta envelope. FlyDelta
-currently has only a queue lifecycle worker with typed evaluator and
-donor-capture callbacks; that worker validates job identity and bounded
-outcome/manifests but does not train, promote or activate anything by itself.
-A future controller may
-schedule both workers, but it must retain separate job schemas, artifact
-registries and promotion gates.
+has a dedicated one-job/bounded-slice worker lane with a typed evaluator,
+donor-capture callbacks, resumable state and an explicit `next_action` from
+the FlyDelta orchestrator. The worker validates job identity and bounded
+outcome/manifests, persists the returned state and reports the next action;
+it does not recursively execute the next phase, train, promote or activate
+anything by itself. The host scheduler decides when to enqueue that next
+bounded slice, while FlyDelta retains transition policy. Both workers may be
+scheduled under the same total worker budget, but they retain separate job
+schemas, artifact registries and promotion gates.
 
 The lifecycle stores share one persistence contract: the `payload_json` column
 contains the record payload, not the serialized lifecycle envelope. JSONL,

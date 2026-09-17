@@ -107,10 +107,13 @@ bool common_flydelta_representation_latent_delta_validate(
         size_t expected_dimension,
         std::string & error);
 
-// Builds c_perp = (I - P_Q)c, where Q is the current search surface. The
-// surface is orthonormalized locally, so callers may pass raw rank-1/rank-2
-// directions. This prevents augmentation from rediscovering an existing
-// experimental axis while preserving evidence_rank.
+// Builds c_perp = (I - P_Q)c, where Q is the permitted natural-evidence
+// surface for the current augmentation policy. The surface is orthonormalized
+// locally, so callers may pass raw compatible directions. In V0, callers must
+// not include a failed orthogonal-search axis here: a rank-one parent becomes
+// [natural d, donor residual], while rank-three surfaces require an explicit
+// later surface policy. This prevents augmentation from silently combining
+// two experimental escapes while preserving evidence_rank.
 bool common_flydelta_build_residualized_latent_delta(
         const std::string & donor_id,
         int32_t layer_index,

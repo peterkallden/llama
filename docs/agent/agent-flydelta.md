@@ -806,8 +806,10 @@ Whirlpool / region result
   -> evidence depth (maximum allowed depth)
   -> Bootstrap rank-1
   -> UtilityGate -> Shallow rank-2 controls, when capacity and utility allow
-  -> UtilityGate -> Deep aggregate controls, when capacity and utility allow
-  -> UtilityGate -> TFO-lite, when Deep controls justify it
+  -> Deep capacity + positive Shallow utility
+  -> robust aggregation / Deep basis
+  -> Deep controls
+  -> UtilityGate -> coefficient search / TFO-lite, when utility allows
   -> margin/geometry ranking -> bounded full generation -> host verifier
 ```
 
@@ -824,15 +826,33 @@ ingests them one at a time through `common_flydelta_incremental_aggregation`
 and returns a bounded snapshot containing counts, retained sample IDs, a
 running mean and variance. The snapshot is derived worker output; the
 append-only learning ledger and corpus remain the source of truth. Rebuilding
-the snapshot is therefore safe and idempotent, and the worker does not need to
-hold the full corpus or all activation tensors in memory.
+the snapshot is therefore safe and idempotent: the aggregator tracks stable
+sample/delta IDs and ignores duplicates during both incremental ingest and
+snapshot rebuild. The worker does not need to hold the full corpus or all
+activation tensors in memory.
 
-Samples are first checked against the aggregation identity: source, behavior
-key, model/profile, execution context, capture layout and layer. Scope,
-tokenizer, template and generation-semantics fingerprints are admission
-invariants when supplied by the host; they are checked, but are not silently
-reinterpreted as a semantic behavior classifier. Incompatible or `HARMED`
-samples are rejected from the aggregate.
+Samples are first checked against two deliberately separate contracts:
+
+```text
+upstream admission invariants
+  scope
+  tokenizer fingerprint
+  template fingerprint
+  generation/capture semantics
+
+aggregation identity
+  behavior_key
+  model/profile and execution context
+  capture layout
+  layer
+```
+
+Admission invariants must be validated by the host and/or asserted when the
+aggregator receives a batch. Aggregation identity answers which admitted
+deltas belong to one evidence geometry; it is not a semantic classifier.
+Scope, tokenizer, template and generation-semantics fingerprints are checked
+when supplied, but are not silently reinterpreted as behavior groups.
+Incompatible or `HARMED` samples are rejected from the aggregate.
 `UNKNOWN` and `NEUTRAL` samples remain valid experimental material, but they
 cannot become positive learning or promotion evidence merely by being
 aggregated. Retention is bounded by `aggregation_max_retained_samples`; the
@@ -885,13 +905,17 @@ More precisely:
   Whirlpool geometry, a positive margin, or an experimental residual axis is
   not evidence rank.
 * `Deep` requires both Deep evidence capacity and a positive `UtilityGate`
-  decision after Shallow controls. Evidence alone grants capacity; it does not
-  spend the model-side search budget.
+  decision after Shallow controls. The Deep basis is built before Deep
+  controls are evaluated. Evidence alone grants capacity; it does not spend
+  the model-side search budget.
 * `TFO-lite` is the final escalation step. It requires Deep controls and a
   positive Deep utility decision.
 * Orthogonal and augmentation searches may create an experimental
   `search_rank = 2`, but they never increase `evidence_rank` and cannot create
   learning or promotion credit by themselves.
+* When natural evidence opens Shallow, pending orthogonal/plateau intent is
+  cleared. An old experimental escape must not survive as a second phase flag
+  alongside the natural Shallow plan.
 * `BootstrapZoom` remains a rank-one local refinement. It is the normal final
   refinement while the evidence is rank-one, but it may be skipped when real
   rank-two evidence is already available and the worker can enter Shallow
@@ -970,7 +994,7 @@ current search surface
   -> host-owned donor candidates
   -> fresh target / target+donor qualification
   -> latent delta: h(target+donor) - h(target)
-  -> residualize against the complete current search surface
+  -> residualize against the permitted V0 evidence surface
   -> augmentation controls
   -> local Whirlpool recenter
   -> optional Deep/TFO-lite only after positive control utility
@@ -983,11 +1007,15 @@ experimental search; only a separately host-verified `HELPED` result can
 provide learning credit.
 
 The V0 control set is fixed and small: existing surface, donor residual,
-positive combination and negative combination. The residual is computed as
-`(I - P_Q)c`, where `Q` is an orthonormalized view of the complete current
-experimental surface, not merely the natural evidence basis. A usable donor
-therefore increments `search_rank` by at most one and increments the surface
-revision, while `evidence_rank` remains unchanged.
+positive combination and negative combination. For a rank-one parent, the V0
+surface is explicitly `[natural d, donor residual]`; a failed orthogonal axis
+is retained as diagnostic history but is not included in that surface. The
+residual is computed as `(I - P_Q)c`, where `Q` is an orthonormalized view of
+the permitted natural evidence surface. A usable donor therefore increments
+`search_rank` by at most one and increments the surface revision, while
+`evidence_rank` remains unchanged. Combining orthogonal and donor axes into a
+rank-three surface is a later experiment and must be enabled explicitly by a
+future surface policy; it is not part of V0.
 
 Augmentation phases are persisted as `DISCOVER_DONORS`, `QUALIFY_DONOR`,
 `CAPTURE_DONOR`, `BUILD_LATENT_DELTA`, `RUN_CONTROLS`, `LOCALIZE_SURFACE`,
@@ -2042,7 +2070,7 @@ relative scales 0.02, 0.04, 0.08, 0.16
         -> adjacent pair trials around those regions
 ```
 
-The dense discovery pass is capture-only: it computes per-layer separation,
+The host-scheduled dense discovery pass is capture-only: it computes per-layer separation,
 projected variance, Fisher-like score and local slope from matched
 model-facing captures. It selects a bounded set of signal-driven anchors.
 Those anchors constrain the first singleton region arms; the complete dense
@@ -2240,14 +2268,33 @@ geometry -> decision margin -> full generation -> host outcome
 The margin is a ranking signal only. It may choose which arm receives full
 generation, but it can never manufacture `HELPED`.
 
-### 4K. Rank-2 WHAT and MIX search — implemented seam
+### 4K. Rank-2 WHAT and MIX search — low-level primitive
 
-After a region scan has identified a useful layer, the host may pass the
+After a region scan has identified a useful layer and the orchestrator has
+allowed Shallow/Deep work, the host may pass the
 compatible WHAT candidates for that same layer to
 `common_flydelta_run_deep_search()`. The helper ranks candidates by the
 model-facing margin when available, otherwise by their existing alignment,
 keeps a bounded rank (two by default), and builds the existing orthogonal
 low-rank basis. It does not mix directions from unrelated layers.
+
+This helper is deliberately not the normal phase-transition policy. It is a
+bounded evaluator primitive called by a worker slice after the orchestrator
+has established the applicable evidence capacity and UtilityGate result.
+The normal order is:
+
+```text
+Shallow evidence basis
+    -> Shallow controls
+    -> UtilityGate
+    -> Deep capacity + positive utility
+    -> robust aggregation / Deep basis
+    -> Deep controls
+    -> UtilityGate
+    -> coefficient search / TFO-lite
+```
+
+The low-level helper itself then evaluates:
 
 ```text
 region arms
