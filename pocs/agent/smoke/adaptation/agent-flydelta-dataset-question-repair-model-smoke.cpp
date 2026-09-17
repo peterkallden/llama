@@ -8,6 +8,7 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "agent/adaptation/flydelta/flydelta-deep-search.h"
+#include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-worker.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
@@ -19,6 +20,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -274,6 +276,7 @@ int main(int argc, char ** argv) {
 
     std::map<std::string, std::vector<common_flydelta_contrast_sample>> samples_by_behavior;
     std::map<std::string, bootstrap_case> bootstrap_cases_by_delta;
+    std::map<std::string, std::vector<common_flydelta_behavior_delta>> deltas_by_case;
     size_t passed = 0, unresolved = 0, failures = 0, repaired = 0;
     for (const auto & scenario : suite["scenarios"]) {
         const auto id = scenario.value("id", "unnamed");
@@ -363,10 +366,12 @@ int main(int argc, char ** argv) {
         credit.outcome = common_flydelta_counterfactual_outcome::helped;
         credit.quality_delta = 1.0f;
         credit.eligible_for_learning = true;
-        for (const auto & delta : deltas) if (delta.layer_index == 2) {
-            samples_by_behavior[behavior_key].push_back({delta, credit});
+        for (const auto & delta : deltas) {
             bootstrap_cases_by_delta[delta.id] = {
                 id, behavior_key, expected, scenario.value("question", ""), manifest.id, delta.id};
+            deltas_by_case[id].push_back(delta);
+            if (delta.layer_index != 2) continue;
+            samples_by_behavior[behavior_key].push_back({delta, credit});
         }
         ++repaired;
         std::cout << "scenario=" << id << " host_outcome=host_certified_repair"
@@ -673,9 +678,11 @@ int main(int argc, char ** argv) {
             }
         }
 
-        // Bootstrap deliberately evaluates only the first retained raw
-        // direction. The evaluator/worker still owns the counterfactual
-        // lifecycle; this smoke supplies the model and host callbacks.
+        // The normal model-facing smoke goes through the same bounded
+        // search-pipeline worker as production. Whirlpool supplies the WHERE
+        // probes; this host runner executes the fresh model arms. Keeping the
+        // runner here makes the smoke model-facing without moving policy into
+        // the evaluator or recursively running later phases.
         const auto aggregation_snapshot = aggregation.snapshot();
         if (evidence_depth.depth == common_flydelta_search_depth::bootstrap &&
                 !directions.empty() && !aggregation_snapshot.retained_samples.empty()) {
@@ -688,9 +695,17 @@ int main(int argc, char ** argv) {
             }
             const auto bootstrap_case = case_it->second;
             const auto bootstrap_direction = directions.front();
+            const auto case_deltas_it = deltas_by_case.find(bootstrap_case.id);
+            if (case_deltas_it == deltas_by_case.end() || case_deltas_it->second.empty()) {
+                host.close();
+                std::cerr << "Bootstrap sample has no per-layer model captures: "
+                          << bootstrap_case.id << '\n';
+                return 1;
+            }
+            const auto & case_deltas = case_deltas_it->second;
             common_flydelta_experiment_job job;
-            job.id = "flydelta://job/bootstrap/" + bootstrap_case.id;
-            job.kind = common_flydelta_experiment_job_kind::counterfactual;
+            job.id = "flydelta://job/search-pipeline/" + bootstrap_case.id;
+            job.kind = common_flydelta_experiment_job_kind::search_pipeline;
             job.seed.id = "evidence://dataset-repair/" + bootstrap_case.id;
             job.seed.behavior_key = bootstrap_case.behavior_key;
             job.seed.source = common_adaptation_evidence_source::tool_repair;
@@ -714,90 +729,235 @@ int main(int argc, char ** argv) {
             job.behavior_delta_ids = {bootstrap_case.delta_id};
             job.alpha_search.candidates = {0.02f};
             job.alpha_search.max_candidates = 1;
-            job.code_revision = "flydelta-dataset-question-bootstrap:v1";
+            job.code_revision = "flydelta-dataset-question-search-pipeline:v1";
 
             common_flydelta_evaluator_config evaluator_config;
+            common_flydelta_search_pipeline_config pipeline_config;
+            pipeline_config.dimension = n_embd;
+            pipeline_config.max_directions = 1;
+            pipeline_config.use_intervention_region_search = true;
+            pipeline_config.use_whirlpool_search = true;
+            pipeline_config.scale.initial_scale = 0.02f;
+            pipeline_config.scale.growth_factor = 2.0f;
+            pipeline_config.scale.max_scale = 0.16f;
+            pipeline_config.scale.max_geometric_trials = 4;
+            pipeline_config.scale.max_refinement_trials = 0;
+            pipeline_config.scale.min_cosine = 0.0f;
+            pipeline_config.scale.max_leakage = 10.0f;
+            pipeline_config.scale.max_shift_norm = 10.0f;
+            pipeline_config.region_max_singleton_layers = std::min<size_t>(
+                16, case_deltas.size());
+            pipeline_config.region_max_neighborhoods = 4;
+            pipeline_config.region_max_trials = 32;
+            pipeline_config.region_max_stalled_scales = 2;
+            pipeline_config.whirlpool_max_rounds = 2;
+            pipeline_config.whirlpool_probes_per_round = 4;
+            pipeline_config.whirlpool_max_trials = 8;
+            pipeline_config.whirlpool_initial_radius = 2;
+            pipeline_config.whirlpool_shrink_factor = 0.5f;
+            evaluator_config.pipeline = pipeline_config;
+            evaluator_config.max_references = 128;
             common_flydelta_evaluator_callbacks evaluator_callbacks;
-            std::vector<common_flydelta_counterfactual_report> reports;
+            common_flydelta_search_pipeline_result pipeline_result;
             std::string baseline_tool;
-            std::string candidate_tool;
-            evaluator_callbacks.run_counterfactual = [&](const auto & queued_job,
+            std::map<uint32_t, std::string> candidate_tools;
+            common_flydelta_experiment_fixture fixture;
+            fixture.id = "flydelta://fixture/search-pipeline/" + bootstrap_case.id;
+            fixture.task_fingerprint = job.seed.task_fingerprint;
+            fixture.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+            fixture.tokenizer_fingerprint = job.seed.tokenizer_fingerprint;
+            fixture.template_fingerprint = job.seed.template_fingerprint;
+            fixture.execution_context_fingerprint = job.seed.execution_context_fingerprint;
+            fixture.verifier_revision = job.seed.verifier_ref;
+
+            common_flydelta_search_pipeline_direction pipeline_direction;
+            pipeline_direction.direction = bootstrap_direction;
+            for (const auto & delta : case_deltas) {
+                if (delta.layer_index <= 0) continue;
+                const auto layer = static_cast<uint32_t>(delta.layer_index);
+                pipeline_direction.available_layers.push_back(layer);
+                pipeline_direction.layer_diagnostics.push_back({layer, 0.0f, 0.0f, 0.0f, 0.0f});
+            }
+            std::sort(pipeline_direction.available_layers.begin(),
+                pipeline_direction.available_layers.end());
+            pipeline_direction.available_layers.erase(std::unique(
+                pipeline_direction.available_layers.begin(),
+                pipeline_direction.available_layers.end()),
+                pipeline_direction.available_layers.end());
+            pipeline_direction.layer_anchors = {static_cast<uint32_t>(bootstrap_direction.layer_index)};
+            if (pipeline_direction.layer_anchors.front() == 0 ||
+                    !std::binary_search(pipeline_direction.available_layers.begin(),
+                        pipeline_direction.available_layers.end(),
+                        pipeline_direction.layer_anchors.front())) {
+                pipeline_direction.layer_anchors = {pipeline_direction.available_layers.front()};
+            }
+
+            const auto normalized_delta = [&](const common_flydelta_behavior_delta & delta,
+                    std::vector<float> & values, std::string & runner_error) {
+                double squared = 0.0;
+                for (const float value : delta.values) squared += static_cast<double>(value) * value;
+                if (!std::isfinite(squared) || squared <= 0.0) {
+                    runner_error = "dataset pipeline delta has zero norm";
+                    return false;
+                }
+                const float inverse_norm = 1.0f / static_cast<float>(std::sqrt(squared));
+                values.resize(delta.values.size());
+                for (size_t index = 0; index < delta.values.size(); ++index) {
+                    values[index] = delta.values[index] * inverse_norm;
+                }
+                return true;
+            };
+
+            evaluator_callbacks.run_search_pipeline = [&](const auto & queued_job,
                     auto & output, std::string & runner_error) {
                 if (queued_job.behavior_delta_ids.size() != 1 ||
                         queued_job.behavior_delta_ids.front() != bootstrap_case.delta_id) {
-                    runner_error = "Bootstrap worker received an unexpected behavior delta";
+                    runner_error = "search-pipeline worker received an unexpected behavior delta";
                     return false;
                 }
-                common_flydelta_experiment_fixture fixture;
-                fixture.id = "flydelta://fixture/bootstrap/" + bootstrap_case.id;
-                fixture.task_fingerprint = queued_job.seed.task_fingerprint;
-                fixture.model_profile_fingerprint = queued_job.seed.model_profile_fingerprint;
-                fixture.tokenizer_fingerprint = queued_job.seed.tokenizer_fingerprint;
-                fixture.template_fingerprint = queued_job.seed.template_fingerprint;
-                fixture.execution_context_fingerprint = queued_job.seed.execution_context_fingerprint;
-                fixture.verifier_revision = queued_job.seed.verifier_ref;
-
-                common_flydelta_gate_config gate_config;
-                gate_config.enabled = true;
-                gate_config.max_scale = 0.25f;
-                common_flydelta_activation_request activation_request;
-                activation_request.candidate_id = "flydelta://candidate/bootstrap/" + bootstrap_case.id;
-                activation_request.artifact_id = "flydelta://experimental/bootstrap/" + bootstrap_case.id;
-                activation_request.model_profile_fingerprint = capture->model_profile_fingerprint;
-                activation_request.capture_layout_revision = capture->capture_layout_revision;
-                activation_request.model_n_embd = n_embd;
-                activation_request.model_n_layers = n_layers;
-                activation_request.il_end = static_cast<int32_t>(n_layers - 1);
-                common_flydelta_basis_direction overlay_direction;
-                overlay_direction.layer_index = bootstrap_direction.layer_index;
-                overlay_direction.values = bootstrap_direction.values;
-                activation_request.directions.push_back(std::move(overlay_direction));
-                activation_request.coefficients = {1.0f};
-                activation_request.gate_request.explicit_opt_in = true;
-                activation_request.gate_request.candidate_status = common_flydelta_candidate_status::approved;
-                activation_request.gate_request.basis_available = true;
-                activation_request.gate_request.familiarity = 1.0f;
-                activation_request.gate_request.novelty = 0.0f;
-                activation_request.gate_request.requested_scale = 0.02f;
-                common_flydelta_activation_result activation;
-                if (!common_flydelta_prepare_activation(
-                        gate_config, activation_request, 64U * 1024U * 1024U,
-                        activation, runner_error)) return false;
-                const auto activation_ptr = std::make_shared<const common_flydelta_activation_result>(
-                    std::move(activation));
-
-                const auto runner = [&](const common_flydelta_experiment_fixture &,
-                        bool apply_overlay, common_flydelta_counterfactual_trial & trial,
-                        std::string &) {
-                    common_agent_generation_result generated_result;
-                    const bool generated = inference->generate(make_request(
-                        value, contract, bootstrap_case.question,
-                        {}, apply_overlay ? activation_ptr : std::shared_ptr<const common_flydelta_activation_result>{}),
-                        generated_result);
-                    const auto verdict = verify_model_call(generated_result,
-                        bootstrap_case.expected_tool, host);
-                    if (apply_overlay) candidate_tool = verdict.selected_tool;
-                    else baseline_tool = verdict.selected_tool;
-                    trial.executed = generated;
-                    trial.verifier_known = generated &&
-                        verdict.value != host_verdict::kind::unresolved_alternative;
-                    trial.passed = generated && verdict.value == host_verdict::kind::passed;
-                    trial.quality = trial.passed ? 1.0f : 0.0f;
-                    trial.overlay_applied = apply_overlay;
-                    trial.intervention_count = apply_overlay ? 1 : 0;
-                    trial.evidence_ref = apply_overlay
-                        ? "evidence:flydelta-bootstrap-overlay"
-                        : "evidence:flydelta-bootstrap-baseline";
-                    return true;
+                std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_capture;
+                const auto direction_for_layer = [&](uint32_t layer,
+                        common_flydelta_basis_direction & direction, std::string & direction_error) {
+                    const auto delta_it = std::find_if(case_deltas.begin(), case_deltas.end(),
+                        [&](const auto & delta) { return delta.layer_index == static_cast<int32_t>(layer); });
+                    if (delta_it == case_deltas.end()) {
+                        direction_error = "search-pipeline arm has no matching layer delta";
+                        return false;
+                    }
+                    direction.layer_index = static_cast<int32_t>(layer);
+                    return normalized_delta(*delta_it, direction.values, direction_error);
                 };
-                common_flydelta_counterfactual_report report;
-                if (!common_flydelta_run_counterfactual(
-                        queued_job.id, activation_request.candidate_id,
-                        "flydelta://profile/bootstrap-baseline",
-                        "flydelta://profile/bootstrap-overlay", fixture, runner,
-                        report, runner_error)) return false;
-                output.push_back(report);
-                reports.push_back(report);
+
+                const bool executed = common_flydelta_run_search_pipeline(
+                    fixture, pipeline_config, {pipeline_direction},
+                    [&](const common_flydelta_experiment_fixture &,
+                            const common_flydelta_direction_candidate &,
+                            const common_flydelta_layer_candidate * candidate,
+                            float scale, bool apply_overlay,
+                            common_flydelta_counterfactual_trial & trial,
+                            common_flydelta_decision_margin & margin,
+                            common_flydelta_scale_geometry & geometry,
+                            std::string & arm_error) {
+                        std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
+                        if (apply_overlay) {
+                            if (candidate == nullptr || candidate->layer_indices.empty()) {
+                                arm_error = "search-pipeline overlay arm has no layer candidate";
+                                return false;
+                            }
+                            common_flydelta_activation_request activation_request;
+                            activation_request.candidate_id = "flydelta://candidate/search/" + bootstrap_case.id;
+                            activation_request.artifact_id = "flydelta://experimental/search/" + bootstrap_case.id;
+                            activation_request.model_profile_fingerprint = capture->model_profile_fingerprint;
+                            activation_request.capture_layout_revision = capture->capture_layout_revision;
+                            activation_request.model_n_embd = n_embd;
+                            activation_request.model_n_layers = n_layers;
+                            activation_request.il_end = static_cast<int32_t>(n_layers - 1);
+                            for (const uint32_t layer : candidate->layer_indices) {
+                                common_flydelta_basis_direction overlay_direction;
+                                if (!direction_for_layer(layer, overlay_direction, arm_error)) return false;
+                                activation_request.directions.push_back(std::move(overlay_direction));
+                                activation_request.coefficients.push_back(1.0f);
+                            }
+                            activation_request.gate_request.explicit_opt_in = true;
+                            activation_request.gate_request.candidate_status =
+                                common_flydelta_candidate_status::approved;
+                            activation_request.gate_request.basis_available = true;
+                            activation_request.gate_request.familiarity = 1.0f;
+                            activation_request.gate_request.novelty = 0.0f;
+                            activation_request.gate_request.requested_scale = candidate->per_layer_scale;
+                            common_flydelta_gate_config gate_config;
+                            gate_config.enabled = true;
+                            gate_config.max_scale = 1.0f;
+                            common_flydelta_activation_result activation;
+                            if (!common_flydelta_prepare_activation(
+                                    gate_config, activation_request, 64U * 1024U * 1024U,
+                                    activation, arm_error)) return false;
+                            activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                                std::move(activation));
+                        }
+
+                        common_agent_generation_result generated_result;
+                        const bool generated = inference->generate(make_request(
+                            value, contract, bootstrap_case.question, capture, activation_ptr),
+                            generated_result);
+                        const auto verdict = verify_model_call(generated_result,
+                            bootstrap_case.expected_tool, host);
+                        if (!apply_overlay) baseline_tool = verdict.selected_tool;
+                        else candidate_tools[candidate->anchor_layer_index] = verdict.selected_tool;
+                        trial = {};
+                        // "executed" means that the host attempted this arm;
+                        // generation success and verifier certainty are
+                        // separate fields. This lets the search preserve a
+                        // failed/unknown model call as an observation.
+                        trial.executed = true;
+                        trial.verifier_known = generated &&
+                            verdict.value != host_verdict::kind::unresolved_alternative;
+                        trial.passed = generated && verdict.value == host_verdict::kind::passed;
+                        trial.quality = trial.passed ? 1.0f : 0.0f;
+                        trial.overlay_applied = apply_overlay;
+                        trial.intervention_count = apply_overlay ? candidate->layer_indices.size() : 0;
+                        trial.evidence_ref = apply_overlay
+                            ? "evidence:flydelta-search-overlay"
+                            : "evidence:flydelta-search-baseline";
+                        margin = {};
+                        geometry = {};
+                        if (!apply_overlay && generated_result.flydelta_capture) {
+                            baseline_capture = generated_result.flydelta_capture;
+                        }
+                        if (apply_overlay && generated_result.flydelta_capture && baseline_capture) {
+                            const uint32_t measured_after = *std::max_element(
+                                candidate->layer_indices.begin(), candidate->layer_indices.end());
+                            // Layer-input capture is taken before the
+                            // candidate layer's own injection. Measure the
+                            // first captured downstream layer, matching the
+                            // production model smoke, so an applied overlay
+                            // is not reported as a zero shift.
+                            const auto delta_it = std::find_if(case_deltas.begin(), case_deltas.end(),
+                                [&](const auto & delta) {
+                                    return delta.layer_index > static_cast<int32_t>(measured_after);
+                                });
+                            if (delta_it != case_deltas.end()) {
+                                common_flydelta_representation_diagnostics diagnostics;
+                                if (!common_flydelta_representation_diagnostics_from_captures(
+                                        *baseline_capture, *generated_result.flydelta_capture, *delta_it,
+                                        64U * 1024U * 1024U, diagnostics, arm_error)) return false;
+                                geometry.available = true;
+                                geometry.cosine = diagnostics.cosine;
+                                geometry.progress = diagnostics.progress;
+                                geometry.leakage = diagnostics.leakage;
+                                geometry.shift_norm = diagnostics.shift_norm;
+                            }
+                        }
+                        std::cout << "flydelta_search_arm group=" << entry.first
+                                  << " layers=";
+                        if (candidate == nullptr) std::cout << "baseline";
+                        else for (size_t index = 0; index < candidate->layer_indices.size(); ++index) {
+                            if (index != 0) std::cout << ',';
+                            std::cout << candidate->layer_indices[index];
+                        }
+                        std::cout << " scale=" << scale
+                                  << " selected_tool=" << verdict.selected_tool
+                                  << " outcome=" << (trial.passed ? "HELPED" :
+                                      (trial.verifier_known ? "NEUTRAL" : "UNKNOWN"));
+                        if (geometry.available) {
+                            std::cout << " cosine=" << geometry.cosine
+                                      << " progress=" << geometry.progress
+                                      << " leakage=" << geometry.leakage
+                                      << " shift_norm=" << geometry.shift_norm;
+                        }
+                        std::cout << '\n';
+                        if (!generated && !generated_result.error_message.empty()) {
+                            std::cerr << " generation_error=" << generated_result.error_message;
+                        }
+                        // A model/host outcome is still an evaluated search
+                        // arm. Preserve it for Whirlpool/lifecycle instead
+                        // of turning one failed generation into a broken
+                        // worker slice. Invalid overlay composition and
+                        // missing references above remain hard failures.
+                        return true;
+                    }, pipeline_result, runner_error);
+                if (!executed) return false;
+                output = pipeline_result;
                 return true;
             };
             common_flydelta_experiment_worker_report worker_report;
@@ -807,20 +967,17 @@ int main(int argc, char ** argv) {
                         worker_root, {}, evaluator_config, evaluator_callbacks,
                         worker_report, error) ||
                     worker_report.state != common_flydelta_experiment_queue_state::succeeded ||
-                    reports.size() != 1) {
+                    pipeline_result.directions.empty()) {
                 host.close();
-                std::cerr << "Bootstrap worker failed for " << entry.first << ": " << error << '\n';
+                std::cerr << "Search-pipeline worker failed for " << entry.first << ": " << error << '\n';
                 return 1;
             }
-            const auto & report = reports.front();
-            std::cout << "flydelta_bootstrap_worker group=" << entry.first
+            std::cout << "flydelta_search_pipeline_worker group=" << entry.first
                       << " state=" << common_flydelta_experiment_queue_state_name(worker_report.state)
-                      << " outcome=" << common_flydelta_counterfactual_outcome_name(report.outcome)
+                      << " directions=" << pipeline_result.directions.size()
+                      << " region_trials=" << pipeline_result.directions.front().region_trials.size()
+                      << " selected=" << (pipeline_result.selection.selected ? "yes" : "no")
                       << " baseline_tool=" << baseline_tool
-                      << " candidate_tool=" << candidate_tool
-                      << " baseline_passed=" << (report.baseline.passed ? "yes" : "no")
-                      << " candidate_passed=" << (report.candidate.passed ? "yes" : "no")
-                      << " candidate_overlay_applied=" << (report.candidate.overlay_applied ? "yes" : "no")
                       << '\n';
             std::cout << "flydelta_trace group=" << entry.first
                       << " json=" << worker_report.trace_json << '\n';
