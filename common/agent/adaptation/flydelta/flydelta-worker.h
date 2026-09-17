@@ -25,9 +25,12 @@ struct common_flydelta_experiment_worker_result {
     common_flydelta_aggregation_snapshot aggregation;
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;
+    bool has_experiment_plan = false;
+    common_flydelta_experiment_plan experiment_plan;
     bool has_bootstrap_zoom_state = false;
     common_flydelta_bootstrap_zoom_state bootstrap_zoom_state;
     std::string bootstrap_zoom_state_ref;
+    std::string search_state_ref;
 };
 
 struct common_flydelta_experiment_worker_report {
@@ -37,9 +40,12 @@ struct common_flydelta_experiment_worker_report {
     size_t report_count = 0;
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;
+    bool has_experiment_plan = false;
+    common_flydelta_experiment_plan experiment_plan;
     bool has_bootstrap_zoom_state = false;
     common_flydelta_bootstrap_zoom_state bootstrap_zoom_state;
     std::string bootstrap_zoom_state_ref;
+    std::string search_state_ref;
 };
 
 // The worker owns queue lifecycle and result validation. The callback owns

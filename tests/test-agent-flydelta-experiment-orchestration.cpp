@@ -79,10 +79,61 @@ int main() {
         common_flydelta_experiment_phase::deep_controls, {utility}, {}, utility_decision, error));
     CHECK(utility_decision.action == common_flydelta_utility_gate_action::allow_tfo_lite);
 
+    common_flydelta_rank1_plateau_config plateau_config;
+    std::vector<common_flydelta_rank1_plateau_round> plateau_rounds = {
+        {true, 2, 24, 0.100f},
+        {true, 2, 24, 0.105f},
+        {true, 2, 25, 0.109f},
+    };
+    common_flydelta_rank1_plateau_result plateau;
+    CHECK(common_flydelta_evaluate_rank1_plateau(
+        plateau_config, 1.08f, plateau_rounds, plateau, error));
+    CHECK(plateau.eligible && plateau.plateau && plateau.plateau_streak == 2 &&
+        plateau.action == common_flydelta_rank1_plateau_action::orthogonal_search &&
+        plateau.safe_arm_count == 6 && plateau.minimum_anchor_layer == 24 &&
+        plateau.maximum_anchor_layer == 25);
+    common_flydelta_utility_gate_decision plateau_decision;
+    CHECK(common_flydelta_decide_rank1_plateau_utility(
+        plateau, plateau_decision, error));
+    CHECK(plateau_decision.utility_qualified &&
+        plateau_decision.action == common_flydelta_utility_gate_action::orthogonal_search);
+
+    common_flydelta_orthogonal_search_config orthogonal_config;
+    std::vector<common_flydelta_orthogonal_search_arm> orthogonal_arms = {
+        {{1.0f, 0.0f, 0.0f}, 0.0f, true, common_flydelta_counterfactual_outcome::unknown},
+        {{1.0f, 1.0f, 0.0f}, 0.5f, true, common_flydelta_counterfactual_outcome::neutral},
+        {{1.0f, -1.0f, 0.0f}, -0.5f, true, common_flydelta_counterfactual_outcome::unknown},
+        {{1.0f, 2.0f, 0.0f}, 1.0f, true, common_flydelta_counterfactual_outcome::unknown},
+        {{1.0f, -2.0f, 0.0f}, -1.0f, true, common_flydelta_counterfactual_outcome::unknown},
+    };
+    common_flydelta_orthogonal_search_result orthogonal;
+    CHECK(common_flydelta_build_orthogonal_search_direction(
+        orthogonal_config, {1.0f, 0.0f, 0.0f}, orthogonal_arms, orthogonal, error));
+    CHECK(orthogonal.available && orthogonal.experimental_only &&
+        orthogonal.source_arm_count == orthogonal_arms.size() && orthogonal.fit_quality > 0.99f &&
+        std::fabs(orthogonal.direction[0]) < 0.001f && orthogonal.direction[1] > 0.99f &&
+        std::fabs(orthogonal.direction[2]) < 0.001f);
+
+    common_flydelta_experiment_plan bootstrap_plan;
+    bool advanced = false;
+    common_flydelta_evidence_depth_result bootstrap_depth = depth;
+    bootstrap_depth.depth = common_flydelta_search_depth::bootstrap;
+    bootstrap_depth.compatible_samples = 1;
+    bootstrap_depth.effective_rank = 1.0f;
+    CHECK(common_flydelta_plan_search_continuation(
+        continuation, bootstrap_depth, bootstrap_plan, error));
+    common_flydelta_utility_gate_decision orthogonal_decision;
+    orthogonal_decision = plateau_decision;
+    common_flydelta_experiment_plan orthogonal_plan;
+    CHECK(common_flydelta_advance_experiment_plan(
+        bootstrap_plan, orthogonal_decision, orthogonal_plan, advanced, error));
+    CHECK(advanced && orthogonal_plan.run_orthogonal_search &&
+        orthogonal_plan.phase == common_flydelta_experiment_phase::bootstrap &&
+        !orthogonal_plan.run_tfo_lite);
+
     // Capacity may be Deep, but the execution path remains ordered:
     // Bootstrap/Whirlpool -> Shallow controls -> Deep controls -> TFO-lite.
     CHECK(common_flydelta_plan_search_continuation(continuation, depth, plan, error));
-    bool advanced = false;
     CHECK(common_flydelta_decide_subspace_utility(
         utility_config, plan.depth, plan.phase, {utility}, {}, utility_decision, error));
     CHECK(utility_decision.action == common_flydelta_utility_gate_action::escalate_shallow);

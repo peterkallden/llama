@@ -33,6 +33,10 @@ struct common_flydelta_experiment_job {
     // Reference to a host-persisted BootstrapZoom state. The queue carries
     // only this opaque reference, never the state payload or activations.
     std::string bootstrap_zoom_state_ref;
+    // Reference to the host-persisted continuation state for later
+    // rank-one plateau, orthogonal-search or augmentation phases. It is
+    // deliberately separate from the legacy BootstrapZoom state type.
+    std::string search_state_ref;
     common_flydelta_alpha_search_config alpha_search;
     float learning_rate = 0.1f;
     float decay = 1.0f;

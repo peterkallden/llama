@@ -46,6 +46,9 @@ struct common_flydelta_experiment_plan {
     bool tfo_lite_requires_utility_gate = false;
     // Set only after Deep controls have earned a separate UtilityGate action.
     bool run_tfo_lite = false;
+    // Set for the bounded experimental escape from a rank-one plateau. This
+    // does not change evidence depth and does not imply a Shallow transition.
+    bool run_orthogonal_search = false;
 };
 
 // Evidence controls search capacity; this policy controls whether observed
@@ -84,6 +87,9 @@ enum class common_flydelta_utility_gate_action {
     // A useful rank-one signal may justify a small local WHERE/HOW MUCH
     // refinement even when evidence capacity does not yet permit Shallow.
     refine_bootstrap,
+    // Bootstrap has plateaued, so inspect a second, search-derived axis. The
+    // resulting rank-2 space remains experimental until host verification.
+    orthogonal_search,
     escalate_shallow,
     escalate_deep,
     allow_tfo_lite,
@@ -97,6 +103,103 @@ struct common_flydelta_utility_gate_decision {
 
 const char * common_flydelta_utility_gate_action_name(
         common_flydelta_utility_gate_action action);
+
+// Rank-one plateau detection is a search gate. It never changes evidence
+// rank; it only decides whether a locally useful Bootstrap search deserves an
+// experimental orthogonal probe.
+struct common_flydelta_rank1_plateau_config {
+    int schema_version = 1;
+    size_t minimum_bootstrap_arms = 6;
+    size_t required_plateau_rounds = 2;
+    float minimum_useful_margin = 0.0f;
+    float maximum_recent_gain_ratio = 0.075f;
+    uint32_t maximum_region_span = 3;
+    float shallow_rank_threshold = 1.5f;
+};
+
+struct common_flydelta_rank1_plateau_round {
+    bool safe_to_continue = false;
+    size_t evaluated_arms = 0;
+    uint32_t anchor_layer = 0;
+    float best_margin_delta = 0.0f;
+};
+
+enum class common_flydelta_rank1_plateau_action {
+    continue_bootstrap,
+    refine_bootstrap,
+    orthogonal_search,
+};
+
+struct common_flydelta_rank1_plateau_result {
+    bool eligible = false;
+    bool plateau = false;
+    common_flydelta_rank1_plateau_action action =
+        common_flydelta_rank1_plateau_action::continue_bootstrap;
+    size_t safe_arm_count = 0;
+    size_t plateau_streak = 0;
+    float best_margin_delta = 0.0f;
+    float recent_gain_ratio = 0.0f;
+    uint32_t minimum_anchor_layer = 0;
+    uint32_t maximum_anchor_layer = 0;
+};
+
+bool common_flydelta_rank1_plateau_config_validate(
+        const common_flydelta_rank1_plateau_config & config,
+        std::string & error);
+bool common_flydelta_evaluate_rank1_plateau(
+        const common_flydelta_rank1_plateau_config & config,
+        float effective_rank,
+        const std::vector<common_flydelta_rank1_plateau_round> & rounds,
+        common_flydelta_rank1_plateau_result & result,
+        std::string & error);
+
+// Converts the plateau gate's search-only result into the common UtilityGate
+// decision consumed by the plan transition helper. This adapter never grants
+// learning or promotion credit.
+bool common_flydelta_decide_rank1_plateau_utility(
+        const common_flydelta_rank1_plateau_result & plateau,
+        common_flydelta_utility_gate_decision & decision,
+        std::string & error);
+
+// A Bootstrap arm descriptor is the actual bounded intervention in a common
+// flattened layer/profile space. Keeping the descriptor here, rather than a
+// score-only summary, prevents an apparent orthogonal signal from being
+// inferred from alpha values that all lie on the same rank-one ray.
+struct common_flydelta_orthogonal_search_arm {
+    std::vector<float> intervention;
+    float decision_margin_delta = 0.0f;
+    bool safe_to_continue = false;
+    common_flydelta_counterfactual_outcome outcome =
+        common_flydelta_counterfactual_outcome::unknown;
+};
+
+struct common_flydelta_orthogonal_search_config {
+    int schema_version = 1;
+    size_t minimum_arms = 5;
+    size_t maximum_arms = 32;
+    float minimum_residual_norm = 0.0001f;
+    float minimum_fit_quality = 0.1f;
+    float ridge = 0.001f;
+};
+
+struct common_flydelta_orthogonal_search_result {
+    bool available = false;
+    bool experimental_only = true;
+    size_t source_arm_count = 0;
+    float residual_norm = 0.0f;
+    float fit_quality = 0.0f;
+    std::vector<float> direction;
+};
+
+bool common_flydelta_orthogonal_search_config_validate(
+        const common_flydelta_orthogonal_search_config & config,
+        std::string & error);
+bool common_flydelta_build_orthogonal_search_direction(
+        const common_flydelta_orthogonal_search_config & config,
+        const std::vector<float> & rank1_direction,
+        const std::vector<common_flydelta_orthogonal_search_arm> & arms,
+        common_flydelta_orthogonal_search_result & result,
+        std::string & error);
 bool common_flydelta_utility_gate_config_validate(
         const common_flydelta_utility_gate_config & config,
         std::string & error);

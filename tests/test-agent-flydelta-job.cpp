@@ -73,6 +73,8 @@ int main() {
     job.id = "flydelta://job/search-pipeline-1";
     job.kind = common_flydelta_experiment_job_kind::search_pipeline;
     job.behavior_delta_ids = {"flydelta://delta/1"};
+    job.bootstrap_zoom_state_ref = "flydelta://state/bootstrap-zoom/seed";
+    job.search_state_ref = "flydelta://state/search/plateau-1";
     CHECK(common_flydelta_experiment_job_validate(job, 8, error));
     const auto pipeline_text = common_flydelta_experiment_job_to_json(job);
     common_flydelta_experiment_job pipeline_parsed;
@@ -80,6 +82,8 @@ int main() {
     CHECK(pipeline_parsed.kind == common_flydelta_experiment_job_kind::search_pipeline);
     CHECK(pipeline_parsed.capture_manifest_ids == job.capture_manifest_ids);
     CHECK(pipeline_parsed.behavior_delta_ids == job.behavior_delta_ids);
+    CHECK(pipeline_parsed.bootstrap_zoom_state_ref == job.bootstrap_zoom_state_ref);
+    CHECK(pipeline_parsed.search_state_ref == job.search_state_ref);
 
     job.kind = common_flydelta_experiment_job_kind::delta_memory;
     job.seed.split = common_flydelta_training_split::validation;

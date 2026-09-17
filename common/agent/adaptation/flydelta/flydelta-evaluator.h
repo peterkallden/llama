@@ -73,6 +73,16 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_bootstrap_zoom_state & state,
             std::string & state_ref,
             std::string & error)> persist_bootstrap_zoom_state;
+
+    // Optional generic state-aware runner for post-Bootstrap phases. The host
+    // owns the typed state behind the opaque reference and returns the next
+    // reference after one bounded slice.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const std::string & resume_state_ref,
+            common_flydelta_search_pipeline_result & result,
+            std::string & next_state_ref,
+            std::string & error)> run_search_pipeline_with_search_state;
 };
 
 struct common_flydelta_evaluator_result {
@@ -85,10 +95,13 @@ struct common_flydelta_evaluator_result {
     common_flydelta_aggregation_snapshot aggregation;
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;
+    bool has_experiment_plan = false;
+    common_flydelta_experiment_plan experiment_plan;
     size_t processed_references = 0;
     bool has_bootstrap_zoom_state = false;
     common_flydelta_bootstrap_zoom_state bootstrap_zoom_state;
     std::string bootstrap_zoom_state_ref;
+    std::string search_state_ref;
 };
 
 // Evaluates exactly one already-validated job. This is an orchestration seam,

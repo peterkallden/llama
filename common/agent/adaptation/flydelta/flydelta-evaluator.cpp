@@ -150,13 +150,23 @@ bool common_flydelta_evaluate_job(
             return true;
         }
         case common_flydelta_experiment_job_kind::search_pipeline: {
-            if ((!callbacks.run_search_pipeline && !callbacks.run_search_pipeline_with_state) ||
+            if ((!callbacks.run_search_pipeline && !callbacks.run_search_pipeline_with_state &&
+                    !callbacks.run_search_pipeline_with_search_state) ||
                     !common_flydelta_search_pipeline_config_validate(config.pipeline, error)) {
                 if (error.empty()) error = "FlyDelta search pipeline evaluator requires a host runner and config";
                 return false;
             }
             common_flydelta_search_pipeline_result pipeline_result;
-            if (callbacks.run_search_pipeline_with_state) {
+            if (callbacks.run_search_pipeline_with_search_state) {
+                std::string next_state_ref;
+                if (!callbacks.run_search_pipeline_with_search_state(
+                        job, job.search_state_ref, pipeline_result, next_state_ref, error) ||
+                        next_state_ref.size() > 512) {
+                    if (error.empty()) error = "FlyDelta search state-aware runner returned an invalid state reference";
+                    return false;
+                }
+                result.search_state_ref = std::move(next_state_ref);
+            } else if (callbacks.run_search_pipeline_with_state) {
                 common_flydelta_bootstrap_zoom_state resume_state;
                 const common_flydelta_bootstrap_zoom_state * resume = nullptr;
                 if (!job.bootstrap_zoom_state_ref.empty()) {
@@ -196,6 +206,40 @@ bool common_flydelta_evaluate_job(
                     pipeline_result, continuation, error)) return false;
             result.search_pipeline_results.push_back(std::move(pipeline_result));
             result.search_continuations.push_back(std::move(continuation));
+            // A search job now emits the first ordered plan when the host
+            // supplies its compatible evidence resolver. The plan starts at
+            // Bootstrap even if the evidence ceiling is Deep; later phases
+            // require explicit UtilityGate transitions by the host.
+            if (callbacks.resolve_behavior_delta) {
+                common_flydelta_aggregation_config aggregation_config;
+                aggregation_config.identity = config.direction;
+                aggregation_config.depth = config.evidence_depth;
+                aggregation_config.max_retained_samples = config.aggregation_max_retained_samples;
+                common_flydelta_incremental_aggregation aggregation(aggregation_config);
+                bool evidence_available = true;
+                for (const auto & id : job.behavior_delta_ids) {
+                    common_flydelta_contrast_sample sample;
+                    if (!callbacks.resolve_behavior_delta(
+                            id, sample.delta, sample.credit, error)) {
+                        // The plan is an optional host-facing addition. A
+                        // legacy search callback may expose this resolver but
+                        // intentionally decline the reference; preserve the
+                        // old search result and omit the plan in that case.
+                        error.clear();
+                        evidence_available = false;
+                        break;
+                    }
+                    if (!aggregation.ingest(sample, error)) return false;
+                }
+                if (evidence_available) {
+                    if (!aggregation.assess_depth(result.evidence_depth, error) ||
+                            !common_flydelta_plan_search_continuation(
+                                result.search_continuations.back(), result.evidence_depth,
+                                result.experiment_plan, error)) return false;
+                    result.has_experiment_plan = true;
+                    result.search_budget = result.experiment_plan.budget;
+                }
+            }
             result.processed_references = job.behavior_delta_ids.size();
             return true;
         }

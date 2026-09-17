@@ -35,6 +35,9 @@ struct common_flydelta_experiment_collection_request {
     // Opaque host-owned resume reference. Collection transports it to the
     // next search-pipeline job; it never reads or writes the state payload.
     std::string bootstrap_zoom_state_ref;
+    // Opaque state for post-Bootstrap continuation. The collection layer only
+    // transports it; the host resolves its typed state.
+    std::string search_state_ref;
 };
 
 enum class common_flydelta_experiment_collection_result {

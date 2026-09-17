@@ -67,6 +67,7 @@ int main() {
     pipeline_request.kind = common_flydelta_experiment_job_kind::search_pipeline;
     pipeline_request.behavior_delta_ids = {"flydelta://delta/pipeline-1"};
     pipeline_request.bootstrap_zoom_state_ref = "flydelta://state/bootstrap-zoom/seed";
+    pipeline_request.search_state_ref = "flydelta://state/search/plateau-1";
     const auto pipeline_root = root / "pipeline";
     CHECK(common_flydelta_collect_experiment_job(
         pipeline_root, {}, pipeline_request, result, error));
@@ -78,6 +79,8 @@ int main() {
     CHECK(pipeline_claimed.job.behavior_delta_ids.size() == 1);
     CHECK(pipeline_claimed.job.bootstrap_zoom_state_ref ==
         "flydelta://state/bootstrap-zoom/seed");
+    CHECK(pipeline_claimed.job.search_state_ref ==
+        "flydelta://state/search/plateau-1");
 
     value.enabled = false;
     CHECK(common_flydelta_collect_experiment_job(root, {}, value, result, error));
@@ -130,6 +133,7 @@ int main() {
     pipeline_refine_request.kind = common_flydelta_experiment_job_kind::search_pipeline;
     pipeline_refine_request.behavior_delta_ids = {"flydelta://delta/pipeline-refine"};
     pipeline_refine_request.bootstrap_zoom_state_ref = "flydelta://state/bootstrap-zoom/resume";
+    pipeline_refine_request.search_state_ref = "flydelta://state/search/resume";
     const auto pipeline_refine_root = root / "pipeline-refine";
     CHECK(common_flydelta_collect_search_pipeline_refinement_job(
         pipeline_refine_root, {}, pipeline_refine_request, observation, decision, lineage,
@@ -142,6 +146,8 @@ int main() {
     CHECK(pipeline_refined.job.behavior_delta_ids.size() == 1);
     CHECK(pipeline_refined.job.bootstrap_zoom_state_ref ==
         "flydelta://state/bootstrap-zoom/resume");
+    CHECK(pipeline_refined.job.search_state_ref ==
+        "flydelta://state/search/resume");
 
     std::filesystem::remove_all(root, ignored);
     return 0;

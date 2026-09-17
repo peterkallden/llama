@@ -1,5 +1,6 @@
 #include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -114,11 +115,234 @@ const char * common_flydelta_utility_gate_action_name(
         case common_flydelta_utility_gate_action::stop: return "stop";
         case common_flydelta_utility_gate_action::retain: return "retain";
         case common_flydelta_utility_gate_action::refine_bootstrap: return "refine_bootstrap";
+        case common_flydelta_utility_gate_action::orthogonal_search: return "orthogonal_search";
         case common_flydelta_utility_gate_action::escalate_shallow: return "escalate_shallow";
         case common_flydelta_utility_gate_action::escalate_deep: return "escalate_deep";
         case common_flydelta_utility_gate_action::allow_tfo_lite: return "allow_tfo_lite";
     }
     return "retain";
+}
+
+bool common_flydelta_rank1_plateau_config_validate(
+        const common_flydelta_rank1_plateau_config & config,
+        std::string & error) {
+    error.clear();
+    if (config.schema_version != 1 || config.minimum_bootstrap_arms < 2 ||
+            config.minimum_bootstrap_arms > 64 || config.required_plateau_rounds == 0 ||
+            config.required_plateau_rounds > 8 || !finite(config.minimum_useful_margin) ||
+            !finite(config.maximum_recent_gain_ratio) || config.maximum_recent_gain_ratio < 0.0f ||
+            config.maximum_recent_gain_ratio > 1.0f || config.maximum_region_span == 0 ||
+            config.maximum_region_span > 64 || !finite(config.shallow_rank_threshold) ||
+            config.shallow_rank_threshold <= 1.0f) {
+        error = "FlyDelta rank-one plateau configuration is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_evaluate_rank1_plateau(
+        const common_flydelta_rank1_plateau_config & config,
+        float effective_rank,
+        const std::vector<common_flydelta_rank1_plateau_round> & rounds,
+        common_flydelta_rank1_plateau_result & result,
+        std::string & error) {
+    error.clear();
+    result = {};
+    if (!common_flydelta_rank1_plateau_config_validate(config, error) ||
+            !finite(effective_rank) || effective_rank < 0.0f || rounds.empty() ||
+            rounds.size() > 32) {
+        if (error.empty()) error = "FlyDelta rank-one plateau input is invalid";
+        return false;
+    }
+    result.minimum_anchor_layer = std::numeric_limits<uint32_t>::max();
+    for (const auto & round : rounds) {
+        if (!round.safe_to_continue || round.evaluated_arms == 0 ||
+                !finite(round.best_margin_delta) || round.anchor_layer == 0) {
+            result = {};
+            result.action = common_flydelta_rank1_plateau_action::continue_bootstrap;
+            return true;
+        }
+        result.safe_arm_count += round.evaluated_arms;
+        result.best_margin_delta = std::max(result.best_margin_delta, round.best_margin_delta);
+        result.minimum_anchor_layer = std::min(result.minimum_anchor_layer, round.anchor_layer);
+        result.maximum_anchor_layer = std::max(result.maximum_anchor_layer, round.anchor_layer);
+    }
+    if (result.safe_arm_count < config.minimum_bootstrap_arms ||
+            effective_rank >= config.shallow_rank_threshold ||
+            result.best_margin_delta <= config.minimum_useful_margin ||
+            result.maximum_anchor_layer - result.minimum_anchor_layer > config.maximum_region_span) {
+        result.minimum_anchor_layer = result.minimum_anchor_layer ==
+            std::numeric_limits<uint32_t>::max() ? 0 : result.minimum_anchor_layer;
+        result.action = common_flydelta_rank1_plateau_action::continue_bootstrap;
+        return true;
+    }
+    result.eligible = true;
+    if (rounds.size() < 2) {
+        result.action = common_flydelta_rank1_plateau_action::refine_bootstrap;
+        return true;
+    }
+    for (size_t index = rounds.size(); index > 1; --index) {
+        const float previous = rounds[index - 2].best_margin_delta;
+        const float current = rounds[index - 1].best_margin_delta;
+        if (current < previous) break;
+        const float recent_gain = current - previous;
+        const float ratio = recent_gain /
+            std::max(std::fabs(current), std::numeric_limits<float>::epsilon());
+        if (result.plateau_streak == 0) result.recent_gain_ratio = ratio;
+        if (ratio > config.maximum_recent_gain_ratio) break;
+        ++result.plateau_streak;
+    }
+    result.plateau = result.plateau_streak >= config.required_plateau_rounds;
+    result.action = result.plateau
+        ? common_flydelta_rank1_plateau_action::orthogonal_search
+        : common_flydelta_rank1_plateau_action::refine_bootstrap;
+    return true;
+}
+
+bool common_flydelta_decide_rank1_plateau_utility(
+        const common_flydelta_rank1_plateau_result & plateau,
+        common_flydelta_utility_gate_decision & decision,
+        std::string & error) {
+    error.clear();
+    decision = {};
+    if (!finite(plateau.best_margin_delta) || !finite(plateau.recent_gain_ratio)) {
+        error = "FlyDelta rank-one plateau result is invalid";
+        return false;
+    }
+    decision.history = {plateau.plateau_streak, 0};
+    if (!plateau.eligible) {
+        decision.action = common_flydelta_utility_gate_action::retain;
+        return true;
+    }
+    decision.utility_qualified = true;
+    decision.action = plateau.action == common_flydelta_rank1_plateau_action::orthogonal_search
+        ? common_flydelta_utility_gate_action::orthogonal_search
+        : plateau.action == common_flydelta_rank1_plateau_action::refine_bootstrap
+            ? common_flydelta_utility_gate_action::refine_bootstrap
+            : common_flydelta_utility_gate_action::retain;
+    return true;
+}
+
+bool common_flydelta_orthogonal_search_config_validate(
+        const common_flydelta_orthogonal_search_config & config,
+        std::string & error) {
+    error.clear();
+    if (config.schema_version != 1 || config.minimum_arms < 3 || config.minimum_arms > 64 ||
+            config.maximum_arms < config.minimum_arms || config.maximum_arms > 128 ||
+            !finite(config.minimum_residual_norm) || config.minimum_residual_norm <= 0.0f ||
+            !finite(config.minimum_fit_quality) || config.minimum_fit_quality < 0.0f ||
+            config.minimum_fit_quality > 1.0f || !finite(config.ridge) || config.ridge <= 0.0f) {
+        error = "FlyDelta orthogonal-search configuration is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_build_orthogonal_search_direction(
+        const common_flydelta_orthogonal_search_config & config,
+        const std::vector<float> & rank1_direction,
+        const std::vector<common_flydelta_orthogonal_search_arm> & arms,
+        common_flydelta_orthogonal_search_result & result,
+        std::string & error) {
+    error.clear();
+    result = {};
+    if (!common_flydelta_orthogonal_search_config_validate(config, error) ||
+            rank1_direction.empty() || arms.size() > config.maximum_arms) {
+        if (error.empty()) error = "FlyDelta orthogonal-search input is invalid";
+        return false;
+    }
+    const float rank1_norm = l2_norm(rank1_direction);
+    if (!finite(rank1_norm) || rank1_norm <= std::numeric_limits<float>::epsilon()) {
+        error = "FlyDelta orthogonal-search rank-one direction must not be zero";
+        return false;
+    }
+    std::vector<float> axis(rank1_direction.size());
+    for (size_t i = 0; i < axis.size(); ++i) axis[i] = rank1_direction[i] / rank1_norm;
+
+    std::vector<const common_flydelta_orthogonal_search_arm *> usable;
+    for (const auto & arm : arms) {
+        if (!arm.safe_to_continue ||
+                arm.outcome == common_flydelta_counterfactual_outcome::harmed) continue;
+        if (arm.intervention.size() != axis.size() || !finite(arm.decision_margin_delta)) {
+            error = "FlyDelta orthogonal-search arm dimensions are invalid";
+            return false;
+        }
+        for (const float value : arm.intervention) {
+            if (!finite(value)) {
+                error = "FlyDelta orthogonal-search arm contains a non-finite value";
+                return false;
+            }
+        }
+        usable.push_back(&arm);
+    }
+    if (usable.size() < config.minimum_arms) return true;
+    std::vector<float> mean(axis.size(), 0.0f);
+    float mean_margin = 0.0f;
+    for (const auto * arm : usable) {
+        mean_margin += arm->decision_margin_delta;
+        for (size_t i = 0; i < mean.size(); ++i) mean[i] += arm->intervention[i];
+    }
+    const float count = static_cast<float>(usable.size());
+    mean_margin /= count;
+    for (float & value : mean) value /= count;
+
+    std::vector<float> gradient(axis.size(), 0.0f);
+    float response_energy = 0.0f;
+    float fitted_energy = 0.0f;
+    float covariance = 0.0f;
+    for (const auto * arm : usable) {
+        std::vector<float> residual(axis.size());
+        for (size_t i = 0; i < residual.size(); ++i) residual[i] = arm->intervention[i] - mean[i];
+        const float along_axis = [&]() {
+            float value = 0.0f;
+            for (size_t i = 0; i < residual.size(); ++i) value += residual[i] * axis[i];
+            return value;
+        }();
+        for (size_t i = 0; i < residual.size(); ++i) residual[i] -= along_axis * axis[i];
+        const float response = arm->decision_margin_delta - mean_margin;
+        response_energy += response * response;
+        const float residual_norm = l2_norm(residual);
+        if (residual_norm > std::numeric_limits<float>::epsilon()) {
+            for (size_t i = 0; i < gradient.size(); ++i) gradient[i] += response * residual[i];
+        }
+    }
+    const float gradient_norm = l2_norm(gradient);
+    if (!finite(gradient_norm) || gradient_norm <= config.minimum_residual_norm) return true;
+    const float axis_component = [&]() {
+        float value = 0.0f;
+        for (size_t i = 0; i < gradient.size(); ++i) value += gradient[i] * axis[i];
+        return value;
+    }();
+    for (size_t i = 0; i < gradient.size(); ++i) gradient[i] -= axis_component * axis[i];
+    const float residual_gradient_norm = l2_norm(gradient);
+    if (!finite(residual_gradient_norm) || residual_gradient_norm <= config.minimum_residual_norm) return true;
+    for (const auto * arm : usable) {
+        std::vector<float> residual(axis.size());
+        for (size_t i = 0; i < residual.size(); ++i) residual[i] = arm->intervention[i] - mean[i];
+        float along_axis = 0.0f;
+        for (size_t i = 0; i < residual.size(); ++i) along_axis += residual[i] * axis[i];
+        for (size_t i = 0; i < residual.size(); ++i) residual[i] -= along_axis * axis[i];
+        const float predicted = [&]() {
+            float value = 0.0f;
+            for (size_t i = 0; i < residual.size(); ++i) value += gradient[i] * residual[i];
+            return value;
+        }();
+        fitted_energy += predicted * predicted;
+        covariance += predicted * (arm->decision_margin_delta - mean_margin);
+    }
+    const float fit_denominator = std::sqrt(std::max(
+        fitted_energy * response_energy + config.ridge, 0.0f));
+    const float fit_quality = fit_denominator > std::numeric_limits<float>::epsilon()
+        ? covariance / fit_denominator : 0.0f;
+    if (!finite(fit_quality) || fit_quality < config.minimum_fit_quality) return true;
+    result.available = true;
+    result.source_arm_count = usable.size();
+    result.residual_norm = residual_gradient_norm;
+    result.fit_quality = fit_quality;
+    result.direction = std::move(gradient);
+    const float direction_norm = l2_norm(result.direction);
+    for (float & value : result.direction) value /= direction_norm;
+    return true;
 }
 
 const char * common_flydelta_bootstrap_zoom_phase_name(
@@ -543,6 +767,18 @@ bool common_flydelta_advance_experiment_plan(
             }
             configure_phase(common_flydelta_experiment_phase::bootstrap,
                 common_flydelta_search_depth::bootstrap);
+            advanced = true;
+            break;
+        case common_flydelta_utility_gate_action::orthogonal_search:
+            if (current.phase != common_flydelta_experiment_phase::bootstrap) {
+                error = "FlyDelta orthogonal search requires the Bootstrap phase";
+                return false;
+            }
+            // This is deliberately a same-phase experimental operation. The
+            // host must keep evidence depth unchanged and later evaluate the
+            // resulting rank-two controls before allowing Deep/TFO.
+            next.run_orthogonal_search = true;
+            next.run_tfo_lite = false;
             advanced = true;
             break;
         case common_flydelta_utility_gate_action::escalate_shallow:

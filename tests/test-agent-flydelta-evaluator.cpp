@@ -211,6 +211,16 @@ int main() {
     pipeline.alpha_search.candidates = {0.02f};
     pipeline.alpha_search.max_candidates = 1;
     callbacks = {};
+    callbacks.resolve_behavior_delta = [](const auto &, auto & delta, auto & credit, std::string &) {
+        delta = behavior_delta();
+        credit.experiment_id = "flydelta://experiment/search";
+        credit.candidate_id = "flydelta://candidate/search";
+        credit.fixture_id = "flydelta://fixture/search";
+        credit.outcome = common_flydelta_counterfactual_outcome::unknown;
+        credit.quality_delta = 0.0f;
+        credit.eligible_for_learning = false;
+        return true;
+    };
     callbacks.run_search_pipeline = [](const auto &, auto & value, std::string &) {
         value = search_pipeline_result();
         return true;
@@ -219,6 +229,10 @@ int main() {
     CHECK(result.processed_references == 1 && result.search_pipeline_results.size() == 1);
     CHECK(result.search_continuations.size() == 1);
     CHECK(result.search_continuations.front().region.anchor_layer_index == 24);
+    CHECK(result.has_experiment_plan &&
+        result.experiment_plan.phase == common_flydelta_experiment_phase::bootstrap &&
+        result.experiment_plan.depth == common_flydelta_search_depth::bootstrap &&
+        !result.experiment_plan.run_tfo_lite);
 
     auto resumable_pipeline = pipeline;
     resumable_pipeline.id = "flydelta://job/search-pipeline-resume";
@@ -264,6 +278,24 @@ int main() {
         result.bootstrap_zoom_state_ref == "flydelta://state/bootstrap-2" &&
         result.bootstrap_zoom_state.state_ref == "flydelta://state/bootstrap-2" &&
         result.bootstrap_zoom_state.next_candidate_index == 4);
+
+    auto generic_resumable_pipeline = pipeline;
+    generic_resumable_pipeline.id = "flydelta://job/search-pipeline-generic-resume";
+    generic_resumable_pipeline.search_state_ref = "flydelta://state/search-1";
+    callbacks = {};
+    bool generic_resumed = false;
+    callbacks.run_search_pipeline_with_search_state = [&](const auto & job,
+            const auto & state_ref, auto & value, auto & next_state_ref, std::string &) {
+        generic_resumed = job.search_state_ref == state_ref &&
+            state_ref == "flydelta://state/search-1";
+        value = search_pipeline_result();
+        next_state_ref = "flydelta://state/search-2";
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(
+        generic_resumable_pipeline, config, callbacks, result, error));
+    CHECK(generic_resumed && result.search_state_ref == "flydelta://state/search-2" &&
+        result.search_pipeline_results.size() == 1);
 
     // The production-facing adapter persists only immutable state metadata in
     // the host lifecycle store. It can be attached without replacing the

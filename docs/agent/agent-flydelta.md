@@ -669,7 +669,9 @@ promotion decision; those remain owned by the evaluator callbacks and the
 explicit lifecycle controller.
 
 For resumable rank-one BootstrapZoom work, the queue transports only
-`bootstrap_zoom_state_ref`. The evaluator's state-aware callback resolves
+`bootstrap_zoom_state_ref`. For later rank-one plateau, orthogonal-search or
+augmentation slices, it transports the separate opaque `search_state_ref`.
+The evaluator's state-aware callback resolves
 that opaque reference before the next bounded slice and persists a new,
 immutable reference after it. `common_flydelta_configure_bootstrap_zoom_lifecycle_callbacks()` binds those two callbacks to the existing host lifecycle
 store; it stores bounded phase/progress metadata, never captures, prompts or
@@ -723,7 +725,15 @@ that state in the artifact/state registry; the queue carries only the opaque
 reference. This lets a later sample resume the local search without repeating
 completed arms while keeping activations, prompts and verifier payloads out of
 the worker envelope.
-That remaining integration is deliberate until Shallow controls have been
+The typed BootstrapZoom callback remains deliberately separate from the
+generic post-Bootstrap state reference: the latter is an ownership/transport
+seam for the host's plateau/orthogonal/augmentation state, not a claim that
+those model-facing phases run automatically in the legacy callback. The
+optional `run_search_pipeline_with_search_state` callback consumes the
+opaque reference for one bounded post-Bootstrap slice and returns the next
+reference through the evaluator/worker report. If it is not configured, the
+existing BootstrapZoom-aware or legacy runner remains unchanged.
+remaining integration is deliberate until Shallow controls have been
 observed on real fixtures. The intended invariant is:
 
 ```text
@@ -816,6 +826,35 @@ The worker still processes one queue job per invocation. Spreading jobs over
 time is intentional: each turn pays only for evidence collection, while the
 worker performs the bounded re-aggregation and any model experiments later.
 No active sideband is mutated while this happens.
+
+#### Rank-one plateau escape
+
+BootstrapZoom is allowed to continue locally while the evidence remains
+rank-one. If its safe arms remain in one WHERE region, improve the
+decision-margin but show diminishing returns over successive rounds, the
+`Rank1PlateauGate` may request an experimental orthogonal search. This is a
+search escape, not an evidence-depth transition:
+
+```text
+Bootstrap/BootstrapZoom
+  -> Rank1PlateauGate
+  -> OrthogonalResidualSearch
+  -> +/- residual probes
+  -> experimental rank-2 controls
+  -> UtilityGate
+  -> Deep/TFO-lite only if separately earned
+```
+
+The residual fit consumes the actual bounded intervention descriptors for the
+arms. Alpha-only arms cannot manufacture a second axis. Safe `UNKNOWN` and
+`NEUTRAL` arms may contribute search response, while `HARMED` arms are
+excluded; none of these observations increases `evidence_rank`. A successful
+fit is marked `search_derived` and remains in the experimental lifecycle.
+
+If no stable residual signal can be found, the later fallback is
+`RepresentationAugmentation`. Its donor context must first qualify at the
+text level, and only then may its latent delta be probed. Both paths use the
+same geometry bounds, fresh-context rule, host verifier and lifecycle gates.
 
 ### Verified repair materialization — implemented adapters
 

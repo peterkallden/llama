@@ -221,6 +221,41 @@ int main() {
     CHECK(evaluator_report.state == common_flydelta_experiment_queue_state::succeeded);
     CHECK(evaluator_report.report_count == 1);
 
+    auto generic_state_job = pipeline_job;
+    generic_state_job.id = "flydelta://job/worker-generic-state";
+    generic_state_job.search_state_ref = "flydelta://state/worker-search-1";
+    evaluator_callbacks.run_search_pipeline_with_search_state = [](
+            const auto &, const auto & state_ref, auto & value, auto & next_state_ref, auto &) {
+        if (state_ref != "flydelta://state/worker-search-1") return false;
+        value = {};
+        common_flydelta_search_pipeline_direction_result direction;
+        direction.direction.layer_index = 2;
+        direction.direction.values = {1.0f, 0.0f};
+        direction.direction.source_samples = 1;
+        direction.direction.retained_samples = 1;
+        direction.direction.median_alignment = 1.0f;
+        common_flydelta_intervention_region_trial region;
+        region.candidate.layer_indices = {2};
+        region.candidate.anchor_layer_index = 2;
+        region.candidate.total_scale = 0.05f;
+        region.candidate.per_layer_scale = 0.05f;
+        region.executed = true;
+        region.verifier_known = true;
+        region.search_score = 0.5f;
+        region.promising = true;
+        region.safe_to_continue = true;
+        region.evidence_ref = "evidence:worker-generic-state";
+        direction.region_trials.push_back(std::move(region));
+        value.directions.push_back(std::move(direction));
+        next_state_ref = "flydelta://state/worker-search-2";
+        return true;
+    };
+    CHECK(common_flydelta_experiment_queue_enqueue(root, generic_state_job, {}, error));
+    CHECK(common_flydelta_experiment_worker_run_evaluator_once(
+        root, {}, evaluator_config, evaluator_callbacks, evaluator_report, error));
+    CHECK(evaluator_report.state == common_flydelta_experiment_queue_state::succeeded &&
+        evaluator_report.search_state_ref == "flydelta://state/worker-search-2");
+
     evaluator_callbacks = {};
     evaluator_callbacks.resolve_behavior_delta = [](const auto &, auto & delta, auto & credit, auto &) {
         delta = behavior_delta();
