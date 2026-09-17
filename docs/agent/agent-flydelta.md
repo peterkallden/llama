@@ -813,6 +813,51 @@ at every depth: cosine, progress, leakage, shift norm and decision margin may
 rank or refine the next experiment, while only a host-verified baseline-fail /
 candidate-pass outcome can create `HELPED` evidence.
 
+#### Architecture invariants for phase escalation
+
+The following rules are part of the FlyDelta architecture contract, not merely
+defaults of the current worker implementation:
+
+```text
+Evidence depth -> search capacity
+Utility        -> search expenditure
+Host outcome   -> learning credit
+```
+
+More precisely:
+
+* `retain` never causes automatic escalation. It preserves the candidate and
+  its diagnostics for a later bounded continuation.
+* `Shallow` requires genuine compatible evidence with `effective_rank >= 2`.
+  Whirlpool geometry, a positive margin, or an experimental residual axis is
+  not evidence rank.
+* `Deep` requires both Deep evidence capacity and a positive `UtilityGate`
+  decision after Shallow controls. Evidence alone grants capacity; it does not
+  spend the model-side search budget.
+* `TFO-lite` is the final escalation step. It requires Deep controls and a
+  positive Deep utility decision.
+* Orthogonal and augmentation searches may create an experimental
+  `search_rank = 2`, but they never increase `evidence_rank` and cannot create
+  learning or promotion credit by themselves.
+* `BootstrapZoom` remains a rank-one local refinement. It is the normal final
+  refinement while the evidence is rank-one, but it may be skipped when real
+  rank-two evidence is already available and the worker can enter Shallow
+  directly.
+
+The resulting normal path is therefore:
+
+```text
+Bootstrap -> BootstrapZoom
+  -> real evidence_rank >= 2 -> Shallow controls
+  -> positive Shallow utility + Deep capacity -> Deep controls
+  -> positive Deep utility -> TFO-lite
+```
+
+When rank-one evidence remains rank-one, plateau and orthogonal search are
+optional escape paths rather than mandatory phases. They are useful for
+experimental exploration, but the normal worker may retain/refine Bootstrap
+and wait for another compatible sample instead.
+
 This gives the worker a single evolving pipeline rather than three separate
 algorithms:
 

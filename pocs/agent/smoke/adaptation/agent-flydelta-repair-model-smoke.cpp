@@ -6,6 +6,7 @@
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
 #include "agent/adaptation/flydelta/flydelta-evidence-depth.h"
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
+#include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
 #include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
 #include "agent/adaptation/flydelta/flydelta-layer-discovery.h"
@@ -14,6 +15,7 @@
 #include "agent/adaptation/flydelta/flydelta-scale-search.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-training.h"
+#include "agent/adaptation/flydelta/flydelta-worker.h"
 #include "agent/adaptation/flydelta/flydelta.h"
 #include "tools/agent/cli/agent-cli-generation.h"
 #include "tools/agent/cli/agent-cli-inference.h"
@@ -38,7 +40,9 @@ struct options {
     int n_predict = 96;
     int n_threads = 3;
     int n_gpu_layers = 0;
-    bool region_scan = false;
+    // The model-backed smoke exercises the current Whirlpool/worker path by
+    // default; the explicit flag remains accepted for compatibility.
+    bool region_scan = true;
     std::vector<uint32_t> region_layers;
 };
 
@@ -964,6 +968,9 @@ int main(int argc, char ** argv) {
                   << " nonqualifying_streak=" << utility_decision.history.nonqualifying_streak
                   << "\n";
 
+        std::vector<common_flydelta_bootstrap_zoom_trial> zoom_trials;
+        common_flydelta_bootstrap_zoom_selection zoom_selection;
+
         // A Bootstrap-only evidence set may still have enough decision utility
         // to spend a small, strictly rank-one local budget. This uses each
         // layer's own repair direction; a profile never transports L24's
@@ -972,7 +979,6 @@ int main(int argc, char ** argv) {
         if (utility_decision.action ==
                 common_flydelta_utility_gate_action::refine_bootstrap) {
             common_flydelta_bootstrap_zoom_config zoom_config;
-            std::vector<common_flydelta_bootstrap_zoom_trial> zoom_trials;
             std::vector<common_flydelta_bootstrap_zoom_candidate> alpha_candidates;
             if (!common_flydelta_propose_bootstrap_alpha_zoom(
                     continuation.region.anchor_layer_index,
@@ -1166,7 +1172,6 @@ int main(int argc, char ** argv) {
                 }
                 retain_zoom_trial(candidate, outcome, margin, diagnostics, diagnostics_available);
             }
-            common_flydelta_bootstrap_zoom_selection zoom_selection;
             if (!common_flydelta_select_bootstrap_zoom_trial(
                     zoom_trials, zoom_selection, error)) {
                 std::cerr << "FlyDelta BootstrapZoom candidate selection failed: " << error << '\n';
@@ -1188,6 +1193,257 @@ int main(int argc, char ** argv) {
                       << " margin_delta=" << retained.margin_delta
                       << " search_score=" << zoom_selection.search_score << '\n';
         }
+
+        // BootstrapZoom is followed by the rank-one plateau gate. This is a
+        // search transition only: it may request the bounded orthogonal
+        // escape, but it must not manufacture Shallow/Deep evidence. Build
+        // the rounds from the actual region/zoom observations so the model
+        // smoke exercises the same gate as the worker-facing pipeline.
+        common_flydelta_rank1_plateau_config plateau_config;
+        std::vector<common_flydelta_rank1_plateau_round> plateau_rounds;
+        const auto make_region_round = [&]() {
+            common_flydelta_rank1_plateau_round round;
+            round.anchor_layer = continuation.region.anchor_layer_index;
+            round.safe_to_continue = !region_trials.empty();
+            for (const auto & trial : region_trials) {
+                if (!trial.safe_to_continue) round.safe_to_continue = false;
+                if (trial.safe_to_continue && trial.margin.available) {
+                    round.best_margin_delta = std::max(
+                        round.best_margin_delta, trial.margin.normalized_delta() -
+                            region_baseline_margin.normalized_delta());
+                    ++round.evaluated_arms;
+                }
+            }
+            return round;
+        };
+        const auto make_zoom_round = [&](common_flydelta_bootstrap_zoom_phase phase) {
+            common_flydelta_rank1_plateau_round round;
+            round.anchor_layer = continuation.region.anchor_layer_index;
+            for (const auto & trial : zoom_trials) {
+                if (trial.candidate.phase != phase) continue;
+                if (!trial.host_verified ||
+                        trial.outcome == common_flydelta_counterfactual_outcome::harmed) {
+                    round.safe_to_continue = false;
+                    continue;
+                }
+                round.safe_to_continue = true;
+                ++round.evaluated_arms;
+                if (trial.margin_available) {
+                    round.best_margin_delta = std::max(round.best_margin_delta,
+                        trial.margin_delta);
+                }
+            }
+            return round;
+        };
+        plateau_rounds.push_back(make_region_round());
+        const auto alpha_round = make_zoom_round(common_flydelta_bootstrap_zoom_phase::alpha_zoom);
+        if (alpha_round.evaluated_arms != 0) plateau_rounds.push_back(alpha_round);
+        const auto profile_round = make_zoom_round(common_flydelta_bootstrap_zoom_phase::profile_zoom);
+        if (profile_round.evaluated_arms != 0) plateau_rounds.push_back(profile_round);
+        common_flydelta_rank1_plateau_result plateau_result;
+        common_flydelta_utility_gate_decision plateau_decision;
+        common_flydelta_experiment_plan plateau_plan;
+        bool plateau_advanced = false;
+        if (!common_flydelta_evaluate_rank1_plateau(
+                plateau_config, evidence_depth.effective_rank, plateau_rounds,
+                plateau_result, error) ||
+                !common_flydelta_decide_rank1_plateau_utility(
+                    plateau_result, plateau_decision, error) ||
+                !common_flydelta_advance_experiment_plan(
+                    continuation_plan, plateau_decision, plateau_plan,
+                    plateau_advanced, error)) {
+            std::cerr << "FlyDelta plateau transition failed: " << error << '\n';
+            return 1;
+        }
+        std::cout << "flydelta_plateau_gate eligible="
+                  << (plateau_result.eligible ? "yes" : "no")
+                  << " plateau=" << (plateau_result.plateau ? "yes" : "no")
+                  << " action=" << common_flydelta_utility_gate_action_name(
+                      plateau_decision.action)
+                  << " safe_arms=" << plateau_result.safe_arm_count
+                  << " plateau_streak=" << plateau_result.plateau_streak
+                  << " best_margin_delta=" << plateau_result.best_margin_delta
+                  << " recent_gain_ratio=" << plateau_result.recent_gain_ratio
+                  << " advanced=" << (plateau_advanced ? "yes" : "no")
+                  << " run_orthogonal_search="
+                  << (plateau_plan.run_orthogonal_search ? "yes" : "no")
+                  << " evidence_rank=" << evidence_depth.effective_rank << '\n';
+
+    // Exercise the actual evaluator/worker handoff. The first queue slice
+    // owns the model-backed Bootstrap/BootstrapZoom result and persists typed
+    // zoom state. The second slice carries a separate opaque post-Bootstrap
+    // state reference and must use the generic state-aware callback. With one
+    // natural repair sample this remains rank-one: the smoke must not
+    // fabricate Shallow/Deep/TFO evidence.
+        if (value.region_scan && !selected.selected && !zoom_trials.empty()) {
+        common_flydelta_experiment_seed state_seed;
+        if (!common_flydelta_experiment_seed_from_evidence(
+                evidence, evidence.behavior_key, profile,
+                experiment_fixture.tokenizer_fingerprint,
+                experiment_fixture.template_fingerprint,
+                experiment_fixture.execution_context_fingerprint,
+                common_flydelta_training_split::train, state_seed, error)) {
+            std::cerr << "FlyDelta state smoke seed construction failed: " << error << '\n';
+            return 1;
+        }
+        common_flydelta_experiment_job state_job;
+        state_job.id = "flydelta://job/model-repair-state/bootstrap";
+        state_job.kind = common_flydelta_experiment_job_kind::search_pipeline;
+        state_job.seed = state_seed;
+        state_job.capture_manifest_ids = {"manifest:model-repair-e2e"};
+        state_job.behavior_delta_ids = {"delta:model-repair-e2e"};
+        state_job.alpha_search.candidates = {0.02f};
+        state_job.alpha_search.max_candidates = 1;
+        state_job.code_revision = "flydelta-model-repair-state-smoke:v1";
+
+        common_flydelta_evaluator_config state_evaluator_config;
+        state_evaluator_config.pipeline = pipeline_config;
+        state_evaluator_config.max_references = 128;
+        common_flydelta_evaluator_callbacks state_callbacks;
+        state_callbacks.run_search_pipeline_with_state = [&](const auto & job,
+                const auto * resume_state, auto & output, auto & next_state,
+                std::string & runner_error) {
+            if (resume_state != nullptr) {
+                runner_error = "initial Qwen state slice unexpectedly received a resume state";
+                return false;
+            }
+            output = pipeline_result;
+            next_state = {};
+            next_state.behavior_key = job.seed.behavior_key;
+            next_state.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+            next_state.capture_layout_revision = "layer-input:v1";
+            next_state.phase = common_flydelta_bootstrap_zoom_phase::profile_zoom;
+            next_state.anchor_layer = continuation.region.anchor_layer_index;
+            next_state.selected_scale = std::max(0.0001f,
+                continuation.region.total_scale);
+            next_state.best_margin_delta = utility_observation.decision_margin_delta;
+            next_state.best_search_score = continuation.search_score;
+            next_state.extra_model_trials = zoom_trials.size();
+            next_state.next_candidate_index = zoom_trials.size();
+            next_state.local_layers = {continuation.region.anchor_layer_index};
+            next_state.completed_trials = zoom_trials;
+            next_state.selection = zoom_selection;
+            return true;
+        };
+        state_callbacks.persist_bootstrap_zoom_state = [&](const auto & state,
+                std::string & state_ref, std::string & persist_error) {
+            if (!common_flydelta_bootstrap_zoom_state_validate(state, persist_error)) {
+                return false;
+            }
+            state_ref = "flydelta://state/model-repair/bootstrap-zoom";
+            return true;
+        };
+
+        const std::string post_bootstrap_state_ref =
+            "flydelta://state/model-repair/post-bootstrap";
+        state_callbacks.run_search_pipeline_with_search_state =
+            [&](const auto & job, const std::string & resume_state_ref,
+                    auto & output, std::string & next_state_ref,
+                    std::string & runner_error) {
+                if (resume_state_ref != post_bootstrap_state_ref ||
+                        job.bootstrap_zoom_state_ref.empty()) {
+                    runner_error = "post-Bootstrap Qwen state reference was not carried correctly";
+                    return false;
+                }
+                common_flydelta_gate_request gate_request;
+                if (!common_flydelta_gate_request_from_context(
+                        recognition, code, true,
+                        common_flydelta_candidate_status::approved, true,
+                        continuation.region.per_layer_scale, gate_request, runner_error)) {
+                    return false;
+                }
+                common_flydelta_activation_request request;
+                request.candidate_id = "flydelta://candidate/model-repair-post-bootstrap";
+                request.artifact_id = "flydelta://artifact/model-repair-e2e";
+                request.model_profile_fingerprint = profile;
+                request.capture_layout_revision = "layer-input:v1";
+                request.model_n_embd = model_n_embd;
+                request.model_n_layers = model_n_layers;
+                request.il_end = static_cast<int32_t>(model_n_layers - 1);
+                for (const uint32_t layer : continuation.region.layer_indices) {
+                    const auto direction = std::find_if(basis.directions().begin(),
+                        basis.directions().end(), [&](const auto & value) {
+                            return value.layer_index == static_cast<int32_t>(layer);
+                        });
+                    if (direction == basis.directions().end()) {
+                        runner_error = "post-Bootstrap state has no layer-compatible direction";
+                        return false;
+                    }
+                    request.directions.push_back(*direction);
+                    request.coefficients.push_back(coefficients.front());
+                }
+                request.gate_request = gate_request;
+                common_flydelta_gate_config gate_config;
+                gate_config.enabled = true;
+                gate_config.max_scale = 1.0f;
+                common_flydelta_activation_result activation;
+                if (!common_flydelta_prepare_activation(
+                        gate_config, request, 64U * 1024U * 1024U,
+                        activation, runner_error)) return false;
+                const auto activation_ptr =
+                    std::make_shared<const common_flydelta_activation_result>(
+                        std::move(activation));
+                common_agent_generation_result generated;
+                if (!generate(*inference, value, failed_instruction, generated,
+                        activation_ptr, capture_request)) {
+                    runner_error = generated.error_message.empty()
+                        ? "post-Bootstrap Qwen state generation failed"
+                        : generated.error_message;
+                    return false;
+                }
+                std::cout << "flydelta_post_bootstrap_state_model_output="
+                          << output_preview(generated) << '\n';
+                output = pipeline_result;
+                next_state_ref = "flydelta://state/model-repair/post-bootstrap-next";
+                return true;
+            };
+
+        const auto state_root = std::filesystem::temp_directory_path() /
+            "llama-agent-flydelta-model-state-smoke";
+        std::error_code state_cleanup_error;
+        std::filesystem::remove_all(state_root, state_cleanup_error);
+        common_flydelta_experiment_worker_report initial_state_report;
+        if (!common_flydelta_experiment_queue_enqueue(
+                state_root, state_job, {}, error) ||
+                !common_flydelta_experiment_worker_run_evaluator_once(
+                    state_root, {}, state_evaluator_config, state_callbacks,
+                    initial_state_report, error) ||
+                initial_state_report.state !=
+                    common_flydelta_experiment_queue_state::succeeded ||
+                initial_state_report.bootstrap_zoom_state_ref.empty()) {
+            std::filesystem::remove_all(state_root, state_cleanup_error);
+            std::cerr << "FlyDelta initial state-aware worker slice failed: " << error << '\n';
+            return 1;
+        }
+        std::cout << "flydelta_stateful_worker_initial state="
+                  << common_flydelta_experiment_queue_state_name(initial_state_report.state)
+                  << " bootstrap_zoom_state_ref=" << initial_state_report.bootstrap_zoom_state_ref
+                  << " search_state_ref=" << initial_state_report.search_state_ref << '\n';
+
+        common_flydelta_experiment_job post_state_job = state_job;
+        post_state_job.id = "flydelta://job/model-repair-state/post-bootstrap";
+        post_state_job.bootstrap_zoom_state_ref = initial_state_report.bootstrap_zoom_state_ref;
+        post_state_job.search_state_ref = post_bootstrap_state_ref;
+        common_flydelta_experiment_worker_report post_state_report;
+        if (!common_flydelta_experiment_queue_enqueue(
+                state_root, post_state_job, {}, error) ||
+                !common_flydelta_experiment_worker_run_evaluator_once(
+                    state_root, {}, state_evaluator_config, state_callbacks,
+                    post_state_report, error) ||
+                post_state_report.state !=
+                    common_flydelta_experiment_queue_state::succeeded ||
+                post_state_report.search_state_ref.empty()) {
+            std::filesystem::remove_all(state_root, state_cleanup_error);
+            std::cerr << "FlyDelta post-Bootstrap state-aware worker slice failed: " << error << '\n';
+            return 1;
+        }
+        std::cout << "flydelta_stateful_worker_post state="
+                  << common_flydelta_experiment_queue_state_name(post_state_report.state)
+                  << " bootstrap_zoom_state_ref=" << post_state_report.bootstrap_zoom_state_ref
+                  << " search_state_ref=" << post_state_report.search_state_ref << '\n';
+        std::filesystem::remove_all(state_root, state_cleanup_error);
+    }
+
     }
 
     common_flydelta_layer_search_selection layer_selection;
