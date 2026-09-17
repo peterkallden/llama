@@ -877,7 +877,7 @@ samples from pretending to be a multidimensional basis.
 | --- | --- | --- | --- |
 | Bootstrap | one compatible sample or effective rank about one | up to 4 region arms plus at most 8 local rank-1 BootstrapZoom arms; no coefficient search | run the smallest model experiment and collect cosine, progress, leakage, shift norm and decision margin; a useful signal may refine alpha/profile locally |
 | Shallow | at least 2 compatible samples and effective rank at least 2 | up to 8 region arms, up to 4 coefficient proposals, top 1 full arm | compare a small rank-2 basis and cheap margin/geometry controls |
-| Deep | at least 6 compatible samples, effective rank at least 2, stable geometry and valid condition bound | up to 32 region arms, up to 16 coefficient proposals, top 3 full arms; TFO-lite allowed | run aggregate WHAT builders and coefficient search |
+| Deep | at least 6 compatible samples, effective rank at least 2, stable geometry and valid condition bound | up to 32 region arms, up to 16 coefficient proposals, top 3 full arms; TFO-lite allowed | build robust aggregate/Deep basis and run Deep controls; coefficient search/TFO-lite only after positive Deep UtilityGate |
 
 The depth result chooses a budget; it does not itself run a model or promote a
 candidate. Bootstrap therefore does perform diagnostics when its small model
