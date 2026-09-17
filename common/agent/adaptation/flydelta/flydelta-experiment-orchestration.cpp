@@ -557,8 +557,15 @@ bool common_flydelta_bootstrap_zoom_state_validate(
             state.selected_scale > 1.0f || !finite(state.best_margin_delta) ||
             !finite(state.best_search_score) || state.extra_model_trials > 10 ||
             state.next_candidate_index > state.extra_model_trials ||
+            state.surface_revision == 0 ||
+            state.parent_surface_revision >= state.surface_revision ||
+            state.search_rank == 0 || state.search_rank > 4 ||
+            !finite(state.evidence_rank) || state.evidence_rank <= 0.0f ||
+            state.evidence_rank > 1024.0f || state.surface_origin.empty() ||
+            state.surface_origin.size() > 128 || state.parent_surface_ref.size() > 512 ||
             state.local_layers.size() > 3 ||
             state.completed_trials.size() > 8 ||
+            state.surface_trials.size() > 8 ||
             (!state.local_layers.empty() &&
                 (!std::is_sorted(state.local_layers.begin(), state.local_layers.end()) ||
                  state.local_layers.front() == 0 ||
@@ -573,6 +580,9 @@ bool common_flydelta_bootstrap_zoom_state_validate(
         return false;
     }
     for (const auto & trial : state.completed_trials) {
+        if (!common_flydelta_bootstrap_zoom_trial_validate(trial, error)) return false;
+    }
+    for (const auto & trial : state.surface_trials) {
         if (!common_flydelta_bootstrap_zoom_trial_validate(trial, error)) return false;
     }
     if (!common_flydelta_bootstrap_zoom_selection_validate(
@@ -778,6 +788,7 @@ bool common_flydelta_advance_experiment_plan(
             // host must keep evidence depth unchanged and later evaluate the
             // resulting rank-two controls before allowing Deep/TFO.
             next.run_orthogonal_search = true;
+            next.run_rank_two_controls_first = true;
             next.run_tfo_lite = false;
             advanced = true;
             break;

@@ -121,8 +121,15 @@ std::string state_to_json(const common_flydelta_bootstrap_zoom_state & state) {
         {"best_search_score", state.best_search_score},
         {"extra_model_trials", state.extra_model_trials},
         {"next_candidate_index", state.next_candidate_index},
+        {"surface_revision", state.surface_revision},
+        {"parent_surface_revision", state.parent_surface_revision},
+        {"search_rank", state.search_rank},
+        {"evidence_rank", state.evidence_rank},
+        {"surface_origin", state.surface_origin},
+        {"parent_surface_ref", state.parent_surface_ref},
         {"local_layers", state.local_layers},
         {"completed_trials", json::array()},
+        {"surface_trials", json::array()},
         {"selection", {
             {"selected", state.selection.selected},
             {"trial_index", state.selection.trial_index},
@@ -131,6 +138,9 @@ std::string state_to_json(const common_flydelta_bootstrap_zoom_state & state) {
     };
     for (const auto & trial : state.completed_trials) {
         value["completed_trials"].push_back(trial_json(trial));
+    }
+    for (const auto & trial : state.surface_trials) {
+        value["surface_trials"].push_back(trial_json(trial));
     }
     return value.dump();
 }
@@ -159,6 +169,12 @@ bool state_from_json(const std::string & text,
         state.best_search_score = value.value("best_search_score", 0.0f);
         state.extra_model_trials = value.value("extra_model_trials", size_t{0});
         state.next_candidate_index = value.value("next_candidate_index", size_t{0});
+        state.surface_revision = value.value("surface_revision", 1U);
+        state.parent_surface_revision = value.value("parent_surface_revision", 0U);
+        state.search_rank = value.value("search_rank", size_t{1});
+        state.evidence_rank = value.value("evidence_rank", 1.0f);
+        state.surface_origin = value.value("surface_origin", "bootstrap_rank1");
+        state.parent_surface_ref = value.value("parent_surface_ref", "");
         state.local_layers = value.value("local_layers", std::vector<uint32_t>{});
         for (const auto & item : value.value("completed_trials", json::array())) {
             common_flydelta_bootstrap_zoom_trial trial;
@@ -167,6 +183,14 @@ bool state_from_json(const std::string & text,
                 return false;
             }
             state.completed_trials.push_back(std::move(trial));
+        }
+        for (const auto & item : value.value("surface_trials", json::array())) {
+            common_flydelta_bootstrap_zoom_trial trial;
+            if (!parse_trial(item, trial)) {
+                error = "BootstrapZoom lifecycle surface trial is invalid";
+                return false;
+            }
+            state.surface_trials.push_back(std::move(trial));
         }
         const auto selection = value.value("selection", json::object());
         state.selection.selected = selection.value("selected", false);

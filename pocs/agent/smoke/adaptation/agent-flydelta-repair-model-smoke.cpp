@@ -31,6 +31,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -43,6 +44,10 @@ struct options {
     // The model-backed smoke exercises the current Whirlpool/worker path by
     // default; the explicit flag remains accepted for compatibility.
     bool region_scan = true;
+    // Test-only escape hatch: exercise the plateau -> orthogonal -> rank-two
+    // surface path with the existing model-backed runner. It never changes
+    // the production worker policy or evidence rank.
+    bool force_plateau_escape = false;
     std::vector<uint32_t> region_layers;
 };
 
@@ -103,6 +108,8 @@ bool parse_args(int argc, char ** argv, options & value) {
             value.n_gpu_layers = std::stoi(count);
         } else if (arg == "--region-scan") {
             value.region_scan = true;
+        } else if (arg == "--force-plateau-escape") {
+            value.force_plateau_escape = true;
         } else if (arg == "--region-layers") {
             const char * layers = next("--region-layers");
             if (!layers || !parse_layer_list(layers, value.region_layers)) {
@@ -203,7 +210,8 @@ int main(int argc, char ** argv) {
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N]"
-                  << " [--region-scan] [--region-layers L1,L2,...]\n";
+                  << " [--region-scan] [--region-layers L1,L2,...]"
+                  << " [--force-plateau-escape]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -977,7 +985,8 @@ int main(int argc, char ** argv) {
         // representation to L25 and therefore does not accidentally become a
         // different WHAT candidate.
         if (utility_decision.action ==
-                common_flydelta_utility_gate_action::refine_bootstrap) {
+                common_flydelta_utility_gate_action::refine_bootstrap ||
+                value.force_plateau_escape) {
             common_flydelta_bootstrap_zoom_config zoom_config;
             std::vector<common_flydelta_bootstrap_zoom_candidate> alpha_candidates;
             if (!common_flydelta_propose_bootstrap_alpha_zoom(
@@ -1269,6 +1278,431 @@ int main(int argc, char ** argv) {
                   << (plateau_plan.run_orthogonal_search ? "yes" : "no")
                   << " evidence_rank=" << evidence_depth.effective_rank << '\n';
 
+        // An orthogonal escape is a new experimental search surface, not an
+        // evidence-depth transition. The explicit smoke flag exists only to
+        // exercise this path with the single natural repair sample; normal
+        // orchestration enters it only when the plateau gate says so.
+        const bool run_orthogonal_surface = plateau_plan.run_orthogonal_search ||
+            value.force_plateau_escape;
+        std::vector<common_flydelta_bootstrap_zoom_trial> surface_trials;
+        common_flydelta_orthogonal_search_result orthogonal_surface;
+        common_flydelta_bootstrap_zoom_state surface_state;
+        if (run_orthogonal_surface && !zoom_trials.empty()) {
+            std::vector<uint32_t> surface_layers;
+            for (const auto & trial : zoom_trials) {
+                for (const uint32_t layer : trial.candidate.layer_indices) {
+                    if (std::find(surface_layers.begin(), surface_layers.end(), layer) ==
+                            surface_layers.end()) surface_layers.push_back(layer);
+                }
+            }
+            std::sort(surface_layers.begin(), surface_layers.end());
+            if (surface_layers.size() > 3) surface_layers.resize(3);
+            if (surface_layers.empty()) {
+                surface_layers = continuation.region.layer_indices;
+                if (surface_layers.size() > 3) surface_layers.resize(3);
+            }
+
+            const auto flatten_profile = [&](const common_flydelta_bootstrap_zoom_candidate & candidate) {
+                std::vector<float> profile(surface_layers.size(), 0.0f);
+                for (size_t index = 0; index < candidate.layer_indices.size(); ++index) {
+                    const auto it = std::find(surface_layers.begin(), surface_layers.end(),
+                        candidate.layer_indices[index]);
+                    if (it != surface_layers.end()) {
+                        profile[static_cast<size_t>(it - surface_layers.begin())] =
+                            candidate.layer_weights[index];
+                    }
+                }
+                return profile;
+            };
+            const auto & rank1_trial = zoom_selection.selected
+                ? zoom_trials[zoom_selection.trial_index] : zoom_trials.front();
+            const std::vector<float> rank1_profile = flatten_profile(rank1_trial.candidate);
+            std::vector<common_flydelta_orthogonal_search_arm> orthogonal_arms;
+            for (const auto & trial : zoom_trials) {
+                common_flydelta_orthogonal_search_arm arm;
+                arm.intervention = flatten_profile(trial.candidate);
+                arm.decision_margin_delta = trial.margin_delta;
+                arm.safe_to_continue = trial.host_verified &&
+                    trial.outcome != common_flydelta_counterfactual_outcome::harmed;
+                arm.outcome = trial.outcome;
+                orthogonal_arms.push_back(std::move(arm));
+            }
+            common_flydelta_orthogonal_search_config orthogonal_config;
+            if (!common_flydelta_build_orthogonal_search_direction(
+                    orthogonal_config, rank1_profile, orthogonal_arms,
+                    orthogonal_surface, error)) {
+                std::cerr << "FlyDelta orthogonal surface construction failed: " << error << '\n';
+                return 1;
+            }
+            std::cout << "flydelta_orthogonal_surface available="
+                      << (orthogonal_surface.available ? "yes" : "no")
+                      << " experimental_only="
+                      << (orthogonal_surface.experimental_only ? "yes" : "no")
+                      << " source_arms=" << orthogonal_surface.source_arm_count
+                      << " residual_norm=" << orthogonal_surface.residual_norm
+                      << " fit_quality=" << orthogonal_surface.fit_quality
+                      << " evidence_rank=" << evidence_depth.effective_rank << '\n';
+
+            if (orthogonal_surface.available) {
+                const auto normalize_profile = [](std::vector<float> profile) {
+                    float energy = 0.0f;
+                    for (const float value : profile) energy += value * value;
+                    const float scale = std::sqrt(energy);
+                    if (scale > 0.000001f) for (float & value : profile) value /= scale;
+                    return profile;
+                };
+                const auto make_surface_candidate = [&](const std::vector<float> & profile,
+                        bool opposite_sign) {
+                    common_flydelta_bootstrap_zoom_candidate candidate;
+                    candidate.phase = opposite_sign
+                        ? common_flydelta_bootstrap_zoom_phase::sign_control
+                        : common_flydelta_bootstrap_zoom_phase::profile_zoom;
+                    candidate.total_scale = std::max(0.0001f,
+                        zoom_trials[zoom_selection.trial_index].candidate.total_scale);
+                    candidate.opposite_sign_control = opposite_sign;
+                    for (size_t index = 0; index < profile.size(); ++index) {
+                        if (std::fabs(profile[index]) <= 0.000001f) continue;
+                        candidate.layer_indices.push_back(surface_layers[index]);
+                        candidate.layer_weights.push_back(profile[index]);
+                    }
+                    candidate.layer_weights = normalize_profile(candidate.layer_weights);
+                    return candidate;
+                };
+                const auto run_surface_candidate =
+                    [&](const common_flydelta_bootstrap_zoom_candidate & candidate,
+                        common_flydelta_counterfactual_trial & counterfactual,
+                        common_flydelta_decision_margin & margin,
+                        common_flydelta_representation_diagnostics & diagnostics,
+                        bool & diagnostics_available) {
+                    common_flydelta_gate_request gate_request;
+                    if (!common_flydelta_gate_request_from_context(
+                            recognition, code, true,
+                            common_flydelta_candidate_status::approved, true,
+                            candidate.total_scale, gate_request, error)) return false;
+                    common_flydelta_activation_request request;
+                    request.candidate_id = "flydelta://candidate/model-repair-orthogonal-surface";
+                    request.artifact_id = "flydelta://artifact/model-repair-e2e";
+                    request.model_profile_fingerprint = profile;
+                    request.capture_layout_revision = "layer-input:v1";
+                    request.model_n_embd = model_n_embd;
+                    request.model_n_layers = model_n_layers;
+                    request.il_end = static_cast<int32_t>(model_n_layers - 1);
+                    for (size_t index = 0; index < candidate.layer_indices.size(); ++index) {
+                        const auto direction = std::find_if(basis.directions().begin(),
+                            basis.directions().end(), [&](const auto & value) {
+                                return value.layer_index == static_cast<int32_t>(
+                                    candidate.layer_indices[index]);
+                            });
+                        if (direction == basis.directions().end()) {
+                            error = "FlyDelta orthogonal surface has no layer-compatible direction";
+                            return false;
+                        }
+                        request.directions.push_back(*direction);
+                        request.coefficients.push_back(candidate.layer_weights[index]);
+                    }
+                    request.gate_request = gate_request;
+                    common_flydelta_gate_config gate_config;
+                    gate_config.enabled = true;
+                    gate_config.max_scale = 1.0f;
+                    common_flydelta_activation_result activation;
+                    if (!common_flydelta_prepare_activation(
+                            gate_config, request, 64U * 1024U * 1024U, activation, error)) return false;
+                    const auto activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                        std::move(activation));
+                    common_agent_generation_result generated;
+                    const bool executed = generate(*inference, value, failed_instruction,
+                        generated, activation_ptr, capture_request);
+                    counterfactual = {};
+                    counterfactual.executed = executed;
+                    counterfactual.verifier_known = executed;
+                    counterfactual.passed = executed && contains_tool(generated, "data.inspect");
+                    counterfactual.quality = counterfactual.passed ? 1.0f : 0.0f;
+                    counterfactual.overlay_applied = true;
+                    counterfactual.intervention_count = candidate.layer_indices.size();
+                    counterfactual.evidence_ref = "evidence:model-repair-orthogonal-surface";
+                    const auto scoring_request = make_request(value, failed_instruction);
+                    if (!score_chat_choice_margin(
+                            loaded->model, loaded->chat_templates.get(), scoring_request.messages,
+                            scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
+                            "{\"name\":\"", "data.inspect", "data.describe", margin,
+                            nullptr, scoring_request.json_schema, {}, {}, activation_ptr->overlay, &error)) {
+                        return false;
+                    }
+                    diagnostics = {};
+                    diagnostics_available = false;
+                    if (generated.flydelta_capture && region_baseline_capture) {
+                        const uint32_t measured_after = *std::max_element(
+                            candidate.layer_indices.begin(), candidate.layer_indices.end());
+                        const auto measurement = std::find_if(deltas.begin(), deltas.end(),
+                            [&](const auto & delta) { return delta.layer_index >
+                                static_cast<int>(measured_after); });
+                        if (measurement != deltas.end()) {
+                            if (!common_flydelta_representation_diagnostics_from_captures(
+                                    *region_baseline_capture, *generated.flydelta_capture,
+                                    *measurement, 64U * 1024U * 1024U, diagnostics, error)) return false;
+                            diagnostics_available = true;
+                        }
+                    }
+                    std::cout << "flydelta_rank2_control_model_output layers=";
+                    for (size_t index = 0; index < candidate.layer_indices.size(); ++index) {
+                        if (index != 0) std::cout << ',';
+                        std::cout << candidate.layer_indices[index] << ':' <<
+                            candidate.layer_weights[index];
+                    }
+                    std::cout << " output=" << output_preview(generated) << '\n';
+                    if (!executed && !generated.error_message.empty()) error = generated.error_message;
+                    return executed;
+                };
+                const std::vector<std::pair<const char *, std::vector<float>>> controls = {
+                    {"rank1", {1.0f, 0.0f}}, {"orthogonal", {0.0f, 1.0f}},
+                    {"sum", {0.70710678f, 0.70710678f}},
+                    {"difference", {0.70710678f, -0.70710678f}},
+                };
+                for (const auto & control : controls) {
+                    std::vector<float> profile_mix(rank1_profile.size(), 0.0f);
+                    for (size_t index = 0; index < profile_mix.size(); ++index) {
+                        profile_mix[index] = control.second[0] * rank1_profile[index] +
+                            control.second[1] * orthogonal_surface.direction[index];
+                    }
+                    const bool opposite = std::string(control.first) == "difference";
+                    auto candidate = make_surface_candidate(profile_mix, opposite);
+                    std::string candidate_error;
+                    if (!common_flydelta_bootstrap_zoom_candidate_validate(candidate, candidate_error)) {
+                        std::cerr << "FlyDelta rank2 control skipped label=" << control.first
+                                  << " reason=" << candidate_error << '\n';
+                        continue;
+                    }
+                    common_flydelta_counterfactual_trial counterfactual;
+                    common_flydelta_decision_margin margin;
+                    common_flydelta_representation_diagnostics diagnostics;
+                    bool diagnostics_available = false;
+                    if (!run_surface_candidate(candidate, counterfactual, margin,
+                            diagnostics, diagnostics_available)) {
+                        std::cerr << "FlyDelta rank2 control failed label=" << control.first
+                                  << ": " << error << '\n';
+                        return 1;
+                    }
+                    common_flydelta_bootstrap_zoom_trial trial;
+                    trial.candidate = std::move(candidate);
+                    trial.outcome = counterfactual.passed
+                        ? common_flydelta_counterfactual_outcome::helped
+                        : common_flydelta_counterfactual_outcome::unknown;
+                    trial.host_verified = true;
+                    trial.margin_available = margin.available && region_baseline_margin.available;
+                    trial.margin_delta = trial.margin_available
+                        ? margin.normalized_delta() - region_baseline_margin.normalized_delta() : 0.0f;
+                    trial.diagnostics_available = diagnostics_available;
+                    if (diagnostics_available) trial.diagnostics = diagnostics;
+                    surface_trials.push_back(std::move(trial));
+                    std::cout << "flydelta_rank2_control label=" << control.first
+                              << " outcome=" << common_flydelta_counterfactual_outcome_name(
+                                  surface_trials.back().outcome);
+                    print_margin("margin", margin, &region_baseline_margin);
+                    std::cout << " margin_delta=" << surface_trials.back().margin_delta << '\n';
+                }
+                common_flydelta_subspace_utility_observation best_surface_utility;
+                for (const auto & trial : surface_trials) {
+                    if (!trial.margin_available) continue;
+                    if (!best_surface_utility.decision_margin_available ||
+                            trial.margin_delta > best_surface_utility.decision_margin_delta) {
+                        best_surface_utility.safe_to_continue = trial.host_verified &&
+                            trial.outcome != common_flydelta_counterfactual_outcome::harmed;
+                        best_surface_utility.decision_margin_available = true;
+                        best_surface_utility.decision_margin_delta = trial.margin_delta;
+                        best_surface_utility.geometry_available = trial.diagnostics_available;
+                        if (trial.diagnostics_available) best_surface_utility.geometry = trial.diagnostics;
+                    }
+                }
+                common_flydelta_utility_gate_decision surface_utility_decision;
+                if (!surface_trials.empty() &&
+                        !common_flydelta_decide_subspace_utility(
+                            utility_config, evidence_depth.depth,
+                            common_flydelta_experiment_phase::bootstrap,
+                            {best_surface_utility}, {}, surface_utility_decision, error)) {
+                    std::cerr << "FlyDelta rank2 surface utility decision failed: " << error << '\n';
+                    return 1;
+                }
+                std::cout << "flydelta_rank2_surface_gate controls=" << surface_trials.size()
+                          << " action=" << common_flydelta_utility_gate_action_name(
+                              surface_utility_decision.action)
+                          << " utility_qualified=" <<
+                              (surface_utility_decision.utility_qualified ? "yes" : "no")
+                          << " evidence_rank=" << evidence_depth.effective_rank << '\n';
+
+                // Persist the new surface even when it remains UNKNOWN. This
+                // is the resume point for later samples; it is not a learned
+                // sideband and cannot promote itself.
+                surface_state = {};
+                surface_state.behavior_key = evidence.behavior_key;
+                surface_state.model_profile_fingerprint = profile;
+                surface_state.capture_layout_revision = "layer-input:v1";
+                surface_state.phase = common_flydelta_bootstrap_zoom_phase::profile_zoom;
+                surface_state.anchor_layer = continuation.region.anchor_layer_index;
+                surface_state.selected_scale = rank1_trial.candidate.total_scale;
+                surface_state.best_margin_delta = plateau_result.best_margin_delta;
+                surface_state.best_search_score = continuation.search_score;
+                surface_state.extra_model_trials = zoom_trials.size();
+                surface_state.next_candidate_index = zoom_trials.size();
+                surface_state.surface_revision = 2;
+                surface_state.parent_surface_revision = 1;
+                surface_state.search_rank = 2;
+                surface_state.evidence_rank = evidence_depth.effective_rank;
+                surface_state.surface_origin = "orthogonal_search";
+                surface_state.parent_surface_ref = "flydelta://state/model-repair/bootstrap-zoom";
+                surface_state.local_layers = surface_layers;
+                surface_state.completed_trials = zoom_trials;
+                surface_state.surface_trials = surface_trials;
+                surface_state.selection = zoom_selection;
+                if (!common_flydelta_bootstrap_zoom_state_validate(surface_state, error)) {
+                    std::cerr << "FlyDelta orthogonal surface state invalid: " << error << '\n';
+                    return 1;
+                }
+                std::cout << "flydelta_surface_state revision=" << surface_state.surface_revision
+                          << " parent_revision=" << surface_state.parent_surface_revision
+                          << " search_rank=" << surface_state.search_rank
+                          << " evidence_rank=" << surface_state.evidence_rank
+                          << " origin=" << surface_state.surface_origin
+                          << " controls=" << surface_state.surface_trials.size() << '\n';
+
+                // A useful rank-two surface earns a small local WHERE
+                // recenter, still with fresh contexts and the same model
+                // runner. The probe is intentionally singleton: the stored
+                // rank-two profile supplies the per-layer coefficient while
+                // Whirlpool moves only the layer anchor.
+                if (surface_utility_decision.utility_qualified) {
+                    common_flydelta_whirlpool_search_config recenter_config;
+                    recenter_config.available_layers = surface_layers;
+                    recenter_config.seed_layers = {continuation.region.anchor_layer_index};
+                    recenter_config.total_scale = rank1_trial.candidate.total_scale;
+                    recenter_config.max_rounds = 1;
+                    recenter_config.probes_per_round = std::min<size_t>(3, surface_layers.size());
+                    recenter_config.max_trials = recenter_config.probes_per_round;
+                    recenter_config.initial_radius = 1;
+                    recenter_config.shrink_factor = 0.5f;
+                    for (const auto & region_trial : region_trials) {
+                        if (!region_trial.geometry_available) continue;
+                        if (std::find(surface_layers.begin(), surface_layers.end(),
+                                region_trial.candidate.anchor_layer_index) == surface_layers.end()) continue;
+                        recenter_config.layer_diagnostics.push_back({
+                            region_trial.candidate.anchor_layer_index,
+                            region_trial.geometry.cosine,
+                            region_trial.geometry.progress,
+                            region_trial.geometry.leakage,
+                            region_trial.geometry.shift_norm});
+                    }
+                    const auto run_recenter_probe =
+                        [&](const common_flydelta_experiment_fixture &,
+                            const common_flydelta_intervention_region_candidate * candidate,
+                            common_flydelta_counterfactual_trial & counterfactual,
+                            common_flydelta_decision_margin & margin,
+                            common_flydelta_representation_diagnostics & diagnostics,
+                            bool & diagnostics_available, std::string & runner_error) {
+                        std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
+                        if (candidate != nullptr) {
+                            const auto layer_it = std::find(surface_layers.begin(), surface_layers.end(),
+                                candidate->anchor_layer_index);
+                            if (layer_it == surface_layers.end()) {
+                                runner_error = "Whirlpool recenter probe is outside the new surface";
+                                return false;
+                            }
+                            const size_t layer_offset = static_cast<size_t>(
+                                layer_it - surface_layers.begin());
+                            float surface_weight = rank1_profile[layer_offset] +
+                                0.5f * orthogonal_surface.direction[layer_offset];
+                            if (std::fabs(surface_weight) <= 0.000001f) surface_weight = 1.0f;
+                            const auto direction = std::find_if(basis.directions().begin(),
+                                basis.directions().end(), [&](const auto & value) {
+                                    return value.layer_index == static_cast<int32_t>(
+                                        candidate->anchor_layer_index);
+                                });
+                            if (direction == basis.directions().end()) {
+                                runner_error = "Whirlpool recenter has no layer-compatible direction";
+                                return false;
+                            }
+                            common_flydelta_gate_request gate_request;
+                            if (!common_flydelta_gate_request_from_context(
+                                    recognition, code, true,
+                                    common_flydelta_candidate_status::approved, true,
+                                    candidate->per_layer_scale, gate_request, runner_error)) return false;
+                            common_flydelta_activation_request request;
+                            request.candidate_id = "flydelta://candidate/model-repair-surface-recenter";
+                            request.artifact_id = "flydelta://artifact/model-repair-e2e";
+                            request.model_profile_fingerprint = profile;
+                            request.capture_layout_revision = "layer-input:v1";
+                            request.model_n_embd = model_n_embd;
+                            request.model_n_layers = model_n_layers;
+                            request.il_end = static_cast<int32_t>(model_n_layers - 1);
+                            request.directions.push_back(*direction);
+                            request.coefficients.push_back(surface_weight);
+                            request.gate_request = gate_request;
+                            common_flydelta_gate_config gate_config;
+                            gate_config.enabled = true;
+                            gate_config.max_scale = 1.0f;
+                            common_flydelta_activation_result activation;
+                            if (!common_flydelta_prepare_activation(
+                                    gate_config, request, 64U * 1024U * 1024U,
+                                    activation, runner_error)) return false;
+                            activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                                std::move(activation));
+                        }
+                        common_agent_generation_result generated;
+                        const bool executed = generate(*inference, value, failed_instruction,
+                            generated, activation_ptr, capture_request);
+                        counterfactual = {};
+                        counterfactual.executed = executed;
+                        counterfactual.verifier_known = executed;
+                        counterfactual.passed = executed && contains_tool(generated, "data.inspect");
+                        counterfactual.quality = counterfactual.passed ? 1.0f : 0.0f;
+                        counterfactual.overlay_applied = candidate != nullptr;
+                        counterfactual.intervention_count = candidate != nullptr ? 1 : 0;
+                        counterfactual.evidence_ref = candidate != nullptr
+                            ? "evidence:model-repair-surface-recenter"
+                            : "evidence:model-repair-surface-recenter-baseline";
+                        const auto scoring_request = make_request(value, failed_instruction);
+                        if (!score_chat_choice_margin(
+                                loaded->model, loaded->chat_templates.get(), scoring_request.messages,
+                                scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
+                                "{\"name\":\"", "data.inspect", "data.describe", margin,
+                                nullptr, scoring_request.json_schema, {}, {},
+                                activation_ptr ? activation_ptr->overlay : common_flydelta_static_overlay{},
+                                &runner_error)) return false;
+                        diagnostics = {};
+                        diagnostics_available = false;
+                        if (candidate != nullptr && generated.flydelta_capture && region_baseline_capture) {
+                            const auto measurement = std::find_if(deltas.begin(), deltas.end(),
+                                [&](const auto & delta) { return delta.layer_index > static_cast<int>(
+                                    candidate->anchor_layer_index); });
+                            if (measurement != deltas.end()) {
+                                if (!common_flydelta_representation_diagnostics_from_captures(
+                                        *region_baseline_capture, *generated.flydelta_capture, *measurement,
+                                        64U * 1024U * 1024U, diagnostics, runner_error)) return false;
+                                diagnostics_available = true;
+                            }
+                        }
+                        if (!executed && !generated.error_message.empty()) runner_error = generated.error_message;
+                        return executed;
+                    };
+                    std::vector<common_flydelta_intervention_region_trial> recenter_trials;
+                    common_flydelta_intervention_region_selection recenter_selection;
+                    common_flydelta_whirlpool_trace recenter_trace;
+                    if (!common_flydelta_run_whirlpool_search(
+                            experiment_fixture, recenter_config, run_recenter_probe,
+                            recenter_trials, recenter_selection, recenter_trace, error)) {
+                        std::cerr << "FlyDelta surface Whirlpool recenter failed: " << error << '\n';
+                        return 1;
+                    }
+                    std::cout << "flydelta_surface_recenter trials=" << recenter_trials.size()
+                              << " model_calls=" << recenter_trace.model_evaluations
+                              << " final_centre=" << recenter_trace.final_centre
+                              << " final_radius=" << recenter_trace.final_radius
+                              << " best_trial=" << recenter_trace.best_trial_index
+                              << " best_search_score=" << recenter_trace.best_search_score
+                              << " selected_helped=" << (recenter_selection.selected ? "yes" : "no")
+                              << " surface_revision=" << surface_state.surface_revision << '\n';
+                }
+            }
+        }
+
     // Exercise the actual evaluator/worker handoff. The first queue slice
     // owns the model-backed Bootstrap/BootstrapZoom result and persists typed
     // zoom state. The second slice carries a separate opaque post-Bootstrap
@@ -1323,6 +1757,16 @@ int main(int argc, char ** argv) {
             next_state.local_layers = {continuation.region.anchor_layer_index};
             next_state.completed_trials = zoom_trials;
             next_state.selection = zoom_selection;
+            if (surface_state.surface_revision > 1) {
+                next_state.surface_revision = surface_state.surface_revision;
+                next_state.parent_surface_revision = surface_state.parent_surface_revision;
+                next_state.search_rank = surface_state.search_rank;
+                next_state.evidence_rank = surface_state.evidence_rank;
+                next_state.surface_origin = surface_state.surface_origin;
+                next_state.parent_surface_ref = surface_state.parent_surface_ref;
+                next_state.local_layers = surface_state.local_layers;
+                next_state.surface_trials = surface_state.surface_trials;
+            }
             return true;
         };
         state_callbacks.persist_bootstrap_zoom_state = [&](const auto & state,

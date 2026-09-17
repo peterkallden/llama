@@ -129,7 +129,7 @@ int main() {
         bootstrap_plan, orthogonal_decision, orthogonal_plan, advanced, error));
     CHECK(advanced && orthogonal_plan.run_orthogonal_search &&
         orthogonal_plan.phase == common_flydelta_experiment_phase::bootstrap &&
-        !orthogonal_plan.run_tfo_lite);
+        orthogonal_plan.run_rank_two_controls_first && !orthogonal_plan.run_tfo_lite);
 
     // Capacity may be Deep, but the execution path remains ordered:
     // Bootstrap/Whirlpool -> Shallow controls -> Deep controls -> TFO-lite.
@@ -199,5 +199,29 @@ int main() {
         zoom_trials, zoom_selection, error));
     CHECK(zoom_selection.selected && zoom_selection.trial_index == 1 &&
         zoom_selection.search_score == 0.2f);
+
+    common_flydelta_bootstrap_zoom_state surface_state;
+    surface_state.behavior_key = "tool_choice/data_query";
+    surface_state.model_profile_fingerprint = "model:test";
+    surface_state.capture_layout_revision = "layer-input:v1";
+    surface_state.phase = common_flydelta_bootstrap_zoom_phase::profile_zoom;
+    surface_state.anchor_layer = 24;
+    surface_state.selected_scale = 0.1f;
+    surface_state.best_margin_delta = 0.2f;
+    surface_state.best_search_score = 0.2f;
+    surface_state.extra_model_trials = 1;
+    surface_state.next_candidate_index = 1;
+    surface_state.surface_revision = 2;
+    surface_state.parent_surface_revision = 1;
+    surface_state.search_rank = 2;
+    surface_state.evidence_rank = 1.0f;
+    surface_state.surface_origin = "orthogonal_search";
+    surface_state.local_layers = {23, 24, 25};
+    surface_state.completed_trials = {first_trial};
+    surface_state.selection = {true, 0, 0.1f};
+    surface_state.surface_trials = {best_trial};
+    CHECK(common_flydelta_bootstrap_zoom_state_validate(surface_state, error));
+    surface_state.parent_surface_revision = surface_state.surface_revision;
+    CHECK(!common_flydelta_bootstrap_zoom_state_validate(surface_state, error));
     return 0;
 }

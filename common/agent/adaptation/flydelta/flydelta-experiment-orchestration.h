@@ -287,10 +287,23 @@ struct common_flydelta_bootstrap_zoom_state {
     float best_search_score = 0.0f;
     size_t extra_model_trials = 0;
     size_t next_candidate_index = 0;
+    // Search-surface lineage is not evidence or promotion state. It lets a
+    // worker resume an orthogonal/search-derived surface without inflating
+    // host-certified evidence rank.
+    uint32_t surface_revision = 1;
+    uint32_t parent_surface_revision = 0;
+    size_t search_rank = 1;
+    float evidence_rank = 1.0f;
+    std::string surface_origin = "bootstrap_rank1";
+    std::string parent_surface_ref;
     std::vector<uint32_t> local_layers;
     // The best safe experimental arm so far. This is persisted with resume
     // state so a later worker slice can retain/refine the same candidate.
     std::vector<common_flydelta_bootstrap_zoom_trial> completed_trials;
+    // Rank-two controls are kept separately from rank-one BootstrapZoom
+    // trials. They describe the next experimental surface and never become
+    // learning evidence by being present here.
+    std::vector<common_flydelta_bootstrap_zoom_trial> surface_trials;
     common_flydelta_bootstrap_zoom_selection selection;
 };
 

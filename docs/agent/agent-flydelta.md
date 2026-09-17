@@ -685,6 +685,15 @@ DeltaMemory learning credit nor promotion. Collection preserves the reference wh
 the scheduling decision to enqueue that follow-up job—there is deliberately
 no hidden worker-local state store or autonomous daemon loop.
 
+An orthogonal escape creates a new experimental search surface, not a new
+evidence set. Persisted state records `surface_revision`, its parent
+revision/reference, `search_rank`, `evidence_rank`, the surface origin and
+bounded rank-two control trials. This makes the surface resumable and
+comparable across worker slices without allowing a search-derived residual to
+pretend that host-certified evidence became rank two. A useful surface may be
+re-centered locally by Whirlpool, but it remains experimental until the normal
+host-verifier and lifecycle gates classify it.
+
 #### Incremental aggregation and search depth
 
 Search sophistication follows both evidence depth and observed subspace
@@ -751,6 +760,23 @@ the remaining worker scheduling gap can be filled without changing host
 authority or lifecycle rules. The host must advance only one plan transition
 at a time, so it cannot invoke TFO directly from a Whirlpool result or skip
 the rank-two control stencil.
+
+The ordered transition at a rank-one plateau is:
+
+```text
+Bootstrap / BootstrapZoom
+  -> plateau UtilityGate
+  -> orthogonal search (experimental search_rank = 2)
+  -> rank-two controls [1,0], [0,1], [1,1]/sqrt(2), [1,-1]/sqrt(2)
+  -> UtilityGate
+  -> optional local Whirlpool recenter on the new surface
+  -> Deep/TFO only when evidence capacity and utility both allow it
+```
+
+The recenter is a WHERE operation on the new surface; it does not replace the
+rank-two controls and does not itself grant learning credit. If no useful
+surface utility is observed, the state is retained for later compatible
+samples instead of spending a deeper search budget.
 
 The worker now carries an explicit reference-only continuation between the
 adaptive `WHERE` phase and evidence-driven `WHAT` work. Whirlpool may retain
