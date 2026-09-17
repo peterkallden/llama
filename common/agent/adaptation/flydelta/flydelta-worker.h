@@ -16,8 +16,67 @@
 struct common_flydelta_evaluator_config;
 struct common_flydelta_evaluator_callbacks;
 
+// Bounded, machine-readable diagnostics for one FlyDelta worker slice. This
+// is search history, not learning or promotion state. It deliberately keeps
+// references and scalar measurements, never prompts, tool output or tensors.
+struct common_flydelta_trace_arm {
+    std::string phase;
+    std::string arm_id;
+    std::vector<uint32_t> layer_indices;
+    float scale = 0.0f;
+    std::vector<float> coefficients;
+    bool margin_available = false;
+    float margin_total = 0.0f;
+    float margin_normalized = 0.0f;
+    float margin_delta_total = 0.0f;
+    float margin_delta_normalized = 0.0f;
+    bool geometry_available = false;
+    float cosine = 0.0f;
+    float progress = 0.0f;
+    float leakage = 0.0f;
+    float shift_norm = 0.0f;
+    float search_score = 0.0f;
+    bool promising = false;
+    bool safe_to_continue = false;
+    bool host_evaluated = false;
+    bool verifier_known = false;
+    bool candidate_passed = false;
+    bool has_baseline = false;
+    bool baseline_executed = false;
+    bool baseline_verifier_known = false;
+    bool baseline_passed = false;
+    common_flydelta_counterfactual_outcome host_outcome =
+        common_flydelta_counterfactual_outcome::unknown;
+    std::string evidence_ref;
+};
+
+struct common_flydelta_trace {
+    int schema_version = 1;
+    std::string job_id;
+    std::string phase;
+    std::string behavior_key;
+    std::string fixture_baseline_ref;
+    std::string surface_parent_best_ref;
+    size_t evidence_rank = 0;
+    size_t search_rank = 0;
+    size_t model_evaluations = 0;
+    size_t region_budget = 0;
+    size_t coefficient_budget = 0;
+    bool tfo_lite_allowed = false;
+    bool has_next_action = false;
+    common_flydelta_next_action next_action = common_flydelta_next_action::retain;
+    std::string next_action_reason;
+    std::vector<common_flydelta_trace_arm> arms;
+    std::vector<common_flydelta_whirlpool_trace> whirlpool;
+};
+
+bool common_flydelta_trace_validate(
+        const common_flydelta_trace & trace, std::string & error);
+std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace);
+
 struct common_flydelta_experiment_worker_result {
     std::string safe_summary;
+    common_flydelta_trace trace;
     std::vector<common_flydelta_capture_manifest> capture_manifests;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
     std::vector<common_flydelta_direction_candidate> direction_candidates;
@@ -47,6 +106,8 @@ struct common_flydelta_experiment_worker_report {
     common_flydelta_experiment_queue_state state = common_flydelta_experiment_queue_state::pending;
     std::string job_id;
     std::string safe_summary;
+    common_flydelta_trace trace;
+    std::string trace_json;
     size_t report_count = 0;
     std::vector<common_flydelta_capture_manifest> capture_manifests;
     common_flydelta_evidence_depth_result evidence_depth;

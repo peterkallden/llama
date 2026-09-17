@@ -2,8 +2,160 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
 #include <algorithm>
+#include <cmath>
+
+#include <nlohmann/json.hpp>
 
 namespace {
+
+using json = nlohmann::ordered_json;
+
+bool finite(const float value) {
+    return std::isfinite(value);
+}
+
+const char * phase_name(const common_flydelta_experiment_job_kind kind) {
+    switch (kind) {
+        case common_flydelta_experiment_job_kind::counterfactual: return "counterfactual";
+        case common_flydelta_experiment_job_kind::direction: return "direction";
+        case common_flydelta_experiment_job_kind::basis: return "basis";
+        case common_flydelta_experiment_job_kind::delta_memory: return "delta_memory";
+        case common_flydelta_experiment_job_kind::search_pipeline: return "search_pipeline";
+        case common_flydelta_experiment_job_kind::donor_capture: return "donor_capture";
+    }
+    return "unknown";
+}
+
+void copy_geometry(const common_flydelta_representation_diagnostics & source,
+        common_flydelta_trace_arm & target) {
+    target.geometry_available = true;
+    target.cosine = source.cosine;
+    target.progress = source.progress;
+    target.leakage = source.leakage;
+    target.shift_norm = source.shift_norm;
+}
+
+void copy_margin(const common_flydelta_margin_comparison & source,
+        common_flydelta_trace_arm & target) {
+    if (!source.available) return;
+    target.margin_available = true;
+    target.margin_total = source.candidate.total_delta();
+    target.margin_normalized = source.candidate.normalized_delta();
+    target.margin_delta_total = source.total_delta();
+    target.margin_delta_normalized = source.normalized_delta();
+}
+
+void append_region_arm(const common_flydelta_intervention_region_trial & trial,
+        const size_t direction_index, const size_t trial_index,
+        common_flydelta_trace & trace) {
+    common_flydelta_trace_arm arm;
+    arm.phase = "region";
+    arm.arm_id = "region:" + std::to_string(direction_index) + ":" +
+        std::to_string(trial_index);
+    arm.layer_indices = trial.candidate.layer_indices;
+    arm.scale = trial.candidate.total_scale;
+    copy_margin(trial.margin_comparison, arm);
+    if (!arm.margin_available && trial.margin.available) {
+        arm.margin_available = true;
+        arm.margin_total = trial.margin.total_delta();
+        arm.margin_normalized = trial.margin.normalized_delta();
+    }
+    if (trial.geometry_available) copy_geometry(trial.geometry, arm);
+    arm.search_score = trial.search_score;
+    arm.promising = trial.promising;
+    arm.safe_to_continue = trial.safe_to_continue;
+    arm.host_evaluated = trial.executed;
+    arm.verifier_known = trial.verifier_known;
+    arm.host_outcome = trial.outcome;
+    arm.candidate_passed = trial.outcome == common_flydelta_counterfactual_outcome::helped;
+    arm.evidence_ref = trial.evidence_ref;
+    trace.arms.push_back(std::move(arm));
+}
+
+void append_counterfactual_arm(const common_flydelta_counterfactual_report & report,
+        const common_flydelta_experiment_job & job, common_flydelta_trace & trace) {
+    common_flydelta_trace_arm arm;
+    arm.phase = phase_name(job.kind);
+    arm.arm_id = report.candidate_id;
+    arm.scale = job.alpha_search.candidates.empty() ? 0.0f :
+        job.alpha_search.candidates.front();
+    arm.host_evaluated = report.candidate.executed;
+    arm.verifier_known = report.candidate.verifier_known;
+    arm.candidate_passed = report.candidate.passed;
+    arm.host_outcome = report.outcome;
+    arm.evidence_ref = report.candidate.evidence_ref;
+    arm.has_baseline = true;
+    arm.baseline_executed = report.baseline.executed;
+    arm.baseline_verifier_known = report.baseline.verifier_known;
+    arm.baseline_passed = report.baseline.passed;
+    trace.arms.push_back(std::move(arm));
+}
+
+void append_derived_trace(const common_flydelta_experiment_job & job,
+        const common_flydelta_experiment_worker_result & result,
+        common_flydelta_trace & trace) {
+    trace.job_id = job.id;
+    trace.phase = phase_name(job.kind);
+    trace.behavior_key = job.seed.behavior_key;
+    trace.fixture_baseline_ref = job.seed.baseline_ref;
+    trace.surface_parent_best_ref = job.seed.candidate_ref;
+    trace.evidence_rank = result.evidence_depth.stable_rank;
+    trace.search_rank = result.basis_directions.size();
+    trace.region_budget = result.search_budget.max_region_trials;
+    trace.coefficient_budget = result.search_budget.max_coefficient_trials;
+    trace.tfo_lite_allowed = result.search_budget.allow_tfo_lite;
+    trace.has_next_action = result.has_next_action;
+    trace.next_action = result.next_action;
+    trace.next_action_reason = result.next_action_reason;
+
+    if (result.counterfactual_reports.size() <= 256) {
+        for (const auto & report : result.counterfactual_reports) {
+            append_counterfactual_arm(report, job, trace);
+        }
+    }
+    size_t direction_index = 0;
+    for (const auto & pipeline : result.search_pipeline_results) {
+        for (const auto & direction : pipeline.directions) {
+            trace.whirlpool.push_back(direction.whirlpool_trace);
+            trace.model_evaluations += direction.whirlpool_trace.model_evaluations;
+            for (size_t trial_index = 0; trial_index < direction.region_trials.size();
+                    ++trial_index) {
+                if (trace.arms.size() >= 256) break;
+                append_region_arm(direction.region_trials[trial_index], direction_index,
+                    trial_index, trace);
+            }
+            ++direction_index;
+        }
+    }
+    if (trace.model_evaluations == 0) trace.model_evaluations = trace.arms.size();
+}
+
+json trace_arm_json(const common_flydelta_trace_arm & arm) {
+    return {
+        {"phase", arm.phase}, {"arm_id", arm.arm_id},
+        {"layer_indices", arm.layer_indices}, {"scale", arm.scale},
+        {"coefficients", arm.coefficients},
+        {"margin_available", arm.margin_available},
+        {"margin_total", arm.margin_total},
+        {"margin_normalized", arm.margin_normalized},
+        {"margin_delta_total", arm.margin_delta_total},
+        {"margin_delta_normalized", arm.margin_delta_normalized},
+        {"geometry_available", arm.geometry_available},
+        {"cosine", arm.cosine}, {"progress", arm.progress},
+        {"leakage", arm.leakage}, {"shift_norm", arm.shift_norm},
+        {"search_score", arm.search_score}, {"promising", arm.promising},
+        {"safe_to_continue", arm.safe_to_continue},
+        {"host_evaluated", arm.host_evaluated},
+        {"verifier_known", arm.verifier_known},
+        {"candidate_passed", arm.candidate_passed},
+        {"has_baseline", arm.has_baseline},
+        {"baseline_executed", arm.baseline_executed},
+        {"baseline_verifier_known", arm.baseline_verifier_known},
+        {"baseline_passed", arm.baseline_passed},
+        {"host_outcome", common_flydelta_counterfactual_outcome_name(arm.host_outcome)},
+        {"evidence_ref", arm.evidence_ref}
+    };
+}
 
 bool validate_result(
         const common_flydelta_claimed_experiment_job & claimed,
@@ -30,6 +182,7 @@ bool validate_result(
         error = "FlyDelta worker next-action reason is invalid";
         return false;
     }
+    if (!common_flydelta_trace_validate(result.trace, error)) return false;
     for (const auto & manifest : result.capture_manifests) {
         if (!common_flydelta_capture_manifest_validate(
                 manifest, 4U * 1024U * 1024U, error)) return false;
@@ -116,6 +269,7 @@ bool common_flydelta_experiment_worker_run_once(
     common_flydelta_experiment_worker_result result;
     std::string callback_error;
     bool succeeded = callback && callback(claimed.job, result, callback_error);
+    if (succeeded) append_derived_trace(claimed.job, result, result.trace);
     if (succeeded && !validate_result(claimed, result, callback_error)) succeeded = false;
 
     const auto state = succeeded
@@ -128,6 +282,8 @@ bool common_flydelta_experiment_worker_run_once(
             queue_root, claimed, state, safe_summary, limits, error)) return false;
     report.state = state;
     report.safe_summary = safe_summary;
+    report.trace = std::move(result.trace);
+    report.trace_json = common_flydelta_trace_to_json(report.trace);
     report.report_count = result.capture_manifests.size() +
         result.counterfactual_reports.size() + result.direction_candidates.size() +
         result.search_pipeline_results.size();
@@ -149,6 +305,79 @@ bool common_flydelta_experiment_worker_run_once(
     report.representation_augmentation_state_ref =
         std::move(result.representation_augmentation_state_ref);
     return true;
+}
+
+bool common_flydelta_trace_validate(
+        const common_flydelta_trace & trace, std::string & error) {
+    error.clear();
+    if (trace.schema_version != 1 || trace.job_id.size() > 512 ||
+            trace.phase.size() > 64 || trace.behavior_key.size() > 256 ||
+            trace.fixture_baseline_ref.size() > 512 ||
+            trace.surface_parent_best_ref.size() > 512 ||
+            trace.next_action_reason.size() > 512 || trace.arms.size() > 256 ||
+            trace.whirlpool.size() > 32) {
+        error = "FlyDelta trace exceeds its bounds";
+        return false;
+    }
+    for (const auto & arm : trace.arms) {
+        if (arm.phase.size() > 64 || arm.arm_id.size() > 512 ||
+                arm.evidence_ref.size() > 512 || arm.layer_indices.size() > 64 ||
+                arm.coefficients.size() > 64 || !finite(arm.scale) ||
+                !finite(arm.margin_total) || !finite(arm.margin_normalized) ||
+                !finite(arm.margin_delta_total) || !finite(arm.margin_delta_normalized) ||
+                !finite(arm.cosine) || !finite(arm.progress) || !finite(arm.leakage) ||
+                !finite(arm.shift_norm) || !finite(arm.search_score)) {
+            error = "FlyDelta trace arm is invalid";
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
+    json arms = json::array();
+    for (const auto & arm : trace.arms) arms.push_back(trace_arm_json(arm));
+    json whirlpool = json::array();
+    for (const auto & value : trace.whirlpool) {
+        json rounds = json::array();
+        for (const auto & round : value.rounds) {
+            rounds.push_back({
+                {"round", round.round}, {"centre_before", round.centre_before},
+                {"radius_before", round.radius_before},
+                {"probed_layers", round.probed_layers},
+                {"best_probe_layer", round.best_probe_layer},
+                {"best_probe_score", round.best_probe_score},
+                {"centre_after", round.centre_after},
+                {"radius_after", round.radius_after}
+            });
+        }
+        whirlpool.push_back({
+            {"schema_version", value.schema_version},
+            {"model_evaluations", value.model_evaluations},
+            {"best_trial_index", value.best_trial_index},
+            {"best_search_score", value.best_search_score},
+            {"final_centre", value.final_centre},
+            {"final_radius", value.final_radius},
+            {"rounds", std::move(rounds)}
+        });
+    }
+    const json payload = {
+        {"kind", "flydelta_trace"}, {"schema_version", trace.schema_version},
+        {"job_id", trace.job_id}, {"phase", trace.phase},
+        {"behavior_key", trace.behavior_key},
+        {"fixture_baseline_ref", trace.fixture_baseline_ref},
+        {"surface_parent_best_ref", trace.surface_parent_best_ref},
+        {"evidence_rank", trace.evidence_rank}, {"search_rank", trace.search_rank},
+        {"model_evaluations", trace.model_evaluations},
+        {"region_budget", trace.region_budget},
+        {"coefficient_budget", trace.coefficient_budget},
+        {"tfo_lite_allowed", trace.tfo_lite_allowed},
+        {"has_next_action", trace.has_next_action},
+        {"next_action", common_flydelta_next_action_name(trace.next_action)},
+        {"next_action_reason", trace.next_action_reason},
+        {"arms", std::move(arms)}, {"whirlpool", std::move(whirlpool)}
+    };
+    return payload.dump();
 }
 
 bool common_flydelta_experiment_worker_run_evaluator_once(

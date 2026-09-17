@@ -679,6 +679,17 @@ budget. The bridge does not resolve paths, create model contexts or make a
 promotion decision; those remain owned by the evaluator callbacks and the
 explicit lifecycle controller.
 
+Each worker result also carries a bounded `common_flydelta_trace` and its
+machine-readable `trace_json` form. The trace is append-only search history,
+not learning state: it records the job and phase, behavior and baseline
+references, evidence/search rank, budgets, `next_action`, every derived arm's
+layer/scale/coefficients, decision-margin values and baseline-relative
+deltas, cosine/progress/leakage/shift-norm geometry, host evaluation status
+and outcome. Search-pipeline slices additionally retain the existing
+Whirlpool round traces (probes, recentering, radius and model-evaluation
+count). The worker bounds this material and never includes prompts, model
+outputs, credentials or activation tensors.
+
 For resumable rank-one BootstrapZoom work, the queue transports only
 `bootstrap_zoom_state_ref`. For later rank-one plateau, orthogonal-search or
 augmentation slices, it transports the separate opaque `search_state_ref`.

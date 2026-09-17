@@ -121,6 +121,14 @@ int main() {
     CHECK(callback_received_expected_job);
     CHECK(worker_report.state == common_flydelta_experiment_queue_state::succeeded);
     CHECK(worker_report.report_count == 1);
+    CHECK(worker_report.trace.schema_version == 1);
+    CHECK(worker_report.trace.phase == "counterfactual");
+    CHECK(worker_report.trace.arms.size() == 1);
+    CHECK(worker_report.trace.arms.front().has_baseline);
+    CHECK(worker_report.trace.arms.front().baseline_passed == false);
+    CHECK(worker_report.trace.arms.front().candidate_passed);
+    CHECK(worker_report.trace_json.find("flydelta_trace") != std::string::npos);
+    CHECK(worker_report.trace_json.find("host_outcome") != std::string::npos);
 
     auto direction_job = job("flydelta://job/worker-direction");
     direction_job.kind = common_flydelta_experiment_job_kind::direction;

@@ -822,6 +822,8 @@ int main(int argc, char ** argv) {
                       << " candidate_passed=" << (report.candidate.passed ? "yes" : "no")
                       << " candidate_overlay_applied=" << (report.candidate.overlay_applied ? "yes" : "no")
                       << '\n';
+            std::cout << "flydelta_trace group=" << entry.first
+                      << " json=" << worker_report.trace_json << '\n';
         }
     }
     host.close();
