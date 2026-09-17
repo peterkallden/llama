@@ -4,6 +4,12 @@
 
 namespace {
 
+bool is_representation_augmentation_state_ref(const std::string & value) {
+    static constexpr const char * prefix =
+        "flydelta://state/representation-augmentation/";
+    return value.rfind(prefix, 0) == 0;
+}
+
 bool valid_reference_count(size_t count, size_t max_references) {
     return count != 0 && count <= max_references;
 }
@@ -150,6 +156,51 @@ bool common_flydelta_evaluate_job(
             return true;
         }
         case common_flydelta_experiment_job_kind::search_pipeline: {
+            const bool has_representation_augmentation_state =
+                is_representation_augmentation_state_ref(job.search_state_ref);
+            if (has_representation_augmentation_state) {
+                if (!callbacks.run_representation_augmentation_with_state ||
+                        !callbacks.resolve_representation_augmentation_state ||
+                        !callbacks.persist_representation_augmentation_state ||
+                        !common_flydelta_representation_augmentation_config_validate(
+                            config.representation_augmentation, error)) {
+                    if (error.empty()) {
+                        error = "FlyDelta augmentation continuation requires typed state callbacks";
+                    }
+                    return false;
+                }
+                common_flydelta_representation_augmentation_state resume_state;
+                if (!callbacks.resolve_representation_augmentation_state(
+                        job.search_state_ref, resume_state, error) ||
+                        !common_flydelta_representation_augmentation_state_validate(
+                            resume_state, config.representation_augmentation, error)) {
+                    if (error.empty()) error = "FlyDelta augmentation resume state is invalid";
+                    return false;
+                }
+                common_flydelta_search_pipeline_result pipeline_result;
+                common_flydelta_representation_augmentation_state next_state;
+                if (!callbacks.run_representation_augmentation_with_state(
+                        job, &resume_state, pipeline_result, next_state, error) ||
+                        !common_flydelta_representation_augmentation_state_validate(
+                            next_state, config.representation_augmentation, error) ||
+                        !validate_search_pipeline_result(
+                            pipeline_result, config.pipeline, error)) return false;
+                if (!callbacks.persist_representation_augmentation_state(
+                        next_state, result.representation_augmentation_state_ref, error) ||
+                        result.representation_augmentation_state_ref.empty() ||
+                        result.representation_augmentation_state_ref.size() > 512) return false;
+                next_state.state_ref = result.representation_augmentation_state_ref;
+                result.has_representation_augmentation_state = true;
+                result.representation_augmentation_state = std::move(next_state);
+                result.search_state_ref = result.representation_augmentation_state_ref;
+                common_flydelta_search_continuation continuation;
+                if (!common_flydelta_select_search_continuation(
+                        pipeline_result, continuation, error)) return false;
+                result.search_pipeline_results.push_back(std::move(pipeline_result));
+                result.search_continuations.push_back(std::move(continuation));
+                result.processed_references = job.behavior_delta_ids.size();
+                return true;
+            }
             const bool has_post_bootstrap_state = !job.search_state_ref.empty();
             // The generic state callback is the continuation seam after
             // BootstrapZoom. It must never replace the initial Bootstrap

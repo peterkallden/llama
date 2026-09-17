@@ -930,6 +930,44 @@ If no stable residual signal can be found, the later fallback is
 text level, and only then may its latent delta be probed. Both paths use the
 same geometry bounds, fresh-context rule, host verifier and lifecycle gates.
 
+#### Representation augmentation — implemented escape seam
+
+Representation augmentation is the bounded escape used when a useful search
+surface has plateaued but the current WHAT surface has no sufficiently useful
+unexplored axis. It is not a second learning pipeline and it does not raise
+natural evidence depth. The worker keeps the existing `search_state_ref` and
+stores a typed augmentation state behind it:
+
+```text
+current search surface
+  -> host-owned donor candidates
+  -> fresh target / target+donor qualification
+  -> latent delta: h(target+donor) - h(target)
+  -> residualize against the complete current search surface
+  -> augmentation controls
+  -> local Whirlpool recenter
+  -> optional Deep/TFO-lite only after positive control utility
+```
+
+The donor contract is reference-only. A donor is never promotable by itself,
+and a donor that merely supplies the exact answer is contextual assistance,
+not generalizable learning evidence. A positive margin may qualify a donor for
+experimental search; only a separately host-verified `HELPED` result can
+provide learning credit.
+
+The V0 control set is fixed and small: existing surface, donor residual,
+positive combination and negative combination. The residual is computed as
+`(I - P_Q)c`, where `Q` is an orthonormalized view of the complete current
+experimental surface, not merely the natural evidence basis. A usable donor
+therefore increments `search_rank` by at most one and increments the surface
+revision, while `evidence_rank` remains unchanged.
+
+Augmentation phases are persisted as `DISCOVER_DONORS`, `QUALIFY_DONOR`,
+`CAPTURE_DONOR`, `BUILD_LATENT_DELTA`, `RUN_CONTROLS`, `LOCALIZE_SURFACE`,
+`FULL_GENERATION`, `VERIFY` and `DONE`. `RUN_CONTROLS` precedes recentering and
+TFO-lite. The state machine is resumable and uses the same append-only
+experimental lifecycle store as the other FlyDelta search states.
+
 ### Verified repair materialization — implemented adapters
 
 `common_flydelta_capture_candidate_from_transition()` is the narrow bridge

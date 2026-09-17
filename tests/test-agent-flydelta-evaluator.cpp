@@ -1,5 +1,6 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "agent/adaptation/flydelta/flydelta-bootstrap-zoom-state-store.h"
+#include "agent/adaptation/flydelta/flydelta-representation-augmentation-state-store.h"
 
 #include <cmath>
 #include <utility>
@@ -383,6 +384,59 @@ int main() {
         resolved_state.completed_trials.size() == 1 &&
         resolved_state.completed_trials.front().candidate.layer_indices ==
             std::vector<uint32_t>({24, 25}));
+
+    // A post-Bootstrap augmentation state uses the same opaque search-state
+    // transport, but its typed state remains separately validated and
+    // resumable. It must not fall through to the generic search callback.
+    common_flydelta_representation_augmentation_state augmentation_state;
+    augmentation_state.state_ref = "flydelta://state/representation-augmentation/evaluator";
+    augmentation_state.model_fingerprint = pipeline.seed.model_profile_fingerprint;
+    augmentation_state.behavior_key = pipeline.seed.behavior_key;
+    augmentation_state.direction_family_id = "tool-choice";
+    augmentation_state.parent_surface_revision = 1;
+    augmentation_state.parent_search_state_ref = "flydelta://state/search/plateau";
+    augmentation_state.parent_evidence_rank = 1.0f;
+    augmentation_state.evidence_rank = 1.0f;
+    augmentation_state.search_rank = 1;
+    augmentation_state.selected_region = {24};
+    augmentation_state.target_fixture_ref = "fixture://augmentation";
+    augmentation_state.remaining_budget = 4;
+    augmentation_state.surface_revision = 1;
+    CHECK(common_flydelta_representation_augmentation_state_validate(
+        augmentation_state, config.representation_augmentation, error));
+    auto augmentation_job = pipeline;
+    augmentation_job.id = "flydelta://job/search-pipeline-augmentation";
+    augmentation_job.search_state_ref = augmentation_state.state_ref;
+    callbacks = {};
+    bool augmentation_runner_called = false;
+    callbacks.resolve_representation_augmentation_state =
+        [&](const auto & state_ref, auto & value, std::string &) {
+            if (state_ref != augmentation_state.state_ref) return false;
+            value = augmentation_state;
+            return true;
+        };
+    callbacks.run_representation_augmentation_with_state =
+        [&](const auto &, const auto * resume, auto & value, auto & next, std::string &) {
+            augmentation_runner_called = resume != nullptr;
+            value = search_pipeline_result();
+            next = augmentation_state;
+            next.phase = common_flydelta_representation_augmentation_phase::run_controls;
+            next.surface_revision = 2;
+            next.next_action = "run_controls";
+            return true;
+        };
+    callbacks.persist_representation_augmentation_state =
+        [](const auto & value, auto & ref, std::string &) {
+            ref = value.state_ref;
+            return true;
+        };
+    callbacks.run_search_pipeline_with_search_state =
+        [](const auto &, const auto &, auto &, auto &, std::string &) { return false; };
+    CHECK(common_flydelta_evaluate_job(augmentation_job, config, callbacks, result, error));
+    CHECK(augmentation_runner_called && result.has_representation_augmentation_state &&
+        result.representation_augmentation_state_ref == augmentation_state.state_ref &&
+        result.representation_augmentation_state.surface_revision == 2 &&
+        result.search_state_ref == augmentation_state.state_ref);
 
     auto memory = base_job(common_flydelta_experiment_job_kind::delta_memory,
             "flydelta://job/memory");

@@ -6,6 +6,7 @@
 #include "agent/adaptation/flydelta/flydelta-aggregation.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
+#include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
 
 #include <functional>
 #include <string>
@@ -31,6 +32,9 @@ struct common_flydelta_experiment_worker_result {
     common_flydelta_bootstrap_zoom_state bootstrap_zoom_state;
     std::string bootstrap_zoom_state_ref;
     std::string search_state_ref;
+    bool has_representation_augmentation_state = false;
+    common_flydelta_representation_augmentation_state representation_augmentation_state;
+    std::string representation_augmentation_state_ref;
 };
 
 struct common_flydelta_experiment_worker_report {
@@ -46,6 +50,9 @@ struct common_flydelta_experiment_worker_report {
     common_flydelta_bootstrap_zoom_state bootstrap_zoom_state;
     std::string bootstrap_zoom_state_ref;
     std::string search_state_ref;
+    bool has_representation_augmentation_state = false;
+    common_flydelta_representation_augmentation_state representation_augmentation_state;
+    std::string representation_augmentation_state_ref;
 };
 
 // The worker owns queue lifecycle and result validation. The callback owns

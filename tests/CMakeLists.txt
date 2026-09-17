@@ -426,6 +426,7 @@ test-agent-flydelta-scale-search.cpp
         test-agent-flydelta-evaluator.cpp
         test-agent-flydelta-experiment-orchestration.cpp
         test-agent-flydelta-sideband-controller.cpp
+        test-agent-flydelta-representation-augmentation.cpp
         test-agent-model-facing-tool-chain.cpp
         test-memory-policy.cpp
         test-plan-context.cpp

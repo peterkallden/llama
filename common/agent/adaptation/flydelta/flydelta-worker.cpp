@@ -26,6 +26,16 @@ bool validate_result(
         error = "FlyDelta worker search state reference is invalid";
         return false;
     }
+    if (result.has_representation_augmentation_state &&
+            !common_flydelta_representation_augmentation_state_validate(
+                result.representation_augmentation_state,
+                common_flydelta_representation_augmentation_config{}, error)) {
+        return false;
+    }
+    if (result.representation_augmentation_state_ref.size() > 512) {
+        error = "FlyDelta worker representation augmentation state reference is invalid";
+        return false;
+    }
     for (const auto & counterfactual : result.counterfactual_reports) {
         if (!common_flydelta_counterfactual_report_validate(counterfactual, error)) return false;
         if (counterfactual.experiment_id != claimed.job.id) {
@@ -114,6 +124,10 @@ bool common_flydelta_experiment_worker_run_once(
     report.bootstrap_zoom_state = std::move(result.bootstrap_zoom_state);
     report.bootstrap_zoom_state_ref = std::move(result.bootstrap_zoom_state_ref);
     report.search_state_ref = std::move(result.search_state_ref);
+    report.has_representation_augmentation_state = result.has_representation_augmentation_state;
+    report.representation_augmentation_state = std::move(result.representation_augmentation_state);
+    report.representation_augmentation_state_ref =
+        std::move(result.representation_augmentation_state_ref);
     return true;
 }
 
@@ -154,6 +168,12 @@ bool common_flydelta_experiment_worker_run_evaluator_once(
             worker_result.bootstrap_zoom_state_ref = std::move(
                 evaluator_result.bootstrap_zoom_state_ref);
             worker_result.search_state_ref = std::move(evaluator_result.search_state_ref);
+            worker_result.has_representation_augmentation_state =
+                evaluator_result.has_representation_augmentation_state;
+            worker_result.representation_augmentation_state = std::move(
+                evaluator_result.representation_augmentation_state);
+            worker_result.representation_augmentation_state_ref = std::move(
+                evaluator_result.representation_augmentation_state_ref);
             worker_result.safe_summary = "FlyDelta evaluator processed " +
                 std::to_string(evaluator_result.processed_references) + " reference(s)";
             return true;

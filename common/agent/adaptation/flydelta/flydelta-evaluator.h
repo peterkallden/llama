@@ -8,6 +8,7 @@
 #include "agent/adaptation/flydelta/flydelta-aggregation.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
+#include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
 
 #include <cstddef>
 #include <functional>
@@ -22,6 +23,7 @@ struct common_flydelta_evaluator_config {
     common_flydelta_search_pipeline_config pipeline;
     common_flydelta_memory_config memory;
     common_flydelta_evidence_depth_config evidence_depth;
+    common_flydelta_representation_augmentation_config representation_augmentation;
     size_t aggregation_max_retained_samples = 32;
     size_t max_references = 128;
 };
@@ -74,6 +76,24 @@ struct common_flydelta_evaluator_callbacks {
             std::string & state_ref,
             std::string & error)> persist_bootstrap_zoom_state;
 
+    // Typed continuation seam for the representation-augmentation escape.
+    // The queue still carries only search_state_ref; the host owns the typed
+    // state, fresh inference contexts and all donor/capture resolution.
+    std::function<bool(
+            const std::string & state_ref,
+            common_flydelta_representation_augmentation_state & state,
+            std::string & error)> resolve_representation_augmentation_state;
+    std::function<bool(
+            const common_flydelta_representation_augmentation_state & state,
+            std::string & state_ref,
+            std::string & error)> persist_representation_augmentation_state;
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const common_flydelta_representation_augmentation_state * resume_state,
+            common_flydelta_search_pipeline_result & result,
+            common_flydelta_representation_augmentation_state & next_state,
+            std::string & error)> run_representation_augmentation_with_state;
+
     // Optional generic state-aware runner for post-Bootstrap phases. The host
     // owns the typed state behind the opaque reference and returns the next
     // reference after one bounded slice.
@@ -102,6 +122,9 @@ struct common_flydelta_evaluator_result {
     common_flydelta_bootstrap_zoom_state bootstrap_zoom_state;
     std::string bootstrap_zoom_state_ref;
     std::string search_state_ref;
+    bool has_representation_augmentation_state = false;
+    common_flydelta_representation_augmentation_state representation_augmentation_state;
+    std::string representation_augmentation_state_ref;
 };
 
 // Evaluates exactly one already-validated job. This is an orchestration seam,

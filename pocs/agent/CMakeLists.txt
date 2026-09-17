@@ -975,6 +975,19 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Model-free smoke for donor qualification, surface residualization and the
+# bounded four-arm augmentation control set. Real-model work remains opt-in.
+set(TARGET llama-agent-flydelta-representation-augmentation-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-representation-augmentation-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Optional real-model FlyDelta A/B smoke. It is CTest-compatible but skips
 # when LLAMA_AGENT_MODEL is not supplied, like the existing model smokes.
 set(TARGET llama-agent-flydelta-model-ab-smoke)
@@ -2105,6 +2118,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-adaptation-e2e-smoke
     llama-agent-model-adaptation-smoke
     llama-agent-flydelta-tool-repair-smoke
+    llama-agent-flydelta-representation-augmentation-smoke
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-flydelta-dataset-question-contract-smoke
@@ -2282,6 +2296,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-flydelta-tool-repair-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-tool-repair-smoke>)
     set_property(TEST llama-agent-flydelta-tool-repair-ctest PROPERTY LABELS agent-adaptation)
+
+    add_test(NAME llama-agent-flydelta-representation-augmentation-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-representation-augmentation-smoke>)
+    set_property(TEST llama-agent-flydelta-representation-augmentation-ctest PROPERTY LABELS agent-adaptation)
 
     add_test(NAME llama-agent-flydelta-model-ab-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-model-ab-smoke>)
