@@ -190,6 +190,12 @@ struct common_agent_daemon_status {
     bool worker_running = false;
     size_t worker_count = 1;
     size_t workers_running = 0;
+    // FlyDelta has its own queue and worker lane. The lane can be configured
+    // before a host evaluator callback is attached, so configured and
+    // running are intentionally separate status facts.
+    bool flydelta_worker_configured = false;
+    size_t flydelta_worker_count = 0;
+    size_t flydelta_workers_running = 0;
     bool accepting_commands = false;
     bool shutdown_requested = false;
     size_t queued_command_count = 0;

@@ -139,8 +139,6 @@ bool common_flydelta_run_deep_search(
         trial.margin = margin;
         trial.outcome = common_flydelta_classify_counterfactual(baseline, candidate);
         trial.quality_delta = candidate.quality - baseline.quality;
-        trial.sequence_margin_delta = margin.available && baseline_margin.available
-            ? margin.normalized_delta() - baseline_margin.normalized_delta() : 0.0f;
         trial.executed = candidate.executed;
         trial.verifier_known = baseline.verifier_known && candidate.verifier_known;
         trial.geometry_available = geometry_available;

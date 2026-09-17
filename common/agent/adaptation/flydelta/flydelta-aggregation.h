@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 // Bounded in-memory state for one compatible FlyDelta identity. The append-only
@@ -12,6 +13,10 @@
 struct common_flydelta_aggregation_config {
     common_flydelta_direction_search_config identity;
     common_flydelta_evidence_depth_config depth;
+    std::string scope_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string generation_semantics_fingerprint;
     size_t max_retained_samples = 32;
 };
 
@@ -21,6 +26,7 @@ struct common_flydelta_aggregation_snapshot {
     size_t rejected_samples = 0;
     std::vector<float> mean_direction;
     std::vector<float> variance;
+    std::vector<std::string> seen_sample_ids;
     std::vector<std::string> retained_sample_ids;
     std::vector<common_flydelta_contrast_sample> retained_samples;
 };
@@ -55,6 +61,7 @@ private:
     size_t rejected_samples_ = 0;
     std::vector<float> mean_direction_;
     std::vector<float> m2_;
+    std::unordered_set<std::string> seen_sample_ids_;
     std::vector<std::string> retained_sample_ids_;
     std::vector<common_flydelta_contrast_sample> retained_samples_;
 };

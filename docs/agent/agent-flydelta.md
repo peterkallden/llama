@@ -74,6 +74,7 @@ enable_flydelta_capture_candidates
 flydelta_model_profile_fingerprint
 flydelta_capture_layout_revision
 flydelta_max_capture_candidates
+flydelta_capture_job_enqueue
 ```
 
 Only a host-discovered `candidate_ready` source (currently a tool failure plus
@@ -82,7 +83,17 @@ contains transaction/evidence IDs and fingerprints, not prompts, tool output
 or hidden-state tensors. Reflection, research and user-correction matches
 remain non-ready until a host supplies an explicit relation and verifier. The
 collector is bounded, idempotent and best-effort; it cannot make the active
-turn fail.
+turn fail. A host may provide `flydelta_capture_job_enqueue` to place a
+reference-only `donor_capture` job on the existing FlyDelta experiment queue.
+The common worker then invokes a host callback for fresh capture/inference and
+returns only redacted, identity-checked capture manifests. Queue pressure or
+temporary worker unavailability remains pending host work rather than a turn
+failure; the daemon dispatcher now owns an optional dedicated FlyDelta lane.
+Its configured worker count is reserved from `limits.worker_count`, and status
+reports distinguish a configured lane from a running lane. The daemon bootstrap
+provides the queue/budget seam but does not invent an evaluator callback: a host
+integration must attach the callback that resolves references and performs the
+bounded work before jobs are consumed.
 
 The adaptation boundary now also has one shared, reference-only evidence
 contract (`common_adaptation_evidence`). It is a view over the existing
@@ -724,10 +735,10 @@ Shallow controls may enter Deep, and only qualifying Deep controls may enable
 TFO-lite. A Deep evidence plan therefore records only that TFO is *permitted
 by evidence* and still requires the UtilityGate after rank-two controls.
 
-The worker does not invent a model context or invoke this decision without a
-host evaluator callback; the host still owns utility history and schedules the
-next bounded job. For resumable model-facing work, the evaluator now has an
-optional state-aware search callback. It receives the previous
+The worker does not invent a model context or invoke this decision recursively;
+the evaluator executes one bounded slice and the host schedules the next job.
+For resumable model-facing work, the evaluator now has an optional state-aware
+search callback. It receives the previous
 `bootstrap_zoom_state_ref`, advances only the remaining BootstrapZoom budget,
 and returns a new reference-safe state. A host-owned resolver/persister stores
 that state in the artifact/state registry; the queue carries only the opaque
@@ -744,9 +755,12 @@ typed BootstrapZoom callback or the legacy runner; a configured post-Bootstrap
 callback cannot bypass BootstrapZoom. The selected callback consumes the
 opaque reference for one bounded post-Bootstrap slice and returns the next
 reference through the evaluator/worker report. If it is not configured, the
-existing BootstrapZoom-aware or legacy runner remains unchanged.
-remaining integration is deliberate until Shallow controls have been
-observed on real fixtures. The intended invariant is:
+existing BootstrapZoom-aware or legacy runner remains unchanged. When the host
+supplies the paired orchestration-state resolver/persister, the evaluator
+converts the completed slice's region-arm margin/geometry into the common
+UtilityGate input, invokes the pure FlyDelta orchestrator, persists the updated
+plan/history, and returns `next_action` to the worker report. The worker still
+does not execute the next phase itself. The intended invariant is:
 
 ```text
 allowed_depth = evidence gate
@@ -755,11 +769,11 @@ next_depth    = utility gate + evidence gate
 
 Thus six nearly collinear samples do not automatically justify Deep, and a
 small independent set does not justify expensive search unless its shallow
-controls show useful margin/geometry. This distinction is a design invariant;
-the remaining worker scheduling gap can be filled without changing host
-authority or lifecycle rules. The host must advance only one plan transition
-at a time, so it cannot invoke TFO directly from a Whirlpool result or skip
-the rank-two control stencil.
+controls show useful margin/geometry. This distinction is a design invariant.
+The worker advances at most one bounded plan transition per invocation: the
+host scheduler may delay or refuse the returned action for resource reasons,
+but it does not reimplement the FlyDelta phase policy or skip the rank-two
+control stencil.
 
 The ordered transition at a rank-one plateau is:
 
@@ -813,13 +827,26 @@ append-only learning ledger and corpus remain the source of truth. Rebuilding
 the snapshot is therefore safe and idempotent, and the worker does not need to
 hold the full corpus or all activation tensors in memory.
 
-Samples are first checked against one identity: source, behavior key, scope,
-model/profile, tokenizer/template, execution context, capture layout and
-layer. Incompatible or `HARMED` samples are rejected from the aggregate.
+Samples are first checked against the aggregation identity: source, behavior
+key, model/profile, execution context, capture layout and layer. Scope,
+tokenizer, template and generation-semantics fingerprints are admission
+invariants when supplied by the host; they are checked, but are not silently
+reinterpreted as a semantic behavior classifier. Incompatible or `HARMED`
+samples are rejected from the aggregate.
 `UNKNOWN` and `NEUTRAL` samples remain valid experimental material, but they
 cannot become positive learning or promotion evidence merely by being
 aggregated. Retention is bounded by `aggregation_max_retained_samples`; the
 configured bound must still allow the deep threshold to be reached.
+
+Every model-facing arm also separates evaluation from decisiveness:
+`host_evaluated` means the host attempted the evaluation, `verifier_known`
+means that an applicable verifier produced a decisive classification, and
+`host_outcome` is `HELPED`, `NEUTRAL`, `HARMED` or `UNKNOWN`. Search trace and
+lineage may retain evaluated `UNKNOWN`/`NEUTRAL` arms. Only a known
+host-verified `HELPED` result can create positive intervention credit. Margin
+data is stored both absolutely and as a delta against the immutable
+`fixture_baseline_ref`; a separate `surface_parent_best_ref` records the
+comparison against the prior experimental surface.
 
 Search depth is assessed from compatible sample count and geometry before
 model-side search is expanded. Sample count alone is insufficient: effective
@@ -1865,6 +1892,15 @@ LLAMA_AGENT_THREADS=3 \
 build-agent-cozo/bin/llama-agent-flydelta-repair-model-smoke \
   --n-predict 96 --threads 3
 ```
+
+For the model-facing augmentation seam, the same smoke can additionally be
+run with `--force-plateau-escape --force-representation-augmentation`.
+This is an evaluation mode only: it creates a second host-certified donor
+context, residualizes its capture against the selected rank-one surface and
+runs the four augmentation controls. It may report `recenter_augmented_surface`
+from the UtilityGate, but it cannot change `evidence_rank`, create learning
+credit or promote a sideband. The run uses fresh model contexts and is
+intentionally separate from the normal evidence-depth policy.
 
 The model-backed test skips without a model and is capped at three CPU
 threads. It complements, rather than replaces, the model-free repair smoke

@@ -5,6 +5,8 @@
 
 #include <chrono>
 #include <cstdio>
+#include <atomic>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <thread>
@@ -125,6 +127,55 @@ common_agent_daemon_runtime make_waiting_runtime(
     runtime.host = std::make_unique<common_agent_runtime_session_manager>(
         make_agent_runtime_session_manager_config(std::move(build_config)));
     return runtime;
+}
+
+common_flydelta_experiment_job make_flydelta_lane_job() {
+    common_flydelta_experiment_job job;
+    job.id = "flydelta://job/daemon-lane";
+    job.kind = common_flydelta_experiment_job_kind::counterfactual;
+    job.seed.id = "evidence://repair/daemon-lane/flydelta";
+    job.seed.behavior_key = "tool_use/diagnostics/missing-argument";
+    job.seed.source = common_adaptation_evidence_source::tool_repair;
+    job.seed.scope.namespace_id = "local";
+    job.seed.scope.project_id = "project";
+    job.seed.scope.session_id = "session";
+    job.seed.task_fingerprint = "sha256:task";
+    job.seed.model_profile_fingerprint = "sha256:model";
+    job.seed.tokenizer_fingerprint = "sha256:tokenizer";
+    job.seed.template_fingerprint = "sha256:template";
+    job.seed.execution_context_fingerprint = "sha256:execution-context";
+    job.seed.baseline_ref = "execution:failed";
+    job.seed.candidate_ref = "execution:repaired";
+    job.seed.verifier_ref = "verifier:v1";
+    job.seed.evidence_ref = "evidence://repair/daemon-lane";
+    job.seed.transaction_ids = {"learning://failed", "learning://repaired"};
+    job.capture_manifest_ids = {"flydelta://capture/daemon-lane"};
+    job.alpha_search.candidates = {0.05f};
+    job.alpha_search.max_candidates = 1;
+    job.code_revision = "daemon-lane-smoke:v1";
+    return job;
+}
+
+common_flydelta_counterfactual_report make_flydelta_lane_report(
+        const std::string & job_id) {
+    common_flydelta_counterfactual_report report;
+    report.experiment_id = job_id;
+    report.fixture_id = "flydelta://fixture/daemon-lane";
+    report.candidate_id = "flydelta://candidate/daemon-lane";
+    report.baseline_profile_id = "base";
+    report.candidate_profile_id = "overlay";
+    report.baseline.executed = true;
+    report.baseline.verifier_known = true;
+    report.baseline.passed = false;
+    report.baseline.evidence_ref = "evidence://baseline/daemon-lane";
+    report.candidate.executed = true;
+    report.candidate.verifier_known = true;
+    report.candidate.passed = true;
+    report.candidate.overlay_applied = true;
+    report.candidate.evidence_ref = "evidence://candidate/daemon-lane";
+    report.outcome = common_flydelta_counterfactual_outcome::helped;
+    report.quality_delta = 1.0f;
+    return report;
 }
 
 bool has_event_type(
@@ -565,9 +616,80 @@ int main() {
         return 1;
     }
 
+    const auto flydelta_queue_root =
+        std::filesystem::temp_directory_path() / "llama-agent-daemon-flydelta-lane-smoke";
+    std::error_code flydelta_cleanup_error;
+    std::filesystem::remove_all(flydelta_queue_root, flydelta_cleanup_error);
+    std::atomic<size_t> flydelta_callback_count{0};
+    common_agent_daemon_flydelta_worker_config flydelta_config;
+    flydelta_config.enabled = true;
+    flydelta_config.worker_count = 1;
+    flydelta_config.queue_root = flydelta_queue_root;
+    flydelta_config.poll_interval = std::chrono::milliseconds(10);
+    flydelta_config.callback = [&flydelta_callback_count](
+            const common_flydelta_experiment_job & job,
+            common_flydelta_experiment_worker_result & result,
+            std::string & error) {
+        ++flydelta_callback_count;
+        error.clear();
+        result.safe_summary = "daemon lane processed one FlyDelta job";
+        result.counterfactual_reports.push_back(make_flydelta_lane_report(job.id));
+        return true;
+    };
+    const auto flydelta_job = make_flydelta_lane_job();
+    std::string flydelta_enqueue_error;
+    if (!common_flydelta_experiment_queue_enqueue(
+            flydelta_queue_root, flydelta_job, flydelta_config.queue_limits,
+            flydelta_enqueue_error)) {
+        std::fprintf(stderr, "could not enqueue FlyDelta daemon-lane job: %s\n",
+            flydelta_enqueue_error.c_str());
+        return 1;
+    }
+    {
+        common_agent_daemon_dispatcher flydelta_dispatcher(
+            make_waiting_runtime(
+                common_agent_runtime_pending_operation_kind::inference,
+                "dispatcher FlyDelta lane pending inference",
+                "dispatcher FlyDelta lane resolver"),
+            8,
+            2,
+            std::move(flydelta_config));
+        if (flydelta_dispatcher.total_worker_count_value() != 2 ||
+                flydelta_dispatcher.worker_count_value() != 1 ||
+                flydelta_dispatcher.flydelta_worker_count_value() != 1 ||
+                flydelta_dispatcher.flydelta_workers_running_value() != 1) {
+            std::fprintf(stderr, "dispatcher did not reserve the FlyDelta worker budget\n");
+            return 1;
+        }
+        const auto flydelta_deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (flydelta_callback_count.load() == 0 &&
+                std::chrono::steady_clock::now() < flydelta_deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (flydelta_callback_count.load() != 1) {
+            std::fprintf(stderr, "FlyDelta daemon lane did not process its queued job\n");
+            return 1;
+        }
+        common_agent_daemon_command_result status_result;
+        std::string status_error;
+        common_agent_daemon_command status_command;
+        status_command.request_id = "flydelta-lane-status";
+        status_command.type = common_agent_daemon_command_type::get_status;
+        if (!flydelta_dispatcher.execute(status_command, status_result, status_error) ||
+                !status_result.status.flydelta_worker_configured ||
+                status_result.status.flydelta_worker_count != 1) {
+            std::fprintf(stderr, "FlyDelta daemon lane status was not observable: %s\n",
+                status_error.c_str());
+            return 1;
+        }
+    }
+    std::filesystem::remove_all(flydelta_queue_root, flydelta_cleanup_error);
+
     std::printf("tool_wait_event=%s\n",
         has_event_type(tool_wait_result, "turn.waiting_for_tool") ? "yes" : "no");
     std::printf("inference_wait_event=%s\n",
         has_event_type(inference_wait_result, "turn.waiting_for_inference") ? "yes" : "no");
+    std::printf("flydelta_lane_callbacks=%zu\n", flydelta_callback_count.load());
     return 0;
 }

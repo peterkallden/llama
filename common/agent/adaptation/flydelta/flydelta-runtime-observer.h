@@ -14,7 +14,10 @@ class common_flydelta_runtime_candidate_observer {
 public:
     common_flydelta_runtime_candidate_observer(
             common_flydelta_capture_candidate_collector & collector,
-            common_learning_lifecycle_store * lifecycle_store = nullptr);
+            common_learning_lifecycle_store * lifecycle_store = nullptr,
+            std::function<bool(
+                    const common_flydelta_capture_candidate &,
+                    std::string &)> enqueue_capture_job = {});
 
     bool observe(
             const common_adaptation_evidence_source_match & match,
@@ -29,4 +32,7 @@ public:
 private:
     common_flydelta_capture_candidate_collector & collector;
     common_learning_lifecycle_store * lifecycle_store;
+    std::function<bool(
+            const common_flydelta_capture_candidate &,
+            std::string &)> enqueue_capture_job;
 };

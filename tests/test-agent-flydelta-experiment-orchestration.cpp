@@ -79,6 +79,23 @@ int main() {
         common_flydelta_experiment_phase::deep_controls, {utility}, {}, utility_decision, error));
     CHECK(utility_decision.action == common_flydelta_utility_gate_action::allow_tfo_lite);
 
+    // The worker-facing orchestration seam combines the existing utility and
+    // phase policies. It returns a bounded next action; it does not recurse
+    // into the next model slice.
+    common_flydelta_slice_orchestration_result slice;
+    CHECK(common_flydelta_orchestrate_search_slice(
+        plan, utility_config, {utility}, {}, slice, error));
+    CHECK(slice.plan_advanced &&
+        slice.next_action == common_flydelta_next_action::run_shallow_controls &&
+        slice.plan.phase == common_flydelta_experiment_phase::shallow_controls &&
+        slice.plan.depth == common_flydelta_search_depth::deep);
+
+    utility.safe_to_continue = false;
+    CHECK(common_flydelta_orchestrate_search_slice(
+        plan, utility_config, {utility}, {}, slice, error));
+    CHECK(!slice.plan_advanced && slice.next_action == common_flydelta_next_action::stop);
+    utility.safe_to_continue = true;
+
     common_flydelta_rank1_plateau_config plateau_config;
     std::vector<common_flydelta_rank1_plateau_round> plateau_rounds = {
         {true, 2, 24, 0.100f},
@@ -142,7 +159,7 @@ int main() {
         plan, utility_decision, shallow_plan, advanced, error));
     CHECK(advanced && shallow_plan.phase == common_flydelta_experiment_phase::shallow_controls &&
         shallow_plan.run_rank_two_controls_first && shallow_plan.required_compatible_directions == 2 &&
-        !shallow_plan.run_tfo_lite);
+        !shallow_plan.run_tfo_lite && !shallow_plan.run_orthogonal_search);
     CHECK(common_flydelta_decide_subspace_utility(
         utility_config, shallow_plan.depth, shallow_plan.phase,
         {utility}, {}, utility_decision, error));
@@ -183,7 +200,8 @@ int main() {
 
     common_flydelta_bootstrap_zoom_trial first_trial;
     first_trial.candidate = zoom[0];
-    first_trial.host_verified = true;
+    first_trial.host_evaluated = true;
+    first_trial.verifier_known = true;
     first_trial.margin_available = true;
     first_trial.margin_delta = 0.1f;
     first_trial.diagnostics_available = true;

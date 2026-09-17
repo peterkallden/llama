@@ -13,6 +13,8 @@ bool bounded(const std::string & value, size_t max_size = 512) {
 bool references_empty_except(
         const common_flydelta_experiment_collection_request & request,
         common_flydelta_experiment_job_kind kind) {
+    if (kind != common_flydelta_experiment_job_kind::donor_capture &&
+            !request.capture_candidate_ids.empty()) return false;
     if (kind != common_flydelta_experiment_job_kind::counterfactual &&
             kind != common_flydelta_experiment_job_kind::search_pipeline &&
             !request.capture_manifest_ids.empty()) return false;
@@ -69,6 +71,7 @@ bool common_flydelta_collect_experiment_job(
     if (!request.job_variant_id.empty()) job.id += "/" + request.job_variant_id;
     job.kind = request.kind;
     job.seed = std::move(seed);
+    job.capture_candidate_ids = request.capture_candidate_ids;
     job.capture_manifest_ids = request.capture_manifest_ids;
     job.behavior_delta_ids = request.behavior_delta_ids;
     job.training_example_ids = request.training_example_ids;

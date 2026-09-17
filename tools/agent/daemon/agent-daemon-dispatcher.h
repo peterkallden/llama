@@ -2,9 +2,13 @@
 
 #include "agent-daemon-service.h"
 #include "../runtime/agent-runtime-control.h"
+#include "agent/adaptation/flydelta/flydelta-worker.h"
+#include "agent/adaptation/flydelta/flydelta-worker-budget.h"
 
 #include <condition_variable>
+#include <chrono>
 #include <deque>
+#include <filesystem>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -13,12 +17,22 @@
 
 struct daemon_options;
 
+struct common_agent_daemon_flydelta_worker_config {
+    bool enabled = false;
+    size_t worker_count = 0;
+    std::filesystem::path queue_root;
+    common_flydelta_experiment_queue_limits queue_limits;
+    common_flydelta_experiment_worker_callback callback;
+    std::chrono::milliseconds poll_interval{250};
+};
+
 class common_agent_daemon_dispatcher {
 public:
     explicit common_agent_daemon_dispatcher(
         common_agent_daemon_runtime runtime,
         size_t max_queue_size = 8,
-        size_t worker_count = 1);
+        size_t worker_count = 1,
+        common_agent_daemon_flydelta_worker_config flydelta_config = {});
     ~common_agent_daemon_dispatcher();
 
     bool execute(
@@ -31,6 +45,9 @@ public:
     size_t queued_command_count() const;
     size_t max_queue_size_value() const { return max_queue_size; }
     size_t worker_count_value() const { return worker_count; }
+    size_t total_worker_count_value() const { return total_worker_count; }
+    size_t flydelta_worker_count_value() const { return flydelta_worker_count; }
+    size_t flydelta_workers_running_value() const;
     std::string subscribe_events(common_agent_event_stream_subscription subscription);
     void unsubscribe_events(const std::string & subscription_id);
     common_agent_event_stream_wait_status wait_for_event(
@@ -108,15 +125,21 @@ private:
         common_agent_daemon_status & status) const;
 
     void worker_loop();
+    void flydelta_worker_loop();
 
     mutable std::mutex mutex;
     std::condition_variable condition;
     std::deque<std::shared_ptr<queued_command>> queue;
+    common_agent_daemon_flydelta_worker_config flydelta_config;
     common_agent_daemon_service service;
     std::vector<std::thread> workers;
+    std::vector<std::thread> flydelta_workers;
     size_t max_queue_size = 0;
+    size_t total_worker_count = 1;
     size_t worker_count = 1;
+    size_t flydelta_worker_count = 0;
     size_t workers_running = 0;
+    size_t flydelta_workers_running = 0;
     bool worker_running = false;
     bool accepting_commands = true;
     bool stop_requested = false;

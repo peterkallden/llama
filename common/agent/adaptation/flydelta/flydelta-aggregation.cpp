@@ -1,5 +1,6 @@
 #include "agent/adaptation/flydelta/flydelta-aggregation.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -13,12 +14,22 @@ float norm(const std::vector<float> & values) {
 
 bool compatible(
         const common_flydelta_behavior_delta & delta,
-        const common_flydelta_direction_search_config & identity) {
+        const common_flydelta_aggregation_config & config) {
+    const auto matches_if_set = [](const std::string & expected,
+            const std::string & actual) {
+        return expected.empty() || expected == actual;
+    };
+    const auto & identity = config.identity;
     return delta.source == identity.source && delta.behavior_key == identity.behavior_key &&
         delta.model_profile_fingerprint == identity.model_profile_fingerprint &&
         delta.execution_context_fingerprint == identity.execution_context_fingerprint &&
         delta.capture_layout_revision == identity.capture_layout_revision &&
-        delta.layer_index == identity.layer_index;
+        delta.layer_index == identity.layer_index &&
+        matches_if_set(config.scope_fingerprint, delta.scope_fingerprint) &&
+        matches_if_set(config.tokenizer_fingerprint, delta.tokenizer_fingerprint) &&
+        matches_if_set(config.template_fingerprint, delta.template_fingerprint) &&
+        matches_if_set(config.generation_semantics_fingerprint,
+            delta.generation_semantics_fingerprint);
 }
 
 } // namespace
@@ -53,8 +64,13 @@ bool common_flydelta_incremental_aggregation::ingest(
             !common_flydelta_intervention_credit_validate(sample.credit, error)) {
         return false;
     }
+    if (seen_sample_ids_.find(sample.delta.id) != seen_sample_ids_.end()) {
+        // Snapshot replay and duplicate append-only references are idempotent.
+        return true;
+    }
+    seen_sample_ids_.insert(sample.delta.id);
     ++observations_seen_;
-    if (!compatible(sample.delta, config_.identity) ||
+    if (!compatible(sample.delta, config_) ||
             sample.credit.outcome == common_flydelta_counterfactual_outcome::harmed) {
         ++rejected_samples_;
         return true;
@@ -98,6 +114,8 @@ common_flydelta_aggregation_snapshot common_flydelta_incremental_aggregation::sn
     result.compatible_samples = compatible_samples_;
     result.rejected_samples = rejected_samples_;
     result.mean_direction = mean_direction_;
+    result.seen_sample_ids.assign(seen_sample_ids_.begin(), seen_sample_ids_.end());
+    std::sort(result.seen_sample_ids.begin(), result.seen_sample_ids.end());
     result.retained_sample_ids = retained_sample_ids_;
     result.retained_samples = retained_samples_;
     if (compatible_samples_ > 1) {

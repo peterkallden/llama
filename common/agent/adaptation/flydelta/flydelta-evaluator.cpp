@@ -62,6 +62,46 @@ bool validate_search_pipeline_result(
     return true;
 }
 
+bool utility_observations_from_pipeline(
+        const common_flydelta_search_pipeline_result & pipeline,
+        std::vector<common_flydelta_subspace_utility_observation> & observations,
+        std::string & error) {
+    observations.clear();
+    for (const auto & direction : pipeline.directions) {
+        for (const auto & trial : direction.region_trials) {
+            if (!trial.executed) continue;
+            common_flydelta_subspace_utility_observation observation;
+            observation.safe_to_continue = trial.safe_to_continue;
+            observation.decision_margin_available = trial.margin_comparison.available;
+            if (observation.decision_margin_available) {
+                observation.decision_margin_delta =
+                    trial.margin_comparison.normalized_delta();
+            }
+            observation.geometry_available = trial.geometry_available;
+            observation.geometry = trial.geometry;
+            if (!common_flydelta_subspace_utility_observation_validate(observation, error)) {
+                return false;
+            }
+            observations.push_back(std::move(observation));
+        }
+    }
+    if (observations.empty()) {
+        error = "FlyDelta search slice returned no executed utility observations";
+        return false;
+    }
+    return true;
+}
+
+common_flydelta_next_action next_action_from_augmentation(
+        const std::string & action) {
+    if (action == "stop") return common_flydelta_next_action::stop;
+    if (action == "retain") return common_flydelta_next_action::retain;
+    if (action == "refine_bootstrap") return common_flydelta_next_action::refine_bootstrap;
+    if (action == "recenter_augmented_surface") return common_flydelta_next_action::recenter_surface;
+    if (action == "allow_tfo_lite") return common_flydelta_next_action::allow_tfo_lite;
+    return common_flydelta_next_action::run_representation_augmentation;
+}
+
 } // namespace
 
 bool common_flydelta_evaluate_job(
@@ -75,8 +115,41 @@ bool common_flydelta_evaluate_job(
     if (config.max_references == 0 ||
             !common_flydelta_experiment_job_validate(
                 job, config.max_references, error)) return false;
+    if (static_cast<bool>(callbacks.resolve_search_orchestration_state) !=
+            static_cast<bool>(callbacks.persist_search_orchestration_state)) {
+        error = "FlyDelta orchestration state callbacks must be supplied together";
+        return false;
+    }
 
     switch (job.kind) {
+        case common_flydelta_experiment_job_kind::donor_capture: {
+            if (!callbacks.run_donor_capture) {
+                error = "FlyDelta donor capture evaluator requires a host runner";
+                return false;
+            }
+            if (!callbacks.run_donor_capture(job, result.capture_manifests, error) ||
+                    result.capture_manifests.empty()) {
+                if (error.empty()) error = "FlyDelta donor capture evaluator returned no manifests";
+                return false;
+            }
+            if (result.capture_manifests.size() != job.capture_candidate_ids.size()) {
+                error = "FlyDelta donor capture manifest count does not match candidates";
+                return false;
+            }
+            for (const auto & manifest : result.capture_manifests) {
+                if (!common_flydelta_capture_manifest_validate(
+                        manifest, config.max_capture_bytes, error)) return false;
+                if (manifest.model_profile_fingerprint != job.seed.model_profile_fingerprint ||
+                        manifest.execution_context_fingerprint !=
+                            job.seed.execution_context_fingerprint ||
+                        manifest.behavior_key != job.seed.behavior_key) {
+                    error = "FlyDelta donor capture manifest does not match job identity";
+                    return false;
+                }
+            }
+            result.processed_references = result.capture_manifests.size();
+            return true;
+        }
         case common_flydelta_experiment_job_kind::counterfactual: {
             if (!callbacks.run_counterfactual) {
                 error = "FlyDelta counterfactual evaluator requires a host runner";
@@ -193,6 +266,11 @@ bool common_flydelta_evaluate_job(
                 result.has_representation_augmentation_state = true;
                 result.representation_augmentation_state = std::move(next_state);
                 result.search_state_ref = result.representation_augmentation_state_ref;
+                result.has_next_action = true;
+                result.next_action = next_action_from_augmentation(
+                    result.representation_augmentation_state.next_action);
+                result.next_action_reason =
+                    result.representation_augmentation_state.next_action;
                 common_flydelta_search_continuation continuation;
                 if (!common_flydelta_select_search_continuation(
                         pipeline_result, continuation, error)) return false;
@@ -264,6 +342,43 @@ bool common_flydelta_evaluate_job(
                     pipeline_result, continuation, error)) return false;
             result.search_pipeline_results.push_back(std::move(pipeline_result));
             result.search_continuations.push_back(std::move(continuation));
+            const bool has_resume_state = !job.search_state_ref.empty() ||
+                !job.bootstrap_zoom_state_ref.empty();
+            if (has_resume_state && callbacks.resolve_search_orchestration_state) {
+                common_flydelta_experiment_plan current_plan;
+                common_flydelta_utility_history history;
+                const std::string & orchestration_ref = !job.search_state_ref.empty()
+                    ? job.search_state_ref : job.bootstrap_zoom_state_ref;
+                if (!callbacks.resolve_search_orchestration_state(
+                        orchestration_ref, current_plan, history, error)) {
+                    if (error.empty()) error =
+                        "FlyDelta orchestration state resolver returned no state";
+                    return false;
+                }
+                std::vector<common_flydelta_subspace_utility_observation> observations;
+                if (!utility_observations_from_pipeline(
+                        result.search_pipeline_results.back(), observations, error)) return false;
+                common_flydelta_slice_orchestration_result orchestration;
+                if (!common_flydelta_orchestrate_search_slice(
+                        current_plan, config.utility_gate, observations, history,
+                        orchestration, error)) return false;
+                std::string next_orchestration_ref;
+                if (!callbacks.persist_search_orchestration_state(
+                        orchestration.plan, orchestration.utility.history,
+                        next_orchestration_ref, error) ||
+                        next_orchestration_ref.empty() || next_orchestration_ref.size() > 512) {
+                    if (error.empty()) error =
+                        "FlyDelta orchestration state persister returned an invalid reference";
+                    return false;
+                }
+                result.search_state_ref = std::move(next_orchestration_ref);
+                result.has_experiment_plan = true;
+                result.experiment_plan = std::move(orchestration.plan);
+                result.has_next_action = true;
+                result.next_action = orchestration.next_action;
+                result.utility_decision = orchestration.utility;
+                result.next_action_reason = std::move(orchestration.reason);
+            }
             // A search job now emits the first ordered plan when the host
             // supplies its compatible evidence resolver. The plan starts at
             // Bootstrap even if the evidence ceiling is Deep; later phases
@@ -301,6 +416,12 @@ bool common_flydelta_evaluate_job(
                                 result.experiment_plan, error)) return false;
                     result.has_experiment_plan = true;
                     result.search_budget = result.experiment_plan.budget;
+                    // Whirlpool is the current bounded slice. The next
+                    // bounded slice is explicitly Bootstrap; the evaluator
+                    // does not execute it recursively.
+                    result.has_next_action = true;
+                    result.next_action = common_flydelta_next_action::run_bootstrap;
+                    result.next_action_reason = "Whirlpool completed; schedule Bootstrap slice";
                 }
             }
             result.processed_references = job.behavior_delta_ids.size();

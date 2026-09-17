@@ -377,12 +377,15 @@ bool common_flydelta_append_search_pipeline_lifecycle(
             observation.candidate_id = experimental_artifact_id + suffix;
             observation.search_kind = "direction-layer-scale-region";
             observation.experimental_artifact_id = experimental_artifact_id;
+            observation.fixture_baseline_ref = fixture.id;
+            observation.surface_parent_best_ref = experimental_artifact_id;
             observation.outcome = region.outcome;
-            observation.host_verified = region.verifier_known;
+            observation.host_evaluated = region.executed;
+            observation.verifier_known = region.verifier_known;
             observation.diagnostics_available = region.geometry_available;
             if (region.geometry_available) observation.diagnostics = region.geometry;
-            observation.sequence_margin_available = region.margin.available;
-            observation.sequence_margin_delta = region.margin.normalized_delta();
+            observation.sequence_margin_available = region.margin_comparison.available;
+            observation.sequence_margin = region.margin_comparison;
             observation.budget_remaining = region.safe_to_continue;
 
             common_flydelta_search_decision decision;
@@ -422,10 +425,13 @@ bool common_flydelta_append_search_pipeline_lifecycle(
                 observation.candidate_id = experimental_artifact_id + suffix;
                 observation.search_kind = "direction-layer-scale";
                 observation.experimental_artifact_id = experimental_artifact_id;
+                observation.fixture_baseline_ref = fixture.id;
+                observation.surface_parent_best_ref = experimental_artifact_id;
                 observation.outcome = scale.outcome;
                 // This flag means that the host ran/classified the arm. The
                 // outcome may still be UNKNOWN when the verifier had no fact.
-                observation.host_verified = true;
+                observation.host_evaluated = scale.executed;
+                observation.verifier_known = scale.verifier_known;
                 observation.diagnostics_available = scale.geometry_available;
                 if (scale.geometry_available) {
                     observation.diagnostics = {

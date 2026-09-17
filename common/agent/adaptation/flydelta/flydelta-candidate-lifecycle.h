@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-decision-margin.h"
 #include "agent/adaptation/lifecycle-store.h"
 
 #include <cstddef>
@@ -67,9 +68,16 @@ struct common_flydelta_search_observation {
     // reference is optional for purely in-memory probes, but when present it
     // must point at a registry entry with status=experimental.
     std::string experimental_artifact_id;
+    std::string fixture_baseline_ref;
+    std::string surface_parent_best_ref;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
-    bool host_verified = false;
+    // The host attempted/classified this arm. This is intentionally weaker
+    // than verifier_known and does not grant learning credit.
+    bool host_evaluated = false;
+    // A verifier had a decisive relation for the arm. UNKNOWN may be either
+    // evaluated without a verifier or evaluated with an inconclusive one.
+    bool verifier_known = false;
     bool diagnostics_available = false;
     common_flydelta_representation_diagnostics diagnostics;
     // Optional bounded arm parameters. Coefficient search uses this field;
@@ -77,7 +85,7 @@ struct common_flydelta_search_observation {
     std::vector<float> coefficients;
     float search_fitness = 0.0f;
     bool sequence_margin_available = false;
-    float sequence_margin_delta = 0.0f;
+    common_flydelta_margin_comparison sequence_margin;
     bool budget_remaining = false;
 };
 

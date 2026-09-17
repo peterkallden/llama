@@ -337,6 +337,11 @@ int main(int argc, char ** argv) {
         require_restart(candidate.resource_metadata_db != options.resource_metadata_db, "resources.metadata_db");
         require_restart(candidate.queue_capacity != options.queue_capacity, "limits.queue_capacity");
         require_restart(candidate.worker_count != options.worker_count, "limits.worker_count");
+        require_restart(
+            candidate.adaptation_flydelta_enabled != options.adaptation_flydelta_enabled ||
+            candidate.adaptation_flydelta_worker_count != options.adaptation_flydelta_worker_count ||
+            candidate.adaptation_flydelta_queue_path != options.adaptation_flydelta_queue_path,
+            "runtime.adaptation.flydelta");
         require_restart(candidate.inference_max_active != options.inference_max_active, "limits.inference_max_active");
         require_restart(candidate.http_enabled != options.http_enabled, "mcp.inbound.enabled");
         require_restart(candidate.http_listen_address != options.http_listen_address, "mcp.inbound.listen");
@@ -504,7 +509,13 @@ int main(int argc, char ** argv) {
         return true;
     };
     agent_mcp_server_tool_registry http_registry;
-    common_agent_daemon_dispatcher dispatcher(std::move(runtime), options.queue_capacity, options.worker_count);
+    common_agent_daemon_flydelta_worker_config flydelta_worker_config;
+    flydelta_worker_config.enabled = options.adaptation_flydelta_enabled;
+    flydelta_worker_config.worker_count = options.adaptation_flydelta_worker_count;
+    flydelta_worker_config.queue_root = options.adaptation_flydelta_queue_path;
+    common_agent_daemon_dispatcher dispatcher(
+        std::move(runtime), options.queue_capacity, options.worker_count,
+        std::move(flydelta_worker_config));
     if (options.http_enabled && !build_http_tool_catalog(options, http_registry, error)) {
         std::fprintf(stderr, "failed to resolve daemon MCP HTTP tool catalog: %s\n", error.c_str());
         return 2;

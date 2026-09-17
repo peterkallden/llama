@@ -331,10 +331,11 @@ static bool run_tfo_lite_coefficient_search(
             common_flydelta_coefficient_trial trial;
             trial.coefficients = coefficients;
             trial.margin = margin;
+            trial.margin_comparison.available = baseline_margin.available && margin.available;
+            trial.margin_comparison.baseline = baseline_margin;
+            trial.margin_comparison.candidate = margin;
             trial.outcome = common_flydelta_classify_counterfactual(baseline, candidate);
             trial.quality_delta = candidate.quality - baseline.quality;
-            trial.sequence_margin_delta = margin.available && baseline_margin.available
-                ? margin.normalized_delta() - baseline_margin.normalized_delta() : 0.0f;
             trial.executed = candidate.executed;
             trial.verifier_known = baseline.verifier_known && candidate.verifier_known;
             if (!copy_geometry(geometry, geometry_available, trial, error)) return false;
@@ -446,10 +447,11 @@ bool common_flydelta_run_low_rank_coefficient_search(
         common_flydelta_coefficient_trial trial;
         trial.coefficients = coefficients;
         trial.margin = margin;
+        trial.margin_comparison.available = baseline_margin.available && margin.available;
+        trial.margin_comparison.baseline = baseline_margin;
+        trial.margin_comparison.candidate = margin;
         trial.outcome = common_flydelta_classify_counterfactual(baseline, candidate);
         trial.quality_delta = candidate.quality - baseline.quality;
-        trial.sequence_margin_delta = margin.available && baseline_margin.available
-            ? margin.normalized_delta() - baseline_margin.normalized_delta() : 0.0f;
         trial.executed = candidate.executed;
         trial.verifier_known = baseline.verifier_known && candidate.verifier_known;
         if (!copy_geometry(geometry, geometry_available, trial, error)) return false;
@@ -500,16 +502,19 @@ bool common_flydelta_append_coefficient_search_lifecycle(
             std::to_string(index);
         observation.search_kind = kind;
         observation.experimental_artifact_id = experimental_artifact_id;
+        observation.fixture_baseline_ref = fixture.id;
+        observation.surface_parent_best_ref = experimental_artifact_id;
         observation.outcome = trial.outcome;
-        observation.host_verified = true;
+        observation.host_evaluated = trial.executed;
+        observation.verifier_known = trial.verifier_known;
         observation.diagnostics_available = trial.geometry_available;
         if (trial.geometry_available) {
             observation.diagnostics = trial.geometry;
         }
         observation.coefficients = trial.coefficients;
         observation.search_fitness = trial.search_fitness;
-        observation.sequence_margin_available = trial.margin.available;
-        observation.sequence_margin_delta = trial.sequence_margin_delta;
+        observation.sequence_margin_available = trial.margin_comparison.available;
+        observation.sequence_margin = trial.margin_comparison;
         observation.budget_remaining = index + 1 < trials.size();
 
         common_flydelta_search_decision decision;

@@ -22,6 +22,7 @@ struct common_flydelta_experiment_collection_request {
     std::string template_fingerprint;
     std::string execution_context_fingerprint;
     common_flydelta_training_split split = common_flydelta_training_split::train;
+    std::vector<std::string> capture_candidate_ids;
     std::vector<std::string> capture_manifest_ids;
     std::vector<std::string> behavior_delta_ids;
     std::vector<std::string> training_example_ids;

@@ -22,6 +22,7 @@ const char * common_flydelta_experiment_job_kind_name(
         case common_flydelta_experiment_job_kind::counterfactual: return "counterfactual";
         case common_flydelta_experiment_job_kind::search_pipeline: return "search_pipeline";
         case common_flydelta_experiment_job_kind::delta_memory: return "delta_memory";
+        case common_flydelta_experiment_job_kind::donor_capture: return "donor_capture";
     }
     return "basis";
 }
@@ -34,6 +35,7 @@ bool common_flydelta_experiment_job_kind_from_name(
     else if (value == "counterfactual") kind = common_flydelta_experiment_job_kind::counterfactual;
     else if (value == "search_pipeline") kind = common_flydelta_experiment_job_kind::search_pipeline;
     else if (value == "delta_memory") kind = common_flydelta_experiment_job_kind::delta_memory;
+    else if (value == "donor_capture") kind = common_flydelta_experiment_job_kind::donor_capture;
     else return false;
     return true;
 }
@@ -57,6 +59,18 @@ bool common_flydelta_experiment_job_validate(
         for (const auto & ref : refs) if (!bounded(ref)) return false;
         return true;
     };
+    if (job.kind != common_flydelta_experiment_job_kind::donor_capture &&
+            !job.capture_candidate_ids.empty()) {
+        error = "FlyDelta capture-candidate references are only valid for donor capture jobs";
+        return false;
+    }
+    if (job.kind == common_flydelta_experiment_job_kind::donor_capture &&
+            (!check_refs(job.capture_candidate_ids) ||
+             !job.capture_manifest_ids.empty() || !job.behavior_delta_ids.empty() ||
+             !job.training_example_ids.empty())) {
+        error = "FlyDelta donor capture job requires bounded capture-candidate references";
+        return false;
+    }
     if ((job.kind == common_flydelta_experiment_job_kind::basis ||
          job.kind == common_flydelta_experiment_job_kind::direction) &&
             !check_refs(job.behavior_delta_ids)) {
@@ -113,6 +127,7 @@ std::string common_flydelta_experiment_job_to_json(
             {"evidence_ref", job.seed.evidence_ref},
             {"transaction_ids", job.seed.transaction_ids},
         }},
+        {"capture_candidate_ids", job.capture_candidate_ids},
         {"capture_manifest_ids", job.capture_manifest_ids},
         {"behavior_delta_ids", job.behavior_delta_ids},
         {"training_example_ids", job.training_example_ids},
@@ -169,6 +184,7 @@ bool common_flydelta_experiment_job_from_json(
         job.seed.verifier_ref = seed.value("verifier_ref", "");
         job.seed.evidence_ref = seed.value("evidence_ref", "");
         job.seed.transaction_ids = seed.value("transaction_ids", std::vector<std::string>{});
+        job.capture_candidate_ids = value.value("capture_candidate_ids", std::vector<std::string>{});
         job.capture_manifest_ids = value.value("capture_manifest_ids", std::vector<std::string>{});
         job.behavior_delta_ids = value.value("behavior_delta_ids", std::vector<std::string>{});
         job.training_example_ids = value.value("training_example_ids", std::vector<std::string>{});

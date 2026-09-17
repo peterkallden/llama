@@ -19,6 +19,12 @@ struct common_flydelta_behavior_delta {
     std::string behavior_key;
     std::string capture_manifest_id;
     std::string host_evidence_ref;
+    // Optional admission invariants. They are asserted when supplied by the
+    // host, but are deliberately not part of the semantic aggregation key.
+    std::string scope_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string generation_semantics_fingerprint;
     std::string model_profile_fingerprint;
     std::string execution_context_fingerprint;
     std::string capture_layout_revision;

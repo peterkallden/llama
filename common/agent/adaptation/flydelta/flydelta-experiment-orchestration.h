@@ -104,6 +104,31 @@ struct common_flydelta_utility_gate_decision {
 const char * common_flydelta_utility_gate_action_name(
         common_flydelta_utility_gate_action action);
 
+// Cross-slice action returned to the host scheduler. This is policy output,
+// not an instruction for the evaluator to recurse into another phase.
+enum class common_flydelta_next_action {
+    stop,
+    retain,
+    run_bootstrap,
+    refine_bootstrap,
+    run_orthogonal_search,
+    run_shallow_controls,
+    run_deep_controls,
+    recenter_surface,
+    run_representation_augmentation,
+    allow_tfo_lite,
+};
+
+const char * common_flydelta_next_action_name(common_flydelta_next_action action);
+
+struct common_flydelta_slice_orchestration_result {
+    common_flydelta_next_action next_action = common_flydelta_next_action::retain;
+    common_flydelta_utility_gate_decision utility;
+    common_flydelta_experiment_plan plan;
+    bool plan_advanced = false;
+    std::string reason;
+};
+
 // Rank-one plateau detection is a search gate. It never changes evidence
 // rank; it only decides whether a locally useful Bootstrap search deserves an
 // experimental orthogonal probe.
@@ -256,7 +281,9 @@ struct common_flydelta_bootstrap_zoom_trial {
     common_flydelta_bootstrap_zoom_candidate candidate;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
-    bool host_verified = false;
+    bool host_evaluated = false;
+    // The verifier-known flag remains separate: UNKNOWN is valid search state.
+    bool verifier_known = false;
     bool margin_available = false;
     float margin_delta = 0.0f;
     bool diagnostics_available = false;
@@ -374,4 +401,15 @@ bool common_flydelta_advance_experiment_plan(
         const common_flydelta_utility_gate_decision & utility,
         common_flydelta_experiment_plan & next,
         bool & advanced,
+        std::string & error);
+
+// Applies EvidenceGate + UtilityGate to one completed bounded slice. It
+// never invokes model execution; the caller persists the returned plan and
+// lets the host scheduler decide whether to enqueue next_action.
+bool common_flydelta_orchestrate_search_slice(
+        const common_flydelta_experiment_plan & current,
+        const common_flydelta_utility_gate_config & utility_config,
+        const std::vector<common_flydelta_subspace_utility_observation> & observations,
+        const common_flydelta_utility_history & history,
+        common_flydelta_slice_orchestration_result & result,
         std::string & error);

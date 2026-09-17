@@ -51,6 +51,7 @@ struct common_flydelta_intervention_region_trial {
         common_flydelta_counterfactual_outcome::unknown;
     float quality_delta = 0.0f;
     common_flydelta_decision_margin margin;
+    common_flydelta_margin_comparison margin_comparison;
     bool executed = false;
     bool verifier_known = false;
     bool geometry_available = false;

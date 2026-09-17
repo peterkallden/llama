@@ -31,6 +31,7 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.flydelta_model_profile_fingerprint = std::move(build_config.flydelta_model_profile_fingerprint);
     config.flydelta_capture_layout_revision = std::move(build_config.flydelta_capture_layout_revision);
     config.flydelta_max_capture_candidates = build_config.flydelta_max_capture_candidates;
+    config.flydelta_capture_job_enqueue = std::move(build_config.flydelta_capture_job_enqueue);
     return config;
 }
 
@@ -96,11 +97,12 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                         assembly.adaptation_error = std::move(lifecycle_error);
                     }
                 }
-                if (assembly.flydelta_lifecycle_store) {
+                if (assembly.flydelta_lifecycle_store || runtime_config.flydelta_capture_job_enqueue) {
                     assembly.flydelta_runtime_candidate_observer =
                         std::make_unique<common_flydelta_runtime_candidate_observer>(
                             *assembly.flydelta_capture_collector,
-                            assembly.flydelta_lifecycle_store.get());
+                            assembly.flydelta_lifecycle_store.get(),
+                            runtime_config.flydelta_capture_job_enqueue);
                     adaptation_config.source_observer =
                         assembly.flydelta_runtime_candidate_observer->source_observer();
                 } else {

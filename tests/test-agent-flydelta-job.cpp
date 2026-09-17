@@ -85,7 +85,26 @@ int main() {
     CHECK(pipeline_parsed.bootstrap_zoom_state_ref == job.bootstrap_zoom_state_ref);
     CHECK(pipeline_parsed.search_state_ref == job.search_state_ref);
 
+    job.id = "flydelta://job/donor-capture-1";
+    job.kind = common_flydelta_experiment_job_kind::donor_capture;
+    job.capture_candidate_ids = {"flydelta://capture-candidate/1"};
+    job.capture_manifest_ids.clear();
+    job.behavior_delta_ids.clear();
+    job.training_example_ids.clear();
+    job.bootstrap_zoom_state_ref.clear();
+    job.search_state_ref.clear();
+    CHECK(common_flydelta_experiment_job_validate(job, 8, error));
+    const auto donor_text = common_flydelta_experiment_job_to_json(job);
+    common_flydelta_experiment_job donor_parsed;
+    CHECK(common_flydelta_experiment_job_from_json(donor_text, donor_parsed, error));
+    CHECK(donor_parsed.kind == common_flydelta_experiment_job_kind::donor_capture);
+    CHECK(donor_parsed.capture_candidate_ids == job.capture_candidate_ids);
+    job.capture_manifest_ids = {"flydelta://capture/should-not-be-mixed"};
+    CHECK(!common_flydelta_experiment_job_validate(job, 8, error));
+    job.capture_manifest_ids.clear();
+
     job.kind = common_flydelta_experiment_job_kind::delta_memory;
+    job.capture_candidate_ids.clear();
     job.seed.split = common_flydelta_training_split::validation;
     job.training_example_ids = {"flydelta://training/1"};
     CHECK(!common_flydelta_experiment_job_validate(job, 8, error));

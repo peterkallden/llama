@@ -7,6 +7,7 @@
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
+#include "agent/adaptation/flydelta/flydelta-capture.h"
 
 #include <functional>
 #include <string>
@@ -17,6 +18,7 @@ struct common_flydelta_evaluator_callbacks;
 
 struct common_flydelta_experiment_worker_result {
     std::string safe_summary;
+    std::vector<common_flydelta_capture_manifest> capture_manifests;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
     std::vector<common_flydelta_direction_candidate> direction_candidates;
     std::vector<common_flydelta_basis_direction> basis_directions;
@@ -32,6 +34,10 @@ struct common_flydelta_experiment_worker_result {
     common_flydelta_bootstrap_zoom_state bootstrap_zoom_state;
     std::string bootstrap_zoom_state_ref;
     std::string search_state_ref;
+    bool has_next_action = false;
+    common_flydelta_next_action next_action = common_flydelta_next_action::retain;
+    common_flydelta_utility_gate_decision utility_decision;
+    std::string next_action_reason;
     bool has_representation_augmentation_state = false;
     common_flydelta_representation_augmentation_state representation_augmentation_state;
     std::string representation_augmentation_state_ref;
@@ -42,6 +48,7 @@ struct common_flydelta_experiment_worker_report {
     std::string job_id;
     std::string safe_summary;
     size_t report_count = 0;
+    std::vector<common_flydelta_capture_manifest> capture_manifests;
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;
     bool has_experiment_plan = false;
@@ -50,6 +57,10 @@ struct common_flydelta_experiment_worker_report {
     common_flydelta_bootstrap_zoom_state bootstrap_zoom_state;
     std::string bootstrap_zoom_state_ref;
     std::string search_state_ref;
+    bool has_next_action = false;
+    common_flydelta_next_action next_action = common_flydelta_next_action::retain;
+    common_flydelta_utility_gate_decision utility_decision;
+    std::string next_action_reason;
     bool has_representation_augmentation_state = false;
     common_flydelta_representation_augmentation_state representation_augmentation_state;
     std::string representation_augmentation_state_ref;

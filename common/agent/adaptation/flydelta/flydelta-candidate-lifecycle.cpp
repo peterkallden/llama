@@ -79,7 +79,9 @@ bool common_flydelta_search_observation_validate(
     if (observation.schema_version != 1 || !nonempty_bounded(observation.experiment_id) ||
             !nonempty_bounded(observation.candidate_id) ||
             !nonempty_bounded(observation.search_kind) ||
-            observation.experimental_artifact_id.size() > 512 || !observation.host_verified ||
+            observation.experimental_artifact_id.size() > 512 ||
+            observation.fixture_baseline_ref.size() > 512 ||
+            observation.surface_parent_best_ref.size() > 512 || !observation.host_evaluated ||
             (observation.diagnostics_available &&
                 !common_flydelta_representation_diagnostics_validate(observation.diagnostics, error)) ||
             observation.coefficients.size() > 16 ||
@@ -87,7 +89,8 @@ bool common_flydelta_search_observation_validate(
                 [](float value) { return std::isfinite(value); }) ||
             !std::isfinite(observation.search_fitness) ||
             (observation.sequence_margin_available &&
-                !std::isfinite(observation.sequence_margin_delta))) {
+                (!observation.sequence_margin.available ||
+                 !common_flydelta_margin_comparison_validate(observation.sequence_margin, error)))) {
         if (error.empty()) error = "FlyDelta search observation is invalid";
         return false;
     }
@@ -107,11 +110,15 @@ bool common_flydelta_decide_search_disposition(
         observation.diagnostics.cosine >= 0.3f && observation.diagnostics.progress > 0.0f &&
         observation.diagnostics.leakage <= 1.0f && observation.diagnostics.shift_norm <= 1.0f;
     const bool margin_is_promising = observation.sequence_margin_available &&
-        observation.sequence_margin_delta > 0.0f;
+        observation.sequence_margin.normalized_delta() > 0.0f;
     const bool search_signal = geometry_is_safe || margin_is_promising;
 
     switch (observation.outcome) {
         case common_flydelta_counterfactual_outcome::helped:
+            if (!observation.verifier_known) {
+                error = "FlyDelta HELPED observation requires a known verifier";
+                return false;
+            }
             decision.disposition = common_flydelta_search_disposition::validate_repeatability;
             decision.search_priority = 0.5f;
             decision.evidence_score = 1.0f;
@@ -229,7 +236,10 @@ bool common_flydelta_append_search_lifecycle(
         {"artifact_action", common_flydelta_experimental_artifact_action_name(
             decision.artifact_action)},
         {"outcome", common_flydelta_counterfactual_outcome_name(observation.outcome)},
-        {"host_verified", observation.host_verified},
+        {"host_evaluated", observation.host_evaluated},
+        {"verifier_known", observation.verifier_known},
+        {"fixture_baseline_ref", observation.fixture_baseline_ref},
+        {"surface_parent_best_ref", observation.surface_parent_best_ref},
         {"disposition", common_flydelta_search_disposition_name(decision.disposition)},
         {"search_priority", decision.search_priority},
         {"evidence_score", decision.evidence_score},
@@ -252,7 +262,14 @@ bool common_flydelta_append_search_lifecycle(
         payload["search_fitness"] = observation.search_fitness;
     }
     if (observation.sequence_margin_available) {
-        payload["sequence_margin_delta"] = observation.sequence_margin_delta;
+        payload["sequence_margin"] = {
+            {"baseline_total", observation.sequence_margin.baseline.total_delta()},
+            {"candidate_total", observation.sequence_margin.candidate.total_delta()},
+            {"total_delta", observation.sequence_margin.total_delta()},
+            {"baseline_normalized", observation.sequence_margin.baseline.normalized_delta()},
+            {"candidate_normalized", observation.sequence_margin.candidate.normalized_delta()},
+            {"normalized_delta", observation.sequence_margin.normalized_delta()},
+        };
     }
     if (lineage) {
         payload["lineage"] = {

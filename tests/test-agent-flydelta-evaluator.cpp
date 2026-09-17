@@ -108,6 +108,17 @@ static common_flydelta_search_pipeline_result search_pipeline_result() {
     trial.promising = true;
     trial.safe_to_continue = true;
     trial.evidence_ref = "evidence:where";
+    trial.margin_comparison.available = true;
+    trial.margin_comparison.baseline.available = true;
+    trial.margin_comparison.baseline.positive_total_logprob = -2.0f;
+    trial.margin_comparison.baseline.negative_total_logprob = -1.0f;
+    trial.margin_comparison.baseline.positive_token_count = 1;
+    trial.margin_comparison.baseline.negative_token_count = 1;
+    trial.margin_comparison.candidate.available = true;
+    trial.margin_comparison.candidate.positive_total_logprob = -1.6f;
+    trial.margin_comparison.candidate.negative_total_logprob = -1.0f;
+    trial.margin_comparison.candidate.positive_token_count = 1;
+    trial.margin_comparison.candidate.negative_token_count = 1;
     direction.region_trials.push_back(std::move(trial));
     value.directions.push_back(std::move(direction));
     return value;
@@ -234,6 +245,9 @@ int main() {
         result.experiment_plan.phase == common_flydelta_experiment_phase::bootstrap &&
         result.experiment_plan.depth == common_flydelta_search_depth::bootstrap &&
         !result.experiment_plan.run_tfo_lite);
+    CHECK(result.has_next_action &&
+        result.next_action == common_flydelta_next_action::run_bootstrap &&
+        result.next_action_reason.find("Whirlpool") != std::string::npos);
 
     auto resumable_pipeline = pipeline;
     resumable_pipeline.id = "flydelta://job/search-pipeline-resume";
@@ -316,12 +330,38 @@ int main() {
     generic_resumable_pipeline.search_state_ref = "flydelta://state/search-1";
     callbacks = {};
     bool generic_resumed = false;
+    bool orchestration_resolved = false;
+    bool orchestration_persisted = false;
     callbacks.run_search_pipeline_with_search_state = [&](const auto & job,
             const auto & state_ref, auto & value, auto & next_state_ref, std::string &) {
         generic_resumed = job.search_state_ref == state_ref &&
             state_ref == "flydelta://state/search-1";
         value = search_pipeline_result();
         next_state_ref = "flydelta://state/search-2";
+        return true;
+    };
+    callbacks.resolve_search_orchestration_state = [&](const auto & state_ref,
+            auto & current_plan, auto & history, std::string &) {
+        orchestration_resolved = state_ref == "flydelta://state/search-1";
+        current_plan = {};
+        current_plan.continuation.region.layer_indices = {24};
+        current_plan.continuation.region.anchor_layer_index = 24;
+        current_plan.continuation.search_score = 0.5f;
+        current_plan.depth = common_flydelta_search_depth::deep;
+        current_plan.phase = common_flydelta_experiment_phase::bootstrap;
+        current_plan.budget = common_flydelta_search_budget_for_depth(
+            common_flydelta_search_depth::bootstrap);
+        current_plan.tfo_lite_permitted_by_evidence = true;
+        current_plan.tfo_lite_requires_utility_gate = true;
+        history = {};
+        return true;
+    };
+    callbacks.persist_search_orchestration_state = [&](const auto & current_plan,
+            const auto & history, auto & next_state_ref, std::string &) {
+        orchestration_persisted = current_plan.phase ==
+            common_flydelta_experiment_phase::shallow_controls &&
+            history.qualifying_streak == 1;
+        next_state_ref = "flydelta://state/search-3";
         return true;
     };
     bool typed_bootstrap_called_for_post_state = false;
@@ -332,8 +372,11 @@ int main() {
     CHECK(common_flydelta_evaluate_job(
         generic_resumable_pipeline, config, callbacks, result, error));
     CHECK(generic_resumed && !typed_bootstrap_called_for_post_state &&
-        result.search_state_ref == "flydelta://state/search-2" &&
-        !result.has_experiment_plan &&
+        orchestration_resolved && orchestration_persisted &&
+        result.search_state_ref == "flydelta://state/search-3" &&
+        result.has_experiment_plan &&
+        result.has_next_action &&
+        result.next_action == common_flydelta_next_action::run_shallow_controls &&
         result.search_pipeline_results.size() == 1);
 
     // The production-facing adapter persists only immutable state metadata in
@@ -362,7 +405,8 @@ int main() {
     selected_arm.total_scale = 0.1f;
     common_flydelta_bootstrap_zoom_trial selected_trial;
     selected_trial.candidate = selected_arm;
-    selected_trial.host_verified = true;
+    selected_trial.host_evaluated = true;
+    selected_trial.verifier_known = true;
     selected_trial.margin_available = true;
     selected_trial.margin_delta = 0.2f;
     selected_trial.diagnostics_available = true;

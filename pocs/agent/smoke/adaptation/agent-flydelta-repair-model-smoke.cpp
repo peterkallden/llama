@@ -12,6 +12,7 @@
 #include "agent/adaptation/flydelta/flydelta-layer-discovery.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
+#include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
 #include "agent/adaptation/flydelta/flydelta-scale-search.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-training.h"
@@ -48,6 +49,8 @@ struct options {
     // surface path with the existing model-backed runner. It never changes
     // the production worker policy or evidence rank.
     bool force_plateau_escape = false;
+    // Test-only model-facing bridge for the representation-augmentation seam.
+    bool force_representation_augmentation = false;
     std::vector<uint32_t> region_layers;
 };
 
@@ -110,6 +113,8 @@ bool parse_args(int argc, char ** argv, options & value) {
             value.region_scan = true;
         } else if (arg == "--force-plateau-escape") {
             value.force_plateau_escape = true;
+        } else if (arg == "--force-representation-augmentation") {
+            value.force_representation_augmentation = true;
         } else if (arg == "--region-layers") {
             const char * layers = next("--region-layers");
             if (!layers || !parse_layer_list(layers, value.region_layers)) {
@@ -211,7 +216,8 @@ int main(int argc, char ** argv) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N]"
                   << " [--region-scan] [--region-layers L1,L2,...]"
-                  << " [--force-plateau-escape]\n";
+                  << " [--force-plateau-escape]"
+                  << " [--force-representation-augmentation]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -1114,7 +1120,8 @@ int main(int argc, char ** argv) {
                 // remains experimental search evidence rather than learning
                 // credit.
                 trial.outcome = outcome;
-                trial.host_verified = true;
+                trial.host_evaluated = true;
+                trial.verifier_known = true;
                 trial.margin_available = margin.available && region_baseline_margin.available;
                 trial.margin_delta = trial.margin_available
                     ? margin.normalized_delta() - region_baseline_margin.normalized_delta()
@@ -1230,7 +1237,7 @@ int main(int argc, char ** argv) {
             round.anchor_layer = continuation.region.anchor_layer_index;
             for (const auto & trial : zoom_trials) {
                 if (trial.candidate.phase != phase) continue;
-                if (!trial.host_verified ||
+                if (!trial.verifier_known ||
                         trial.outcome == common_flydelta_counterfactual_outcome::harmed) {
                     round.safe_to_continue = false;
                     continue;
@@ -1322,7 +1329,7 @@ int main(int argc, char ** argv) {
                 common_flydelta_orthogonal_search_arm arm;
                 arm.intervention = flatten_profile(trial.candidate);
                 arm.decision_margin_delta = trial.margin_delta;
-                arm.safe_to_continue = trial.host_verified &&
+                arm.safe_to_continue = trial.verifier_known &&
                     trial.outcome != common_flydelta_counterfactual_outcome::harmed;
                 arm.outcome = trial.outcome;
                 orthogonal_arms.push_back(std::move(arm));
@@ -1487,7 +1494,8 @@ int main(int argc, char ** argv) {
                     trial.outcome = counterfactual.passed
                         ? common_flydelta_counterfactual_outcome::helped
                         : common_flydelta_counterfactual_outcome::unknown;
-                    trial.host_verified = true;
+                    trial.host_evaluated = true;
+                    trial.verifier_known = true;
                     trial.margin_available = margin.available && region_baseline_margin.available;
                     trial.margin_delta = trial.margin_available
                         ? margin.normalized_delta() - region_baseline_margin.normalized_delta() : 0.0f;
@@ -1505,7 +1513,7 @@ int main(int argc, char ** argv) {
                     if (!trial.margin_available) continue;
                     if (!best_surface_utility.decision_margin_available ||
                             trial.margin_delta > best_surface_utility.decision_margin_delta) {
-                        best_surface_utility.safe_to_continue = trial.host_verified &&
+                        best_surface_utility.safe_to_continue = trial.verifier_known &&
                             trial.outcome != common_flydelta_counterfactual_outcome::harmed;
                         best_surface_utility.decision_margin_available = true;
                         best_surface_utility.decision_margin_delta = trial.margin_delta;
@@ -1700,6 +1708,262 @@ int main(int argc, char ** argv) {
                               << " selected_helped=" << (recenter_selection.selected ? "yes" : "no")
                               << " surface_revision=" << surface_state.surface_revision << '\n';
                 }
+            }
+        }
+
+        // Model-facing representation augmentation. This is deliberately an
+        // explicit smoke mode: the normal worker remains governed by natural
+        // evidence depth, while this mode verifies the real capture/donor /
+        // residualization seam against the same resident model.
+        if (value.force_representation_augmentation) {
+            const uint32_t augmentation_layer = continuation.region.anchor_layer_index;
+            const auto base_delta = std::find_if(deltas.begin(), deltas.end(),
+                [&](const auto & delta) {
+                    return delta.layer_index == static_cast<int32_t>(augmentation_layer);
+                });
+            if (base_delta == deltas.end()) {
+                std::cerr << "FlyDelta augmentation has no anchor-layer surface direction\n";
+                return 1;
+            }
+
+            const auto layer_values = [&](const common_flydelta_hidden_state_capture & capture,
+                    uint32_t layer, std::vector<float> & values) {
+                const auto layer_it = std::find(capture.layer_indices.begin(),
+                    capture.layer_indices.end(), layer);
+                if (layer_it == capture.layer_indices.end()) return false;
+                const size_t offset = static_cast<size_t>(layer_it - capture.layer_indices.begin()) *
+                    capture.n_embd;
+                if (offset + capture.n_embd > capture.values.size()) return false;
+                values.assign(capture.values.begin() + offset,
+                    capture.values.begin() + offset + capture.n_embd);
+                return true;
+            };
+
+            // This is a second natural host-certified context in the same
+            // behavior family. It is intentionally different from the first
+            // repair pair, so residualization has a chance to reveal a new
+            // experimental axis instead of reproducing the parent delta.
+            const char * donor_instruction =
+                "The available tools are data.describe and data.inspect. For inventory.csv, "
+                "the request asks to inspect the first table, so choose data.inspect. "
+                "Return exactly {\"name\":\"data.inspect\",\"arguments\":"
+                "{\"dataset\":\"inventory.csv\"}}.";
+            common_agent_generation_result donor;
+            const bool donor_executed = generate(*inference, value, donor_instruction, donor,
+                {}, capture_request);
+            const bool donor_verified = donor_executed && contains_tool(donor, "data.inspect") &&
+                donor.flydelta_capture && donor.flydelta_capture->captured &&
+                common_flydelta_hidden_state_capture_validate(
+                    *donor.flydelta_capture, 64U * 1024U * 1024U, error);
+            std::cout << "augmentation_donor_model_output=" << output_preview(donor) << '\n'
+                      << "augmentation_donor_host_verified="
+                      << (donor_verified ? "yes" : "no") << '\n';
+            if (!donor_verified) {
+                std::cerr << "FlyDelta augmentation donor was not host-certified: " << error << '\n';
+                return 1;
+            }
+
+            common_flydelta_representation_donor_candidate donor_candidate;
+            donor_candidate.donor_id = "flydelta://donor/model-repair-augmentation";
+            donor_candidate.source_type = "host_certified_repair";
+            donor_candidate.source_ref = "evidence://flydelta/model-repair-augmentation";
+            donor_candidate.behavior_key = evidence.behavior_key;
+            donor_candidate.context_payload_ref = "context://host/model-repair-augmentation";
+            donor_candidate.qualification_policy = "host_verified_or_margin_guided";
+            donor_candidate.provenance = "model-facing smoke; opaque host context reference";
+            if (!common_flydelta_representation_donor_candidate_validate(
+                    donor_candidate, error)) {
+                std::cerr << "FlyDelta augmentation donor candidate is invalid: " << error << '\n';
+                return 1;
+            }
+
+            common_flydelta_representation_donor_qualification observation;
+            observation.donor_id = donor_candidate.donor_id;
+            observation.host_evaluated = true;
+            observation.verifier_known = true;
+            observation.safe_to_continue = true;
+            observation.host_outcome = common_flydelta_counterfactual_outcome::helped;
+            const auto donor_request = make_request(value, donor_instruction);
+            common_flydelta_decision_margin donor_margin;
+            if (!score_chat_choice_margin(
+                    loaded->model, loaded->chat_templates.get(), donor_request.messages,
+                    donor_request.tools, donor_request.tool_choice, donor_request.options,
+                    "{\"name\":\"", "data.inspect", "data.describe", donor_margin,
+                    nullptr, donor_request.json_schema, {}, {}, {}, &error)) {
+                // Margin is optional for a host-certified donor. Keep the
+                // donor usable, but make the missing diagnostic visible.
+                observation.decision_margin_available = false;
+            } else {
+                observation.decision_margin_available = true;
+                observation.margin_gain = donor_margin.normalized_delta();
+            }
+            // The diagnostic helper needs a behavior delta. Its values are
+            // useful here only as geometry for donor search qualification.
+            common_flydelta_representation_diagnostics donor_geometry;
+            if (common_flydelta_representation_diagnostics_from_captures(
+                    *failed.flydelta_capture, *donor.flydelta_capture, *base_delta,
+                    64U * 1024U * 1024U, donor_geometry, error)) {
+                observation.geometry_available = true;
+                observation.geometry = donor_geometry;
+                observation.margin_gain = std::max(observation.margin_gain, 0.0f);
+            }
+            common_flydelta_representation_donor_qualification qualified;
+            common_flydelta_representation_augmentation_config augmentation_config;
+            if (!common_flydelta_qualify_representation_donor(
+                    donor_candidate, observation, augmentation_config.minimum_margin_gain,
+                    augmentation_config.max_leakage, augmentation_config.max_shift_norm,
+                    qualified, error) || !qualified.search_qualified) {
+                std::cerr << "FlyDelta augmentation donor was not search-qualified: " << error
+                          << " reason=" << qualified.reason << '\n';
+                return 1;
+            }
+
+            std::vector<float> donor_values;
+            std::vector<float> target_values;
+            if (!layer_values(*donor.flydelta_capture, augmentation_layer, donor_values) ||
+                    !layer_values(*failed.flydelta_capture, augmentation_layer, target_values)) {
+                std::cerr << "FlyDelta augmentation donor/target layer capture is unavailable\n";
+                return 1;
+            }
+            common_flydelta_representation_latent_delta latent;
+            if (!common_flydelta_build_residualized_latent_delta(
+                    donor_candidate.donor_id, static_cast<int32_t>(augmentation_layer),
+                    donor_values, target_values, {base_delta->values},
+                    augmentation_config.minimum_residual_norm, latent, error)) {
+                std::cerr << "FlyDelta augmentation residualization failed: " << error << '\n';
+                return 1;
+            }
+            std::cout << "augmentation_latent_delta available="
+                      << (latent.available ? "yes" : "no")
+                      << " layer=" << latent.layer_index
+                      << " raw_norm=" << latent.raw_norm
+                      << " residual_norm=" << latent.residual_norm
+                      << " removed_norm=" << latent.removed_norm << '\n';
+
+            common_flydelta_representation_augmentation_state augmentation_state;
+            augmentation_state.state_ref =
+                "flydelta://state/representation-augmentation/model-repair-e2e";
+            augmentation_state.model_fingerprint = profile;
+            augmentation_state.behavior_key = evidence.behavior_key;
+            augmentation_state.direction_family_id = "structured_tool_selection";
+            augmentation_state.parent_surface_revision = surface_state.surface_revision == 0
+                ? 1 : surface_state.surface_revision;
+            augmentation_state.parent_search_state_ref =
+                "flydelta://state/model-repair/bootstrap-zoom";
+            augmentation_state.parent_evidence_rank = std::max(0.1f,
+                static_cast<float>(evidence_depth.effective_rank));
+            augmentation_state.evidence_rank = augmentation_state.parent_evidence_rank;
+            augmentation_state.search_rank = 1;
+            augmentation_state.selected_region = {augmentation_layer};
+            augmentation_state.target_fixture_ref = experiment_fixture.id;
+            augmentation_state.donor_candidate_refs = {donor_candidate.donor_id};
+            augmentation_state.qualified_donor_refs = {donor_candidate.donor_id};
+            augmentation_state.phase =
+                common_flydelta_representation_augmentation_phase::build_latent_delta;
+            augmentation_state.best_donor_ref = donor_candidate.donor_id;
+            augmentation_state.best_margin_gain = qualified.margin_gain;
+            augmentation_state.remaining_budget = augmentation_config.max_controls +
+                augmentation_config.max_local_whirlpool_probes +
+                augmentation_config.max_full_generation;
+            augmentation_state.surface_revision = augmentation_state.parent_surface_revision;
+            if (!common_flydelta_apply_representation_augmentation(
+                    augmentation_state, latent, error)) {
+                if (!latent.available) {
+                    std::cout << "augmentation_search=retain reason=residual_below_threshold\n";
+                } else {
+                    std::cerr << "FlyDelta augmentation state transition failed: " << error << '\n';
+                    return 1;
+                }
+            } else {
+                std::vector<std::vector<float>> controls;
+                if (!common_flydelta_propose_representation_augmentation_controls(
+                        augmentation_config, controls, error)) {
+                    std::cerr << "FlyDelta augmentation controls failed: " << error << '\n';
+                    return 1;
+                }
+                const auto base_direction = common_flydelta_basis_direction{
+                    base_delta->layer_index, base_delta->values, 1, 0, 0};
+                float best_control_margin = 0.0f;
+                size_t control_index = 0;
+                for (const auto & control : controls) {
+                    common_flydelta_activation_request request;
+                    request.candidate_id = "flydelta://candidate/model-repair-augmentation";
+                    request.artifact_id = "flydelta://artifact/model-repair-e2e";
+                    request.model_profile_fingerprint = profile;
+                    request.capture_layout_revision = "layer-input:v1";
+                    request.model_n_embd = model_n_embd;
+                    request.model_n_layers = model_n_layers;
+                    request.il_end = static_cast<int32_t>(model_n_layers - 1);
+                    request.directions = {base_direction,
+                        {static_cast<int32_t>(augmentation_layer), latent.values}};
+                    request.coefficients = control;
+                    if (!common_flydelta_gate_request_from_context(
+                            recognition, code, true,
+                            common_flydelta_candidate_status::approved, true,
+                            continuation.region.total_scale, request.gate_request, error)) {
+                        std::cerr << "FlyDelta augmentation control gate failed: " << error << '\n';
+                        return 1;
+                    }
+                    common_flydelta_gate_config gate_config;
+                    gate_config.enabled = true;
+                    gate_config.max_scale = 1.0f;
+                    common_flydelta_activation_result activation;
+                    if (!common_flydelta_prepare_activation(
+                            gate_config, request, 64U * 1024U * 1024U,
+                            activation, error)) {
+                        std::cerr << "FlyDelta augmentation control activation failed: " << error << '\n';
+                        return 1;
+                    }
+                    const auto activation_ptr =
+                        std::make_shared<const common_flydelta_activation_result>(
+                            std::move(activation));
+                    common_agent_generation_result generated;
+                    if (!generate(*inference, value, failed_instruction, generated,
+                            activation_ptr, capture_request)) {
+                        std::cerr << "FlyDelta augmentation control generation failed: "
+                                  << generated.error_message << '\n';
+                        return 1;
+                    }
+                    common_flydelta_decision_margin margin;
+                    const auto scoring_request = make_request(value, failed_instruction);
+                    if (!score_chat_choice_margin(
+                            loaded->model, loaded->chat_templates.get(),
+                            scoring_request.messages, scoring_request.tools,
+                            scoring_request.tool_choice, scoring_request.options,
+                            "{\"name\":\"", "data.inspect", "data.describe", margin,
+                            nullptr, scoring_request.json_schema, {}, {},
+                            activation_ptr->overlay, &error)) {
+                        std::cerr << "FlyDelta augmentation control margin failed: " << error << '\n';
+                        return 1;
+                    }
+                    const float margin_delta = region_baseline_margin.available && margin.available
+                        ? margin.normalized_delta() - region_baseline_margin.normalized_delta() : 0.0f;
+                    best_control_margin = std::max(best_control_margin, margin_delta);
+                    std::cout << "augmentation_control index=" << control_index++
+                              << " c0=" << control[0] << " c1=" << control[1]
+                              << " host_outcome=" << (contains_tool(generated, "data.inspect")
+                                  ? "helped" : "unknown")
+                              << " margin_delta=" << margin_delta
+                              << " output=" << output_preview(generated) << '\n';
+                }
+                augmentation_state.phase =
+                    common_flydelta_representation_augmentation_phase::run_controls;
+                common_flydelta_representation_augmentation_action action;
+                if (!common_flydelta_decide_representation_augmentation(
+                        augmentation_config, augmentation_state, {qualified},
+                        best_control_margin > 0.0f, false, action, error)) {
+                    std::cerr << "FlyDelta augmentation UtilityGate failed: " << error << '\n';
+                    return 1;
+                }
+                augmentation_state.next_action =
+                    common_flydelta_representation_augmentation_action_name(action);
+                std::cout << "augmentation_utility_gate best_margin_delta="
+                          << best_control_margin << " action="
+                          << augmentation_state.next_action
+                          << " search_rank=" << augmentation_state.search_rank
+                          << " evidence_rank=" << augmentation_state.evidence_rank
+                          << " surface_revision=" << augmentation_state.surface_revision
+                          << " promotion=no\n";
             }
         }
 

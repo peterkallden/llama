@@ -11,6 +11,7 @@
 #include "resource/resource-contract.h"
 #include "agent/adaptation/learning-cause-classifier.h"
 #include "agent/adaptation/learning-domain-policy.h"
+#include "agent/adaptation/flydelta/flydelta-worker-budget.h"
 #include "agent/runtime/model-catalog.h"
 
 #include <cstdint>
@@ -64,6 +65,12 @@ struct agent_host_config {
     std::string adaptation_transaction_path;
     std::set<std::string> adaptation_stable_model_facing_tools;
     common_learning_domain_policy adaptation_domains;
+    // FlyDelta uses the same overall worker budget as the agent. These
+    // settings are deliberately configuration-only until the host scheduler
+    // installs the dedicated nearline lane.
+    bool adaptation_flydelta_enabled = false;
+    size_t adaptation_flydelta_worker_count = 0;
+    std::string adaptation_flydelta_queue_path;
 
     std::string memory_backend = "auto";
     std::string memory_db;

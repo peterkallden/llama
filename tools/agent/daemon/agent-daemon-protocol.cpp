@@ -499,6 +499,9 @@ void append_agent_daemon_status_snapshot(
     response["worker_running"] = status.worker_running;
     response["worker_count"] = status.worker_count;
     response["workers_running"] = status.workers_running;
+    response["flydelta_worker_configured"] = status.flydelta_worker_configured;
+    response["flydelta_worker_count"] = status.flydelta_worker_count;
+    response["flydelta_workers_running"] = status.flydelta_workers_running;
     response["accepting_commands"] = status.accepting_commands;
     response["shutdown_requested"] = status.shutdown_requested;
     response["sessions"] = status.session_count;

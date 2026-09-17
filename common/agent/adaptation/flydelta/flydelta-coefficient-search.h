@@ -75,10 +75,10 @@ bool common_flydelta_coefficient_search_config_validate(
 struct common_flydelta_coefficient_trial {
     std::vector<float> coefficients;
     common_flydelta_decision_margin margin;
+    common_flydelta_margin_comparison margin_comparison;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
     float quality_delta = 0.0f;
-    float sequence_margin_delta = 0.0f;
     float search_fitness = 0.0f;
     bool geometry_available = false;
     common_flydelta_representation_diagnostics geometry;

@@ -26,6 +26,14 @@ bool validate_result(
         error = "FlyDelta worker search state reference is invalid";
         return false;
     }
+    if (result.next_action_reason.size() > 512) {
+        error = "FlyDelta worker next-action reason is invalid";
+        return false;
+    }
+    for (const auto & manifest : result.capture_manifests) {
+        if (!common_flydelta_capture_manifest_validate(
+                manifest, 4U * 1024U * 1024U, error)) return false;
+    }
     if (result.has_representation_augmentation_state &&
             !common_flydelta_representation_augmentation_state_validate(
                 result.representation_augmentation_state,
@@ -79,6 +87,12 @@ bool validate_result(
         error = "FlyDelta DeltaMemory worker result requires weights";
         return false;
     }
+    if (claimed.job.kind == common_flydelta_experiment_job_kind::donor_capture &&
+            (result.capture_manifests.empty() ||
+             result.capture_manifests.size() != claimed.job.capture_candidate_ids.size())) {
+        error = "FlyDelta donor capture worker result requires a manifest";
+        return false;
+    }
     return true;
 }
 
@@ -114,8 +128,10 @@ bool common_flydelta_experiment_worker_run_once(
             queue_root, claimed, state, safe_summary, limits, error)) return false;
     report.state = state;
     report.safe_summary = safe_summary;
-    report.report_count = result.counterfactual_reports.size() +
-        result.direction_candidates.size() + result.search_pipeline_results.size();
+    report.report_count = result.capture_manifests.size() +
+        result.counterfactual_reports.size() + result.direction_candidates.size() +
+        result.search_pipeline_results.size();
+    report.capture_manifests = std::move(result.capture_manifests);
     report.evidence_depth = result.evidence_depth;
     report.search_budget = result.search_budget;
     report.has_experiment_plan = result.has_experiment_plan;
@@ -124,6 +140,10 @@ bool common_flydelta_experiment_worker_run_once(
     report.bootstrap_zoom_state = std::move(result.bootstrap_zoom_state);
     report.bootstrap_zoom_state_ref = std::move(result.bootstrap_zoom_state_ref);
     report.search_state_ref = std::move(result.search_state_ref);
+    report.has_next_action = result.has_next_action;
+    report.next_action = result.next_action;
+    report.utility_decision = result.utility_decision;
+    report.next_action_reason = std::move(result.next_action_reason);
     report.has_representation_augmentation_state = result.has_representation_augmentation_state;
     report.representation_augmentation_state = std::move(result.representation_augmentation_state);
     report.representation_augmentation_state_ref =
@@ -146,6 +166,7 @@ bool common_flydelta_experiment_worker_run_evaluator_once(
             common_flydelta_evaluator_result evaluator_result;
             if (!common_flydelta_evaluate_job(
                     job, config, callbacks, evaluator_result, callback_error)) return false;
+            worker_result.capture_manifests = std::move(evaluator_result.capture_manifests);
             worker_result.counterfactual_reports =
                 std::move(evaluator_result.counterfactual_reports);
             worker_result.direction_candidates =
@@ -168,6 +189,10 @@ bool common_flydelta_experiment_worker_run_evaluator_once(
             worker_result.bootstrap_zoom_state_ref = std::move(
                 evaluator_result.bootstrap_zoom_state_ref);
             worker_result.search_state_ref = std::move(evaluator_result.search_state_ref);
+            worker_result.has_next_action = evaluator_result.has_next_action;
+            worker_result.next_action = evaluator_result.next_action;
+            worker_result.utility_decision = evaluator_result.utility_decision;
+            worker_result.next_action_reason = std::move(evaluator_result.next_action_reason);
             worker_result.has_representation_augmentation_state =
                 evaluator_result.has_representation_augmentation_state;
             worker_result.representation_augmentation_state = std::move(

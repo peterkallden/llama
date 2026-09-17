@@ -508,6 +508,9 @@ bool parse_agent_daemon_jsonl_status_response(
     response.worker_running = message.value("worker_running", false);
     response.worker_count = message.value("worker_count", 1);
     response.workers_running = message.value("workers_running", 0);
+    response.flydelta_worker_configured = message.value("flydelta_worker_configured", false);
+    response.flydelta_worker_count = message.value("flydelta_worker_count", 0);
+    response.flydelta_workers_running = message.value("flydelta_workers_running", 0);
     response.accepting_commands = message.value("accepting_commands", false);
     response.shutdown_requested = message.value("shutdown_requested", false);
     response.sessions = message.value("sessions", 0);

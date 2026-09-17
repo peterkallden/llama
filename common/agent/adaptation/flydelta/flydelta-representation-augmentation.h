@@ -59,7 +59,10 @@ bool common_flydelta_representation_donor_candidate_validate(
 struct common_flydelta_representation_donor_qualification {
     int schema_version = 1;
     std::string donor_id;
-    bool host_verified = false;
+    // Evaluation and decisiveness are separate. UNKNOWN is valid search
+    // material, but only a known HELPED outcome can provide learning credit.
+    bool host_evaluated = false;
+    bool verifier_known = false;
     bool safe_to_continue = false;
     common_flydelta_counterfactual_outcome host_outcome =
         common_flydelta_counterfactual_outcome::unknown;

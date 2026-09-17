@@ -47,7 +47,8 @@ int main() {
 
     common_flydelta_representation_donor_qualification observation;
     observation.donor_id = candidate.donor_id;
-    observation.host_verified = true;
+    observation.host_evaluated = true;
+    observation.verifier_known = true;
     observation.safe_to_continue = true;
     observation.decision_margin_available = true;
     observation.margin_gain = 0.12f;

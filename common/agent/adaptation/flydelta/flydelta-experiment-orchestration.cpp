@@ -123,6 +123,23 @@ const char * common_flydelta_utility_gate_action_name(
     return "retain";
 }
 
+const char * common_flydelta_next_action_name(common_flydelta_next_action action) {
+    switch (action) {
+        case common_flydelta_next_action::stop: return "stop";
+        case common_flydelta_next_action::retain: return "retain";
+        case common_flydelta_next_action::run_bootstrap: return "run_bootstrap";
+        case common_flydelta_next_action::refine_bootstrap: return "refine_bootstrap";
+        case common_flydelta_next_action::run_orthogonal_search: return "run_orthogonal_search";
+        case common_flydelta_next_action::run_shallow_controls: return "run_shallow_controls";
+        case common_flydelta_next_action::run_deep_controls: return "run_deep_controls";
+        case common_flydelta_next_action::recenter_surface: return "recenter_surface";
+        case common_flydelta_next_action::run_representation_augmentation:
+            return "run_representation_augmentation";
+        case common_flydelta_next_action::allow_tfo_lite: return "allow_tfo_lite";
+    }
+    return "retain";
+}
+
 bool common_flydelta_rank1_plateau_config_validate(
         const common_flydelta_rank1_plateau_config & config,
         std::string & error) {
@@ -477,7 +494,8 @@ bool common_flydelta_bootstrap_zoom_trial_validate(
         const common_flydelta_bootstrap_zoom_trial & trial,
         std::string & error) {
     error.clear();
-    if (!valid_zoom_candidate(trial.candidate, error) || !trial.host_verified ||
+    if (!valid_zoom_candidate(trial.candidate, error) || !trial.host_evaluated ||
+            (trial.verifier_known && !trial.host_evaluated) ||
             !finite(trial.margin_delta) ||
             (trial.diagnostics_available &&
                 !common_flydelta_representation_diagnostics_validate(
@@ -764,6 +782,7 @@ bool common_flydelta_advance_experiment_plan(
         next.require_decision_margin = phase != common_flydelta_experiment_phase::bootstrap;
         next.run_rank_two_controls_first = phase != common_flydelta_experiment_phase::bootstrap;
         next.run_tfo_lite = false;
+        next.run_orthogonal_search = false;
     };
     switch (utility.action) {
         case common_flydelta_utility_gate_action::stop:
@@ -825,4 +844,56 @@ bool common_flydelta_advance_experiment_plan(
             break;
     }
     return common_flydelta_search_budget_validate(next.budget, error);
+}
+
+bool common_flydelta_orchestrate_search_slice(
+        const common_flydelta_experiment_plan & current,
+        const common_flydelta_utility_gate_config & utility_config,
+        const std::vector<common_flydelta_subspace_utility_observation> & observations,
+        const common_flydelta_utility_history & history,
+        common_flydelta_slice_orchestration_result & result,
+        std::string & error) {
+    error.clear();
+    result = {};
+    if (!common_flydelta_search_budget_validate(current.budget, error) ||
+            observations.empty()) {
+        if (error.empty()) error = "FlyDelta bounded-slice orchestration input is invalid";
+        return false;
+    }
+    if (!common_flydelta_decide_subspace_utility(
+            utility_config, current.depth, current.phase, observations, history,
+            result.utility, error)) return false;
+    if (result.utility.action != common_flydelta_utility_gate_action::stop &&
+            result.utility.action != common_flydelta_utility_gate_action::retain &&
+            !result.utility.utility_qualified) {
+        error = "FlyDelta non-retain transition requires qualified utility";
+        return false;
+    }
+    if (!common_flydelta_advance_experiment_plan(
+            current, result.utility, result.plan, result.plan_advanced, error)) return false;
+    switch (result.utility.action) {
+        case common_flydelta_utility_gate_action::stop:
+            result.next_action = common_flydelta_next_action::stop;
+            break;
+        case common_flydelta_utility_gate_action::retain:
+            result.next_action = common_flydelta_next_action::retain;
+            break;
+        case common_flydelta_utility_gate_action::refine_bootstrap:
+            result.next_action = common_flydelta_next_action::refine_bootstrap;
+            break;
+        case common_flydelta_utility_gate_action::orthogonal_search:
+            result.next_action = common_flydelta_next_action::run_orthogonal_search;
+            break;
+        case common_flydelta_utility_gate_action::escalate_shallow:
+            result.next_action = common_flydelta_next_action::run_shallow_controls;
+            break;
+        case common_flydelta_utility_gate_action::escalate_deep:
+            result.next_action = common_flydelta_next_action::run_deep_controls;
+            break;
+        case common_flydelta_utility_gate_action::allow_tfo_lite:
+            result.next_action = common_flydelta_next_action::allow_tfo_lite;
+            break;
+    }
+    result.reason = common_flydelta_utility_gate_action_name(result.utility.action);
+    return true;
 }

@@ -49,6 +49,7 @@ int main() {
 
     CHECK(aggregation.ingest(sample("flydelta://sample/one", {1.0f, 0.0f, 0.0f, 0.0f}), error));
     CHECK(aggregation.ingest(sample("flydelta://sample/two", {0.0f, 1.0f, 0.0f, 0.0f}), error));
+    CHECK(aggregation.ingest(sample("flydelta://sample/one", {1.0f, 0.0f, 0.0f, 0.0f}), error));
     CHECK(aggregation.assess_depth(depth, error));
     CHECK(depth.depth == common_flydelta_search_depth::shallow);
 
@@ -74,6 +75,7 @@ int main() {
     CHECK(snapshot.compatible_samples == 8 && snapshot.rejected_samples == 2);
     CHECK(snapshot.retained_samples.size() == 6);
     CHECK(snapshot.retained_sample_ids.size() == 6);
+    CHECK(snapshot.seen_sample_ids.size() == 10);
     CHECK(snapshot.mean_direction.size() == 4 && snapshot.variance.size() == 4);
     CHECK(std::isfinite(snapshot.mean_direction[0]) && std::isfinite(snapshot.variance[1]));
     CHECK(std::string(common_flydelta_search_depth_name(depth.depth)) == "deep");

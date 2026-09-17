@@ -2628,6 +2628,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-queue
     test-agent-flydelta-collection
     test-agent-flydelta-worker
+    test-agent-flydelta-worker-budget
     test-agent-flydelta-pipeline
     test-agent-flydelta-gate
     test-agent-flydelta-promotion

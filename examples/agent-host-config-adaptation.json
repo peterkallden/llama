@@ -6,6 +6,11 @@
     "adaptation": {
       "capture": true,
       "collection_allowed": true,
+      "flydelta": {
+        "enabled": true,
+        "worker_count": 1,
+        "queue_path": "var/agent/flydelta/jobs"
+      },
       "max_evidence": 16,
       "backend": "jsonl",
       "transaction_path": "var/agent/learning.jsonl",
@@ -22,6 +27,9 @@
         }
       }
     }
+  },
+  "limits": {
+    "worker_count": 2
   },
   "model": {
     "path": "models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",

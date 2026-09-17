@@ -24,3 +24,17 @@ bool common_flydelta_decision_margin_validate(
     return true;
 }
 
+bool common_flydelta_margin_comparison_validate(
+        const common_flydelta_margin_comparison & comparison,
+        std::string & error) {
+    error.clear();
+    if (!comparison.available) return true;
+    if (!common_flydelta_decision_margin_validate(comparison.baseline, error) ||
+            !common_flydelta_decision_margin_validate(comparison.candidate, error) ||
+            !std::isfinite(comparison.total_delta()) ||
+            !std::isfinite(comparison.normalized_delta())) {
+        if (error.empty()) error = "FlyDelta margin comparison is invalid";
+        return false;
+    }
+    return true;
+}

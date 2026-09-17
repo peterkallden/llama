@@ -505,6 +505,16 @@ bool parse_agent_host_config_json(
             read_optional(adaptation, "max_evidence", config.adaptation_max_evidence);
             read_optional(adaptation, "backend", config.adaptation_transaction_backend);
             read_optional(adaptation, "transaction_path", config.adaptation_transaction_path);
+            if (adaptation.contains("flydelta")) {
+                if (!adaptation["flydelta"].is_object()) {
+                    error = "runtime.adaptation.flydelta must be an object";
+                    return false;
+                }
+                const auto & flydelta = adaptation["flydelta"];
+                read_optional(flydelta, "enabled", config.adaptation_flydelta_enabled);
+                read_optional(flydelta, "worker_count", config.adaptation_flydelta_worker_count);
+                read_optional(flydelta, "queue_path", config.adaptation_flydelta_queue_path);
+            }
             if (adaptation.contains("stable_model_facing_tools") &&
                     adaptation["stable_model_facing_tools"].is_array()) {
                 config.adaptation_stable_model_facing_tools.clear();
@@ -1204,6 +1214,11 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"max_evidence", config.adaptation_max_evidence},
                 {"backend", config.adaptation_transaction_backend},
                 {"transaction_path", config.adaptation_transaction_path},
+                {"flydelta", {
+                    {"enabled", config.adaptation_flydelta_enabled},
+                    {"worker_count", config.adaptation_flydelta_worker_count},
+                    {"queue_path", config.adaptation_flydelta_queue_path},
+                }},
                 {"stable_model_facing_tools", config.adaptation_stable_model_facing_tools},
                 {"domains", {
                     {"planning", config.adaptation_domains.planning},
@@ -1420,6 +1435,24 @@ bool validate_agent_host_config(
     }
     if (config.inference_max_active == 0) {
         error = "limits.inference_max_active must be greater than zero";
+        return false;
+    }
+    common_flydelta_worker_budget flydelta_budget;
+    if (!common_flydelta_worker_budget_compute(
+            config.worker_count,
+            config.adaptation_flydelta_enabled,
+            config.adaptation_flydelta_worker_count,
+            flydelta_budget,
+            error)) {
+        error = "runtime.adaptation.flydelta: " + error;
+        return false;
+    }
+    if (config.adaptation_flydelta_enabled && config.adaptation_flydelta_queue_path.empty()) {
+        error = "runtime.adaptation.flydelta.queue_path is required when FlyDelta is enabled";
+        return false;
+    }
+    if (config.adaptation_flydelta_enabled && flydelta_budget.agent_workers == 0) {
+        error = "runtime.adaptation.flydelta.worker_count must leave at least one agent worker";
         return false;
     }
     if (config.n_threads < 1) {
@@ -1889,6 +1922,9 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_transaction_path = config.adaptation_transaction_path;
     options.adaptation_stable_model_facing_tools = config.adaptation_stable_model_facing_tools;
     options.adaptation_domains = config.adaptation_domains;
+    options.adaptation_flydelta_enabled = config.adaptation_flydelta_enabled;
+    options.adaptation_flydelta_worker_count = config.adaptation_flydelta_worker_count;
+    options.adaptation_flydelta_queue_path = config.adaptation_flydelta_queue_path;
     options.max_tool_rounds = config.max_tool_rounds;
     options.queue_capacity = config.queue_capacity;
     options.worker_count = config.worker_count;

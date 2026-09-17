@@ -9,6 +9,7 @@
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
+#include "agent/adaptation/flydelta/flydelta-capture.h"
 
 #include <cstddef>
 #include <functional>
@@ -24,7 +25,9 @@ struct common_flydelta_evaluator_config {
     common_flydelta_memory_config memory;
     common_flydelta_evidence_depth_config evidence_depth;
     common_flydelta_representation_augmentation_config representation_augmentation;
+    common_flydelta_utility_gate_config utility_gate;
     size_t aggregation_max_retained_samples = 32;
+    size_t max_capture_bytes = 4U * 1024U * 1024U;
     size_t max_references = 128;
 };
 
@@ -50,6 +53,14 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_experiment_job & job,
             std::vector<common_flydelta_counterfactual_report> & reports,
             std::string & error)> run_counterfactual;
+
+    // Host-owned donor capture for reference-only candidate IDs. The host
+    // resolves evidence and runs fresh inference; only redacted manifests
+    // cross back into the common evaluator.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            std::vector<common_flydelta_capture_manifest> & manifests,
+            std::string & error)> run_donor_capture;
 
     // Executes the composed direction/layer/scale search. The callback owns
     // reference resolution, fresh inference contexts and host verification.
@@ -103,9 +114,24 @@ struct common_flydelta_evaluator_callbacks {
             common_flydelta_search_pipeline_result & result,
             std::string & next_state_ref,
             std::string & error)> run_search_pipeline_with_search_state;
+
+    // Resolves/persists the small orchestration envelope associated with a
+    // post-Whirlpool state reference. The host owns storage; FlyDelta owns
+    // the EvidenceGate/UtilityGate transition decision.
+    std::function<bool(
+            const std::string & state_ref,
+            common_flydelta_experiment_plan & plan,
+            common_flydelta_utility_history & history,
+            std::string & error)> resolve_search_orchestration_state;
+    std::function<bool(
+            const common_flydelta_experiment_plan & plan,
+            const common_flydelta_utility_history & history,
+            std::string & state_ref,
+            std::string & error)> persist_search_orchestration_state;
 };
 
 struct common_flydelta_evaluator_result {
+    std::vector<common_flydelta_capture_manifest> capture_manifests;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
     std::vector<common_flydelta_basis_direction> basis_directions;
     std::vector<common_flydelta_direction_candidate> direction_candidates;
@@ -122,6 +148,10 @@ struct common_flydelta_evaluator_result {
     common_flydelta_bootstrap_zoom_state bootstrap_zoom_state;
     std::string bootstrap_zoom_state_ref;
     std::string search_state_ref;
+    bool has_next_action = false;
+    common_flydelta_next_action next_action = common_flydelta_next_action::retain;
+    common_flydelta_utility_gate_decision utility_decision;
+    std::string next_action_reason;
     bool has_representation_augmentation_state = false;
     common_flydelta_representation_augmentation_state representation_augmentation_state;
     std::string representation_augmentation_state_ref;

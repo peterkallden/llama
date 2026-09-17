@@ -32,7 +32,14 @@ int main() {
     common_flydelta_capture_candidate_collector collector(
         "sha256:model", "capture:v1", 4);
     common_learning_in_memory_lifecycle_store lifecycle;
-    common_flydelta_runtime_candidate_observer observer(collector, &lifecycle);
+    size_t enqueued = 0;
+    std::string enqueued_candidate_id;
+    common_flydelta_runtime_candidate_observer observer(collector, &lifecycle,
+        [&](const auto & candidate, std::string &) {
+            ++enqueued;
+            enqueued_candidate_id = candidate.id;
+            return true;
+        });
 
     common_adaptation_evidence_source_match match;
     match.source = common_adaptation_evidence_source::tool_repair;
@@ -49,6 +56,8 @@ int main() {
     CHECK(records.front().status == common_learning_lifecycle_status::observed);
     CHECK(records.front().payload_json.find("capture_candidate_discovered") != std::string::npos);
     CHECK(records.front().payload_json.find("wrong-tool") != std::string::npos);
+    CHECK(enqueued == 2);
+    CHECK(enqueued_candidate_id == collector.candidates().front().id);
 
     common_adaptation_evidence_source_match ordinary;
     ordinary.source = common_adaptation_evidence_source::tool_repair;

@@ -92,7 +92,8 @@ bool common_flydelta_intervention_region_trial_validate(
     if (!candidate_validate(trial.candidate, error) ||
             !valid_outcome(trial.outcome) || !std::isfinite(trial.quality_delta) ||
             !std::isfinite(trial.search_score) ||
-            !common_flydelta_decision_margin_validate(trial.margin, error)) {
+            !common_flydelta_decision_margin_validate(trial.margin, error) ||
+            !common_flydelta_margin_comparison_validate(trial.margin_comparison, error)) {
         if (error.empty()) error = "FlyDelta intervention region trial is invalid";
         return false;
     }
@@ -208,6 +209,9 @@ bool common_flydelta_run_intervention_region_search(
         region_trial.outcome = common_flydelta_classify_counterfactual(baseline, counterfactual);
         region_trial.quality_delta = counterfactual.quality - baseline.quality;
         region_trial.margin = margin;
+        region_trial.margin_comparison.available = baseline_margin.available && margin.available;
+        region_trial.margin_comparison.baseline = baseline_margin;
+        region_trial.margin_comparison.candidate = margin;
         region_trial.executed = counterfactual.executed;
         region_trial.verifier_known = baseline.verifier_known && counterfactual.verifier_known;
         region_trial.geometry_available = geometry_available;

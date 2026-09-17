@@ -1,6 +1,7 @@
 #include "agent-daemon-dispatcher.h"
 
 #include <iterator>
+#include <chrono>
 #include <utility>
 
 namespace {
@@ -120,10 +121,27 @@ common_agent_daemon_event_type queued_turn_rejection_daemon_event_type(
 common_agent_daemon_dispatcher::common_agent_daemon_dispatcher(
         common_agent_daemon_runtime runtime,
         size_t max_queue_size,
-        size_t worker_count)
-    : service(std::move(runtime))
+        size_t worker_count,
+        common_agent_daemon_flydelta_worker_config flydelta)
+    : flydelta_config(std::move(flydelta))
+    , service(std::move(runtime))
     , max_queue_size(max_queue_size)
-    , worker_count(worker_count == 0 ? 1 : worker_count) {
+    , total_worker_count(worker_count == 0 ? 1 : worker_count) {
+    common_flydelta_worker_budget budget;
+    std::string budget_error;
+    if (!common_flydelta_worker_budget_compute(
+            total_worker_count, flydelta_config.enabled,
+            flydelta_config.worker_count, budget, budget_error)) {
+        // Host configuration validates this before construction. Keep direct
+        // test/embedder construction safe by falling back to the full agent
+        // pool instead of silently starting a partial pool.
+        flydelta_config = {};
+        worker_count = total_worker_count;
+    } else {
+        worker_count = budget.agent_workers;
+        flydelta_worker_count = budget.flydelta_workers;
+    }
+    this->worker_count = worker_count;
     workers.reserve(this->worker_count);
     for (size_t i = 0; i < this->worker_count; ++i) {
         workers.emplace_back([this]() {
@@ -132,6 +150,16 @@ common_agent_daemon_dispatcher::common_agent_daemon_dispatcher(
     }
     workers_running = this->worker_count;
     worker_running = true;
+    if (flydelta_config.enabled && flydelta_worker_count != 0 &&
+            !flydelta_config.queue_root.empty() && flydelta_config.callback) {
+        flydelta_workers.reserve(flydelta_worker_count);
+        for (size_t i = 0; i < flydelta_worker_count; ++i) {
+            flydelta_workers.emplace_back([this]() {
+                flydelta_worker_loop();
+            });
+        }
+        flydelta_workers_running = flydelta_workers.size();
+    }
 }
 
 common_agent_daemon_dispatcher::~common_agent_daemon_dispatcher() {
@@ -143,6 +171,11 @@ common_agent_daemon_dispatcher::~common_agent_daemon_dispatcher() {
     }
     condition.notify_all();
     for (auto & worker : workers) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
+    for (auto & worker : flydelta_workers) {
         if (worker.joinable()) {
             worker.join();
         }
@@ -239,6 +272,11 @@ common_agent_event_stream_wait_status common_agent_daemon_dispatcher::wait_for_e
 size_t common_agent_daemon_dispatcher::queued_command_count() const {
     std::lock_guard<std::mutex> lock(mutex);
     return queue.size();
+}
+
+size_t common_agent_daemon_dispatcher::flydelta_workers_running_value() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return flydelta_workers_running;
 }
 
 bool common_agent_daemon_dispatcher::execute_session_lifecycle(
@@ -568,6 +606,10 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
     status.worker_running = worker_running;
     status.worker_count = worker_count;
     status.workers_running = workers_running;
+    status.flydelta_worker_configured = flydelta_config.enabled &&
+        flydelta_worker_count > 0;
+    status.flydelta_worker_count = flydelta_worker_count;
+    status.flydelta_workers_running = flydelta_workers_running;
     status.accepting_commands = accepting_commands;
     status.shutdown_requested = service.shutdown_requested();
     status.max_queue_size = max_queue_size;
@@ -585,6 +627,30 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
         accepting_commands &&
         worker_running &&
         status.readiness.health != "failed";
+}
+
+void common_agent_daemon_dispatcher::flydelta_worker_loop() {
+    while (true) {
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            if (stop_requested) break;
+        }
+
+        common_flydelta_experiment_worker_report report;
+        std::string error;
+        common_flydelta_experiment_worker_run_once(
+            flydelta_config.queue_root, flydelta_config.queue_limits,
+            flydelta_config.callback, report, error);
+
+        std::unique_lock<std::mutex> lock(mutex);
+        if (stop_requested) break;
+        condition.wait_for(lock, flydelta_config.poll_interval, [&]() {
+            return stop_requested;
+        });
+    }
+
+    std::lock_guard<std::mutex> lock(mutex);
+    if (flydelta_workers_running > 0) --flydelta_workers_running;
 }
 
 void common_agent_daemon_dispatcher::worker_loop() {

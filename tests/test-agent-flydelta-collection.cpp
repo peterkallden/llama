@@ -103,7 +103,8 @@ int main() {
     observation.experiment_id = "flydelta://experiment/collector-refine";
     observation.candidate_id = "flydelta://candidate/refine";
     observation.outcome = common_flydelta_counterfactual_outcome::unknown;
-    observation.host_verified = true;
+    observation.host_evaluated = true;
+    observation.verifier_known = true;
     observation.diagnostics_available = true;
     observation.diagnostics = {1, 2, 0.5f, 0.2f, 0.1f};
     observation.budget_remaining = true;

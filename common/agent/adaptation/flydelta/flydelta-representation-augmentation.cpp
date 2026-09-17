@@ -116,6 +116,7 @@ bool common_flydelta_representation_donor_qualification_validate(
         std::string & error) {
     error.clear();
     if (qualification.schema_version != 1 || !bounded(qualification.donor_id) ||
+            (qualification.verifier_known && !qualification.host_evaluated) ||
             !finite(qualification.margin_gain) || qualification.reason.size() > 512 ||
             (qualification.geometry_available &&
                 !common_flydelta_representation_diagnostics_validate(
@@ -148,7 +149,8 @@ bool common_flydelta_qualify_representation_donor(
         (observation.geometry.cosine >= 0.0f && observation.geometry.progress > 0.0f &&
          observation.geometry.leakage <= max_leakage &&
          observation.geometry.shift_norm <= max_shift_norm);
-    const bool verified_helped = observation.host_verified && observation.host_outcome ==
+    const bool verified_helped = observation.host_evaluated && observation.verifier_known &&
+        observation.host_outcome ==
         common_flydelta_counterfactual_outcome::helped;
     const bool margin_useful = observation.decision_margin_available &&
         observation.margin_gain >= minimum_margin_gain;

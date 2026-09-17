@@ -77,6 +77,59 @@ int main() {
             default_config.tool_timeout_ms, default_error.c_str());
         return 1;
     }
+    agent_host_config flydelta_config;
+    std::string flydelta_error;
+    const nlohmann::ordered_json flydelta_json = {
+        {"runtime", {
+            {"adaptation", {
+                {"flydelta", {
+                    {"enabled", true},
+                    {"worker_count", 1},
+                    {"queue_path", "var/agent/flydelta/jobs"},
+                }},
+            }},
+        }},
+        {"limits", {{"worker_count", 4}}},
+    };
+    if (!parse_agent_host_config_json(flydelta_json, flydelta_config, flydelta_error) ||
+            !validate_agent_host_config(flydelta_config, flydelta_error) ||
+            !flydelta_config.adaptation_flydelta_enabled ||
+            flydelta_config.adaptation_flydelta_worker_count != 1 ||
+            flydelta_config.adaptation_flydelta_queue_path != "var/agent/flydelta/jobs") {
+        std::fprintf(stderr, "FlyDelta worker reservation was not parsed: %s\n", flydelta_error.c_str());
+        return 1;
+    }
+    const auto flydelta_serialized = agent_host_config_to_json(flydelta_config);
+    if (!flydelta_serialized["runtime"]["adaptation"]["flydelta"]["enabled"].get<bool>() ||
+            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["worker_count"] != 1) {
+        std::fprintf(stderr, "FlyDelta worker reservation was not serialized\n");
+        return 1;
+    }
+    daemon_options flydelta_options;
+    apply_agent_host_config_to_daemon_options(flydelta_config, flydelta_options);
+    if (!flydelta_options.adaptation_flydelta_enabled ||
+            flydelta_options.adaptation_flydelta_worker_count != 1) {
+        std::fprintf(stderr, "FlyDelta worker reservation was not copied to daemon options\n");
+        return 1;
+    }
+    agent_host_config invalid_flydelta_config;
+    const nlohmann::ordered_json invalid_flydelta_json = {
+        {"runtime", {
+            {"adaptation", {
+                {"flydelta", {
+                    {"enabled", true},
+                    {"worker_count", 5},
+                    {"queue_path", "var/agent/flydelta/jobs"},
+                }},
+            }},
+        }},
+        {"limits", {{"worker_count", 4}}},
+    };
+    if (parse_agent_host_config_json(invalid_flydelta_json, invalid_flydelta_config, flydelta_error) ||
+            flydelta_error.find("cannot exceed") == std::string::npos) {
+        std::fprintf(stderr, "invalid FlyDelta worker reservation was accepted\n");
+        return 1;
+    }
     const auto root = std::filesystem::temp_directory_path() / "llama-agent-config-discovery-smoke";
     std::error_code cleanup_error;
     std::filesystem::remove_all(root, cleanup_error);

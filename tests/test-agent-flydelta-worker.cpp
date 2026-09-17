@@ -81,6 +81,25 @@ static common_flydelta_behavior_delta behavior_delta() {
     return value;
 }
 
+static common_flydelta_capture_manifest capture_manifest(
+        const common_flydelta_experiment_job & job) {
+    common_flydelta_capture_manifest value;
+    value.id = "flydelta://manifest/worker-donor";
+    value.observation_id = "learning://observation/worker-donor";
+    value.source = common_adaptation_evidence_source::tool_repair;
+    value.behavior_key = job.seed.behavior_key;
+    value.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+    value.template_fingerprint = job.seed.template_fingerprint;
+    value.execution_context_fingerprint = job.seed.execution_context_fingerprint;
+    value.positive_execution_ref = "execution:repaired";
+    value.negative_execution_ref = "execution:failed";
+    value.capture_layout_revision = "layout:v1";
+    value.evidence_hash = "sha256:evidence";
+    value.redaction_attested = true;
+    value.captured_bytes = 64;
+    return value;
+}
+
 int main() {
     std::string error;
     const auto root = std::filesystem::temp_directory_path() /
@@ -128,6 +147,9 @@ int main() {
             result.bootstrap_zoom_state.extra_model_trials = 3;
             result.bootstrap_zoom_state.next_candidate_index = 2;
             result.bootstrap_zoom_state_ref = result.bootstrap_zoom_state.state_ref;
+            result.has_next_action = true;
+            result.next_action = common_flydelta_next_action::run_bootstrap;
+            result.next_action_reason = "Whirlpool completed; schedule Bootstrap slice";
             return true;
         }, worker_report, error));
     CHECK(worker_report.state == common_flydelta_experiment_queue_state::succeeded);
@@ -137,6 +159,9 @@ int main() {
     CHECK(worker_report.has_bootstrap_zoom_state &&
         worker_report.bootstrap_zoom_state_ref == "flydelta://state/worker-bootstrap" &&
         worker_report.bootstrap_zoom_state.next_candidate_index == 2);
+    CHECK(worker_report.has_next_action &&
+        worker_report.next_action == common_flydelta_next_action::run_bootstrap &&
+        worker_report.next_action_reason.find("Whirlpool") != std::string::npos);
 
     const auto second = job("flydelta://job/worker-2");
     CHECK(common_flydelta_experiment_queue_enqueue(root, second, {}, error));
@@ -220,6 +245,28 @@ int main() {
     CHECK(evaluator_succeeded);
     CHECK(evaluator_report.state == common_flydelta_experiment_queue_state::succeeded);
     CHECK(evaluator_report.report_count == 1);
+
+    auto donor_job = pipeline_job;
+    donor_job.id = "flydelta://job/worker-donor-capture";
+    donor_job.kind = common_flydelta_experiment_job_kind::donor_capture;
+    donor_job.capture_candidate_ids = {"flydelta://capture-candidate/worker"};
+    donor_job.capture_manifest_ids.clear();
+    donor_job.behavior_delta_ids.clear();
+    donor_job.bootstrap_zoom_state_ref.clear();
+    donor_job.search_state_ref.clear();
+    evaluator_callbacks.run_donor_capture = [](const auto & job, auto & manifests, auto &) {
+        manifests = {capture_manifest(job)};
+        return true;
+    };
+    common_flydelta_evaluator_result donor_result;
+    CHECK(common_flydelta_evaluate_job(
+        donor_job, evaluator_config, evaluator_callbacks, donor_result, error));
+    CHECK(donor_result.capture_manifests.size() == 1);
+    CHECK(common_flydelta_experiment_queue_enqueue(root, donor_job, {}, error));
+    CHECK(common_flydelta_experiment_worker_run_evaluator_once(
+        root, {}, evaluator_config, evaluator_callbacks, evaluator_report, error));
+    CHECK(evaluator_report.state == common_flydelta_experiment_queue_state::succeeded);
+    CHECK(evaluator_report.capture_manifests.size() == 1);
 
     auto generic_state_job = pipeline_job;
     generic_state_job.id = "flydelta://job/worker-generic-state";

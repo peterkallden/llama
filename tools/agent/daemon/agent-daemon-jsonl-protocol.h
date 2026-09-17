@@ -142,6 +142,9 @@ struct agent_daemon_jsonl_status_response {
     bool worker_running = false;
     int worker_count = 1;
     int workers_running = 0;
+    bool flydelta_worker_configured = false;
+    int flydelta_worker_count = 0;
+    int flydelta_workers_running = 0;
     bool accepting_commands = false;
     bool shutdown_requested = false;
     int sessions = 0;

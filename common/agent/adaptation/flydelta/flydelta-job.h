@@ -12,6 +12,7 @@ enum class common_flydelta_experiment_job_kind {
     counterfactual,
     search_pipeline,
     delta_memory,
+    donor_capture,
 };
 
 const char * common_flydelta_experiment_job_kind_name(
@@ -27,6 +28,7 @@ struct common_flydelta_experiment_job {
     std::string id;
     common_flydelta_experiment_job_kind kind = common_flydelta_experiment_job_kind::basis;
     common_flydelta_experiment_seed seed;
+    std::vector<std::string> capture_candidate_ids;
     std::vector<std::string> capture_manifest_ids;
     std::vector<std::string> behavior_delta_ids;
     std::vector<std::string> training_example_ids;

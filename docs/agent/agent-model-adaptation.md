@@ -60,6 +60,14 @@ The local branch currently contains the first contract slices:
   in-memory, Cozo, SQLite, and explicit JSONL backends with the documented
   priority order.
 
+The host configuration also carries an explicit `runtime.adaptation.flydelta`
+worker reservation. Its budget is validated against `limits.worker_count` and
+the daemon dispatcher owns the optional dedicated nearline lane. The lane is
+started only when the host supplies its FlyDelta evaluator callback; otherwise
+the reservation remains visible as configured-but-idle and no job is consumed.
+Changing this configuration remains restart-required and never silently
+reduces the normal daemon pool.
+
 The observation identity hash and corpus bundle hash are currently stable
 non-cryptographic identity hashes used for local deduplication and test
 reproducibility. Resource and artifact integrity must continue to use the
@@ -99,8 +107,11 @@ reversible nearline association layer. Neither path may weaken deterministic
 host contracts or automatically activate from a single runtime observation.
 
 FlyDelta now also has a small dedicated experiment queue contract. A
-host-verified seed is wrapped in a typed `basis`, `counterfactual` or
-`delta_memory` job and stored as a bounded reference-only envelope. Its
+host-verified seed is wrapped in a typed `donor_capture`, `basis`,
+`counterfactual` or `delta_memory` job and stored as a bounded reference-only
+envelope. A donor job contains only capture-candidate IDs; the host callback
+resolves those IDs, performs fresh capture/inference and returns validated
+redacted manifests. Its
 `pending -> running -> succeeded/failed/cancelled` filesystem lifecycle uses
 the same atomic-rename and duplicate-suppression discipline as this path, but
 it is not the QLoRA worker queue. The existing worker accepts only
@@ -112,9 +123,10 @@ artifacts and evaluators separate.
 The distinction also applies to workers. The existing
 `llama-agent-adaptation-worker` consumes corpus-backed training jobs and
 produces trainer artifacts. It must not consume a FlyDelta envelope. FlyDelta
-currently has only a queue lifecycle worker with a typed evaluator callback;
-that worker validates job identity and bounded outcome reports but does not
-train, promote or activate anything by itself. A future controller may
+currently has only a queue lifecycle worker with typed evaluator and
+donor-capture callbacks; that worker validates job identity and bounded
+outcome/manifests but does not train, promote or activate anything by itself.
+A future controller may
 schedule both workers, but it must retain separate job schemas, artifact
 registries and promotion gates.
 

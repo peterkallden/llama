@@ -85,6 +85,9 @@ struct daemon_options {
     std::string adaptation_transaction_path;
     std::set<std::string> adaptation_stable_model_facing_tools;
     common_learning_domain_policy adaptation_domains;
+    bool adaptation_flydelta_enabled = false;
+    size_t adaptation_flydelta_worker_count = 0;
+    std::string adaptation_flydelta_queue_path;
     size_t max_tool_rounds = 0;
     size_t queue_capacity = 8;
     size_t worker_count = 1;

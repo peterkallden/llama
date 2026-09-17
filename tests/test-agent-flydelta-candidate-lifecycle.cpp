@@ -12,12 +12,22 @@ static common_flydelta_search_observation observation(
     value.experiment_id = "flydelta://experiment/lifecycle";
     value.candidate_id = "flydelta://candidate/1";
     value.outcome = outcome;
-    value.host_verified = true;
+    value.host_evaluated = true;
+    value.verifier_known = true;
     value.budget_remaining = budget;
     value.diagnostics_available = signal;
     value.diagnostics = {1, 2, 0.5f, 0.2f, 0.1f};
     value.sequence_margin_available = signal;
-    value.sequence_margin_delta = signal ? 0.4f : 0.0f;
+    if (signal) {
+        value.sequence_margin.available = true;
+        value.sequence_margin.baseline.available = true;
+        value.sequence_margin.baseline.positive_total_logprob = -2.0f;
+        value.sequence_margin.baseline.negative_total_logprob = -1.0f;
+        value.sequence_margin.baseline.positive_token_count = 1;
+        value.sequence_margin.baseline.negative_token_count = 1;
+        value.sequence_margin.candidate = value.sequence_margin.baseline;
+        value.sequence_margin.candidate.positive_total_logprob = -1.6f;
+    }
     return value;
 }
 
@@ -66,6 +76,12 @@ int main() {
     CHECK(common_flydelta_decide_search_disposition(
         observation(common_flydelta_counterfactual_outcome::unknown, false), decision, error));
     CHECK(decision.disposition == common_flydelta_search_disposition::retain);
+
+    auto inconclusive = observation(common_flydelta_counterfactual_outcome::unknown, true);
+    inconclusive.verifier_known = false;
+    CHECK(common_flydelta_search_observation_validate(inconclusive, error));
+    CHECK(common_flydelta_decide_search_disposition(inconclusive, decision, error));
+    CHECK(decision.disposition == common_flydelta_search_disposition::refine);
 
     CHECK(common_flydelta_decide_search_disposition(
         observation(common_flydelta_counterfactual_outcome::harmed, true), decision, error));

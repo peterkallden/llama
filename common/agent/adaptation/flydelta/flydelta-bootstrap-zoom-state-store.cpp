@@ -56,7 +56,8 @@ json trial_json(const common_flydelta_bootstrap_zoom_trial & trial) {
     json value = {
         {"candidate", candidate_json(trial.candidate)},
         {"outcome", outcome_name(trial.outcome)},
-        {"host_verified", trial.host_verified},
+        {"host_evaluated", trial.host_evaluated},
+        {"verifier_known", trial.verifier_known},
         {"margin_available", trial.margin_available},
         {"margin_delta", trial.margin_delta},
         {"diagnostics_available", trial.diagnostics_available},
@@ -90,7 +91,9 @@ bool parse_trial(const json & value, common_flydelta_bootstrap_zoom_trial & tria
     if (!value.is_object() || !parse_candidate(
             value.value("candidate", json::object()), trial.candidate) ||
             !parse_outcome(value.value("outcome", ""), trial.outcome)) return false;
-    trial.host_verified = value.value("host_verified", false);
+    trial.host_evaluated = value.value("host_evaluated", false);
+    trial.verifier_known = value.value("verifier_known",
+        value.value("host_verified", false));
     trial.margin_available = value.value("margin_available", false);
     trial.margin_delta = value.value("margin_delta", 0.0f);
     trial.diagnostics_available = value.value("diagnostics_available", false);

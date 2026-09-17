@@ -48,7 +48,7 @@ int main() {
     CHECK(common_flydelta_run_deep_search(
         fixture(), config, input,
         [&](const common_flydelta_experiment_fixture &,
-                const common_flydelta_low_rank_basis &,
+                const common_flydelta_low_rank_basis & basis,
                 const std::vector<float> & coefficients, bool apply_overlay,
                 common_flydelta_counterfactual_trial & trial,
                 common_flydelta_decision_margin & margin,

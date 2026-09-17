@@ -396,6 +396,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-queue.cpp
         test-agent-flydelta-collection.cpp
         test-agent-flydelta-worker.cpp
+        test-agent-flydelta-worker-budget.cpp
         test-agent-flydelta-pipeline.cpp
         test-agent-flydelta-gate.cpp
         test-agent-flydelta-promotion.cpp

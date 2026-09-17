@@ -62,6 +62,11 @@ struct common_agent_runtime_config {
     std::string flydelta_model_profile_fingerprint;
     std::string flydelta_capture_layout_revision;
     size_t flydelta_max_capture_candidates = 64;
+    // Host-owned bridge that enqueues a reference-only donor_capture job.
+    // It is best-effort and must not make a user turn fail on queue pressure.
+    std::function<bool(
+            const common_flydelta_capture_candidate &,
+            std::string &)> flydelta_capture_job_enqueue;
 };
 
 struct common_agent_runtime_build_config {
@@ -83,6 +88,9 @@ struct common_agent_runtime_build_config {
     std::string flydelta_model_profile_fingerprint;
     std::string flydelta_capture_layout_revision;
     size_t flydelta_max_capture_candidates = 64;
+    std::function<bool(
+            const common_flydelta_capture_candidate &,
+            std::string &)> flydelta_capture_job_enqueue;
 };
 
 common_agent_inference_options make_agent_inference_options(
