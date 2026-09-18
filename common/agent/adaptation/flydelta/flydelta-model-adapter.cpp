@@ -1,6 +1,26 @@
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
+bool common_flydelta_model_host_validate(
+        const common_flydelta_model_host & host,
+        std::string & error) {
+    error.clear();
+    if (!host.register_evaluator) {
+        error = "FlyDelta model host has no evaluator registration callback";
+        return false;
+    }
+    if (!host.capabilities.bootstrap_zoom &&
+            !host.capabilities.adaptive_alpha &&
+            !host.capabilities.teacher_forced_margin &&
+            !host.capabilities.orthogonal_search &&
+            !host.capabilities.representation_augmentation &&
+            !host.capabilities.host_verification) {
+        error = "FlyDelta model host advertises no capabilities";
+        return false;
+    }
+    return true;
+}
+
 bool common_flydelta_model_adapter_validate(
         const common_flydelta_model_adapter & adapter,
         std::string & error) {
@@ -55,4 +75,24 @@ common_flydelta_model_adapter_from_evaluator(
     }
     error.clear();
     return adapter;
+}
+
+std::shared_ptr<const common_flydelta_model_adapter>
+common_flydelta_model_adapter_from_host(
+        const common_flydelta_model_host & host,
+        std::string & error) {
+    if (!common_flydelta_model_host_validate(host, error)) {
+        return {};
+    }
+
+    common_flydelta_evaluator_config config;
+    common_flydelta_evaluator_callbacks callbacks;
+    if (!host.register_evaluator(config, callbacks, error)) {
+        if (error.empty()) {
+            error = "FlyDelta model host failed to register evaluator";
+        }
+        return {};
+    }
+    return common_flydelta_model_adapter_from_evaluator(
+        config, callbacks, host.capabilities, error);
 }

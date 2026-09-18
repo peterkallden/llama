@@ -85,6 +85,9 @@ struct common_agent_daemon_runtime {
     // Populated by the runtime host when model-facing FlyDelta execution is
     // available. The dispatcher consumes this registration bundle only.
     std::shared_ptr<const common_flydelta_model_adapter> flydelta_model_adapter;
+    // Optional backend-neutral host registration. The daemon composes this
+    // into flydelta_model_adapter at startup when no adapter was supplied.
+    std::shared_ptr<const common_flydelta_model_host> flydelta_model_host;
     // Optional host-owned evaluator registration. The daemon composes this
     // into flydelta_model_adapter at startup when no adapter was supplied.
     std::shared_ptr<const common_flydelta_evaluator_config> flydelta_evaluator_config;

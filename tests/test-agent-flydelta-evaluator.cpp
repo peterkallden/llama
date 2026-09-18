@@ -520,5 +520,25 @@ int main() {
     CHECK(worker_result.counterfactual_reports.size() == 1);
     CHECK(worker_result.counterfactual_reports.front().experiment_id == counterfactual.id);
     CHECK(worker_result.safe_summary.find("processed 1 reference") != std::string::npos);
+
+    common_flydelta_model_host model_host;
+    model_host.capabilities = adapter_capabilities;
+    int registration_calls = 0;
+    model_host.register_evaluator = [&] (
+            common_flydelta_evaluator_config & registered_config,
+            common_flydelta_evaluator_callbacks & registered_callbacks,
+            std::string & registration_error) {
+        ++registration_calls;
+        registered_config = config;
+        registered_callbacks = callbacks;
+        registration_error.clear();
+        return true;
+    };
+    const auto host_adapter = common_flydelta_model_adapter_from_host(
+        model_host, adapter_error);
+    CHECK(host_adapter != nullptr && adapter_error.empty());
+    CHECK(registration_calls == 1);
+    CHECK(host_adapter->worker_callback(counterfactual, worker_result, error));
+    CHECK(worker_result.counterfactual_reports.size() == 1);
     return 0;
 }

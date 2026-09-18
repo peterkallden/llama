@@ -876,16 +876,27 @@ model/backend-neutral; model names used by model smokes are test configuration,
 not part of the worker or adapter API. The common worker never creates that
 adapter, and an advertised capability is not evidence that a correction works.
 
+For a runtime that owns the model-facing evaluator but does not want to expose
+its callback bundle directly through daemon setup, it may instead register a
+`common_flydelta_model_host`. Its registration callback fills the evaluator
+configuration and host-owned callbacks exactly once at daemon startup; the
+daemon then composes the ordinary `common_flydelta_model_adapter` from that
+registration. This is only a composition seam: the host still owns model
+residency, reference/fixture resolution, fresh inference contexts, margin
+scoring and verification. The generic worker receives no raw model context and
+does not recursively execute the next phase.
+
 The daemon runtime carries the optional adapter registration into the
 dispatcher and exposes two separate status facts: whether an adapter is
 registered, and whether it advertises model-facing search support. A configured
 FlyDelta lane without a registered adapter is therefore an observable idle
 configuration, not a callback that silently captures user-session state. A
-runtime host may provide either a ready adapter or a shared evaluator
-configuration plus host-owned evaluator callbacks; daemon startup composes the
-latter through `common_flydelta_model_adapter_from_evaluator()`. Missing host
-callbacks fail closed and leave the lane idle rather than fabricating model
-execution.
+runtime host may provide either a ready adapter, a `common_flydelta_model_host`,
+or a shared evaluator configuration plus host-owned evaluator callbacks; daemon
+startup composes the latter two through
+`common_flydelta_model_adapter_from_host()` or
+`common_flydelta_model_adapter_from_evaluator()`. Missing host callbacks fail
+closed and leave the lane idle rather than fabricating model execution.
 
 The ordered transition at a rank-one plateau is:
 
