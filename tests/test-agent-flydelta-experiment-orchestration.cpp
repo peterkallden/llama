@@ -295,10 +295,11 @@ int main() {
         trial.diagnostics.leakage = 0.05f * static_cast<float>(index + 1);
         geometric_trials.push_back(std::move(trial));
     }
-    // The common input preserves a bounded unsafe observation for lineage,
-    // but its explicit eligibility prevents it from becoming orthogonal
-    // source material.
-    geometric_trials.back().host_evaluated = false;
+    // A host-evaluated arm may remain in lineage while falling outside the
+    // orthogonal safety envelope.  Keep it valid persisted search state and
+    // make the eligibility decision come from its diagnostics instead of
+    // conflating "not eligible" with "not evaluated".
+    geometric_trials.back().diagnostics.shift_norm = 1.5f;
     common_flydelta_bootstrap_zoom_state orthogonal_input_state;
     orthogonal_input_state.behavior_key = "tool_choice/data_query";
     orthogonal_input_state.model_profile_fingerprint = "model:test";
