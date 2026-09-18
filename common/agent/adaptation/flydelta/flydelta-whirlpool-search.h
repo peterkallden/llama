@@ -32,6 +32,11 @@ struct common_flydelta_whirlpool_search_config {
     float max_leakage = 1.0f;
     float max_shift_norm = 1.0f;
     float min_cosine = 0.3f;
+    // Optional common dose regulator. It may request one explicit lower retry
+    // after an unsafe probe; it never selects a layer or creates evidence.
+    bool use_dose_controller = true;
+    size_t max_dose_retries = 1;
+    common_flydelta_dose_policy dose_policy;
 };
 
 bool common_flydelta_whirlpool_search_config_validate(

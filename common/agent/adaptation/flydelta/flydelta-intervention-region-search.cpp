@@ -17,6 +17,17 @@ bool valid_outcome(common_flydelta_counterfactual_outcome outcome) {
     return false;
 }
 
+bool valid_dose_action(common_flydelta_dose_action action) {
+    switch (action) {
+        case common_flydelta_dose_action::accept:
+        case common_flydelta_dose_action::retry_lower:
+        case common_flydelta_dose_action::safety_boundary:
+        case common_flydelta_dose_action::reject:
+            return true;
+    }
+    return false;
+}
+
 float per_layer_scale(float total_scale, size_t count) {
     return total_scale / std::sqrt(static_cast<float>(count));
 }
@@ -99,6 +110,16 @@ bool common_flydelta_intervention_region_trial_validate(
     }
     if (trial.geometry_available &&
             !common_flydelta_representation_diagnostics_validate(trial.geometry, error)) {
+        return false;
+    }
+    if (!std::isfinite(trial.requested_total_scale) || trial.requested_total_scale < 0.0f ||
+            !std::isfinite(trial.executed_total_scale) || trial.executed_total_scale < 0.0f ||
+            !std::isfinite(trial.relative_dose) || trial.relative_dose < 0.0f ||
+            (trial.dose_evaluated &&
+             (!valid_dose_action(trial.dose_action) ||
+              trial.requested_total_scale <= 0.0f ||
+              trial.executed_total_scale <= 0.0f || trial.dose_reason.size() > 512))) {
+        error = "FlyDelta intervention region dose metadata is invalid";
         return false;
     }
     if (trial.evidence_ref.size() > 512) {

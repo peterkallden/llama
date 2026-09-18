@@ -103,6 +103,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-layer-discovery.cpp adaptation/flydelta/flydelta-layer-discovery.h
     adaptation/flydelta/flydelta-two-pass.cpp adaptation/flydelta/flydelta-two-pass.h
     adaptation/flydelta/flydelta-representation-diagnostics.cpp adaptation/flydelta/flydelta-representation-diagnostics.h
+    adaptation/flydelta/flydelta-dose-controller.cpp adaptation/flydelta/flydelta-dose-controller.h
     adaptation/flydelta/flydelta-direction-search.cpp adaptation/flydelta/flydelta-direction-search.h
     adaptation/flydelta/flydelta-candidate-lifecycle.cpp adaptation/flydelta/flydelta-candidate-lifecycle.h
     adaptation/flydelta/flydelta-runtime-observer.cpp adaptation/flydelta/flydelta-runtime-observer.h

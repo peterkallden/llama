@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
+#include "agent/adaptation/flydelta/flydelta-dose-controller.h"
 
 #include <cstddef>
 #include <functional>
@@ -27,6 +28,9 @@ struct common_flydelta_scale_search_config {
     bool separation_calibrated = false;
     float reference_separation = 1.0f;
     float max_resolved_scale = 1.0f;
+    bool use_dose_controller = true;
+    size_t max_dose_retries = 1;
+    common_flydelta_dose_policy dose_policy;
 };
 
 struct common_flydelta_scale_geometry {
@@ -50,6 +54,13 @@ struct common_flydelta_scale_trial {
     bool refinement = false;
     bool separation_calibrated = false;
     bool scale_clamped = false;
+    float dose_requested_strength = 0.0f;
+    float dose_executed_strength = 0.0f;
+    common_flydelta_dose_action dose_action = common_flydelta_dose_action::reject;
+    float relative_dose = 0.0f;
+    bool dose_evaluated = false;
+    bool dose_safety_limited = false;
+    std::string dose_reason;
     common_flydelta_scale_geometry geometry;
     std::string evidence_ref;
 };

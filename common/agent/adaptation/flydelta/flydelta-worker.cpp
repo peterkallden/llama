@@ -54,6 +54,17 @@ void append_region_arm(const common_flydelta_intervention_region_trial & trial,
         std::to_string(trial_index);
     arm.layer_indices = trial.candidate.layer_indices;
     arm.scale = trial.candidate.total_scale;
+    arm.requested_scale = trial.requested_total_scale > 0.0f
+        ? trial.requested_total_scale : trial.candidate.total_scale;
+    arm.executed_scale = trial.executed_total_scale > 0.0f
+        ? trial.executed_total_scale : trial.candidate.total_scale;
+    arm.dose_evaluated = trial.dose_evaluated;
+    arm.relative_dose = trial.relative_dose;
+    arm.dose_comparable = trial.dose_comparable;
+    arm.dose_safety_limited = trial.dose_safety_limited;
+    arm.dose_action = trial.dose_evaluated
+        ? common_flydelta_dose_action_name(trial.dose_action) : "not_evaluated";
+    arm.dose_reason = trial.dose_reason;
     copy_margin(trial.margin_comparison, arm);
     if (!arm.margin_available && trial.margin.available) {
         arm.margin_available = true;
@@ -116,6 +127,13 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
         trace.alpha_range_not_exhausted =
             result.bootstrap_zoom_state.alpha_response.range_not_exhausted;
         trace.alpha_last_scale = result.bootstrap_zoom_state.alpha_response.last_scale;
+        trace.alpha_last_requested_scale = result.bootstrap_zoom_state.alpha_response.last_requested_scale;
+        trace.alpha_last_executed_scale = result.bootstrap_zoom_state.alpha_response.last_executed_scale;
+        trace.alpha_last_relative_dose = result.bootstrap_zoom_state.alpha_response.last_relative_dose;
+        trace.alpha_last_dose_action = common_flydelta_dose_action_name(
+            result.bootstrap_zoom_state.alpha_response.last_dose_action);
+        trace.alpha_last_dose_evaluated = result.bootstrap_zoom_state.alpha_response.last_dose_evaluated;
+        trace.alpha_last_dose_safety_limited = result.bootstrap_zoom_state.alpha_response.last_dose_safety_limited;
         trace.alpha_utility_slope = result.bootstrap_zoom_state.alpha_response.utility_slope;
         trace.alpha_best_margin_delta_normalized =
             result.bootstrap_zoom_state.alpha_response.best_margin_delta_normalized;
@@ -136,6 +154,13 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
             trace.alpha_response_status = pipeline.alpha_response.response_status;
             trace.alpha_range_not_exhausted = pipeline.alpha_response.range_not_exhausted;
             trace.alpha_last_scale = pipeline.alpha_response.last_scale;
+            trace.alpha_last_requested_scale = pipeline.alpha_response.last_requested_scale;
+            trace.alpha_last_executed_scale = pipeline.alpha_response.last_executed_scale;
+            trace.alpha_last_relative_dose = pipeline.alpha_response.last_relative_dose;
+            trace.alpha_last_dose_action = common_flydelta_dose_action_name(
+                pipeline.alpha_response.last_dose_action);
+            trace.alpha_last_dose_evaluated = pipeline.alpha_response.last_dose_evaluated;
+            trace.alpha_last_dose_safety_limited = pipeline.alpha_response.last_dose_safety_limited;
             trace.alpha_utility_slope = pipeline.alpha_response.utility_slope;
             trace.alpha_best_margin_delta_normalized =
                 pipeline.alpha_response.best_margin_delta_normalized;
@@ -159,6 +184,14 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
     return {
         {"phase", arm.phase}, {"arm_id", arm.arm_id},
         {"layer_indices", arm.layer_indices}, {"scale", arm.scale},
+        {"requested_scale", arm.requested_scale},
+        {"executed_scale", arm.executed_scale},
+        {"dose_evaluated", arm.dose_evaluated},
+        {"relative_dose", arm.relative_dose},
+        {"dose_comparable", arm.dose_comparable},
+        {"dose_safety_limited", arm.dose_safety_limited},
+        {"dose_action", arm.dose_action},
+        {"dose_reason", arm.dose_reason},
         {"coefficients", arm.coefficients},
         {"margin_available", arm.margin_available},
         {"margin_total", arm.margin_total},
@@ -406,6 +439,12 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
             trace.alpha_response_status)},
         {"alpha_range_not_exhausted", trace.alpha_range_not_exhausted},
         {"alpha_last_scale", trace.alpha_last_scale},
+        {"alpha_last_requested_scale", trace.alpha_last_requested_scale},
+        {"alpha_last_executed_scale", trace.alpha_last_executed_scale},
+        {"alpha_last_relative_dose", trace.alpha_last_relative_dose},
+        {"alpha_last_dose_action", trace.alpha_last_dose_action},
+        {"alpha_last_dose_evaluated", trace.alpha_last_dose_evaluated},
+        {"alpha_last_dose_safety_limited", trace.alpha_last_dose_safety_limited},
         {"alpha_utility_slope", trace.alpha_utility_slope},
         {"alpha_best_margin_delta_normalized",
             trace.alpha_best_margin_delta_normalized},

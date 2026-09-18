@@ -51,7 +51,10 @@ bool common_flydelta_scale_search_config_validate(
             config.min_cosine < -1.0f || config.min_cosine > 1.0f ||
             !std::isfinite(config.max_leakage) || config.max_leakage < 0.0f ||
             !std::isfinite(config.max_shift_norm) || config.max_shift_norm <= 0.0f ||
-            !std::isfinite(config.saturation_epsilon) || config.saturation_epsilon < 0.0f) {
+            !std::isfinite(config.saturation_epsilon) || config.saturation_epsilon < 0.0f ||
+            config.max_dose_retries > 1 ||
+            (config.use_dose_controller &&
+             !common_flydelta_dose_policy_validate(config.dose_policy, error))) {
         error = "FlyDelta scale search configuration is invalid";
         return false;
     }
@@ -100,7 +103,11 @@ bool common_flydelta_scale_trial_validate(
     if (!finite_scale(trial.scale) || !finite_scale(trial.requested_scale) ||
             !valid_outcome(trial.outcome) ||
             !std::isfinite(trial.quality_delta) || trial.quality_delta < -1.0f ||
-            trial.quality_delta > 1.0f || (trial.verifier_known && trial.evidence_ref.empty())) {
+            trial.quality_delta > 1.0f || (trial.verifier_known && trial.evidence_ref.empty()) ||
+            !std::isfinite(trial.dose_requested_strength) || trial.dose_requested_strength < 0.0f ||
+            !std::isfinite(trial.dose_executed_strength) || trial.dose_executed_strength < 0.0f ||
+            !std::isfinite(trial.relative_dose) || trial.relative_dose < 0.0f ||
+            (trial.dose_evaluated && trial.dose_reason.size() > 512)) {
         error = "FlyDelta scale trial is invalid";
         return false;
     }
@@ -140,6 +147,7 @@ bool common_flydelta_run_scale_search(
     bool previous_geometry_safe = true;
     size_t geometric_count = 0;
     size_t refinement_count = 0;
+    common_flydelta_dose_state dose_state;
     size_t first_helped_index = std::numeric_limits<size_t>::max();
     while (geometric_count < config.max_geometric_trials) {
         const float scale = geometric_count == 0
@@ -156,6 +164,38 @@ bool common_flydelta_run_scale_search(
                 !common_flydelta_counterfactual_trial_validate(candidate, error)) {
             return false;
         }
+        common_flydelta_dose_decision dose_decision;
+        bool dose_retry_performed = false;
+        const float dose_requested_scale = resolved_scale;
+        if (config.use_dose_controller) {
+            common_flydelta_dose_observation dose_observation{
+                geometry.available, resolved_scale,
+                geometry.available ? geometry.shift_norm : 0.0f,
+                geometry.available ? geometry.progress : 0.0f,
+                geometry.available ? geometry.leakage : 0.0f,
+            };
+            if (!common_flydelta_dose_observe(
+                    config.dose_policy, dose_state, dose_observation,
+                    dose_decision, error)) return false;
+            if (dose_decision.action == common_flydelta_dose_action::retry_lower &&
+                    dose_decision.proposed_safe_strength && config.max_dose_retries > 0) {
+                dose_retry_performed = true;
+                resolved_scale = *dose_decision.proposed_safe_strength;
+                if (!runner(fixture, resolved_scale, true, candidate, geometry, error) ||
+                        !common_flydelta_counterfactual_trial_validate(candidate, error)) {
+                    return false;
+                }
+                dose_observation = {
+                    geometry.available, resolved_scale,
+                    geometry.available ? geometry.shift_norm : 0.0f,
+                    geometry.available ? geometry.progress : 0.0f,
+                    geometry.available ? geometry.leakage : 0.0f,
+                };
+                if (!common_flydelta_dose_observe(
+                        config.dose_policy, dose_state, dose_observation,
+                        dose_decision, error)) return false;
+            }
+        }
         common_flydelta_scale_trial trial;
         trial.scale = resolved_scale;
         trial.requested_scale = scale;
@@ -167,6 +207,15 @@ bool common_flydelta_run_scale_search(
         trial.geometry_available = geometry.available;
         trial.separation_calibrated = config.separation_calibrated;
         trial.scale_clamped = scale_clamped;
+        trial.dose_requested_strength = config.use_dose_controller
+            ? dose_requested_scale : 0.0f;
+        trial.dose_executed_strength = config.use_dose_controller ? resolved_scale : 0.0f;
+        trial.dose_action = dose_decision.action;
+        trial.relative_dose = dose_decision.relative_dose;
+        trial.dose_evaluated = config.use_dose_controller;
+        trial.dose_safety_limited = dose_retry_performed || dose_decision.safety_limited;
+        trial.dose_reason = dose_retry_performed
+            ? "retry_lower: " + dose_decision.reason : dose_decision.reason;
         trial.evidence_ref = candidate.evidence_ref;
         trial.safe_to_escalate = geometry.available && finite_geometry(geometry) &&
             geometry.cosine >= config.min_cosine && geometry.leakage <= config.max_leakage &&
@@ -211,6 +260,38 @@ bool common_flydelta_run_scale_search(
                     !common_flydelta_counterfactual_trial_validate(candidate, error)) {
                 return false;
             }
+            common_flydelta_dose_decision dose_decision;
+            bool dose_retry_performed = false;
+            const float dose_requested_scale = resolved_midpoint;
+            if (config.use_dose_controller) {
+                common_flydelta_dose_observation dose_observation{
+                    geometry.available, resolved_midpoint,
+                    geometry.available ? geometry.shift_norm : 0.0f,
+                    geometry.available ? geometry.progress : 0.0f,
+                    geometry.available ? geometry.leakage : 0.0f,
+                };
+                if (!common_flydelta_dose_observe(
+                        config.dose_policy, dose_state, dose_observation,
+                        dose_decision, error)) return false;
+                if (dose_decision.action == common_flydelta_dose_action::retry_lower &&
+                        dose_decision.proposed_safe_strength && config.max_dose_retries > 0) {
+                    dose_retry_performed = true;
+                    resolved_midpoint = *dose_decision.proposed_safe_strength;
+                    if (!runner(fixture, resolved_midpoint, true, candidate, geometry, error) ||
+                            !common_flydelta_counterfactual_trial_validate(candidate, error)) {
+                        return false;
+                    }
+                    dose_observation = {
+                        geometry.available, resolved_midpoint,
+                        geometry.available ? geometry.shift_norm : 0.0f,
+                        geometry.available ? geometry.progress : 0.0f,
+                        geometry.available ? geometry.leakage : 0.0f,
+                    };
+                    if (!common_flydelta_dose_observe(
+                            config.dose_policy, dose_state, dose_observation,
+                            dose_decision, error)) return false;
+                }
+            }
             common_flydelta_scale_trial trial;
             trial.scale = resolved_midpoint;
             trial.requested_scale = midpoint;
@@ -223,6 +304,15 @@ bool common_flydelta_run_scale_search(
             trial.refinement = true;
             trial.separation_calibrated = config.separation_calibrated;
             trial.scale_clamped = scale_clamped;
+            trial.dose_requested_strength = config.use_dose_controller
+                ? dose_requested_scale : 0.0f;
+            trial.dose_executed_strength = config.use_dose_controller ? resolved_midpoint : 0.0f;
+            trial.dose_action = dose_decision.action;
+            trial.relative_dose = dose_decision.relative_dose;
+            trial.dose_evaluated = config.use_dose_controller;
+            trial.dose_safety_limited = dose_retry_performed || dose_decision.safety_limited;
+            trial.dose_reason = dose_retry_performed
+                ? "retry_lower: " + dose_decision.reason : dose_decision.reason;
             trial.evidence_ref = candidate.evidence_ref;
             trial.safe_to_escalate = geometry.available && finite_geometry(geometry) &&
                 geometry.cosine >= config.min_cosine && geometry.leakage <= config.max_leakage &&

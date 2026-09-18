@@ -1691,6 +1691,8 @@ int main(int argc, char ** argv) {
                 alpha_config.max_expansion_non_improving = 2;
                 alpha_config.max_leakage = pipeline_config.scale.max_leakage;
                 alpha_config.max_shift_norm = pipeline_config.scale.max_shift_norm;
+                alpha_config.dose_policy.max_shift_norm = pipeline_config.scale.max_shift_norm;
+                alpha_config.dose_policy.max_leakage = pipeline_config.scale.max_leakage;
                 std::vector<common_flydelta_alpha_response_trial> alpha_trials;
                 common_flydelta_alpha_response_selection alpha_selection;
                 std::string alpha_error;
@@ -1702,7 +1704,7 @@ int main(int argc, char ** argv) {
                               << ": " << alpha_error << '\n';
                     return 1;
                 }
-                std::cout << "flydelta_adaptive_alpha_summary group=" << entry.first
+                    std::cout << "flydelta_adaptive_alpha_summary group=" << entry.first
                           << " seed_layer=" << alpha_seed->candidate.anchor_layer_index
                           << " trials=" << alpha_trials.size()
                           << " response_status=" << common_flydelta_alpha_response_status_name(
@@ -1713,12 +1715,34 @@ int main(int argc, char ** argv) {
                           << " range_not_exhausted=" <<
                               (alpha_selection.range_not_exhausted ? "yes" : "no")
                           << " selected=" << (alpha_selection.selected ? "yes" : "no")
-                          << " selected_scale=" << alpha_selection.scale
-                          << " utility=" << alpha_selection.utility
+                              << " selected_scale=" << alpha_selection.scale
+                              << " last_requested_scale=" << alpha_selection.last_requested_scale
+                              << " last_executed_scale=" << alpha_selection.last_executed_scale
+                              << " last_relative_dose=" << alpha_selection.last_relative_dose
+                              << " last_dose_action=" << common_flydelta_dose_action_name(
+                                  alpha_selection.last_dose_action)
+                              << " last_dose_evaluated=" <<
+                                  (alpha_selection.last_dose_evaluated ? "yes" : "no")
+                              << " last_dose_safety_limited=" <<
+                                  (alpha_selection.last_dose_safety_limited ? "yes" : "no")
+                              << " utility=" << alpha_selection.utility
                           << " minimum_effective=" <<
                               (alpha_selection.minimum_effective_available ? "yes" : "no")
                           << " minimum_effective_scale=" << alpha_selection.minimum_effective_scale
-                          << '\n';
+                              << '\n';
+                for (const auto & alpha_trial : alpha_trials) {
+                    std::cout << "flydelta_adaptive_alpha_dose group=" << entry.first
+                              << " requested_scale=" << alpha_trial.requested_scale
+                              << " executed_scale=" << alpha_trial.scale
+                              << " relative_dose=" << alpha_trial.relative_dose
+                              << " dose_action=" << common_flydelta_dose_action_name(
+                                  alpha_trial.dose_action)
+                              << " dose_evaluated=" <<
+                                  (alpha_trial.dose_evaluated ? "yes" : "no")
+                              << " safety_limited=" <<
+                                  (alpha_trial.dose_safety_limited ? "yes" : "no")
+                              << " reason=" << alpha_trial.dose_reason << '\n';
+                }
             }
         }
     }

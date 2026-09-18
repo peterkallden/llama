@@ -24,6 +24,14 @@ struct common_flydelta_trace_arm {
     std::string arm_id;
     std::vector<uint32_t> layer_indices;
     float scale = 0.0f;
+    float requested_scale = 0.0f;
+    float executed_scale = 0.0f;
+    bool dose_evaluated = false;
+    float relative_dose = 0.0f;
+    bool dose_comparable = false;
+    bool dose_safety_limited = false;
+    std::string dose_action;
+    std::string dose_reason;
     std::vector<float> coefficients;
     bool margin_available = false;
     float margin_total = 0.0f;
@@ -69,6 +77,12 @@ struct common_flydelta_trace {
         common_flydelta_alpha_response_status::inconclusive;
     bool alpha_range_not_exhausted = false;
     float alpha_last_scale = 0.0f;
+    float alpha_last_requested_scale = 0.0f;
+    float alpha_last_executed_scale = 0.0f;
+    float alpha_last_relative_dose = 0.0f;
+    std::string alpha_last_dose_action;
+    bool alpha_last_dose_evaluated = false;
+    bool alpha_last_dose_safety_limited = false;
     float alpha_utility_slope = 0.0f;
     float alpha_best_margin_delta_normalized = 0.0f;
     bool has_next_action = false;

@@ -128,7 +128,9 @@ int main() {
             geometry.shift_norm = 0.01f;
             return true;
         }, trials, selection, error));
-    CHECK(calls == 2);
+    CHECK(calls == 3); // baseline + requested arm + one explicit dose backoff
     CHECK(trials.size() == 1 && !selection.selected && !trials.front().safe_to_escalate);
+    CHECK(trials.front().dose_evaluated && trials.front().dose_safety_limited);
+    CHECK(trials.front().dose_requested_strength > trials.front().dose_executed_strength);
     return 0;
 }

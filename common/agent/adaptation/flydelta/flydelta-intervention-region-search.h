@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
+#include "agent/adaptation/flydelta/flydelta-dose-controller.h"
 
 #include <cstddef>
 #include <functional>
@@ -47,6 +48,14 @@ bool common_flydelta_intervention_region_candidate_validate(
 
 struct common_flydelta_intervention_region_trial {
     common_flydelta_intervention_region_candidate candidate;
+    float requested_total_scale = 0.0f;
+    float executed_total_scale = 0.0f;
+    common_flydelta_dose_action dose_action = common_flydelta_dose_action::accept;
+    bool dose_evaluated = false;
+    float relative_dose = 0.0f;
+    bool dose_comparable = false;
+    bool dose_safety_limited = false;
+    std::string dose_reason;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
     float quality_delta = 0.0f;

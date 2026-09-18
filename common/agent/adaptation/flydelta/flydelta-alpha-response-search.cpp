@@ -75,7 +75,9 @@ bool common_flydelta_alpha_response_search_config_validate(
             !std::isfinite(config.max_shift_norm) || config.max_shift_norm <= 0.0f ||
             !std::isfinite(config.min_cosine) || config.min_cosine < -1.0f ||
             config.min_cosine > 1.0f || !std::isfinite(config.leakage_penalty) ||
-            config.leakage_penalty < 0.0f) {
+            config.leakage_penalty < 0.0f || config.max_dose_retries > 1 ||
+            (config.use_dose_controller &&
+             !common_flydelta_dose_policy_validate(config.dose_policy, error))) {
         error = "FlyDelta alpha response search configuration is invalid";
         return false;
     }
@@ -87,6 +89,7 @@ bool common_flydelta_alpha_response_trial_validate(
         std::string & error) {
     error.clear();
     if (!finite_scale(trial.scale) ||
+            !finite_scale(trial.requested_scale) ||
             !common_flydelta_counterfactual_trial_validate(trial.counterfactual, error) ||
             !common_flydelta_decision_margin_validate(trial.margin, error) ||
             !std::isfinite(trial.margin_delta_total) ||
@@ -128,6 +131,7 @@ bool common_flydelta_run_alpha_response_search(
             !common_flydelta_decision_margin_validate(baseline_margin, error)) return false;
 
     std::map<float, size_t> by_scale;
+    common_flydelta_dose_state dose_state;
     auto evaluate = [&](float scale, bool refinement, size_t & index) -> bool {
         if (!finite_scale(scale) || scale > config.max_scale) return false;
         const auto found = by_scale.find(scale);
@@ -137,6 +141,7 @@ bool common_flydelta_run_alpha_response_search(
         }
         common_flydelta_alpha_response_trial value;
         value.scale = scale;
+        value.requested_scale = scale;
         value.refinement = refinement;
         bool geometry_available = false;
         if (!runner(fixture, scale, true, value.counterfactual, value.margin,
@@ -147,6 +152,60 @@ bool common_flydelta_run_alpha_response_search(
         if (!common_flydelta_counterfactual_trial_validate(value.counterfactual, error) ||
                 !common_flydelta_decision_margin_validate(value.margin, error)) return false;
         value.geometry_available = geometry_available;
+        if (config.use_dose_controller) {
+            common_flydelta_dose_observation dose_observation{
+                geometry_available,
+                scale,
+                geometry_available ? value.geometry.shift_norm : 0.0f,
+                geometry_available ? value.geometry.progress : 0.0f,
+                geometry_available ? value.geometry.leakage : 0.0f,
+            };
+            common_flydelta_dose_decision dose_decision;
+            if (!common_flydelta_dose_observe(
+                    config.dose_policy, dose_state, dose_observation,
+                    dose_decision, error)) return false;
+            value.dose_evaluated = true;
+            value.dose_action = dose_decision.action;
+            value.relative_dose = dose_decision.relative_dose;
+            value.dose_safety_limited = dose_decision.safety_limited;
+            value.dose_reason = dose_decision.reason;
+            if (dose_decision.action == common_flydelta_dose_action::retry_lower &&
+                    dose_decision.proposed_safe_strength &&
+                    config.max_dose_retries > 0) {
+                const float executed_scale = *dose_decision.proposed_safe_strength;
+                value.scale = executed_scale;
+                value.dose_safety_limited = true;
+                value.dose_reason = "retry_lower: " + value.dose_reason;
+                value.counterfactual = {};
+                value.margin = {};
+                value.geometry = {};
+                value.geometry_available = false;
+                if (!runner(fixture, executed_scale, true, value.counterfactual,
+                        value.margin, value.geometry, value.geometry_available, error) ||
+                        !common_flydelta_counterfactual_trial_validate(
+                            value.counterfactual, error) ||
+                        !common_flydelta_decision_margin_validate(value.margin, error)) {
+                    return false;
+                }
+                if (value.geometry_available && !finite_geometry(value.geometry)) {
+                    error = "FlyDelta alpha response geometry is invalid";
+                    return false;
+                }
+                dose_observation = {
+                    value.geometry_available,
+                    executed_scale,
+                    value.geometry_available ? value.geometry.shift_norm : 0.0f,
+                    value.geometry_available ? value.geometry.progress : 0.0f,
+                    value.geometry_available ? value.geometry.leakage : 0.0f,
+                };
+                if (!common_flydelta_dose_observe(
+                        config.dose_policy, dose_state, dose_observation,
+                        dose_decision, error)) return false;
+                value.dose_action = dose_decision.action;
+                value.relative_dose = dose_decision.relative_dose;
+                value.dose_reason = "retry_lower: " + dose_decision.reason;
+            }
+        }
         value.outcome = common_flydelta_classify_counterfactual(
             baseline_counterfactual, value.counterfactual);
         value.margin_available = baseline_margin.available && value.margin.available;
@@ -220,6 +279,12 @@ bool common_flydelta_run_alpha_response_search(
     if (!expansion_indices.empty()) {
         const auto & last = trials[expansion_indices.back()];
         selection.last_scale = last.scale;
+        selection.last_requested_scale = last.requested_scale;
+        selection.last_executed_scale = last.scale;
+        selection.last_relative_dose = last.relative_dose;
+        selection.last_dose_action = last.dose_action;
+        selection.last_dose_evaluated = last.dose_evaluated;
+        selection.last_dose_safety_limited = last.dose_safety_limited;
         selection.last_utility = last.utility;
         if (expansion_indices.size() >= 2) {
             const auto & previous = trials[expansion_indices[expansion_indices.size() - 2]];
@@ -230,6 +295,16 @@ bool common_flydelta_run_alpha_response_search(
             selection.range_not_exhausted = budget_limited && last.safe_to_continue &&
                 last.utility > previous.utility + config.utility_epsilon;
         }
+    }
+
+    if (!trials.empty()) {
+        const auto & last = trials.back();
+        selection.last_requested_scale = last.requested_scale;
+        selection.last_executed_scale = last.scale;
+        selection.last_relative_dose = last.relative_dose;
+        selection.last_dose_action = last.dose_action;
+        selection.last_dose_evaluated = last.dose_evaluated;
+        selection.last_dose_safety_limited = last.dose_safety_limited;
     }
 
     // Golden-section refinement is used only inside the observed response

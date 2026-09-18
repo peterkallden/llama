@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-decision-margin.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
+#include "agent/adaptation/flydelta/flydelta-dose-controller.h"
 
 #include <cstddef>
 #include <functional>
@@ -43,10 +44,19 @@ struct common_flydelta_alpha_response_search_config {
     float max_shift_norm = 1.0f;
     float min_cosine = 0.0f;
     float leakage_penalty = 0.10f;
+    bool use_dose_controller = true;
+    size_t max_dose_retries = 1;
+    common_flydelta_dose_policy dose_policy;
 };
 
 struct common_flydelta_alpha_response_trial {
     float scale = 0.0f;
+    float requested_scale = 0.0f;
+    common_flydelta_dose_action dose_action = common_flydelta_dose_action::reject;
+    float relative_dose = 0.0f;
+    bool dose_evaluated = false;
+    bool dose_safety_limited = false;
+    std::string dose_reason;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
     common_flydelta_counterfactual_trial counterfactual;
@@ -75,6 +85,12 @@ struct common_flydelta_alpha_response_selection {
     common_flydelta_alpha_response_status response_status =
         common_flydelta_alpha_response_status::inconclusive;
     float last_scale = 0.0f;
+    float last_requested_scale = 0.0f;
+    float last_executed_scale = 0.0f;
+    float last_relative_dose = 0.0f;
+    common_flydelta_dose_action last_dose_action = common_flydelta_dose_action::reject;
+    bool last_dose_evaluated = false;
+    bool last_dose_safety_limited = false;
     float last_utility = 0.0f;
     float utility_slope = 0.0f;
     float max_reachable_scale = 0.0f;

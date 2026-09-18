@@ -2069,6 +2069,47 @@ DeltaMemory or promote an artifact by itself. The diagnostics are deliberately
 outside the counterfactual outcome and promotion contracts; they never create
 `HELPED`, select an alpha, or serve as learning evidence.
 
+#### DoseController — shared intervention safety seam
+
+The search policies propose an intervention strength; they do not silently
+change it at execution time. `DoseController` is the shared low-level safety
+seam used by Whirlpool, the bounded scale primitive and AdaptiveAlphaSearch.
+It is deliberately not an orchestrator: it does not choose a layer, score a
+behavior, decide `HELPED`, change evidence depth or grant learning credit.
+
+Its roles are separate:
+
+```text
+search policy proposes requested strength
+  -> DoseController observes geometry
+       absolute dose: shift_norm       (hard safety envelope)
+       relative dose: sqrt(progress² + leakage²)
+  -> accept, explicit retry_lower, safety_boundary or reject
+  -> search policy records the observation and chooses its next proposal
+```
+
+`shift_norm` is the absolute safety bound. `progress` and `leakage` are the
+orthogonal components relative to the same behavior delta, so their Euclidean
+combination is the relative intervention dose when that geometry is
+comparable. `separation_calibrated` remains a prior/reference scale; the
+DoseController is the posterior empirical safety response from an actual
+model observation. They are complementary and must not be conflated.
+
+Every dose-aware arm records both `requested_scale` and `executed_scale`.
+When a request is outside the envelope, an explicit bounded retry may be
+issued at `proposed_safe_strength`; there is no hidden clamp. The trace also
+records `dose_action`, `relative_dose`, `dose_safety_limited` and a bounded
+reason. A retry remains the same search arm/coordinate, while its executed
+strength is the safe observation that was actually run.
+
+The controller state is local to a compatible search surface. Reuse therefore
+requires explicit compatibility of model fingerprint, tokenizer/template and
+capture semantics, context identity, surface revision, basis/direction,
+layer/profile and intervention semantics. It is not a universal alpha cache.
+The controller regulates how strongly a proposed intervention may be
+exercised; the search policy still decides whether the resulting response is
+useful.
+
 ### 4I. Coarse-to-fine layer search — implemented
 
 When an overlay arm remains `UNKNOWN`, the host may use its per-layer

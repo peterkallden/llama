@@ -141,5 +141,61 @@ int main() {
     CHECK(early_helped_trials.size() == 3);
     CHECK(early_helped_trials.front().outcome ==
         common_flydelta_counterfactual_outcome::helped);
+
+    // An unsafe requested alpha must be represented explicitly: the search
+    // coordinate remains the requested value while execution may retry once
+    // at the bounded dose proposed by the controller.
+    common_flydelta_alpha_response_search_config dose_config;
+    dose_config.seed_scale = 0.05f;
+    dose_config.max_scale = 0.05f;
+    dose_config.max_expansion_trials = 1;
+    dose_config.max_zoom_trials = 0;
+    dose_config.max_min_effective_trials = 0;
+    dose_config.max_expansion_non_improving = 1;
+    dose_config.max_shift_norm = 1.0f;
+    dose_config.dose_policy.max_shift_norm = 1.0f;
+    dose_config.dose_policy.max_leakage = 1.0f;
+    dose_config.dose_policy.target_absolute_fraction = 0.5f;
+    dose_config.dose_policy.backoff_safety_factor = 0.8f;
+    common_flydelta_alpha_response_selection dose_selection;
+    std::vector<common_flydelta_alpha_response_trial> dose_trials;
+    CHECK(common_flydelta_run_alpha_response_search(
+        common_flydelta_experiment_fixture{
+            1, "fixture:alpha-response-dose-retry", "task", "model", "tokenizer",
+            "template", "context", "verifier"
+        }, dose_config,
+        [](const common_flydelta_experiment_fixture &, float scale, bool apply_overlay,
+                common_flydelta_counterfactual_trial & counterfactual,
+                common_flydelta_decision_margin & margin,
+                common_flydelta_representation_diagnostics & geometry,
+                bool & geometry_available, std::string &) {
+            counterfactual = {};
+            counterfactual.executed = true;
+            counterfactual.verifier_known = true;
+            counterfactual.passed = false;
+            counterfactual.overlay_applied = apply_overlay;
+            counterfactual.evidence_ref = "evidence:alpha-dose-retry";
+            margin = {};
+            margin.available = true;
+            margin.positive_token_count = 1;
+            margin.negative_token_count = 1;
+            margin.positive_total_logprob = -1.0f;
+            margin.negative_total_logprob = -2.0f;
+            geometry = {};
+            geometry_available = apply_overlay;
+            geometry.cosine = 0.8f;
+            geometry.progress = scale;
+            geometry.leakage = 0.05f;
+            geometry.shift_norm = scale >= 0.05f ? 2.0f : scale;
+            return true;
+        }, dose_trials, dose_selection, error));
+    CHECK(dose_trials.size() == 1);
+    CHECK(dose_trials.front().requested_scale == 0.05f);
+    CHECK(dose_trials.front().scale < dose_trials.front().requested_scale);
+    CHECK(dose_trials.front().dose_evaluated);
+    CHECK(dose_trials.front().dose_safety_limited);
+    CHECK(dose_trials.front().dose_action == common_flydelta_dose_action::accept);
+    CHECK(dose_trials.front().dose_reason.find("retry_lower:") == 0);
+    CHECK(common_flydelta_alpha_response_trial_validate(dose_trials.front(), error));
     return 0;
 }

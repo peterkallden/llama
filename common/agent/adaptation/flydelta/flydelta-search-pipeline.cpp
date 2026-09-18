@@ -201,6 +201,8 @@ bool common_flydelta_run_search_pipeline(
                 whirlpool_config.min_cosine = config.scale.min_cosine;
                 whirlpool_config.max_leakage = config.scale.max_leakage;
                 whirlpool_config.max_shift_norm = config.scale.max_shift_norm;
+                whirlpool_config.dose_policy.max_shift_norm = config.scale.max_shift_norm;
+                whirlpool_config.dose_policy.max_leakage = config.scale.max_leakage;
                 if (!common_flydelta_run_whirlpool_search(
                         fixture, whirlpool_config,
                         [&](const common_flydelta_experiment_fixture & current_fixture,
@@ -299,11 +301,17 @@ bool common_flydelta_run_search_pipeline(
                         common_flydelta_decision_margin margin;
                         const bool ok = runner(scale_fixture, input.direction, layer, scale,
                             scale_apply_overlay, trial, margin, geometry, scale_error);
-                        if (ok && scale_apply_overlay) counterfactuals.push_back(trial);
+                if (ok && scale_apply_overlay) counterfactuals.push_back(trial);
                         return ok;
                     };
+                auto scale_config = config.scale;
+                // Keep the shared dose envelope aligned with the pipeline's
+                // existing geometry gates. The scale primitive must not
+                // silently fall back to its standalone defaults.
+                scale_config.dose_policy.max_shift_norm = scale_config.max_shift_norm;
+                scale_config.dose_policy.max_leakage = scale_config.max_leakage;
                 if (!common_flydelta_run_scale_search(
-                        current_fixture, config.scale, scale_runner,
+                        current_fixture, scale_config, scale_runner,
                         nested.scale_trials, nested.scale_selection, runner_error)) {
                     return false;
                 }

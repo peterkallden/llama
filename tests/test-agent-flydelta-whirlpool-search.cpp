@@ -78,5 +78,47 @@ int main() {
     common_flydelta_whirlpool_search_config invalid = config;
     invalid.probes_per_round = 1;
     CHECK(!common_flydelta_whirlpool_search_config_validate(invalid, error));
+
+    common_flydelta_whirlpool_search_config retry_config = config;
+    retry_config.max_rounds = 1;
+    retry_config.max_trials = 2;
+    retry_config.dose_policy.max_shift_norm = 1.0f;
+    retry_config.dose_policy.max_leakage = 1.0f;
+    size_t retry_calls = 0;
+    trials.clear();
+    selection = {};
+    trace = {};
+    CHECK(common_flydelta_run_whirlpool_search(
+        fixture(), retry_config,
+        [&](const auto &, const auto * candidate, auto & trial, auto & margin,
+                auto & geometry, auto & geometry_available, std::string &) {
+            ++retry_calls;
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.evidence_ref = candidate == nullptr
+                ? "evidence:retry-baseline" : "evidence:retry-arm";
+            if (candidate == nullptr) return true;
+            trial.quality = 0.0f;
+            geometry_available = true;
+            geometry.layer_index = candidate->anchor_layer_index;
+            geometry.cosine = 0.8f;
+            geometry.progress = 0.4f;
+            geometry.leakage = 0.1f;
+            geometry.shift_norm = candidate->total_scale >= 0.02f ? 4.0f : 0.5f;
+            margin = {};
+            return true;
+        }, trials, selection, trace, error));
+    CHECK(error.empty());
+    CHECK(retry_calls > trials.size() + 1);
+    CHECK(!trials.empty());
+    CHECK(std::any_of(trials.begin(), trials.end(), [](const auto & trial) {
+        return trial.dose_evaluated &&
+            trial.dose_action == common_flydelta_dose_action::accept &&
+            trial.requested_total_scale > trial.executed_total_scale &&
+            trial.dose_safety_limited;
+    }));
+    CHECK(trace.model_evaluations == retry_calls);
+    CHECK(common_flydelta_whirlpool_trace_validate(trace, retry_config, trials.size(), error));
     return 0;
 }

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 
 namespace {
 
@@ -100,7 +101,10 @@ bool common_flydelta_whirlpool_search_config_validate(
             config.leakage_penalty < 0.0f || !std::isfinite(config.max_leakage) ||
             config.max_leakage < 0.0f || !std::isfinite(config.max_shift_norm) ||
             config.max_shift_norm <= 0.0f || !std::isfinite(config.min_cosine) ||
-            config.min_cosine < -1.0f || config.min_cosine > 1.0f) {
+            config.min_cosine < -1.0f || config.min_cosine > 1.0f ||
+            config.max_dose_retries > 1 ||
+            (config.use_dose_controller &&
+             !common_flydelta_dose_policy_validate(config.dose_policy, error))) {
         error = "FlyDelta Whirlpool search configuration is invalid";
         return false;
     }
@@ -128,7 +132,7 @@ bool common_flydelta_whirlpool_trace_validate(
         size_t trial_count,
         std::string & error) {
     error.clear();
-    if (trace.schema_version != 1 || trace.model_evaluations != trial_count + 1 ||
+    if (trace.schema_version != 1 || trace.model_evaluations < trial_count + 1 ||
             trace.rounds.size() > config.max_rounds ||
             (trace.best_trial_index != static_cast<size_t>(-1) &&
                 trace.best_trial_index >= trial_count) ||
@@ -186,6 +190,7 @@ bool common_flydelta_run_whirlpool_search(
     std::vector<uint32_t> visited;
     float best_objective = -std::numeric_limits<float>::infinity();
     size_t best_trial = 0;
+    std::unordered_map<uint32_t, common_flydelta_dose_state> dose_states;
 
     for (size_t round = 0; round < config.max_rounds && trials.size() < config.max_trials;
             ++round) {
@@ -213,6 +218,7 @@ bool common_flydelta_run_whirlpool_search(
             common_flydelta_decision_margin margin;
             common_flydelta_representation_diagnostics geometry;
             bool geometry_available = false;
+            const float requested_scale = candidate.total_scale;
             if (!runner(fixture, &candidate, counterfactual, margin, geometry,
                     geometry_available, error) ||
                     !common_flydelta_counterfactual_trial_validate(counterfactual, error) ||
@@ -222,8 +228,66 @@ bool common_flydelta_run_whirlpool_search(
                 return false;
             }
 
+            common_flydelta_dose_decision dose_decision;
+            size_t model_attempts = 1;
+            bool dose_retry_performed = false;
+            if (config.use_dose_controller) {
+                common_flydelta_dose_observation dose_observation{
+                    geometry_available,
+                    candidate.total_scale,
+                    geometry_available ? geometry.shift_norm : 0.0f,
+                    geometry_available ? geometry.progress : 0.0f,
+                    geometry_available ? geometry.leakage : 0.0f,
+                };
+                if (!common_flydelta_dose_observe(
+                        config.dose_policy, dose_states[layer], dose_observation,
+                        dose_decision, error)) return false;
+                if (dose_decision.action == common_flydelta_dose_action::retry_lower &&
+                        dose_decision.proposed_safe_strength &&
+                        config.max_dose_retries > 0) {
+                    dose_retry_performed = true;
+                    candidate.total_scale = *dose_decision.proposed_safe_strength;
+                    candidate.per_layer_scale = candidate.total_scale;
+                    counterfactual = {};
+                    margin = {};
+                    geometry = {};
+                    geometry_available = false;
+                    if (!runner(fixture, &candidate, counterfactual, margin, geometry,
+                            geometry_available, error) ||
+                            !common_flydelta_counterfactual_trial_validate(
+                                counterfactual, error) ||
+                            !common_flydelta_decision_margin_validate(margin, error)) {
+                        return false;
+                    }
+                    if (geometry_available &&
+                            !common_flydelta_representation_diagnostics_validate(
+                                geometry, error)) return false;
+                    dose_observation = {
+                        geometry_available,
+                        candidate.total_scale,
+                        geometry_available ? geometry.shift_norm : 0.0f,
+                        geometry_available ? geometry.progress : 0.0f,
+                        geometry_available ? geometry.leakage : 0.0f,
+                    };
+                    if (!common_flydelta_dose_observe(
+                            config.dose_policy, dose_states[layer], dose_observation,
+                            dose_decision, error)) return false;
+                    ++model_attempts;
+                }
+            }
+
             common_flydelta_intervention_region_trial region_trial;
             region_trial.candidate = candidate;
+            region_trial.requested_total_scale = requested_scale;
+            region_trial.executed_total_scale = candidate.total_scale;
+            region_trial.dose_evaluated = config.use_dose_controller;
+            region_trial.dose_action = dose_decision.action;
+            region_trial.relative_dose = dose_decision.relative_dose;
+            region_trial.dose_comparable = dose_decision.comparable;
+            region_trial.dose_safety_limited =
+                dose_retry_performed || dose_decision.safety_limited;
+            region_trial.dose_reason = dose_retry_performed
+                ? "retry_lower: " + dose_decision.reason : dose_decision.reason;
             region_trial.outcome = common_flydelta_classify_counterfactual(
                 baseline, counterfactual);
             region_trial.quality_delta = counterfactual.quality - baseline.quality;
@@ -246,7 +310,7 @@ bool common_flydelta_run_whirlpool_search(
                 margin, geometry, geometry_available, config);
             region_trial.evidence_ref = counterfactual.evidence_ref;
             trials.push_back(std::move(region_trial));
-            ++trace.model_evaluations;
+            trace.model_evaluations += model_attempts;
             const auto & stored = trials.back();
             if (stored.search_score > best_objective) {
                 best_objective = stored.search_score;
