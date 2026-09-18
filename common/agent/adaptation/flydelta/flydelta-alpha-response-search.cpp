@@ -37,8 +37,9 @@ float utility_for(const common_flydelta_alpha_response_trial & trial,
 }
 
 bool better(const common_flydelta_alpha_response_trial & lhs,
-        const common_flydelta_alpha_response_trial & rhs) {
-    if (lhs.utility != rhs.utility) return lhs.utility > rhs.utility;
+        const common_flydelta_alpha_response_trial & rhs, float epsilon) {
+    if (lhs.utility > rhs.utility + epsilon) return true;
+    if (rhs.utility > lhs.utility + epsilon) return false;
     return lhs.scale < rhs.scale;
 }
 
@@ -123,8 +124,11 @@ bool common_flydelta_run_alpha_response_search(
         value.refinement = refinement;
         bool geometry_available = false;
         if (!runner(fixture, scale, true, value.counterfactual, value.margin,
-                value.geometry, geometry_available, error) ||
-                !common_flydelta_counterfactual_trial_validate(value.counterfactual, error) ||
+                value.geometry, geometry_available, error)) {
+            if (error.empty()) error = "FlyDelta alpha response runner failed";
+            return false;
+        }
+        if (!common_flydelta_counterfactual_trial_validate(value.counterfactual, error) ||
                 !common_flydelta_decision_margin_validate(value.margin, error)) return false;
         value.geometry_available = geometry_available;
         value.outcome = common_flydelta_classify_counterfactual(
@@ -148,7 +152,7 @@ bool common_flydelta_run_alpha_response_search(
     size_t index = 0;
     float scale = config.seed_scale;
     for (size_t count = 0; count < config.max_expansion_trials; ++count) {
-        if (!evaluate(scale, false, index)) break;
+        if (!evaluate(scale, false, index)) return false;
         const auto & current = trials[index];
         if (!current.safe_to_continue) break;
         if (scale > config.max_scale / config.growth_factor) break;
@@ -168,7 +172,8 @@ bool common_flydelta_run_alpha_response_search(
         });
         size_t best_position = 0;
         for (size_t position = 1; position < order.size(); ++position) {
-            if (better(trials[order[position]], trials[order[best_position]])) {
+            if (better(trials[order[position]], trials[order[best_position]],
+                    config.utility_epsilon)) {
                 best_position = position;
             }
         }
@@ -180,18 +185,23 @@ bool common_flydelta_run_alpha_response_search(
             const float x1 = right - (right - left) / phi;
             const float x2 = left + (right - left) / phi;
             size_t i1 = 0, i2 = 0;
-            if (!evaluate(x1, true, i1) || !evaluate(x2, true, i2)) break;
-            if (better(trials[i1], trials[i2])) right = x2;
+            if (!evaluate(x1, true, i1) || !evaluate(x2, true, i2)) return false;
+            if (better(trials[i1], trials[i2], config.utility_epsilon)) right = x2;
             else left = x1;
         }
     }
 
     for (size_t i = 0; i < trials.size(); ++i) {
-        if (!selection.selected || better(trials[i], trials[selection.trial_index])) {
+        const auto & trial = trials[i];
+        const bool eligible = trial.safe_to_continue &&
+            trial.outcome != common_flydelta_counterfactual_outcome::harmed &&
+            trial.utility > config.utility_epsilon;
+        if (eligible && (!selection.selected ||
+                better(trial, trials[selection.trial_index], config.utility_epsilon))) {
             selection.selected = true;
             selection.trial_index = i;
-            selection.scale = trials[i].scale;
-            selection.utility = trials[i].utility;
+            selection.scale = trial.scale;
+            selection.utility = trial.utility;
         }
     }
 
@@ -199,6 +209,7 @@ bool common_flydelta_run_alpha_response_search(
     for (size_t i = 0; i < trials.size(); ++i) {
         if (trials[i].outcome == common_flydelta_counterfactual_outcome::helped &&
                 trials[i].counterfactual.executed && trials[i].counterfactual.verifier_known &&
+                trials[i].safe_to_continue &&
                 (first_helped == std::numeric_limits<size_t>::max() ||
                  trials[i].scale < trials[first_helped].scale)) first_helped = i;
     }
@@ -221,7 +232,7 @@ bool common_flydelta_run_alpha_response_search(
             if (!finite_scale(midpoint) || midpoint <= lower ||
                     midpoint >= selection.minimum_effective_scale) break;
             size_t midpoint_index = 0;
-            if (!evaluate(midpoint, true, midpoint_index)) break;
+            if (!evaluate(midpoint, true, midpoint_index)) return false;
             if (trials[midpoint_index].outcome == common_flydelta_counterfactual_outcome::helped &&
                     trials[midpoint_index].counterfactual.verifier_known) {
                 selection.minimum_effective_scale = midpoint;

@@ -6,6 +6,7 @@
 #include "agent/adaptation/flydelta/flydelta-aggregation.h"
 #include "agent/adaptation/flydelta/flydelta-evidence-depth.h"
 #include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-alpha-response-search.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "agent/adaptation/flydelta/flydelta-deep-search.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
@@ -45,6 +46,7 @@ struct options {
     std::string learning_ledger;
     bool force_deep = false;
     bool force_tfo_lite = false;
+    bool adaptive_alpha_search = false;
     int n_predict = 128;
     int n_threads = 3;
     int n_gpu_layers = 0;
@@ -75,6 +77,10 @@ bool parse_args(int argc, char ** argv, options & value) {
         value.force_tfo_lite = std::string(force_tfo) == "1" || std::string(force_tfo) == "true";
         value.force_deep = value.force_deep || value.force_tfo_lite;
     }
+    if (const char * adaptive_alpha = std::getenv("LLAMA_AGENT_ADAPTIVE_ALPHA_SEARCH")) {
+        value.adaptive_alpha_search = std::string(adaptive_alpha) == "1" ||
+            std::string(adaptive_alpha) == "true";
+    }
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
     if (const char * backend = std::getenv("LLAMA_AGENT_BACKEND")) value.backend = backend;
     if (const char * scenario_id = std::getenv("LLAMA_AGENT_SCENARIO_ID")) value.scenario_id = scenario_id;
@@ -91,6 +97,7 @@ bool parse_args(int argc, char ** argv, options & value) {
         else if (argument == "--learning-ledger") { const auto v = next("--learning-ledger"); if (!v) return false; value.learning_ledger = v; }
         else if (argument == "--force-deep") value.force_deep = true;
         else if (argument == "--force-tfo-lite") { value.force_tfo_lite = true; value.force_deep = true; }
+        else if (argument == "--adaptive-alpha-search") value.adaptive_alpha_search = true;
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
         else if (argument == "--n-gpu-layers") { const auto v = next("--n-gpu-layers"); if (!v) return false; value.n_gpu_layers = std::stoi(v); }
@@ -345,7 +352,7 @@ int main(int argc, char ** argv) {
                   << " [--scenario-id ID]"
                   << " [--max-scenarios N]"
                   << " [--learning-ledger JSONL]"
-                  << " [--force-deep|--force-tfo-lite]"
+                  << " [--force-deep|--force-tfo-lite] [--adaptive-alpha-search]"
                   << " [--threads N] [--n-gpu-layers N]\n";
         return 2;
     }
@@ -1478,6 +1485,233 @@ int main(int argc, char ** argv) {
                       << '\n';
             std::cout << "flydelta_trace group=" << entry.first
                       << " json=" << worker_report.trace_json << '\n';
+
+            if (value.adaptive_alpha_search) {
+                const auto & pipeline_direction_result = pipeline_result.directions.front();
+                const common_flydelta_intervention_region_trial * alpha_seed = nullptr;
+                if (!pipeline_direction_result.region_trials.empty()) {
+                    size_t seed_index = pipeline_direction_result.whirlpool_trace.best_trial_index;
+                    if (seed_index >= pipeline_direction_result.region_trials.size()) {
+                        seed_index = 0;
+                        for (size_t index = 1;
+                                index < pipeline_direction_result.region_trials.size(); ++index) {
+                            if (pipeline_direction_result.region_trials[index].search_score >
+                                    pipeline_direction_result.region_trials[seed_index].search_score) {
+                                seed_index = index;
+                            }
+                        }
+                    }
+                    alpha_seed = &pipeline_direction_result.region_trials[seed_index];
+                }
+                if (alpha_seed == nullptr || alpha_seed->candidate.layer_indices.empty()) {
+                    host.close();
+                    std::cerr << "AdaptiveAlphaSearch has no Whirlpool region seed for "
+                              << entry.first << '\n';
+                    return 1;
+                }
+
+                std::shared_ptr<const common_flydelta_hidden_state_capture> alpha_baseline_capture;
+                std::optional<common_flydelta_decision_margin> alpha_baseline_margin;
+                const auto alpha_direction_for_layer = [&](uint32_t layer,
+                        common_flydelta_basis_direction & direction,
+                        std::string & alpha_error) {
+                    const auto delta_it = std::find_if(case_deltas.begin(), case_deltas.end(),
+                        [&](const auto & delta) { return delta.layer_index == static_cast<int32_t>(layer); });
+                    if (delta_it == case_deltas.end()) {
+                        alpha_error = "AdaptiveAlphaSearch arm has no matching layer delta";
+                        return false;
+                    }
+                    direction.layer_index = static_cast<int32_t>(layer);
+                    return normalized_delta(*delta_it, direction.values, alpha_error);
+                };
+
+                const auto alpha_runner = [&](const common_flydelta_experiment_fixture &,
+                        float scale, bool apply_overlay,
+                        common_flydelta_counterfactual_trial & trial,
+                        common_flydelta_decision_margin & margin,
+                        common_flydelta_representation_diagnostics & geometry,
+                        bool & geometry_available, std::string & alpha_error) {
+                    std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
+                    if (apply_overlay) {
+                        common_flydelta_activation_request activation_request;
+                        activation_request.candidate_id =
+                            "flydelta://candidate/adaptive-alpha/" + bootstrap_case.id;
+                        activation_request.artifact_id =
+                            "flydelta://experimental/adaptive-alpha/" + bootstrap_case.id;
+                        activation_request.model_profile_fingerprint = capture->model_profile_fingerprint;
+                        activation_request.capture_layout_revision = capture->capture_layout_revision;
+                        activation_request.model_n_embd = n_embd;
+                        activation_request.model_n_layers = n_layers;
+                        activation_request.il_end = static_cast<int32_t>(n_layers - 1);
+                        for (const uint32_t layer : alpha_seed->candidate.layer_indices) {
+                            common_flydelta_basis_direction direction;
+                            if (!alpha_direction_for_layer(layer, direction, alpha_error)) return false;
+                            activation_request.directions.push_back(std::move(direction));
+                            activation_request.coefficients.push_back(1.0f);
+                        }
+                        activation_request.gate_request.explicit_opt_in = true;
+                        activation_request.gate_request.candidate_status =
+                            common_flydelta_candidate_status::approved;
+                        activation_request.gate_request.basis_available = true;
+                        activation_request.gate_request.familiarity = 1.0f;
+                        activation_request.gate_request.novelty = 0.0f;
+                        const float layer_count = static_cast<float>(
+                            alpha_seed->candidate.layer_indices.size());
+                        activation_request.gate_request.requested_scale =
+                            scale / std::sqrt(std::max(1.0f, layer_count));
+                        common_flydelta_gate_config gate_config;
+                        gate_config.enabled = true;
+                        gate_config.max_scale = 1.0f;
+                        common_flydelta_activation_result activation;
+                        if (!common_flydelta_prepare_activation(
+                                gate_config, activation_request, 64U * 1024U * 1024U,
+                                activation, alpha_error)) return false;
+                        activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                            std::move(activation));
+                    }
+
+                    common_agent_generation_result generated_result;
+                    const bool generated = inference->generate(make_request(
+                        value, contract, bootstrap_case.question, capture, activation_ptr),
+                        generated_result);
+                    const auto verdict = verify_model_call(generated_result,
+                        bootstrap_case.expected_tool, bootstrap_case.canonical_arguments,
+                        bootstrap_case.verification_mode, &bootstrap_case.canonical_execution, host);
+                    trial = {};
+                    trial.executed = true;
+                    trial.verifier_known = generated &&
+                        verdict.value != host_verdict::kind::unresolved_alternative;
+                    trial.passed = generated && verdict.value == host_verdict::kind::passed;
+                    trial.quality = trial.passed ? 1.0f : 0.0f;
+                    trial.overlay_applied = apply_overlay;
+                    trial.intervention_count = apply_overlay
+                        ? alpha_seed->candidate.layer_indices.size() : 0;
+                    trial.evidence_ref = apply_overlay
+                        ? "evidence:flydelta-adaptive-alpha-overlay"
+                        : "evidence:flydelta-adaptive-alpha-baseline";
+
+                    margin = {};
+                    std::string margin_error;
+                    if (!bootstrap_case.failed_tool.empty() ||
+                            !bootstrap_case.failed_continuation.empty()) {
+                        common_agent_teacher_forced_choice_request score_request;
+                        score_request.context = make_request(
+                            value, contract, bootstrap_case.question, capture, activation_ptr);
+                        score_request.context.flydelta_capture.reset();
+                        score_request.choice_prefix = "{\"name\":\"";
+                        score_request.positive_choice = bootstrap_case.expected_tool;
+                        score_request.negative_choice = bootstrap_case.failed_tool;
+                        score_request.positive_continuation = tool_call_continuation(
+                            bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
+                        score_request.negative_continuation = bootstrap_case.failed_continuation;
+                        common_agent_teacher_forced_choice_result score_result;
+                        if (inference->score_teacher_forced_choice(score_request, score_result) &&
+                                score_result.available) {
+                            margin.available = true;
+                            margin.positive_total_logprob = score_result.positive_total_logprob;
+                            margin.negative_total_logprob = score_result.negative_total_logprob;
+                            margin.positive_token_count = score_result.positive_token_count;
+                            margin.negative_token_count = score_result.negative_token_count;
+                        } else {
+                            margin_error = score_result.error_message.empty()
+                                ? "teacher-forced choice margin unavailable"
+                                : score_result.error_message;
+                        }
+                    } else {
+                        margin_error = "fixture has no distinct failed tool for decision pair";
+                    }
+                    if (!apply_overlay && margin.available) alpha_baseline_margin = margin;
+                    if (!apply_overlay && generated_result.flydelta_capture &&
+                            generated_result.flydelta_capture->captured) {
+                        alpha_baseline_capture = generated_result.flydelta_capture;
+                    }
+
+                    geometry = {};
+                    geometry_available = false;
+                    if (apply_overlay && generated_result.flydelta_capture &&
+                            generated_result.flydelta_capture->captured && alpha_baseline_capture) {
+                        const uint32_t measured_after = *std::max_element(
+                            alpha_seed->candidate.layer_indices.begin(),
+                            alpha_seed->candidate.layer_indices.end());
+                        const auto delta_it = std::find_if(case_deltas.begin(), case_deltas.end(),
+                            [&](const auto & delta) {
+                                return delta.layer_index > static_cast<int32_t>(measured_after);
+                            });
+                        if (delta_it != case_deltas.end()) {
+                            common_flydelta_representation_diagnostics diagnostics;
+                            if (!common_flydelta_representation_diagnostics_from_captures(
+                                    *alpha_baseline_capture, *generated_result.flydelta_capture,
+                                    *delta_it, 64U * 1024U * 1024U, diagnostics, alpha_error)) {
+                                return false;
+                            }
+                            geometry_available = true;
+                            geometry.cosine = diagnostics.cosine;
+                            geometry.progress = diagnostics.progress;
+                            geometry.leakage = diagnostics.leakage;
+                            geometry.shift_norm = diagnostics.shift_norm;
+                        }
+                    }
+                    std::cout << "flydelta_adaptive_alpha_arm group=" << entry.first
+                              << " layers=";
+                    for (size_t index = 0; index < alpha_seed->candidate.layer_indices.size(); ++index) {
+                        if (index != 0) std::cout << ',';
+                        std::cout << alpha_seed->candidate.layer_indices[index];
+                    }
+                    std::cout << " scale=" << scale
+                              << " outcome=" << (trial.passed ? "HELPED" :
+                                  (trial.verifier_known ? "NEUTRAL" : "UNKNOWN"));
+                    if (margin.available) {
+                        const float delta_total = alpha_baseline_margin && apply_overlay
+                            ? margin.total_delta() - alpha_baseline_margin->total_delta() : 0.0f;
+                        const float delta_normalized = alpha_baseline_margin && apply_overlay
+                            ? margin.normalized_delta() - alpha_baseline_margin->normalized_delta() : 0.0f;
+                        std::cout << " margin_delta_total=" << delta_total
+                                  << " margin_delta_normalized=" << delta_normalized;
+                    } else {
+                        std::cout << " margin_available=no";
+                    }
+                    if (geometry_available) {
+                        std::cout << " cosine=" << geometry.cosine
+                                  << " progress=" << geometry.progress
+                                  << " leakage=" << geometry.leakage
+                                  << " shift_norm=" << geometry.shift_norm;
+                    }
+                    if (!margin_error.empty()) std::cout << " margin_error=" << margin_error;
+                    std::cout << '\n';
+                    return true;
+                };
+
+                common_flydelta_alpha_response_search_config alpha_config;
+                alpha_config.seed_scale = 0.02f;
+                alpha_config.growth_factor = 1.61803398875f;
+                alpha_config.max_scale = 0.64f;
+                alpha_config.max_expansion_trials = 6;
+                alpha_config.max_zoom_trials = 5;
+                alpha_config.max_min_effective_trials = 3;
+                alpha_config.max_leakage = pipeline_config.scale.max_leakage;
+                alpha_config.max_shift_norm = pipeline_config.scale.max_shift_norm;
+                std::vector<common_flydelta_alpha_response_trial> alpha_trials;
+                common_flydelta_alpha_response_selection alpha_selection;
+                std::string alpha_error;
+                const bool alpha_ok = common_flydelta_run_alpha_response_search(
+                    fixture, alpha_config, alpha_runner, alpha_trials, alpha_selection, alpha_error);
+                if (!alpha_ok) {
+                    host.close();
+                    std::cerr << "AdaptiveAlphaSearch failed for " << entry.first
+                              << ": " << alpha_error << '\n';
+                    return 1;
+                }
+                std::cout << "flydelta_adaptive_alpha_summary group=" << entry.first
+                          << " seed_layer=" << alpha_seed->candidate.anchor_layer_index
+                          << " trials=" << alpha_trials.size()
+                          << " selected=" << (alpha_selection.selected ? "yes" : "no")
+                          << " selected_scale=" << alpha_selection.scale
+                          << " utility=" << alpha_selection.utility
+                          << " minimum_effective=" <<
+                              (alpha_selection.minimum_effective_available ? "yes" : "no")
+                          << " minimum_effective_scale=" << alpha_selection.minimum_effective_scale
+                          << '\n';
+            }
         }
     }
     std::string ledger_error;
