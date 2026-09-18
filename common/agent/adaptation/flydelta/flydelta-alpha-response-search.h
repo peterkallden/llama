@@ -17,11 +17,15 @@
 struct common_flydelta_alpha_response_search_config {
     int schema_version = 1;
     float seed_scale = 0.02f;
-    float growth_factor = 1.61803398875f;
+    // Expansion is deliberately faster than golden-section refinement. The
+    // latter is used only after an observed response interval exists.
+    float growth_factor = 2.0f;
     float max_scale = 0.64f;
-    size_t max_expansion_trials = 6;
-    size_t max_zoom_trials = 5;
-    size_t max_min_effective_trials = 3;
+    size_t max_expansion_trials = 5;
+    size_t max_zoom_trials = 2;
+    size_t max_min_effective_trials = 2;
+    // Avoid stopping on one noisy utility reversal during exploration.
+    size_t max_expansion_non_improving = 2;
     float utility_epsilon = 0.0001f;
     float max_leakage = 1.0f;
     float max_shift_norm = 1.0f;

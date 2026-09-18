@@ -1683,11 +1683,12 @@ int main(int argc, char ** argv) {
 
                 common_flydelta_alpha_response_search_config alpha_config;
                 alpha_config.seed_scale = 0.02f;
-                alpha_config.growth_factor = 1.61803398875f;
+                alpha_config.growth_factor = 2.0f;
                 alpha_config.max_scale = 0.64f;
-                alpha_config.max_expansion_trials = 6;
-                alpha_config.max_zoom_trials = 5;
-                alpha_config.max_min_effective_trials = 3;
+                alpha_config.max_expansion_trials = 5;
+                alpha_config.max_zoom_trials = 2;
+                alpha_config.max_min_effective_trials = 2;
+                alpha_config.max_expansion_non_improving = 2;
                 alpha_config.max_leakage = pipeline_config.scale.max_leakage;
                 alpha_config.max_shift_norm = pipeline_config.scale.max_shift_norm;
                 std::vector<common_flydelta_alpha_response_trial> alpha_trials;

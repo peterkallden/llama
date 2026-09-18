@@ -42,6 +42,7 @@ int main() {
     config.max_expansion_trials = 4;
     config.max_zoom_trials = 4;
     config.max_min_effective_trials = 2;
+    config.max_expansion_non_improving = 2;
     common_flydelta_alpha_response_selection selection;
     std::vector<common_flydelta_alpha_response_trial> trials;
     size_t calls = 0;
@@ -100,7 +101,7 @@ int main() {
         }, no_selection_config, scripted_alpha_runner,
         no_selection_trials, no_selection, error));
     CHECK(!no_selection.selected);
-    CHECK(no_selection.minimum_effective_available);
+    CHECK(!no_selection.minimum_effective_available);
 
     common_flydelta_alpha_response_selection failing_selection;
     std::vector<common_flydelta_alpha_response_trial> failing_trials;
@@ -116,5 +117,25 @@ int main() {
             return false;
         }, failing_trials, failing_selection, error));
     CHECK(error == "synthetic runner failure");
+
+    common_flydelta_alpha_response_search_config early_helped_config = config;
+    early_helped_config.seed_scale = 0.2f;
+    early_helped_config.growth_factor = 2.0f;
+    early_helped_config.max_expansion_trials = 5;
+    early_helped_config.max_zoom_trials = 4;
+    std::vector<common_flydelta_alpha_response_trial> early_helped_trials;
+    common_flydelta_alpha_response_selection early_helped_selection;
+    CHECK(common_flydelta_run_alpha_response_search(
+        common_flydelta_experiment_fixture{
+            1, "fixture:alpha-response-early-helped", "task", "model", "tokenizer",
+            "template", "context", "verifier"
+        }, early_helped_config, scripted_alpha_runner,
+        early_helped_trials, early_helped_selection, error));
+    CHECK(early_helped_selection.minimum_effective_available);
+    // The normal golden phase is skipped, but the bounded minimum-effective
+    // bracket is still allowed to add its midpoint probes.
+    CHECK(early_helped_trials.size() == 3);
+    CHECK(early_helped_trials.front().outcome ==
+        common_flydelta_counterfactual_outcome::helped);
     return 0;
 }

@@ -54,6 +54,8 @@ bool common_flydelta_alpha_response_search_config_validate(
             !std::isfinite(config.growth_factor) || config.growth_factor <= 1.0f ||
             config.max_expansion_trials == 0 || config.max_expansion_trials > 16 ||
             config.max_zoom_trials > 16 || config.max_min_effective_trials > 8 ||
+            config.max_expansion_non_improving == 0 ||
+            config.max_expansion_non_improving > 8 ||
             !std::isfinite(config.utility_epsilon) || config.utility_epsilon < 0.0f ||
             !std::isfinite(config.max_leakage) || config.max_leakage < 0.0f ||
             !std::isfinite(config.max_shift_norm) || config.max_shift_norm <= 0.0f ||
@@ -151,10 +153,23 @@ bool common_flydelta_run_alpha_response_search(
 
     size_t index = 0;
     float scale = config.seed_scale;
+    float best_expansion_utility = -std::numeric_limits<float>::infinity();
+    size_t non_improving_expansions = 0;
+    bool helped_during_expansion = false;
     for (size_t count = 0; count < config.max_expansion_trials; ++count) {
         if (!evaluate(scale, false, index)) return false;
         const auto & current = trials[index];
+        if (current.outcome == common_flydelta_counterfactual_outcome::helped) {
+            helped_during_expansion = true;
+            break;
+        }
         if (!current.safe_to_continue) break;
+        if (current.utility > best_expansion_utility + config.utility_epsilon) {
+            best_expansion_utility = current.utility;
+            non_improving_expansions = 0;
+        } else if (++non_improving_expansions >= config.max_expansion_non_improving) {
+            break;
+        }
         if (scale > config.max_scale / config.growth_factor) break;
         scale *= config.growth_factor;
         if (!finite_scale(scale) || scale > config.max_scale) break;
@@ -164,7 +179,7 @@ bool common_flydelta_run_alpha_response_search(
     // interval. It is intentionally conservative: it never extrapolates
     // beyond the geometric expansion and never turns a diagnostic into a
     // host verdict.
-    if (config.max_zoom_trials > 0 && trials.size() >= 2) {
+    if (!helped_during_expansion && config.max_zoom_trials > 0 && trials.size() >= 2) {
         std::vector<size_t> order(trials.size());
         for (size_t i = 0; i < trials.size(); ++i) order[i] = i;
         std::sort(order.begin(), order.end(), [&](size_t lhs, size_t rhs) {
@@ -186,6 +201,8 @@ bool common_flydelta_run_alpha_response_search(
             const float x2 = left + (right - left) / phi;
             size_t i1 = 0, i2 = 0;
             if (!evaluate(x1, true, i1) || !evaluate(x2, true, i2)) return false;
+            if (trials[i1].outcome == common_flydelta_counterfactual_outcome::helped ||
+                    trials[i2].outcome == common_flydelta_counterfactual_outcome::helped) break;
             if (better(trials[i1], trials[i2], config.utility_epsilon)) right = x2;
             else left = x1;
         }
