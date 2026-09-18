@@ -295,6 +295,10 @@ int main() {
         trial.diagnostics.leakage = 0.05f * static_cast<float>(index + 1);
         geometric_trials.push_back(std::move(trial));
     }
+    // The common input preserves a bounded unsafe observation for lineage,
+    // but its explicit eligibility prevents it from becoming orthogonal
+    // source material.
+    geometric_trials.back().host_evaluated = false;
     common_flydelta_bootstrap_zoom_state orthogonal_input_state;
     orthogonal_input_state.behavior_key = "tool_choice/data_query";
     orthogonal_input_state.model_profile_fingerprint = "model:test";
@@ -313,8 +317,10 @@ int main() {
     CHECK(orthogonal_input.local_layers == std::vector<uint32_t>({23, 24, 25}) &&
         orthogonal_input.rank1_intervention == std::vector<float>({0.0f, 1.0f, 0.0f}) &&
         orthogonal_input.arms.size() == geometric_trials.size());
-    for (const auto & prepared_arm : orthogonal_input.arms) {
-        CHECK(prepared_arm.geometric_response_available && prepared_arm.safe_to_continue &&
+    for (size_t index = 0; index < orthogonal_input.arms.size(); ++index) {
+        const auto & prepared_arm = orthogonal_input.arms[index];
+        CHECK(prepared_arm.geometric_response_available &&
+            prepared_arm.safe_to_continue == (index + 1 < orthogonal_input.arms.size()) &&
             !prepared_arm.decision_margin_available);
     }
 

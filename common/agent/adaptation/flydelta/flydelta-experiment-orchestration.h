@@ -401,9 +401,10 @@ bool common_flydelta_bootstrap_zoom_state_validate(
         const common_flydelta_bootstrap_zoom_state & state,
         std::string & error);
 
-// Extracts safe, host-evaluated BootstrapZoom arms into the common
-// orthogonal-search input. It carries neither prompts nor activations and
-// does not decide evidence depth, lifecycle, or the next action.
+// Projects bounded host-evaluated BootstrapZoom arms into the common
+// orthogonal-search input and marks their safety eligibility. It carries
+// neither prompts nor activations and does not decide evidence depth,
+// lifecycle, or the next action.
 bool common_flydelta_prepare_orthogonal_search_input(
         const common_flydelta_orthogonal_search_config & config,
         const common_flydelta_bootstrap_zoom_state & state,
