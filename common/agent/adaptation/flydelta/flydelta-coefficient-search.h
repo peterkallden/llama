@@ -5,6 +5,7 @@
 #include "agent/adaptation/flydelta/flydelta-decision-margin.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
+#include "agent/adaptation/flydelta/flydelta-dose-controller.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -65,6 +66,9 @@ struct common_flydelta_coefficient_search_config {
     // Applied only when the existing representation diagnostics are
     // available for an arm. No second leakage calculation is introduced.
     float leakage_penalty = 0.10f;
+    bool use_dose_controller = true;
+    size_t max_dose_retries = 1;
+    common_flydelta_dose_policy dose_policy;
 };
 
 bool common_flydelta_coefficient_search_config_validate(
@@ -74,6 +78,14 @@ bool common_flydelta_coefficient_search_config_validate(
 
 struct common_flydelta_coefficient_trial {
     std::vector<float> coefficients;
+    std::vector<float> requested_coefficients;
+    float requested_strength = 0.0f;
+    float executed_strength = 0.0f;
+    common_flydelta_dose_action dose_action = common_flydelta_dose_action::reject;
+    float relative_dose = 0.0f;
+    bool dose_evaluated = false;
+    bool dose_safety_limited = false;
+    std::string dose_reason;
     common_flydelta_decision_margin margin;
     common_flydelta_margin_comparison margin_comparison;
     common_flydelta_counterfactual_outcome outcome =

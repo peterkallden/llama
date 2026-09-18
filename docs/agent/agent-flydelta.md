@@ -2073,7 +2073,8 @@ outside the counterfactual outcome and promotion contracts; they never create
 
 The search policies propose an intervention strength; they do not silently
 change it at execution time. `DoseController` is the shared low-level safety
-seam used by Whirlpool, the bounded scale primitive and AdaptiveAlphaSearch.
+seam used by Whirlpool, the bounded scale primitive, AdaptiveAlphaSearch and
+rank-2 coefficient/TFO-lite arms.
 It is deliberately not an orchestrator: it does not choose a layer, score a
 behavior, decide `HELPED`, change evidence depth or grant learning credit.
 

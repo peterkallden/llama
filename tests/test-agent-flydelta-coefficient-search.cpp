@@ -127,6 +127,8 @@ int main() {
     CHECK(tfo_selection.selected);
     bool found_mixed_arm = false;
     for (const auto & trial : tfo_trials) {
+        CHECK(trial.dose_evaluated);
+        CHECK(trial.dose_action == common_flydelta_dose_action::accept);
         found_mixed_arm = found_mixed_arm ||
             (std::fabs(trial.coefficients[0]) > 0.0001f &&
              std::fabs(trial.coefficients[1]) > 0.0001f);
