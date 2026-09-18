@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "agent/adaptation/flydelta/flydelta-bootstrap-zoom-state-store.h"
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation-state-store.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 
 #include <cmath>
 #include <utility>
@@ -499,5 +500,25 @@ int main() {
     };
     CHECK(!common_flydelta_evaluate_job(memory, config, callbacks, result, error));
     CHECK(error.find("validation or holdout") != std::string::npos);
+
+    // The production adapter bridge must execute exactly one evaluator slice
+    // and expose the typed worker result without model-specific knowledge.
+    callbacks = {};
+    callbacks.run_counterfactual = [](const auto & job, auto & reports, std::string &) {
+        reports.push_back(report(job.id));
+        return true;
+    };
+    common_flydelta_model_capabilities adapter_capabilities;
+    adapter_capabilities.host_verification = true;
+    std::string adapter_error;
+    const auto adapter = common_flydelta_model_adapter_from_evaluator(
+        config, callbacks, adapter_capabilities, adapter_error);
+    CHECK(adapter != nullptr && adapter_error.empty());
+    CHECK(common_flydelta_model_adapter_supports_search(*adapter) == false);
+    common_flydelta_experiment_worker_result worker_result;
+    CHECK(adapter->worker_callback(counterfactual, worker_result, error));
+    CHECK(worker_result.counterfactual_reports.size() == 1);
+    CHECK(worker_result.counterfactual_reports.front().experiment_id == counterfactual.id);
+    CHECK(worker_result.safe_summary.find("processed 1 reference") != std::string::npos);
     return 0;
 }

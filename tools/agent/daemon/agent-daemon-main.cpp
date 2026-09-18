@@ -5,6 +5,7 @@
 #include "../mcp/agent-mcp-http-server.h"
 #include "../host/agent-host-config.h"
 #include "agent/agent-inbound-contract.h"
+#include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
 #include "log.h"
 
@@ -513,6 +514,19 @@ int main(int argc, char ** argv) {
     flydelta_worker_config.enabled = options.adaptation_flydelta_enabled;
     flydelta_worker_config.worker_count = options.adaptation_flydelta_worker_count;
     flydelta_worker_config.queue_root = options.adaptation_flydelta_queue_path;
+    if (!runtime.flydelta_model_adapter && runtime.flydelta_evaluator_config &&
+            runtime.flydelta_evaluator_callbacks) {
+        std::string adapter_error;
+        runtime.flydelta_model_adapter = common_flydelta_model_adapter_from_evaluator(
+            *runtime.flydelta_evaluator_config,
+            *runtime.flydelta_evaluator_callbacks,
+            runtime.flydelta_model_capabilities,
+            adapter_error);
+        if (!runtime.flydelta_model_adapter) {
+            std::fprintf(stderr, "FlyDelta model adapter registration failed: %s\n",
+                adapter_error.c_str());
+        }
+    }
     flydelta_worker_config.model_adapter = runtime.flydelta_model_adapter;
     common_agent_daemon_dispatcher dispatcher(
         std::move(runtime), options.queue_capacity, options.worker_count,

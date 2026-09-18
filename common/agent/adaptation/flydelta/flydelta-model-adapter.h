@@ -6,6 +6,9 @@
 #include <memory>
 #include <string>
 
+struct common_flydelta_evaluator_config;
+struct common_flydelta_evaluator_callbacks;
+
 // Host/runtime capabilities for one concrete model-facing FlyDelta adapter.
 // These flags describe what the adapter can execute; they do not grant search
 // permission, evidence rank, learning credit or promotion authority.
@@ -31,3 +34,14 @@ bool common_flydelta_model_adapter_validate(
 bool common_flydelta_model_adapter_supports_search(
         const common_flydelta_model_adapter & adapter);
 
+// Builds the production-facing bridge around the existing bounded evaluator.
+// The supplied callbacks remain host-owned: they resolve opaque references,
+// create fresh inference contexts and perform host verification. This factory
+// is model/backend-neutral and only composes evaluator execution with the
+// generic worker callback.
+std::shared_ptr<const common_flydelta_model_adapter>
+common_flydelta_model_adapter_from_evaluator(
+        const common_flydelta_evaluator_config & config,
+        const common_flydelta_evaluator_callbacks & callbacks,
+        common_flydelta_model_capabilities capabilities,
+        std::string & error);

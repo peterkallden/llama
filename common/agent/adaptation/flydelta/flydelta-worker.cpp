@@ -474,6 +474,41 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
     return payload.dump();
 }
 
+bool common_flydelta_worker_result_from_evaluator(
+        const common_flydelta_evaluator_result & source,
+        common_flydelta_experiment_worker_result & target,
+        std::string & error) {
+    error.clear();
+    target = {};
+    target.capture_manifests = source.capture_manifests;
+    target.counterfactual_reports = source.counterfactual_reports;
+    target.direction_candidates = source.direction_candidates;
+    target.basis_directions = source.basis_directions;
+    target.search_pipeline_results = source.search_pipeline_results;
+    target.search_continuations = source.search_continuations;
+    target.delta_memory_weights = source.delta_memory_weights;
+    target.aggregation = source.aggregation;
+    target.evidence_depth = source.evidence_depth;
+    target.search_budget = source.search_budget;
+    target.has_experiment_plan = source.has_experiment_plan;
+    target.experiment_plan = source.experiment_plan;
+    target.has_bootstrap_zoom_state = source.has_bootstrap_zoom_state;
+    target.bootstrap_zoom_state = source.bootstrap_zoom_state;
+    target.bootstrap_zoom_state_ref = source.bootstrap_zoom_state_ref;
+    target.search_state_ref = source.search_state_ref;
+    target.has_next_action = source.has_next_action;
+    target.next_action = source.next_action;
+    target.utility_decision = source.utility_decision;
+    target.next_action_reason = source.next_action_reason;
+    target.has_representation_augmentation_state =
+        source.has_representation_augmentation_state;
+    target.representation_augmentation_state = source.representation_augmentation_state;
+    target.representation_augmentation_state_ref = source.representation_augmentation_state_ref;
+    target.safe_summary = "FlyDelta evaluator processed " +
+        std::to_string(source.processed_references) + " reference(s)";
+    return true;
+}
+
 bool common_flydelta_experiment_worker_run_evaluator_once(
         const std::filesystem::path & queue_root,
         const common_flydelta_experiment_queue_limits & limits,
@@ -488,42 +523,8 @@ bool common_flydelta_experiment_worker_run_evaluator_once(
                 std::string & callback_error) {
             common_flydelta_evaluator_result evaluator_result;
             if (!common_flydelta_evaluate_job(
-                    job, config, callbacks, evaluator_result, callback_error)) return false;
-            worker_result.capture_manifests = std::move(evaluator_result.capture_manifests);
-            worker_result.counterfactual_reports =
-                std::move(evaluator_result.counterfactual_reports);
-            worker_result.direction_candidates =
-                std::move(evaluator_result.direction_candidates);
-            worker_result.basis_directions =
-                std::move(evaluator_result.basis_directions);
-            worker_result.search_pipeline_results =
-                std::move(evaluator_result.search_pipeline_results);
-            worker_result.search_continuations =
-                std::move(evaluator_result.search_continuations);
-            worker_result.delta_memory_weights =
-                std::move(evaluator_result.delta_memory_weights);
-            worker_result.aggregation = std::move(evaluator_result.aggregation);
-            worker_result.evidence_depth = evaluator_result.evidence_depth;
-            worker_result.search_budget = evaluator_result.search_budget;
-            worker_result.has_experiment_plan = evaluator_result.has_experiment_plan;
-            worker_result.experiment_plan = std::move(evaluator_result.experiment_plan);
-            worker_result.has_bootstrap_zoom_state = evaluator_result.has_bootstrap_zoom_state;
-            worker_result.bootstrap_zoom_state = std::move(evaluator_result.bootstrap_zoom_state);
-            worker_result.bootstrap_zoom_state_ref = std::move(
-                evaluator_result.bootstrap_zoom_state_ref);
-            worker_result.search_state_ref = std::move(evaluator_result.search_state_ref);
-            worker_result.has_next_action = evaluator_result.has_next_action;
-            worker_result.next_action = evaluator_result.next_action;
-            worker_result.utility_decision = evaluator_result.utility_decision;
-            worker_result.next_action_reason = std::move(evaluator_result.next_action_reason);
-            worker_result.has_representation_augmentation_state =
-                evaluator_result.has_representation_augmentation_state;
-            worker_result.representation_augmentation_state = std::move(
-                evaluator_result.representation_augmentation_state);
-            worker_result.representation_augmentation_state_ref = std::move(
-                evaluator_result.representation_augmentation_state_ref);
-            worker_result.safe_summary = "FlyDelta evaluator processed " +
-                std::to_string(evaluator_result.processed_references) + " reference(s)";
-            return true;
+                job, config, callbacks, evaluator_result, callback_error)) return false;
+            return common_flydelta_worker_result_from_evaluator(
+                evaluator_result, worker_result, callback_error);
         }, report, error);
 }

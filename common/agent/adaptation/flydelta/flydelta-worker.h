@@ -15,6 +15,7 @@
 
 struct common_flydelta_evaluator_config;
 struct common_flydelta_evaluator_callbacks;
+struct common_flydelta_evaluator_result;
 
 // Bounded, machine-readable diagnostics for one FlyDelta worker slice. This
 // is search history, not learning or promotion state. It deliberately keeps
@@ -124,6 +125,13 @@ struct common_flydelta_experiment_worker_result {
     common_flydelta_representation_augmentation_state representation_augmentation_state;
     std::string representation_augmentation_state_ref;
 };
+
+// Copies one already evaluated bounded slice into the worker result contract.
+// Queue validation and trace derivation remain owned by the worker afterwards.
+bool common_flydelta_worker_result_from_evaluator(
+        const common_flydelta_evaluator_result & source,
+        common_flydelta_experiment_worker_result & target,
+        std::string & error);
 
 struct common_flydelta_experiment_worker_report {
     common_flydelta_experiment_queue_state state = common_flydelta_experiment_queue_state::pending;

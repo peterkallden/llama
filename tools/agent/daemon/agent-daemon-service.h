@@ -21,6 +21,8 @@
 #include <vector>
 
 class common_agent_inference_capacity_gate;
+struct common_flydelta_evaluator_config;
+struct common_flydelta_evaluator_callbacks;
 
 struct daemon_options;
 
@@ -83,6 +85,11 @@ struct common_agent_daemon_runtime {
     // Populated by the runtime host when model-facing FlyDelta execution is
     // available. The dispatcher consumes this registration bundle only.
     std::shared_ptr<const common_flydelta_model_adapter> flydelta_model_adapter;
+    // Optional host-owned evaluator registration. The daemon composes this
+    // into flydelta_model_adapter at startup when no adapter was supplied.
+    std::shared_ptr<const common_flydelta_evaluator_config> flydelta_evaluator_config;
+    std::shared_ptr<const common_flydelta_evaluator_callbacks> flydelta_evaluator_callbacks;
+    common_flydelta_model_capabilities flydelta_model_capabilities;
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
     std::unique_ptr<common_agent_runtime_session_manager> host;
     std::shared_ptr<common_agent_inference_capacity_gate> inference_gate;

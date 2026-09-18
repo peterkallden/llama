@@ -880,7 +880,12 @@ The daemon runtime carries the optional adapter registration into the
 dispatcher and exposes two separate status facts: whether an adapter is
 registered, and whether it advertises model-facing search support. A configured
 FlyDelta lane without a registered adapter is therefore an observable idle
-configuration, not a callback that silently captures user-session state.
+configuration, not a callback that silently captures user-session state. A
+runtime host may provide either a ready adapter or a shared evaluator
+configuration plus host-owned evaluator callbacks; daemon startup composes the
+latter through `common_flydelta_model_adapter_from_evaluator()`. Missing host
+callbacks fail closed and leave the lane idle rather than fabricating model
+execution.
 
 The ordered transition at a rank-one plateau is:
 
