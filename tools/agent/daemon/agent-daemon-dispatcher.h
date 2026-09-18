@@ -4,6 +4,7 @@
 #include "../runtime/agent-runtime-control.h"
 #include "agent/adaptation/flydelta/flydelta-worker.h"
 #include "agent/adaptation/flydelta/flydelta-worker-budget.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 
 #include <condition_variable>
 #include <chrono>
@@ -22,6 +23,9 @@ struct common_agent_daemon_flydelta_worker_config {
     size_t worker_count = 0;
     std::filesystem::path queue_root;
     common_flydelta_experiment_queue_limits queue_limits;
+    // Host-owned model adapter. The worker only consumes its bounded callback;
+    // model contexts and reference resolution remain inside the adapter.
+    std::shared_ptr<const common_flydelta_model_adapter> model_adapter;
     common_flydelta_experiment_worker_callback callback;
     std::chrono::milliseconds poll_interval{250};
 };

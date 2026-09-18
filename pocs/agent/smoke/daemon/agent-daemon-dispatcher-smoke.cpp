@@ -626,7 +626,11 @@ int main() {
     flydelta_config.worker_count = 1;
     flydelta_config.queue_root = flydelta_queue_root;
     flydelta_config.poll_interval = std::chrono::milliseconds(10);
-    flydelta_config.callback = [&flydelta_callback_count](
+    auto flydelta_model_adapter = std::make_shared<common_flydelta_model_adapter>();
+    flydelta_model_adapter->capabilities.bootstrap_zoom = true;
+    flydelta_model_adapter->capabilities.orthogonal_search = true;
+    flydelta_model_adapter->capabilities.host_verification = true;
+    flydelta_model_adapter->worker_callback = [&flydelta_callback_count](
             const common_flydelta_experiment_job & job,
             common_flydelta_experiment_worker_result & result,
             std::string & error) {
@@ -636,6 +640,7 @@ int main() {
         result.counterfactual_reports.push_back(make_flydelta_lane_report(job.id));
         return true;
     };
+    flydelta_config.model_adapter = flydelta_model_adapter;
     const auto flydelta_job = make_flydelta_lane_job();
     std::string flydelta_enqueue_error;
     if (!common_flydelta_experiment_queue_enqueue(

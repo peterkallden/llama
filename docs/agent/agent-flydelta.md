@@ -864,6 +864,16 @@ host scheduler may delay or refuse the returned action for resource reasons,
 but it does not reimplement the FlyDelta phase policy or skip the rank-two
 control stencil.
 
+The daemon dispatcher also accepts a host-owned
+`common_flydelta_model_adapter`. This is a registration bundle: it advertises
+model-facing capabilities and supplies the already-bounded worker callback.
+When present, the dispatcher uses it to populate the ordinary worker callback;
+worker budgeting, queue claims and result validation remain unchanged. The
+production adapter must be constructed by the runtime host, where model
+residency, capture/fixture resolution, fresh contexts and host verification
+are available. The common worker never creates that adapter, and an advertised
+capability is not evidence that a correction works.
+
 The ordered transition at a rank-one plateau is:
 
 ```text

@@ -127,6 +127,13 @@ common_agent_daemon_dispatcher::common_agent_daemon_dispatcher(
     , service(std::move(runtime))
     , max_queue_size(max_queue_size)
     , total_worker_count(worker_count == 0 ? 1 : worker_count) {
+    if (!flydelta_config.callback && flydelta_config.model_adapter) {
+        std::string adapter_error;
+        if (common_flydelta_model_adapter_validate(
+                *flydelta_config.model_adapter, adapter_error)) {
+            flydelta_config.callback = flydelta_config.model_adapter->worker_callback;
+        }
+    }
     common_flydelta_worker_budget budget;
     std::string budget_error;
     if (!common_flydelta_worker_budget_compute(
