@@ -187,6 +187,19 @@ actual semantic target. The margin/search objective remains separate from this
 decision: it must compare a fixture-bound positive/negative pair and can guide
 search, but it cannot itself create `HELPED` or learning credit.
 
+The model-facing margin seam is explicit. A bounded inference backend may
+implement `score_teacher_forced_choice()` for one fixture-bound choice slot;
+the CLI/Qwen backend scores the positive and negative alternatives in fresh
+contexts and returns total plus length-normalized log probabilities. The
+alternatives are behavior-specific: when the tool name changes they may be
+tool-slot continuations, while an argument-only repair uses complete canonical
+call tails after the same prefix. The dataset repair smoke extracts the actual
+failed JSON call (including fenced JSON) and compares it with the host's
+canonical repaired call, so a same-tool argument repair still has a usable
+margin. An unavailable backend or an unparseable/absent negative continuation
+leaves the margin unavailable; it does not turn the observation into a failure
+and does not block host verification.
+
 The bridge uses the explicit `generation_boundary` capture position. It reads
 the final prompt row in each turn but identifies it as “immediately before the
 model generates the tool call”, rather than as an absolute prompt-row number.
@@ -2529,6 +2542,28 @@ path is supplied, otherwise Cozo, then SQLite when compiled. JSONL is explicit
 and portable. The lifecycle journal is separate from the learning transaction
 ledger; a JSONL lifecycle path must not be the same file as the transaction
 JSONL path.
+
+### Adaptive rank-one alpha response search
+
+`flydelta-alpha-response-search` is an opt-in, low-level HOW-MUCH primitive
+for a selected rank-one region. It does not replace Whirlpool or change the
+bounded worker phase policy:
+
+```text
+Whirlpool / BootstrapZoom seed
+        -> geometric alpha expansion
+        -> bounded golden-section zoom inside observed safe bounds
+        -> optional minimum-effective HELPED bracket
+        -> Rank1PlateauGate / next bounded action
+```
+
+The search prefers the fixture-bound decision-margin delta and subtracts a
+leakage penalty. If the model-facing margin is unavailable it falls back to
+the existing geometry utility; `cosine`, `progress`, `leakage` and
+`shift_norm` remain safety/diagnostic signals. It never creates `HELPED`,
+learning credit or a promoted artifact. A future orchestrator integration may
+expose it as `refine_bootstrap`, but the initial implementation is deliberately
+testable without recursive worker execution.
 
 ### 5. Optional dynamic hook
 

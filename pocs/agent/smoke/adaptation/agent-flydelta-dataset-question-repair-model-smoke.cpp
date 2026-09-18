@@ -102,6 +102,11 @@ struct bootstrap_case {
     json canonical_arguments = json::object();
     std::string verification_mode = "normalized_call";
     common_tool_execution_result canonical_execution;
+    // The actual failed tool is the negative side of this fixture's
+    // behavior-specific teacher-forced choice pair. It is deliberately not
+    // a global data.inspect/data.describe assumption.
+    std::string failed_tool;
+    std::string failed_continuation;
 };
 
 std::string tool_family(const std::string & tool_name) {
@@ -182,6 +187,27 @@ std::string preview(const common_agent_generation_result & result) {
     for (char & character : output) if (character == '\n' || character == '\r' || character == '\t') character = ' ';
     if (output.size() > 300) output.resize(300);
     return output;
+}
+
+std::string tool_call_continuation(const std::string & tool, const json & arguments) {
+    if (tool.empty() || !arguments.is_object()) return {};
+    return tool + "\",\"arguments\":" + arguments.dump() + "}";
+}
+
+std::string parsed_tool_call_continuation(const common_agent_generation_result & result) {
+    if (!common_agent_generation_succeeded(result)) return {};
+    json parsed = json::parse(result.content, nullptr, false);
+    if (parsed.is_discarded()) {
+        const size_t first_object = result.content.find('{');
+        const size_t last_object = result.content.rfind('}');
+        if (first_object != std::string::npos && last_object > first_object) {
+            parsed = json::parse(result.content.substr(first_object,
+                last_object - first_object + 1), nullptr, false);
+        }
+    }
+    if (!parsed.is_object() || !parsed.contains("name") || !parsed["name"].is_string() ||
+            !parsed.contains("arguments") || !parsed["arguments"].is_object()) return {};
+    return tool_call_continuation(parsed["name"].get<std::string>(), parsed["arguments"]);
 }
 
 bool result_oracle_matches(
@@ -433,6 +459,7 @@ int main(int argc, char ** argv) {
         const auto failed_verdict = verify_model_call(
             failed_result, expected, canonical_repair["arguments"], verification_mode,
             &canonical_execution, host);
+        const std::string failed_continuation = parsed_tool_call_continuation(failed_result);
         if (generated && failed_verdict.value == host_verdict::kind::passed) {
             ++passed;
             std::cout << "scenario=" << id << " host_outcome=passed selected=" << failed_verdict.selected_tool
@@ -558,9 +585,11 @@ int main(int argc, char ** argv) {
             credit.quality_delta = 0.0f;
             credit.eligible_for_learning = false;
             for (const auto & delta : replay_deltas) {
-                bootstrap_cases_by_delta[delta.id] = {
+                bootstrap_case case_record{
                     id, behavior_key, expected, scenario.value("question", ""), manifest.id, delta.id,
-                    canonical_repair["arguments"], verification_mode, canonical_execution};
+                    canonical_repair["arguments"], verification_mode, canonical_execution,
+                    failed_verdict.selected_tool, failed_continuation};
+                bootstrap_cases_by_delta[delta.id] = std::move(case_record);
                 deltas_by_case[id].push_back(delta);
                 if (delta.layer_index == 2) samples_by_behavior[behavior_key].push_back({delta, credit});
             }
@@ -614,9 +643,11 @@ int main(int argc, char ** argv) {
         credit.quality_delta = 1.0f;
         credit.eligible_for_learning = true;
         for (const auto & delta : deltas) {
-            bootstrap_cases_by_delta[delta.id] = {
+            bootstrap_case case_record{
                 id, behavior_key, expected, scenario.value("question", ""), manifest.id, delta.id,
-                canonical_repair["arguments"], verification_mode, canonical_execution};
+                canonical_repair["arguments"], verification_mode, canonical_execution,
+                failed_verdict.selected_tool, failed_continuation};
+            bootstrap_cases_by_delta[delta.id] = std::move(case_record);
             deltas_by_case[id].push_back(delta);
             if (delta.layer_index != 2) continue;
             samples_by_behavior[behavior_key].push_back({delta, credit});
@@ -730,8 +761,11 @@ int main(int argc, char ** argv) {
         // smoke-only override evaluates Deep on a smaller group so the
         // algorithm and model-facing arm diagnostics can be inspected before
         // enough production evidence has accumulated.
-        if (value.force_deep && evidence_depth.depth != common_flydelta_search_depth::deep &&
-                entry.second.size() >= 2 && directions.size() >= 2) {
+        // --force-deep/--force-tfo-lite is an explicit smoke override.  It
+        // must still execute when the fixture naturally reaches Deep; the
+        // normal worker/orchestrator gate remains unchanged because this is
+        // only the model-facing smoke path.
+        if (value.force_deep && entry.second.size() >= 2 && directions.size() >= 2) {
             const auto aggregation_snapshot_for_deep = aggregation.snapshot();
             if (aggregation_snapshot_for_deep.retained_samples.size() < 2) {
                 std::cerr << "forced Deep requires two retained samples for " << entry.first << '\n';
@@ -781,6 +815,8 @@ int main(int argc, char ** argv) {
                 deep_directions.push_back({direction, false, 0.0f});
             }
             std::shared_ptr<const common_flydelta_hidden_state_capture> deep_baseline_capture;
+            std::optional<common_flydelta_decision_margin> deep_baseline_choice_margin;
+            std::string deep_margin_error;
             auto run_deep_arm = [&](const common_flydelta_low_rank_basis & basis,
                     const std::vector<float> & coefficients, bool apply_overlay,
                     common_flydelta_counterfactual_trial & trial,
@@ -844,6 +880,35 @@ int main(int argc, char ** argv) {
                 trial.evidence_ref = apply_overlay
                     ? "evidence:flydelta-deep-overlay" : "evidence:flydelta-deep-baseline";
                 margin = {};
+                deep_margin_error.clear();
+                if (!deep_case.failed_tool.empty() || !deep_case.failed_continuation.empty()) {
+                    common_agent_teacher_forced_choice_request score_request;
+                    score_request.context = make_request(
+                        value, contract, deep_case.question, capture, activation_ptr);
+                    score_request.context.flydelta_capture.reset();
+                    score_request.choice_prefix = "{\"name\":\"";
+                    score_request.positive_choice = deep_case.expected_tool;
+                    score_request.negative_choice = deep_case.failed_tool;
+                    score_request.positive_continuation = tool_call_continuation(
+                        deep_case.expected_tool, deep_case.canonical_arguments);
+                    score_request.negative_continuation = deep_case.failed_continuation;
+                    common_agent_teacher_forced_choice_result score_result;
+                    if (inference->score_teacher_forced_choice(score_request, score_result) &&
+                            score_result.available) {
+                        margin.available = true;
+                        margin.positive_total_logprob = score_result.positive_total_logprob;
+                        margin.negative_total_logprob = score_result.negative_total_logprob;
+                        margin.positive_token_count = score_result.positive_token_count;
+                        margin.negative_token_count = score_result.negative_token_count;
+                    } else {
+                        deep_margin_error = score_result.error_message.empty()
+                            ? "teacher-forced choice margin unavailable"
+                            : score_result.error_message;
+                    }
+                } else {
+                    deep_margin_error = "fixture has no distinct failed tool for decision pair";
+                }
+                if (!apply_overlay && margin.available) deep_baseline_choice_margin = margin;
                 if (!apply_overlay && generated_result.flydelta_capture &&
                         generated_result.flydelta_capture->captured) {
                     deep_baseline_capture = generated_result.flydelta_capture;
@@ -903,12 +968,25 @@ int main(int argc, char ** argv) {
                             }
                             std::cout << " executed=" << (executed ? "yes" : "no")
                                       << " outcome=diagnostic";
+                            if (margin.available) {
+                                const float delta_total = deep_baseline_choice_margin && apply_overlay
+                                    ? margin.total_delta() - deep_baseline_choice_margin->total_delta() : 0.0f;
+                                const float delta_normalized = deep_baseline_choice_margin && apply_overlay
+                                    ? margin.normalized_delta() - deep_baseline_choice_margin->normalized_delta() : 0.0f;
+                                std::cout << " margin_total=" << margin.total_delta()
+                                          << " margin_normalized=" << margin.normalized_delta()
+                                          << " margin_delta_total=" << delta_total
+                                          << " margin_delta_normalized=" << delta_normalized;
+                            } else {
+                                std::cout << " margin_available=no";
+                            }
                             if (geometry_available) {
                                 std::cout << " cosine=" << geometry.cosine
                                           << " progress=" << geometry.progress
                                           << " leakage=" << geometry.leakage
                                           << " shift_norm=" << geometry.shift_norm;
                             }
+                            if (!deep_margin_error.empty()) std::cout << " margin_error=" << deep_margin_error;
                             std::cout << '\n';
                         }
                         return executed;
@@ -1105,7 +1183,8 @@ int main(int argc, char ** argv) {
                     runner_error = "search-pipeline worker received an unexpected behavior delta";
                     return false;
                 }
-                std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_capture;
+            std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_capture;
+            std::optional<common_flydelta_decision_margin> baseline_choice_margin;
                 const auto direction_for_layer = [&](uint32_t layer,
                         common_flydelta_basis_direction & direction, std::string & direction_error) {
                     const auto delta_it = std::find_if(case_deltas.begin(), case_deltas.end(),
@@ -1191,6 +1270,36 @@ int main(int argc, char ** argv) {
                             ? "evidence:flydelta-search-overlay"
                             : "evidence:flydelta-search-baseline";
                         margin = {};
+                        std::string margin_error;
+                        if (!bootstrap_case.failed_tool.empty() ||
+                                !bootstrap_case.failed_continuation.empty()) {
+                            common_agent_teacher_forced_choice_request score_request;
+                            score_request.context = make_request(
+                                value, contract, bootstrap_case.question, capture, activation_ptr);
+                            score_request.context.flydelta_capture.reset();
+                            score_request.choice_prefix = "{\"name\":\"";
+                            score_request.positive_choice = bootstrap_case.expected_tool;
+                            score_request.negative_choice = bootstrap_case.failed_tool;
+                            score_request.positive_continuation = tool_call_continuation(
+                                bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
+                            score_request.negative_continuation = bootstrap_case.failed_continuation;
+                            common_agent_teacher_forced_choice_result score_result;
+                            if (inference->score_teacher_forced_choice(score_request, score_result) &&
+                                    score_result.available) {
+                                margin.available = true;
+                                margin.positive_total_logprob = score_result.positive_total_logprob;
+                                margin.negative_total_logprob = score_result.negative_total_logprob;
+                                margin.positive_token_count = score_result.positive_token_count;
+                                margin.negative_token_count = score_result.negative_token_count;
+                            } else {
+                                margin_error = score_result.error_message.empty()
+                                    ? "teacher-forced choice margin unavailable"
+                                    : score_result.error_message;
+                            }
+                        } else {
+                            margin_error = "fixture has no distinct failed tool for decision pair";
+                        }
+                        if (!apply_overlay && margin.available) baseline_choice_margin = margin;
                         geometry = {};
                         if (!apply_overlay && generated_result.flydelta_capture &&
                                 generated_result.flydelta_capture->captured) {
@@ -1232,12 +1341,25 @@ int main(int argc, char ** argv) {
                                   << " selected_tool=" << verdict.selected_tool
                                   << " outcome=" << (trial.passed ? "HELPED" :
                                       (trial.verifier_known ? "NEUTRAL" : "UNKNOWN"));
+                        if (margin.available) {
+                            const float delta_total = baseline_choice_margin && apply_overlay
+                                ? margin.total_delta() - baseline_choice_margin->total_delta() : 0.0f;
+                            const float delta_normalized = baseline_choice_margin && apply_overlay
+                                ? margin.normalized_delta() - baseline_choice_margin->normalized_delta() : 0.0f;
+                            std::cout << " margin_total=" << margin.total_delta()
+                                      << " margin_normalized=" << margin.normalized_delta()
+                                      << " margin_delta_total=" << delta_total
+                                      << " margin_delta_normalized=" << delta_normalized;
+                        } else {
+                            std::cout << " margin_available=no";
+                        }
                         if (geometry.available) {
                             std::cout << " cosine=" << geometry.cosine
                                       << " progress=" << geometry.progress
                                       << " leakage=" << geometry.leakage
                                       << " shift_norm=" << geometry.shift_norm;
                         }
+                        if (!margin_error.empty()) std::cout << " margin_error=" << margin_error;
                         std::cout << '\n';
                         if (!generated && !generated_result.error_message.empty()) {
                             std::cerr << " generation_error=" << generated_result.error_message;

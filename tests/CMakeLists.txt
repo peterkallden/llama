@@ -413,6 +413,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-runtime-observer.cpp
 test-agent-flydelta-layer-search.cpp
 test-agent-flydelta-scale-search.cpp
+test-agent-flydelta-alpha-response-search.cpp
         test-agent-flydelta-intervention-region-search.cpp
         test-agent-flydelta-whirlpool-search.cpp
         test-agent-flydelta-whirlpool-ab.cpp

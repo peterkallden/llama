@@ -131,6 +131,41 @@ struct common_agent_generation_result {
     std::shared_ptr<const common_flydelta_hidden_state_capture> flydelta_capture;
 };
 
+// A bounded teacher-forced comparison over one model-facing choice slot.
+// This is deliberately transport-level data: the FlyDelta layer turns it
+// into a decision-margin diagnostic, while the host still owns verification
+// and learning credit.
+struct common_agent_teacher_forced_choice_request {
+    common_agent_generation_request context;
+    std::string choice_prefix;
+    std::string positive_choice;
+    std::string negative_choice;
+    // Optional complete continuations after choice_prefix.  These allow a
+    // behavior-specific margin when the tool name is unchanged but the
+    // repaired arguments differ.  If empty, the scorer uses the choice
+    // strings above for the legacy tool-slot comparison.
+    std::string positive_continuation;
+    std::string negative_continuation;
+};
+
+struct common_agent_teacher_forced_choice_result {
+    bool available = false;
+    float positive_total_logprob = 0.0f;
+    float negative_total_logprob = 0.0f;
+    size_t positive_token_count = 0;
+    size_t negative_token_count = 0;
+    std::string error_message;
+
+    float total_delta() const {
+        return positive_total_logprob - negative_total_logprob;
+    }
+    float normalized_delta() const {
+        if (positive_token_count == 0 || negative_token_count == 0) return 0.0f;
+        return positive_total_logprob / static_cast<float>(positive_token_count) -
+            negative_total_logprob / static_cast<float>(negative_token_count);
+    }
+};
+
 inline bool common_agent_generation_succeeded(const common_agent_generation_result & result) {
     return result.status == common_agent_generation_status::completed;
 }
@@ -152,6 +187,14 @@ public:
     virtual bool generate(
         const common_agent_generation_request & request,
         common_agent_generation_result & result) = 0;
+    virtual bool score_teacher_forced_choice(
+        const common_agent_teacher_forced_choice_request & request,
+        common_agent_teacher_forced_choice_result & result) {
+        (void) request;
+        result = {};
+        result.error_message = "teacher-forced choice scoring is unavailable for this inference backend";
+        return false;
+    }
     common_agent_generation_result generate_result(const common_agent_generation_request & request) {
         common_agent_generation_result result;
         generate(request, result);

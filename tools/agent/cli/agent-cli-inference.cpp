@@ -1,6 +1,7 @@
 #include "agent-cli-inference.h"
 
 #include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-decision-margin.h"
 #include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 #include "tools/agent/cli/agent-cli-generation.h"
 
@@ -52,6 +53,48 @@ public:
             request.flydelta_capture);
         result.chat_params = chat_params;
         return ok;
+    }
+
+    bool score_teacher_forced_choice(
+            const common_agent_teacher_forced_choice_request & request,
+            common_agent_teacher_forced_choice_result & result) override {
+        result = {};
+        common_flydelta_static_overlay no_overlay;
+        const common_flydelta_static_overlay * overlay = &no_overlay;
+        if (request.context.flydelta_activation) {
+            std::string activation_error;
+            if (!common_flydelta_activation_result_validate(
+                    *request.context.flydelta_activation,
+                    static_cast<size_t>(llama_model_n_embd(model)),
+                    static_cast<size_t>(llama_model_n_layer(model)),
+                    64U * 1024U * 1024U,
+                    activation_error)) {
+                result.error_message = "invalid FlyDelta scoring activation: " + activation_error;
+                return false;
+            }
+            overlay = &request.context.flydelta_activation->overlay;
+        }
+        common_flydelta_decision_margin margin;
+        std::string error;
+        const std::string & positive = request.positive_continuation.empty()
+            ? request.positive_choice : request.positive_continuation;
+        const std::string & negative = request.negative_continuation.empty()
+            ? request.negative_choice : request.negative_continuation;
+        if (!score_chat_choice_margin(
+                model, templates, request.context.messages, request.context.tools,
+                request.context.tool_choice, request.context.options,
+                request.choice_prefix, positive, negative,
+                margin, nullptr, request.context.json_schema, adapters, adapter_scales,
+                *overlay, &error)) {
+            result.error_message = std::move(error);
+            return false;
+        }
+        result.available = margin.available;
+        result.positive_total_logprob = margin.positive_total_logprob;
+        result.negative_total_logprob = margin.negative_total_logprob;
+        result.positive_token_count = margin.positive_token_count;
+        result.negative_token_count = margin.negative_token_count;
+        return true;
     }
 
 private:

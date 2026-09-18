@@ -108,6 +108,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-runtime-observer.cpp adaptation/flydelta/flydelta-runtime-observer.h
 adaptation/flydelta/flydelta-layer-search.cpp adaptation/flydelta/flydelta-layer-search.h
 adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale-search.h
+    adaptation/flydelta/flydelta-alpha-response-search.cpp adaptation/flydelta/flydelta-alpha-response-search.h
     adaptation/flydelta/flydelta-intervention-region-search.cpp adaptation/flydelta/flydelta-intervention-region-search.h
     adaptation/flydelta/flydelta-whirlpool-search.cpp adaptation/flydelta/flydelta-whirlpool-search.h
     adaptation/flydelta/flydelta-search-pipeline.cpp adaptation/flydelta/flydelta-search-pipeline.h

@@ -25,10 +25,11 @@ bool generate_chat_turn_result(
     const common_flydelta_static_overlay & flydelta_overlay = {},
     const std::shared_ptr<const common_flydelta_hidden_state_capture_request> & flydelta_capture = {});
 
-// Scores only the bounded model-facing choice slot after choice_prefix. The
-// two alternatives are teacher-forced on fresh contexts with the same prompt
-// and overlay. The result contains total and length-normalized logprob data;
-// it is a diagnostic ranking signal and never a host verdict.
+// Scores two bounded model-facing continuations after choice_prefix. The
+// alternatives are teacher-forced on fresh contexts with the same prompt and
+// overlay. They may be just tool names or complete behavior-specific call
+// tails. The result contains total and length-normalized logprob data; it is
+// a diagnostic ranking signal and never a host verdict.
 bool score_chat_choice_margin(
     llama_model * model,
     const common_chat_templates * chat_templates,
