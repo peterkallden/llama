@@ -276,6 +276,9 @@ bool common_flydelta_run_alpha_response_search(
             selection.trial_index = i;
             selection.scale = trial.scale;
             selection.utility = trial.utility;
+            selection.best_margin_delta_total = trial.margin_delta_total;
+            selection.best_margin_delta_normalized = trial.margin_delta_normalized;
+            selection.best_margin_available = trial.margin_available;
         }
     }
 

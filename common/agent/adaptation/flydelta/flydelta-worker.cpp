@@ -104,6 +104,22 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
     trace.region_budget = result.search_budget.max_region_trials;
     trace.coefficient_budget = result.search_budget.max_coefficient_trials;
     trace.tfo_lite_allowed = result.search_budget.allow_tfo_lite;
+    if (result.has_experiment_plan) {
+        trace.bootstrap_refinement = common_flydelta_bootstrap_refinement_kind_name(
+            result.experiment_plan.bootstrap_refinement);
+    }
+    if (result.has_bootstrap_zoom_state &&
+            result.bootstrap_zoom_state.alpha_response_available) {
+        trace.alpha_response_available = true;
+        trace.alpha_response_status =
+            result.bootstrap_zoom_state.alpha_response.response_status;
+        trace.alpha_range_not_exhausted =
+            result.bootstrap_zoom_state.alpha_response.range_not_exhausted;
+        trace.alpha_last_scale = result.bootstrap_zoom_state.alpha_response.last_scale;
+        trace.alpha_utility_slope = result.bootstrap_zoom_state.alpha_response.utility_slope;
+        trace.alpha_best_margin_delta_normalized =
+            result.bootstrap_zoom_state.alpha_response.best_margin_delta_normalized;
+    }
     trace.has_next_action = result.has_next_action;
     trace.next_action = result.next_action;
     trace.next_action_reason = result.next_action_reason;
@@ -115,6 +131,15 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
     }
     size_t direction_index = 0;
     for (const auto & pipeline : result.search_pipeline_results) {
+        if (pipeline.alpha_response_available) {
+            trace.alpha_response_available = true;
+            trace.alpha_response_status = pipeline.alpha_response.response_status;
+            trace.alpha_range_not_exhausted = pipeline.alpha_response.range_not_exhausted;
+            trace.alpha_last_scale = pipeline.alpha_response.last_scale;
+            trace.alpha_utility_slope = pipeline.alpha_response.utility_slope;
+            trace.alpha_best_margin_delta_normalized =
+                pipeline.alpha_response.best_margin_delta_normalized;
+        }
         for (const auto & direction : pipeline.directions) {
             trace.whirlpool.push_back(direction.whirlpool_trace);
             trace.model_evaluations += direction.whirlpool_trace.model_evaluations;
@@ -315,7 +340,9 @@ bool common_flydelta_trace_validate(
             trace.fixture_baseline_ref.size() > 512 ||
             trace.surface_parent_best_ref.size() > 512 ||
             trace.next_action_reason.size() > 512 || trace.arms.size() > 256 ||
-            trace.whirlpool.size() > 32) {
+            trace.whirlpool.size() > 32 || trace.bootstrap_refinement.size() > 64 ||
+            !finite(trace.alpha_last_scale) || !finite(trace.alpha_utility_slope) ||
+            !finite(trace.alpha_best_margin_delta_normalized)) {
         error = "FlyDelta trace exceeds its bounds";
         return false;
     }
@@ -372,6 +399,15 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
         {"region_budget", trace.region_budget},
         {"coefficient_budget", trace.coefficient_budget},
         {"tfo_lite_allowed", trace.tfo_lite_allowed},
+        {"bootstrap_refinement", trace.bootstrap_refinement},
+        {"alpha_response_available", trace.alpha_response_available},
+        {"alpha_response_status", common_flydelta_alpha_response_status_name(
+            trace.alpha_response_status)},
+        {"alpha_range_not_exhausted", trace.alpha_range_not_exhausted},
+        {"alpha_last_scale", trace.alpha_last_scale},
+        {"alpha_utility_slope", trace.alpha_utility_slope},
+        {"alpha_best_margin_delta_normalized",
+            trace.alpha_best_margin_delta_normalized},
         {"has_next_action", trace.has_next_action},
         {"next_action", common_flydelta_next_action_name(trace.next_action)},
         {"next_action_reason", trace.next_action_reason},

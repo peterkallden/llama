@@ -85,6 +85,23 @@ bool utility_observations_from_pipeline(
             observations.push_back(std::move(observation));
         }
     }
+    if (pipeline.alpha_response_available) {
+        common_flydelta_subspace_utility_observation observation;
+        observation.alpha_response_available = true;
+        observation.alpha_response_status = pipeline.alpha_response.response_status;
+        observation.alpha_range_not_exhausted = pipeline.alpha_response.range_not_exhausted;
+        observation.safe_to_continue =
+            pipeline.alpha_response.response_status !=
+                common_flydelta_alpha_response_status::safety_limited;
+        observation.decision_margin_available =
+            pipeline.alpha_response.best_margin_available;
+        observation.decision_margin_delta =
+            pipeline.alpha_response.best_margin_delta_normalized;
+        if (!common_flydelta_subspace_utility_observation_validate(observation, error)) {
+            return false;
+        }
+        observations.push_back(std::move(observation));
+    }
     if (observations.empty()) {
         error = "FlyDelta search slice returned no executed utility observations";
         return false;
@@ -378,6 +395,38 @@ bool common_flydelta_evaluate_job(
                 result.next_action = orchestration.next_action;
                 result.utility_decision = orchestration.utility;
                 result.next_action_reason = std::move(orchestration.reason);
+
+                // BootstrapZoom -> AdaptiveAlpha is a state transition, not
+                // a new queue lane. Keep the same opaque state lineage and
+                // persist one new revision so the next bounded worker slice
+                // can select the correct rank-one primitive.
+                if (result.has_bootstrap_zoom_state &&
+                        current_plan.bootstrap_refinement ==
+                            common_flydelta_bootstrap_refinement_kind::bootstrap_zoom &&
+                        orchestration.plan.bootstrap_refinement ==
+                            common_flydelta_bootstrap_refinement_kind::adaptive_alpha &&
+                        result.bootstrap_zoom_state.phase !=
+                            common_flydelta_bootstrap_zoom_phase::adaptive_alpha) {
+                    result.bootstrap_zoom_state.phase =
+                        common_flydelta_bootstrap_zoom_phase::adaptive_alpha;
+                    result.bootstrap_zoom_state.refinement_kind =
+                        common_flydelta_bootstrap_refinement_kind::adaptive_alpha;
+                    result.bootstrap_zoom_state.alpha_response_available = false;
+                    result.bootstrap_zoom_state.alpha_response = {};
+                    result.bootstrap_zoom_state.extra_model_trials = 0;
+                    result.bootstrap_zoom_state.next_candidate_index = 0;
+                    result.bootstrap_zoom_state.state_ref.clear();
+                    if (!callbacks.persist_bootstrap_zoom_state(
+                            result.bootstrap_zoom_state,
+                            result.bootstrap_zoom_state_ref, error) ||
+                            result.bootstrap_zoom_state_ref.empty() ||
+                            result.bootstrap_zoom_state_ref.size() > 512) {
+                        if (error.empty()) error =
+                            "FlyDelta AdaptiveAlpha transition state persistence failed";
+                        return false;
+                    }
+                    result.bootstrap_zoom_state.state_ref = result.bootstrap_zoom_state_ref;
+                }
             }
             // A search job now emits the first ordered plan when the host
             // supplies its compatible evidence resolver. The plan starts at

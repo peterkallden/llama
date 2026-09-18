@@ -333,6 +333,49 @@ host-known candidate pass; `UNKNOWN` and `NEUTRAL` remain searchable
 diagnostics only. Shallow and Deep continue to select larger budgets, while
 the current dataset smoke does not execute Deep search yet.
 
+### Bounded production search order
+
+The production worker executes one bounded slice at a time. The evaluator
+does not recursively run the next phase; the FlyDelta orchestrator returns a
+typed `next_action`, persists the resumable state, and the host scheduler
+decides when (or whether) to enqueue the next slice.
+
+The normal rank-one path is:
+
+```text
+Whirlpool (WHERE)
+  -> Bootstrap rank-1
+  -> UtilityGate
+  -> BootstrapZoom (local profile/scale refinement)
+  -> UtilityGate
+  -> AdaptiveAlphaSearch when rank-1 utility remains promising
+  -> UtilityGate / AlphaResponseGate
+```
+
+`AdaptiveAlphaSearch` is not a new worker lane and does not increase evidence
+capacity. It is a bounded continuation of `refine_bootstrap`, transported by
+the existing Bootstrap state reference. Its expansion status is explicit:
+`helped`, `saturated`, `safety_limited`, `budget_limited`, or
+`upper_bound_reached`; a budget-limited search with a still-improving last
+point is marked `range_not_exhausted` and must not be treated as plateau
+evidence. A verified `HELPED` arm runs the bounded minimum-effective bracket
+before it can enter the normal lifecycle.
+
+If natural evidence has `effective_rank >= 2`, the next permitted capacity is
+Shallow controls; it does not need to spend AdaptiveAlpha first. Otherwise a
+rank-one surface may be retained/refined, or use the explicitly experimental
+orthogonal/augmentation escape. Search utility may select the next region,
+but only host verification creates learning credit:
+
+```text
+Evidence depth -> search capacity
+Observed utility -> bounded search expenditure
+Host outcome -> learning/promotion credit
+```
+
+The worker trace records the refinement kind and AdaptiveAlpha status so a
+resume can be audited without replaying prior model arms.
+
 The repair smoke partitions its captures by the scenario's explicit
 `behavior_key` before assessing depth. The key describes the behavior being
 learned, not merely the fact that a tool was used. Samples from
@@ -713,14 +756,15 @@ Whirlpool round traces (probes, recentering, radius and model-evaluation
 count). The worker bounds this material and never includes prompts, model
 outputs, credentials or activation tensors.
 
-For resumable rank-one BootstrapZoom work, the queue transports only
-`bootstrap_zoom_state_ref`. For later rank-one plateau, orthogonal-search or
+For resumable rank-one BootstrapZoom/AdaptiveAlpha work, the queue transports
+only `bootstrap_zoom_state_ref`. For later rank-one plateau, orthogonal-search or
 augmentation slices, it transports the separate opaque `search_state_ref`.
 The evaluator's state-aware callback resolves
 that opaque reference before the next bounded slice and persists a new,
 immutable reference after it. `common_flydelta_configure_bootstrap_zoom_lifecycle_callbacks()` binds those two callbacks to the existing host lifecycle
-store; it stores bounded phase/progress metadata, never captures, prompts or
-model state. The state also retains every host-classified BootstrapZoom arm
+store; it stores bounded phase/progress metadata, AdaptiveAlpha response
+status and range state, never captures, prompts or model state. The state also
+retains every host-classified BootstrapZoom arm
 and its selected best safe arm (layer profile, scale, decision-margin delta
 and optional geometry). Thus an aligned `UNKNOWN` is retained as an
 experimental candidate for later refinement rather than lost after a worker
@@ -773,8 +817,9 @@ The worker does not invent a model context or invoke this decision recursively;
 the evaluator executes one bounded slice and the host schedules the next job.
 For resumable model-facing work, the evaluator now has an optional state-aware
 search callback. It receives the previous
-`bootstrap_zoom_state_ref`, advances only the remaining BootstrapZoom budget,
-and returns a new reference-safe state. A host-owned resolver/persister stores
+`bootstrap_zoom_state_ref`, advances only the remaining BootstrapZoom or
+AdaptiveAlpha budget selected by the typed phase, and returns a new
+reference-safe state. A host-owned resolver/persister stores
 that state in the artifact/state registry; the queue carries only the opaque
 reference. This lets a later sample resume the local search without repeating
 completed arms while keeping activations, prompts and verifier payloads out of
@@ -909,7 +954,7 @@ samples from pretending to be a multidimensional basis.
 
 | Depth | Gate | Model/search budget | Diagnostic role |
 | --- | --- | --- | --- |
-| Bootstrap | one compatible sample or effective rank about one | up to 4 region arms plus at most 8 local rank-1 BootstrapZoom arms; no coefficient search | run the smallest model experiment and collect cosine, progress, leakage, shift norm and decision margin; a useful signal may refine alpha/profile locally |
+| Bootstrap | one compatible sample or effective rank about one | up to 4 region arms plus bounded rank-1 BootstrapZoom/AdaptiveAlpha arms; no coefficient search | run the smallest model experiment and collect cosine, progress, leakage, shift norm and decision margin; a useful signal may refine alpha/profile locally |
 | Shallow | at least 2 compatible samples and effective rank at least 2 | up to 8 region arms, up to 4 coefficient proposals, top 1 full arm | compare a small rank-2 basis and cheap margin/geometry controls |
 | Deep | at least 6 compatible samples, effective rank at least 2, stable geometry and valid condition bound | up to 32 region arms, up to 16 coefficient proposals, top 3 full arms; TFO-lite allowed | build robust aggregate/Deep basis and run Deep controls; coefficient search/TFO-lite only after positive Deep UtilityGate |
 
@@ -958,7 +1003,7 @@ More precisely:
 The resulting normal path is therefore:
 
 ```text
-Bootstrap -> BootstrapZoom
+Bootstrap -> BootstrapZoom -> AdaptiveAlpha (when rank-1 utility remains promising)
   -> real evidence_rank >= 2 -> Shallow controls
   -> positive Shallow utility + Deep capacity -> Deep controls
   -> positive Deep utility -> TFO-lite
@@ -2545,25 +2590,29 @@ JSONL path.
 
 ### Adaptive rank-one alpha response search
 
-`flydelta-alpha-response-search` is an opt-in, low-level HOW-MUCH primitive
-for a selected rank-one region. It does not replace Whirlpool or change the
-bounded worker phase policy:
+`flydelta-alpha-response-search` is the bounded HOW-MUCH primitive used for a
+selected rank-one region after BootstrapZoom has earned further refinement.
+It does not replace Whirlpool or create a new worker lane; the existing typed
+Bootstrap state marks the next slice as `adaptive_alpha` and the orchestrator
+continues to own the phase transition:
 
 ```text
 Whirlpool / BootstrapZoom seed
         -> geometric alpha expansion
         -> bounded golden-section zoom inside observed safe bounds
         -> optional minimum-effective HELPED bracket
-        -> Rank1PlateauGate / next bounded action
+        -> AlphaResponseGate / next bounded action
 ```
 
 The search prefers the fixture-bound decision-margin delta and subtracts a
 leakage penalty. If the model-facing margin is unavailable it falls back to
 the existing geometry utility; `cosine`, `progress`, `leakage` and
 `shift_norm` remain safety/diagnostic signals. It never creates `HELPED`,
-learning credit or a promoted artifact. A future orchestrator integration may
-expose it as `refine_bootstrap`, but the initial implementation is deliberately
-testable without recursive worker execution.
+learning credit or a promoted artifact. A budget-limited search whose last
+safe utility is still rising is marked `range_not_exhausted`; it remains a
+bounded `refine_bootstrap` continuation and cannot be interpreted as plateau
+evidence. A verified `HELPED` result performs the bounded minimum-effective
+bracket before the ordinary lifecycle can consume it.
 
 ### 5. Optional dynamic hook
 

@@ -16,7 +16,8 @@ float l2_norm(const std::vector<float> & values) {
 bool valid_zoom_phase(common_flydelta_bootstrap_zoom_phase phase) {
     return phase == common_flydelta_bootstrap_zoom_phase::alpha_zoom ||
         phase == common_flydelta_bootstrap_zoom_phase::profile_zoom ||
-        phase == common_flydelta_bootstrap_zoom_phase::sign_control;
+        phase == common_flydelta_bootstrap_zoom_phase::sign_control ||
+        phase == common_flydelta_bootstrap_zoom_phase::adaptive_alpha;
 }
 
 bool valid_zoom_candidate(
@@ -107,6 +108,17 @@ const char * common_flydelta_experiment_phase_name(
         case common_flydelta_experiment_phase::deep_controls: return "deep_controls";
     }
     return "bootstrap";
+}
+
+const char * common_flydelta_bootstrap_refinement_kind_name(
+        common_flydelta_bootstrap_refinement_kind kind) {
+    switch (kind) {
+        case common_flydelta_bootstrap_refinement_kind::bootstrap_zoom:
+            return "bootstrap_zoom";
+        case common_flydelta_bootstrap_refinement_kind::adaptive_alpha:
+            return "adaptive_alpha";
+    }
+    return "bootstrap_zoom";
 }
 
 const char * common_flydelta_utility_gate_action_name(
@@ -368,6 +380,7 @@ const char * common_flydelta_bootstrap_zoom_phase_name(
         case common_flydelta_bootstrap_zoom_phase::alpha_zoom: return "alpha_zoom";
         case common_flydelta_bootstrap_zoom_phase::profile_zoom: return "profile_zoom";
         case common_flydelta_bootstrap_zoom_phase::sign_control: return "sign_control";
+        case common_flydelta_bootstrap_zoom_phase::adaptive_alpha: return "adaptive_alpha";
     }
     return "alpha_zoom";
 }
@@ -420,13 +433,25 @@ bool common_flydelta_decide_subspace_utility(
     bool qualified = false;
     for (const auto & observation : observations) {
         if (!common_flydelta_subspace_utility_observation_validate(observation, error)) return false;
+        if (observation.alpha_response_available &&
+                observation.alpha_response_status ==
+                    common_flydelta_alpha_response_status::safety_limited) {
+            decision.action = common_flydelta_utility_gate_action::stop;
+            decision.history = {0, history.nonqualifying_streak + 1};
+            return true;
+        }
         if (!observation.safe_to_continue) {
             decision.action = common_flydelta_utility_gate_action::stop;
             decision.history = {0, history.nonqualifying_streak + 1};
             return true;
         }
         const bool geometry_ok = !observation.geometry_available || safe_geometry(observation.geometry, config);
+        const bool alpha_can_continue = !observation.alpha_response_available ||
+            observation.alpha_range_not_exhausted ||
+            observation.alpha_response_status ==
+                common_flydelta_alpha_response_status::helped;
         if (observation.decision_margin_available && geometry_ok &&
+                alpha_can_continue &&
                 observation.decision_margin_delta > required_margin(current_phase, config)) {
             qualified = true;
         }
@@ -584,6 +609,18 @@ bool common_flydelta_bootstrap_zoom_state_validate(
             state.local_layers.size() > 3 ||
             state.completed_trials.size() > 8 ||
             state.surface_trials.size() > 8 ||
+            (state.phase == common_flydelta_bootstrap_zoom_phase::adaptive_alpha &&
+                state.refinement_kind != common_flydelta_bootstrap_refinement_kind::adaptive_alpha) ||
+            (state.alpha_response_available &&
+                (!finite(state.alpha_response.scale) ||
+                 !finite(state.alpha_response.utility) ||
+                 !finite(state.alpha_response.last_scale) ||
+                 !finite(state.alpha_response.last_utility) ||
+                 !finite(state.alpha_response.utility_slope) ||
+                 !finite(state.alpha_response.max_reachable_scale) ||
+                 !finite(state.alpha_response.minimum_effective_scale) ||
+                 !finite(state.alpha_response.best_margin_delta_total) ||
+                 !finite(state.alpha_response.best_margin_delta_normalized))) ||
             (!state.local_layers.empty() &&
                 (!std::is_sorted(state.local_layers.begin(), state.local_layers.end()) ||
                  state.local_layers.front() == 0 ||
@@ -749,6 +786,7 @@ bool common_flydelta_plan_search_continuation(
     // permission to skip the rank-one/rank-two evidence chain.
     plan.depth = evidence_depth.depth;
     plan.phase = common_flydelta_experiment_phase::bootstrap;
+    plan.bootstrap_refinement = common_flydelta_bootstrap_refinement_kind::bootstrap_zoom;
     plan.budget = common_flydelta_search_budget_for_depth(
         common_flydelta_search_depth::bootstrap);
     if (!common_flydelta_search_budget_validate(plan.budget, error)) return false;
@@ -796,6 +834,7 @@ bool common_flydelta_advance_experiment_plan(
             }
             configure_phase(common_flydelta_experiment_phase::bootstrap,
                 common_flydelta_search_depth::bootstrap);
+            next.bootstrap_refinement = common_flydelta_bootstrap_refinement_kind::adaptive_alpha;
             advanced = true;
             break;
         case common_flydelta_utility_gate_action::orthogonal_search:

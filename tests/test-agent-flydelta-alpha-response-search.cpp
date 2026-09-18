@@ -84,6 +84,7 @@ int main() {
     CHECK(selection.minimum_effective_scale >= 0.19f &&
         selection.minimum_effective_scale <= 0.21f);
     CHECK(selection.response_status == common_flydelta_alpha_response_status::helped);
+    CHECK(selection.best_margin_available && selection.best_margin_delta_normalized > 0.0f);
     CHECK(std::fabs(selection.scale - selection.minimum_effective_scale) > 0.0001f ||
         selection.scale >= 0.2f);
     for (const auto & trial : trials) {

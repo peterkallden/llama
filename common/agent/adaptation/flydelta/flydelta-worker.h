@@ -63,6 +63,14 @@ struct common_flydelta_trace {
     size_t region_budget = 0;
     size_t coefficient_budget = 0;
     bool tfo_lite_allowed = false;
+    std::string bootstrap_refinement;
+    bool alpha_response_available = false;
+    common_flydelta_alpha_response_status alpha_response_status =
+        common_flydelta_alpha_response_status::inconclusive;
+    bool alpha_range_not_exhausted = false;
+    float alpha_last_scale = 0.0f;
+    float alpha_utility_slope = 0.0f;
+    float alpha_best_margin_delta_normalized = 0.0f;
     bool has_next_action = false;
     common_flydelta_next_action next_action = common_flydelta_next_action::retain;
     std::string next_action_reason;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-evidence-depth.h"
+#include "agent/adaptation/flydelta/flydelta-alpha-response-search.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 
 #include <cstddef>
@@ -25,6 +26,17 @@ enum class common_flydelta_experiment_phase {
     deep_controls,
 };
 
+// Bootstrap refinement remains one bounded production phase. This kind tells
+// the host which rank-one refinement primitive the next slice should execute;
+// it does not create a new worker lane or change evidence capacity.
+enum class common_flydelta_bootstrap_refinement_kind {
+    bootstrap_zoom,
+    adaptive_alpha,
+};
+
+const char * common_flydelta_bootstrap_refinement_kind_name(
+        common_flydelta_bootstrap_refinement_kind kind);
+
 const char * common_flydelta_experiment_phase_name(
         common_flydelta_experiment_phase phase);
 
@@ -36,6 +48,8 @@ struct common_flydelta_experiment_plan {
     // phase always advances sequentially under UtilityGate control.
     common_flydelta_search_depth depth = common_flydelta_search_depth::bootstrap;
     common_flydelta_experiment_phase phase = common_flydelta_experiment_phase::bootstrap;
+    common_flydelta_bootstrap_refinement_kind bootstrap_refinement =
+        common_flydelta_bootstrap_refinement_kind::bootstrap_zoom;
     common_flydelta_search_budget budget;
     size_t required_compatible_directions = 1;
     bool require_decision_margin = false;
@@ -74,6 +88,12 @@ struct common_flydelta_subspace_utility_observation {
     float decision_margin_delta = 0.0f;
     bool geometry_available = false;
     common_flydelta_representation_diagnostics geometry;
+    // Optional summary emitted by AdaptiveAlphaSearch. It is search utility,
+    // never host evidence or learning credit.
+    bool alpha_response_available = false;
+    common_flydelta_alpha_response_status alpha_response_status =
+        common_flydelta_alpha_response_status::inconclusive;
+    bool alpha_range_not_exhausted = false;
 };
 
 struct common_flydelta_utility_history {
@@ -247,6 +267,7 @@ enum class common_flydelta_bootstrap_zoom_phase {
     alpha_zoom,
     profile_zoom,
     sign_control,
+    adaptive_alpha,
 };
 
 const char * common_flydelta_bootstrap_zoom_phase_name(
@@ -308,6 +329,8 @@ struct common_flydelta_bootstrap_zoom_state {
     std::string capture_layout_revision;
     common_flydelta_bootstrap_zoom_phase phase =
         common_flydelta_bootstrap_zoom_phase::alpha_zoom;
+    common_flydelta_bootstrap_refinement_kind refinement_kind =
+        common_flydelta_bootstrap_refinement_kind::bootstrap_zoom;
     uint32_t anchor_layer = 0;
     float selected_scale = 0.0f;
     float best_margin_delta = 0.0f;
@@ -332,6 +355,10 @@ struct common_flydelta_bootstrap_zoom_state {
     // learning evidence by being present here.
     std::vector<common_flydelta_bootstrap_zoom_trial> surface_trials;
     common_flydelta_bootstrap_zoom_selection selection;
+    // The low-level AdaptiveAlpha result is summarized here so the next
+    // bounded worker slice can be orchestrated without replaying prior arms.
+    bool alpha_response_available = false;
+    common_flydelta_alpha_response_selection alpha_response;
 };
 
 bool common_flydelta_bootstrap_zoom_state_validate(

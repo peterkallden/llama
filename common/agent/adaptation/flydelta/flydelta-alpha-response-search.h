@@ -65,6 +65,12 @@ struct common_flydelta_alpha_response_selection {
     bool selected = false;
     float scale = 0.0f;
     float utility = 0.0f;
+    // Best decision signal observed by the bounded response search. This is
+    // kept separately from utility because leakage-penalized utility is not
+    // the same quantity as the fixture-relative teacher-forced margin.
+    float best_margin_delta_total = 0.0f;
+    float best_margin_delta_normalized = 0.0f;
+    bool best_margin_available = false;
     size_t trial_index = 0;
     common_flydelta_alpha_response_status response_status =
         common_flydelta_alpha_response_status::inconclusive;

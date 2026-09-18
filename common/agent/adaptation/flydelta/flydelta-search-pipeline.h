@@ -6,6 +6,7 @@
 #include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
 #include "agent/adaptation/flydelta/flydelta-whirlpool-search.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
+#include "agent/adaptation/flydelta/flydelta-alpha-response-search.h"
 
 #include <cstddef>
 #include <functional>
@@ -82,6 +83,11 @@ struct common_flydelta_search_pipeline_selection {
 struct common_flydelta_search_pipeline_result {
     std::vector<common_flydelta_search_pipeline_direction_result> directions;
     common_flydelta_search_pipeline_selection selection;
+    // Optional bounded rank-one refinement summary. The host runner may fill
+    // this when the current state selects AdaptiveAlphaSearch; the generic
+    // evaluator uses it for UtilityGate navigation only.
+    bool alpha_response_available = false;
+    common_flydelta_alpha_response_selection alpha_response;
 };
 
 bool common_flydelta_search_pipeline_config_validate(

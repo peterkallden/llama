@@ -66,6 +66,40 @@ int main() {
         utility_config, common_flydelta_search_depth::bootstrap,
         common_flydelta_experiment_phase::bootstrap, {utility}, {}, utility_decision, error));
     CHECK(utility_decision.action == common_flydelta_utility_gate_action::refine_bootstrap);
+    common_flydelta_subspace_utility_observation alpha_utility = utility;
+    alpha_utility.alpha_response_available = true;
+    alpha_utility.alpha_response_status = common_flydelta_alpha_response_status::budget_limited;
+    alpha_utility.alpha_range_not_exhausted = true;
+    CHECK(common_flydelta_decide_subspace_utility(
+        utility_config, common_flydelta_search_depth::bootstrap,
+        common_flydelta_experiment_phase::bootstrap, {alpha_utility}, {}, utility_decision, error));
+    CHECK(utility_decision.action == common_flydelta_utility_gate_action::refine_bootstrap);
+    common_flydelta_experiment_plan zoom_plan;
+    common_flydelta_evidence_depth_result zoom_depth = depth;
+    zoom_depth.compatible_samples = 1;
+    zoom_depth.effective_rank = 1.0f;
+    zoom_depth.depth = common_flydelta_search_depth::bootstrap;
+    CHECK(common_flydelta_plan_search_continuation(
+        continuation, zoom_depth, zoom_plan, error));
+    CHECK(zoom_plan.bootstrap_refinement ==
+        common_flydelta_bootstrap_refinement_kind::bootstrap_zoom);
+    common_flydelta_experiment_plan alpha_plan;
+    bool alpha_advanced = false;
+    CHECK(common_flydelta_advance_experiment_plan(
+        zoom_plan, utility_decision, alpha_plan, alpha_advanced, error));
+    CHECK(alpha_advanced && alpha_plan.bootstrap_refinement ==
+        common_flydelta_bootstrap_refinement_kind::adaptive_alpha);
+    alpha_utility.alpha_range_not_exhausted = false;
+    alpha_utility.alpha_response_status = common_flydelta_alpha_response_status::saturated;
+    CHECK(common_flydelta_decide_subspace_utility(
+        utility_config, common_flydelta_search_depth::bootstrap,
+        common_flydelta_experiment_phase::bootstrap, {alpha_utility}, {}, utility_decision, error));
+    CHECK(utility_decision.action == common_flydelta_utility_gate_action::retain);
+    alpha_utility.alpha_response_status = common_flydelta_alpha_response_status::helped;
+    CHECK(common_flydelta_decide_subspace_utility(
+        utility_config, common_flydelta_search_depth::shallow,
+        common_flydelta_experiment_phase::bootstrap, {alpha_utility}, {}, utility_decision, error));
+    CHECK(utility_decision.action == common_flydelta_utility_gate_action::escalate_shallow);
     CHECK(common_flydelta_decide_subspace_utility(
         utility_config, common_flydelta_search_depth::shallow,
         common_flydelta_experiment_phase::bootstrap, {utility}, {}, utility_decision, error));
@@ -238,6 +272,18 @@ int main() {
     surface_state.completed_trials = {first_trial};
     surface_state.selection = {true, 0, 0.1f};
     surface_state.surface_trials = {best_trial};
+    CHECK(common_flydelta_bootstrap_zoom_state_validate(surface_state, error));
+    surface_state.phase = common_flydelta_bootstrap_zoom_phase::adaptive_alpha;
+    surface_state.refinement_kind = common_flydelta_bootstrap_refinement_kind::adaptive_alpha;
+    surface_state.alpha_response_available = true;
+    surface_state.alpha_response.selected = true;
+    surface_state.alpha_response.scale = 0.2f;
+    surface_state.alpha_response.utility = 0.4f;
+    surface_state.alpha_response.best_margin_available = true;
+    surface_state.alpha_response.best_margin_delta_normalized = 0.2f;
+    surface_state.alpha_response.response_status =
+        common_flydelta_alpha_response_status::budget_limited;
+    surface_state.alpha_response.range_not_exhausted = true;
     CHECK(common_flydelta_bootstrap_zoom_state_validate(surface_state, error));
     surface_state.parent_surface_revision = surface_state.surface_revision;
     CHECK(!common_flydelta_bootstrap_zoom_state_validate(surface_state, error));

@@ -24,8 +24,44 @@ bool parse_phase(const std::string & value, common_flydelta_bootstrap_zoom_phase
     if (value == "alpha_zoom") phase = common_flydelta_bootstrap_zoom_phase::alpha_zoom;
     else if (value == "profile_zoom") phase = common_flydelta_bootstrap_zoom_phase::profile_zoom;
     else if (value == "sign_control") phase = common_flydelta_bootstrap_zoom_phase::sign_control;
+    else if (value == "adaptive_alpha") phase = common_flydelta_bootstrap_zoom_phase::adaptive_alpha;
     else return false;
     return true;
+}
+
+const char * refinement_kind_name(common_flydelta_bootstrap_refinement_kind kind) {
+    return common_flydelta_bootstrap_refinement_kind_name(kind);
+}
+
+bool parse_refinement_kind(
+        const std::string & value,
+        common_flydelta_bootstrap_refinement_kind & kind) {
+    if (value == "bootstrap_zoom") kind = common_flydelta_bootstrap_refinement_kind::bootstrap_zoom;
+    else if (value == "adaptive_alpha") kind = common_flydelta_bootstrap_refinement_kind::adaptive_alpha;
+    else return false;
+    return true;
+}
+
+const char * alpha_status_name(common_flydelta_alpha_response_status status) {
+    return common_flydelta_alpha_response_status_name(status);
+}
+
+bool parse_alpha_status(
+        const std::string & value,
+        common_flydelta_alpha_response_status & status) {
+    for (const auto candidate : {
+            common_flydelta_alpha_response_status::inconclusive,
+            common_flydelta_alpha_response_status::helped,
+            common_flydelta_alpha_response_status::saturated,
+            common_flydelta_alpha_response_status::safety_limited,
+            common_flydelta_alpha_response_status::budget_limited,
+            common_flydelta_alpha_response_status::upper_bound_reached}) {
+        if (value == alpha_status_name(candidate)) {
+            status = candidate;
+            return true;
+        }
+    }
+    return false;
 }
 
 const char * outcome_name(common_flydelta_counterfactual_outcome outcome) {
@@ -118,6 +154,7 @@ std::string state_to_json(const common_flydelta_bootstrap_zoom_state & state) {
         {"model_profile_fingerprint", state.model_profile_fingerprint},
         {"capture_layout_revision", state.capture_layout_revision},
         {"phase", phase_name(state.phase)},
+        {"refinement_kind", refinement_kind_name(state.refinement_kind)},
         {"anchor_layer", state.anchor_layer},
         {"selected_scale", state.selected_scale},
         {"best_margin_delta", state.best_margin_delta},
@@ -137,6 +174,25 @@ std::string state_to_json(const common_flydelta_bootstrap_zoom_state & state) {
             {"selected", state.selection.selected},
             {"trial_index", state.selection.trial_index},
             {"search_score", state.selection.search_score},
+        }},
+        {"alpha_response_available", state.alpha_response_available},
+        {"alpha_response", {
+            {"selected", state.alpha_response.selected},
+            {"scale", state.alpha_response.scale},
+            {"utility", state.alpha_response.utility},
+            {"trial_index", state.alpha_response.trial_index},
+            {"response_status", alpha_status_name(state.alpha_response.response_status)},
+            {"last_scale", state.alpha_response.last_scale},
+            {"last_utility", state.alpha_response.last_utility},
+            {"utility_slope", state.alpha_response.utility_slope},
+            {"max_reachable_scale", state.alpha_response.max_reachable_scale},
+            {"range_not_exhausted", state.alpha_response.range_not_exhausted},
+            {"minimum_effective_available", state.alpha_response.minimum_effective_available},
+            {"minimum_effective_scale", state.alpha_response.minimum_effective_scale},
+            {"minimum_effective_trial_index", state.alpha_response.minimum_effective_trial_index},
+            {"best_margin_delta_total", state.alpha_response.best_margin_delta_total},
+            {"best_margin_delta_normalized", state.alpha_response.best_margin_delta_normalized},
+            {"best_margin_available", state.alpha_response.best_margin_available},
         }},
     };
     for (const auto & trial : state.completed_trials) {
@@ -164,6 +220,11 @@ bool state_from_json(const std::string & text,
         state.capture_layout_revision = value.value("capture_layout_revision", "");
         if (!parse_phase(value.value("phase", ""), state.phase)) {
             error = "BootstrapZoom lifecycle state phase is invalid";
+            return false;
+        }
+        if (!parse_refinement_kind(value.value("refinement_kind", "bootstrap_zoom"),
+                state.refinement_kind)) {
+            error = "BootstrapZoom lifecycle refinement kind is invalid";
             return false;
         }
         state.anchor_layer = value.value("anchor_layer", 0U);
@@ -199,6 +260,34 @@ bool state_from_json(const std::string & text,
         state.selection.selected = selection.value("selected", false);
         state.selection.trial_index = selection.value("trial_index", size_t{0});
         state.selection.search_score = selection.value("search_score", 0.0f);
+        state.alpha_response_available = value.value("alpha_response_available", false);
+        const auto alpha = value.value("alpha_response", json::object());
+        state.alpha_response.selected = alpha.value("selected", false);
+        state.alpha_response.scale = alpha.value("scale", 0.0f);
+        state.alpha_response.utility = alpha.value("utility", 0.0f);
+        state.alpha_response.trial_index = alpha.value("trial_index", size_t{0});
+        if (!parse_alpha_status(alpha.value("response_status", "inconclusive"),
+                state.alpha_response.response_status)) {
+            error = "AdaptiveAlpha lifecycle response status is invalid";
+            return false;
+        }
+        state.alpha_response.last_scale = alpha.value("last_scale", 0.0f);
+        state.alpha_response.last_utility = alpha.value("last_utility", 0.0f);
+        state.alpha_response.utility_slope = alpha.value("utility_slope", 0.0f);
+        state.alpha_response.max_reachable_scale = alpha.value("max_reachable_scale", 0.0f);
+        state.alpha_response.range_not_exhausted = alpha.value("range_not_exhausted", false);
+        state.alpha_response.minimum_effective_available =
+            alpha.value("minimum_effective_available", false);
+        state.alpha_response.minimum_effective_scale =
+            alpha.value("minimum_effective_scale", 0.0f);
+        state.alpha_response.minimum_effective_trial_index =
+            alpha.value("minimum_effective_trial_index", size_t{0});
+        state.alpha_response.best_margin_delta_total =
+            alpha.value("best_margin_delta_total", 0.0f);
+        state.alpha_response.best_margin_delta_normalized =
+            alpha.value("best_margin_delta_normalized", 0.0f);
+        state.alpha_response.best_margin_available =
+            alpha.value("best_margin_available", false);
     } catch (const std::exception & exception) {
         error = std::string("invalid BootstrapZoom lifecycle state JSON: ") + exception.what();
         return false;
