@@ -93,6 +93,11 @@ common_flydelta_model_adapter_from_host(
         }
         return {};
     }
+    if (host.capabilities.orthogonal_search &&
+            !callbacks.run_search_pipeline_with_search_state) {
+        error = "FlyDelta orthogonal capability requires a post-Bootstrap state-aware runner";
+        return {};
+    }
     return common_flydelta_model_adapter_from_evaluator(
         config, callbacks, host.capabilities, error);
 }

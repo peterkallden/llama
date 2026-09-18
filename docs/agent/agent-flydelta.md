@@ -886,6 +886,14 @@ residency, reference/fixture resolution, fresh inference contexts, margin
 scoring and verification. The generic worker receives no raw model context and
 does not recursively execute the next phase.
 
+The host registration is fail-closed for advertised post-Bootstrap features:
+when `orthogonal_search` is enabled, the callback bundle must include the
+bounded `run_search_pipeline_with_search_state` runner. That runner is where
+the host resolves the persisted surface, prepares the typed orthogonal input,
+runs fresh model probes and returns the next opaque state reference. A capability
+flag without that callback is a configuration error, not an orthogonal search
+that found no direction.
+
 The daemon runtime carries the optional adapter registration into the
 dispatcher and exposes two separate status facts: whether an adapter is
 registered, and whether it advertises model-facing search support. A configured

@@ -540,5 +540,32 @@ int main() {
     CHECK(registration_calls == 1);
     CHECK(host_adapter->worker_callback(counterfactual, worker_result, error));
     CHECK(worker_result.counterfactual_reports.size() == 1);
+
+    common_flydelta_model_host incomplete_orthogonal_host = model_host;
+    incomplete_orthogonal_host.capabilities.orthogonal_search = true;
+    const auto incomplete_orthogonal_adapter =
+        common_flydelta_model_adapter_from_host(
+            incomplete_orthogonal_host, adapter_error);
+    CHECK(incomplete_orthogonal_adapter == nullptr);
+    CHECK(adapter_error.find("state-aware runner") != std::string::npos);
+
+    model_host.capabilities.orthogonal_search = true;
+    model_host.register_evaluator = [&] (
+            common_flydelta_evaluator_config & registered_config,
+            common_flydelta_evaluator_callbacks & registered_callbacks,
+            std::string & registration_error) {
+        ++registration_calls;
+        registered_config = config;
+        registered_callbacks = callbacks;
+        registered_callbacks.run_search_pipeline_with_search_state =
+            [](const auto &, const auto &, auto &, auto &, std::string &) {
+                return false;
+            };
+        registration_error.clear();
+        return true;
+    };
+    const auto orthogonal_host_adapter =
+        common_flydelta_model_adapter_from_host(model_host, adapter_error);
+    CHECK(orthogonal_host_adapter != nullptr && adapter_error.empty());
     return 0;
 }
