@@ -1705,6 +1705,13 @@ int main(int argc, char ** argv) {
                 std::cout << "flydelta_adaptive_alpha_summary group=" << entry.first
                           << " seed_layer=" << alpha_seed->candidate.anchor_layer_index
                           << " trials=" << alpha_trials.size()
+                          << " response_status=" << common_flydelta_alpha_response_status_name(
+                              alpha_selection.response_status)
+                          << " last_scale=" << alpha_selection.last_scale
+                          << " max_reachable_scale=" << alpha_selection.max_reachable_scale
+                          << " utility_slope=" << alpha_selection.utility_slope
+                          << " range_not_exhausted=" <<
+                              (alpha_selection.range_not_exhausted ? "yes" : "no")
                           << " selected=" << (alpha_selection.selected ? "yes" : "no")
                           << " selected_scale=" << alpha_selection.scale
                           << " utility=" << alpha_selection.utility

@@ -83,6 +83,7 @@ int main() {
     CHECK(selection.minimum_effective_available);
     CHECK(selection.minimum_effective_scale >= 0.19f &&
         selection.minimum_effective_scale <= 0.21f);
+    CHECK(selection.response_status == common_flydelta_alpha_response_status::helped);
     CHECK(std::fabs(selection.scale - selection.minimum_effective_scale) > 0.0001f ||
         selection.scale >= 0.2f);
     for (const auto & trial : trials) {
@@ -102,6 +103,7 @@ int main() {
         no_selection_trials, no_selection, error));
     CHECK(!no_selection.selected);
     CHECK(!no_selection.minimum_effective_available);
+    CHECK(no_selection.response_status == common_flydelta_alpha_response_status::saturated);
 
     common_flydelta_alpha_response_selection failing_selection;
     std::vector<common_flydelta_alpha_response_trial> failing_trials;
@@ -132,6 +134,7 @@ int main() {
         }, early_helped_config, scripted_alpha_runner,
         early_helped_trials, early_helped_selection, error));
     CHECK(early_helped_selection.minimum_effective_available);
+    CHECK(early_helped_selection.response_status == common_flydelta_alpha_response_status::helped);
     // The normal golden phase is skipped, but the bounded minimum-effective
     // bracket is still allowed to add its midpoint probes.
     CHECK(early_helped_trials.size() == 3);

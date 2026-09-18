@@ -45,6 +45,20 @@ bool better(const common_flydelta_alpha_response_trial & lhs,
 
 } // namespace
 
+const char * common_flydelta_alpha_response_status_name(
+        common_flydelta_alpha_response_status status) {
+    switch (status) {
+        case common_flydelta_alpha_response_status::inconclusive: return "inconclusive";
+        case common_flydelta_alpha_response_status::helped: return "helped";
+        case common_flydelta_alpha_response_status::saturated: return "saturated";
+        case common_flydelta_alpha_response_status::safety_limited: return "safety_limited";
+        case common_flydelta_alpha_response_status::budget_limited: return "budget_limited";
+        case common_flydelta_alpha_response_status::upper_bound_reached:
+            return "upper_bound_reached";
+    }
+    return "inconclusive";
+}
+
 bool common_flydelta_alpha_response_search_config_validate(
         const common_flydelta_alpha_response_search_config & config,
         std::string & error) {
@@ -153,26 +167,69 @@ bool common_flydelta_run_alpha_response_search(
 
     size_t index = 0;
     float scale = config.seed_scale;
+    float max_reachable_scale = config.seed_scale;
+    for (size_t count = 1; count < config.max_expansion_trials; ++count) {
+        if (max_reachable_scale > config.max_scale / config.growth_factor) {
+            max_reachable_scale = config.max_scale;
+            break;
+        }
+        max_reachable_scale *= config.growth_factor;
+    }
+    max_reachable_scale = std::min(max_reachable_scale, config.max_scale);
     float best_expansion_utility = -std::numeric_limits<float>::infinity();
     size_t non_improving_expansions = 0;
     bool helped_during_expansion = false;
+    bool safety_limited = false;
+    bool saturated = false;
+    bool upper_bound_reached = false;
+    std::vector<size_t> expansion_indices;
     for (size_t count = 0; count < config.max_expansion_trials; ++count) {
         if (!evaluate(scale, false, index)) return false;
+        expansion_indices.push_back(index);
         const auto & current = trials[index];
         if (current.outcome == common_flydelta_counterfactual_outcome::helped) {
             helped_during_expansion = true;
             break;
         }
-        if (!current.safe_to_continue) break;
+        if (!current.safe_to_continue) {
+            safety_limited = true;
+            break;
+        }
         if (current.utility > best_expansion_utility + config.utility_epsilon) {
             best_expansion_utility = current.utility;
             non_improving_expansions = 0;
         } else if (++non_improving_expansions >= config.max_expansion_non_improving) {
+            saturated = true;
             break;
         }
-        if (scale > config.max_scale / config.growth_factor) break;
+        if (scale > config.max_scale / config.growth_factor) {
+            upper_bound_reached = true;
+            break;
+        }
         scale *= config.growth_factor;
-        if (!finite_scale(scale) || scale > config.max_scale) break;
+        if (!finite_scale(scale) || scale > config.max_scale) {
+            upper_bound_reached = true;
+            break;
+        }
+    }
+
+    const bool budget_limited = !helped_during_expansion && !safety_limited &&
+        !saturated && !upper_bound_reached &&
+        expansion_indices.size() >= config.max_expansion_trials;
+    selection.max_reachable_scale = max_reachable_scale;
+    if (!expansion_indices.empty()) {
+        const auto & last = trials[expansion_indices.back()];
+        selection.last_scale = last.scale;
+        selection.last_utility = last.utility;
+        if (expansion_indices.size() >= 2) {
+            const auto & previous = trials[expansion_indices[expansion_indices.size() - 2]];
+            const float scale_delta = last.scale - previous.scale;
+            if (scale_delta > 0.0f) {
+                selection.utility_slope = (last.utility - previous.utility) / scale_delta;
+            }
+            selection.range_not_exhausted = budget_limited && last.safe_to_continue &&
+                last.utility > previous.utility + config.utility_epsilon;
+        }
     }
 
     // Golden-section refinement is used only inside the observed response
@@ -231,6 +288,7 @@ bool common_flydelta_run_alpha_response_search(
                  trials[i].scale < trials[first_helped].scale)) first_helped = i;
     }
     if (first_helped != std::numeric_limits<size_t>::max()) {
+        selection.response_status = common_flydelta_alpha_response_status::helped;
         selection.minimum_effective_available = true;
         selection.minimum_effective_scale = trials[first_helped].scale;
         selection.minimum_effective_trial_index = first_helped;
@@ -258,6 +316,14 @@ bool common_flydelta_run_alpha_response_search(
                 lower = midpoint;
             }
         }
+    } else if (safety_limited) {
+        selection.response_status = common_flydelta_alpha_response_status::safety_limited;
+    } else if (saturated) {
+        selection.response_status = common_flydelta_alpha_response_status::saturated;
+    } else if (budget_limited) {
+        selection.response_status = common_flydelta_alpha_response_status::budget_limited;
+    } else if (upper_bound_reached) {
+        selection.response_status = common_flydelta_alpha_response_status::upper_bound_reached;
     }
     return true;
 }

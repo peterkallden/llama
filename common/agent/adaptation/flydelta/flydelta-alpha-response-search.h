@@ -9,6 +9,18 @@
 #include <string>
 #include <vector>
 
+enum class common_flydelta_alpha_response_status {
+    inconclusive,
+    helped,
+    saturated,
+    safety_limited,
+    budget_limited,
+    upper_bound_reached,
+};
+
+const char * common_flydelta_alpha_response_status_name(
+        common_flydelta_alpha_response_status status);
+
 // A bounded one-dimensional response search for an already selected rank-1
 // direction/region. This is deliberately a low-level primitive: it consumes
 // one bounded slice and does not decide Bootstrap/Shallow/Deep transitions.
@@ -54,6 +66,13 @@ struct common_flydelta_alpha_response_selection {
     float scale = 0.0f;
     float utility = 0.0f;
     size_t trial_index = 0;
+    common_flydelta_alpha_response_status response_status =
+        common_flydelta_alpha_response_status::inconclusive;
+    float last_scale = 0.0f;
+    float last_utility = 0.0f;
+    float utility_slope = 0.0f;
+    float max_reachable_scale = 0.0f;
+    bool range_not_exhausted = false;
     bool minimum_effective_available = false;
     float minimum_effective_scale = 0.0f;
     size_t minimum_effective_trial_index = 0;
