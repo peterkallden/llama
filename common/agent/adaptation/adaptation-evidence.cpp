@@ -65,6 +65,8 @@ common_adaptation_evidence_source_for_signal(
         case common_learning_signal_type::tool_failure:
         case common_learning_signal_type::successful_recovery:
             return common_adaptation_evidence_source::tool_repair;
+        case common_learning_signal_type::repair_echo_failure:
+            return common_adaptation_evidence_source::tool_repair;
         case common_learning_signal_type::reflection_hint:
             return common_adaptation_evidence_source::reflection_alternative;
         case common_learning_signal_type::user_correction:

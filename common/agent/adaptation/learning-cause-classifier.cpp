@@ -9,6 +9,9 @@ common_learning_cause common_learning_classify_result(
         [](const auto & value) { return !value.tool_name.empty(); });
     if (failure == result.failures.end()) {
         for (const auto & signal : result.learning_signals) {
+            if (signal.type == common_learning_signal_type::repair_echo_failure) {
+                return common_learning_cause::model_behavior;
+            }
             if (signal.type == common_learning_signal_type::user_correction) {
                 return common_learning_cause::project_knowledge;
             }

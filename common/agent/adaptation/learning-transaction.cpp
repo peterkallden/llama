@@ -54,6 +54,8 @@ static json signal_to_json(const common_learning_signal & signal) {
         {"summary", signal.summary},
         {"tool_family", signal.tool_family},
         {"provider_kind", signal.provider_kind},
+        {"repair_context", signal.repair_context_json.empty()
+            ? json(nullptr) : json::parse(signal.repair_context_json, nullptr, false)},
     };
 }
 
@@ -64,6 +66,7 @@ static bool signal_from_json(const json & value, common_learning_signal & signal
     }
     const auto type = value.value("type", "");
     if (type == "tool_failure") signal.type = common_learning_signal_type::tool_failure;
+    else if (type == "repair_echo_failure") signal.type = common_learning_signal_type::repair_echo_failure;
     else if (type == "successful_recovery") signal.type = common_learning_signal_type::successful_recovery;
     else if (type == "reflection_hint") signal.type = common_learning_signal_type::reflection_hint;
     else if (type == "user_correction") signal.type = common_learning_signal_type::user_correction;
@@ -79,6 +82,11 @@ static bool signal_from_json(const json & value, common_learning_signal & signal
     signal.summary = value.value("summary", "");
     signal.tool_family = value.value("tool_family", "");
     signal.provider_kind = value.value("provider_kind", "");
+    const auto repair_context = value.value("repair_context", json(nullptr));
+    if (!repair_context.is_null()) {
+        if (repair_context.is_discarded()) { error = "learning transaction contains invalid repair context"; return false; }
+        signal.repair_context_json = repair_context.dump();
+    }
     return true;
 }
 

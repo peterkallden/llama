@@ -21,6 +21,12 @@ int main() {
     assert(result.ok);
     assert(result.output == "safe result");
 
+    std::string normalized;
+    assert(registry.normalize_and_validate(
+        {"lookup", R"({"id":"memory:1","limit":4,"kind":"fact"})"},
+        normalized, error));
+    assert(normalized == R"({"id":"memory:1","limit":4,"kind":"fact"})");
+
     result = registry.execute({"shell", "{}"});
     assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
 
@@ -34,5 +40,7 @@ int main() {
     assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
     result = registry.execute({"lookup", R"({"id":"memory:1","kind":"unknown"})"});
     assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
+    assert(!registry.normalize_and_validate(
+        {"lookup", R"({"id":"memory:1","limit":5})"}, normalized, error));
     return 0;
 }

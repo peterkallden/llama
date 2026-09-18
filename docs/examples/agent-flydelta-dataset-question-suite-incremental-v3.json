@@ -156,6 +156,78 @@
           {"tool": "data.filter", "args": {"dataset": "dataset://local/sales", "conditions": [{"field": "region", "operator": "in", "value": ["east", "north"]}, {"field": "amount", "operator": ">", "value": 3}], "limit": 100}}
         ]
       }
+    },
+    {
+      "id": "customer-total-amount-and-units",
+      "behavior_key": "tool_use/dataset/data_aggregate",
+      "question": "For each customer, calculate the total amount and total units ordered.",
+      "expected_tool": "data.aggregate",
+      "plan": {
+        "goal": "Compute multiple totals over one grouping dimension",
+        "steps": [
+          {"tool": "data.aggregate", "args": {"dataset": "dataset://local/sales", "group_by": ["customer_id"], "measures": [{"function": "sum", "column": "amount", "as": "total_amount"}, {"function": "sum", "column": "units", "as": "total_units"}]}}
+        ]
+      }
+    },
+    {
+      "id": "regional-average-and-row-count",
+      "behavior_key": "tool_use/dataset/data_aggregate",
+      "question": "For each region, compute the average order amount and the number of rows.",
+      "expected_tool": "data.aggregate",
+      "plan": {
+        "goal": "Combine an average and a count in a grouped summary",
+        "steps": [
+          {"tool": "data.aggregate", "args": {"dataset": "dataset://local/sales", "group_by": ["region"], "measures": [{"function": "avg", "column": "amount", "as": "average_amount"}, {"function": "count", "column": "*", "as": "row_count"}]}}
+        ]
+      }
+    },
+    {
+      "id": "largest-orders-projection",
+      "behavior_key": "tool_use/dataset/data_query",
+      "question": "Return the two orders with the largest amounts, including order_id, region, and amount.",
+      "expected_tool": "data.query",
+      "plan": {
+        "goal": "Project a selected result and rank it by a measure",
+        "steps": [
+          {"tool": "data.query", "args": {"dataset": "dataset://local/sales", "select": ["order_id", "region", "amount"], "order_by": [{"field": "amount", "direction": "desc"}], "limit": 2}}
+        ]
+      }
+    },
+    {
+      "id": "customer-orders-by-id",
+      "behavior_key": "tool_use/dataset/data_query",
+      "question": "List order_id, amount, and units for customer 101, sorted by order_id from low to high.",
+      "expected_tool": "data.query",
+      "plan": {
+        "goal": "Select columns for one key and return them in key order",
+        "steps": [
+          {"tool": "data.query", "args": {"dataset": "dataset://local/sales", "select": ["order_id", "amount", "units"], "where": [{"field": "customer_id", "operator": "=", "value": 101}], "order_by": [{"field": "order_id", "direction": "asc"}], "limit": 100}}
+        ]
+      }
+    },
+    {
+      "id": "positive-amount-unit-filter",
+      "behavior_key": "tool_use/dataset/data_filter",
+      "question": "Keep rows with a positive amount and at least two units, preserving the original columns.",
+      "expected_tool": "data.filter",
+      "plan": {
+        "goal": "Apply two numeric threshold predicates",
+        "steps": [
+          {"tool": "data.filter", "args": {"dataset": "dataset://local/sales", "conditions": [{"field": "amount", "operator": ">", "value": 0}, {"field": "units", "operator": ">=", "value": 2}], "limit": 100}}
+        ]
+      }
+    },
+    {
+      "id": "exclude-south-orders",
+      "behavior_key": "tool_use/dataset/data_filter",
+      "question": "Filter out south-region orders and keep only records with at least one unit.",
+      "expected_tool": "data.filter",
+      "plan": {
+        "goal": "Combine an exclusion predicate with a minimum threshold",
+        "steps": [
+          {"tool": "data.filter", "args": {"dataset": "dataset://local/sales", "conditions": [{"field": "region", "operator": "!=", "value": "south"}, {"field": "units", "operator": ">=", "value": 1}], "limit": 100}}
+        ]
+      }
     }
   ]
 }

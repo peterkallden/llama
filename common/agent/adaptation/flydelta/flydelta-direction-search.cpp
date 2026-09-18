@@ -93,8 +93,16 @@ bool common_flydelta_decision_pair_validate(
         std::string & error) {
     error.clear();
     const char * source = common_adaptation_evidence_source_name(pair.source);
+    const bool valid_scope = pair.score_scope.empty() ||
+        pair.score_scope == "tool_choice" || pair.score_scope == "normalized_call" ||
+        pair.score_scope == "selected_arguments" || pair.score_scope == "full_continuation";
     if (pair.schema_version != 1 || !source || std::string(source) == "unknown" ||
-            !nonempty_bounded(pair.behavior_key) || pair.positive_tokens.empty() ||
+            (!pair.decision_pair_id.empty() && !nonempty_bounded(pair.decision_pair_id)) ||
+            !nonempty_bounded(pair.behavior_key) ||
+            (!pair.fixture_revision.empty() && !nonempty_bounded(pair.fixture_revision)) ||
+            (!pair.positive_ref.empty() && !nonempty_bounded(pair.positive_ref)) ||
+            (!pair.negative_ref.empty() && !nonempty_bounded(pair.negative_ref)) ||
+            !valid_scope || pair.positive_tokens.empty() ||
             pair.negative_tokens.empty() || pair.positive_tokens.size() > 8192 ||
             pair.negative_tokens.size() > 8192 || pair.first_divergence_index < 0 ||
             static_cast<size_t>(pair.first_divergence_index) >= pair.positive_tokens.size() ||

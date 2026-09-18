@@ -5,6 +5,7 @@
 
 enum class common_learning_signal_type {
     tool_failure,
+    repair_echo_failure,
     successful_recovery,
     reflection_hint,
     user_correction,
@@ -17,6 +18,7 @@ enum class common_learning_signal_type {
 inline const char * common_learning_signal_type_name(common_learning_signal_type type) {
     switch (type) {
         case common_learning_signal_type::tool_failure: return "tool_failure";
+        case common_learning_signal_type::repair_echo_failure: return "repair_echo_failure";
         case common_learning_signal_type::successful_recovery: return "successful_recovery";
         case common_learning_signal_type::reflection_hint: return "reflection_hint";
         case common_learning_signal_type::user_correction: return "user_correction";
@@ -50,11 +52,13 @@ struct common_learning_signal {
             std::string evidence_id = {},
             std::string summary = {},
             std::string tool_family = {},
-            std::string provider_kind = {})
+            std::string provider_kind = {},
+            std::string repair_context_json = {})
         : type(type), plan_id(std::move(plan_id)), step_id(std::move(step_id)),
           tool_name(std::move(tool_name)), evidence_id(std::move(evidence_id)),
           summary(std::move(summary)), tool_family(std::move(tool_family)),
-          provider_kind(std::move(provider_kind)) {}
+          provider_kind(std::move(provider_kind)),
+          repair_context_json(std::move(repair_context_json)) {}
 
     common_learning_signal_type type = common_learning_signal_type::tool_failure;
     std::string plan_id;
@@ -67,4 +71,7 @@ struct common_learning_signal {
     // model-facing family used for policy and corpus views.
     std::string tool_family;
     std::string provider_kind;
+    // Optional bounded host-owned payload for a repair attempt. It is
+    // persisted as evidence context, never treated as a positive repair.
+    std::string repair_context_json;
 };

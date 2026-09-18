@@ -569,17 +569,26 @@ int main(int argc, char ** argv) {
                 trial.evidence_ref = apply_overlay
                     ? "evidence:model-repair-counterfactual-overlay"
                     : "evidence:model-repair-counterfactual-baseline";
-                if (!apply_overlay && result.flydelta_capture) {
+                if (!apply_overlay && result.flydelta_capture && result.flydelta_capture->captured) {
                     baseline_arm_capture = result.flydelta_capture;
                 } else if (apply_overlay && !trial.passed && !baseline_arm_capture) {
                     runner_error = "FlyDelta unknown arm has no baseline capture";
                     return false;
                 } else if (apply_overlay && !trial.passed && baseline_arm_capture &&
-                        result.flydelta_capture) {
+                        result.flydelta_capture && result.flydelta_capture->captured) {
                     arm_diagnostic diagnostic;
                     diagnostic.alpha = alpha;
                     diagnostic.available = true;
                     for (const auto & delta : deltas) {
+                        // layer-input captures are sampled before the cvec is
+                        // injected at the selected basis layer. The same
+                        // layer is therefore a pre-injection control, not a
+                        // propagated intervention measurement. Keep only the
+                        // first downstream layers for arm geometry so the
+                        // layer search cannot rank an artificial zero.
+                        if (delta.layer_index <= basis.directions().front().layer_index) {
+                            continue;
+                        }
                         common_flydelta_representation_diagnostics values;
                         if (!common_flydelta_representation_diagnostics_from_captures(
                                 *baseline_arm_capture, *result.flydelta_capture, delta,
@@ -792,11 +801,13 @@ int main(int argc, char ** argv) {
                                 : common_flydelta_static_overlay{}, &runner_error)) {
                         return false;
                     }
-                    if (!apply_overlay && result.flydelta_capture) {
+                    if (!apply_overlay && result.flydelta_capture &&
+                            result.flydelta_capture->captured) {
                         region_baseline_capture = result.flydelta_capture;
                         region_baseline_margin = margin;
                     }
                     if (apply_overlay && candidate && result.flydelta_capture &&
+                            result.flydelta_capture->captured &&
                             region_baseline_capture) {
                         const auto measurement = std::find_if(deltas.begin(), deltas.end(),
                             [&](const auto & delta) {
@@ -1059,7 +1070,8 @@ int main(int argc, char ** argv) {
                 }
                 diagnostics = {};
                 diagnostics_available = false;
-                if (result.flydelta_capture && region_baseline_capture) {
+                if (result.flydelta_capture && result.flydelta_capture->captured &&
+                        region_baseline_capture) {
                     const uint32_t measured_after = *std::max_element(
                         candidate.layer_indices.begin(), candidate.layer_indices.end());
                     const auto measurement = std::find_if(deltas.begin(), deltas.end(),
@@ -1437,7 +1449,8 @@ int main(int argc, char ** argv) {
                     }
                     diagnostics = {};
                     diagnostics_available = false;
-                    if (generated.flydelta_capture && region_baseline_capture) {
+                    if (generated.flydelta_capture && generated.flydelta_capture->captured &&
+                            region_baseline_capture) {
                         const uint32_t measured_after = *std::max_element(
                             candidate.layer_indices.begin(), candidate.layer_indices.end());
                         const auto measurement = std::find_if(deltas.begin(), deltas.end(),
@@ -1676,7 +1689,8 @@ int main(int argc, char ** argv) {
                                 &runner_error)) return false;
                         diagnostics = {};
                         diagnostics_available = false;
-                        if (candidate != nullptr && generated.flydelta_capture && region_baseline_capture) {
+                        if (candidate != nullptr && generated.flydelta_capture &&
+                                generated.flydelta_capture->captured && region_baseline_capture) {
                             const auto measurement = std::find_if(deltas.begin(), deltas.end(),
                                 [&](const auto & delta) { return delta.layer_index > static_cast<int>(
                                     candidate->anchor_layer_index); });
@@ -2388,10 +2402,12 @@ int main(int argc, char ** argv) {
                             trial.evidence_ref = apply_overlay
                                 ? "evidence:model-repair-l2-scale-search"
                                 : "evidence:model-repair-l2-scale-baseline";
-                            if (!apply_overlay && result.flydelta_capture) {
+                            if (!apply_overlay && result.flydelta_capture &&
+                                    result.flydelta_capture->captured) {
                                 scale_baseline_capture = result.flydelta_capture;
                             }
-                            if (apply_overlay && result.flydelta_capture) {
+                            if (apply_overlay && result.flydelta_capture &&
+                                    result.flydelta_capture->captured && scale_baseline_capture) {
                                 common_flydelta_representation_diagnostics values;
                                 if (!common_flydelta_representation_diagnostics_from_captures(
                                         *scale_baseline_capture, *result.flydelta_capture, *layer2_effect,
@@ -2552,10 +2568,12 @@ int main(int argc, char ** argv) {
                             if (!executed && !result.error_message.empty()) {
                                 runner_error = result.error_message;
                             }
-                            if (!apply_overlay && result.flydelta_capture) {
+                            if (!apply_overlay && result.flydelta_capture &&
+                                    result.flydelta_capture->captured) {
                                 coefficient_baseline_capture = result.flydelta_capture;
                             }
-                            if (apply_overlay && result.flydelta_capture && coefficient_baseline_capture &&
+                            if (apply_overlay && result.flydelta_capture &&
+                                    result.flydelta_capture->captured && coefficient_baseline_capture &&
                                     layer2_effect != deltas.end()) {
                                 if (!common_flydelta_representation_diagnostics_from_captures(
                                         *coefficient_baseline_capture, *result.flydelta_capture,

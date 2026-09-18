@@ -112,6 +112,15 @@ int main() {
         {10, 11, 101, 102}, {10, 11, 202, 102}, decision_pair, error));
     CHECK(decision_pair.first_divergence_index == 2);
     CHECK(common_flydelta_decision_pair_validate(decision_pair, error));
+    decision_pair.decision_pair_id = "flydelta://decision-pair/contrast";
+    decision_pair.fixture_revision = "fixture:v1";
+    decision_pair.positive_ref = "repair:positive";
+    decision_pair.negative_ref = "repair:negative";
+    decision_pair.score_scope = "tool_choice";
+    CHECK(common_flydelta_decision_pair_validate(decision_pair, error));
+    decision_pair.score_scope = "not-a-scope";
+    CHECK(!common_flydelta_decision_pair_validate(decision_pair, error));
+    decision_pair.score_scope = "tool_choice";
     common_flydelta_decision_pair planning_pair;
     CHECK(common_flydelta_decision_pair_from_tokens(
         common_adaptation_evidence_source::planning_revision,

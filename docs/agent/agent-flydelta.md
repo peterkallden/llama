@@ -177,6 +177,16 @@ original call followed by a host-executed canonical repair is recorded as
 the existing threshold for aggregate direction candidates; the bridge itself
 does not activate a `.flyd` artifact.
 
+The model bridge now evaluates a declared fixture verification mode rather
+than treating an executable expected tool as universally correct. Its default
+dataset-repair mode is `normalized_call`: the registry's host normalization and
+schema path is reused, and the normalized model arguments must match the
+host-authored canonical repair. Fixtures may explicitly choose `tool_only` for
+routing-only behavior or `result_oracle` when the canonical host result is the
+actual semantic target. The margin/search objective remains separate from this
+decision: it must compare a fixture-bound positive/negative pair and can guide
+search, but it cannot itself create `HELPED` or learning credit.
+
 The bridge uses the explicit `generation_boundary` capture position. It reads
 the final prompt row in each turn but identifies it as “immediately before the
 model generates the tool call”, rather than as an absolute prompt-row number.
@@ -1614,6 +1624,43 @@ positive-minus-negative capture direction, and coefficient search can combine
 it with another direction without introducing a tool-specific candidate type.
 A missing common prefix, ambiguous divergence or incompatible fingerprint
 fails closed.
+
+Search objective, verification objective and learning authority are separate
+contracts. A model-facing margin is search evidence only; it must be bound to
+the same `behavior_key`, fixture/surface revision and host-selected decision
+pair as the arm being evaluated. Implementations should retain the pair
+identity, positive/negative references and a typed scope such as
+`tool_choice`, `normalized_call`, `selected_arguments` or
+`full_continuation`. A margin improvement may guide Whirlpool, BootstrapZoom,
+UtilityGate, augmentation or coefficient search, but it cannot create
+`HELPED`.
+
+The host verification chain is separate:
+
+```text
+generated arm
+  -> parse and schema validation
+  -> host normalization and execution
+  -> routing check
+  -> semantic verifier (when the fixture supplies one)
+  -> host_outcome
+```
+
+For tool-oriented fixtures the supported verification modes are
+`tool_only`, `normalized_call` and `result_oracle`. The first accepts the
+expected executable tool; the second compares host-normalized arguments with
+the host-authored canonical repair; the third compares the bounded execution
+result with the fixture oracle. A different executable tool remains
+`UNKNOWN` for a tool-selection behavior unless the fixture explicitly declares
+an equivalence policy. Schema-valid or executable is therefore not synonymous
+with semantically correct. Only the host outcome, under the declared
+verification mode, can provide learning credit.
+
+Host normalization must be semantic for the fixture family: equivalent
+predicate forms, measure ordering or irrelevant defaults may normalize to the
+same call, while a different filter predicate or aggregate measure must not.
+This reuses the runtime registry/schema path rather than creating a second
+validator in FlyDelta.
 
 ### 4H. Verified candidate-to-delta materialization — implemented
 

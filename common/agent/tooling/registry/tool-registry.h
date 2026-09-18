@@ -28,6 +28,11 @@ public:
     // invoking the handler. Runtime callers use this to distinguish a bad
     // plan/tool contract from an ordinary handler failure.
     bool validate(const common_registered_tool_call & call, std::string & error) const;
+    // Validates and returns the host-normalized arguments without invoking the
+    // handler. This is useful to compare a model call with a host-authored
+    // canonical repair while reusing the exact runtime contract path.
+    bool normalize_and_validate(const common_registered_tool_call & call,
+            std::string & normalized_arguments, std::string & error) const;
     common_tool_execution_result execute(const common_registered_tool_call & call) const;
     bool contains(const std::string & name) const;
     bool matches_binding(const std::string & name, uint32_t version, const std::string & executor_id) const;

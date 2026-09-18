@@ -75,6 +75,20 @@ public:
         return true;
     }
 
+    bool normalize_call(const std::string & name, const nlohmann::ordered_json & arguments,
+            nlohmann::ordered_json & normalized, std::string & error) const {
+        std::string normalized_text;
+        if (!registry_.normalize_and_validate({name, arguments.dump()}, normalized_text, error)) {
+            return false;
+        }
+        normalized = nlohmann::ordered_json::parse(normalized_text, nullptr, false);
+        if (normalized.is_discarded() || !normalized.is_object()) {
+            error = "host returned invalid normalized tool arguments";
+            return false;
+        }
+        return true;
+    }
+
     bool has_tool(const std::string & name) const { return registry_.contains(name); }
 
 private:
@@ -107,4 +121,3 @@ private:
     common_tool_catalog catalog_;
     common_tool_registry registry_;
 };
-

@@ -52,6 +52,16 @@ common_adaptation_evidence_sources_for_turn(
         matches.push_back(std::move(match));
     }
 
+    if (has_signal(result, common_learning_signal_type::repair_echo_failure)) {
+        common_adaptation_evidence_source_match match;
+        match.source = common_adaptation_evidence_source::tool_repair;
+        match.evidence_refs = signal_evidence(result, common_learning_signal_type::repair_echo_failure);
+        // A failed replay is useful journal material, but it is not a
+        // completed failed -> repaired relation and can never be candidate-ready.
+        match.candidate_ready = false;
+        matches.push_back(std::move(match));
+    }
+
     if (result.reflected || has_signal(result, common_learning_signal_type::reflection_hint)) {
         common_adaptation_evidence_source_match match;
         match.source = common_adaptation_evidence_source::reflection_alternative;

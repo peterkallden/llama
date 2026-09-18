@@ -11,6 +11,7 @@
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-worker.h"
+#include "agent/adaptation/learning-transaction.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "tools/agent/cli/agent-cli-inference.h"
 #include "tools/agent/host/agent-host-config.h"
@@ -39,7 +40,9 @@ struct options {
     std::string model;
     std::string suite;
     std::string config;
+    std::string learning_ledger;
     bool force_deep = false;
+    bool force_tfo_lite = false;
     int n_predict = 128;
     int n_threads = 3;
     int n_gpu_layers = 0;
@@ -49,14 +52,23 @@ struct host_verdict {
     enum class kind { passed, certified_failure, unresolved_alternative } value = kind::certified_failure;
     std::string selected_tool;
     std::string diagnostic;
+    bool schema_valid = false;
+    bool executable = false;
+    bool tool_matches = false;
+    bool normalized_call_matches = false;
 };
 
 bool parse_args(int argc, char ** argv, options & value) {
     if (const char * model = std::getenv("LLAMA_AGENT_MODEL")) value.model = model;
     if (const char * suite = std::getenv("LLAMA_AGENT_DATASET_QUESTION_SUITE")) value.suite = suite;
     if (const char * config = std::getenv("LLAMA_AGENT_CONFIG")) value.config = config;
+    if (const char * ledger = std::getenv("LLAMA_AGENT_LEARNING_LEDGER")) value.learning_ledger = ledger;
     if (const char * force_deep = std::getenv("LLAMA_AGENT_FORCE_DEEP")) {
         value.force_deep = std::string(force_deep) == "1" || std::string(force_deep) == "true";
+    }
+    if (const char * force_tfo = std::getenv("LLAMA_AGENT_FORCE_TFO_LITE")) {
+        value.force_tfo_lite = std::string(force_tfo) == "1" || std::string(force_tfo) == "true";
+        value.force_deep = value.force_deep || value.force_tfo_lite;
     }
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
     for (int index = 1; index < argc; ++index) {
@@ -68,7 +80,9 @@ bool parse_args(int argc, char ** argv, options & value) {
         if (argument == "--model") { const auto v = next("--model"); if (!v) return false; value.model = v; }
         else if (argument == "--suite") { const auto v = next("--suite"); if (!v) return false; value.suite = v; }
         else if (argument == "--config") { const auto v = next("--config"); if (!v) return false; value.config = v; }
+        else if (argument == "--learning-ledger") { const auto v = next("--learning-ledger"); if (!v) return false; value.learning_ledger = v; }
         else if (argument == "--force-deep") value.force_deep = true;
+        else if (argument == "--force-tfo-lite") { value.force_tfo_lite = true; value.force_deep = true; }
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
         else if (argument == "--n-gpu-layers") { const auto v = next("--n-gpu-layers"); if (!v) return false; value.n_gpu_layers = std::stoi(v); }
@@ -85,6 +99,9 @@ struct bootstrap_case {
     std::string question;
     std::string capture_manifest_id;
     std::string delta_id;
+    json canonical_arguments = json::object();
+    std::string verification_mode = "normalized_call";
+    common_tool_execution_result canonical_execution;
 };
 
 std::string tool_family(const std::string & tool_name) {
@@ -107,12 +124,55 @@ bool read_json(const std::string & path, json & value, std::string & error) {
     if (!input) { error = "could not open suite: " + path; return false; }
     std::ostringstream contents;
     contents << input.rdbuf();
-    value = json::parse(contents.str(), nullptr, false);
-    if (value.is_discarded() || !value.is_object() || !value.contains("scenarios") ||
-            !value["scenarios"].is_array()) {
-        error = "dataset repair suite is invalid";
+    const std::string text = contents.str();
+    value = json::parse(text, nullptr, false);
+    if (!value.is_discarded() && value.is_object() && value.contains("scenarios") &&
+            value["scenarios"].is_array()) {
+        return true;
+    }
+
+    // The replay fixture is JSONL because it is also a durable, append-only
+    // learning input. Normalize it to the model smoke's existing suite shape
+    // so the host repair, capture and worker pipeline remain shared.
+    json scenarios = json::array();
+    std::istringstream lines(text);
+    std::string line;
+    size_t line_number = 0;
+    while (std::getline(lines, line)) {
+        ++line_number;
+        if (line.empty()) continue;
+        const auto entry = json::parse(line, nullptr, false);
+        if (entry.is_discarded() || !entry.is_object() ||
+                !entry.contains("id") || !entry.contains("question") ||
+                !entry.contains("expected_tool") || !entry.contains("canonical_repair") ||
+                !entry["canonical_repair"].is_object() ||
+                !entry["canonical_repair"].contains("arguments")) {
+            error = "dataset repair replay is invalid at line " + std::to_string(line_number);
+            return false;
+        }
+        json scenario = entry;
+        json steps = json::array();
+        steps.push_back({
+            {"tool", entry["expected_tool"]},
+            {"args", entry["canonical_repair"]["arguments"]},
+        });
+        scenario["plan"] = {
+            {"goal", "Replay a host-constructed canonical repair from JSONL"},
+            {"steps", std::move(steps)},
+        };
+        scenarios.push_back(std::move(scenario));
+    }
+    if (scenarios.empty()) {
+        error = "dataset repair suite or replay is invalid";
         return false;
     }
+    value = {
+        {"schema_version", 1},
+        {"id", "flydelta://fixture/dataset-repair-replay"},
+        {"dataset", "dataset://local/sales"},
+        {"replay_mode", true},
+        {"scenarios", std::move(scenarios)},
+    };
     return true;
 }
 
@@ -124,8 +184,23 @@ std::string preview(const common_agent_generation_result & result) {
     return output;
 }
 
+bool result_oracle_matches(
+        const common_tool_execution_result & actual,
+        const common_tool_execution_result & expected) {
+    if (!actual.ok || !expected.ok) return false;
+    const json actual_json = json::parse(actual.output, nullptr, false);
+    const json expected_json = json::parse(expected.output, nullptr, false);
+    if (!actual_json.is_discarded() && !expected_json.is_discarded()) {
+        return actual_json == expected_json;
+    }
+    return actual.output == expected.output;
+}
+
 host_verdict verify_model_call(const common_agent_generation_result & result,
-        const std::string & expected_tool, agent_flydelta_dataset_repair_host & host) {
+        const std::string & expected_tool, const json & expected_arguments,
+        const std::string & verification_mode,
+        const common_tool_execution_result * expected_execution,
+        agent_flydelta_dataset_repair_host & host) {
     host_verdict verdict;
     if (!common_agent_generation_succeeded(result)) {
         verdict.diagnostic = "model generation failed";
@@ -138,12 +213,21 @@ host_verdict verify_model_call(const common_agent_generation_result & result,
         return verdict;
     }
     verdict.selected_tool = parsed["name"].get<std::string>();
+    json normalized_arguments;
+    std::string normalize_error;
+    if (!host.normalize_call(verdict.selected_tool, parsed["arguments"], normalized_arguments, normalize_error)) {
+        verdict.diagnostic = "host rejected tool arguments: " + normalize_error;
+        return verdict;
+    }
+    verdict.schema_valid = true;
     common_tool_execution_result execution;
     std::string error;
     if (!host.execute_call(verdict.selected_tool, parsed["arguments"], execution, error)) {
         verdict.diagnostic = "host rejected tool call: " + error;
         return verdict;
     }
+    verdict.executable = true;
+    verdict.tool_matches = verdict.selected_tool == expected_tool;
     if (verdict.selected_tool != expected_tool) {
         // A different executable read-only tool can still be semantically
         // useful. This fixture has no equivalence oracle, so it remains
@@ -152,8 +236,28 @@ host_verdict verify_model_call(const common_agent_generation_result & result,
         verdict.diagnostic = "different executable tool; semantic equivalence is unknown";
         return verdict;
     }
+    json normalized_expected;
+    if (!host.normalize_call(expected_tool, expected_arguments, normalized_expected, normalize_error)) {
+        verdict.diagnostic = "host canonical repair is invalid: " + normalize_error;
+        return verdict;
+    }
+    verdict.normalized_call_matches = normalized_arguments == normalized_expected;
+    if (verification_mode == "normalized_call" && !verdict.normalized_call_matches) {
+        verdict.diagnostic = "expected tool executed, but normalized arguments differ from canonical repair";
+        return verdict;
+    }
+    if (verification_mode == "result_oracle") {
+        if (expected_execution == nullptr || !result_oracle_matches(execution, *expected_execution)) {
+            verdict.diagnostic = "expected tool executed, but result oracle did not match";
+            return verdict;
+        }
+    }
     verdict.value = host_verdict::kind::passed;
-    verdict.diagnostic = "host executed the expected canonical tool";
+    verdict.diagnostic = verification_mode == "tool_only"
+        ? "host executed the expected tool"
+        : verification_mode == "result_oracle"
+            ? "host executed the expected tool and result matched the oracle"
+            : "host executed the expected canonical normalized call";
     return verdict;
 }
 
@@ -200,7 +304,8 @@ int main(int argc, char ** argv) {
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL --suite SUITE_JSON [--config AGENT_CONFIG]"
-                  << " [--force-deep]"
+                  << " [--learning-ledger JSONL]"
+                  << " [--force-deep|--force-tfo-lite]"
                   << " [--threads N] [--n-gpu-layers N]\n";
         return 2;
     }
@@ -267,17 +372,40 @@ int main(int argc, char ** argv) {
 
     auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
     capture->enabled = true;
-    for (uint32_t layer = 1; layer < n_layers && layer <= 4; ++layer) capture->layer_indices.push_back(layer);
+    // Use the full bounded layer profile. Layer discovery/Whirlpool selects
+    // intervention anchors from these captures; it must not be constrained
+    // to the early-layer smoke subset.
+    for (uint32_t layer = 1; layer < n_layers; ++layer) capture->layer_indices.push_back(layer);
     capture->token_index = -1;
     capture->position = common_flydelta_capture_position::generation_boundary;
     capture->max_bytes = 4U * 1024U * 1024U;
     capture->model_profile_fingerprint = "sha256:flydelta-dataset-question-repair";
     capture->capture_layout_revision = "layer-input:generation-boundary:v1";
 
+    std::filesystem::path learning_ledger_path;
+    bool remove_learning_ledger = false;
+    if (value.learning_ledger.empty()) {
+        learning_ledger_path = std::filesystem::temp_directory_path() /
+            "llama-agent-flydelta-repair-echo-learning.jsonl";
+        remove_learning_ledger = true;
+        std::error_code remove_error;
+        std::filesystem::remove(learning_ledger_path, remove_error);
+    } else {
+        learning_ledger_path = value.learning_ledger;
+    }
+    common_learning_jsonl_transaction_store learning_ledger;
+    if (!learning_ledger.open(learning_ledger_path, error)) {
+        host.close();
+        std::cerr << "could not open learning ledger: " << error << '\n';
+        return 1;
+    }
+
     std::map<std::string, std::vector<common_flydelta_contrast_sample>> samples_by_behavior;
     std::map<std::string, bootstrap_case> bootstrap_cases_by_delta;
     std::map<std::string, std::vector<common_flydelta_behavior_delta>> deltas_by_case;
-    size_t passed = 0, unresolved = 0, failures = 0, repaired = 0;
+    size_t passed = 0, unresolved = 0, failures = 0, repaired = 0, synthetic_repairs = 0,
+        repair_echo_failures = 0;
+    const bool replay_mode = suite.value("replay_mode", false);
     for (const auto & scenario : suite["scenarios"]) {
         const auto id = scenario.value("id", "unnamed");
         const auto expected = scenario.value("expected_tool", "");
@@ -291,10 +419,20 @@ int main(int argc, char ** argv) {
             std::cout << "scenario=" << id << " host_verifier=unavailable error=" << error << '\n';
             continue;
         }
+        const json canonical_repair = {{"name", expected}, {"arguments", steps.front()["args"]}};
+        const std::string verification_mode = scenario.value("verification_mode", "normalized_call");
+        if (verification_mode != "tool_only" && verification_mode != "normalized_call" &&
+                verification_mode != "result_oracle") {
+            host.close();
+            std::cerr << "scenario has invalid verification_mode: " << id << '\n';
+            return 1;
+        }
 
         common_agent_generation_result failed_result;
         const bool generated = inference->generate(make_request(value, contract, scenario.value("question", ""), capture), failed_result);
-        const auto failed_verdict = verify_model_call(failed_result, expected, host);
+        const auto failed_verdict = verify_model_call(
+            failed_result, expected, canonical_repair["arguments"], verification_mode,
+            &canonical_execution, host);
         if (generated && failed_verdict.value == host_verdict::kind::passed) {
             ++passed;
             std::cout << "scenario=" << id << " host_outcome=passed selected=" << failed_verdict.selected_tool
@@ -308,18 +446,127 @@ int main(int argc, char ** argv) {
             continue;
         }
         ++failures;
-        const json canonical_repair = {{"name", expected}, {"arguments", steps.front()["args"]}};
         const std::string repair_request = "The host rejected the prior tool-call attempt (" +
             failed_verdict.diagnostic + "). The host constructed the canonical repair below. " +
             "Return this JSON object unchanged, including both name and arguments, with no markdown or explanation: " +
             canonical_repair.dump();
         common_agent_generation_result repaired_result;
         const bool repair_generated = inference->generate(make_request(value, contract, repair_request, capture), repaired_result);
-        const auto repaired_verdict = verify_model_call(repaired_result, expected, host);
+        const auto repaired_verdict = verify_model_call(
+            repaired_result, expected, canonical_repair["arguments"], verification_mode,
+            &canonical_execution, host);
         const bool capture_pair = failed_result.flydelta_capture && repaired_result.flydelta_capture &&
             failed_result.flydelta_capture->captured && repaired_result.flydelta_capture->captured;
-        if (!repair_generated || repaired_verdict.value != host_verdict::kind::passed || !capture_pair) {
+        const bool synthetic_repair = replay_mode && repair_generated && capture_pair &&
+            repaired_verdict.value == host_verdict::kind::passed;
+        if ((!repair_generated || repaired_verdict.value != host_verdict::kind::passed || !capture_pair) &&
+                !synthetic_repair) {
+            const auto echo_evidence_id = "evidence:dataset-repair:" + id + ":repair-echo-failure";
+            const json echo_context = {
+                {"kind", "repair_echo_failure"},
+                {"expected_tool", expected},
+                {"canonical_repair", canonical_repair},
+                {"failed_output", failed_result.content},
+                {"repair_output", repaired_result.content},
+                {"diagnostic", repaired_verdict.diagnostic},
+                {"host_evaluated", true},
+                {"verifier_known", repaired_verdict.value != host_verdict::kind::unresolved_alternative},
+                {"host_outcome", "UNKNOWN"},
+                {"learning_credit", false},
+            };
+            common_learning_transaction echo_transaction;
+            echo_transaction.id = "learning://observation/repair-echo-failure/" + id;
+            echo_transaction.created_at = "2026-09-17T00:00:00Z";
+            echo_transaction.observation.id = echo_transaction.id;
+            echo_transaction.observation.scope.namespace_id = "local";
+            echo_transaction.observation.scope.session_id = "flydelta-dataset-repair";
+            echo_transaction.observation.scope.project_id = "dataset-question-suite";
+            echo_transaction.observation.scope.turn_id = "turn:dataset-repair:" + id;
+            echo_transaction.observation.source_turn_id = echo_transaction.observation.scope.turn_id;
+            echo_transaction.observation.source_plan_id = "plan:" + echo_transaction.observation.scope.turn_id;
+            common_learning_signal echo_signal(
+                common_learning_signal_type::repair_echo_failure,
+                echo_transaction.observation.source_plan_id,
+                "repair-echo:" + id,
+                expected,
+                echo_evidence_id,
+                "model failed to replay the host-constructed canonical repair",
+                tool_family(expected),
+                "native");
+            echo_signal.repair_context_json = echo_context.dump();
+            echo_transaction.observation.signals.push_back(std::move(echo_signal));
+            echo_transaction.observation.evidence_ids = {echo_evidence_id};
+            echo_transaction.observation.cause = common_learning_cause::model_behavior;
+            echo_transaction.observation.verification = common_learning_verification::unverified;
+            echo_transaction.observation.idempotency_key = echo_transaction.id + ":idempotency";
+            echo_transaction.observation.collection_allowed = true;
+            echo_transaction.observation.content_hash = common_learning_observation_hash(
+                echo_transaction.observation);
+            if (!common_learning_transaction_validate(echo_transaction, 16, error) ||
+                    !learning_ledger.append(echo_transaction, error)) {
+                host.close();
+                std::cerr << "could not persist repair-echo failure: " << error << '\n';
+                return 1;
+            }
+            ++repair_echo_failures;
             std::cout << "scenario=" << id << " host_outcome=repair_failed selected=" << repaired_verdict.selected_tool
+                      << " failed_output=" << preview(failed_result)
+                      << " repaired_output=" << preview(repaired_result)
+                      << " persisted=" << echo_transaction.id << '\n';
+            continue;
+        }
+
+        if (synthetic_repair) {
+            // The replay log supplies a host-constructed canonical repair, but
+            // this branch deliberately does not claim host-certified learning
+            // evidence. It only turns the real Qwen baseline/repair captures
+            // into experimental material for layer discovery and search.
+            common_flydelta_capture_manifest manifest;
+            manifest.id = "flydelta://capture/dataset-repair-replay/" + id;
+            manifest.observation_id = "learning://observation/repair-echo-failure/" + id;
+            manifest.behavior_key = behavior_key;
+            manifest.model_profile_fingerprint = capture->model_profile_fingerprint;
+            manifest.template_fingerprint = "template:dataset-question-compact-v1";
+            manifest.execution_context_fingerprint = "sha256:dataset-question-context-v1";
+            manifest.positive_execution_ref = "execution:dataset-repair-replay:" + id + ":synthetic-repaired";
+            manifest.negative_execution_ref = "execution:dataset-repair-replay:" + id + ":failed";
+            manifest.capture_layout_revision = capture->capture_layout_revision;
+            manifest.evidence_hash = "sha256:dataset-repair-replay:" + id;
+            manifest.redaction_attested = true;
+            manifest.captured_bytes = (failed_result.flydelta_capture->values.size() +
+                repaired_result.flydelta_capture->values.size()) * sizeof(float);
+            if (!common_flydelta_capture_manifest_validate(
+                    manifest, 64U * 1024U * 1024U, error)) {
+                host.close();
+                std::cerr << "synthetic replay manifest failed: " << error << '\n';
+                return 1;
+            }
+            std::vector<common_flydelta_behavior_delta> replay_deltas;
+            if (!common_flydelta_behavior_deltas_from_captures(
+                    manifest, *failed_result.flydelta_capture, *repaired_result.flydelta_capture,
+                    "evidence:dataset-repair-replay:" + id,
+                    64U * 1024U * 1024U, 64U * 1024U * 1024U, replay_deltas, error)) {
+                host.close();
+                std::cerr << "synthetic replay delta failed: " << error << '\n';
+                return 1;
+            }
+            common_flydelta_intervention_credit credit;
+            credit.experiment_id = "flydelta://replay-experiment/" + id;
+            credit.candidate_id = "flydelta://replay-candidate/" + id;
+            credit.fixture_id = "flydelta://dataset-question-replay/" + id;
+            credit.outcome = common_flydelta_counterfactual_outcome::unknown;
+            credit.quality_delta = 0.0f;
+            credit.eligible_for_learning = false;
+            for (const auto & delta : replay_deltas) {
+                bootstrap_cases_by_delta[delta.id] = {
+                    id, behavior_key, expected, scenario.value("question", ""), manifest.id, delta.id,
+                    canonical_repair["arguments"], verification_mode, canonical_execution};
+                deltas_by_case[id].push_back(delta);
+                if (delta.layer_index == 2) samples_by_behavior[behavior_key].push_back({delta, credit});
+            }
+            ++synthetic_repairs;
+            std::cout << "scenario=" << id << " host_outcome=synthetic_repair_observation"
+                      << " selected=" << repaired_verdict.selected_tool
                       << " failed_output=" << preview(failed_result)
                       << " repaired_output=" << preview(repaired_result) << '\n';
             continue;
@@ -368,7 +615,8 @@ int main(int argc, char ** argv) {
         credit.eligible_for_learning = true;
         for (const auto & delta : deltas) {
             bootstrap_cases_by_delta[delta.id] = {
-                id, behavior_key, expected, scenario.value("question", ""), manifest.id, delta.id};
+                id, behavior_key, expected, scenario.value("question", ""), manifest.id, delta.id,
+                canonical_repair["arguments"], verification_mode, canonical_execution};
             deltas_by_case[id].push_back(delta);
             if (delta.layer_index != 2) continue;
             samples_by_behavior[behavior_key].push_back({delta, credit});
@@ -400,7 +648,9 @@ int main(int argc, char ** argv) {
               << " passed=" << passed << " failures=" << failures << " unresolved=" << unresolved
               << " config=" << (value.config.empty() ? "none" : value.config)
               << " selected_scenarios=" << selected_scenarios
-              << " host_certified_repairs=" << repaired << '\n';
+              << " host_certified_repairs=" << repaired
+              << " synthetic_repair_observations=" << synthetic_repairs
+              << " repair_echo_failures=" << repair_echo_failures << '\n';
     for (const auto & entry : samples_by_behavior) {
         common_flydelta_direction_search_config direction_config;
         direction_config.dimension = n_embd;
@@ -410,6 +660,13 @@ int main(int argc, char ** argv) {
         direction_config.min_median_alignment = depth_config.min_median_alignment;
         direction_config.trim_fraction = 0.20f;
         direction_config.variance_ridge = 0.001f;
+        // Replay captures are real model-facing observations, but their
+        // canonical repair comes from the host fixture and therefore has no
+        // positive learning credit. Keep them available for experimental
+        // direction/search work without admitting them to learning mode.
+        direction_config.mode = replay_mode
+            ? common_flydelta_direction_search_mode::experimental
+            : common_flydelta_direction_search_mode::learning;
         direction_config.source = common_adaptation_evidence_source::tool_repair;
         direction_config.behavior_key = entry.first;
         direction_config.model_profile_fingerprint = capture->model_profile_fingerprint;
@@ -489,7 +746,14 @@ int main(int argc, char ** argv) {
                 return 1;
             }
             const auto deep_case = deep_case_it->second;
-            const auto deep_delta = aggregation_snapshot_for_deep.retained_samples.front().delta;
+            const auto deep_case_deltas_it = deltas_by_case.find(deep_case.id);
+            if (deep_case_deltas_it == deltas_by_case.end() || deep_case_deltas_it->second.empty()) {
+                std::cerr << "forced Deep sample has no per-layer model captures: "
+                          << deep_case.id << '\n';
+                host.close();
+                return 1;
+            }
+            const auto & deep_case_deltas = deep_case_deltas_it->second;
             common_flydelta_experiment_fixture deep_fixture;
             deep_fixture.id = "flydelta://fixture/deep/" + deep_case.id;
             deep_fixture.task_fingerprint = "sha256:dataset-question:" + deep_case.id;
@@ -503,7 +767,9 @@ int main(int argc, char ** argv) {
             deep_config.max_rank = 2;
             deep_config.max_directions = 4;
             deep_config.full_generation_top_k = 3;
-            deep_config.coefficients.strategy = common_flydelta_coefficient_search_strategy::coordinate;
+            deep_config.coefficients.strategy = value.force_tfo_lite
+                ? common_flydelta_coefficient_search_strategy::tfo_lite
+                : common_flydelta_coefficient_search_strategy::coordinate;
             deep_config.coefficients.step = 0.05f;
             deep_config.coefficients.max_candidates = 8;
             deep_config.coefficients.max_l2_norm = 0.32f;
@@ -564,7 +830,9 @@ int main(int argc, char ** argv) {
                 generated_result = {};
                 const bool generated = inference->generate(make_request(
                     value, contract, deep_case.question, capture, activation_ptr), generated_result);
-                const auto verdict = verify_model_call(generated_result, deep_case.expected_tool, host);
+                const auto verdict = verify_model_call(
+                    generated_result, deep_case.expected_tool, deep_case.canonical_arguments,
+                    deep_case.verification_mode, &deep_case.canonical_execution, host);
                 trial = {};
                 trial.executed = generated;
                 trial.verifier_known = generated &&
@@ -576,12 +844,31 @@ int main(int argc, char ** argv) {
                 trial.evidence_ref = apply_overlay
                     ? "evidence:flydelta-deep-overlay" : "evidence:flydelta-deep-baseline";
                 margin = {};
-                if (!apply_overlay && generated_result.flydelta_capture) {
+                if (!apply_overlay && generated_result.flydelta_capture &&
+                        generated_result.flydelta_capture->captured) {
                     deep_baseline_capture = generated_result.flydelta_capture;
                 }
-                if (apply_overlay && generated_result.flydelta_capture && deep_baseline_capture) {
+                if (apply_overlay && generated_result.flydelta_capture &&
+                        generated_result.flydelta_capture->captured && deep_baseline_capture) {
+                    // Captures use the layer-input layout: the requested
+                    // layer is sampled before its own overlay injection.
+                    // Measuring the repair delta at the same layer therefore
+                    // reports the pre-injection state and makes every arm
+                    // look like a zero shift. Use the first captured
+                    // downstream layer, just as the normal region runner
+                    // does, so coordinate and TFO diagnostics describe the
+                    // actual propagated intervention.
+                    const auto measurement_it = std::find_if(deep_case_deltas.begin(),
+                        deep_case_deltas.end(), [&](const auto & delta) {
+                            return delta.layer_index > basis.layer_index;
+                        });
+                    if (measurement_it == deep_case_deltas.end()) {
+                        runner_error = "forced Deep has no downstream capture for geometry";
+                        return false;
+                    }
                     if (!common_flydelta_representation_diagnostics_from_captures(
-                            *deep_baseline_capture, *generated_result.flydelta_capture, deep_delta,
+                            *deep_baseline_capture, *generated_result.flydelta_capture,
+                            *measurement_it,
                             64U * 1024U * 1024U, geometry, runner_error)) return false;
                     geometry_available = true;
                 }
@@ -652,7 +939,10 @@ int main(int argc, char ** argv) {
                 deep_result.coefficient_trials.size() - deep_group_full_generation_trials;
             deep_diagnostic_trials += deep_group_diagnostic_trials;
             std::cout << "flydelta_deep_search group=" << entry.first
-                      << " forced=yes basis_rank=" << deep_result.basis.vectors.size()
+                      << " forced=yes strategy="
+                      << common_flydelta_coefficient_search_strategy_name(
+                          deep_config.coefficients.strategy)
+                      << " basis_rank=" << deep_result.basis.vectors.size()
                       << " diagnostic_trials=" << deep_group_diagnostic_trials
                       << " full_generation_trials=" << deep_group_full_generation_trials
                       << " selected=" << (deep_result.coefficient_selection.selected ? "yes" : "no")
@@ -881,7 +1171,8 @@ int main(int argc, char ** argv) {
                             value, contract, bootstrap_case.question, capture, activation_ptr),
                             generated_result);
                         const auto verdict = verify_model_call(generated_result,
-                            bootstrap_case.expected_tool, host);
+                            bootstrap_case.expected_tool, bootstrap_case.canonical_arguments,
+                            bootstrap_case.verification_mode, &bootstrap_case.canonical_execution, host);
                         if (!apply_overlay) baseline_tool = verdict.selected_tool;
                         else candidate_tools[candidate->anchor_layer_index] = verdict.selected_tool;
                         trial = {};
@@ -901,10 +1192,12 @@ int main(int argc, char ** argv) {
                             : "evidence:flydelta-search-baseline";
                         margin = {};
                         geometry = {};
-                        if (!apply_overlay && generated_result.flydelta_capture) {
+                        if (!apply_overlay && generated_result.flydelta_capture &&
+                                generated_result.flydelta_capture->captured) {
                             baseline_capture = generated_result.flydelta_capture;
                         }
-                        if (apply_overlay && generated_result.flydelta_capture && baseline_capture) {
+                        if (apply_overlay && generated_result.flydelta_capture &&
+                                generated_result.flydelta_capture->captured && baseline_capture) {
                             const uint32_t measured_after = *std::max_element(
                                 candidate->layer_indices.begin(), candidate->layer_indices.end());
                             // Layer-input capture is taken before the
@@ -983,6 +1276,32 @@ int main(int argc, char ** argv) {
                       << " json=" << worker_report.trace_json << '\n';
         }
     }
+    std::string ledger_error;
+    const auto persisted_learning = learning_ledger.list(ledger_error);
+    if (!ledger_error.empty()) {
+        host.close();
+        std::cerr << "could not read persisted repair-echo failures: " << ledger_error << '\n';
+        return 1;
+    }
+    size_t persisted_echo_failures = 0;
+    for (const auto & persisted : persisted_learning) {
+        for (const auto & signal : persisted.observation.signals) {
+            if (signal.type == common_learning_signal_type::repair_echo_failure) {
+                ++persisted_echo_failures;
+                if (signal.repair_context_json.empty()) {
+                    host.close();
+                    std::cerr << "persisted repair-echo failure is missing repair context\n";
+                    return 1;
+                }
+            }
+        }
+    }
+    if (persisted_echo_failures != repair_echo_failures) {
+        host.close();
+        std::cerr << "persisted repair-echo failure count mismatch: expected "
+                  << repair_echo_failures << " got " << persisted_echo_failures << '\n';
+        return 1;
+    }
     host.close();
     std::filesystem::remove_all(worker_root, ignored);
     std::cout << "flydelta_depth_summary layer2_samples=" << layer2_samples
@@ -991,7 +1310,14 @@ int main(int argc, char ** argv) {
               << " direction_candidates=" << direction_candidates
               << " forced_deep_searches=" << deep_search_executed
               << " forced_deep_full_generation_trials=" << deep_full_generation_trials
+              << " forced_tfo_lite=" << (value.force_tfo_lite ? "yes" : "no")
               << " bootstrap_overlay_evaluated=yes"
-              << " deep_search_executed=" << (deep_search_executed != 0 ? "yes" : "no") << '\n';
+              << " deep_search_executed=" << (deep_search_executed != 0 ? "yes" : "no")
+              << " repair_echo_persisted=" << persisted_echo_failures
+              << " learning_ledger=" << learning_ledger_path << '\n';
+    if (remove_learning_ledger) {
+        std::error_code ledger_remove_error;
+        std::filesystem::remove(learning_ledger_path, ledger_remove_error);
+    }
     return 0;
 }

@@ -1064,6 +1064,19 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Deterministic replay of model-facing repair failures. This exercises the
+# durable learning observation seam without loading a model or a data backend.
+set(TARGET llama-agent-flydelta-repair-echo-replay-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-repair-echo-replay-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # The repair contract uses the same native data adapters and Cozo-backed
 # fixture as a host turn. Keep it conditional because Android intentionally
 # omits Cozo from its reduced agent build.
@@ -2122,6 +2135,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-flydelta-dataset-question-contract-smoke
+    llama-agent-flydelta-repair-echo-replay-smoke
     llama-agent-resident-smoke
     llama-agent-model-residency-smoke
     llama-agent-two-model-smoke
@@ -2323,6 +2337,11 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-contract-smoke>
             ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json)
     set_property(TEST llama-agent-flydelta-dataset-question-contract-ctest PROPERTY LABELS agent-adaptation)
+
+    add_test(NAME llama-agent-flydelta-repair-echo-replay-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-repair-echo-replay-smoke>
+            ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-repair-echo-replay.jsonl)
+    set_property(TEST llama-agent-flydelta-repair-echo-replay-ctest PROPERTY LABELS agent-adaptation)
 
     if (LLAMA_MEMORY_COZO)
         add_test(NAME llama-agent-flydelta-dataset-question-repair-contract-ctest

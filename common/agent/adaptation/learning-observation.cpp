@@ -30,6 +30,7 @@ bool common_learning_observation_qualifies(const common_learning_observation & o
     for (const auto & signal : observation.signals) {
         switch (signal.type) {
             case common_learning_signal_type::tool_failure:
+            case common_learning_signal_type::repair_echo_failure:
             case common_learning_signal_type::successful_recovery:
             case common_learning_signal_type::reflection_hint:
             case common_learning_signal_type::user_correction:
@@ -55,6 +56,12 @@ bool common_learning_observation_validate(
     if (observation.idempotency_key.empty()) { error = "learning observation requires idempotency key"; return false; }
     if (observation.signals.empty()) { error = "learning observation requires signal"; return false; }
     if (observation.evidence_ids.size() > max_evidence) { error = "learning observation exceeds evidence bound"; return false; }
+    for (const auto & signal : observation.signals) {
+        if (signal.repair_context_json.size() > 64U * 1024U) {
+            error = "learning observation repair context exceeds byte bound";
+            return false;
+        }
+    }
     for (const auto & evidence_id : observation.evidence_ids) {
         if (evidence_id.empty()) { error = "learning observation contains empty evidence id"; return false; }
     }
@@ -82,7 +89,7 @@ std::string common_learning_observation_canonical(const common_learning_observat
             << signal.plan_id << '\x1f' << signal.step_id << '\x1f'
             << signal.tool_name << '\x1f' << signal.evidence_id << '\x1f'
             << signal.summary << '\x1f' << signal.tool_family << '\x1f'
-            << signal.provider_kind << '\n';
+            << signal.provider_kind << '\x1f' << signal.repair_context_json << '\n';
     }
     for (const auto & evidence_id : observation.evidence_ids) out << evidence_id << '\n';
     return out.str();

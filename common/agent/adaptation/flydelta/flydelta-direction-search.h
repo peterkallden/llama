@@ -46,7 +46,17 @@ struct common_flydelta_contrast_sample {
 struct common_flydelta_decision_pair {
     int schema_version = 1;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    // Optional host provenance. Older callers may leave these empty, but a
+    // model-facing margin should populate them before it enters a search
+    // trace so the pair cannot be confused with another fixture/surface.
+    std::string decision_pair_id;
     std::string behavior_key;
+    std::string fixture_revision;
+    std::string positive_ref;
+    std::string negative_ref;
+    // Examples: tool_choice, normalized_call, selected_arguments,
+    // full_continuation.
+    std::string score_scope;
     std::vector<int32_t> positive_tokens;
     std::vector<int32_t> negative_tokens;
     int32_t first_divergence_index = -1;
