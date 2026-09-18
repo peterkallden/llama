@@ -683,7 +683,9 @@ int main() {
         status_command.type = common_agent_daemon_command_type::get_status;
         if (!flydelta_dispatcher.execute(status_command, status_result, status_error) ||
                 !status_result.status.flydelta_worker_configured ||
-                status_result.status.flydelta_worker_count != 1) {
+                status_result.status.flydelta_worker_count != 1 ||
+                !status_result.status.flydelta_model_adapter_configured ||
+                !status_result.status.flydelta_model_adapter_search_supported) {
             std::fprintf(stderr, "FlyDelta daemon lane status was not observable: %s\n",
                 status_error.c_str());
             return 1;

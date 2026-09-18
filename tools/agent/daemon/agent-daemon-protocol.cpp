@@ -502,6 +502,9 @@ void append_agent_daemon_status_snapshot(
     response["flydelta_worker_configured"] = status.flydelta_worker_configured;
     response["flydelta_worker_count"] = status.flydelta_worker_count;
     response["flydelta_workers_running"] = status.flydelta_workers_running;
+    response["flydelta_model_adapter_configured"] = status.flydelta_model_adapter_configured;
+    response["flydelta_model_adapter_search_supported"] =
+        status.flydelta_model_adapter_search_supported;
     response["accepting_commands"] = status.accepting_commands;
     response["shutdown_requested"] = status.shutdown_requested;
     response["sessions"] = status.session_count;

@@ -200,6 +200,8 @@ struct common_agent_daemon_status {
     bool flydelta_worker_configured = false;
     size_t flydelta_worker_count = 0;
     size_t flydelta_workers_running = 0;
+    bool flydelta_model_adapter_configured = false;
+    bool flydelta_model_adapter_search_supported = false;
     bool accepting_commands = false;
     bool shutdown_requested = false;
     size_t queued_command_count = 0;
