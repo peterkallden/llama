@@ -24,9 +24,15 @@ bool validate_search_pipeline_result(
     }
     for (const auto & direction : result.directions) {
         if (!common_flydelta_direction_candidate_validate(
-                direction.direction, config.dimension, error) ||
-                !common_flydelta_layer_search_plan_validate(
+                direction.direction, config.dimension, error)) return false;
+        // Region/Whirlpool search deliberately does not populate the
+        // classic layer-search plan. Validate the representation that the
+        // bounded slice actually produced instead of rejecting a valid
+        // region result as an incomplete layer plan.
+        if (direction.region_trials.empty()) {
+            if (!common_flydelta_layer_search_plan_validate(
                     direction.layer_plan, config.layer, error)) return false;
+        }
         for (const auto & trial : direction.layer_trials) {
             if (!common_flydelta_layer_search_trial_validate(trial, error)) return false;
         }

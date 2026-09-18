@@ -296,6 +296,7 @@ bool common_flydelta_experiment_worker_run_once(
     bool succeeded = callback && callback(claimed.job, result, callback_error);
     if (succeeded) append_derived_trace(claimed.job, result, result.trace);
     if (succeeded && !validate_result(claimed, result, callback_error)) succeeded = false;
+    if (!succeeded && error.empty() && !callback_error.empty()) error = callback_error;
 
     const auto state = succeeded
         ? common_flydelta_experiment_queue_state::succeeded
