@@ -2,6 +2,7 @@
 #include "../runtime/agent-server-generation.h"
 
 #include "agent/agent-prepared-generation.h"
+#include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "server-context.h"
 #include "server-task.h"
 
@@ -95,6 +96,27 @@ void apply_server_error(
     } else {
         result.error_message = std::move(fallback_error);
     }
+}
+
+void apply_server_capture(
+        const server_task_result_cmpl_final & response,
+        const common_agent_generation_request & request,
+        common_agent_generation_result & result) {
+    if (!request.flydelta_capture || !request.flydelta_capture->enabled ||
+            !response.capture.attempted) {
+        return;
+    }
+    auto capture = std::make_shared<common_flydelta_hidden_state_capture>();
+    capture->model_profile_fingerprint = response.capture.model_profile_fingerprint;
+    capture->capture_layout_revision = response.capture.capture_layout_revision;
+    capture->layer_indices = response.capture.layer_indices;
+    capture->position = static_cast<common_flydelta_capture_position>(response.capture.position);
+    capture->token_index = response.capture.token_index;
+    capture->n_embd = response.capture.n_embd;
+    capture->values = response.capture.values;
+    capture->captured = response.capture.captured;
+    capture->failure_reason = response.capture.failure_reason;
+    result.flydelta_capture = std::move(capture);
 }
 
 bool record_schema_partial(
@@ -345,11 +367,119 @@ public:
             }
 
             apply_server_success(result, std::move(content), decoded_tokens, stop_reason);
+            if (const auto * final_response = dynamic_cast<const server_task_result_cmpl_final *>(response)) {
+                apply_server_capture(*final_response, request, result);
+            }
             resident_trace("nonstream-success", request);
             return true;
         } catch (const std::exception & err) {
             apply_server_error(nullptr, result, common_agent_generation_status::errored, common_agent_generation_stop_reason::error, err.what());
             std::fprintf(stderr, "server_context agent inference failed: %s\n", err.what());
+            return false;
+        }
+    }
+
+    bool score_teacher_forced_choice(
+            const common_agent_teacher_forced_choice_request & request,
+            common_agent_teacher_forced_choice_result & result) override {
+        result = {};
+
+        try {
+            std::string flydelta_error;
+            if (!server_context_agent_generation_supports_flydelta(request.context, flydelta_error)) {
+                result.error_message = flydelta_error;
+                return false;
+            }
+
+            const std::string & positive = request.positive_continuation.empty()
+                ? request.positive_choice : request.positive_continuation;
+            const std::string & negative = request.negative_continuation.empty()
+                ? request.negative_choice : request.negative_continuation;
+            if (request.choice_prefix.empty() || positive.empty() || negative.empty()) {
+                result.error_message = "server teacher-forced scoring requires a prefix and two continuations";
+                return false;
+            }
+            if (!request.context.input_resources.empty()) {
+                result.error_message = "server teacher-forced scoring does not support multimodal resources yet";
+                return false;
+            }
+
+            common_agent_prepared_generation prepared;
+            common_chat_params chat_params;
+            if (!common_agent_prepare_chat_generation(
+                    templates, request.context, prepared, &chat_params)) {
+                result.error_message = "failed to prepare server teacher-forced scoring prompt";
+                return false;
+            }
+
+            const std::string prefix = prepared.prompt + request.choice_prefix;
+            auto make_score_task = [&](server_response_reader & reader, const std::string & continuation) {
+                server_task task(SERVER_TASK_TYPE_TEACHER_FORCED_SCORE);
+                task.id = reader.get_new_id();
+                task.cli = true;
+                task.cli_prompt = prefix;
+                task.teacher_forced_target = continuation;
+                task.params = make_server_task_params_from_prepared_generation(
+                    params_base, request.context, prepared, logit_bias_eog);
+                // Scoring is a non-streaming, non-sampling operation.  In
+                // particular, disable prompt-cache reuse so positive and
+                // negative choices are fresh isolated evaluations.
+                task.params.stream = false;
+                task.params.cache_prompt = false;
+                task.params.n_predict = 0;
+                return task;
+            };
+
+            auto score_one = [&](const std::string & continuation,
+                    server_task_result_teacher_score & score) {
+                // Use a fresh response reader for each side. The server host
+                // normally runs with one slot; sequential tasks keep the
+                // positive and negative prompt/KV lifetimes unambiguous.
+                server_response_reader reader = server.get_response_reader();
+                server_task task = make_score_task(reader, continuation);
+                reader.post_task(std::move(task));
+                auto responses = reader.wait_for_all([]() { return false; });
+                if (responses.is_terminated || responses.error || responses.results.size() != 1) {
+                    if (responses.error && responses.error->is_error()) {
+                        const auto * error = static_cast<const server_task_result_error *>(responses.error.get());
+                        result.error_message = error->err_msg;
+                    } else {
+                        result.error_message = responses.is_terminated
+                            ? "server teacher-forced scoring was terminated"
+                            : "server teacher-forced scoring returned an incomplete result";
+                    }
+                    return false;
+                }
+                const auto & response = responses.results.front();
+                if (response->is_error()) {
+                    const auto * error = static_cast<const server_task_result_error *>(response.get());
+                    result.error_message = error->err_msg;
+                    return false;
+                }
+                const auto * score_result = dynamic_cast<const server_task_result_teacher_score *>(response.get());
+                if (score_result == nullptr) {
+                    result.error_message = "server returned a non-scoring result for teacher-forced task";
+                    return false;
+                }
+                score = *score_result;
+                return true;
+            };
+
+            server_task_result_teacher_score positive_result;
+            server_task_result_teacher_score negative_result;
+            if (!score_one(positive, positive_result) || !score_one(negative, negative_result)) {
+                return false;
+            }
+            result.available = positive_result.token_count > 0 && negative_result.token_count > 0;
+            result.positive_total_logprob = static_cast<float>(positive_result.total_logprob);
+            result.negative_total_logprob = static_cast<float>(negative_result.total_logprob);
+            result.positive_token_count = positive_result.token_count;
+            result.negative_token_count = negative_result.token_count;
+            return true;
+        } catch (const std::exception & err) {
+            result = {};
+            result.error_message = err.what();
+            std::fprintf(stderr, "server teacher-forced scoring failed: %s\n", err.what());
             return false;
         }
     }

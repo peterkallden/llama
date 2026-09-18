@@ -228,6 +228,9 @@ bool common_flydelta_run_whirlpool_search(
                 baseline, counterfactual);
             region_trial.quality_delta = counterfactual.quality - baseline.quality;
             region_trial.margin = margin;
+            region_trial.margin_comparison.available = baseline_margin.available && margin.available;
+            region_trial.margin_comparison.baseline = baseline_margin;
+            region_trial.margin_comparison.candidate = margin;
             region_trial.executed = counterfactual.executed;
             region_trial.verifier_known = baseline.verifier_known && counterfactual.verifier_known;
             region_trial.geometry_available = geometry_available;

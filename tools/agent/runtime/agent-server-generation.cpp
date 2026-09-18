@@ -1,6 +1,7 @@
 #include "agent-server-generation.h"
 
 #include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-capture.h"
 
 #include "hash/hash.h"
 
@@ -93,6 +94,18 @@ task_params make_server_task_params_from_prepared_generation(
 
     if (request.flydelta_activation && request.flydelta_activation->overlay.enabled) {
         params.cvec = make_server_task_cvec(request.flydelta_activation->overlay);
+    }
+
+    if (request.flydelta_capture && request.flydelta_capture->enabled) {
+        auto capture = std::make_shared<server_task_capture_request>();
+        capture->enabled = true;
+        capture->layer_indices = request.flydelta_capture->layer_indices;
+        capture->token_index = request.flydelta_capture->token_index;
+        capture->position = static_cast<int32_t>(request.flydelta_capture->position);
+        capture->max_bytes = request.flydelta_capture->max_bytes;
+        capture->model_profile_fingerprint = request.flydelta_capture->model_profile_fingerprint;
+        capture->capture_layout_revision = request.flydelta_capture->capture_layout_revision;
+        params.capture = std::move(capture);
     }
 
     if (!prepared.parser.empty()) {

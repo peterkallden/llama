@@ -16,6 +16,9 @@ using json = nlohmann::ordered_json;
 
 enum server_task_type {
     SERVER_TASK_TYPE_COMPLETION,
+    // Internal bounded teacher-forced scoring task.  This is not an HTTP
+    // endpoint; agent inference submits it through the resident server queue.
+    SERVER_TASK_TYPE_TEACHER_FORCED_SCORE,
     SERVER_TASK_TYPE_EMBEDDING,
     SERVER_TASK_TYPE_RERANK,
     SERVER_TASK_TYPE_INFILL,
@@ -75,6 +78,35 @@ bool server_task_cvec_validate(
         size_t max_bytes,
         std::string & error);
 
+// Internal FlyDelta capture transport.  These are deliberately generic
+// server-task fields so the server core does not depend on the agent layer.
+// The agent adapter maps them to common_flydelta_hidden_state_capture at the
+// boundary.
+struct server_task_capture_request {
+    bool enabled = false;
+    std::vector<uint32_t> layer_indices;
+    int32_t token_index = -1;
+    int32_t position = 0;
+    size_t max_bytes = 0;
+    std::string model_profile_fingerprint;
+    std::string capture_layout_revision;
+};
+
+using server_task_capture_request_ptr = std::shared_ptr<const server_task_capture_request>;
+
+struct server_task_capture_result {
+    bool attempted = false;
+    bool captured = false;
+    uint32_t n_embd = 0;
+    int32_t token_index = -1;
+    int32_t position = 0;
+    std::vector<uint32_t> layer_indices;
+    std::vector<float> values;
+    std::string model_profile_fingerprint;
+    std::string capture_layout_revision;
+    std::string failure_reason;
+};
+
 struct task_params {
     bool stream          = false;
     bool include_usage   = false;
@@ -99,6 +131,7 @@ struct task_params {
 
     // Internal typed field; deliberately omitted from task_params::to_json().
     server_task_cvec_ptr cvec;
+    server_task_capture_request_ptr capture;
 
     std::vector<std::string> antiprompt;
     std::vector<std::string> response_fields;
@@ -190,6 +223,12 @@ struct server_task {
     std::string             cli_prompt;
     std::vector<raw_buffer> cli_files;
 
+    // Internal teacher-forced scoring material.  The server tokenizes the
+    // target together with cli_prompt and retains only the suffix after the
+    // validated prompt boundary.
+    std::string teacher_forced_target;
+    llama_tokens teacher_forced_tokens;
+
     server_task_type type;
 
     // used by SERVER_TASK_TYPE_SLOT_SAVE, SERVER_TASK_TYPE_SLOT_RESTORE, SERVER_TASK_TYPE_SLOT_ERASE
@@ -228,6 +267,7 @@ struct server_task {
         switch (type) {
             case SERVER_TASK_TYPE_COMPLETION:
             case SERVER_TASK_TYPE_INFILL:
+            case SERVER_TASK_TYPE_TEACHER_FORCED_SCORE:
                 return true;
             default:
                 return false;
@@ -348,6 +388,13 @@ struct completion_token_output {
 
 };
 
+struct server_task_result_teacher_score : server_task_result {
+    double total_logprob = 0.0;
+    size_t token_count = 0;
+
+    virtual json to_json() override;
+};
+
 struct server_task_result_cmpl_final : server_task_result {
     std::string content;
     llama_tokens tokens;
@@ -371,6 +418,9 @@ struct server_task_result_cmpl_final : server_task_result {
     std::vector<std::string>  response_fields;
 
     task_params generation_params;
+
+    // Internal FlyDelta capture, omitted from the public JSON payload.
+    server_task_capture_result capture;
 
     // response formatting
     bool               verbose  = false;

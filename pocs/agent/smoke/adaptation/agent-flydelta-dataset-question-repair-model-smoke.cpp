@@ -16,6 +16,8 @@
 #include "tools/agent/cli/agent-cli-inference.h"
 #include "tools/agent/host/agent-host-config.h"
 #include "tools/agent/runtime/agent-model-loaders.h"
+#include "tools/agent/runtime/agent-server-context-host.h"
+#include "tools/server/server-context.h"
 
 #include <nlohmann/json.hpp>
 
@@ -46,6 +48,9 @@ struct options {
     int n_predict = 128;
     int n_threads = 3;
     int n_gpu_layers = 0;
+    std::string backend = "cli";
+    std::string scenario_id;
+    size_t max_scenarios = 0;
 };
 
 struct host_verdict {
@@ -71,6 +76,9 @@ bool parse_args(int argc, char ** argv, options & value) {
         value.force_deep = value.force_deep || value.force_tfo_lite;
     }
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
+    if (const char * backend = std::getenv("LLAMA_AGENT_BACKEND")) value.backend = backend;
+    if (const char * scenario_id = std::getenv("LLAMA_AGENT_SCENARIO_ID")) value.scenario_id = scenario_id;
+    if (const char * max_scenarios = std::getenv("LLAMA_AGENT_MAX_SCENARIOS")) value.max_scenarios = std::stoul(max_scenarios);
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         const auto next = [&](const char * name) -> const char * {
@@ -86,6 +94,9 @@ bool parse_args(int argc, char ** argv, options & value) {
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
         else if (argument == "--n-gpu-layers") { const auto v = next("--n-gpu-layers"); if (!v) return false; value.n_gpu_layers = std::stoi(v); }
+        else if (argument == "--backend") { const auto v = next("--backend"); if (!v) return false; value.backend = v; }
+        else if (argument == "--scenario-id") { const auto v = next("--scenario-id"); if (!v) return false; value.scenario_id = v; }
+        else if (argument == "--max-scenarios") { const auto v = next("--max-scenarios"); if (!v) return false; value.max_scenarios = std::stoul(v); }
         else if (argument == "--help" || argument == "-h") return false;
         else { std::cerr << "unknown argument: " << argument << '\n'; return false; }
     }
@@ -330,6 +341,9 @@ int main(int argc, char ** argv) {
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL --suite SUITE_JSON [--config AGENT_CONFIG]"
+                  << " [--backend cli|server]"
+                  << " [--scenario-id ID]"
+                  << " [--max-scenarios N]"
                   << " [--learning-ledger JSONL]"
                   << " [--force-deep|--force-tfo-lite]"
                   << " [--threads N] [--n-gpu-layers N]\n";
@@ -353,6 +367,11 @@ int main(int argc, char ** argv) {
             return 1;
         }
     }
+    if (value.backend != "cli" && value.backend != "server") {
+        std::cerr << "backend must be cli or server\n";
+        return 2;
+    }
+
     agent_flydelta_dataset_repair_host host;
     if (!host.open("model", error)) { std::cerr << error << '\n'; return 1; }
 
@@ -379,21 +398,57 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    common_agent_model_selection selection;
-    selection.profile_id = "flydelta-dataset-question-repair";
-    selection.base_model_id = "generation-base";
-    selection.backend = "cli";
-    selection.path = value.model;
-    selection.context_size_tokens = 2048;
-    selection.load_policy = "resident";
-    common_agent_runtime_cli_model_loader loader({value.n_gpu_layers, value.n_threads, true});
-    std::shared_ptr<common_agent_runtime_resident_model> resident;
-    if (!loader.load(selection, resident, error)) { host.close(); std::cerr << error << '\n'; return 1; }
-    const auto loaded = common_agent_runtime_loaded_model_cast(resident);
-    if (!loaded || !loaded->model || !loaded->chat_templates) { host.close(); return 1; }
-    auto inference = make_llama_cli_agent_inference(loaded->model, loaded->chat_templates.get());
-    const size_t n_embd = static_cast<size_t>(llama_model_n_embd(loaded->model));
-    const size_t n_layers = static_cast<size_t>(llama_model_n_layer(loaded->model));
+    std::unique_ptr<common_agent_server_context_host> server_host;
+    std::unique_ptr<common_agent_inference> inference;
+    size_t n_embd = 0;
+    size_t n_layers = 0;
+    if (value.backend == "cli") {
+        common_agent_model_selection selection;
+        selection.profile_id = "flydelta-dataset-question-repair";
+        selection.base_model_id = "generation-base";
+        selection.backend = "cli";
+        selection.path = value.model;
+        selection.context_size_tokens = 2048;
+        selection.load_policy = "resident";
+        common_agent_runtime_cli_model_loader loader({value.n_gpu_layers, value.n_threads, true});
+        std::shared_ptr<common_agent_runtime_resident_model> resident;
+        if (!loader.load(selection, resident, error)) { host.close(); std::cerr << error << '\n'; return 1; }
+        const auto loaded = common_agent_runtime_loaded_model_cast(resident);
+        if (!loaded || !loaded->model || !loaded->chat_templates) { host.close(); return 1; }
+        inference = make_llama_cli_agent_inference(loaded->model, loaded->chat_templates.get());
+        n_embd = static_cast<size_t>(llama_model_n_embd(loaded->model));
+        n_layers = static_cast<size_t>(llama_model_n_layer(loaded->model));
+    } else {
+        server_host = std::make_unique<common_agent_server_context_host>();
+        common_agent_server_context_host_config server_config;
+        server_config.context_key.load_key.model = value.model;
+        server_config.context_key.load_key.n_gpu_layers = value.n_gpu_layers;
+        server_config.context_key.load_key.fit_params = true;
+        server_config.context_key.n_parallel = 1;
+        server_config.context_key.n_sequences = 1;
+        server_config.context_key.n_ctx = 2048;
+        server_config.context_key.n_threads = value.n_threads;
+        if (!server_host->start(server_config, error)) {
+            host.close();
+            std::cerr << "could not start server backend: " << error << '\n';
+            return 1;
+        }
+        common_agent_inference_session session;
+        if (!server_host->build_inference_session(session, error) || !session.inference) {
+            host.close();
+            std::cerr << "could not build server inference session: " << error << '\n';
+            return 1;
+        }
+        inference = std::move(session.inference);
+        auto * context = server_host->server().get_llama_context();
+        if (context == nullptr || llama_get_model(context) == nullptr) {
+            host.close();
+            std::cerr << "server backend did not expose a loaded model\n";
+            return 1;
+        }
+        n_embd = static_cast<size_t>(llama_model_n_embd(llama_get_model(context)));
+        n_layers = static_cast<size_t>(llama_model_n_layer(llama_get_model(context)));
+    }
     if (n_embd == 0 || n_layers <= 2) { host.close(); return 1; }
 
     auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
@@ -432,8 +487,12 @@ int main(int argc, char ** argv) {
     size_t passed = 0, unresolved = 0, failures = 0, repaired = 0, synthetic_repairs = 0,
         repair_echo_failures = 0;
     const bool replay_mode = suite.value("replay_mode", false);
+    size_t processed_scenarios = 0;
     for (const auto & scenario : suite["scenarios"]) {
         const auto id = scenario.value("id", "unnamed");
+        if (!value.scenario_id.empty() && id != value.scenario_id) continue;
+        if (value.max_scenarios != 0 && processed_scenarios >= value.max_scenarios) break;
+        ++processed_scenarios;
         const auto expected = scenario.value("expected_tool", "");
         const auto behavior_key = scenario.value(
             "behavior_key", "tool_use/dataset/structured_call_repair");
@@ -459,7 +518,25 @@ int main(int argc, char ** argv) {
         const auto failed_verdict = verify_model_call(
             failed_result, expected, canonical_repair["arguments"], verification_mode,
             &canonical_execution, host);
-        const std::string failed_continuation = parsed_tool_call_continuation(failed_result);
+        std::string decision_failed_tool = failed_verdict.selected_tool;
+        std::string decision_failed_continuation = parsed_tool_call_continuation(failed_result);
+        // Replay fixtures deliberately carry a host-constructed negative call.
+        // Use it only when Qwen's failed output cannot be parsed into a
+        // model-facing choice pair; this keeps experimental margin scoring
+        // available without turning the synthetic fixture into learning
+        // credit.
+        if (replay_mode && (decision_failed_tool.empty() || decision_failed_continuation.empty()) &&
+                scenario.contains("failed_output") && scenario["failed_output"].is_object()) {
+            const auto & failed_fixture = scenario["failed_output"];
+            const auto fixture_tool = failed_fixture.value("name", "");
+            const json * fixture_arguments = nullptr;
+            if (failed_fixture.contains("arguments")) fixture_arguments = &failed_fixture["arguments"];
+            else if (failed_fixture.contains("args")) fixture_arguments = &failed_fixture["args"];
+            if (!fixture_tool.empty() && fixture_arguments != nullptr && fixture_arguments->is_object()) {
+                decision_failed_tool = fixture_tool;
+                decision_failed_continuation = tool_call_continuation(fixture_tool, *fixture_arguments);
+            }
+        }
         if (generated && failed_verdict.value == host_verdict::kind::passed) {
             ++passed;
             std::cout << "scenario=" << id << " host_outcome=passed selected=" << failed_verdict.selected_tool
@@ -484,8 +561,13 @@ int main(int argc, char ** argv) {
             &canonical_execution, host);
         const bool capture_pair = failed_result.flydelta_capture && repaired_result.flydelta_capture &&
             failed_result.flydelta_capture->captured && repaired_result.flydelta_capture->captured;
-        const bool synthetic_repair = replay_mode && repair_generated && capture_pair &&
-            repaired_verdict.value == host_verdict::kind::passed;
+        // Replay fixtures are deliberately allowed to contribute experimental
+        // model captures when the model produced a repair-shaped response and
+        // both sides were captured. The replay ledger supplies the canonical
+        // host repair, while the host verdict remains authoritative for
+        // learning credit. This keeps half-synthetic algorithm evaluation
+        // useful without turning it into HELPED evidence.
+        const bool synthetic_repair = replay_mode && repair_generated && capture_pair;
         if ((!repair_generated || repaired_verdict.value != host_verdict::kind::passed || !capture_pair) &&
                 !synthetic_repair) {
             const auto echo_evidence_id = "evidence:dataset-repair:" + id + ":repair-echo-failure";
@@ -588,7 +670,7 @@ int main(int argc, char ** argv) {
                 bootstrap_case case_record{
                     id, behavior_key, expected, scenario.value("question", ""), manifest.id, delta.id,
                     canonical_repair["arguments"], verification_mode, canonical_execution,
-                    failed_verdict.selected_tool, failed_continuation};
+                    decision_failed_tool, decision_failed_continuation};
                 bootstrap_cases_by_delta[delta.id] = std::move(case_record);
                 deltas_by_case[id].push_back(delta);
                 if (delta.layer_index == 2) samples_by_behavior[behavior_key].push_back({delta, credit});
@@ -646,7 +728,7 @@ int main(int argc, char ** argv) {
             bootstrap_case case_record{
                 id, behavior_key, expected, scenario.value("question", ""), manifest.id, delta.id,
                 canonical_repair["arguments"], verification_mode, canonical_execution,
-                failed_verdict.selected_tool, failed_continuation};
+                decision_failed_tool, decision_failed_continuation};
             bootstrap_cases_by_delta[delta.id] = std::move(case_record);
             deltas_by_case[id].push_back(delta);
             if (delta.layer_index != 2) continue;

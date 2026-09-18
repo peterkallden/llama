@@ -1,4 +1,5 @@
 #include "server-context.h"
+#include "src/llama-ext.h"
 #include "server-chat.h"
 #include "server-common.h"
 #include "server-http.h"
@@ -299,12 +300,21 @@ struct server_slot {
     // The active request-scoped control vector. It stays attached to the
     // slot while its prompt/KV state is reusable.
     server_task_cvec_ptr cvec;
+    server_task_capture_request_ptr capture_request;
+    server_task_capture_result capture_result;
     int32_t alora_invocation_start = -1;
 
     // sampling
     json json_schema;
 
     common_sampler_ptr smpl;
+
+    // Internal teacher-forced scoring state.  The target sequence is fed
+    // through the normal decode loop one token at a time, but is never
+    // sampled or exposed as a completion.
+    llama_tokens teacher_forced_tokens;
+    size_t teacher_forced_index = 0;
+    double teacher_forced_logprob = 0.0;
 
     llama_token sampled; // in speculative mode, this is the last accepted token
 
@@ -346,6 +356,11 @@ struct server_slot {
         generated_tokens.clear();
         generated_token_probs.clear();
         json_schema = json();
+        teacher_forced_tokens.clear();
+        teacher_forced_index = 0;
+        teacher_forced_logprob = 0.0;
+        capture_request.reset();
+        capture_result = {};
 
         task_prev = std::move(task);
         task.reset();
@@ -391,7 +406,20 @@ struct server_slot {
 
     bool need_embd() const {
         GGML_ASSERT(task);
+        // Layer-input capture uses the dedicated embeddings_layer_inp output
+        // buffers and must not switch the whole context into embedding mode.
+        // Global embedding mode marks every prompt token as an output, which
+        // conflicts with the server's normal n_outputs_max budget.
         return task->need_embd();
+    }
+
+    bool needs_embedding_output_at(size_t token_index) const {
+        GGML_ASSERT(task);
+        if (task->need_embd()) {
+            return true;
+        }
+        return task->params.capture && task->params.capture->enabled &&
+            token_index + 1 == static_cast<size_t>(task->n_tokens());
     }
 
     // if the context does not have a memory module then all embeddings have to be computed within a single ubatch
@@ -428,7 +456,7 @@ struct server_slot {
     }
 
     bool can_speculate() const {
-        return !!spec;
+        return !!spec && task && task->need_sampling();
     }
 
     void add_token(const completion_token_output & token) {
@@ -1695,6 +1723,28 @@ private:
             slot.cvec = task.params.cvec;
         }
 
+        slot.capture_request = task.params.capture;
+        slot.capture_result = {};
+        if (slot.capture_request && slot.capture_request->enabled) {
+            const auto & capture = *slot.capture_request;
+            if (capture.layer_indices.empty()) {
+                send_error(task, "FlyDelta capture requested no layers", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (capture.max_bytes == 0) {
+                send_error(task, "FlyDelta capture has no byte budget", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            const size_t n_layers = static_cast<size_t>(llama_model_n_layer(model_tgt));
+            for (const uint32_t layer : capture.layer_indices) {
+                if (layer >= n_layers) {
+                    send_error(task, "FlyDelta capture layer is outside the loaded model", ERROR_TYPE_INVALID_REQUEST);
+                    return false;
+                }
+                llama_set_embeddings_layer_inp(slot.ctx_tgt, layer, true);
+            }
+        }
+
         // process per-request lora adapters
         if (!task.params.lora.empty()) {
             auto task_loras = construct_lora_list(task.params.lora);
@@ -1764,6 +1814,10 @@ private:
             send_error(task, "Prompt contains invalid tokens", ERROR_TYPE_INVALID_REQUEST);
             return false;
         }
+
+        slot.teacher_forced_tokens = task.teacher_forced_tokens;
+        slot.teacher_forced_index = 0;
+        slot.teacher_forced_logprob = 0.0;
 
         SLT_DBG(slot, "launching slot : %s\n", safe_json_to_str(slot.to_json()).c_str());
 
@@ -2009,6 +2063,113 @@ private:
         send_error(slot.task->id, error, type, slot.task->n_tokens(), slot.n_ctx);
     }
 
+    void capture_prompt_boundary(server_slot & slot) {
+        if (!slot.capture_request || !slot.capture_request->enabled || slot.capture_result.attempted) {
+            return;
+        }
+
+        const auto & request = *slot.capture_request;
+        auto & result = slot.capture_result;
+        result.attempted = true;
+        result.layer_indices = request.layer_indices;
+        result.position = request.position;
+        result.model_profile_fingerprint = request.model_profile_fingerprint;
+        result.capture_layout_revision = request.capture_layout_revision;
+        result.token_index = request.token_index < 0
+            ? static_cast<int32_t>(slot.task->n_tokens()) - 1
+            : request.token_index;
+
+        const int32_t n_prompt = slot.task->n_tokens();
+        const size_t n_embd = static_cast<size_t>(llama_model_n_embd(model_tgt));
+        if (result.token_index < 0 || result.token_index >= n_prompt) {
+            result.failure_reason = "prompt token index is out of range";
+            return;
+        }
+        const size_t value_bytes = result.layer_indices.size() * n_embd * sizeof(float);
+        if (n_embd == 0 || value_bytes > request.max_bytes) {
+            result.failure_reason = "FlyDelta capture exceeds its byte budget";
+            return;
+        }
+
+        result.n_embd = static_cast<uint32_t>(n_embd);
+        result.values.reserve(result.layer_indices.size() * n_embd);
+        for (const uint32_t layer : result.layer_indices) {
+            const float * values = llama_get_embeddings_layer_inp(slot.ctx_tgt, layer);
+            if (values == nullptr) {
+                result.values.clear();
+                result.n_embd = 0;
+                result.failure_reason = "llama.cpp did not return the requested layer input";
+                return;
+            }
+            const float * row = values + static_cast<size_t>(result.token_index) * n_embd;
+            result.values.insert(result.values.end(), row, row + n_embd);
+        }
+        result.captured = true;
+    }
+
+    void send_teacher_score(server_slot & slot) {
+        auto res = std::make_unique<server_task_result_teacher_score>();
+        res->id = slot.task->id;
+        res->id_slot = slot.id;
+        res->total_logprob = slot.teacher_forced_logprob;
+        res->token_count = slot.teacher_forced_tokens.size();
+        queue_results.send(std::move(res));
+    }
+
+    bool score_teacher_forced_token(server_slot & slot, int32_t tok_idx) {
+        if (slot.teacher_forced_index >= slot.teacher_forced_tokens.size()) {
+            send_error(slot, "teacher-forced scoring state exhausted before a target token was scored",
+                ERROR_TYPE_SERVER);
+            slot.release();
+            return false;
+        }
+
+        const llama_token target = slot.teacher_forced_tokens[slot.teacher_forced_index];
+        const float * logits = llama_get_logits_ith(ctx_tgt, tok_idx);
+        const size_t n_vocab = llama_vocab_n_tokens(vocab);
+        if (logits == nullptr || target < 0 || static_cast<size_t>(target) >= n_vocab) {
+            send_error(slot, "teacher-forced scoring did not return valid logits",
+                ERROR_TYPE_SERVER);
+            slot.release();
+            return false;
+        }
+
+        float maximum = logits[0];
+        for (size_t i = 1; i < n_vocab; ++i) {
+            maximum = std::max(maximum, logits[i]);
+        }
+        double normalizer = 0.0;
+        for (size_t i = 0; i < n_vocab; ++i) {
+            normalizer += std::exp(static_cast<double>(logits[i] - maximum));
+        }
+        if (!std::isfinite(normalizer) || normalizer <= 0.0) {
+            send_error(slot, "teacher-forced scoring received invalid logits",
+                ERROR_TYPE_SERVER);
+            slot.release();
+            return false;
+        }
+
+        slot.teacher_forced_logprob +=
+            static_cast<double>(logits[target] - maximum) - std::log(normalizer);
+        slot.teacher_forced_index++;
+        slot.stats.n_gen++;
+
+        if (slot.teacher_forced_index == slot.teacher_forced_tokens.size()) {
+            send_teacher_score(slot);
+            slot.i_batch = -1;
+            slot.release();
+            return true;
+        }
+
+        // The scored token becomes the next prompt token.  pre_decode() will
+        // append it through handle_last_sampled_token(), causing the next
+        // decode to produce logits for the following target token.
+        slot.sampled = target;
+        slot.has_next_token = true;
+        slot.i_batch = -1;
+        return true;
+    }
+
     void send_error(const int id_task, const std::string & error, const enum error_type type = ERROR_TYPE_SERVER, const int32_t n_prompt_tokens = 0, const int32_t n_ctx = 0) {
         SRV_ERR("task id = %d, error: %s\n", id_task, error.c_str());
 
@@ -2128,6 +2289,7 @@ private:
         }
 
         res->generation_params = slot.task->params; // copy the parameters
+        res->capture = std::move(slot.capture_result);
 
         queue_results.send(std::move(res));
     }
@@ -2217,9 +2379,44 @@ private:
         try {
             auto & prompt = task.cli_prompt;
             if (mctx != nullptr) {
+                if (task.type == SERVER_TASK_TYPE_TEACHER_FORCED_SCORE) {
+                    send_error(task, "teacher-forced server scoring does not support multimodal CLI prompts yet",
+                        ERROR_TYPE_INVALID_REQUEST);
+                    return false;
+                }
                 task.tokens = process_mtmd_prompt(mctx, prompt, task.cli_files);
             } else {
                 task.tokens = std::move(tokenize_input_prompts(vocab, mctx, prompt, true, true)[0]);
+            }
+
+            if (task.type == SERVER_TASK_TYPE_TEACHER_FORCED_SCORE) {
+                if (task.teacher_forced_target.empty()) {
+                    send_error(task, "teacher-forced scoring target is empty", ERROR_TYPE_INVALID_REQUEST);
+                    return false;
+                }
+
+                // Tokenize the complete prefix+target as one string.  This
+                // preserves tokenizer boundary behavior (including leading
+                // whitespace merges) and makes the suffix explicit only if
+                // the prefix tokenization is unchanged.
+                auto combined_prompts = tokenize_input_prompts(
+                    vocab, mctx, prompt + task.teacher_forced_target, true, true);
+                server_tokens combined = std::move(combined_prompts[0]);
+                if (combined.size() <= task.tokens.size()) {
+                    send_error(task, "teacher-forced scoring target produced no continuation tokens",
+                        ERROR_TYPE_INVALID_REQUEST);
+                    return false;
+                }
+                for (size_t i = 0; i < task.tokens.size(); ++i) {
+                    if (task.tokens[i] != combined[i]) {
+                        send_error(task, "teacher-forced scoring continuation crosses the prompt token boundary",
+                            ERROR_TYPE_INVALID_REQUEST);
+                        return false;
+                    }
+                }
+                const auto & combined_tokens = combined.get_tokens();
+                task.teacher_forced_tokens.assign(
+                    combined_tokens.begin() + task.tokens.size(), combined_tokens.end());
             }
             task.cli_prompt.clear();
             task.cli_files.clear();
@@ -2348,6 +2545,7 @@ private:
 
         switch (task.type) {
             case SERVER_TASK_TYPE_COMPLETION:
+            case SERVER_TASK_TYPE_TEACHER_FORCED_SCORE:
             case SERVER_TASK_TYPE_INFILL:
             case SERVER_TASK_TYPE_EMBEDDING:
             case SERVER_TASK_TYPE_RERANK:
@@ -2982,7 +3180,7 @@ private:
 
             generating.push_back(&slot);
 
-            if (spec) {
+            if (spec && slot.task->need_sampling()) {
                 common_speculative_get_draft_params(spec.get(), slot.id).drafting = false;
 
                 const bool use_ckpt_tgt = ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
@@ -3529,7 +3727,7 @@ private:
                         add_ok &= batch.add(slot.id,
                             cur_tok,
                             /* pos       = */ slot.prompt.tokens.pos_next(),
-                            /* output    = */ slot.need_embd(),
+                            /* output    = */ slot.needs_embedding_output_at(slot.prompt.n_tokens()),
                             /* is_prompt = */ true);
                         slot.prompt.tokens.push_back(cur_tok);
 
@@ -3587,7 +3785,9 @@ private:
                         slot.stats.n_gen = 0;
                         slot.i_batch     = batch.size() - 1;
 
-                        slot.init_sampler();
+                        if (slot.task->need_sampling()) {
+                            slot.init_sampler();
+                        }
                     } else {
                         // skip ordinary mid-prompt checkpoints, unless the batch starts a user
                         // message or we are near the end of the prompt
@@ -3802,7 +4002,23 @@ private:
                 return;
             }
 
+            if (slot.task->type == SERVER_TASK_TYPE_TEACHER_FORCED_SCORE) {
+                if (slot.state == SLOT_STATE_DONE_PROMPT) {
+                    slot.state = SLOT_STATE_GENERATING;
+                } else if (slot.state != SLOT_STATE_GENERATING) {
+                    return;
+                }
+
+                // Unlike completion sampling, this reads the current logits
+                // for the known target token and queues that token for the
+                // next decode step. No sampler or stop policy is involved.
+                const int tok_idx = slot.i_batch - off;
+                score_teacher_forced_token(slot, tok_idx);
+                return;
+            }
+
             if (slot.state == SLOT_STATE_DONE_PROMPT) {
+                capture_prompt_boundary(slot);
                 if (slot.task->type == SERVER_TASK_TYPE_EMBEDDING) {
                     // prompt evaluated for embedding
                     send_embedding(slot, batch_view);

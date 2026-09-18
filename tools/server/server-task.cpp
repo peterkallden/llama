@@ -1554,6 +1554,14 @@ json server_task_result_rerank::to_json() {
     };
 }
 
+// server_task_result_teacher_score
+json server_task_result_teacher_score::to_json() {
+    return json {
+        {"total_logprob", total_logprob},
+        {"token_count",   token_count},
+    };
+}
+
 //
 // server_task_result_error
 //
