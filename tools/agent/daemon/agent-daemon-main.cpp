@@ -513,6 +513,7 @@ int main(int argc, char ** argv) {
     flydelta_worker_config.enabled = options.adaptation_flydelta_enabled;
     flydelta_worker_config.worker_count = options.adaptation_flydelta_worker_count;
     flydelta_worker_config.queue_root = options.adaptation_flydelta_queue_path;
+    flydelta_worker_config.model_adapter = runtime.flydelta_model_adapter;
     common_agent_daemon_dispatcher dispatcher(
         std::move(runtime), options.queue_capacity, options.worker_count,
         std::move(flydelta_worker_config));

@@ -7,6 +7,7 @@
 #include "../runtime/agent-runtime-session-manager.h"
 #include "../runtime/agent-model-residency.h"
 #include "../tooling/agent-tool-provider.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 
 #include "memory/memory-store.h"
 #include "agent/data-store.h"
@@ -79,6 +80,9 @@ struct common_agent_daemon_runtime {
     std::unique_ptr<common_agent_data_store> data_store;
     std::unique_ptr<agent_resource_store> resource_store;
     std::shared_ptr<common_agent_runtime_model_residency> model_residency;
+    // Populated by the runtime host when model-facing FlyDelta execution is
+    // available. The dispatcher consumes this registration bundle only.
+    std::shared_ptr<const common_flydelta_model_adapter> flydelta_model_adapter;
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
     std::unique_ptr<common_agent_runtime_session_manager> host;
     std::shared_ptr<common_agent_inference_capacity_gate> inference_gate;
