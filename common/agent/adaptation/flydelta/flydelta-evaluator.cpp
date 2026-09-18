@@ -298,7 +298,14 @@ bool common_flydelta_evaluate_job(
                 if (!common_flydelta_select_search_continuation(
                         pipeline_result, continuation, error)) return false;
                 result.search_pipeline_results.push_back(std::move(pipeline_result));
-                result.search_continuations.push_back(std::move(continuation));
+                if (!continuation.region.layer_indices.empty()) {
+                    result.search_continuations.push_back(std::move(continuation));
+                } else {
+                    result.has_next_action = true;
+                    result.next_action = common_flydelta_next_action::stop;
+                    result.next_action_reason =
+                        "Bounded search completed without useful utility; retain trace and stop branch";
+                }
                 result.processed_references = job.behavior_delta_ids.size();
                 return true;
             }
@@ -364,10 +371,18 @@ bool common_flydelta_evaluate_job(
             if (!common_flydelta_select_search_continuation(
                     pipeline_result, continuation, error)) return false;
             result.search_pipeline_results.push_back(std::move(pipeline_result));
-            result.search_continuations.push_back(std::move(continuation));
+            if (!continuation.region.layer_indices.empty()) {
+                result.search_continuations.push_back(std::move(continuation));
+            } else {
+                result.has_next_action = true;
+                result.next_action = common_flydelta_next_action::stop;
+                result.next_action_reason =
+                    "Bounded search completed without useful utility; retain trace and stop branch";
+            }
             const bool has_resume_state = !job.search_state_ref.empty() ||
                 !job.bootstrap_zoom_state_ref.empty();
-            if (has_resume_state && callbacks.resolve_search_orchestration_state) {
+            if (has_resume_state && callbacks.resolve_search_orchestration_state &&
+                    !result.search_continuations.empty()) {
                 common_flydelta_experiment_plan current_plan;
                 common_flydelta_utility_history history;
                 const std::string & orchestration_ref = !job.search_state_ref.empty()
@@ -465,18 +480,25 @@ bool common_flydelta_evaluate_job(
                     if (!aggregation.ingest(sample, error)) return false;
                 }
                 if (evidence_available) {
-                    if (!aggregation.assess_depth(result.evidence_depth, error) ||
-                            !common_flydelta_plan_search_continuation(
-                                result.search_continuations.back(), result.evidence_depth,
-                                result.experiment_plan, error)) return false;
-                    result.has_experiment_plan = true;
-                    result.search_budget = result.experiment_plan.budget;
-                    // Whirlpool is the current bounded slice. The next
-                    // bounded slice is explicitly Bootstrap; the evaluator
-                    // does not execute it recursively.
-                    result.has_next_action = true;
-                    result.next_action = common_flydelta_next_action::run_bootstrap;
-                    result.next_action_reason = "Whirlpool completed; schedule Bootstrap slice";
+                    if (!aggregation.assess_depth(result.evidence_depth, error)) return false;
+                    if (result.search_continuations.empty()) {
+                        result.has_next_action = true;
+                        result.next_action = common_flydelta_next_action::stop;
+                        result.next_action_reason =
+                            "Bounded search completed without useful utility; retain trace and stop branch";
+                    } else if (!common_flydelta_plan_search_continuation(
+                            result.search_continuations.back(), result.evidence_depth,
+                            result.experiment_plan, error)) return false;
+                    if (!result.search_continuations.empty()) {
+                        result.has_experiment_plan = true;
+                        result.search_budget = result.experiment_plan.budget;
+                        // Whirlpool is the current bounded slice. The next
+                        // bounded slice is explicitly Bootstrap; the evaluator
+                        // does not execute it recursively.
+                        result.has_next_action = true;
+                        result.next_action = common_flydelta_next_action::run_bootstrap;
+                        result.next_action_reason = "Whirlpool completed; schedule Bootstrap slice";
+                    }
                 }
             }
             result.processed_references = job.behavior_delta_ids.size();

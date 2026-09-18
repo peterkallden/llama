@@ -70,6 +70,22 @@ struct common_flydelta_search_pipeline_direction_result {
     common_flydelta_whirlpool_trace whirlpool_trace;
 };
 
+// A bounded search can complete without producing a continuation. That is a
+// normal experimental result, not a worker failure.
+enum class common_flydelta_search_status {
+    candidate_available,
+    no_useful_utility,
+    safety_limited,
+    saturated,
+    peaked,
+    budget_limited,
+    upper_bound_limited,
+};
+
+const char * common_flydelta_search_status_name(common_flydelta_search_status status);
+bool common_flydelta_search_status_is_terminal_without_candidate(
+        common_flydelta_search_status status);
+
 struct common_flydelta_search_pipeline_selection {
     bool selected = false;
     bool intervention_region = false;
@@ -83,6 +99,8 @@ struct common_flydelta_search_pipeline_selection {
 struct common_flydelta_search_pipeline_result {
     std::vector<common_flydelta_search_pipeline_direction_result> directions;
     common_flydelta_search_pipeline_selection selection;
+    common_flydelta_search_status search_status =
+        common_flydelta_search_status::candidate_available;
     // Optional bounded rank-one refinement summary. The host runner may fill
     // this when the current state selects AdaptiveAlphaSearch; the generic
     // evaluator uses it for UtilityGate navigation only.

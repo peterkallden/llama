@@ -115,6 +115,10 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
     trace.region_budget = result.search_budget.max_region_trials;
     trace.coefficient_budget = result.search_budget.max_coefficient_trials;
     trace.tfo_lite_allowed = result.search_budget.allow_tfo_lite;
+    if (!result.search_pipeline_results.empty()) {
+        trace.search_status = common_flydelta_search_status_name(
+            result.search_pipeline_results.back().search_status);
+    }
     if (result.has_experiment_plan) {
         trace.bootstrap_refinement = common_flydelta_bootstrap_refinement_kind_name(
             result.experiment_plan.bootstrap_refinement);
@@ -278,10 +282,23 @@ bool validate_result(
         error = "FlyDelta counterfactual worker result requires a report";
             return false;
     }
-    if (claimed.job.kind == common_flydelta_experiment_job_kind::search_pipeline &&
-            (result.search_pipeline_results.empty() || result.search_continuations.empty())) {
-        error = "FlyDelta search pipeline worker result requires a result and continuation";
-        return false;
+    if (claimed.job.kind == common_flydelta_experiment_job_kind::search_pipeline) {
+        if (result.search_pipeline_results.empty()) {
+            error = "FlyDelta search pipeline worker result requires a result";
+            return false;
+        }
+        if (result.search_continuations.empty()) {
+            if (result.search_pipeline_results.size() != 1 ||
+                    result.search_pipeline_results.front().selection.selected ||
+                    !common_flydelta_search_status_is_terminal_without_candidate(
+                        result.search_pipeline_results.front().search_status)) {
+                error = "FlyDelta empty search continuation is not a terminal result";
+                return false;
+            }
+        } else if (result.search_continuations.size() != result.search_pipeline_results.size()) {
+            error = "FlyDelta search pipeline result and continuation counts differ";
+            return false;
+        }
     }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::direction &&
             result.direction_candidates.empty()) {
@@ -433,6 +450,7 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
         {"region_budget", trace.region_budget},
         {"coefficient_budget", trace.coefficient_budget},
         {"tfo_lite_allowed", trace.tfo_lite_allowed},
+        {"search_status", trace.search_status},
         {"bootstrap_refinement", trace.bootstrap_refinement},
         {"alpha_response_available", trace.alpha_response_available},
         {"alpha_response_status", common_flydelta_alpha_response_status_name(

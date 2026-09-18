@@ -1340,9 +1340,23 @@ int main(int argc, char ** argv) {
             for (const auto & trial : zoom_trials) {
                 common_flydelta_orthogonal_search_arm arm;
                 arm.intervention = flatten_profile(trial.candidate);
+                arm.decision_margin_available = trial.margin_available;
                 arm.decision_margin_delta = trial.margin_delta;
-                arm.safe_to_continue = trial.verifier_known &&
-                    trial.outcome != common_flydelta_counterfactual_outcome::harmed;
+                arm.geometric_response_available = trial.diagnostics_available;
+                if (trial.diagnostics_available) {
+                    // progress and leakage are the normalized parallel and
+                    // perpendicular components of the same overlay shift.
+                    arm.geometric_response = std::sqrt(
+                        trial.diagnostics.progress * trial.diagnostics.progress +
+                        trial.diagnostics.leakage * trial.diagnostics.leakage);
+                }
+                arm.safe_to_continue = trial.host_evaluated &&
+                    trial.outcome != common_flydelta_counterfactual_outcome::harmed &&
+                    trial.diagnostics_available &&
+                    trial.diagnostics.cosine >= 0.3f &&
+                    trial.diagnostics.progress > 0.0f &&
+                    trial.diagnostics.leakage <= 1.0f &&
+                    trial.diagnostics.shift_norm <= 1.0f;
                 arm.outcome = trial.outcome;
                 orthogonal_arms.push_back(std::move(arm));
             }
@@ -1360,6 +1374,9 @@ int main(int argc, char ** argv) {
                       << " source_arms=" << orthogonal_surface.source_arm_count
                       << " residual_norm=" << orthogonal_surface.residual_norm
                       << " fit_quality=" << orthogonal_surface.fit_quality
+                      << " response_signal="
+                      << common_flydelta_orthogonal_response_signal_name(
+                             orthogonal_surface.response_signal)
                       << " evidence_rank=" << evidence_depth.effective_rank << '\n';
 
             if (orthogonal_surface.available) {

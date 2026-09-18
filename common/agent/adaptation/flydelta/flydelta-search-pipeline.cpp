@@ -69,6 +69,25 @@ common_flydelta_layer_candidate to_layer_candidate(
 
 } // namespace
 
+const char * common_flydelta_search_status_name(
+        const common_flydelta_search_status status) {
+    switch (status) {
+        case common_flydelta_search_status::candidate_available: return "candidate_available";
+        case common_flydelta_search_status::no_useful_utility: return "no_useful_utility";
+        case common_flydelta_search_status::safety_limited: return "safety_limited";
+        case common_flydelta_search_status::saturated: return "saturated";
+        case common_flydelta_search_status::peaked: return "peaked";
+        case common_flydelta_search_status::budget_limited: return "budget_limited";
+        case common_flydelta_search_status::upper_bound_limited: return "upper_bound_limited";
+    }
+    return "candidate_available";
+}
+
+bool common_flydelta_search_status_is_terminal_without_candidate(
+        const common_flydelta_search_status status) {
+    return status != common_flydelta_search_status::candidate_available;
+}
+
 bool common_flydelta_search_pipeline_config_validate(
         const common_flydelta_search_pipeline_config & config,
         std::string & error) {
@@ -354,6 +373,9 @@ bool common_flydelta_run_search_pipeline(
             }
         }
         result.directions.push_back(std::move(direction_result));
+    }
+    if (!result.selection.selected) {
+        result.search_status = common_flydelta_search_status::no_useful_utility;
     }
     return true;
 }

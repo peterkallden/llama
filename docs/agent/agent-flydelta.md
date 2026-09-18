@@ -1052,8 +1052,14 @@ Bootstrap/BootstrapZoom
 The residual fit consumes the actual bounded intervention descriptors for the
 arms. Alpha-only arms cannot manufacture a second axis. Safe `UNKNOWN` and
 `NEUTRAL` arms may contribute search response, while `HARMED` arms are
-excluded; none of these observations increases `evidence_rank`. A successful
-fit is marked `search_derived` and remains in the experimental lifecycle.
+excluded; none of these observations increases `evidence_rank`. Decision
+margin is preferred when enough arms provide it. If margin is unavailable,
+the fit may fall back to a structured geometric response derived from the
+normalized parallel/perpendicular shift components (`sqrt(progress^2 +
+leakage^2)`). That fallback may open one experimental orthogonal probe, but
+positive decision utility is still required before spending more rank-two or
+Deep/TFO budget. A successful fit is marked `search_derived` and remains in
+the experimental lifecycle.
 
 If no stable residual signal can be found, the later fallback is
 `RepresentationAugmentation`. Its donor context must first qualify at the

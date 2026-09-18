@@ -71,6 +71,7 @@ struct common_flydelta_trace {
     size_t region_budget = 0;
     size_t coefficient_budget = 0;
     bool tfo_lite_allowed = false;
+    std::string search_status = "candidate_available";
     std::string bootstrap_refinement;
     bool alpha_response_available = false;
     common_flydelta_alpha_response_status alpha_response_status =

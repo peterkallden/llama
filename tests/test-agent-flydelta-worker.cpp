@@ -171,6 +171,41 @@ int main() {
         worker_report.next_action == common_flydelta_next_action::run_bootstrap &&
         worker_report.next_action_reason.find("Whirlpool") != std::string::npos);
 
+    auto terminal_search_job = job("flydelta://job/worker-terminal-search");
+    terminal_search_job.kind = common_flydelta_experiment_job_kind::search_pipeline;
+    terminal_search_job.behavior_delta_ids = {"flydelta://delta/terminal-search"};
+    CHECK(common_flydelta_experiment_queue_enqueue(root, terminal_search_job, {}, error));
+    CHECK(common_flydelta_experiment_worker_run_once(root, {},
+        [](const auto &, auto & result, std::string &) {
+            result.safe_summary = "bounded search completed without utility";
+            common_flydelta_search_pipeline_direction_result direction;
+            direction.direction = direction_candidate();
+            common_flydelta_intervention_region_trial trial;
+            trial.candidate.layer_indices = {2};
+            trial.candidate.anchor_layer_index = 2;
+            trial.candidate.total_scale = 0.05f;
+            trial.candidate.per_layer_scale = 0.05f;
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.search_score = 0.0f;
+            trial.promising = false;
+            trial.safe_to_continue = false;
+            trial.evidence_ref = "evidence:worker-terminal-search";
+            direction.region_trials.push_back(std::move(trial));
+            result.search_pipeline_results.push_back({});
+            result.search_pipeline_results.front().directions.push_back(std::move(direction));
+            result.search_pipeline_results.front().search_status =
+                common_flydelta_search_status::no_useful_utility;
+            result.has_next_action = true;
+            result.next_action = common_flydelta_next_action::stop;
+            result.next_action_reason = "no useful utility";
+            return true;
+        }, worker_report, error));
+    CHECK(worker_report.state == common_flydelta_experiment_queue_state::succeeded);
+    CHECK(worker_report.trace.search_status == "no_useful_utility");
+    CHECK(worker_report.has_next_action &&
+        worker_report.next_action == common_flydelta_next_action::stop);
+
     const auto second = job("flydelta://job/worker-2");
     CHECK(common_flydelta_experiment_queue_enqueue(root, second, {}, error));
     CHECK(common_flydelta_experiment_worker_run_once(root, {},

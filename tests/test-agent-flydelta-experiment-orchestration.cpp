@@ -151,19 +151,49 @@ int main() {
 
     common_flydelta_orthogonal_search_config orthogonal_config;
     std::vector<common_flydelta_orthogonal_search_arm> orthogonal_arms = {
-        {{1.0f, 0.0f, 0.0f}, 0.0f, true, common_flydelta_counterfactual_outcome::unknown},
-        {{1.0f, 1.0f, 0.0f}, 0.5f, true, common_flydelta_counterfactual_outcome::neutral},
-        {{1.0f, -1.0f, 0.0f}, -0.5f, true, common_flydelta_counterfactual_outcome::unknown},
-        {{1.0f, 2.0f, 0.0f}, 1.0f, true, common_flydelta_counterfactual_outcome::unknown},
-        {{1.0f, -2.0f, 0.0f}, -1.0f, true, common_flydelta_counterfactual_outcome::unknown},
+        {{1.0f, 0.0f, 0.0f}, true, 0.0f, false, 0.0f, true,
+            common_flydelta_counterfactual_outcome::unknown},
+        {{1.0f, 1.0f, 0.0f}, true, 0.5f, false, 0.0f, true,
+            common_flydelta_counterfactual_outcome::neutral},
+        {{1.0f, -1.0f, 0.0f}, true, -0.5f, false, 0.0f, true,
+            common_flydelta_counterfactual_outcome::unknown},
+        {{1.0f, 2.0f, 0.0f}, true, 1.0f, false, 0.0f, true,
+            common_flydelta_counterfactual_outcome::unknown},
+        {{1.0f, -2.0f, 0.0f}, true, -1.0f, false, 0.0f, true,
+            common_flydelta_counterfactual_outcome::unknown},
     };
     common_flydelta_orthogonal_search_result orthogonal;
     CHECK(common_flydelta_build_orthogonal_search_direction(
         orthogonal_config, {1.0f, 0.0f, 0.0f}, orthogonal_arms, orthogonal, error));
     CHECK(orthogonal.available && orthogonal.experimental_only &&
         orthogonal.source_arm_count == orthogonal_arms.size() && orthogonal.fit_quality > 0.99f &&
+        orthogonal.response_signal == common_flydelta_orthogonal_response_signal::decision_margin &&
         std::fabs(orthogonal.direction[0]) < 0.001f && orthogonal.direction[1] > 0.99f &&
         std::fabs(orthogonal.direction[2]) < 0.001f);
+
+    std::vector<common_flydelta_orthogonal_search_arm> geometric_arms = {
+        {{1.0f, 0.0f, 0.0f}, false, 0.0f, true, 0.0f, true,
+            common_flydelta_counterfactual_outcome::neutral},
+        {{1.0f, 1.0f, 0.0f}, false, 0.0f, true, 0.5f, true,
+            common_flydelta_counterfactual_outcome::neutral},
+        {{1.0f, -1.0f, 0.0f}, false, 0.0f, true, -0.5f, true,
+            common_flydelta_counterfactual_outcome::unknown},
+        {{1.0f, 2.0f, 0.0f}, false, 0.0f, true, 1.0f, true,
+            common_flydelta_counterfactual_outcome::neutral},
+        {{1.0f, -2.0f, 0.0f}, false, 0.0f, true, -1.0f, true,
+            common_flydelta_counterfactual_outcome::unknown},
+    };
+    common_flydelta_orthogonal_search_result geometric_orthogonal;
+    CHECK(common_flydelta_build_orthogonal_search_direction(
+        orthogonal_config, {1.0f, 0.0f, 0.0f}, geometric_arms, geometric_orthogonal, error));
+    CHECK(geometric_orthogonal.available && geometric_orthogonal.experimental_only &&
+        geometric_orthogonal.response_signal ==
+            common_flydelta_orthogonal_response_signal::geometric_response &&
+        geometric_orthogonal.source_arm_count == geometric_arms.size() &&
+        geometric_orthogonal.fit_quality > 0.99f &&
+        std::fabs(geometric_orthogonal.direction[0]) < 0.001f &&
+        geometric_orthogonal.direction[1] > 0.99f &&
+        std::fabs(geometric_orthogonal.direction[2]) < 0.001f);
 
     common_flydelta_experiment_plan bootstrap_plan;
     bool advanced = false;

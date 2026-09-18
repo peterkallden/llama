@@ -212,11 +212,30 @@ bool common_flydelta_decide_rank1_plateau_utility(
 // inferred from alpha values that all lie on the same rank-one ray.
 struct common_flydelta_orthogonal_search_arm {
     std::vector<float> intervention;
+    // Decision utility is preferred whenever enough arms carry it.  It is
+    // deliberately optional: a rank-one plateau may still expose a coherent
+    // geometric response before a behavior-specific margin becomes useful.
+    bool decision_margin_available = false;
     float decision_margin_delta = 0.0f;
+    // The caller supplies a dimensionless response derived from compatible
+    // diagnostics (normally the relative dose sqrt(progress^2 + leakage^2)).
+    // It may only open one experimental orthogonal probe; it never supplies
+    // learning credit or permission for further rank-two expenditure.
+    bool geometric_response_available = false;
+    float geometric_response = 0.0f;
     bool safe_to_continue = false;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
 };
+
+enum class common_flydelta_orthogonal_response_signal {
+    none,
+    decision_margin,
+    geometric_response,
+};
+
+const char * common_flydelta_orthogonal_response_signal_name(
+        common_flydelta_orthogonal_response_signal signal);
 
 struct common_flydelta_orthogonal_search_config {
     int schema_version = 1;
@@ -233,6 +252,8 @@ struct common_flydelta_orthogonal_search_result {
     size_t source_arm_count = 0;
     float residual_norm = 0.0f;
     float fit_quality = 0.0f;
+    common_flydelta_orthogonal_response_signal response_signal =
+        common_flydelta_orthogonal_response_signal::none;
     std::vector<float> direction;
 };
 

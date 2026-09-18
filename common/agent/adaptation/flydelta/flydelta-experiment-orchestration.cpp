@@ -267,6 +267,18 @@ bool common_flydelta_orthogonal_search_config_validate(
     return true;
 }
 
+const char * common_flydelta_orthogonal_response_signal_name(
+        common_flydelta_orthogonal_response_signal signal) {
+    switch (signal) {
+        case common_flydelta_orthogonal_response_signal::none: return "none";
+        case common_flydelta_orthogonal_response_signal::decision_margin:
+            return "decision_margin";
+        case common_flydelta_orthogonal_response_signal::geometric_response:
+            return "geometric_response";
+    }
+    return "unknown";
+}
+
 bool common_flydelta_build_orthogonal_search_direction(
         const common_flydelta_orthogonal_search_config & config,
         const std::vector<float> & rank1_direction,
@@ -288,11 +300,14 @@ bool common_flydelta_build_orthogonal_search_direction(
     std::vector<float> axis(rank1_direction.size());
     for (size_t i = 0; i < axis.size(); ++i) axis[i] = rank1_direction[i] / rank1_norm;
 
-    std::vector<const common_flydelta_orthogonal_search_arm *> usable;
+    std::vector<const common_flydelta_orthogonal_search_arm *> margin_arms;
+    std::vector<const common_flydelta_orthogonal_search_arm *> geometric_arms;
     for (const auto & arm : arms) {
         if (!arm.safe_to_continue ||
                 arm.outcome == common_flydelta_counterfactual_outcome::harmed) continue;
-        if (arm.intervention.size() != axis.size() || !finite(arm.decision_margin_delta)) {
+        if (arm.intervention.size() != axis.size() ||
+                (arm.decision_margin_available && !finite(arm.decision_margin_delta)) ||
+                (arm.geometric_response_available && !finite(arm.geometric_response))) {
             error = "FlyDelta orthogonal-search arm dimensions are invalid";
             return false;
         }
@@ -302,17 +317,31 @@ bool common_flydelta_build_orthogonal_search_direction(
                 return false;
             }
         }
-        usable.push_back(&arm);
+        if (arm.decision_margin_available) margin_arms.push_back(&arm);
+        if (arm.geometric_response_available) geometric_arms.push_back(&arm);
     }
+    const common_flydelta_orthogonal_response_signal response_signal =
+        margin_arms.size() >= config.minimum_arms
+            ? common_flydelta_orthogonal_response_signal::decision_margin
+            : geometric_arms.size() >= config.minimum_arms
+                ? common_flydelta_orthogonal_response_signal::geometric_response
+                : common_flydelta_orthogonal_response_signal::none;
+    const auto & usable = response_signal ==
+            common_flydelta_orthogonal_response_signal::decision_margin
+        ? margin_arms : geometric_arms;
     if (usable.size() < config.minimum_arms) return true;
+    const auto response_for = [&](const common_flydelta_orthogonal_search_arm & arm) {
+        return response_signal == common_flydelta_orthogonal_response_signal::decision_margin
+            ? arm.decision_margin_delta : arm.geometric_response;
+    };
     std::vector<float> mean(axis.size(), 0.0f);
-    float mean_margin = 0.0f;
+    float mean_response = 0.0f;
     for (const auto * arm : usable) {
-        mean_margin += arm->decision_margin_delta;
+        mean_response += response_for(*arm);
         for (size_t i = 0; i < mean.size(); ++i) mean[i] += arm->intervention[i];
     }
     const float count = static_cast<float>(usable.size());
-    mean_margin /= count;
+    mean_response /= count;
     for (float & value : mean) value /= count;
 
     std::vector<float> gradient(axis.size(), 0.0f);
@@ -328,7 +357,7 @@ bool common_flydelta_build_orthogonal_search_direction(
             return value;
         }();
         for (size_t i = 0; i < residual.size(); ++i) residual[i] -= along_axis * axis[i];
-        const float response = arm->decision_margin_delta - mean_margin;
+        const float response = response_for(*arm) - mean_response;
         response_energy += response * response;
         const float residual_norm = l2_norm(residual);
         if (residual_norm > std::numeric_limits<float>::epsilon()) {
@@ -357,7 +386,7 @@ bool common_flydelta_build_orthogonal_search_direction(
             return value;
         }();
         fitted_energy += predicted * predicted;
-        covariance += predicted * (arm->decision_margin_delta - mean_margin);
+        covariance += predicted * (response_for(*arm) - mean_response);
     }
     const float fit_denominator = std::sqrt(std::max(
         fitted_energy * response_energy + config.ridge, 0.0f));
@@ -368,6 +397,7 @@ bool common_flydelta_build_orthogonal_search_direction(
     result.source_arm_count = usable.size();
     result.residual_norm = residual_gradient_norm;
     result.fit_quality = fit_quality;
+    result.response_signal = response_signal;
     result.direction = std::move(gradient);
     const float direction_norm = l2_norm(result.direction);
     for (float & value : result.direction) value /= direction_norm;
@@ -762,6 +792,11 @@ bool common_flydelta_select_search_continuation(
         }
     }
     if (!found) {
+        // A bounded search may complete normally without finding a safe,
+        // promising continuation. The worker records that terminal result;
+        // it is not a callback or persistence failure.
+        if (common_flydelta_search_status_is_terminal_without_candidate(
+                pipeline.search_status)) return true;
         error = "FlyDelta search pipeline produced no safe promising region continuation";
         return false;
     }
