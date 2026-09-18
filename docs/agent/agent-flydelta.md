@@ -869,10 +869,18 @@ The daemon dispatcher also accepts a host-owned
 model-facing capabilities and supplies the already-bounded worker callback.
 When present, the dispatcher uses it to populate the ordinary worker callback;
 worker budgeting, queue claims and result validation remain unchanged. The
-production adapter must be constructed by the runtime host, where model
-residency, capture/fixture resolution, fresh contexts and host verification
-are available. The common worker never creates that adapter, and an advertised
-capability is not evidence that a correction works.
+production adapter must be constructed by the runtime host, where the selected
+model profile, backend inference object, reference/fixture resolution, fresh
+contexts and host verification are available. The adapter contract is
+model/backend-neutral; model names used by model smokes are test configuration,
+not part of the worker or adapter API. The common worker never creates that
+adapter, and an advertised capability is not evidence that a correction works.
+
+The daemon runtime carries the optional adapter registration into the
+dispatcher and exposes two separate status facts: whether an adapter is
+registered, and whether it advertises model-facing search support. A configured
+FlyDelta lane without a registered adapter is therefore an observable idle
+configuration, not a callback that silently captures user-session state.
 
 The ordered transition at a rank-one plateau is:
 

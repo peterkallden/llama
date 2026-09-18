@@ -63,7 +63,8 @@ The local branch currently contains the first contract slices:
 The host configuration also carries an explicit `runtime.adaptation.flydelta`
 worker reservation. Its budget is validated against `limits.worker_count` and
 the daemon dispatcher owns the optional dedicated nearline lane. The lane is
-started only when the host supplies its FlyDelta evaluator callback; otherwise
+started only when the host supplies its FlyDelta evaluator callback, directly
+or through the model/backend-neutral `common_flydelta_model_adapter`; otherwise
 the reservation remains visible as configured-but-idle and no job is consumed.
 Changing this configuration remains restart-required and never silently
 reduces the normal daemon pool.
