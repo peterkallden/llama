@@ -260,7 +260,11 @@ bool common_flydelta_orthogonal_search_config_validate(
             config.maximum_arms < config.minimum_arms || config.maximum_arms > 128 ||
             !finite(config.minimum_residual_norm) || config.minimum_residual_norm <= 0.0f ||
             !finite(config.minimum_fit_quality) || config.minimum_fit_quality < 0.0f ||
-            config.minimum_fit_quality > 1.0f || !finite(config.ridge) || config.ridge <= 0.0f) {
+            config.minimum_fit_quality > 1.0f || !finite(config.ridge) || config.ridge <= 0.0f ||
+            !finite(config.minimum_cosine) || config.minimum_cosine < -1.0f ||
+            config.minimum_cosine > 1.0f || !finite(config.maximum_leakage) ||
+            config.maximum_leakage < 0.0f || !finite(config.maximum_shift_norm) ||
+            config.maximum_shift_norm <= 0.0f) {
         error = "FlyDelta orthogonal-search configuration is invalid";
         return false;
     }
@@ -672,6 +676,67 @@ bool common_flydelta_bootstrap_zoom_state_validate(
     }
     if (!common_flydelta_bootstrap_zoom_selection_validate(
             state.selection, state.completed_trials.size(), error)) return false;
+    return true;
+}
+
+bool common_flydelta_prepare_orthogonal_search_input(
+        const common_flydelta_orthogonal_search_config & config,
+        const common_flydelta_bootstrap_zoom_state & state,
+        common_flydelta_orthogonal_search_input & input,
+        std::string & error) {
+    error.clear();
+    input = {};
+    if (!common_flydelta_orthogonal_search_config_validate(config, error) ||
+            !common_flydelta_bootstrap_zoom_state_validate(state, error) ||
+            state.local_layers.empty() || state.completed_trials.empty()) {
+        if (error.empty()) {
+            error = "FlyDelta orthogonal search requires persisted local BootstrapZoom trials";
+        }
+        return false;
+    }
+    input.local_layers = state.local_layers;
+    const auto flatten = [&](const common_flydelta_bootstrap_zoom_candidate & candidate,
+            std::vector<float> & profile) {
+        profile.assign(input.local_layers.size(), 0.0f);
+        for (size_t index = 0; index < candidate.layer_indices.size(); ++index) {
+            const auto it = std::lower_bound(input.local_layers.begin(), input.local_layers.end(),
+                candidate.layer_indices[index]);
+            if (it == input.local_layers.end() || *it != candidate.layer_indices[index]) {
+                error = "FlyDelta BootstrapZoom trial falls outside its persisted local region";
+                return false;
+            }
+            profile[static_cast<size_t>(it - input.local_layers.begin())] =
+                candidate.layer_weights[index];
+        }
+        return true;
+    };
+    const size_t rank1_index = state.selection.selected ? state.selection.trial_index : 0;
+    if (rank1_index >= state.completed_trials.size() ||
+            !flatten(state.completed_trials[rank1_index].candidate, input.rank1_intervention)) {
+        if (error.empty()) error = "FlyDelta rank-one BootstrapZoom trial is unavailable";
+        return false;
+    }
+    for (const auto & trial : state.completed_trials) {
+        common_flydelta_orthogonal_search_arm arm;
+        if (!flatten(trial.candidate, arm.intervention)) return false;
+        arm.decision_margin_available = trial.margin_available;
+        arm.decision_margin_delta = trial.margin_delta;
+        arm.geometric_response_available = trial.diagnostics_available;
+        if (trial.diagnostics_available) {
+            arm.geometric_response = std::sqrt(
+                trial.diagnostics.progress * trial.diagnostics.progress +
+                trial.diagnostics.leakage * trial.diagnostics.leakage);
+        }
+        arm.safe_to_continue = trial.host_evaluated &&
+            trial.outcome != common_flydelta_counterfactual_outcome::harmed &&
+            trial.diagnostics_available &&
+            trial.diagnostics.cosine >= config.minimum_cosine &&
+            trial.diagnostics.progress > 0.0f &&
+            trial.diagnostics.leakage <= config.maximum_leakage &&
+            trial.diagnostics.shift_norm <= config.maximum_shift_norm;
+        arm.outcome = trial.outcome;
+        input.arms.push_back(std::move(arm));
+    }
     return true;
 }
 

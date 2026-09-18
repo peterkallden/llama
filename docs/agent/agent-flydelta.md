@@ -783,6 +783,15 @@ pretend that host-certified evidence became rank two. A useful surface may be
 re-centered locally by Whirlpool, but it remains experimental until the normal
 host-verifier and lifecycle gates classify it.
 
+For `run_orthogonal_search`, the common layer first converts the persisted
+BootstrapZoom state into a typed, reference-free orthogonal-search input. It
+contains the local layer profile, retained arm diagnostics and the selected
+rank-one intervention, but never prompts, activations or a model context. The
+host/model adapter then performs one bounded fresh-context orthogonal probe
+slice and returns its typed result through the existing state-aware pipeline
+callback. The worker transports and persists that result; it does not resolve
+model state or execute the orthogonal probes itself.
+
 #### Incremental aggregation and search depth
 
 Search sophistication follows both evidence depth and observed subspace

@@ -1320,49 +1320,39 @@ int main(int argc, char ** argv) {
                 surface_layers = continuation.region.layer_indices;
                 if (surface_layers.size() > 3) surface_layers.resize(3);
             }
-
-            const auto flatten_profile = [&](const common_flydelta_bootstrap_zoom_candidate & candidate) {
-                std::vector<float> profile(surface_layers.size(), 0.0f);
-                for (size_t index = 0; index < candidate.layer_indices.size(); ++index) {
-                    const auto it = std::find(surface_layers.begin(), surface_layers.end(),
-                        candidate.layer_indices[index]);
-                    if (it != surface_layers.end()) {
-                        profile[static_cast<size_t>(it - surface_layers.begin())] =
-                            candidate.layer_weights[index];
-                    }
-                }
-                return profile;
-            };
-            const auto & rank1_trial = zoom_selection.selected
-                ? zoom_trials[zoom_selection.trial_index] : zoom_trials.front();
-            const std::vector<float> rank1_profile = flatten_profile(rank1_trial.candidate);
-            std::vector<common_flydelta_orthogonal_search_arm> orthogonal_arms;
-            for (const auto & trial : zoom_trials) {
-                common_flydelta_orthogonal_search_arm arm;
-                arm.intervention = flatten_profile(trial.candidate);
-                arm.decision_margin_available = trial.margin_available;
-                arm.decision_margin_delta = trial.margin_delta;
-                arm.geometric_response_available = trial.diagnostics_available;
-                if (trial.diagnostics_available) {
-                    // progress and leakage are the normalized parallel and
-                    // perpendicular components of the same overlay shift.
-                    arm.geometric_response = std::sqrt(
-                        trial.diagnostics.progress * trial.diagnostics.progress +
-                        trial.diagnostics.leakage * trial.diagnostics.leakage);
-                }
-                arm.safe_to_continue = trial.host_evaluated &&
-                    trial.outcome != common_flydelta_counterfactual_outcome::harmed &&
-                    trial.diagnostics_available &&
-                    trial.diagnostics.cosine >= 0.3f &&
-                    trial.diagnostics.progress > 0.0f &&
-                    trial.diagnostics.leakage <= 1.0f &&
-                    trial.diagnostics.shift_norm <= 1.0f;
-                arm.outcome = trial.outcome;
-                orthogonal_arms.push_back(std::move(arm));
-            }
             common_flydelta_orthogonal_search_config orthogonal_config;
+            // The common helper consumes only persisted search state and
+            // diagnostics. The model host below owns the fresh validation
+            // generation; this keeps the same preparation path usable by a
+            // production post-Bootstrap callback.
+            surface_state = {};
+            surface_state.behavior_key = evidence.behavior_key;
+            surface_state.model_profile_fingerprint = profile;
+            surface_state.capture_layout_revision = "layer-input:v1";
+            surface_state.phase = common_flydelta_bootstrap_zoom_phase::profile_zoom;
+            surface_state.anchor_layer = continuation.region.anchor_layer_index;
+            surface_state.selected_scale = std::max(0.0001f,
+                zoom_trials[zoom_selection.selected ? zoom_selection.trial_index : 0].candidate.total_scale);
+            surface_state.best_margin_delta = plateau_result.best_margin_delta;
+            surface_state.best_search_score = continuation.search_score;
+            surface_state.extra_model_trials = zoom_trials.size();
+            surface_state.next_candidate_index = zoom_trials.size();
+            surface_state.evidence_rank = evidence_depth.effective_rank;
+            surface_state.local_layers = surface_layers;
+            surface_state.completed_trials = zoom_trials;
+            surface_state.selection = zoom_selection;
+            common_flydelta_orthogonal_search_input orthogonal_input;
+            if (!common_flydelta_prepare_orthogonal_search_input(
+                    orthogonal_config, surface_state, orthogonal_input, error)) {
+                std::cerr << "FlyDelta orthogonal input preparation failed: " << error << '\n';
+                return 1;
+            }
+            surface_layers = orthogonal_input.local_layers;
+            const auto & rank1_trial = zoom_trials[zoom_selection.selected
+                ? zoom_selection.trial_index : 0];
+            const std::vector<float> rank1_profile = orthogonal_input.rank1_intervention;
             if (!common_flydelta_build_orthogonal_search_direction(
-                    orthogonal_config, rank1_profile, orthogonal_arms,
+                    orthogonal_config, rank1_profile, orthogonal_input.arms,
                     orthogonal_surface, error)) {
                 std::cerr << "FlyDelta orthogonal surface construction failed: " << error << '\n';
                 return 1;

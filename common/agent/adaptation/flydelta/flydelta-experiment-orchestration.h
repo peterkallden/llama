@@ -244,6 +244,12 @@ struct common_flydelta_orthogonal_search_config {
     float minimum_residual_norm = 0.0001f;
     float minimum_fit_quality = 0.1f;
     float ridge = 0.001f;
+    // Admission for a geometric-response fallback. These are intentionally
+    // safety bounds only; decision utility remains the gate for further
+    // rank-two expenditure.
+    float minimum_cosine = 0.3f;
+    float maximum_leakage = 1.0f;
+    float maximum_shift_norm = 1.0f;
 };
 
 struct common_flydelta_orthogonal_search_result {
@@ -255,6 +261,15 @@ struct common_flydelta_orthogonal_search_result {
     common_flydelta_orthogonal_response_signal response_signal =
         common_flydelta_orthogonal_response_signal::none;
     std::vector<float> direction;
+};
+
+// Reference-free preparation owned by the common layer. A host/model adapter
+// supplies only the persisted BootstrapZoom state, then uses this typed input
+// to run one bounded orthogonal validation slice on fresh contexts.
+struct common_flydelta_orthogonal_search_input {
+    std::vector<uint32_t> local_layers;
+    std::vector<float> rank1_intervention;
+    std::vector<common_flydelta_orthogonal_search_arm> arms;
 };
 
 bool common_flydelta_orthogonal_search_config_validate(
@@ -384,6 +399,15 @@ struct common_flydelta_bootstrap_zoom_state {
 
 bool common_flydelta_bootstrap_zoom_state_validate(
         const common_flydelta_bootstrap_zoom_state & state,
+        std::string & error);
+
+// Extracts safe, host-evaluated BootstrapZoom arms into the common
+// orthogonal-search input. It carries neither prompts nor activations and
+// does not decide evidence depth, lifecycle, or the next action.
+bool common_flydelta_prepare_orthogonal_search_input(
+        const common_flydelta_orthogonal_search_config & config,
+        const common_flydelta_bootstrap_zoom_state & state,
+        common_flydelta_orthogonal_search_input & input,
         std::string & error);
 
 bool common_flydelta_bootstrap_zoom_config_validate(

@@ -282,6 +282,42 @@ int main() {
     CHECK(zoom_selection.selected && zoom_selection.trial_index == 1 &&
         zoom_selection.search_score == 0.2f);
 
+    // The model host receives this reference-free preparation from persisted
+    // BootstrapZoom state; it alone owns the following fresh model probes.
+    std::vector<common_flydelta_bootstrap_zoom_trial> geometric_trials;
+    for (size_t index = 0; index < zoom.size(); ++index) {
+        common_flydelta_bootstrap_zoom_trial trial = first_trial;
+        trial.candidate = zoom[index];
+        trial.margin_available = false;
+        trial.margin_delta = 0.0f;
+        trial.outcome = common_flydelta_counterfactual_outcome::neutral;
+        trial.diagnostics.progress = 0.10f * static_cast<float>(index + 1);
+        trial.diagnostics.leakage = 0.05f * static_cast<float>(index + 1);
+        geometric_trials.push_back(std::move(trial));
+    }
+    common_flydelta_bootstrap_zoom_state orthogonal_input_state;
+    orthogonal_input_state.behavior_key = "tool_choice/data_query";
+    orthogonal_input_state.model_profile_fingerprint = "model:test";
+    orthogonal_input_state.capture_layout_revision = "layer-input:v1";
+    orthogonal_input_state.phase = common_flydelta_bootstrap_zoom_phase::profile_zoom;
+    orthogonal_input_state.anchor_layer = 24;
+    orthogonal_input_state.selected_scale = 0.1f;
+    orthogonal_input_state.extra_model_trials = geometric_trials.size();
+    orthogonal_input_state.next_candidate_index = geometric_trials.size();
+    orthogonal_input_state.local_layers = {23, 24, 25};
+    orthogonal_input_state.completed_trials = geometric_trials;
+    orthogonal_input_state.selection = {true, 0, 0.0f};
+    common_flydelta_orthogonal_search_input orthogonal_input;
+    CHECK(common_flydelta_prepare_orthogonal_search_input(
+        orthogonal_config, orthogonal_input_state, orthogonal_input, error));
+    CHECK(orthogonal_input.local_layers == std::vector<uint32_t>({23, 24, 25}) &&
+        orthogonal_input.rank1_intervention == std::vector<float>({0.0f, 1.0f, 0.0f}) &&
+        orthogonal_input.arms.size() == geometric_trials.size());
+    for (const auto & prepared_arm : orthogonal_input.arms) {
+        CHECK(prepared_arm.geometric_response_available && prepared_arm.safe_to_continue &&
+            !prepared_arm.decision_margin_available);
+    }
+
     common_flydelta_bootstrap_zoom_state surface_state;
     surface_state.behavior_key = "tool_choice/data_query";
     surface_state.model_profile_fingerprint = "model:test";
