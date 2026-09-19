@@ -124,6 +124,9 @@ struct common_flydelta_direction_candidate {
     common_flydelta_direction_kind kind = common_flydelta_direction_kind::raw_repair;
     int32_t layer_index = -1;
     std::vector<float> values;
+    // Optional provenance for builders outside the repair-delta path.
+    std::string origin;
+    std::string extraction_id;
     size_t source_samples = 0;
     size_t retained_samples = 0;
     float median_alignment = 0.0f;

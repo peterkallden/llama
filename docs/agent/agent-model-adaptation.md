@@ -143,6 +143,15 @@ bounded slice, while FlyDelta retains transition policy. Both workers may be
 scheduled under the same total worker budget, but they retain separate job
 schemas, artifact registries and promotion gates.
 
+Host-taught FlyDelta concept extraction follows the same boundary. It is an
+explicit host-approved relation, such as a verified procedure blueprint with
+matched controls, not automatic reflection, user-correction inference or a
+new SFT route. The extractor produces experimental direction material for the
+existing FlyDelta search lane; it does not create learning credit, modify the
+base model or activate a sideband. The production worker and the
+model-capable smoke use the same bounded arm/model-host seam, while the host
+continues to own scheduling, verification and persistence authority.
+
 The lifecycle stores share one persistence contract: the `payload_json` column
 contains the record payload, not the serialized lifecycle envelope. JSONL,
 SQLite and Cozo must therefore produce the same idempotent read-back; the

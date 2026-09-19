@@ -123,6 +123,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/flydelta-artifact-store.cpp adaptation/flydelta/flydelta-artifact-store.h
     adaptation/flydelta/flydelta-representation-augmentation.cpp adaptation/flydelta/flydelta-representation-augmentation.h
     adaptation/flydelta/flydelta-representation-augmentation-state-store.cpp adaptation/flydelta/flydelta-representation-augmentation-state-store.h
+    adaptation/flydelta/flydelta-concept.cpp adaptation/flydelta/flydelta-concept.h
     thinking/reflection-json.cpp thinking/reflection-json.h
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
     tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h

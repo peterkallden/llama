@@ -1794,6 +1794,62 @@ contain at least one validated candidate. This keeps queue execution,
 reference resolution and result validation on the same authority boundary as
 the existing basis, counterfactual and DeltaMemory jobs.
 
+### Host-taught concept extraction — initial contract
+
+Some host-owned procedures and verified corrections are useful as concept
+material even when they are not tool-repair deltas. The initial extraction
+path is deliberately a builder on top of the existing direction contract, not
+a second intervention or learning pipeline:
+
+```text
+host-approved ConceptSpec
+    -> matched baseline / conditioned / control captures
+    -> control-residualized concept trajectories
+    -> raw / trimmed / diagonal-whitened rank-one candidates
+    -> existing FlyDelta direction/search contract
+    -> normal layer, dose, margin and host-verifier evaluation
+```
+
+The host must provide the behavior identity, an extraction identity, procedure
+and verifier references, model/tokenizer/template/layout fingerprints, scope
+and redaction attestation, and host verification for every conditioned
+trajectory. `concept_key` identifies the reusable concept; `extraction_id`
+identifies one immutable extraction run. A
+procedure blueprint also requires a matched control capture. The builder
+rejects unapproved, unaligned, mixed-layer or unverified material.
+
+Concept candidates are emitted with `origin=host_taught_extracted`. They are
+always `experimental_only` and never learning-eligible at this stage. The
+conversion into the ordinary direction candidate preserves that provenance;
+it does not bypass the existing utility gate, worker slice, host verifier or
+promotion lifecycle. The candidate's transient vectors are builder input;
+persisted state should retain references and diagnostics rather than raw
+hidden-state payloads.
+
+The first implementation intentionally stops at CPU-cheap rank-one builders.
+It does not introduce gradient steering, SFT, a new concept registry or a new
+model-residency path. Later concept families can reuse the same contract by
+changing the explicit host-approved `behavior_key` and evidence source.
+
+The concept smoke has two layers. Its default offline mode covers grouped
+aggregation, validated filtering and ordered querying with synthetic matched
+trajectories, explicit `seen`/`holdout`/`transfer`/`contrastive` fixture
+partitions and contract rejection cases. Its optional `--model` mode uses
+the existing resident model/capture path and reports unresolved families when
+the model does not produce enough host-verified conditioned pairs. An
+unresolved model smoke is diagnostic and carries no learning credit; it is not
+allowed to fabricate concept evidence. This gives the smoke useful model
+coverage without creating a private model path unavailable to production.
+
+Teacher-forced margin scoring in the model smoke is behavior-specific as well:
+the positive continuation is the family target and the negative continuation
+is the fixture's nearest declared alternative. It must not use one global
+tool pair such as `data.inspect` versus `data.describe` for every concept
+family. The margin remains search evidence only. Canonical/semantic host
+verification is a separate gate, so a model response that selects the right
+tool but emits a non-canonical or semantically incomplete call remains
+diagnostic `NON_CANONICAL_POSITIVE` material rather than a verified trajectory.
+
 Two generic candidate builders share the same candidate format:
 
 ```text

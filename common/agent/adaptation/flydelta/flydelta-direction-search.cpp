@@ -308,6 +308,8 @@ bool common_flydelta_direction_candidate_validate(
     error.clear();
     if (candidate.schema_version != 1 || !supported_kind(candidate.kind) ||
             candidate.layer_index < 0 || expected_dimension == 0 ||
+            (!candidate.origin.empty() && !nonempty_bounded(candidate.origin)) ||
+            (!candidate.extraction_id.empty() && !nonempty_bounded(candidate.extraction_id)) ||
             candidate.values.size() != expected_dimension || candidate.source_samples == 0 ||
             candidate.retained_samples == 0 || candidate.retained_samples > candidate.source_samples ||
             !std::isfinite(candidate.median_alignment) || candidate.median_alignment < -1.0f ||

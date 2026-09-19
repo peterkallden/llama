@@ -988,6 +988,23 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Host-taught concept smoke. Offline mode exercises all concept families with
+# deterministic matched trajectories; --model runs the same builder from
+# real model-host captures and reports unresolved concepts without granting
+# learning credit.
+set(TARGET llama-agent-flydelta-concept-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-concept-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Optional real-model FlyDelta A/B smoke. It is CTest-compatible but skips
 # when LLAMA_AGENT_MODEL is not supplied, like the existing model smokes.
 set(TARGET llama-agent-flydelta-model-ab-smoke)
@@ -2315,6 +2332,11 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-flydelta-representation-augmentation-smoke>)
     set_property(TEST llama-agent-flydelta-representation-augmentation-ctest PROPERTY LABELS agent-adaptation)
 
+    add_test(NAME llama-agent-flydelta-concept-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-concept-smoke>)
+    set_property(TEST llama-agent-flydelta-concept-ctest PROPERTY LABELS agent-adaptation)
+    set_tests_properties(llama-agent-flydelta-concept-ctest PROPERTIES TIMEOUT 60)
+
     add_test(NAME llama-agent-flydelta-model-ab-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-model-ab-smoke>)
     set_property(TEST llama-agent-flydelta-model-ab-ctest PROPERTY LABELS agent-adaptation)
@@ -2641,6 +2663,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-experiment
     test-agent-flydelta-evidence
     test-agent-flydelta-basis
+    test-agent-flydelta-concept
     test-agent-flydelta-training
     test-agent-flydelta-training-corpus
     test-agent-flydelta-job
