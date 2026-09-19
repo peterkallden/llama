@@ -252,8 +252,12 @@ bool common_flydelta_evaluate_job(
             return true;
         }
         case common_flydelta_experiment_job_kind::search_pipeline: {
+            const std::string & augmentation_state_ref =
+                !job.representation_augmentation_state_ref.empty()
+                    ? job.representation_augmentation_state_ref
+                    : job.search_state_ref;
             const bool has_representation_augmentation_state =
-                is_representation_augmentation_state_ref(job.search_state_ref);
+                is_representation_augmentation_state_ref(augmentation_state_ref);
             if (has_representation_augmentation_state) {
                 if (!callbacks.run_representation_augmentation_with_state ||
                         !callbacks.resolve_representation_augmentation_state ||
@@ -267,7 +271,7 @@ bool common_flydelta_evaluate_job(
                 }
                 common_flydelta_representation_augmentation_state resume_state;
                 if (!callbacks.resolve_representation_augmentation_state(
-                        job.search_state_ref, resume_state, error) ||
+                        augmentation_state_ref, resume_state, error) ||
                         !common_flydelta_representation_augmentation_state_validate(
                             resume_state, config.representation_augmentation, error)) {
                     if (error.empty()) error = "FlyDelta augmentation resume state is invalid";

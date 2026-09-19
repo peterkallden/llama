@@ -88,8 +88,10 @@ struct common_flydelta_evaluator_callbacks {
             std::string & error)> persist_bootstrap_zoom_state;
 
     // Typed continuation seam for the representation-augmentation escape.
-    // The queue still carries only search_state_ref; the host owns the typed
-    // state, fresh inference contexts and all donor/capture resolution.
+    // The queue carries only opaque state refs; older jobs may use
+    // search_state_ref while newer jobs may use the dedicated augmentation
+    // ref. The host owns the typed state, fresh inference contexts and all
+    // donor/capture resolution.
     std::function<bool(
             const std::string & state_ref,
             common_flydelta_representation_augmentation_state & state,

@@ -31,6 +31,7 @@ struct common_agent_daemon_flydelta_worker_config {
     // may enqueue one reference-only follow-up slice after the current job
     // has completed. It must not execute the next slice recursively.
     std::function<bool(
+            const common_flydelta_experiment_job &,
             const common_flydelta_experiment_worker_report &,
             std::string &)> schedule_next_action;
     std::chrono::milliseconds poll_interval{250};

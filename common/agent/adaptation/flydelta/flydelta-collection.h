@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-queue.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
+#include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -39,6 +40,7 @@ struct common_flydelta_experiment_collection_request {
     // Opaque state for post-Bootstrap continuation. The collection layer only
     // transports it; the host resolves its typed state.
     std::string search_state_ref;
+    std::string representation_augmentation_state_ref;
 };
 
 enum class common_flydelta_experiment_collection_result {
@@ -81,5 +83,20 @@ bool common_flydelta_collect_search_pipeline_refinement_job(
         const common_flydelta_search_observation & observation,
         const common_flydelta_search_decision & decision,
         const common_flydelta_candidate_lineage & lineage,
+        common_flydelta_experiment_collection_result & result,
+        std::string & error);
+
+// Enqueues exactly one reference-only follow-up slice from an already claimed
+// search-pipeline job. This is the host scheduler seam: it carries forward
+// the immutable seed and bounded references, updates only opaque state refs,
+// and never evaluates the next phase recursively.
+bool common_flydelta_collect_next_action_job(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        const common_flydelta_experiment_job & parent_job,
+        common_flydelta_next_action next_action,
+        const std::string & bootstrap_zoom_state_ref,
+        const std::string & search_state_ref,
+        const std::string & representation_augmentation_state_ref,
         common_flydelta_experiment_collection_result & result,
         std::string & error);

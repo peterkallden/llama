@@ -68,6 +68,8 @@ int main() {
     pipeline_request.behavior_delta_ids = {"flydelta://delta/pipeline-1"};
     pipeline_request.bootstrap_zoom_state_ref = "flydelta://state/bootstrap-zoom/seed";
     pipeline_request.search_state_ref = "flydelta://state/search/plateau-1";
+    pipeline_request.representation_augmentation_state_ref =
+        "flydelta://state/augmentation/seed";
     const auto pipeline_root = root / "pipeline";
     CHECK(common_flydelta_collect_experiment_job(
         pipeline_root, {}, pipeline_request, result, error));
@@ -81,6 +83,33 @@ int main() {
         "flydelta://state/bootstrap-zoom/seed");
     CHECK(pipeline_claimed.job.search_state_ref ==
         "flydelta://state/search/plateau-1");
+    CHECK(pipeline_claimed.job.representation_augmentation_state_ref ==
+        "flydelta://state/augmentation/seed");
+
+    CHECK(common_flydelta_collect_next_action_job(
+        pipeline_root, {}, pipeline_claimed.job,
+        common_flydelta_next_action::run_orthogonal_search,
+        "flydelta://state/bootstrap-zoom/next",
+        "flydelta://state/search/orthogonal",
+        "flydelta://state/augmentation/next",
+        result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::enqueued);
+    CHECK(common_flydelta_collect_next_action_job(
+        pipeline_root, {}, pipeline_claimed.job,
+        common_flydelta_next_action::run_orthogonal_search,
+        "flydelta://state/bootstrap-zoom/next",
+        "flydelta://state/search/orthogonal",
+        "flydelta://state/augmentation/next",
+        result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::already_present);
+    common_flydelta_claimed_experiment_job next_action_job;
+    CHECK(common_flydelta_experiment_queue_claim_next(
+        pipeline_root, {}, next_action_job, error));
+    CHECK(next_action_job.job.kind == common_flydelta_experiment_job_kind::search_pipeline);
+    CHECK(next_action_job.job.search_state_ref ==
+        "flydelta://state/search/orthogonal");
+    CHECK(next_action_job.job.representation_augmentation_state_ref ==
+        "flydelta://state/augmentation/next");
 
     value.enabled = false;
     CHECK(common_flydelta_collect_experiment_job(root, {}, value, result, error));

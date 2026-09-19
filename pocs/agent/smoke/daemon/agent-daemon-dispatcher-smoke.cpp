@@ -646,11 +646,16 @@ int main() {
     };
     flydelta_config.model_adapter = flydelta_model_adapter;
     flydelta_config.schedule_next_action = [&flydelta_schedule_count](
+            const common_flydelta_experiment_job & parent_job,
             const common_flydelta_experiment_worker_report & report,
             std::string & error) {
         if (!report.has_next_action ||
                 report.next_action != common_flydelta_next_action::refine_bootstrap) {
             error = "unexpected FlyDelta next action in scheduler seam smoke";
+            return false;
+        }
+        if (parent_job.id.empty() || report.completed_job.id != parent_job.id) {
+            error = "scheduler seam did not receive the completed reference-only job";
             return false;
         }
         ++flydelta_schedule_count;

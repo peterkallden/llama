@@ -755,10 +755,16 @@ and outcome. Search-pipeline slices additionally retain the existing
 Whirlpool round traces (probes, recentering, radius and model-evaluation
 count). The worker bounds this material and never includes prompts, model
 outputs, credentials or activation tensors.
+The daemon scheduler uses the same reference-only collection boundary for a
+returned `next_action`: it carries forward the claimed search-pipeline job,
+updates opaque state references and enqueues at most one idempotent follow-up
+job. It never evaluates that job recursively inside the worker slice.
 
 For resumable rank-one BootstrapZoom/AdaptiveAlpha work, the queue transports
 only `bootstrap_zoom_state_ref`. For later rank-one plateau, orthogonal-search or
-augmentation slices, it transports the separate opaque `search_state_ref`.
+augmentation slices, it transports the separate opaque `search_state_ref`;
+augmentation may additionally use the explicit
+`representation_augmentation_state_ref`.
 The evaluator's state-aware callback resolves
 that opaque reference before the next bounded slice and persists a new,
 immutable reference after it. `common_flydelta_configure_bootstrap_zoom_lifecycle_callbacks()` binds those two callbacks to the existing host lifecycle

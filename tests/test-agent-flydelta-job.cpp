@@ -75,6 +75,8 @@ int main() {
     job.behavior_delta_ids = {"flydelta://delta/1"};
     job.bootstrap_zoom_state_ref = "flydelta://state/bootstrap-zoom/seed";
     job.search_state_ref = "flydelta://state/search/plateau-1";
+    job.representation_augmentation_state_ref =
+        "flydelta://state/augmentation/plateau-1";
     CHECK(common_flydelta_experiment_job_validate(job, 8, error));
     const auto pipeline_text = common_flydelta_experiment_job_to_json(job);
     common_flydelta_experiment_job pipeline_parsed;
@@ -84,6 +86,8 @@ int main() {
     CHECK(pipeline_parsed.behavior_delta_ids == job.behavior_delta_ids);
     CHECK(pipeline_parsed.bootstrap_zoom_state_ref == job.bootstrap_zoom_state_ref);
     CHECK(pipeline_parsed.search_state_ref == job.search_state_ref);
+    CHECK(pipeline_parsed.representation_augmentation_state_ref ==
+        job.representation_augmentation_state_ref);
 
     job.id = "flydelta://job/donor-capture-1";
     job.kind = common_flydelta_experiment_job_kind::donor_capture;
@@ -93,6 +97,7 @@ int main() {
     job.training_example_ids.clear();
     job.bootstrap_zoom_state_ref.clear();
     job.search_state_ref.clear();
+    job.representation_augmentation_state_ref.clear();
     CHECK(common_flydelta_experiment_job_validate(job, 8, error));
     const auto donor_text = common_flydelta_experiment_job_to_json(job);
     common_flydelta_experiment_job donor_parsed;

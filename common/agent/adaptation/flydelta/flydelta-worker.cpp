@@ -341,6 +341,7 @@ bool common_flydelta_experiment_worker_run_once(
         return true;
     }
     report.job_id = claimed.job.id;
+    report.completed_job = claimed.job;
     common_flydelta_experiment_worker_result result;
     std::string callback_error;
     bool succeeded = callback && callback(claimed.job, result, callback_error);

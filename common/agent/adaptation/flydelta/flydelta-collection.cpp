@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-collection.h"
 
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
+#include "hash/hash.h"
 
 #include <algorithm>
 
@@ -77,6 +78,8 @@ bool common_flydelta_collect_experiment_job(
     job.training_example_ids = request.training_example_ids;
     job.bootstrap_zoom_state_ref = request.bootstrap_zoom_state_ref;
     job.search_state_ref = request.search_state_ref;
+    job.representation_augmentation_state_ref =
+        request.representation_augmentation_state_ref;
     job.alpha_search = request.alpha_search;
     job.learning_rate = request.learning_rate;
     job.decay = request.decay;
@@ -154,4 +157,55 @@ bool common_flydelta_collect_search_pipeline_refinement_job(
         std::to_string(lineage.generation);
     return common_flydelta_collect_experiment_job(
         queue_root, queue_limits, refinement, result, error);
+}
+
+bool common_flydelta_collect_next_action_job(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        const common_flydelta_experiment_job & parent_job,
+        common_flydelta_next_action next_action,
+        const std::string & bootstrap_zoom_state_ref,
+        const std::string & search_state_ref,
+        const std::string & representation_augmentation_state_ref,
+        common_flydelta_experiment_collection_result & result,
+        std::string & error) {
+    error.clear();
+    result = common_flydelta_experiment_collection_result::disabled;
+    if (next_action == common_flydelta_next_action::stop ||
+            next_action == common_flydelta_next_action::retain) {
+        return true;
+    }
+    if (queue_root.empty() || parent_job.kind != common_flydelta_experiment_job_kind::search_pipeline ||
+            parent_job.id.empty() || parent_job.seed.id.empty()) {
+        error = "FlyDelta next-action scheduling requires a search-pipeline parent job";
+        return false;
+    }
+    const std::string state_key = bootstrap_zoom_state_ref + "\n" +
+        search_state_ref + "\n" + representation_augmentation_state_ref;
+    common_flydelta_experiment_job follow_up = parent_job;
+    follow_up.id = parent_job.id + "/next/" +
+        common_flydelta_next_action_name(next_action) + "/" +
+        hash_sha256_hex(state_key.data(), state_key.size()).substr(0, 32);
+    follow_up.bootstrap_zoom_state_ref = bootstrap_zoom_state_ref;
+    follow_up.search_state_ref = search_state_ref;
+    follow_up.representation_augmentation_state_ref =
+        representation_augmentation_state_ref;
+    if (follow_up.id.size() > 512) {
+        error = "FlyDelta next-action job identity exceeds its bound";
+        return false;
+    }
+    if (!common_flydelta_experiment_job_validate(follow_up, 128, error)) {
+        return false;
+    }
+    bool contains = false;
+    if (!common_flydelta_experiment_queue_contains(
+            queue_root, follow_up.id, contains, error)) return false;
+    if (contains) {
+        result = common_flydelta_experiment_collection_result::already_present;
+        return true;
+    }
+    if (!common_flydelta_experiment_queue_enqueue(
+            queue_root, follow_up, queue_limits, error)) return false;
+    result = common_flydelta_experiment_collection_result::enqueued;
+    return true;
 }

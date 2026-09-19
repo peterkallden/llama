@@ -136,6 +136,10 @@ bool common_flydelta_worker_result_from_evaluator(
 struct common_flydelta_experiment_worker_report {
     common_flydelta_experiment_queue_state state = common_flydelta_experiment_queue_state::pending;
     std::string job_id;
+    // The claimed reference-only envelope is returned to the host scheduler
+    // so it can derive one idempotent follow-up job without re-resolving or
+    // copying model data.
+    common_flydelta_experiment_job completed_job;
     std::string safe_summary;
     common_flydelta_trace trace;
     std::string trace_json;

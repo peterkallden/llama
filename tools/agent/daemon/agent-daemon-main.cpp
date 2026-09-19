@@ -5,6 +5,7 @@
 #include "../mcp/agent-mcp-http-server.h"
 #include "../host/agent-host-config.h"
 #include "agent/agent-inbound-contract.h"
+#include "agent/adaptation/flydelta/flydelta-collection.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
 #include "log.h"
@@ -550,6 +551,19 @@ int main(int argc, char ** argv) {
             runtime.flydelta_model_adapter->capabilities;
     }
     flydelta_worker_config.model_adapter = runtime.flydelta_model_adapter;
+    flydelta_worker_config.schedule_next_action =
+        [queue_root = flydelta_worker_config.queue_root,
+            queue_limits = flydelta_worker_config.queue_limits](
+            const common_flydelta_experiment_job & parent_job,
+            const common_flydelta_experiment_worker_report & report,
+            std::string & schedule_error) {
+            common_flydelta_experiment_collection_result collection_result;
+            return common_flydelta_collect_next_action_job(
+                queue_root, queue_limits, parent_job, report.next_action,
+                report.bootstrap_zoom_state_ref, report.search_state_ref,
+                report.representation_augmentation_state_ref,
+                collection_result, schedule_error);
+        };
     common_agent_daemon_dispatcher dispatcher(
         std::move(runtime), options.queue_capacity, options.worker_count,
         std::move(flydelta_worker_config));
