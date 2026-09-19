@@ -69,6 +69,31 @@ int main() {
     CHECK(generic_transactions.size() == 1);
     CHECK(generic_transactions.front().observation.signals.size() == 2);
 
+    common_learning_in_memory_transaction_store relation_store;
+    common_learning_transaction_observer_config relation_config;
+    relation_config.collection_allowed = true;
+    relation_config.domain_policy.configured = true;
+    relation_config.domain_policy.procedure_learning = true;
+    size_t relation_callbacks = 0;
+    bool relation_callback_valid = true;
+    relation_config.host_relation_observer = [&](const auto & callback_request,
+            const auto & callback_plan, const auto & callback_result,
+            const auto & transaction, std::string &) {
+        relation_callback_valid = callback_request.turn_id == "turn-1" &&
+            callback_plan.id == "plan-1" && callback_result.learning_signals.size() == 1 &&
+            transaction.observation.verification == common_learning_verification::host_verified;
+        ++relation_callbacks;
+        return relation_callback_valid;
+    };
+    common_learning_transaction_observer relation_observer(relation_store, relation_config);
+    common_agent_result procedure_result;
+    procedure_result.learning_signals.push_back({common_learning_signal_type::procedure_verification,
+        "plan-1", {}, {}, "procedure-memory-1", "host verified procedure"});
+    CHECK(relation_observer.observe(req, pl, procedure_result, error));
+    CHECK(relation_callbacks == 1);
+    CHECK(relation_callback_valid);
+    CHECK(relation_store.list(error).size() == 1);
+
     common_learning_transaction_query query;
     query.scope.session_id = "session-1";
     query.tool_family = "diagnostics";

@@ -177,6 +177,34 @@ common_agent_build_procedure_teaching_relation(
     return result;
 }
 
+bool common_agent_procedure_teaching_relation_to_evidence_relation(
+        const common_flydelta_teaching_relation & teaching_relation,
+        const common_learning_transaction & transaction,
+        common_adaptation_evidence_relation & relation,
+        std::string & error) {
+    error.clear();
+    if (teaching_relation.source != common_adaptation_evidence_source::procedure_blueprint ||
+            teaching_relation.status != common_flydelta_teaching_relation_status::resolved ||
+            !teaching_relation.host_approved || transaction.id.empty()) {
+        error = "procedure/blueprint teaching relation is not resolved for evidence";
+        return false;
+    }
+    if (!common_flydelta_teaching_relation_validate(teaching_relation, error)) return false;
+    relation = {};
+    relation.id = teaching_relation.id;
+    relation.source = common_adaptation_evidence_source::procedure_blueprint;
+    relation.scope = teaching_relation.scope;
+    relation.behavior_key = teaching_relation.behavior_key;
+    relation.task_fingerprint = teaching_relation.task_fingerprint;
+    relation.baseline_ref = teaching_relation.baseline_ref;
+    relation.candidate_ref = teaching_relation.conditioned_ref;
+    relation.verifier_ref = teaching_relation.verifier_ref;
+    relation.transaction_ids = { transaction.id };
+    relation.cause = transaction.observation.cause;
+    relation.host_verified = true;
+    return true;
+}
+
 bool common_flydelta_teaching_relation_from_host_relation(
         const common_adaptation_evidence_relation & relation,
         const std::string & evidence_ref,

@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
+#include "agent/adaptation/flydelta/flydelta-capture.h"
 
 #include <iostream>
 #include <string>
@@ -47,6 +48,38 @@ int main() {
         return fail("valid host relation was not resolved");
     }
 
+    common_learning_transaction transaction;
+    transaction.id = "learning://procedure-smoke/transaction-1";
+    transaction.observation.scope = request.scope;
+    transaction.observation.cause = common_learning_cause::host_contract;
+    transaction.observation.content_hash = "identity:smoke-procedure";
+    transaction.created_at = "2026-01-01T00:00:00Z";
+    common_adaptation_evidence_relation evidence_relation;
+    std::string error;
+    if (!common_agent_procedure_teaching_relation_to_evidence_relation(
+            *resolved.relation, transaction, evidence_relation, error)) {
+        return fail("resolved relation was not mapped to generic evidence: " + error);
+    }
+    common_agent_request host_request;
+    host_request.turn_id = request.scope.turn_id;
+    host_request.session_id = request.scope.session_id;
+    host_request.project_id = request.scope.project_id;
+    common_plan_state host_plan;
+    host_plan.id = "procedure-plan-1";
+    common_agent_result host_result;
+    host_result.learning_signals.push_back({common_learning_signal_type::procedure_verification,
+        host_plan.id, {}, {}, request.evidence_ref, "host verified procedure"});
+    common_adaptation_evidence evidence;
+    if (!common_adaptation_evidence_from_turn(
+            host_request, host_plan, host_result, evidence_relation, evidence, error)) {
+        return fail("generic evidence relation was not materialized: " + error);
+    }
+    common_flydelta_capture_candidate_collector collector("model-smoke", "layout-v1");
+    if (!collector.observe_verified_relation(
+            evidence_relation, evidence, transaction, error) || collector.candidates().size() != 1) {
+        return fail("resolved procedure relation did not reach the existing capture queue: " + error);
+    }
+
     auto no_contrast = request;
     no_contrast.conditioned_ref = no_contrast.baseline_ref;
     const auto no_contrast_result = common_agent_build_procedure_teaching_relation(no_contrast);
@@ -66,6 +99,7 @@ int main() {
               << " source=procedure_blueprint"
               << " teaching_key=" << resolved.relation->teaching_key
               << " host_approved=" << (resolved.relation->host_approved ? "yes" : "no")
+              << " capture_candidates=" << collector.candidates().size()
               << " learning_credit=none"
               << " promotion=false"
               << " unresolved_no_contrast=" << common_agent_teaching_build_status_name(

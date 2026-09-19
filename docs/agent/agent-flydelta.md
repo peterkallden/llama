@@ -95,6 +95,19 @@ provides the queue/budget seam but does not invent an evaluator callback: a host
 integration must attach the callback that resolves references and performs the
 bounded work before jobs are consumed.
 
+The runtime assembly also exposes a host-owned
+`procedure_teaching_request_provider`. It receives the completed turn and
+durable learning transaction and may return a typed procedure/blueprint
+teaching request only when the host already has immutable baseline,
+conditioned, verifier and provenance references. The assembly runs that
+request through the existing teaching-relation admission helper, maps it to
+the shared `common_adaptation_evidence` contract and sends it through the
+same FlyDelta runtime observer, lifecycle store and capture queue used by
+other sources. A missing request, a `no_contrast` result or a missing provider
+is a normal unresolved outcome; no references are synthesized and no learning
+credit is created. The callback is invoked after the learning transaction is
+durable, and its failure cannot fail the user turn.
+
 The adaptation boundary now also has one shared, reference-only evidence
 contract (`common_adaptation_evidence`). It is a view over the existing
 learning transaction ledger, not a second evidence store. A small turn router
@@ -1911,10 +1924,12 @@ contribute evidence to one concept without conflating their task identities.
 
 The procedure smoke is intentionally model-free and contract-focused: it
 checks host admission, explicit contrast, optional control requirements and
-the absence of learning credit/promotion. The existing concept smoke remains
-the model-facing path. Both feed the same `TeachingRelation` and existing
-transition/capture/search contracts; the procedure smoke does not create a
-private model or persistence path.
+the absence of learning credit/promotion. It also exercises the resolved
+relation through generic evidence materialization into the existing capture
+candidate queue. The existing concept smoke remains the model-facing path.
+Both feed the same `TeachingRelation` and existing transition/capture/search
+contracts; the procedure smoke does not create a private model or persistence
+path.
 
 The relation may be `ambiguous`, `insufficient_evidence`, `no_contrast`,
 `not_reusable` or `unsupported_behavior`. Such relations can remain in the

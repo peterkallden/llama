@@ -1,7 +1,9 @@
 #pragma once
 
 #include "agent/adaptation/adaptation-evidence-routing.h"
+#include "agent/adaptation/learning-transaction.h"
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -116,9 +118,28 @@ struct common_agent_teaching_build_result {
     std::string diagnostic;
 };
 
+// Host-owned resolver for an explicit procedure/blueprint relation. A null
+// request is a normal "not enough contrast for this turn" result; it is not a
+// worker failure and must not synthesize a baseline or conditioned reference.
+using common_agent_procedure_teaching_request_provider = std::function<bool(
+        const common_agent_request & request,
+        const common_plan_state & plan,
+        const common_agent_result & result,
+        const common_learning_transaction & transaction,
+        std::optional<common_agent_procedure_teaching_request> & teaching_request,
+        std::string & error)>;
+
 common_agent_teaching_build_result
 common_agent_build_procedure_teaching_relation(
         const common_agent_procedure_teaching_request & request);
+
+// Maps a resolved host teaching relation into the existing generic evidence
+// relation used by the learning observer and capture queue.
+bool common_agent_procedure_teaching_relation_to_evidence_relation(
+        const common_flydelta_teaching_relation & teaching_relation,
+        const common_learning_transaction & transaction,
+        common_adaptation_evidence_relation & relation,
+        std::string & error);
 
 // Converts an already completed host relation. The caller supplies the
 // semantic reusability decision and provenance; FlyDelta does not infer

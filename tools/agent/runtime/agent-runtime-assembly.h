@@ -7,6 +7,7 @@
 #include "agent/learning/memory-learning.h"
 #include "agent/adaptation/learning-transaction.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
 #include "agent/adaptation/flydelta/flydelta-runtime-observer.h"
 #include "../adaptation/agent-learning-transaction-store.h"
 #include "agent/runtime/agent-inference-contracts.h"
@@ -67,6 +68,10 @@ struct common_agent_runtime_config {
     std::function<bool(
             const common_flydelta_capture_candidate &,
             std::string &)> flydelta_capture_job_enqueue;
+    // Host-owned semantic resolver. It supplies immutable procedure/blueprint
+    // refs; the assembly turns a resolved relation into the existing
+    // reference-only FlyDelta capture path.
+    common_agent_procedure_teaching_request_provider procedure_teaching_request_provider;
 };
 
 struct common_agent_runtime_build_config {
@@ -91,6 +96,7 @@ struct common_agent_runtime_build_config {
     std::function<bool(
             const common_flydelta_capture_candidate &,
             std::string &)> flydelta_capture_job_enqueue;
+    common_agent_procedure_teaching_request_provider procedure_teaching_request_provider;
 };
 
 common_agent_inference_options make_agent_inference_options(

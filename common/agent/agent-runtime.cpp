@@ -1848,8 +1848,16 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         result.memory_learning_related_count = learning.related_count;
         if ((learning.decision == common_memory_learning_decision::accepted || learning.decision == common_memory_learning_decision::duplicate) &&
                 learning.candidate && learning.candidate->kind == common_memory_kind::procedure && learning.stored_memory_id) {
+            result.learning_signals.push_back(common_learning_signal{
+                common_learning_signal_type::procedure_verification,
+                plan.id, {}, {}, *learning.stored_memory_id,
+                "host verified completed procedure", {}, {}});
             const auto promotion = memory_learner->promote_completed_procedure(request, plan, store, *learning.stored_memory_id);
             if (promotion.blueprint_id) {
+                result.learning_signals.push_back(common_learning_signal{
+                    common_learning_signal_type::blueprint_verification,
+                    plan.id, {}, {}, *promotion.blueprint_id,
+                    "host verified promoted procedure blueprint", {}, {}});
                 append_event(result, request, {common_agent_event_type::blueprint_promoted,
                     "procedure promoted after " + std::to_string(promotion.verified_uses) + " verified uses",
                     *learning.stored_memory_id, *promotion.blueprint_id});

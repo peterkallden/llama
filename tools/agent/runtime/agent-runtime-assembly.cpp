@@ -32,6 +32,7 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.flydelta_capture_layout_revision = std::move(build_config.flydelta_capture_layout_revision);
     config.flydelta_max_capture_candidates = build_config.flydelta_max_capture_candidates;
     config.flydelta_capture_job_enqueue = std::move(build_config.flydelta_capture_job_enqueue);
+    config.procedure_teaching_request_provider = std::move(build_config.procedure_teaching_request_provider);
     return config;
 }
 
@@ -107,6 +108,41 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                         assembly.flydelta_runtime_candidate_observer->source_observer();
                 } else {
                     adaptation_config.source_observer = assembly.flydelta_capture_collector->source_observer();
+                }
+                if (runtime_config.procedure_teaching_request_provider) {
+                    const auto provider = runtime_config.procedure_teaching_request_provider;
+                    auto configured_relation_observer = adaptation_config.host_relation_observer;
+                    auto * runtime_candidate_observer = assembly.flydelta_runtime_candidate_observer.get();
+                    auto * capture_collector = assembly.flydelta_capture_collector.get();
+                    adaptation_config.host_relation_observer =
+                        [provider, configured_relation_observer, runtime_candidate_observer, capture_collector](
+                                const common_agent_request & request,
+                                const common_plan_state & plan,
+                                const common_agent_result & result,
+                                const common_learning_transaction & transaction,
+                                std::string & error) {
+                            if (configured_relation_observer &&
+                                    !configured_relation_observer(request, plan, result, transaction, error)) return false;
+                            std::optional<common_agent_procedure_teaching_request> request_value;
+                            if (!provider(request, plan, result, transaction, request_value, error)) return false;
+                            if (!request_value) return true;
+                            const auto built = common_agent_build_procedure_teaching_relation(*request_value);
+                            if (!built.relation) return true;
+
+                            common_adaptation_evidence_relation relation;
+                            if (!common_agent_procedure_teaching_relation_to_evidence_relation(
+                                    *built.relation, transaction, relation, error)) return false;
+
+                            common_adaptation_evidence evidence;
+                            if (!common_adaptation_evidence_from_turn(
+                                    request, plan, result, relation, evidence, error)) return false;
+                            if (runtime_candidate_observer) {
+                                return runtime_candidate_observer->observe_verified_relation(
+                                    relation, evidence, transaction, error);
+                            }
+                            return capture_collector && capture_collector->observe_verified_relation(
+                                relation, evidence, transaction, error);
+                        };
                 }
             }
             assembly.adaptation_observer = std::make_unique<common_learning_transaction_observer>(

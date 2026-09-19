@@ -24,6 +24,12 @@ public:
             const common_learning_transaction & transaction,
             std::string & error);
 
+    bool observe_verified_relation(
+            const common_adaptation_evidence_relation & relation,
+            const common_adaptation_evidence & evidence,
+            const common_learning_transaction & transaction,
+            std::string & error);
+
     std::function<bool(
             const common_adaptation_evidence_source_match &,
             const common_learning_transaction &,

@@ -358,6 +358,10 @@ bool common_learning_transaction_observer::observe(
     observation.recovery_of_signal_id = common_learning_recovery_reference(result);
     for (const auto & signal : observation.signals) {
         if (signal.type == common_learning_signal_type::successful_recovery) observation.verification = common_learning_verification::host_verified;
+        if (signal.type == common_learning_signal_type::procedure_verification ||
+                signal.type == common_learning_signal_type::blueprint_verification) {
+            observation.verification = common_learning_verification::host_verified;
+        }
         if (signal.type == common_learning_signal_type::user_correction) observation.verification = common_learning_verification::user_confirmed;
     }
     if (!common_learning_observation_qualifies(observation)) return true;
@@ -376,6 +380,13 @@ bool common_learning_transaction_observer::observe(
             std::string source_error;
             (void) config.source_observer(match, transaction, source_error);
         }
+    }
+    if (config.host_relation_observer) {
+        // Relation materialization is a derived host-side path. The learning
+        // transaction is already durable and remains authoritative even when
+        // the optional FlyDelta relation/capture path is unavailable.
+        std::string relation_error;
+        (void) config.host_relation_observer(request, plan, result, transaction, relation_error);
     }
     return true;
 }

@@ -114,6 +114,15 @@ struct common_learning_transaction_observer_config {
             const common_adaptation_evidence_source_match & match,
             const common_learning_transaction & transaction,
             std::string & error)> source_observer;
+    // Optional host-owned relation seam. It runs after the transaction has
+    // been accepted by the learning store, so a relation/capture failure can
+    // never turn a valid learning observation into a ledger failure.
+    std::function<bool(
+            const common_agent_request & request,
+            const common_plan_state & plan,
+            const common_agent_result & result,
+            const common_learning_transaction & transaction,
+            std::string & error)> host_relation_observer;
 };
 
 class common_learning_transaction_observer final : public common_agent_adaptation_observer {
