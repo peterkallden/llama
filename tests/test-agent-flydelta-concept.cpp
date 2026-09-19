@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-concept.h"
+#include "agent/adaptation/flydelta/flydelta-semantic-decision.h"
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -78,5 +79,31 @@ int main() {
     auto no_control = config;
     no_control.require_control = false;
     CHECK(!common_flydelta_concept_build_config_validate(no_control, error));
+
+    common_flydelta_semantic_decision normalized_filter;
+    common_flydelta_semantic_decision_status status;
+    CHECK(common_flydelta_parse_semantic_decision(
+        R"({"name":"data.filter","arguments":{"dataset":"sales.csv","predicate":"status == 'failed'"}})",
+        normalized_filter, status, error));
+    common_flydelta_semantic_decision expected_filter;
+    CHECK(common_flydelta_parse_semantic_decision(
+        R"({"operation":"filter","dataset":"sales.csv","predicate":"status = failed"})",
+        expected_filter, status, error));
+    CHECK(common_flydelta_semantic_decision_equal(normalized_filter, expected_filter));
+
+    common_flydelta_semantic_decision normalized_query;
+    CHECK(common_flydelta_parse_semantic_decision(
+        R"({"operation":"query","dataset":"sales.csv","order_by":"timestamp newest first","limit":5})",
+        normalized_query, status, error));
+    CHECK(normalized_query.order_by_direction == "desc");
+
+    common_flydelta_semantic_decision ignored_decision;
+    CHECK(!common_flydelta_parse_semantic_decision(
+        R"({"name":"data.aggregate","arguments":{"group_by":["region"]}})",
+        ignored_decision, status, error));
+    CHECK(status == common_flydelta_semantic_decision_status::missing_field);
+    CHECK(!common_flydelta_parse_semantic_decision(
+        R"({"operation":"unknown"})", ignored_decision, status, error));
+    CHECK(status == common_flydelta_semantic_decision_status::unsupported_operation);
     return 0;
 }

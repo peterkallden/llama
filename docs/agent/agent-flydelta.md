@@ -1848,7 +1848,10 @@ tool pair such as `data.inspect` versus `data.describe` for every concept
 family. The margin remains search evidence only. Canonical/semantic host
 verification is a separate gate, so a model response that selects the right
 tool but emits a non-canonical or semantically incomplete call remains
-diagnostic `NON_CANONICAL_POSITIVE` material rather than a verified trajectory.
+diagnostic `CANONICALIZATION_FAILED` or `SEMANTIC_DECISION_WRONG` material
+rather than a verified trajectory. Equivalent spellings are normalized before
+this classification; the host still requires all semantic fields needed by
+the fixture.
 
 Two generic candidate builders share the same candidate format:
 

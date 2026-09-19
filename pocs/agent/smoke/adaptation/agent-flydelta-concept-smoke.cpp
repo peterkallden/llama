@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
+#include "agent/adaptation/flydelta/flydelta-semantic-decision.h"
 #include "tools/agent/cli/agent-cli-generation.h"
 #include "tools/agent/cli/agent-cli-inference.h"
 #include "tools/agent/runtime/agent-model-loaders.h"
@@ -572,10 +573,23 @@ const char * conditioned_status(
         const concept_family & family,
         size_t index) {
     const char * conditioned_name = detected_tool(conditioned);
-    if (conditioned.content.find(canonical_conditioned_call(family, index)) != std::string::npos) {
+    common_flydelta_semantic_decision expected;
+    common_flydelta_semantic_decision actual;
+    common_flydelta_semantic_decision_status expected_status;
+    common_flydelta_semantic_decision_status actual_status;
+    std::string expected_error;
+    std::string actual_error;
+    const bool expected_parsed = common_flydelta_parse_semantic_decision(
+        canonical_conditioned_call(family, index), expected, expected_status, expected_error);
+    const bool actual_parsed = common_flydelta_parse_semantic_decision(
+        conditioned.content, actual, actual_status, actual_error);
+    if (expected_parsed && actual_parsed &&
+            common_flydelta_semantic_decision_equal(expected, actual)) {
         return "VERIFIED_POSITIVE";
     }
-    if (std::string(conditioned_name) == family.expected_tool) return "NON_CANONICAL_POSITIVE";
+    if (std::string(conditioned_name) == family.expected_tool) {
+        return actual_parsed ? "SEMANTIC_DECISION_WRONG" : "CANONICALIZATION_FAILED";
+    }
     if (std::string(conditioned_name) == "generation_failure") return "GENERATION_FAILURE";
     if (std::string(conditioned_name) == "none") return "NO_POSITIVE";
     if (std::string(conditioned_name) == detected_tool(baseline)) return "SAME_DECISION";
