@@ -48,6 +48,8 @@ bool common_flydelta_collect_experiment_job(
             (!request.bootstrap_zoom_state_ref.empty() &&
                 !bounded(request.bootstrap_zoom_state_ref)) ||
             (!request.search_state_ref.empty() && !bounded(request.search_state_ref)) ||
+            (!request.representation_augmentation_state_ref.empty() &&
+                !bounded(request.representation_augmentation_state_ref)) ||
             !references_empty_except(request, request.kind)) {
         error = "FlyDelta experiment collection request is incomplete or mixes job references";
         return false;

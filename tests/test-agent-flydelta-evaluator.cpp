@@ -530,6 +530,7 @@ int main() {
     bool bounded_arm_called = false;
     model_host.run_bounded_arm = [&](const auto & request, auto & arm_result, std::string &) {
         bounded_arm_called = request.apply_overlay;
+        arm_result.arm_id = request.arm_id;
         arm_result.executed = true;
         arm_result.requested_alpha = request.alpha;
         arm_result.executed_alpha = request.alpha;
@@ -563,6 +564,7 @@ int main() {
     common_flydelta_arm_request request_contract;
     request_contract.apply_overlay = true;
     request_contract.fresh_context = true;
+    request_contract.arm_id = "flydelta://arm/test-contract";
     request_contract.layer_indices = {2, 3};
     request_contract.coefficients = {1.0f, -0.25f};
     request_contract.alpha = 0.1f;
@@ -571,6 +573,7 @@ int main() {
     CHECK(!common_flydelta_arm_request_validate(request_contract, error));
     common_flydelta_arm_result result_contract;
     result_contract.executed = true;
+    result_contract.arm_id = request_contract.arm_id;
     result_contract.margin.available = true;
     result_contract.margin.positive_token_count = 1;
     result_contract.margin.negative_token_count = 1;
@@ -579,6 +582,18 @@ int main() {
     CHECK(common_flydelta_arm_result_validate(result_contract, error));
     result_contract.margin.negative_token_count = 0;
     CHECK(!common_flydelta_arm_result_validate(result_contract, error));
+    result_contract.margin.negative_token_count = 1;
+    result_contract.host_evaluated = true;
+    result_contract.verifier_known = true;
+    result_contract.executed = false;
+    CHECK(!common_flydelta_arm_result_validate(result_contract, error));
+    result_contract.executed = true;
+    result_contract.verifier_known = false;
+    result_contract.executed_alpha = 0.05f;
+    result_contract.requested_alpha = 0.1f;
+    CHECK(!common_flydelta_arm_result_validate(result_contract, error));
+    result_contract.dose_safety_limited = true;
+    CHECK(common_flydelta_arm_result_validate(result_contract, error));
     const auto host_adapter = common_flydelta_model_adapter_from_host(
         model_host, adapter_error);
     CHECK(host_adapter != nullptr && adapter_error.empty());
@@ -589,9 +604,11 @@ int main() {
     CHECK(!host_adapter->capabilities.orthogonal_search);
     common_flydelta_arm_request arm_request;
     arm_request.apply_overlay = true;
+    arm_request.arm_id = "flydelta://arm/direct";
     arm_request.alpha = 0.1f;
     arm_request.request_generation = true;
     common_flydelta_arm_result arm_result;
+    arm_result.arm_id = arm_request.arm_id;
     CHECK(model_host.run_bounded_arm(arm_request, arm_result, error));
     CHECK(bounded_arm_called && arm_result.executed && arm_result.executed_alpha == 0.1f);
     common_flydelta_experiment_fixture arm_fixture;

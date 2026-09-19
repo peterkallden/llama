@@ -14,6 +14,10 @@
 struct common_flydelta_arm_request {
     int schema_version = 1;
     std::string job_id;
+    // Stable identity for one model-facing arm. The host uses this as the
+    // retry/resume idempotency key; it is derived by the common runner from
+    // the immutable job, fixture, intervention, layer and scale identity.
+    std::string arm_id;
     std::string context_ref;
     std::string fixture_ref;
     std::string intervention_ref;
@@ -32,6 +36,8 @@ struct common_flydelta_arm_request {
 
 struct common_flydelta_arm_result {
     int schema_version = 1;
+    // Must echo the request arm_id when a host executes the arm.
+    std::string arm_id;
     bool executed = false;
     float requested_alpha = 0.0f;
     float executed_alpha = 0.0f;

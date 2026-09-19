@@ -1,7 +1,9 @@
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "hash/hash.h"
 
 #include <cmath>
+#include <string>
 #include <utility>
 
 bool common_flydelta_arm_request_validate(
@@ -10,6 +12,10 @@ bool common_flydelta_arm_request_validate(
     error.clear();
     if (request.schema_version != 1) {
         error = "unsupported FlyDelta arm request schema";
+        return false;
+    }
+    if (request.arm_id.empty() || request.arm_id.size() > 512) {
+        error = "FlyDelta arm request arm id is invalid";
         return false;
     }
     if (!std::isfinite(request.alpha) || request.alpha < 0.0f) {
@@ -45,10 +51,33 @@ bool common_flydelta_arm_result_validate(
         error = "unsupported FlyDelta arm result schema";
         return false;
     }
+    if (result.arm_id.size() > 512) {
+        error = "FlyDelta arm result arm id is invalid";
+        return false;
+    }
     if (!std::isfinite(result.requested_alpha) ||
             !std::isfinite(result.executed_alpha) ||
             result.requested_alpha < 0.0f || result.executed_alpha < 0.0f) {
         error = "FlyDelta arm result alpha is invalid";
+        return false;
+    }
+    if (result.host_evaluated && !result.executed) {
+        error = "FlyDelta arm result cannot evaluate an unexecuted arm";
+        return false;
+    }
+    if (result.verifier_known && !result.host_evaluated) {
+        error = "FlyDelta arm result verifier state requires host evaluation";
+        return false;
+    }
+    const float dose_epsilon = 1.0e-6f;
+    if (!result.dose_safety_limited &&
+            std::fabs(result.executed_alpha - result.requested_alpha) > dose_epsilon) {
+        error = "FlyDelta arm result changed dose without safety-limit attribution";
+        return false;
+    }
+    if (result.dose_safety_limited &&
+            result.executed_alpha > result.requested_alpha + dose_epsilon) {
+        error = "FlyDelta safety-limited arm increased the requested dose";
         return false;
     }
     if (result.geometry_available &&
@@ -172,6 +201,25 @@ common_flydelta_search_pipeline_runner common_flydelta_search_pipeline_runner_fr
             request.alpha = 0.0f;
         }
 
+        std::string arm_identity = request.job_id + "\n" + request.context_ref + "\n" +
+            request.fixture_ref + "\n" + request.intervention_ref + "\n" +
+            std::to_string(request.alpha) + "\n" +
+            (request.apply_overlay ? "overlay" : "baseline") + "\n" +
+            (request.request_capture ? "capture" : "no-capture") + "\n" +
+            (request.request_teacher_forced_margin ? "margin" : "no-margin") + "\n" +
+            (request.request_generation ? "generation" : "no-generation") + "\n" +
+            (request.request_host_verification ? "verification" : "no-verification") + "\n" +
+            std::to_string(request.max_capture_bytes) + "\n" +
+            std::to_string(request.max_generated_tokens);
+        for (const uint32_t layer_index : request.layer_indices) {
+            arm_identity += "\n" + std::to_string(layer_index);
+        }
+        for (const float coefficient : request.coefficients) {
+            arm_identity += "\n" + std::to_string(coefficient);
+        }
+        request.arm_id = "flydelta://arm/" +
+            hash_sha256_hex(arm_identity.data(), arm_identity.size()).substr(0, 32);
+
         if (!common_flydelta_arm_request_validate(request, error)) return false;
 
         common_flydelta_arm_result arm;
@@ -179,6 +227,10 @@ common_flydelta_search_pipeline_runner common_flydelta_search_pipeline_runner_fr
         if (!common_flydelta_arm_result_validate(arm, error)) return false;
         if (!arm.executed) {
             error = "FlyDelta model host returned an unexecuted bounded arm";
+            return false;
+        }
+        if (arm.arm_id != request.arm_id) {
+            error = "FlyDelta model host returned a mismatched arm id";
             return false;
         }
 

@@ -915,10 +915,23 @@ policy.
 
 The bounded-arm transport is validated at the adapter boundary before it is
 passed to the search runner. Request validation covers layer/coefficient shape,
-finite dose values and fresh-context requirements for overlays. Result
-validation covers finite dose/geometry values and any returned decision-margin
-or baseline-comparison contract. These checks are transport invariants only:
+finite dose values, a stable `arm_id` and fresh-context requirements for
+overlays. The host must echo that `arm_id` in the result; retries of the same
+job/surface arm can then be recognized without comparing activation payloads.
+Result validation covers finite dose/geometry values, consistent
+`executed`/`host_evaluated`/`verifier_known` flags and any returned
+decision-margin or baseline-comparison contract. A host may return a lower
+`executed_alpha` than requested only when it marks the result
+`dose_safety_limited`; the common transport never silently changes a dose.
+These checks are transport invariants only:
 they do not convert an arm into utility, HELPED, learning credit or promotion.
+
+The arm identity is intentionally narrower than experiment lifecycle identity.
+`job_id`, fixture, intervention, layer mask, scale and baseline-vs-overlay
+mode form one retry-safe model arm. Surface revision, parent-best comparison
+and the immutable fixture baseline remain orchestration/lifecycle state and
+must not be inferred from the arm id alone. A resumed worker therefore keeps
+both the persisted state reference and the arm id in its trace.
 
 For a runtime that owns the model-facing evaluator but does not want to expose
 its callback bundle directly through daemon setup, it may instead register a
