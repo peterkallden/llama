@@ -1,7 +1,68 @@
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
+#include <cmath>
 #include <utility>
+
+bool common_flydelta_arm_request_validate(
+        const common_flydelta_arm_request & request,
+        std::string & error) {
+    error.clear();
+    if (request.schema_version != 1) {
+        error = "unsupported FlyDelta arm request schema";
+        return false;
+    }
+    if (!std::isfinite(request.alpha) || request.alpha < 0.0f) {
+        error = "FlyDelta arm request alpha is invalid";
+        return false;
+    }
+    if (request.layer_indices.size() != request.coefficients.size()) {
+        error = "FlyDelta arm request layer/coefficient count mismatch";
+        return false;
+    }
+    for (const float coefficient : request.coefficients) {
+        if (!std::isfinite(coefficient)) {
+            error = "FlyDelta arm request coefficient is invalid";
+            return false;
+        }
+    }
+    if (request.apply_overlay && request.layer_indices.empty()) {
+        error = "FlyDelta overlay arm has no layers";
+        return false;
+    }
+    if (request.apply_overlay && !request.fresh_context) {
+        error = "FlyDelta overlay arm must request a fresh context";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_arm_result_validate(
+        const common_flydelta_arm_result & result,
+        std::string & error) {
+    error.clear();
+    if (result.schema_version != 1) {
+        error = "unsupported FlyDelta arm result schema";
+        return false;
+    }
+    if (!std::isfinite(result.requested_alpha) ||
+            !std::isfinite(result.executed_alpha) ||
+            result.requested_alpha < 0.0f || result.executed_alpha < 0.0f) {
+        error = "FlyDelta arm result alpha is invalid";
+        return false;
+    }
+    if (result.geometry_available &&
+            (!std::isfinite(result.cosine) || !std::isfinite(result.progress) ||
+             !std::isfinite(result.leakage) || !std::isfinite(result.shift_norm))) {
+        error = "FlyDelta arm result geometry is invalid";
+        return false;
+    }
+    if (!common_flydelta_decision_margin_validate(result.margin, error) ||
+            !common_flydelta_margin_comparison_validate(result.margin_comparison, error)) {
+        return false;
+    }
+    return true;
+}
 
 namespace {
 
@@ -28,6 +89,13 @@ common_flydelta_model_capabilities common_flydelta_model_capabilities_from_primi
         const bool has_search_runner,
         const bool has_stateful_search) {
     common_flydelta_model_capabilities result = primitives;
+    // Algorithm flags are derived below. Do not carry stale phase flags from
+    // a caller across runtime registration or a resumed search.
+    result.bootstrap_zoom = false;
+    result.adaptive_alpha = false;
+    result.teacher_forced_margin = false;
+    result.orthogonal_search = false;
+    result.representation_augmentation = false;
     result.bootstrap_zoom = has_bounded_arm && primitives.capture &&
         primitives.overlay && primitives.generation && has_search_runner;
     result.adaptive_alpha = result.bootstrap_zoom;
@@ -104,8 +172,11 @@ common_flydelta_search_pipeline_runner common_flydelta_search_pipeline_runner_fr
             request.alpha = 0.0f;
         }
 
+        if (!common_flydelta_arm_request_validate(request, error)) return false;
+
         common_flydelta_arm_result arm;
         if (!host.run_bounded_arm(request, arm, error)) return false;
+        if (!common_flydelta_arm_result_validate(arm, error)) return false;
         if (!arm.executed) {
             error = "FlyDelta model host returned an unexecuted bounded arm";
             return false;

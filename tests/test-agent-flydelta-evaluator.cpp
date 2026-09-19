@@ -560,6 +560,25 @@ int main() {
         registration_error.clear();
         return true;
     };
+    common_flydelta_arm_request request_contract;
+    request_contract.apply_overlay = true;
+    request_contract.fresh_context = true;
+    request_contract.layer_indices = {2, 3};
+    request_contract.coefficients = {1.0f, -0.25f};
+    request_contract.alpha = 0.1f;
+    CHECK(common_flydelta_arm_request_validate(request_contract, error));
+    request_contract.coefficients.pop_back();
+    CHECK(!common_flydelta_arm_request_validate(request_contract, error));
+    common_flydelta_arm_result result_contract;
+    result_contract.executed = true;
+    result_contract.margin.available = true;
+    result_contract.margin.positive_token_count = 1;
+    result_contract.margin.negative_token_count = 1;
+    result_contract.margin.positive_total_logprob = -1.0f;
+    result_contract.margin.negative_total_logprob = -2.0f;
+    CHECK(common_flydelta_arm_result_validate(result_contract, error));
+    result_contract.margin.negative_token_count = 0;
+    CHECK(!common_flydelta_arm_result_validate(result_contract, error));
     const auto host_adapter = common_flydelta_model_adapter_from_host(
         model_host, adapter_error);
     CHECK(host_adapter != nullptr && adapter_error.empty());

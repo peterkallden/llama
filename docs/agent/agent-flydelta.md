@@ -888,6 +888,13 @@ references and owns fresh inference, capture, generation, teacher scoring and
 verification; the common search code owns only bounded search and transition
 policy.
 
+The bounded-arm transport is validated at the adapter boundary before it is
+passed to the search runner. Request validation covers layer/coefficient shape,
+finite dose values and fresh-context requirements for overlays. Result
+validation covers finite dose/geometry values and any returned decision-margin
+or baseline-comparison contract. These checks are transport invariants only:
+they do not convert an arm into utility, HELPED, learning credit or promotion.
+
 For a runtime that owns the model-facing evaluator but does not want to expose
 its callback bundle directly through daemon setup, it may instead register a
 `common_flydelta_model_host`. Its registration callback fills the evaluator
@@ -925,6 +932,9 @@ startup composes the latter two through
 `common_flydelta_model_adapter_from_host()` or
 `common_flydelta_model_adapter_from_evaluator()`. Missing host callbacks fail
 closed and leave the lane idle rather than fabricating model execution.
+When an adapter is present, daemon capability observability is copied from that
+adapter at startup; manually supplied phase flags cannot override the derived
+capabilities of the registered bounded-arm and search callbacks.
 
 The ordered transition at a rank-one plateau is:
 

@@ -536,6 +536,13 @@ int main(int argc, char ** argv) {
                 adapter_error.c_str());
         }
     }
+    if (runtime.flydelta_model_adapter) {
+        // Observability follows the actual registered adapter. This is not a
+        // search or promotion decision; the worker still receives the adapter
+        // as its bounded-slice execution seam below.
+        runtime.flydelta_model_capabilities =
+            runtime.flydelta_model_adapter->capabilities;
+    }
     flydelta_worker_config.model_adapter = runtime.flydelta_model_adapter;
     common_agent_daemon_dispatcher dispatcher(
         std::move(runtime), options.queue_capacity, options.worker_count,

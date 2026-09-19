@@ -62,6 +62,15 @@ struct common_flydelta_arm_result {
     std::string provenance_ref;
 };
 
+// Transport validation only. These checks do not decide utility, promotion,
+// learning credit or HELPED.
+bool common_flydelta_arm_request_validate(
+        const common_flydelta_arm_request & request,
+        std::string & error);
+bool common_flydelta_arm_result_validate(
+        const common_flydelta_arm_result & result,
+        std::string & error);
+
 struct common_flydelta_evaluator_config;
 struct common_flydelta_evaluator_callbacks;
 
