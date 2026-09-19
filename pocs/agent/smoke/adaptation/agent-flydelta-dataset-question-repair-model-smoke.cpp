@@ -408,6 +408,7 @@ int main(int argc, char ** argv) {
 
     std::unique_ptr<common_agent_server_context_host> server_host;
     std::unique_ptr<common_agent_inference> inference;
+    std::shared_ptr<common_agent_runtime_resident_model> resident;
     size_t n_embd = 0;
     size_t n_layers = 0;
     if (value.backend == "cli") {
@@ -419,7 +420,6 @@ int main(int argc, char ** argv) {
         selection.context_size_tokens = 2048;
         selection.load_policy = "resident";
         common_agent_runtime_cli_model_loader loader({value.n_gpu_layers, value.n_threads, true});
-        std::shared_ptr<common_agent_runtime_resident_model> resident;
         if (!loader.load(selection, resident, error)) { host.close(); std::cerr << error << '\n'; return 1; }
         const auto loaded = common_agent_runtime_loaded_model_cast(resident);
         if (!loaded || !loaded->model || !loaded->chat_templates) { host.close(); return 1; }

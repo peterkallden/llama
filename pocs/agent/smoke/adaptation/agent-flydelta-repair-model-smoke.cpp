@@ -796,6 +796,9 @@ int main(int argc, char ** argv) {
                 : common_flydelta_counterfactual_outcome::unknown;
             arm_result.quality = arm_result.host_outcome ==
                 common_flydelta_counterfactual_outcome::helped ? 1.0f : 0.0f;
+            arm_result.provenance_ref = arm_request.apply_overlay
+                ? "evidence:flydelta-model-repair-region-overlay"
+                : "evidence:flydelta-model-repair-region-baseline";
 
             const auto scoring_request = make_request(value, failed_instruction);
             if (!score_chat_choice_margin(
