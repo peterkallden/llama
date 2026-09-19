@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
+#include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
 
 #include <array>
 
@@ -105,6 +106,62 @@ int main() {
     CHECK(generic_transition.behavior_key == source.behavior_key);
     CHECK(generic_transition.baseline_transaction_id == failed.id);
     CHECK(generic_transition.candidate_transaction_id == repaired.id);
+
+    common_flydelta_teaching_relation teaching_relation;
+    CHECK(common_flydelta_teaching_relation_from_evidence(
+        source, teaching_relation, error));
+    CHECK(teaching_relation.status == common_flydelta_teaching_relation_status::resolved);
+    CHECK(teaching_relation.source == common_adaptation_evidence_source::tool_repair);
+    CHECK(teaching_relation.baseline_origin == common_flydelta_teaching_origin::observed);
+    CHECK(teaching_relation.conditioned_origin == common_flydelta_teaching_origin::observed);
+    CHECK(teaching_relation.host_approved);
+    common_flydelta_behavior_transition teaching_transition;
+    CHECK(common_flydelta_teaching_relation_to_transition(
+        teaching_relation, source, failed.id, repaired.id, teaching_transition, error));
+    CHECK(teaching_transition.id == source.id + "/flydelta/behavior");
+
+    auto procedure_evidence = source;
+    procedure_evidence.id = "evidence://procedure/1";
+    procedure_evidence.source = common_adaptation_evidence_source::procedure_blueprint;
+    CHECK(common_flydelta_procedure_blueprint_teaching_relation_from_evidence(
+        procedure_evidence, teaching_relation, error));
+    CHECK(teaching_relation.source == common_adaptation_evidence_source::procedure_blueprint);
+
+    auto user_evidence = source;
+    user_evidence.id = "evidence://user-correction/1";
+    user_evidence.source = common_adaptation_evidence_source::user_correction;
+    CHECK(common_flydelta_teaching_relation_from_evidence(
+        user_evidence, teaching_relation, error));
+    CHECK(teaching_relation.source == common_adaptation_evidence_source::user_correction);
+
+    auto host_relation = common_adaptation_evidence_relation{};
+    host_relation.id = "adaptation://procedure/1";
+    host_relation.source = common_adaptation_evidence_source::procedure_blueprint;
+    host_relation.scope = source.scope;
+    host_relation.behavior_key = "procedure/grouped-aggregation";
+    host_relation.task_fingerprint = "sha256:procedure-task";
+    host_relation.baseline_ref = "execution:procedure-baseline";
+    host_relation.candidate_ref = "execution:procedure-conditioned";
+    host_relation.verifier_ref = "verifier:procedure-v1";
+    common_flydelta_teaching_relation explicit_relation;
+    CHECK(common_flydelta_teaching_relation_from_host_relation(
+        host_relation, "evidence://procedure/explicit", "execution:procedure-control",
+        common_flydelta_teaching_relation_status::resolved,
+        common_flydelta_teaching_origin::host_derived,
+        common_flydelta_teaching_origin::host_derived,
+        common_flydelta_teaching_origin::host_counterfactual,
+        0.9f, true, explicit_relation, error));
+    CHECK(explicit_relation.control_ref == "execution:procedure-control");
+
+    auto unresolved = teaching_relation;
+    unresolved.status = common_flydelta_teaching_relation_status::no_contrast;
+    unresolved.host_approved = false;
+    CHECK(common_flydelta_teaching_relation_validate(unresolved, error));
+
+    auto incomplete = teaching_relation;
+    incomplete.status = common_flydelta_teaching_relation_status::resolved;
+    incomplete.host_approved = false;
+    CHECK(!common_flydelta_teaching_relation_validate(incomplete, error));
 
     const std::array generic_sources = {
         common_adaptation_evidence_source::reflection_alternative,

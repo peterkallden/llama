@@ -147,7 +147,10 @@ bool common_adaptation_evidence_from_turn(
     evidence = {};
     evidence.id = relation.id;
     evidence.source = relation.source;
-    evidence.scope = common_agent_scope_from_request(request);
+    evidence.scope = relation.scope;
+    if (evidence.scope.namespace_id.empty() || evidence.scope.session_id.empty()) {
+        evidence.scope = common_agent_scope_from_request(request);
+    }
     evidence.behavior_key = relation.behavior_key;
     evidence.task_fingerprint = relation.task_fingerprint;
     evidence.baseline_ref = relation.baseline_ref;

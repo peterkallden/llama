@@ -1870,6 +1870,37 @@ procedure behavior. They are still only direction material: the existing
 layer search, scale search and host verifier decide whether a direction is
 useful. No margin or geometric signal can create `HELPED` on its own.
 
+### Host teaching relation — shared source adapter seam
+
+The host-side teaching seam is shared by all evidence sources. Existing
+`common_adaptation_evidence_relation` is the host-owned relation over baseline,
+conditioned candidate, verifier, scope and transaction references. FlyDelta
+views it as a `TeachingRelation` with an explicit reusability status and
+provenance for each side:
+
+```text
+evidence source
+    -> host admission / reusability
+    -> TeachingRelation
+    -> existing behavior transition / concept trajectory
+    -> FlyDelta capture, search and verification
+```
+
+`tool_repair` remains the strict failure/recovery convenience path. A
+`procedure_blueprint` relation uses the same reference-only contract; it does
+not create a second procedure learner or a second FlyDelta registry. Explicit
+`user_correction` can use the same seam once the host supplies the observed
+baseline, the corrected conditioned reference and a verifier. The separate
+user-confirmation source is intentionally not part of this phase.
+
+The relation may be `ambiguous`, `insufficient_evidence`, `no_contrast`,
+`not_reusable` or `unsupported_behavior`. Such relations can remain in the
+learning/evidence journal, but they must not create captures or FlyDelta
+learning credit. Only a `resolved`, host-approved relation enters the existing
+trajectory/capture path. This keeps source-specific interpretation in the
+host while keeping layer search, dose control, margin, worker slices and
+promotion source-neutral.
+
 The model-facing decision boundary uses the same generic seam. A bounded
 `decision_pair` contains two host-selected alternatives plus tokenizer and
 template fingerprints; it is not limited to tool names. The host adapter finds
