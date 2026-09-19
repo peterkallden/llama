@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/adaptation-evidence-routing.h"
 
+#include <optional>
 #include <string>
 
 struct common_flydelta_behavior_transition;
@@ -32,9 +33,31 @@ enum class common_flydelta_teaching_origin {
 const char * common_flydelta_teaching_origin_name(
         common_flydelta_teaching_origin origin);
 
+// Result of the host-side procedure/blueprint admission boundary.  These are
+// normal, inspectable outcomes; they are not worker failures and do not grant
+// learning credit on their own.
+enum class common_agent_teaching_build_status {
+    resolved,
+    out_of_scope,
+    not_host_verified,
+    not_reusable,
+    missing_behavior_key,
+    missing_verifier,
+    no_contrast,
+    incompatible_control,
+    insufficient_evidence,
+};
+
+const char * common_agent_teaching_build_status_name(
+        common_agent_teaching_build_status status);
+
 struct common_flydelta_teaching_relation {
     int schema_version = 1;
     std::string id;
+    // Stable semantic identity for aggregating independent executions.  It is
+    // intentionally distinct from task_fingerprint, which identifies one
+    // concrete execution situation.
+    std::string teaching_key;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     std::string behavior_key;
     common_agent_scope scope;
@@ -44,6 +67,8 @@ struct common_flydelta_teaching_relation {
     std::string control_ref;
     std::string verifier_ref;
     std::string evidence_ref;
+    std::string procedure_ref;
+    std::string blueprint_ref;
     common_flydelta_teaching_relation_status status =
         common_flydelta_teaching_relation_status::insufficient_evidence;
     common_flydelta_teaching_origin baseline_origin = common_flydelta_teaching_origin::none;
@@ -56,6 +81,44 @@ struct common_flydelta_teaching_relation {
 bool common_flydelta_teaching_relation_validate(
         const common_flydelta_teaching_relation & relation,
         std::string & error);
+
+// Host-only request for the V0 procedure/blueprint adapter.  All references
+// are already resolved and immutable; the adapter never synthesizes a
+// baseline, conditioned value or control.
+struct common_agent_procedure_teaching_request {
+    int schema_version = 1;
+    std::string relation_id;
+    std::string teaching_key;
+    std::string procedure_ref;
+    std::string blueprint_ref;
+    common_agent_scope scope;
+    std::string behavior_key;
+    std::string task_fingerprint;
+    std::string baseline_ref;
+    std::string conditioned_ref;
+    std::optional<std::string> control_ref;
+    std::string verifier_ref;
+    std::string evidence_ref;
+    common_flydelta_teaching_origin baseline_origin = common_flydelta_teaching_origin::host_derived;
+    common_flydelta_teaching_origin conditioned_origin = common_flydelta_teaching_origin::host_derived;
+    common_flydelta_teaching_origin control_origin = common_flydelta_teaching_origin::host_counterfactual;
+    float confidence = 0.0f;
+    bool host_scope_admitted = false;
+    bool host_verified = false;
+    bool reusable = false;
+    bool require_control = false;
+};
+
+struct common_agent_teaching_build_result {
+    common_agent_teaching_build_status status =
+        common_agent_teaching_build_status::insufficient_evidence;
+    std::optional<common_flydelta_teaching_relation> relation;
+    std::string diagnostic;
+};
+
+common_agent_teaching_build_result
+common_agent_build_procedure_teaching_relation(
+        const common_agent_procedure_teaching_request & request);
 
 // Converts an already completed host relation. The caller supplies the
 // semantic reusability decision and provenance; FlyDelta does not infer

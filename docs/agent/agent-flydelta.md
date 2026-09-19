@@ -1893,6 +1893,29 @@ not create a second procedure learner or a second FlyDelta registry. Explicit
 baseline, the corrected conditioned reference and a verifier. The separate
 user-confirmation source is intentionally not part of this phase.
 
+The V0 procedure/blueprint producer is deliberately narrow. The host passes
+resolved immutable references and semantic identity through a typed request:
+procedure/blueprint reference, `behavior_key`, separate `teaching_key`, scope,
+task fingerprint, baseline and conditioned references, verifier/evidence
+references, and optional control reference. The producer returns a typed
+admission result such as `no_contrast`, `not_reusable`, `out_of_scope` or
+`resolved`; it does not parse a blueprint, infer a behavior key, or construct a
+counterfactual contrast. A verified successful procedure is therefore not by
+itself a FlyDelta teaching relation. A resolved relation requires an explicit
+behavioral contrast with provenance preserved.
+
+`task_fingerprint` identifies the concrete execution situation. `teaching_key`
+identifies the reusable semantic relation across independent tasks and is the
+future aggregation key. This distinction lets several procedure executions
+contribute evidence to one concept without conflating their task identities.
+
+The procedure smoke is intentionally model-free and contract-focused: it
+checks host admission, explicit contrast, optional control requirements and
+the absence of learning credit/promotion. The existing concept smoke remains
+the model-facing path. Both feed the same `TeachingRelation` and existing
+transition/capture/search contracts; the procedure smoke does not create a
+private model or persistence path.
+
 The relation may be `ambiguous`, `insufficient_evidence`, `no_contrast`,
 `not_reusable` or `unsupported_behavior`. Such relations can remain in the
 learning/evidence journal, but they must not create captures or FlyDelta

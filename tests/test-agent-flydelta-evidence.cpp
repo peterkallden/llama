@@ -153,6 +153,48 @@ int main() {
         0.9f, true, explicit_relation, error));
     CHECK(explicit_relation.control_ref == "execution:procedure-control");
 
+    common_agent_procedure_teaching_request procedure_request;
+    procedure_request.relation_id = "relation://procedure/grouped-sum/1";
+    procedure_request.teaching_key = "dataset.grouped_sum.v1";
+    procedure_request.procedure_ref = "procedure://dataset/grouped-sum/v1";
+    procedure_request.blueprint_ref = "blueprint://dataset/grouped-sum/v1";
+    procedure_request.scope = source.scope;
+    procedure_request.behavior_key = "tool_choice/dataset/grouped_sum";
+    procedure_request.task_fingerprint = "sha256:procedure-task";
+    procedure_request.baseline_ref = "execution:procedure-baseline";
+    procedure_request.conditioned_ref = "execution:procedure-conditioned";
+    procedure_request.control_ref = "execution:procedure-control";
+    procedure_request.verifier_ref = "verifier:procedure-v1";
+    procedure_request.evidence_ref = "evidence://procedure/host-relation";
+    procedure_request.confidence = 0.9f;
+    procedure_request.host_scope_admitted = true;
+    procedure_request.host_verified = true;
+    procedure_request.reusable = true;
+    procedure_request.require_control = true;
+    const auto procedure_result = common_agent_build_procedure_teaching_relation(procedure_request);
+    CHECK(procedure_result.status == common_agent_teaching_build_status::resolved);
+    CHECK(procedure_result.relation.has_value());
+    CHECK(procedure_result.relation->teaching_key == "dataset.grouped_sum.v1");
+    CHECK(procedure_result.relation->procedure_ref == procedure_request.procedure_ref);
+    CHECK(procedure_result.relation->blueprint_ref == procedure_request.blueprint_ref);
+    CHECK(procedure_result.relation->host_approved);
+
+    auto no_contrast_request = procedure_request;
+    no_contrast_request.conditioned_ref = no_contrast_request.baseline_ref;
+    const auto no_contrast_result = common_agent_build_procedure_teaching_relation(no_contrast_request);
+    CHECK(no_contrast_result.status == common_agent_teaching_build_status::no_contrast);
+    CHECK(!no_contrast_result.relation.has_value());
+
+    auto missing_control_request = procedure_request;
+    missing_control_request.control_ref.reset();
+    const auto missing_control_result = common_agent_build_procedure_teaching_relation(missing_control_request);
+    CHECK(missing_control_result.status == common_agent_teaching_build_status::incompatible_control);
+
+    auto unverified_request = procedure_request;
+    unverified_request.host_verified = false;
+    const auto unverified_result = common_agent_build_procedure_teaching_relation(unverified_request);
+    CHECK(unverified_result.status == common_agent_teaching_build_status::not_host_verified);
+
     auto unresolved = teaching_relation;
     unresolved.status = common_flydelta_teaching_relation_status::no_contrast;
     unresolved.host_approved = false;

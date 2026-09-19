@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 
@@ -44,12 +45,29 @@ const char * common_flydelta_teaching_origin_name(
     return "unknown";
 }
 
+const char * common_agent_teaching_build_status_name(
+        common_agent_teaching_build_status status) {
+    switch (status) {
+        case common_agent_teaching_build_status::resolved: return "resolved";
+        case common_agent_teaching_build_status::out_of_scope: return "out_of_scope";
+        case common_agent_teaching_build_status::not_host_verified: return "not_host_verified";
+        case common_agent_teaching_build_status::not_reusable: return "not_reusable";
+        case common_agent_teaching_build_status::missing_behavior_key: return "missing_behavior_key";
+        case common_agent_teaching_build_status::missing_verifier: return "missing_verifier";
+        case common_agent_teaching_build_status::no_contrast: return "no_contrast";
+        case common_agent_teaching_build_status::incompatible_control: return "incompatible_control";
+        case common_agent_teaching_build_status::insufficient_evidence: return "insufficient_evidence";
+    }
+    return "unknown";
+}
+
 bool common_flydelta_teaching_relation_validate(
         const common_flydelta_teaching_relation & relation,
         std::string & error) {
     error.clear();
     const bool complete = relation.status == common_flydelta_teaching_relation_status::resolved;
     if (relation.schema_version != 1 || !bounded(relation.id) ||
+            !bounded(relation.teaching_key) ||
             !source_supported(relation.source) || !bounded(relation.behavior_key) ||
             relation.scope.namespace_id.empty() || relation.scope.session_id.empty() ||
             !bounded(relation.task_fingerprint) || !bounded(relation.baseline_ref) ||
@@ -65,6 +83,98 @@ bool common_flydelta_teaching_relation_validate(
         return false;
     }
     return true;
+}
+
+common_agent_teaching_build_result
+common_agent_build_procedure_teaching_relation(
+        const common_agent_procedure_teaching_request & request) {
+    common_agent_teaching_build_result result;
+    auto reject = [&](common_agent_teaching_build_status status, const char * diagnostic) {
+        result.status = status;
+        result.diagnostic = diagnostic;
+        result.relation.reset();
+        return result;
+    };
+
+    if (request.schema_version != 1) {
+        return reject(common_agent_teaching_build_status::insufficient_evidence,
+            "procedure/blueprint request schema is unsupported");
+    }
+    if (!request.host_scope_admitted) {
+        return reject(common_agent_teaching_build_status::out_of_scope,
+            "procedure/blueprint relation was not admitted in the host scope");
+    }
+    if (!request.host_verified) {
+        return reject(common_agent_teaching_build_status::not_host_verified,
+            "procedure/blueprint relation is not host verified");
+    }
+    if (!request.reusable) {
+        return reject(common_agent_teaching_build_status::not_reusable,
+            "procedure/blueprint is not admitted as reusable behavior");
+    }
+    if (!bounded(request.behavior_key)) {
+        return reject(common_agent_teaching_build_status::missing_behavior_key,
+            "procedure/blueprint relation has no behavior key");
+    }
+    if (!bounded(request.verifier_ref)) {
+        return reject(common_agent_teaching_build_status::missing_verifier,
+            "procedure/blueprint relation has no verifier reference");
+    }
+    if (!bounded(request.relation_id) || !bounded(request.evidence_ref) ||
+            request.scope.namespace_id.empty() || request.scope.session_id.empty() ||
+            !bounded(request.task_fingerprint) ||
+            (!bounded(request.procedure_ref) && !bounded(request.blueprint_ref))) {
+        return reject(common_agent_teaching_build_status::insufficient_evidence,
+            "procedure/blueprint relation is missing immutable host references");
+    }
+    if (!bounded(request.baseline_ref) || !bounded(request.conditioned_ref) ||
+            request.baseline_ref == request.conditioned_ref) {
+        return reject(common_agent_teaching_build_status::no_contrast,
+            "procedure/blueprint relation has no explicit behavioral contrast");
+    }
+    if (request.require_control &&
+            (!request.control_ref || !bounded(*request.control_ref))) {
+        return reject(common_agent_teaching_build_status::incompatible_control,
+            "procedure/blueprint relation requires a compatible control reference");
+    }
+    if (!std::isfinite(request.confidence) || request.confidence < 0.0f ||
+            request.confidence > 1.0f) {
+        return reject(common_agent_teaching_build_status::insufficient_evidence,
+            "procedure/blueprint relation confidence is out of bounds");
+    }
+
+    common_flydelta_teaching_relation relation;
+    relation.id = request.relation_id;
+    relation.teaching_key = bounded(request.teaching_key)
+        ? request.teaching_key : request.behavior_key;
+    relation.source = common_adaptation_evidence_source::procedure_blueprint;
+    relation.behavior_key = request.behavior_key;
+    relation.scope = request.scope;
+    relation.task_fingerprint = request.task_fingerprint;
+    relation.baseline_ref = request.baseline_ref;
+    relation.conditioned_ref = request.conditioned_ref;
+    relation.control_ref = request.control_ref.value_or("");
+    relation.verifier_ref = request.verifier_ref;
+    relation.evidence_ref = request.evidence_ref;
+    relation.procedure_ref = request.procedure_ref;
+    relation.blueprint_ref = request.blueprint_ref;
+    relation.status = common_flydelta_teaching_relation_status::resolved;
+    relation.baseline_origin = request.baseline_origin;
+    relation.conditioned_origin = request.conditioned_origin;
+    relation.control_origin = request.control_ref
+        ? request.control_origin : common_flydelta_teaching_origin::none;
+    relation.confidence = request.confidence;
+    relation.host_approved = true;
+
+    std::string error;
+    if (!common_flydelta_teaching_relation_validate(relation, error)) {
+        return reject(common_agent_teaching_build_status::insufficient_evidence,
+            error.c_str());
+    }
+    result.status = common_agent_teaching_build_status::resolved;
+    result.relation = std::move(relation);
+    result.diagnostic = "resolved host procedure/blueprint teaching relation";
+    return result;
 }
 
 bool common_flydelta_teaching_relation_from_host_relation(
@@ -89,6 +199,7 @@ bool common_flydelta_teaching_relation_from_host_relation(
     }
     teaching_relation = {};
     teaching_relation.id = relation.id;
+    teaching_relation.teaching_key = relation.behavior_key;
     teaching_relation.source = relation.source;
     teaching_relation.behavior_key = relation.behavior_key;
     teaching_relation.scope = relation.scope;
@@ -119,6 +230,7 @@ bool common_flydelta_teaching_relation_from_evidence(
     }
     relation = {};
     relation.id = evidence.id + "/teaching";
+    relation.teaching_key = evidence.behavior_key;
     relation.source = evidence.source;
     relation.behavior_key = evidence.behavior_key;
     relation.scope = evidence.scope;

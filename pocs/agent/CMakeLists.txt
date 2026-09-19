@@ -1005,6 +1005,20 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Model-free host contract smoke for the procedure/blueprint teaching seam.
+# It validates host admission and explicit contrast provenance; model-backed
+# concept extraction remains covered by the existing concept smoke.
+set(TARGET llama-agent-flydelta-procedure-teaching-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-procedure-teaching-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Optional real-model FlyDelta A/B smoke. It is CTest-compatible but skips
 # when LLAMA_AGENT_MODEL is not supplied, like the existing model smokes.
 set(TARGET llama-agent-flydelta-model-ab-smoke)
@@ -2149,6 +2163,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-model-adaptation-smoke
     llama-agent-flydelta-tool-repair-smoke
     llama-agent-flydelta-representation-augmentation-smoke
+    llama-agent-flydelta-procedure-teaching-smoke
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-flydelta-dataset-question-contract-smoke
@@ -2223,6 +2238,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-adaptation-e2e-smoke
     llama-agent-model-adaptation-smoke
     llama-agent-flydelta-tool-repair-smoke
+    llama-agent-flydelta-procedure-teaching-smoke
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-flydelta-dataset-question-repair-model-smoke
@@ -2336,6 +2352,10 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-flydelta-concept-smoke>)
     set_property(TEST llama-agent-flydelta-concept-ctest PROPERTY LABELS agent-adaptation)
     set_tests_properties(llama-agent-flydelta-concept-ctest PROPERTIES TIMEOUT 60)
+
+    add_test(NAME llama-agent-flydelta-procedure-teaching-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-procedure-teaching-smoke>)
+    set_property(TEST llama-agent-flydelta-procedure-teaching-ctest PROPERTY LABELS agent-adaptation)
 
     add_test(NAME llama-agent-flydelta-model-ab-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-model-ab-smoke>)
