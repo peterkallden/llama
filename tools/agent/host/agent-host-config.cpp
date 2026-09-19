@@ -514,6 +514,12 @@ bool parse_agent_host_config_json(
                 read_optional(flydelta, "enabled", config.adaptation_flydelta_enabled);
                 read_optional(flydelta, "worker_count", config.adaptation_flydelta_worker_count);
                 read_optional(flydelta, "queue_path", config.adaptation_flydelta_queue_path);
+                read_optional(flydelta, "capture_candidates", config.adaptation_flydelta_capture_candidates);
+                read_optional(flydelta, "lifecycle_backend", config.adaptation_flydelta_lifecycle_backend);
+                read_optional(flydelta, "lifecycle_path", config.adaptation_flydelta_lifecycle_path);
+                read_optional(flydelta, "model_profile_fingerprint", config.adaptation_flydelta_model_profile_fingerprint);
+                read_optional(flydelta, "capture_layout_revision", config.adaptation_flydelta_capture_layout_revision);
+                read_optional(flydelta, "max_capture_candidates", config.adaptation_flydelta_max_capture_candidates);
             }
             if (adaptation.contains("stable_model_facing_tools") &&
                     adaptation["stable_model_facing_tools"].is_array()) {
@@ -1218,6 +1224,12 @@ nlohmann::ordered_json agent_host_config_to_json(
                     {"enabled", config.adaptation_flydelta_enabled},
                     {"worker_count", config.adaptation_flydelta_worker_count},
                     {"queue_path", config.adaptation_flydelta_queue_path},
+                    {"capture_candidates", config.adaptation_flydelta_capture_candidates},
+                    {"lifecycle_backend", config.adaptation_flydelta_lifecycle_backend},
+                    {"lifecycle_path", config.adaptation_flydelta_lifecycle_path},
+                    {"model_profile_fingerprint", config.adaptation_flydelta_model_profile_fingerprint},
+                    {"capture_layout_revision", config.adaptation_flydelta_capture_layout_revision},
+                    {"max_capture_candidates", config.adaptation_flydelta_max_capture_candidates},
                 }},
                 {"stable_model_facing_tools", config.adaptation_stable_model_facing_tools},
                 {"domains", {
@@ -1453,6 +1465,18 @@ bool validate_agent_host_config(
     }
     if (config.adaptation_flydelta_enabled && flydelta_budget.agent_workers == 0) {
         error = "runtime.adaptation.flydelta.worker_count must leave at least one agent worker";
+        return false;
+    }
+    if (config.adaptation_flydelta_capture_candidates && !config.adaptation_capture) {
+        error = "runtime.adaptation.flydelta.capture_candidates requires adaptation.capture";
+        return false;
+    }
+    if (config.adaptation_flydelta_capture_candidates && config.adaptation_flydelta_capture_layout_revision.empty()) {
+        error = "runtime.adaptation.flydelta.capture_layout_revision must not be empty";
+        return false;
+    }
+    if (config.adaptation_flydelta_max_capture_candidates == 0) {
+        error = "runtime.adaptation.flydelta.max_capture_candidates must be greater than zero";
         return false;
     }
     if (config.n_threads < 1) {
@@ -1925,6 +1949,12 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_flydelta_enabled = config.adaptation_flydelta_enabled;
     options.adaptation_flydelta_worker_count = config.adaptation_flydelta_worker_count;
     options.adaptation_flydelta_queue_path = config.adaptation_flydelta_queue_path;
+    options.adaptation_flydelta_capture_candidates = config.adaptation_flydelta_capture_candidates;
+    options.adaptation_flydelta_lifecycle_backend = config.adaptation_flydelta_lifecycle_backend;
+    options.adaptation_flydelta_lifecycle_path = config.adaptation_flydelta_lifecycle_path;
+    options.adaptation_flydelta_model_profile_fingerprint = config.adaptation_flydelta_model_profile_fingerprint;
+    options.adaptation_flydelta_capture_layout_revision = config.adaptation_flydelta_capture_layout_revision;
+    options.adaptation_flydelta_max_capture_candidates = config.adaptation_flydelta_max_capture_candidates;
     options.max_tool_rounds = config.max_tool_rounds;
     options.queue_capacity = config.queue_capacity;
     options.worker_count = config.worker_count;

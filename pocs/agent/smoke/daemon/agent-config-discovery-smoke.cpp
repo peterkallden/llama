@@ -82,10 +82,18 @@ int main() {
     const nlohmann::ordered_json flydelta_json = {
         {"runtime", {
             {"adaptation", {
+                {"capture", true},
+                {"collection_allowed", true},
                 {"flydelta", {
                     {"enabled", true},
                     {"worker_count", 1},
                     {"queue_path", "var/agent/flydelta/jobs"},
+                    {"capture_candidates", true},
+                    {"lifecycle_backend", "jsonl"},
+                    {"lifecycle_path", "var/agent/flydelta/lifecycle.jsonl"},
+                    {"model_profile_fingerprint", "profile:config-smoke"},
+                    {"capture_layout_revision", "flydelta-capture-v1"},
+                    {"max_capture_candidates", 32},
                 }},
             }},
         }},
@@ -95,20 +103,30 @@ int main() {
             !validate_agent_host_config(flydelta_config, flydelta_error) ||
             !flydelta_config.adaptation_flydelta_enabled ||
             flydelta_config.adaptation_flydelta_worker_count != 1 ||
-            flydelta_config.adaptation_flydelta_queue_path != "var/agent/flydelta/jobs") {
+            flydelta_config.adaptation_flydelta_queue_path != "var/agent/flydelta/jobs" ||
+            !flydelta_config.adaptation_flydelta_capture_candidates ||
+            flydelta_config.adaptation_flydelta_lifecycle_backend != "jsonl" ||
+            flydelta_config.adaptation_flydelta_lifecycle_path != "var/agent/flydelta/lifecycle.jsonl" ||
+            flydelta_config.adaptation_flydelta_model_profile_fingerprint != "profile:config-smoke" ||
+            flydelta_config.adaptation_flydelta_capture_layout_revision != "flydelta-capture-v1" ||
+            flydelta_config.adaptation_flydelta_max_capture_candidates != 32) {
         std::fprintf(stderr, "FlyDelta worker reservation was not parsed: %s\n", flydelta_error.c_str());
         return 1;
     }
     const auto flydelta_serialized = agent_host_config_to_json(flydelta_config);
     if (!flydelta_serialized["runtime"]["adaptation"]["flydelta"]["enabled"].get<bool>() ||
-            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["worker_count"] != 1) {
+            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["worker_count"] != 1 ||
+            !flydelta_serialized["runtime"]["adaptation"]["flydelta"]["capture_candidates"].get<bool>() ||
+            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["max_capture_candidates"] != 32) {
         std::fprintf(stderr, "FlyDelta worker reservation was not serialized\n");
         return 1;
     }
     daemon_options flydelta_options;
     apply_agent_host_config_to_daemon_options(flydelta_config, flydelta_options);
     if (!flydelta_options.adaptation_flydelta_enabled ||
-            flydelta_options.adaptation_flydelta_worker_count != 1) {
+            flydelta_options.adaptation_flydelta_worker_count != 1 ||
+            !flydelta_options.adaptation_flydelta_capture_candidates ||
+            flydelta_options.adaptation_flydelta_lifecycle_path != "var/agent/flydelta/lifecycle.jsonl") {
         std::fprintf(stderr, "FlyDelta worker reservation was not copied to daemon options\n");
         return 1;
     }

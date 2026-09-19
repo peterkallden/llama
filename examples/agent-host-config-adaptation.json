@@ -9,7 +9,13 @@
       "flydelta": {
         "enabled": true,
         "worker_count": 1,
-        "queue_path": "var/agent/flydelta/jobs"
+        "queue_path": "var/agent/flydelta/jobs",
+        "capture_candidates": true,
+        "lifecycle_backend": "jsonl",
+        "lifecycle_path": "var/agent/flydelta/lifecycle.jsonl",
+        "model_profile_fingerprint": "profile:qwen-small",
+        "capture_layout_revision": "flydelta-capture-v1",
+        "max_capture_candidates": 64
       },
       "max_evidence": 16,
       "backend": "jsonl",

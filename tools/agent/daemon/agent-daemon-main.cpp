@@ -341,7 +341,13 @@ int main(int argc, char ** argv) {
         require_restart(
             candidate.adaptation_flydelta_enabled != options.adaptation_flydelta_enabled ||
             candidate.adaptation_flydelta_worker_count != options.adaptation_flydelta_worker_count ||
-            candidate.adaptation_flydelta_queue_path != options.adaptation_flydelta_queue_path,
+            candidate.adaptation_flydelta_queue_path != options.adaptation_flydelta_queue_path ||
+            candidate.adaptation_flydelta_capture_candidates != options.adaptation_flydelta_capture_candidates ||
+            candidate.adaptation_flydelta_lifecycle_backend != options.adaptation_flydelta_lifecycle_backend ||
+            candidate.adaptation_flydelta_lifecycle_path != options.adaptation_flydelta_lifecycle_path ||
+            candidate.adaptation_flydelta_model_profile_fingerprint != options.adaptation_flydelta_model_profile_fingerprint ||
+            candidate.adaptation_flydelta_capture_layout_revision != options.adaptation_flydelta_capture_layout_revision ||
+            candidate.adaptation_flydelta_max_capture_candidates != options.adaptation_flydelta_max_capture_candidates,
             "runtime.adaptation.flydelta");
         require_restart(candidate.inference_max_active != options.inference_max_active, "limits.inference_max_active");
         require_restart(candidate.http_enabled != options.http_enabled, "mcp.inbound.enabled");

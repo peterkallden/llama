@@ -621,6 +621,7 @@ int main() {
     std::error_code flydelta_cleanup_error;
     std::filesystem::remove_all(flydelta_queue_root, flydelta_cleanup_error);
     std::atomic<size_t> flydelta_callback_count{0};
+    std::atomic<size_t> flydelta_schedule_count{0};
     common_agent_daemon_flydelta_worker_config flydelta_config;
     flydelta_config.enabled = true;
     flydelta_config.worker_count = 1;
@@ -638,9 +639,24 @@ int main() {
         error.clear();
         result.safe_summary = "daemon lane processed one FlyDelta job";
         result.counterfactual_reports.push_back(make_flydelta_lane_report(job.id));
+        result.has_next_action = true;
+        result.next_action = common_flydelta_next_action::refine_bootstrap;
+        result.next_action_reason = "bounded scheduler seam smoke";
         return true;
     };
     flydelta_config.model_adapter = flydelta_model_adapter;
+    flydelta_config.schedule_next_action = [&flydelta_schedule_count](
+            const common_flydelta_experiment_worker_report & report,
+            std::string & error) {
+        if (!report.has_next_action ||
+                report.next_action != common_flydelta_next_action::refine_bootstrap) {
+            error = "unexpected FlyDelta next action in scheduler seam smoke";
+            return false;
+        }
+        ++flydelta_schedule_count;
+        error.clear();
+        return true;
+    };
     const auto flydelta_job = make_flydelta_lane_job();
     std::string flydelta_enqueue_error;
     if (!common_flydelta_experiment_queue_enqueue(
@@ -676,6 +692,10 @@ int main() {
             std::fprintf(stderr, "FlyDelta daemon lane did not process its queued job\n");
             return 1;
         }
+        if (flydelta_schedule_count.load() != 1) {
+            std::fprintf(stderr, "FlyDelta daemon lane did not report one bounded next action\n");
+            return 1;
+        }
         common_agent_daemon_command_result status_result;
         std::string status_error;
         common_agent_daemon_command status_command;
@@ -698,5 +718,6 @@ int main() {
     std::printf("inference_wait_event=%s\n",
         has_event_type(inference_wait_result, "turn.waiting_for_inference") ? "yes" : "no");
     std::printf("flydelta_lane_callbacks=%zu\n", flydelta_callback_count.load());
+    std::printf("flydelta_lane_scheduled_next_actions=%zu\n", flydelta_schedule_count.load());
     return 0;
 }

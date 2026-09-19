@@ -658,6 +658,22 @@ void common_agent_daemon_dispatcher::flydelta_worker_loop() {
             flydelta_config.queue_root, flydelta_config.queue_limits,
             flydelta_config.callback, report, error);
 
+        if (error.empty() && report.state == common_flydelta_experiment_queue_state::succeeded &&
+                report.has_next_action &&
+                report.next_action != common_flydelta_next_action::stop &&
+                report.next_action != common_flydelta_next_action::retain &&
+                flydelta_config.schedule_next_action) {
+            std::string schedule_error;
+            if (!flydelta_config.schedule_next_action(report, schedule_error)) {
+                // The current bounded slice remains successfully completed.
+                // Scheduling is a host concern and is reported separately so
+                // a transient queue/resource issue cannot rewrite FlyDelta
+                // search evidence as an evaluator failure.
+                std::fprintf(stderr, "FlyDelta next-action scheduling failed: %s\n",
+                    schedule_error.c_str());
+            }
+        }
+
         std::unique_lock<std::mutex> lock(mutex);
         if (stop_requested) break;
         condition.wait_for(lock, flydelta_config.poll_interval, [&]() {

@@ -27,6 +27,12 @@ struct common_agent_daemon_flydelta_worker_config {
     // model contexts and reference resolution remain inside the adapter.
     std::shared_ptr<const common_flydelta_model_adapter> model_adapter;
     common_flydelta_experiment_worker_callback callback;
+    // Optional host scheduler seam. FlyDelta decides next_action; this hook
+    // may enqueue one reference-only follow-up slice after the current job
+    // has completed. It must not execute the next slice recursively.
+    std::function<bool(
+            const common_flydelta_experiment_worker_report &,
+            std::string &)> schedule_next_action;
     std::chrono::milliseconds poll_interval{250};
 };
 

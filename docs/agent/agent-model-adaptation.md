@@ -70,6 +70,14 @@ the reservation remains visible as configured-but-idle and no job is consumed.
 Changing this configuration remains restart-required and never silently
 reduces the normal daemon pool.
 
+The same configuration can opt the existing adaptation observer into bounded
+FlyDelta candidate capture with `capture_candidates=true`. This requires the
+normal adaptation capture and collection gates. Optional lifecycle journaling
+is configured separately with `lifecycle_backend` and `lifecycle_path`; a JSONL
+lifecycle journal must not reuse the transaction-ledger JSONL file. Candidate
+capture persists only stable references and fingerprints. It does not create a
+model adapter, run inference, or grant learning credit.
+
 The observation identity hash and corpus bundle hash are currently stable
 non-cryptographic identity hashes used for local deduplication and test
 reproducibility. Resource and artifact integrity must continue to use the

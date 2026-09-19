@@ -208,6 +208,23 @@ common_agent_runtime_config make_daemon_runtime_config(const daemon_options & op
     config.adaptation_config.cause_classifier.stable_model_facing_tools =
         options.adaptation_stable_model_facing_tools;
     config.adaptation_config.domain_policy = options.adaptation_domains;
+    config.enable_flydelta_capture_candidates =
+        options.adaptation_flydelta_capture_candidates;
+    config.enable_flydelta_candidate_lifecycle =
+        options.adaptation_flydelta_capture_candidates &&
+        !options.adaptation_flydelta_lifecycle_path.empty();
+    config.flydelta_lifecycle_backend = options.adaptation_flydelta_lifecycle_backend;
+    config.flydelta_lifecycle_path = options.adaptation_flydelta_lifecycle_path;
+    config.flydelta_model_profile_fingerprint =
+        options.adaptation_flydelta_model_profile_fingerprint.empty()
+            ? (options.model_profile.empty()
+                ? "model:" + options.model
+                : "profile:" + options.model_profile)
+            : options.adaptation_flydelta_model_profile_fingerprint;
+    config.flydelta_capture_layout_revision =
+        options.adaptation_flydelta_capture_layout_revision;
+    config.flydelta_max_capture_candidates =
+        options.adaptation_flydelta_max_capture_candidates;
     return config;
 }
 

@@ -88,6 +88,12 @@ struct daemon_options {
     bool adaptation_flydelta_enabled = false;
     size_t adaptation_flydelta_worker_count = 0;
     std::string adaptation_flydelta_queue_path;
+    bool adaptation_flydelta_capture_candidates = false;
+    std::string adaptation_flydelta_lifecycle_backend = "auto";
+    std::string adaptation_flydelta_lifecycle_path;
+    std::string adaptation_flydelta_model_profile_fingerprint;
+    std::string adaptation_flydelta_capture_layout_revision = "flydelta-capture-v1";
+    size_t adaptation_flydelta_max_capture_candidates = 64;
     size_t max_tool_rounds = 0;
     size_t queue_capacity = 8;
     size_t worker_count = 1;
