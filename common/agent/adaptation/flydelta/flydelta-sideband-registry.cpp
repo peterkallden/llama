@@ -26,6 +26,14 @@ bool same(const std::string & actual, const std::string & expected, const char *
     return true;
 }
 
+bool same_manifest(const common_flydelta_sideband_manifest & actual,
+        const common_flydelta_sideband_manifest & expected) {
+    // Compare the canonical manifest projection so retries are idempotent
+    // without maintaining a second hand-written field-by-field comparison.
+    return common_flydelta_sideband_manifest_to_json(actual) ==
+        common_flydelta_sideband_manifest_to_json(expected);
+}
+
 } // namespace
 
 const char * common_flydelta_sideband_status_name(common_flydelta_sideband_status status) {
@@ -170,8 +178,16 @@ bool common_flydelta_sideband_registry::admit(
         error = "new FlyDelta sideband must enter registry as candidate or experimental";
         return false;
     }
-    if (manifests.find(manifest.id) != manifests.end()) {
-        error = "FlyDelta sideband is already registered: " + manifest.id;
+    const auto existing = manifests.find(manifest.id);
+    if (existing != manifests.end()) {
+        if (same_manifest(existing->second, manifest)) {
+            // A worker retry may reach registry admission after the immutable
+            // artifact was already published. Identical metadata is a
+            // successful retry; a changed manifest remains fail-closed.
+            error.clear();
+            return true;
+        }
+        error = "FlyDelta sideband is already registered with different metadata: " + manifest.id;
         return false;
     }
     manifests.emplace(manifest.id, manifest);

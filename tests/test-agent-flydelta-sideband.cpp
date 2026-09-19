@@ -44,6 +44,11 @@ int main() {
         parsed.project_id == "default");
     common_flydelta_sideband_registry registry;
     CHECK(registry.admit(sideband, error));
+    CHECK(registry.admit(sideband, error));
+    auto conflicting_sideband = sideband;
+    conflicting_sideband.artifact_hash = "sha256:other-artifact";
+    CHECK(!registry.admit(conflicting_sideband, error));
+    CHECK(error.find("different metadata") != std::string::npos);
     CHECK(!registry.activate(sideband.id, error));
     CHECK(registry.stage_canary(sideband.id, "eval:tool-repair-v1", error));
     CHECK(registry.activate(sideband.id, error));

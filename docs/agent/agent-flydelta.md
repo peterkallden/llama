@@ -1431,10 +1431,12 @@ reject symlinks and traversal, verify the artifact schema and canonical
 `sha256:<64 hex>` content hash,
 and install new files through a temporary file followed by an atomic rename.
 An identical retry is idempotent; a different artifact cannot replace an
-existing path. The store does not decide lifecycle status, evaluate a
-candidate, or activate a sideband. TTL, scope ownership, revocation and a
-persistent registry/journal still belong in the next lifecycle integration
-sweep.
+existing path. Registry admission has the same retry rule for an identical
+manifest: an identical `id` and metadata is a successful no-op, while changed
+metadata for an existing `id` is rejected. The store does not decide lifecycle
+status, evaluate a candidate, or activate a sideband. TTL, scope ownership,
+revocation and a persistent registry/journal still belong in the next
+lifecycle integration sweep.
 
 The sideband manifest now carries an explicit `namespace_id`, `project_id`,
 optional `expires_at_epoch_ms` and revocation reason. Its in-memory registry
@@ -1468,8 +1470,26 @@ profile may conceptually contain:
 This is the profile/catalog contract for identity and scale; it is not an
 artifact-loading configuration by itself. Per-turn coefficients and the
 mutable inference context never belong in the resident model handle. The
-residency cache key includes declared sideband identity and scale; the registry
-additionally checks the resolved artifact hash and compatibility metadata.
+existing model-residency manager remains the owner of the resident model; a
+future backend may attach a prepared, cacheable basis resource to that
+resident model, but FlyDelta must not create a second model-residency cache.
+The residency/cache identity may include declared sideband identity and
+profile scale, while the registry additionally checks the resolved artifact
+hash and compatibility metadata.
+
+The prepared-resource and activation lifetimes are deliberately separate:
+
+```text
+resident model + compatible artifact/basis
+    -> optional prepared backend resource
+    -> ephemeral per-turn activation binding
+    -> fresh inference context
+```
+
+The prepared resource may be reused only when model, backend, artifact, layout
+and device compatibility match. Per-turn alpha, coefficients, sparse code,
+gate decision and context identity remain ephemeral and are never cached as a
+resident model property.
 
 ### Current llama.cpp control-vector seam: static V0 is viable
 
@@ -1915,7 +1935,10 @@ empty result; invalid active metadata or composition bounds fail closed.
 This keeps CLI and future server integrations from independently repeating
 approval, no-op and compatibility conditions. The result is still an
 ephemeral request value. It does not resolve a registry artifact, persist a
-decision, alter a resident model or make FlyDelta active by itself.
+decision, alter a resident model or make FlyDelta active by itself. A
+backend-specific prepared resource, if one is added later, is a resource
+attachment below this seam; it must not move artifact lifecycle or learning
+authority into activation preparation.
 
 ### 4F.1. Schema-v2 artifact to activation underlay — implemented
 

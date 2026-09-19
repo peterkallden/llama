@@ -55,6 +55,9 @@ bool common_flydelta_sideband_manifest_from_json(
 
 class common_flydelta_sideband_registry {
 public:
+    // Admission is idempotent for an identical manifest. A retry with the
+    // same id but different metadata is rejected so immutable lifecycle
+    // identity cannot be overwritten.
     bool admit(const common_flydelta_sideband_manifest & manifest, std::string & error);
     // Explicit entry point for a search artifact. It keeps callers from
     // accidentally registering an experimental revision as a normal

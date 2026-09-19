@@ -37,6 +37,9 @@ int main() {
     CHECK(common_flydelta_persist_experimental_artifact(
         store, "experiments/lifecycle.flyd", registry, "local", "project", 0,
         artifact, manifest, error));
+    CHECK(common_flydelta_persist_experimental_artifact(
+        store, "experiments/lifecycle.flyd", registry, "local", "project", 0,
+        artifact, manifest, error));
     CHECK(registry.list().at(artifact.id).status == common_flydelta_sideband_status::experimental);
     common_flydelta_artifact loaded;
     CHECK(store.read("experiments/lifecycle.flyd", loaded, error));
