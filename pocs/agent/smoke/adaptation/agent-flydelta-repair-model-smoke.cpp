@@ -11,6 +11,7 @@
 #include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
 #include "agent/adaptation/flydelta/flydelta-layer-discovery.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
 #include "agent/adaptation/flydelta/flydelta-scale-search.h"
@@ -721,129 +722,123 @@ int main(int argc, char ** argv) {
         std::shared_ptr<const common_flydelta_hidden_state_capture> region_baseline_capture;
         common_flydelta_decision_margin region_baseline_margin;
         const auto region_started = std::chrono::steady_clock::now();
-        common_flydelta_search_pipeline_result pipeline_result;
-        if (!common_flydelta_run_search_pipeline(
-                experiment_fixture, pipeline_config, {pipeline_direction},
-                [&](const common_flydelta_experiment_fixture &,
-                        const common_flydelta_direction_candidate &,
-                        const common_flydelta_layer_candidate * candidate,
-                        float, bool apply_overlay,
-                        common_flydelta_counterfactual_trial & trial,
-                        common_flydelta_decision_margin & margin,
-                        common_flydelta_scale_geometry & geometry,
-                        std::string & runner_error) {
-                    common_agent_generation_result result;
-                    geometry = {};
-                    std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
-                    if (apply_overlay) {
-                        if (!candidate) {
-                            runner_error = "region pipeline arm is missing candidate";
-                            return false;
-                        }
-                        common_flydelta_gate_request gate_request;
-                        if (!common_flydelta_gate_request_from_context(
-                                recognition, code, true,
-                                common_flydelta_candidate_status::approved, true,
-                                candidate->per_layer_scale, gate_request, runner_error)) {
-                            return false;
-                        }
-                        common_flydelta_activation_request request;
-                        request.candidate_id = "flydelta://candidate/model-repair-region";
-                        request.artifact_id = "flydelta://artifact/model-repair-e2e";
-                        request.model_profile_fingerprint = profile;
-                        request.capture_layout_revision = "layer-input:v1";
-                        request.model_n_embd = model_n_embd;
-                        request.model_n_layers = model_n_layers;
-                        request.il_end = static_cast<int32_t>(model_n_layers - 1);
-                        for (const uint32_t layer : candidate->layer_indices) {
-                            const auto direction = std::find_if(basis.directions().begin(),
-                                basis.directions().end(), [&](const auto & value) {
-                                    return value.layer_index == static_cast<int32_t>(layer);
-                                });
-                            if (direction == basis.directions().end()) {
-                                runner_error = "region pipeline arm has no layer-compatible direction";
-                                return false;
-                            }
-                            request.directions.push_back(*direction);
-                            request.coefficients.push_back(coefficients.front());
-                        }
-                        request.gate_request = gate_request;
-                        common_flydelta_gate_config gate_config;
-                        gate_config.enabled = true;
-                        gate_config.max_scale = 1.0f;
-                        common_flydelta_activation_result activation;
-                        if (!common_flydelta_prepare_activation(
-                                gate_config, request, 64U * 1024U * 1024U,
-                                activation, runner_error)) return false;
-                        activation_ptr = std::make_shared<const common_flydelta_activation_result>(
-                            std::move(activation));
-                    }
-                    const bool executed = generate(*inference, value, failed_instruction, result,
-                        activation_ptr, capture_request);
-                    trial = {};
-                    trial.executed = executed;
-                    trial.verifier_known = executed;
-                    trial.passed = executed && contains_tool(result, "data.inspect");
-                    trial.quality = trial.passed ? 1.0f : 0.0f;
-                    trial.overlay_applied = apply_overlay;
-                    trial.intervention_count = apply_overlay && candidate
-                        ? candidate->layer_indices.size() : 0;
-                    trial.evidence_ref = apply_overlay
-                        ? "evidence:model-repair-intervention-region"
-                        : "evidence:model-repair-intervention-region-baseline";
-                    const auto scoring_request = make_request(value, failed_instruction);
-                    if (!score_chat_choice_margin(
-                            loaded->model, loaded->chat_templates.get(), scoring_request.messages,
-                            scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
-                            "{\"name\":\"", "data.inspect", "data.describe", margin,
-                            nullptr, scoring_request.json_schema, {}, {},
-                            apply_overlay && activation_ptr ? activation_ptr->overlay
-                                : common_flydelta_static_overlay{}, &runner_error)) {
+        common_flydelta_model_host model_host;
+        model_host.capabilities.capture = true;
+        model_host.capabilities.overlay = true;
+        model_host.capabilities.generation = true;
+        model_host.capabilities.teacher_forced_scoring = true;
+        model_host.capabilities.host_verification = true;
+        model_host.run_bounded_arm = [&](const common_flydelta_arm_request & arm_request,
+                common_flydelta_arm_result & arm_result, std::string & runner_error) {
+            std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
+            if (arm_request.apply_overlay) {
+                if (arm_request.layer_indices.empty() ||
+                        arm_request.layer_indices.size() != arm_request.coefficients.size()) {
+                    runner_error = "model host received an invalid region overlay shape";
+                    return false;
+                }
+                common_flydelta_gate_request gate_request;
+                if (!common_flydelta_gate_request_from_context(
+                        recognition, code, true,
+                        common_flydelta_candidate_status::approved, true,
+                        arm_request.alpha, gate_request, runner_error)) return false;
+                common_flydelta_activation_request activation_request;
+                activation_request.candidate_id = "flydelta://candidate/model-repair-region";
+                activation_request.artifact_id = "flydelta://artifact/model-repair-e2e";
+                activation_request.model_profile_fingerprint = profile;
+                activation_request.capture_layout_revision = "layer-input:v1";
+                activation_request.model_n_embd = model_n_embd;
+                activation_request.model_n_layers = model_n_layers;
+                activation_request.il_end = static_cast<int32_t>(model_n_layers - 1);
+                for (size_t index = 0; index < arm_request.layer_indices.size(); ++index) {
+                    const auto direction = std::find_if(basis.directions().begin(),
+                        basis.directions().end(), [&](const auto & value) {
+                            return value.layer_index == static_cast<int32_t>(
+                                arm_request.layer_indices[index]);
+                        });
+                    if (direction == basis.directions().end()) {
+                        runner_error = "model host has no layer-compatible direction";
                         return false;
                     }
-                    if (!apply_overlay && result.flydelta_capture &&
-                            result.flydelta_capture->captured) {
-                        region_baseline_capture = result.flydelta_capture;
-                        region_baseline_margin = margin;
-                    }
-                    if (apply_overlay && candidate && result.flydelta_capture &&
-                            result.flydelta_capture->captured &&
-                            region_baseline_capture) {
-                        const auto measurement = std::find_if(deltas.begin(), deltas.end(),
-                            [&](const auto & delta) {
-                                // layer-input captures are taken before the
-                                // candidate layer's own injection. Measure
-                                // the first captured downstream layer so a
-                                // valid overlay is not reported as zero shift.
-                                return delta.layer_index > static_cast<int>(
-                                    candidate->layer_indices.back());
-                            });
-                        if (measurement != deltas.end()) {
-                            common_flydelta_representation_diagnostics diagnostics;
-                            if (!common_flydelta_representation_diagnostics_from_captures(
-                                    *region_baseline_capture, *result.flydelta_capture, *measurement,
-                                    64U * 1024U * 1024U, diagnostics, runner_error)) return false;
-                            geometry.available = true;
-                            geometry.cosine = diagnostics.cosine;
-                            geometry.progress = diagnostics.progress;
-                            geometry.leakage = diagnostics.leakage;
-                            geometry.shift_norm = diagnostics.shift_norm;
-                        }
-                    }
-                    std::cout << "region_model_output layers=";
-                    if (candidate) {
-                        for (size_t index = 0; index < candidate->layer_indices.size(); ++index) {
-                            if (index != 0) std::cout << ',';
-                            std::cout << candidate->layer_indices[index];
-                        }
-                    } else {
-                        std::cout << "baseline";
-                    }
-                    std::cout << " scale=" << (candidate ? candidate->total_scale : 0.0f)
-                              << " output=" << output_preview(result) << '\n';
-                    if (!executed && !result.error_message.empty()) runner_error = result.error_message;
-                    return executed;
-                }, pipeline_result, error)) {
+                    activation_request.directions.push_back(*direction);
+                    activation_request.coefficients.push_back(
+                        arm_request.coefficients[index]);
+                }
+                activation_request.gate_request = gate_request;
+                common_flydelta_gate_config gate_config;
+                gate_config.enabled = true;
+                gate_config.max_scale = 1.0f;
+                common_flydelta_activation_result activation;
+                if (!common_flydelta_prepare_activation(
+                        gate_config, activation_request, 64U * 1024U * 1024U,
+                        activation, runner_error)) return false;
+                activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                    std::move(activation));
+            }
+
+            common_agent_generation_result generated;
+            if (!generate(*inference, value, failed_instruction, generated,
+                    activation_ptr, capture_request)) {
+                runner_error = generated.error_message.empty()
+                    ? "model host generation failed" : generated.error_message;
+                return false;
+            }
+            arm_result = {};
+            arm_result.arm_id = arm_request.arm_id;
+            arm_result.executed = true;
+            arm_result.requested_alpha = arm_request.alpha;
+            arm_result.executed_alpha = arm_request.alpha;
+            arm_result.generation_available = true;
+            arm_result.host_evaluated = true;
+            arm_result.verifier_known = true;
+            arm_result.host_outcome = contains_tool(generated, "data.inspect")
+                ? common_flydelta_counterfactual_outcome::helped
+                : common_flydelta_counterfactual_outcome::unknown;
+            arm_result.quality = arm_result.host_outcome ==
+                common_flydelta_counterfactual_outcome::helped ? 1.0f : 0.0f;
+
+            const auto scoring_request = make_request(value, failed_instruction);
+            if (!score_chat_choice_margin(
+                    loaded->model, loaded->chat_templates.get(), scoring_request.messages,
+                    scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
+                    "{\"name\":\"", "data.inspect", "data.describe", arm_result.margin,
+                    nullptr, scoring_request.json_schema, {}, {},
+                    activation_ptr ? activation_ptr->overlay : common_flydelta_static_overlay{},
+                    &runner_error)) return false;
+            arm_result.margin_available = arm_result.margin.available;
+            if (arm_request.apply_overlay && generated.flydelta_capture &&
+                    generated.flydelta_capture->captured && region_baseline_capture) {
+                const auto measurement = std::find_if(deltas.begin(), deltas.end(),
+                    [&](const auto & delta) {
+                        return delta.layer_index > static_cast<int>(
+                            arm_request.layer_indices.back());
+                    });
+                if (measurement != deltas.end()) {
+                    common_flydelta_representation_diagnostics diagnostics;
+                    if (!common_flydelta_representation_diagnostics_from_captures(
+                            *region_baseline_capture, *generated.flydelta_capture, *measurement,
+                            64U * 1024U * 1024U, diagnostics, runner_error)) return false;
+                    arm_result.geometry_available = true;
+                    arm_result.cosine = diagnostics.cosine;
+                    arm_result.progress = diagnostics.progress;
+                    arm_result.leakage = diagnostics.leakage;
+                    arm_result.shift_norm = diagnostics.shift_norm;
+                }
+            }
+            if (!arm_request.apply_overlay && generated.flydelta_capture &&
+                    generated.flydelta_capture->captured) {
+                region_baseline_capture = generated.flydelta_capture;
+                region_baseline_margin = arm_result.margin;
+            }
+            return true;
+        };
+        const auto model_runner = common_flydelta_search_pipeline_runner_from_model_host(
+            model_host, "flydelta://job/model-repair-region", "context://model-repair",
+            "intervention://model-repair-region");
+        common_flydelta_search_pipeline_result pipeline_result;
+        if (!common_flydelta_run_search_pipeline(
+                experiment_fixture, pipeline_config, {pipeline_direction}, model_runner,
+                pipeline_result, error)) {
             std::cerr << "FlyDelta search pipeline failed: " << error << '\n';
             return 1;
         }

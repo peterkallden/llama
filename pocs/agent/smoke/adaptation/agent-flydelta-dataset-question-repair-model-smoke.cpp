@@ -9,6 +9,7 @@
 #include "agent/adaptation/flydelta/flydelta-alpha-response-search.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "agent/adaptation/flydelta/flydelta-deep-search.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-worker.h"
@@ -1272,8 +1273,8 @@ int main(int argc, char ** argv) {
                     runner_error = "search-pipeline worker received an unexpected behavior delta";
                     return false;
                 }
-            std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_capture;
-            std::optional<common_flydelta_decision_margin> baseline_choice_margin;
+                std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_capture;
+                std::optional<common_flydelta_decision_margin> baseline_choice_margin;
                 const auto direction_for_layer = [&](uint32_t layer,
                         common_flydelta_basis_direction & direction, std::string & direction_error) {
                     const auto delta_it = std::find_if(case_deltas.begin(), case_deltas.end(),
@@ -1286,180 +1287,166 @@ int main(int argc, char ** argv) {
                     return normalized_delta(*delta_it, direction.values, direction_error);
                 };
 
-                const bool executed = common_flydelta_run_search_pipeline(
-                    fixture, pipeline_config, {pipeline_direction},
-                    [&](const common_flydelta_experiment_fixture &,
-                            const common_flydelta_direction_candidate &,
-                            const common_flydelta_layer_candidate * candidate,
-                            float scale, bool apply_overlay,
-                            common_flydelta_counterfactual_trial & trial,
-                            common_flydelta_decision_margin & margin,
-                            common_flydelta_scale_geometry & geometry,
-                            std::string & arm_error) {
-                        std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
-                        if (apply_overlay) {
-                            if (candidate == nullptr || candidate->layer_indices.empty()) {
-                                arm_error = "search-pipeline overlay arm has no layer candidate";
+                common_flydelta_model_host model_host;
+                model_host.capabilities.capture = true;
+                model_host.capabilities.overlay = true;
+                model_host.capabilities.generation = true;
+                model_host.capabilities.teacher_forced_scoring = true;
+                model_host.capabilities.host_verification = true;
+                model_host.run_bounded_arm = [&](const common_flydelta_arm_request & arm_request,
+                        common_flydelta_arm_result & arm_result, std::string & arm_error) {
+                    std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
+                    if (arm_request.apply_overlay) {
+                        if (arm_request.layer_indices.empty() ||
+                                arm_request.layer_indices.size() != arm_request.coefficients.size()) {
+                            arm_error = "dataset model host received an invalid overlay shape";
+                            return false;
+                        }
+                        common_flydelta_activation_request activation_request;
+                        activation_request.candidate_id =
+                            "flydelta://candidate/search/" + bootstrap_case.id;
+                        activation_request.artifact_id =
+                            "flydelta://experimental/search/" + bootstrap_case.id;
+                        activation_request.model_profile_fingerprint = capture->model_profile_fingerprint;
+                        activation_request.capture_layout_revision = capture->capture_layout_revision;
+                        activation_request.model_n_embd = n_embd;
+                        activation_request.model_n_layers = n_layers;
+                        activation_request.il_end = static_cast<int32_t>(n_layers - 1);
+                        for (size_t index = 0; index < arm_request.layer_indices.size(); ++index) {
+                            common_flydelta_basis_direction overlay_direction;
+                            if (!direction_for_layer(
+                                    arm_request.layer_indices[index], overlay_direction, arm_error)) {
                                 return false;
                             }
-                            common_flydelta_activation_request activation_request;
-                            activation_request.candidate_id = "flydelta://candidate/search/" + bootstrap_case.id;
-                            activation_request.artifact_id = "flydelta://experimental/search/" + bootstrap_case.id;
-                            activation_request.model_profile_fingerprint = capture->model_profile_fingerprint;
-                            activation_request.capture_layout_revision = capture->capture_layout_revision;
-                            activation_request.model_n_embd = n_embd;
-                            activation_request.model_n_layers = n_layers;
-                            activation_request.il_end = static_cast<int32_t>(n_layers - 1);
-                            for (const uint32_t layer : candidate->layer_indices) {
-                                common_flydelta_basis_direction overlay_direction;
-                                if (!direction_for_layer(layer, overlay_direction, arm_error)) return false;
-                                activation_request.directions.push_back(std::move(overlay_direction));
-                                activation_request.coefficients.push_back(1.0f);
-                            }
-                            activation_request.gate_request.explicit_opt_in = true;
-                            activation_request.gate_request.candidate_status =
-                                common_flydelta_candidate_status::approved;
-                            activation_request.gate_request.basis_available = true;
-                            activation_request.gate_request.familiarity = 1.0f;
-                            activation_request.gate_request.novelty = 0.0f;
-                            activation_request.gate_request.requested_scale = candidate->per_layer_scale;
-                            common_flydelta_gate_config gate_config;
-                            gate_config.enabled = true;
-                            gate_config.max_scale = 1.0f;
-                            common_flydelta_activation_result activation;
-                            if (!common_flydelta_prepare_activation(
-                                    gate_config, activation_request, 64U * 1024U * 1024U,
-                                    activation, arm_error)) return false;
-                            activation_ptr = std::make_shared<const common_flydelta_activation_result>(
-                                std::move(activation));
+                            activation_request.directions.push_back(std::move(overlay_direction));
+                            activation_request.coefficients.push_back(arm_request.coefficients[index]);
                         }
+                        activation_request.gate_request.explicit_opt_in = true;
+                        activation_request.gate_request.candidate_status =
+                            common_flydelta_candidate_status::approved;
+                        activation_request.gate_request.basis_available = true;
+                        activation_request.gate_request.familiarity = 1.0f;
+                        activation_request.gate_request.novelty = 0.0f;
+                        activation_request.gate_request.requested_scale = arm_request.alpha;
+                        common_flydelta_gate_config gate_config;
+                        gate_config.enabled = true;
+                        gate_config.max_scale = 1.0f;
+                        common_flydelta_activation_result activation;
+                        if (!common_flydelta_prepare_activation(
+                                gate_config, activation_request, 64U * 1024U * 1024U,
+                                activation, arm_error)) return false;
+                        activation_ptr = std::make_shared<const common_flydelta_activation_result>(
+                            std::move(activation));
+                    }
 
-                        common_agent_generation_result generated_result;
-                        const bool generated = inference->generate(make_request(
+                    common_agent_generation_result generated_result;
+                    if (!inference->generate(make_request(
                             value, contract, bootstrap_case.question, capture, activation_ptr),
-                            generated_result);
-                        const auto verdict = verify_model_call(generated_result,
-                            bootstrap_case.expected_tool, bootstrap_case.canonical_arguments,
-                            bootstrap_case.verification_mode, &bootstrap_case.canonical_execution, host);
-                        if (!apply_overlay) baseline_tool = verdict.selected_tool;
-                        else candidate_tools[candidate->anchor_layer_index] = verdict.selected_tool;
-                        trial = {};
-                        // "executed" means that the host attempted this arm;
-                        // generation success and verifier certainty are
-                        // separate fields. This lets the search preserve a
-                        // failed/unknown model call as an observation.
-                        trial.executed = true;
-                        trial.verifier_known = generated &&
-                            verdict.value != host_verdict::kind::unresolved_alternative;
-                        trial.passed = generated && verdict.value == host_verdict::kind::passed;
-                        trial.quality = trial.passed ? 1.0f : 0.0f;
-                        trial.overlay_applied = apply_overlay;
-                        trial.intervention_count = apply_overlay ? candidate->layer_indices.size() : 0;
-                        trial.evidence_ref = apply_overlay
-                            ? "evidence:flydelta-search-overlay"
-                            : "evidence:flydelta-search-baseline";
-                        margin = {};
-                        std::string margin_error;
-                        if (!bootstrap_case.failed_tool.empty() ||
-                                !bootstrap_case.failed_continuation.empty()) {
-                            common_agent_teacher_forced_choice_request score_request;
-                            score_request.context = make_request(
-                                value, contract, bootstrap_case.question, capture, activation_ptr);
-                            score_request.context.flydelta_capture.reset();
-                            score_request.choice_prefix = "{\"name\":\"";
-                            score_request.positive_choice = bootstrap_case.expected_tool;
-                            score_request.negative_choice = bootstrap_case.failed_tool;
-                            score_request.positive_continuation = tool_call_continuation(
-                                bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
-                            score_request.negative_continuation = bootstrap_case.failed_continuation;
-                            common_agent_teacher_forced_choice_result score_result;
-                            if (inference->score_teacher_forced_choice(score_request, score_result) &&
-                                    score_result.available) {
-                                margin.available = true;
-                                margin.positive_total_logprob = score_result.positive_total_logprob;
-                                margin.negative_total_logprob = score_result.negative_total_logprob;
-                                margin.positive_token_count = score_result.positive_token_count;
-                                margin.negative_token_count = score_result.negative_token_count;
-                            } else {
-                                margin_error = score_result.error_message.empty()
-                                    ? "teacher-forced choice margin unavailable"
-                                    : score_result.error_message;
-                            }
-                        } else {
-                            margin_error = "fixture has no distinct failed tool for decision pair";
+                            generated_result)) {
+                        arm_error = generated_result.error_message.empty()
+                            ? "dataset model host generation failed" : generated_result.error_message;
+                        return false;
+                    }
+                    const auto verdict = verify_model_call(
+                        generated_result, bootstrap_case.expected_tool,
+                        bootstrap_case.canonical_arguments, bootstrap_case.verification_mode,
+                        &bootstrap_case.canonical_execution, host);
+                    if (!arm_request.apply_overlay) {
+                        baseline_tool = verdict.selected_tool;
+                    } else if (!arm_request.layer_indices.empty()) {
+                        candidate_tools[arm_request.layer_indices.front()] = verdict.selected_tool;
+                    }
+                    arm_result = {};
+                    arm_result.arm_id = arm_request.arm_id;
+                    arm_result.executed = true;
+                    arm_result.requested_alpha = arm_request.alpha;
+                    arm_result.executed_alpha = arm_request.alpha;
+                    arm_result.generation_available = true;
+                    arm_result.host_evaluated = true;
+                    arm_result.verifier_known = verdict.value !=
+                        host_verdict::kind::unresolved_alternative;
+                    arm_result.host_outcome = verdict.value == host_verdict::kind::passed
+                        ? common_flydelta_counterfactual_outcome::helped
+                        : (arm_result.verifier_known
+                            ? common_flydelta_counterfactual_outcome::neutral
+                            : common_flydelta_counterfactual_outcome::unknown);
+                    arm_result.quality = arm_result.host_outcome ==
+                        common_flydelta_counterfactual_outcome::helped ? 1.0f : 0.0f;
+                    arm_result.provenance_ref = arm_request.apply_overlay
+                        ? "evidence:flydelta-search-overlay"
+                        : "evidence:flydelta-search-baseline";
+
+                    arm_result.margin = {};
+                    if (bootstrap_case.failed_tool.empty() &&
+                            bootstrap_case.failed_continuation.empty()) {
+                        arm_error = "fixture has no distinct failed tool for decision pair";
+                        return false;
+                    }
+                    common_agent_teacher_forced_choice_request score_request;
+                    score_request.context = make_request(
+                        value, contract, bootstrap_case.question, capture, activation_ptr);
+                    score_request.context.flydelta_capture.reset();
+                    score_request.choice_prefix = "{\"name\":\"";
+                    score_request.positive_choice = bootstrap_case.expected_tool;
+                    score_request.negative_choice = bootstrap_case.failed_tool;
+                    score_request.positive_continuation = tool_call_continuation(
+                        bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
+                    score_request.negative_continuation = bootstrap_case.failed_continuation;
+                    common_agent_teacher_forced_choice_result score_result;
+                    if (inference->score_teacher_forced_choice(score_request, score_result) &&
+                            score_result.available) {
+                        arm_result.margin.available = true;
+                        arm_result.margin.positive_total_logprob =
+                            score_result.positive_total_logprob;
+                        arm_result.margin.negative_total_logprob =
+                            score_result.negative_total_logprob;
+                        arm_result.margin.positive_token_count = score_result.positive_token_count;
+                        arm_result.margin.negative_token_count = score_result.negative_token_count;
+                    }
+                    arm_result.margin_available = arm_result.margin.available;
+                    if (!arm_request.apply_overlay && generated_result.flydelta_capture &&
+                            generated_result.flydelta_capture->captured) {
+                        baseline_capture = generated_result.flydelta_capture;
+                        if (arm_result.margin.available) baseline_choice_margin = arm_result.margin;
+                    }
+                    if (arm_request.apply_overlay && generated_result.flydelta_capture &&
+                            generated_result.flydelta_capture->captured && baseline_capture) {
+                        const uint32_t measured_after = *std::max_element(
+                            arm_request.layer_indices.begin(), arm_request.layer_indices.end());
+                        const auto delta_it = std::find_if(case_deltas.begin(), case_deltas.end(),
+                            [&](const auto & delta) {
+                                return delta.layer_index > static_cast<int32_t>(measured_after);
+                            });
+                        if (delta_it != case_deltas.end()) {
+                            common_flydelta_representation_diagnostics diagnostics;
+                            if (!common_flydelta_representation_diagnostics_from_captures(
+                                    *baseline_capture, *generated_result.flydelta_capture, *delta_it,
+                                    64U * 1024U * 1024U, diagnostics, arm_error)) return false;
+                            arm_result.geometry_available = true;
+                            arm_result.cosine = diagnostics.cosine;
+                            arm_result.progress = diagnostics.progress;
+                            arm_result.leakage = diagnostics.leakage;
+                            arm_result.shift_norm = diagnostics.shift_norm;
                         }
-                        if (!apply_overlay && margin.available) baseline_choice_margin = margin;
-                        geometry = {};
-                        if (!apply_overlay && generated_result.flydelta_capture &&
-                                generated_result.flydelta_capture->captured) {
-                            baseline_capture = generated_result.flydelta_capture;
-                        }
-                        if (apply_overlay && generated_result.flydelta_capture &&
-                                generated_result.flydelta_capture->captured && baseline_capture) {
-                            const uint32_t measured_after = *std::max_element(
-                                candidate->layer_indices.begin(), candidate->layer_indices.end());
-                            // Layer-input capture is taken before the
-                            // candidate layer's own injection. Measure the
-                            // first captured downstream layer, matching the
-                            // production model smoke, so an applied overlay
-                            // is not reported as a zero shift.
-                            const auto delta_it = std::find_if(case_deltas.begin(), case_deltas.end(),
-                                [&](const auto & delta) {
-                                    return delta.layer_index > static_cast<int32_t>(measured_after);
-                                });
-                            if (delta_it != case_deltas.end()) {
-                                common_flydelta_representation_diagnostics diagnostics;
-                                if (!common_flydelta_representation_diagnostics_from_captures(
-                                        *baseline_capture, *generated_result.flydelta_capture, *delta_it,
-                                        64U * 1024U * 1024U, diagnostics, arm_error)) return false;
-                                geometry.available = true;
-                                geometry.cosine = diagnostics.cosine;
-                                geometry.progress = diagnostics.progress;
-                                geometry.leakage = diagnostics.leakage;
-                                geometry.shift_norm = diagnostics.shift_norm;
-                            }
-                        }
-                        std::cout << "flydelta_search_arm group=" << entry.first
-                                  << " layers=";
-                        if (candidate == nullptr) std::cout << "baseline";
-                        else for (size_t index = 0; index < candidate->layer_indices.size(); ++index) {
-                            if (index != 0) std::cout << ',';
-                            std::cout << candidate->layer_indices[index];
-                        }
-                        std::cout << " scale=" << scale
-                                  << " selected_tool=" << verdict.selected_tool
-                                  << " outcome=" << (trial.passed ? "HELPED" :
-                                      (trial.verifier_known ? "NEUTRAL" : "UNKNOWN"));
-                        if (margin.available) {
-                            const float delta_total = baseline_choice_margin && apply_overlay
-                                ? margin.total_delta() - baseline_choice_margin->total_delta() : 0.0f;
-                            const float delta_normalized = baseline_choice_margin && apply_overlay
-                                ? margin.normalized_delta() - baseline_choice_margin->normalized_delta() : 0.0f;
-                            std::cout << " margin_total=" << margin.total_delta()
-                                      << " margin_normalized=" << margin.normalized_delta()
-                                      << " margin_delta_total=" << delta_total
-                                      << " margin_delta_normalized=" << delta_normalized;
-                        } else {
-                            std::cout << " margin_available=no";
-                        }
-                        if (geometry.available) {
-                            std::cout << " cosine=" << geometry.cosine
-                                      << " progress=" << geometry.progress
-                                      << " leakage=" << geometry.leakage
-                                      << " shift_norm=" << geometry.shift_norm;
-                        }
-                        if (!margin_error.empty()) std::cout << " margin_error=" << margin_error;
-                        std::cout << '\n';
-                        if (!generated && !generated_result.error_message.empty()) {
-                            std::cerr << " generation_error=" << generated_result.error_message;
-                        }
-                        // A model/host outcome is still an evaluated search
-                        // arm. Preserve it for Whirlpool/lifecycle instead
-                        // of turning one failed generation into a broken
-                        // worker slice. Invalid overlay composition and
-                        // missing references above remain hard failures.
-                        return true;
-                    }, pipeline_result, runner_error);
+                    }
+                    std::cout << "flydelta_search_arm group=" << entry.first << " layers=";
+                    if (arm_request.layer_indices.empty()) std::cout << "baseline";
+                    else for (size_t index = 0; index < arm_request.layer_indices.size(); ++index) {
+                        if (index != 0) std::cout << ',';
+                        std::cout << arm_request.layer_indices[index];
+                    }
+                    std::cout << " scale=" << arm_request.alpha
+                              << " selected_tool=" << verdict.selected_tool
+                              << " outcome=" << common_flydelta_counterfactual_outcome_name(
+                                  arm_result.host_outcome) << '\n';
+                    return true;
+                };
+                const auto model_runner = common_flydelta_search_pipeline_runner_from_model_host(
+                    model_host, queued_job.id, "context://dataset-question-repair",
+                    "intervention://dataset-question-repair/" + bootstrap_case.id);
+                const bool executed = common_flydelta_run_search_pipeline(
+                    fixture, pipeline_config, {pipeline_direction}, model_runner,
+                    pipeline_result, runner_error);
                 if (!executed) return false;
                 output = pipeline_result;
                 return true;
