@@ -621,6 +621,11 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
         static_cast<bool>(flydelta_config.callback);
     status.flydelta_model_adapter_search_supported = flydelta_config.model_adapter &&
         common_flydelta_model_adapter_supports_search(*flydelta_config.model_adapter);
+    if (flydelta_config.model_adapter) {
+        status.flydelta_model_capabilities = flydelta_config.model_adapter->capabilities;
+    } else {
+        status.flydelta_model_capabilities = {};
+    }
     status.accepting_commands = accepting_commands;
     status.shutdown_requested = service.shutdown_requested();
     status.max_queue_size = max_queue_size;

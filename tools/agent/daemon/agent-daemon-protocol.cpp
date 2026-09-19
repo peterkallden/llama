@@ -505,6 +505,18 @@ void append_agent_daemon_status_snapshot(
     response["flydelta_model_adapter_configured"] = status.flydelta_model_adapter_configured;
     response["flydelta_model_adapter_search_supported"] =
         status.flydelta_model_adapter_search_supported;
+    response["flydelta_model_capabilities"] = {
+        {"capture", status.flydelta_model_capabilities.capture},
+        {"overlay", status.flydelta_model_capabilities.overlay},
+        {"generation", status.flydelta_model_capabilities.generation},
+        {"teacher_forced_scoring", status.flydelta_model_capabilities.teacher_forced_scoring},
+        {"host_verification", status.flydelta_model_capabilities.host_verification},
+        {"bootstrap_zoom", status.flydelta_model_capabilities.bootstrap_zoom},
+        {"adaptive_alpha", status.flydelta_model_capabilities.adaptive_alpha},
+        {"teacher_forced_margin", status.flydelta_model_capabilities.teacher_forced_margin},
+        {"orthogonal_search", status.flydelta_model_capabilities.orthogonal_search},
+        {"representation_augmentation", status.flydelta_model_capabilities.representation_augmentation},
+    };
     response["accepting_commands"] = status.accepting_commands;
     response["shutdown_requested"] = status.shutdown_requested;
     response["sessions"] = status.session_count;
