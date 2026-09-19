@@ -66,6 +66,11 @@ bool common_flydelta_experiment_job_validate(
         error = "FlyDelta capture-candidate references are only valid for donor capture jobs";
         return false;
     }
+    if (job.kind != common_flydelta_experiment_job_kind::search_pipeline &&
+            !job.representation_augmentation_state_ref.empty()) {
+        error = "FlyDelta augmentation state references are only valid for search pipelines";
+        return false;
+    }
     if (job.kind == common_flydelta_experiment_job_kind::donor_capture &&
             (!check_refs(job.capture_candidate_ids) ||
              !job.capture_manifest_ids.empty() || !job.behavior_delta_ids.empty() ||

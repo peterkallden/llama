@@ -104,6 +104,9 @@ int main() {
     CHECK(common_flydelta_experiment_job_from_json(donor_text, donor_parsed, error));
     CHECK(donor_parsed.kind == common_flydelta_experiment_job_kind::donor_capture);
     CHECK(donor_parsed.capture_candidate_ids == job.capture_candidate_ids);
+    job.representation_augmentation_state_ref = "flydelta://state/augmentation/invalid";
+    CHECK(!common_flydelta_experiment_job_validate(job, 8, error));
+    job.representation_augmentation_state_ref.clear();
     job.capture_manifest_ids = {"flydelta://capture/should-not-be-mixed"};
     CHECK(!common_flydelta_experiment_job_validate(job, 8, error));
     job.capture_manifest_ids.clear();
