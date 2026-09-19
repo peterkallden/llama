@@ -620,6 +620,31 @@ int main() {
         std::filesystem::temp_directory_path() / "llama-agent-daemon-flydelta-lane-smoke";
     std::error_code flydelta_cleanup_error;
     std::filesystem::remove_all(flydelta_queue_root, flydelta_cleanup_error);
+
+    // A configured FlyDelta lane without a host adapter is deliberately
+    // fail-closed: the reservation remains visible, but no queued model work
+    // is consumed. Production startup must bind the existing
+    // common_flydelta_model_host/model_adapter before this lane can run.
+    {
+        common_agent_daemon_flydelta_worker_config unbound_config;
+        unbound_config.enabled = true;
+        unbound_config.worker_count = 1;
+        unbound_config.queue_root = flydelta_queue_root;
+        common_agent_daemon_dispatcher unbound_dispatcher(
+            make_waiting_runtime(
+                common_agent_runtime_pending_operation_kind::inference,
+                "dispatcher unbound FlyDelta lane pending inference",
+                "dispatcher unbound FlyDelta lane resolver"),
+            8,
+            2,
+            std::move(unbound_config));
+        if (unbound_dispatcher.flydelta_worker_count_value() != 1 ||
+                unbound_dispatcher.flydelta_workers_running_value() != 0) {
+            std::fprintf(stderr, "unbound FlyDelta lane was not fail-closed\n");
+            return 1;
+        }
+    }
+
     std::atomic<size_t> flydelta_callback_count{0};
     std::atomic<size_t> flydelta_schedule_count{0};
     common_agent_daemon_flydelta_worker_config flydelta_config;

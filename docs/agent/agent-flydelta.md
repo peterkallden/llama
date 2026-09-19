@@ -376,6 +376,25 @@ Host outcome -> learning/promotion credit
 The worker trace records the refinement kind and AdaptiveAlpha status so a
 resume can be audited without replaying prior model arms.
 
+The daemon does not manufacture a model host for this lane. A production
+runtime must register the existing backend-neutral `common_flydelta_model_host`
+or a fully built `common_flydelta_model_adapter` before the lane becomes
+consuming. That registration is the host-owned binding to model residency,
+fresh inference contexts, reference resolution, overlay/capture transport,
+teacher-forced scoring and host verification. The worker must not reach into a
+session manager, `llama_context`, server context or model path directly. If no
+registration is present, the FlyDelta lane remains configured-but-idle and a
+queued job is not consumed; this is a capability/configuration gap, not a
+successful search with no utility.
+
+The existing runtime already exposes the lower-level pieces needed by that
+host binding: the inference object accepts immutable FlyDelta activations and
+capture requests, and the server-context backend supports isolated
+teacher-forced choice scoring. The missing production step is to bind those
+pieces through the host's opaque fixture/intervention resolver and bounded-arm
+callback. This is intentionally not implemented in the generic worker or as a
+second inference adapter hierarchy.
+
 The repair smoke partitions its captures by the scenario's explicit
 `behavior_key` before assessing depth. The key describes the behavior being
 learned, not merely the fact that a tool was used. Samples from
