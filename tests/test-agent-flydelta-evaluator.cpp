@@ -523,6 +523,30 @@ int main() {
 
     common_flydelta_model_host model_host;
     model_host.capabilities = adapter_capabilities;
+    model_host.capabilities.capture = true;
+    model_host.capabilities.overlay = true;
+    model_host.capabilities.generation = true;
+    model_host.capabilities.teacher_forced_scoring = true;
+    bool bounded_arm_called = false;
+    model_host.run_bounded_arm = [&](const auto & request, auto & arm_result, std::string &) {
+        bounded_arm_called = request.apply_overlay;
+        arm_result.executed = true;
+        arm_result.requested_alpha = request.alpha;
+        arm_result.executed_alpha = request.alpha;
+        arm_result.generation_available = request.request_generation;
+        arm_result.margin_available = true;
+        arm_result.margin.available = true;
+        arm_result.margin.positive_total_logprob = -1.0f;
+        arm_result.margin.negative_total_logprob = -2.0f;
+        arm_result.margin.positive_token_count = 1;
+        arm_result.margin.negative_token_count = 1;
+        arm_result.geometry_available = request.apply_overlay;
+        arm_result.cosine = 0.8f;
+        arm_result.progress = 0.2f;
+        arm_result.leakage = 0.1f;
+        arm_result.shift_norm = 0.3f;
+        return true;
+    };
     int registration_calls = 0;
     model_host.register_evaluator = [&] (
             common_flydelta_evaluator_config & registered_config,
@@ -531,6 +555,8 @@ int main() {
         ++registration_calls;
         registered_config = config;
         registered_callbacks = callbacks;
+        registered_callbacks.run_search_pipeline =
+            [](const auto &, auto &, std::string &) { return true; };
         registration_error.clear();
         return true;
     };
@@ -538,6 +564,42 @@ int main() {
         model_host, adapter_error);
     CHECK(host_adapter != nullptr && adapter_error.empty());
     CHECK(registration_calls == 1);
+    CHECK(host_adapter->capabilities.bootstrap_zoom);
+    CHECK(host_adapter->capabilities.adaptive_alpha);
+    CHECK(host_adapter->capabilities.teacher_forced_margin);
+    CHECK(!host_adapter->capabilities.orthogonal_search);
+    common_flydelta_arm_request arm_request;
+    arm_request.apply_overlay = true;
+    arm_request.alpha = 0.1f;
+    arm_request.request_generation = true;
+    common_flydelta_arm_result arm_result;
+    CHECK(model_host.run_bounded_arm(arm_request, arm_result, error));
+    CHECK(bounded_arm_called && arm_result.executed && arm_result.executed_alpha == 0.1f);
+    common_flydelta_experiment_fixture arm_fixture;
+    arm_fixture.id = "flydelta://fixture/arm";
+    arm_fixture.task_fingerprint = "sha256:task";
+    arm_fixture.model_profile_fingerprint = "sha256:model";
+    arm_fixture.tokenizer_fingerprint = "sha256:tokenizer";
+    arm_fixture.template_fingerprint = "sha256:template";
+    arm_fixture.execution_context_fingerprint = "sha256:context";
+    arm_fixture.verifier_revision = "verifier:v1";
+    common_flydelta_direction_candidate arm_direction;
+    arm_direction.layer_index = 2;
+    arm_direction.values = {1.0f, 0.0f, 0.0f};
+    common_flydelta_layer_candidate arm_layer;
+    arm_layer.layer_indices = {2};
+    arm_layer.anchor_layer_index = 2;
+    arm_layer.total_scale = 0.1f;
+    arm_layer.per_layer_scale = 0.1f;
+    auto model_runner = common_flydelta_search_pipeline_runner_from_model_host(
+        model_host, "flydelta://job/arm", "context://arm", "direction://arm");
+    common_flydelta_counterfactual_trial arm_trial;
+    common_flydelta_decision_margin arm_margin;
+    common_flydelta_scale_geometry arm_geometry;
+    CHECK(model_runner(arm_fixture, arm_direction, &arm_layer, 0.1f, true,
+        arm_trial, arm_margin, arm_geometry, error));
+    CHECK(arm_trial.executed && arm_trial.overlay_applied && arm_margin.available &&
+        arm_geometry.available && arm_geometry.cosine == 0.8f);
     CHECK(host_adapter->worker_callback(counterfactual, worker_result, error));
     CHECK(worker_result.counterfactual_reports.size() == 1);
 

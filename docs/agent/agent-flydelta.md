@@ -876,6 +876,18 @@ model/backend-neutral; model names used by model smokes are test configuration,
 not part of the worker or adapter API. The common worker never creates that
 adapter, and an advertised capability is not evidence that a correction works.
 
+The model-facing host contract also exposes one generic
+`common_flydelta_arm_request`/`common_flydelta_arm_result` bounded-arm seam.
+The existing `common_flydelta_search_pipeline_runner_from_model_host()` helper
+maps that result into the ordinary pipeline runner, including absolute margin,
+baseline-relative margin handling, geometry, outcome and provenance. This is
+deliberately one shared transport path: Whirlpool, BootstrapZoom,
+AdaptiveAlpha, orthogonal probes, augmentation and coefficient search do not
+get separate model APIs. The host resolves the opaque fixture/intervention
+references and owns fresh inference, capture, generation, teacher scoring and
+verification; the common search code owns only bounded search and transition
+policy.
+
 For a runtime that owns the model-facing evaluator but does not want to expose
 its callback bundle directly through daemon setup, it may instead register a
 `common_flydelta_model_host`. Its registration callback fills the evaluator
@@ -893,6 +905,14 @@ the host resolves the persisted surface, prepares the typed orthogonal input,
 runs fresh model probes and returns the next opaque state reference. A capability
 flag without that callback is a configuration error, not an orthogonal search
 that found no direction.
+
+Primitive capabilities (`capture`, `overlay`, `generation` and
+`teacher_forced_scoring`) are facts about the registered runtime. Algorithm
+capabilities are derived from those facts and from the callbacks actually
+registered: Bootstrap/AdaptiveAlpha require a bounded arm plus a normal search
+runner, while orthogonal search and representation augmentation additionally
+require the resumable state-aware runner. A capability is therefore not
+enabled merely because an algorithm exists in common code.
 
 The daemon runtime carries the optional adapter registration into the
 dispatcher and exposes two separate status facts: whether an adapter is
