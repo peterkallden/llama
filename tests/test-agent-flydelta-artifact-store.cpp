@@ -35,6 +35,16 @@ int main() {
     common_flydelta_artifact loaded;
     CHECK(store.read("candidate-v1.flyd", loaded, error));
     CHECK(loaded.id == source.id && loaded.content_hash == common_flydelta_artifact_hash(loaded));
+
+    auto name_only = source;
+    name_only.id = "flydelta:test:store-name-only-v0";
+    name_only.compatibility.base_model_id = "Qwen2.5-Coder-1.5B-Instruct.gguf";
+    name_only.compatibility.base_model_fingerprint.clear();
+    CHECK(store.write("candidate-name-only-v0.flyd", name_only, error));
+    CHECK(store.read("candidate-name-only-v0.flyd", loaded, error));
+    CHECK(loaded.compatibility.base_model_id ==
+        "Qwen2.5-Coder-1.5B-Instruct.gguf");
+
     CHECK(!store.read("../outside.flyd", loaded, error));
     CHECK(!store.read("candidate-v1.tmp.flyd.bak", loaded, error));
     CHECK(!store.write("candidate-v1.json", source, error));

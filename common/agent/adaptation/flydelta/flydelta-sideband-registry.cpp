@@ -26,6 +26,25 @@ bool same(const std::string & actual, const std::string & expected, const char *
     return true;
 }
 
+bool model_identity_matches(const common_flydelta_compatibility & actual,
+        const common_flydelta_compatibility & expected, std::string & error) {
+    if (!actual.base_model_id.empty() || !expected.base_model_id.empty()) {
+        if (actual.base_model_id != expected.base_model_id) {
+            error = "FlyDelta sideband base model id is incompatible";
+            return false;
+        }
+    } else if (actual.base_model_fingerprint != expected.base_model_fingerprint) {
+        error = "FlyDelta sideband base model fingerprint is incompatible";
+        return false;
+    }
+    if (!expected.base_model_fingerprint.empty() &&
+            actual.base_model_fingerprint != expected.base_model_fingerprint) {
+        error = "FlyDelta sideband base model fingerprint is incompatible";
+        return false;
+    }
+    return true;
+}
+
 bool same_manifest(const common_flydelta_sideband_manifest & actual,
         const common_flydelta_sideband_manifest & expected) {
     // Compare the canonical manifest projection so retries are idempotent
@@ -56,7 +75,12 @@ bool common_flydelta_sideband_manifest_validate(
     if (manifest.schema_version != 1 || !bounded(manifest.id) ||
             !bounded(manifest.artifact_path) || !hash_like(manifest.artifact_hash) ||
             !bounded(manifest.namespace_id) || !bounded(manifest.project_id) ||
-            !bounded(manifest.compatibility.base_model_fingerprint) ||
+            (manifest.compatibility.base_model_id.empty() &&
+             manifest.compatibility.base_model_fingerprint.empty()) ||
+            (!manifest.compatibility.base_model_id.empty() &&
+             !bounded(manifest.compatibility.base_model_id)) ||
+            (!manifest.compatibility.base_model_fingerprint.empty() &&
+             !bounded(manifest.compatibility.base_model_fingerprint)) ||
             !bounded(manifest.compatibility.tokenizer_fingerprint) ||
             !bounded(manifest.compatibility.template_fingerprint) ||
             !bounded(manifest.compatibility.architecture) ||
@@ -101,6 +125,7 @@ std::string common_flydelta_sideband_manifest_to_json(
         {"expires_at_epoch_ms", manifest.expires_at_epoch_ms},
         {"revocation_reason", manifest.revocation_reason},
         {"compatibility", {
+            {"base_model_id", manifest.compatibility.base_model_id},
             {"base_model_fingerprint", manifest.compatibility.base_model_fingerprint},
             {"tokenizer_fingerprint", manifest.compatibility.tokenizer_fingerprint},
             {"template_fingerprint", manifest.compatibility.template_fingerprint},
@@ -138,6 +163,7 @@ bool common_flydelta_sideband_manifest_from_json(
         manifest.expires_at_epoch_ms = value.value("expires_at_epoch_ms", 0ULL);
         manifest.revocation_reason = value.value("revocation_reason", "");
         const auto compatibility = value.value("compatibility", json::object());
+        manifest.compatibility.base_model_id = compatibility.value("base_model_id", "");
         manifest.compatibility.base_model_fingerprint = compatibility.value("base_model_fingerprint", "");
         manifest.compatibility.tokenizer_fingerprint = compatibility.value("tokenizer_fingerprint", "");
         manifest.compatibility.template_fingerprint = compatibility.value("template_fingerprint", "");
@@ -317,8 +343,7 @@ bool common_flydelta_sideband_registry::resolve(
         error = "FlyDelta sideband model dimensions or layout are incompatible";
         return false;
     }
-    if (!same(it->second.compatibility.base_model_fingerprint,
-            expected.base_model_fingerprint, "base model", error) ||
+    if (!model_identity_matches(it->second.compatibility, expected, error) ||
             !same(it->second.compatibility.tokenizer_fingerprint,
             expected.tokenizer_fingerprint, "tokenizer", error) ||
             !same(it->second.compatibility.template_fingerprint,

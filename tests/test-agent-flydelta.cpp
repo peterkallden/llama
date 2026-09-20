@@ -91,6 +91,26 @@ int main() {
     CHECK(common_flydelta_artifact_from_json(
         common_flydelta_artifact_to_json(v2), 32, 65536, parsed_v2, error));
     CHECK(parsed_v2.schema_version == 2 && parsed_v2.steering_basis.size() == 2);
+
+    // V0 model identity may be name-only. It must survive durable
+    // serialization and reject a different GGUF basename.
+    auto name_only = v2;
+    name_only.compatibility.base_model_id = "Qwen2.5-Coder-1.5B-Instruct.gguf";
+    name_only.compatibility.base_model_fingerprint.clear();
+    name_only.content_hash = common_flydelta_artifact_hash(name_only);
+    CHECK(common_flydelta_artifact_validate(name_only, 32, 65536, error));
+    common_flydelta_artifact parsed_name_only;
+    CHECK(common_flydelta_artifact_from_json(
+        common_flydelta_artifact_to_json(name_only), 32, 65536,
+        parsed_name_only, error));
+    CHECK(parsed_name_only.compatibility.base_model_id ==
+        "Qwen2.5-Coder-1.5B-Instruct.gguf");
+    CHECK(common_flydelta_artifact_matches(
+        parsed_name_only, name_only.compatibility, error));
+    auto wrong_model = name_only.compatibility;
+    wrong_model.base_model_id = "Qwen2.5-1.5B-Instruct.gguf";
+    CHECK(!common_flydelta_artifact_matches(parsed_name_only, wrong_model, error));
+
     v2.steering_basis.front().values.pop_back();
     CHECK(!common_flydelta_artifact_validate(v2, 32, 65536, error));
     return 0;

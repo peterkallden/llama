@@ -531,9 +531,12 @@ all produce a no-op.
 - Activation is profile-specific, reversible, observable and kill-switchable.
   Candidate/canary/active/retired/rejected states should mirror the current
   adaptation lifecycle without sharing its LoRA type.
-- V0 compatibility is exact-model only: base model, tokenizer, template,
-  architecture/layout and artifact fingerprints must match. A sideband is not
-  presumed portable between Q2/Q4/Q8/FP16 variants merely by family name.
+- V0 compatibility is exact-model only: the canonical GGUF basename
+  (`base_model_id`), tokenizer, template and architecture/layout must match.
+  A content fingerprint is optional in V0 and, when present in the expected
+  runtime profile, is an additional exact check. A sideband is not presumed
+  portable between Q2/Q4/Q8/FP16 variants merely by family name. The model id
+  is a basename, never an absolute path or a fuzzy family label.
 
 ## Integration seams in the current code
 
@@ -821,6 +824,16 @@ DeltaMemory learning credit nor promotion. Collection preserves the reference wh
 `search_pipeline` refinement. The host still owns the runner callback and
 the scheduling decision to enqueue that follow-up job—there is deliberately
 no hidden worker-local state store or autonomous daemon loop.
+
+This opaque state-reference contract is also the V0 save/resume boundary for
+FlyDelta learning and search. State and `.flyd` artifacts are reusable only
+when the resolved runtime model has the same `base_model_id` and the same
+tokenizer/template/architecture/layout compatibility fields. A present
+expected content fingerprint is checked as an additional guard; V0 does not
+require one when the runtime cannot provide it consistently. This reuses the
+existing artifact/state stores rather than creating a parallel training
+database. Persistent registry replay and a stronger mandatory fingerprint
+policy remain later lifecycle work.
 
 An orthogonal escape creates a new experimental search surface, not a new
 evidence set. Persisted state records `surface_revision`, its parent
@@ -1468,7 +1481,8 @@ parallel sideband registry, or a future generic overlay registry with an
 explicit `kind`; it must not masquerade as a LoRA manifest.
 
 A FlyDelta manifest needs: format/kind, ID and revision, artifact SHA-256,
-base architecture and exact model fingerprint, tokenizer/template fingerprints,
+the canonical GGUF basename as `base_model_id`, an optional content
+fingerprint, architecture and tokenizer/template fingerprints,
 inference-layout revision, layer dimensions, encoder configuration fingerprint,
 strict byte/dimension bounds, source/evaluation references and lifecycle state.
 The artifact must contain neither credentials nor unbounded raw conversation

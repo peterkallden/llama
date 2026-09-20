@@ -125,7 +125,7 @@ int main(int argc, char ** argv) {
 
     common_agent_model_profile profile;
     profile.id = "flydelta-ab-base";
-    profile.base_model_id = "generation-base";
+    profile.base_model_id = std::filesystem::path(value.model).filename().string();
     profile.base_model_fingerprint = "sha256:flydelta-smoke-base";
     profile.tokenizer_fingerprint = "sha256:flydelta-smoke-tokenizer";
     profile.chat_template_fingerprint = "sha256:flydelta-smoke-template";
@@ -137,6 +137,7 @@ int main(int argc, char ** argv) {
     manifest.id = sideband_id;
     manifest.artifact_path = "sidebands/smoke-v1.json";
     manifest.artifact_hash = "sha256:flydelta-smoke-artifact";
+    manifest.compatibility.base_model_id = profile.base_model_id;
     manifest.compatibility.base_model_fingerprint = profile.base_model_fingerprint;
     manifest.compatibility.tokenizer_fingerprint = profile.tokenizer_fingerprint;
     manifest.compatibility.template_fingerprint = profile.chat_template_fingerprint;

@@ -59,6 +59,12 @@ json artifact_json_without_hash(const common_flydelta_artifact & artifact) {
         }},
         {"weights", artifact.weights},
     };
+    // Do not change the canonical bytes of legacy artifacts that predate the
+    // V0 model-id field. New artifacts carrying a model id serialize it into
+    // the content hash and therefore cannot be confused across models.
+    if (!artifact.compatibility.base_model_id.empty()) {
+        value["compatibility"]["base_model_id"] = artifact.compatibility.base_model_id;
+    }
     if (artifact.schema_version == 2) {
         value["model_n_embd"] = artifact.model_n_embd;
         value["model_n_layers"] = artifact.model_n_layers;
@@ -78,6 +84,28 @@ json artifact_json_without_hash(const common_flydelta_artifact & artifact) {
 bool same(const std::string & actual, const std::string & expected, const char * name, std::string & error) {
     if (actual != expected) {
         error = std::string("FlyDelta ") + name + " is incompatible";
+        return false;
+    }
+    return true;
+}
+
+bool model_identity_matches(const common_flydelta_compatibility & actual,
+        const common_flydelta_compatibility & expected, std::string & error) {
+    // A configured model id is authoritative in V0. Keep the fingerprint as
+    // an optional strengthening check, and retain compatibility with legacy
+    // artifacts that only carried a fingerprint.
+    if (!actual.base_model_id.empty() || !expected.base_model_id.empty()) {
+        if (actual.base_model_id != expected.base_model_id) {
+            error = "FlyDelta base model id is incompatible";
+            return false;
+        }
+    } else if (actual.base_model_fingerprint != expected.base_model_fingerprint) {
+        error = "FlyDelta base model fingerprint is incompatible";
+        return false;
+    }
+    if (!expected.base_model_fingerprint.empty() &&
+            actual.base_model_fingerprint != expected.base_model_fingerprint) {
+        error = "FlyDelta base model fingerprint is incompatible";
         return false;
     }
     return true;
@@ -310,7 +338,11 @@ bool common_flydelta_artifact_validate(
         return false;
     }
     if (artifact.weights.size() > max_weights) { error = "FlyDelta artifact exceeds weight bound"; return false; }
-    if (artifact.compatibility.base_model_fingerprint.empty() || artifact.compatibility.tokenizer_fingerprint.empty() ||
+    if (artifact.compatibility.base_model_id.empty() && artifact.compatibility.base_model_fingerprint.empty()) {
+        error = "FlyDelta artifact model identity is incomplete";
+        return false;
+    }
+    if (artifact.compatibility.tokenizer_fingerprint.empty() ||
             artifact.compatibility.template_fingerprint.empty() || artifact.compatibility.architecture.empty() ||
             artifact.compatibility.inference_layout_revision.empty()) {
         error = "FlyDelta artifact compatibility identity is incomplete";
@@ -393,6 +425,7 @@ bool common_flydelta_artifact_from_json(
         artifact.memory.target_dim = memory.value("target_dim", 0U);
         artifact.memory.max_abs_weight = memory.value("max_abs_weight", 0.0f);
         const auto & compatibility = value.at("compatibility");
+        artifact.compatibility.base_model_id = compatibility.value("base_model_id", "");
         artifact.compatibility.base_model_fingerprint = compatibility.value("base_model_fingerprint", "");
         artifact.compatibility.tokenizer_fingerprint = compatibility.value("tokenizer_fingerprint", "");
         artifact.compatibility.template_fingerprint = compatibility.value("template_fingerprint", "");
@@ -426,7 +459,7 @@ bool common_flydelta_artifact_matches(
         const common_flydelta_compatibility & expected,
         std::string & error) {
     error.clear();
-    return same(artifact.compatibility.base_model_fingerprint, expected.base_model_fingerprint, "base model", error) &&
+    return model_identity_matches(artifact.compatibility, expected, error) &&
         same(artifact.compatibility.tokenizer_fingerprint, expected.tokenizer_fingerprint, "tokenizer", error) &&
         same(artifact.compatibility.template_fingerprint, expected.template_fingerprint, "template", error) &&
         same(artifact.compatibility.architecture, expected.architecture, "architecture", error) &&

@@ -11,7 +11,7 @@ static common_flydelta_sideband_manifest manifest() {
     value.id = "flydelta://sideband/tool-repair-v1";
     value.artifact_path = "sidebands/tool-repair-v1.json";
     value.artifact_hash = "sha256:artifact-v1";
-    value.compatibility.base_model_fingerprint = "sha256:base";
+    value.compatibility.base_model_id = "qwen2.5-coder-1.5b-instruct.gguf";
     value.compatibility.tokenizer_fingerprint = "sha256:tokenizer";
     value.compatibility.template_fingerprint = "sha256:template";
     value.compatibility.architecture = "qwen2";
@@ -25,7 +25,7 @@ static common_flydelta_sideband_manifest manifest() {
 static common_agent_model_profile profile() {
     common_agent_model_profile value;
     value.id = "agent-default";
-    value.base_model_id = "qwen";
+    value.base_model_id = "qwen2.5-coder-1.5b-instruct.gguf";
     value.base_model_fingerprint = "sha256:base";
     value.tokenizer_fingerprint = "sha256:tokenizer";
     value.chat_template_fingerprint = "sha256:template";
@@ -60,7 +60,7 @@ int main() {
     CHECK(resolved.id == sideband.id && scale == 0.5 &&
             common_flydelta_sideband_status_name(resolved.status) == std::string("active"));
 
-    expected.base_model_fingerprint = "sha256:other";
+    expected.base_model_id = "qwen2.5-1.5b-instruct.gguf";
     CHECK(!registry.resolve(profile(), sideband.id, expected, 4, 3, resolved, scale, error));
     CHECK(error.find("base model") != std::string::npos);
 

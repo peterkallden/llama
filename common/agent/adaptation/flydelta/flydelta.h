@@ -93,6 +93,10 @@ private:
 };
 
 struct common_flydelta_compatibility {
+    // V0 uses the canonical GGUF basename as the stable model identity.
+    // The content fingerprint remains optional until the runtime can provide
+    // it consistently for every load/resume path.
+    std::string base_model_id;
     std::string base_model_fingerprint;
     std::string tokenizer_fingerprint;
     std::string template_fingerprint;

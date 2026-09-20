@@ -471,6 +471,7 @@ int main(int argc, char ** argv) {
     // artifact basis entries.
     artifact_basis.push_back({artifact_direction->layer_index, artifact_direction->values});
     common_flydelta_compatibility compatibility;
+    compatibility.base_model_id = std::filesystem::path(value.model).filename().string();
     compatibility.base_model_fingerprint = profile;
     compatibility.tokenizer_fingerprint = experiment_fixture.tokenizer_fingerprint;
     compatibility.template_fingerprint = experiment_fixture.template_fingerprint;
@@ -678,9 +679,15 @@ int main(int argc, char ** argv) {
         pipeline_config.region_max_stalled_scales = 2;
 
         common_flydelta_search_pipeline_direction pipeline_direction;
-        pipeline_direction.direction = {
-            1, common_flydelta_direction_kind::raw_repair, anchor->layer_index,
-            anchor->values, 1, 1, 1.0f, false};
+        pipeline_direction.direction = {};
+        pipeline_direction.direction.schema_version = 1;
+        pipeline_direction.direction.kind = common_flydelta_direction_kind::raw_repair;
+        pipeline_direction.direction.layer_index = anchor->layer_index;
+        pipeline_direction.direction.values = anchor->values;
+        pipeline_direction.direction.source_samples = 1;
+        pipeline_direction.direction.retained_samples = 1;
+        pipeline_direction.direction.median_alignment = 1.0f;
+        pipeline_direction.direction.experimental_only = false;
         for (const auto & delta : deltas) {
             if (delta.layer_index > 0) pipeline_direction.available_layers.push_back(
                 static_cast<uint32_t>(delta.layer_index));
