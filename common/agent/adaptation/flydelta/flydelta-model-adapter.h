@@ -230,6 +230,23 @@ common_flydelta_search_pipeline_runner common_flydelta_search_pipeline_runner_fr
         size_t max_capture_bytes = 0,
         size_t max_generated_tokens = 0);
 
+// Batch counterpart for independent Whirlpool/region probes. It uses the
+// same generic ArmRequest/ArmResult contract as the scalar factory and falls
+// back through common_flydelta_run_bounded_arm_batch when the backend offers
+// a real batch implementation.
+common_flydelta_search_pipeline_batch_runner
+common_flydelta_search_pipeline_batch_runner_from_model_host(
+        const common_flydelta_model_host & host,
+        std::string job_id,
+        std::string context_ref,
+        std::string intervention_ref,
+        bool request_capture = true,
+        bool request_teacher_forced_margin = true,
+        bool request_generation = true,
+        bool request_host_verification = true,
+        size_t max_capture_bytes = 0,
+        size_t max_generated_tokens = 0);
+
 struct common_flydelta_model_adapter {
     common_flydelta_model_capabilities capabilities;
     common_flydelta_experiment_worker_callback worker_callback;

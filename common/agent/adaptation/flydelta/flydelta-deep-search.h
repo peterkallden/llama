@@ -60,6 +60,20 @@ bool common_flydelta_run_deep_search(
         common_flydelta_deep_search_result & result,
         std::string & error);
 
+// Batch-aware Deep search. The CPU still owns basis selection, ranking,
+// top-K pruning and lifecycle semantics; model-facing diagnostic and full
+// generation arms may be evaluated as bounded batches.
+bool common_flydelta_run_deep_search_batched(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_deep_search_config & config,
+        const std::vector<common_flydelta_deep_search_direction> & directions,
+        const common_flydelta_coefficient_search_runner & diagnostic_runner,
+        const common_flydelta_coefficient_search_batch_runner & diagnostic_batch_runner,
+        const common_flydelta_coefficient_search_runner & full_generation_runner,
+        const common_flydelta_coefficient_search_batch_runner & full_generation_batch_runner,
+        common_flydelta_deep_search_result & result,
+        std::string & error);
+
 // Records the diagnostic and full-generation coefficient trials through the
 // existing experimental lifecycle. This is reference-only: it never updates
 // DeltaMemory, activates a sideband or promotes a challenger.

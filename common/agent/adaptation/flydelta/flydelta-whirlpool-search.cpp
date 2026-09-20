@@ -158,10 +158,11 @@ bool common_flydelta_whirlpool_trace_validate(
     return true;
 }
 
-bool common_flydelta_run_whirlpool_search(
+bool common_flydelta_run_whirlpool_search_batched(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_whirlpool_search_config & config,
-        const common_flydelta_whirlpool_search_runner & runner,
+        const common_flydelta_whirlpool_search_runner & baseline_runner,
+        const common_flydelta_whirlpool_search_batch_runner & batch_runner,
         std::vector<common_flydelta_intervention_region_trial> & trials,
         common_flydelta_intervention_region_selection & selection,
         common_flydelta_whirlpool_trace & trace,
@@ -171,7 +172,8 @@ bool common_flydelta_run_whirlpool_search(
     selection = {};
     trace = {};
     if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
-            !common_flydelta_whirlpool_search_config_validate(config, error) || !runner) {
+            !common_flydelta_whirlpool_search_config_validate(config, error) ||
+            !baseline_runner || !batch_runner) {
         if (error.empty()) error = "FlyDelta Whirlpool runner is invalid";
         return false;
     }
@@ -180,7 +182,7 @@ bool common_flydelta_run_whirlpool_search(
     common_flydelta_decision_margin baseline_margin;
     common_flydelta_representation_diagnostics baseline_geometry;
     bool baseline_geometry_available = false;
-    if (!runner(fixture, nullptr, baseline, baseline_margin,
+    if (!baseline_runner(fixture, nullptr, baseline, baseline_margin,
                 baseline_geometry, baseline_geometry_available, error) ||
             !common_flydelta_counterfactual_trial_validate(baseline, error) ||
             !common_flydelta_decision_margin_validate(baseline_margin, error)) {
@@ -203,11 +205,9 @@ bool common_flydelta_run_whirlpool_search(
         round_trace.radius_before = radius;
         const auto round_probes = probes(centre, radius, config.available_layers,
             std::min(config.probes_per_round, config.max_trials - trials.size()));
-        bool found_round_candidate = false;
-        float round_best = -std::numeric_limits<float>::infinity();
-        uint32_t round_centre = centre;
+        std::vector<common_flydelta_intervention_region_candidate> candidates;
         for (const uint32_t layer : round_probes) {
-            if (contains(visited, layer) || trials.size() >= config.max_trials) continue;
+            if (contains(visited, layer) || trials.size() + candidates.size() >= config.max_trials) continue;
             visited.push_back(layer);
             round_trace.probed_layers.push_back(layer);
             common_flydelta_intervention_region_candidate candidate;
@@ -217,71 +217,112 @@ bool common_flydelta_run_whirlpool_search(
             candidate.per_layer_scale = config.total_scale;
             candidate.source = common_flydelta_layer_search_candidate_source::diagnostic_singleton;
 
-            common_flydelta_counterfactual_trial counterfactual;
-            common_flydelta_decision_margin margin;
-            common_flydelta_representation_diagnostics geometry;
-            bool geometry_available = false;
-            const float requested_scale = candidate.total_scale;
-            if (!runner(fixture, &candidate, counterfactual, margin, geometry,
-                    geometry_available, error) ||
-                    !common_flydelta_counterfactual_trial_validate(counterfactual, error) ||
+            candidates.push_back(std::move(candidate));
+        }
+
+        std::vector<common_flydelta_counterfactual_trial> batch_trials;
+        std::vector<common_flydelta_decision_margin> batch_margins;
+        std::vector<common_flydelta_representation_diagnostics> batch_geometries;
+        std::vector<bool> batch_geometry_available;
+        std::vector<float> requested_scales;
+        requested_scales.reserve(candidates.size());
+        for (const auto & candidate : candidates) {
+            requested_scales.push_back(candidate.total_scale);
+        }
+        if (!candidates.empty() && !batch_runner(fixture, candidates, batch_trials,
+                batch_margins, batch_geometries, batch_geometry_available, error)) return false;
+        if (batch_trials.size() != candidates.size() || batch_margins.size() != candidates.size() ||
+                batch_geometries.size() != candidates.size() ||
+                batch_geometry_available.size() != candidates.size()) {
+            error = "FlyDelta Whirlpool batch returned an incomplete probe set";
+            return false;
+        }
+
+        std::vector<size_t> retry_indices;
+        std::vector<common_flydelta_intervention_region_candidate> retry_candidates;
+        std::vector<common_flydelta_dose_decision> dose_decisions(candidates.size());
+        std::vector<bool> dose_retry(candidates.size(), false);
+        for (size_t index = 0; index < candidates.size(); ++index) {
+            auto & candidate = candidates[index];
+            auto & counterfactual = batch_trials[index];
+            auto & margin = batch_margins[index];
+            auto & geometry = batch_geometries[index];
+            const bool geometry_available = batch_geometry_available[index];
+            if (!common_flydelta_counterfactual_trial_validate(counterfactual, error) ||
                     !common_flydelta_decision_margin_validate(margin, error)) return false;
             if (geometry_available &&
-                    !common_flydelta_representation_diagnostics_validate(geometry, error)) {
+                    !common_flydelta_representation_diagnostics_validate(geometry, error)) return false;
+            if (!config.use_dose_controller) continue;
+            common_flydelta_dose_observation observation{
+                geometry_available, candidate.total_scale,
+                geometry_available ? geometry.shift_norm : 0.0f,
+                geometry_available ? geometry.progress : 0.0f,
+                geometry_available ? geometry.leakage : 0.0f,
+            };
+            if (!common_flydelta_dose_observe(config.dose_policy,
+                    dose_states[candidate.anchor_layer_index], observation,
+                    dose_decisions[index], error)) return false;
+            if (dose_decisions[index].action == common_flydelta_dose_action::retry_lower &&
+                    dose_decisions[index].proposed_safe_strength && config.max_dose_retries > 0) {
+                dose_retry[index] = true;
+                candidate.total_scale = *dose_decisions[index].proposed_safe_strength;
+                candidate.per_layer_scale = candidate.total_scale;
+                retry_indices.push_back(index);
+                retry_candidates.push_back(candidate);
+            }
+        }
+        if (!retry_candidates.empty()) {
+            std::vector<common_flydelta_counterfactual_trial> retry_trials;
+            std::vector<common_flydelta_decision_margin> retry_margins;
+            std::vector<common_flydelta_representation_diagnostics> retry_geometries;
+            std::vector<bool> retry_geometry_available;
+            if (!batch_runner(fixture, retry_candidates, retry_trials, retry_margins,
+                    retry_geometries, retry_geometry_available, error) ||
+                    retry_trials.size() != retry_candidates.size() ||
+                    retry_margins.size() != retry_candidates.size() ||
+                    retry_geometries.size() != retry_candidates.size() ||
+                    retry_geometry_available.size() != retry_candidates.size()) {
+                if (error.empty()) error = "FlyDelta Whirlpool retry batch was incomplete";
                 return false;
             }
-
-            common_flydelta_dose_decision dose_decision;
-            size_t model_attempts = 1;
-            bool dose_retry_performed = false;
-            if (config.use_dose_controller) {
-                common_flydelta_dose_observation dose_observation{
-                    geometry_available,
-                    candidate.total_scale,
-                    geometry_available ? geometry.shift_norm : 0.0f,
-                    geometry_available ? geometry.progress : 0.0f,
-                    geometry_available ? geometry.leakage : 0.0f,
+            for (size_t retry = 0; retry < retry_indices.size(); ++retry) {
+                const size_t index = retry_indices[retry];
+                batch_trials[index] = std::move(retry_trials[retry]);
+                batch_margins[index] = std::move(retry_margins[retry]);
+                batch_geometries[index] = std::move(retry_geometries[retry]);
+                batch_geometry_available[index] = retry_geometry_available[retry];
+                if (!common_flydelta_counterfactual_trial_validate(batch_trials[index], error) ||
+                        !common_flydelta_decision_margin_validate(batch_margins[index], error)) return false;
+                if (batch_geometry_available[index] &&
+                        !common_flydelta_representation_diagnostics_validate(batch_geometries[index], error)) return false;
+                const auto & candidate = candidates[index];
+                common_flydelta_dose_observation observation{
+                    batch_geometry_available[index], candidate.total_scale,
+                    batch_geometry_available[index] ? batch_geometries[index].shift_norm : 0.0f,
+                    batch_geometry_available[index] ? batch_geometries[index].progress : 0.0f,
+                    batch_geometry_available[index] ? batch_geometries[index].leakage : 0.0f,
                 };
-                if (!common_flydelta_dose_observe(
-                        config.dose_policy, dose_states[layer], dose_observation,
-                        dose_decision, error)) return false;
-                if (dose_decision.action == common_flydelta_dose_action::retry_lower &&
-                        dose_decision.proposed_safe_strength &&
-                        config.max_dose_retries > 0) {
-                    dose_retry_performed = true;
-                    candidate.total_scale = *dose_decision.proposed_safe_strength;
-                    candidate.per_layer_scale = candidate.total_scale;
-                    counterfactual = {};
-                    margin = {};
-                    geometry = {};
-                    geometry_available = false;
-                    if (!runner(fixture, &candidate, counterfactual, margin, geometry,
-                            geometry_available, error) ||
-                            !common_flydelta_counterfactual_trial_validate(
-                                counterfactual, error) ||
-                            !common_flydelta_decision_margin_validate(margin, error)) {
-                        return false;
-                    }
-                    if (geometry_available &&
-                            !common_flydelta_representation_diagnostics_validate(
-                                geometry, error)) return false;
-                    dose_observation = {
-                        geometry_available,
-                        candidate.total_scale,
-                        geometry_available ? geometry.shift_norm : 0.0f,
-                        geometry_available ? geometry.progress : 0.0f,
-                        geometry_available ? geometry.leakage : 0.0f,
-                    };
-                    if (!common_flydelta_dose_observe(
-                            config.dose_policy, dose_states[layer], dose_observation,
-                            dose_decision, error)) return false;
-                    ++model_attempts;
-                }
+                if (!common_flydelta_dose_observe(config.dose_policy,
+                        dose_states[candidate.anchor_layer_index], observation,
+                        dose_decisions[index], error)) return false;
             }
+        }
+
+        bool found_round_candidate = false;
+        float round_best = -std::numeric_limits<float>::infinity();
+        uint32_t round_centre = centre;
+        for (size_t index = 0; index < candidates.size(); ++index) {
+            const auto & candidate = candidates[index];
+            const auto & counterfactual = batch_trials[index];
+            const auto & margin = batch_margins[index];
+            const auto & geometry = batch_geometries[index];
+            const bool geometry_available = batch_geometry_available[index];
+            common_flydelta_dose_decision dose_decision = dose_decisions[index];
+            const bool dose_retry_performed = dose_retry[index];
 
             common_flydelta_intervention_region_trial region_trial;
             region_trial.candidate = candidate;
-            region_trial.requested_total_scale = requested_scale;
+            region_trial.requested_total_scale = requested_scales[index];
             region_trial.executed_total_scale = candidate.total_scale;
             region_trial.dose_evaluated = config.use_dose_controller;
             region_trial.dose_action = dose_decision.action;
@@ -313,7 +354,6 @@ bool common_flydelta_run_whirlpool_search(
                 margin, geometry, geometry_available, config);
             region_trial.evidence_ref = counterfactual.evidence_ref;
             trials.push_back(std::move(region_trial));
-            trace.model_evaluations += model_attempts;
             const auto & stored = trials.back();
             if (stored.search_score > best_objective) {
                 best_objective = stored.search_score;
@@ -321,10 +361,11 @@ bool common_flydelta_run_whirlpool_search(
             }
             if (stored.search_score > round_best) {
                 round_best = stored.search_score;
-                round_centre = layer;
+                round_centre = candidate.anchor_layer_index;
                 found_round_candidate = true;
             }
         }
+        trace.model_evaluations += candidates.size() + retry_candidates.size();
         // Never recede from the best observed point. A later local round may
         // be noisier than the previous one; it can still shrink the trust
         // region without moving the centre to a worse probe.
@@ -364,4 +405,50 @@ bool common_flydelta_run_whirlpool_search(
         return false;
     }
     return true;
+}
+
+bool common_flydelta_run_whirlpool_search(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_whirlpool_search_config & config,
+        const common_flydelta_whirlpool_search_runner & runner,
+        std::vector<common_flydelta_intervention_region_trial> & trials,
+        common_flydelta_intervention_region_selection & selection,
+        common_flydelta_whirlpool_trace & trace,
+        std::string & error) {
+    if (!runner) {
+        error = "FlyDelta Whirlpool runner is invalid";
+        return false;
+    }
+    const common_flydelta_whirlpool_search_batch_runner batch_runner =
+        [&](const common_flydelta_experiment_fixture & current_fixture,
+            const std::vector<common_flydelta_intervention_region_candidate> & candidates,
+            std::vector<common_flydelta_counterfactual_trial> & batch_trials,
+            std::vector<common_flydelta_decision_margin> & batch_margins,
+            std::vector<common_flydelta_representation_diagnostics> & batch_geometries,
+            std::vector<bool> & batch_geometry_available,
+            std::string & batch_error) {
+            batch_trials.clear();
+            batch_margins.clear();
+            batch_geometries.clear();
+            batch_geometry_available.clear();
+            batch_trials.reserve(candidates.size());
+            batch_margins.reserve(candidates.size());
+            batch_geometries.reserve(candidates.size());
+            batch_geometry_available.reserve(candidates.size());
+            for (const auto & candidate : candidates) {
+                common_flydelta_counterfactual_trial trial;
+                common_flydelta_decision_margin margin;
+                common_flydelta_representation_diagnostics geometry;
+                bool geometry_available = false;
+                if (!runner(current_fixture, &candidate, trial, margin, geometry,
+                        geometry_available, batch_error)) return false;
+                batch_trials.push_back(std::move(trial));
+                batch_margins.push_back(std::move(margin));
+                batch_geometries.push_back(std::move(geometry));
+                batch_geometry_available.push_back(geometry_available);
+            }
+            return true;
+        };
+    return common_flydelta_run_whirlpool_search_batched(
+        fixture, config, runner, batch_runner, trials, selection, trace, error);
 }

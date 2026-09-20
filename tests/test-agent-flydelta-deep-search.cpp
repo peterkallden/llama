@@ -105,6 +105,74 @@ int main() {
     CHECK(result.coefficient_trials[result.coefficient_selection.trial_index].outcome ==
         common_flydelta_counterfactual_outcome::helped);
 
+    size_t diagnostic_batch_calls = 0;
+    size_t full_batch_calls = 0;
+    const common_flydelta_coefficient_search_runner batch_probe =
+        [](const common_flydelta_experiment_fixture &,
+                const common_flydelta_low_rank_basis & basis,
+                const std::vector<float> & coefficients, bool apply_overlay,
+                common_flydelta_counterfactual_trial & trial,
+                common_flydelta_decision_margin & margin,
+                common_flydelta_representation_diagnostics & geometry,
+                bool & geometry_available, std::string &) {
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.overlay_applied = apply_overlay;
+            trial.quality = apply_overlay && !coefficients.empty() && coefficients[0] > 0.0f
+                ? 1.0f : 0.0f;
+            margin = {};
+            margin.available = apply_overlay;
+            margin.positive_token_count = 1;
+            margin.negative_token_count = 1;
+            geometry = {};
+            geometry_available = apply_overlay;
+            geometry.layer_index = static_cast<uint32_t>(basis.layer_index);
+            geometry.cosine = 0.7f;
+            geometry.progress = apply_overlay ? coefficients[0] : 0.0f;
+            geometry.leakage = 0.02f;
+            geometry.shift_norm = std::fabs(geometry.progress);
+            return true;
+        };
+    const auto batch_probe_runner =
+        [](size_t * calls, const common_flydelta_coefficient_search_runner & scalar) {
+            return [calls, scalar](
+                    const common_flydelta_experiment_fixture & current_fixture,
+                    const common_flydelta_low_rank_basis & basis,
+                    const std::vector<std::vector<float>> & coefficients,
+                    std::vector<common_flydelta_counterfactual_trial> & trials,
+                    std::vector<common_flydelta_decision_margin> & margins,
+                    std::vector<common_flydelta_representation_diagnostics> & geometries,
+                    std::vector<bool> & geometry_available, std::string & batch_error) {
+                ++(*calls);
+                trials.clear();
+                margins.clear();
+                geometries.clear();
+                geometry_available.clear();
+                for (const auto & values : coefficients) {
+                    common_flydelta_counterfactual_trial trial;
+                    common_flydelta_decision_margin margin;
+                    common_flydelta_representation_diagnostics geometry;
+                    bool has_geometry = false;
+                    if (!scalar(current_fixture, basis, values, true, trial, margin,
+                            geometry, has_geometry, batch_error)) return false;
+                    trials.push_back(std::move(trial));
+                    margins.push_back(std::move(margin));
+                    geometries.push_back(std::move(geometry));
+                    geometry_available.push_back(has_geometry);
+                }
+                return true;
+            };
+        };
+    common_flydelta_deep_search_result batched_result;
+    CHECK(common_flydelta_run_deep_search_batched(
+        fixture(), config, input, batch_probe,
+        batch_probe_runner(&diagnostic_batch_calls, batch_probe), batch_probe,
+        batch_probe_runner(&full_batch_calls, batch_probe), batched_result, error));
+    CHECK(diagnostic_batch_calls == 1);
+    CHECK(full_batch_calls == 1);
+    CHECK(batched_result.coefficient_trials.size() == result.coefficient_trials.size());
+
     common_learning_in_memory_lifecycle_store lifecycle;
     common_flydelta_lifecycle_event_context context;
     context.event_id = "event:deep-search";

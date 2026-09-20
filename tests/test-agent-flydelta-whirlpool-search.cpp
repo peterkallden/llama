@@ -75,6 +75,68 @@ int main() {
     CHECK(trace.final_centre == 5);
     CHECK(common_flydelta_whirlpool_trace_validate(trace, config, trials.size(), error));
 
+    common_flydelta_whirlpool_search_config batch_config = config;
+    batch_config.max_rounds = 1;
+    batch_config.max_trials = 4;
+    batch_config.use_dose_controller = false;
+    size_t batch_calls = 0;
+    std::vector<size_t> batch_sizes;
+    trials.clear();
+    selection = {};
+    trace = {};
+    const common_flydelta_whirlpool_search_runner batch_baseline_runner =
+        [](const auto &, const auto * candidate, auto & trial, auto & margin,
+                auto &, auto & geometry_available, std::string &) {
+            if (candidate != nullptr) return false;
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.evidence_ref = "evidence:batch-baseline";
+            trial.passed = false;
+            trial.quality = 0.0f;
+            margin = {};
+            geometry_available = false;
+            return true;
+        };
+    const common_flydelta_whirlpool_search_batch_runner batch_runner =
+        [&](const auto &, const auto & candidates, auto & batch_trials, auto & batch_margins,
+                auto & batch_geometries, auto & batch_geometry_available, std::string &) {
+            ++batch_calls;
+            batch_sizes.push_back(candidates.size());
+            batch_trials.clear();
+            batch_margins.clear();
+            batch_geometries.clear();
+            batch_geometry_available.clear();
+            for (const auto & candidate : candidates) {
+                common_flydelta_counterfactual_trial trial;
+                trial.executed = true;
+                trial.verifier_known = true;
+                trial.evidence_ref = "evidence:batch-arm";
+                trial.quality = candidate.anchor_layer_index == 5 ? 1.0f : 0.0f;
+                common_flydelta_decision_margin margin;
+                common_flydelta_representation_diagnostics geometry;
+                geometry.layer_index = candidate.anchor_layer_index;
+                geometry.cosine = candidate.anchor_layer_index == 5 ? 0.9f : 0.4f;
+                geometry.progress = candidate.anchor_layer_index == 5 ? 0.8f : 0.1f;
+                geometry.leakage = 0.05f;
+                geometry.shift_norm = candidate.total_scale;
+                batch_trials.push_back(std::move(trial));
+                batch_margins.push_back(std::move(margin));
+                batch_geometries.push_back(std::move(geometry));
+                batch_geometry_available.push_back(true);
+            }
+            return true;
+        };
+    CHECK(common_flydelta_run_whirlpool_search_batched(
+        fixture(), batch_config, batch_baseline_runner, batch_runner,
+        trials, selection, trace, error));
+    CHECK(error.empty());
+    CHECK(batch_calls == 1);
+    CHECK(batch_sizes.size() == 1 && batch_sizes.front() >= 2);
+    CHECK(trace.model_evaluations == trials.size() + 1);
+    CHECK(common_flydelta_whirlpool_trace_validate(
+        trace, batch_config, trials.size(), error));
+
     common_flydelta_whirlpool_search_config invalid = config;
     invalid.probes_per_round = 1;
     CHECK(!common_flydelta_whirlpool_search_config_validate(invalid, error));

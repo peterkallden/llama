@@ -79,6 +79,32 @@ using common_flydelta_whirlpool_search_runner = std::function<bool(
         bool & geometry_available,
         std::string & error)>;
 
+// Executes one independent Whirlpool probe set. The caller owns the baseline
+// runner; this callback receives only overlay candidates and must return one
+// result per candidate in the same order. A scalar fallback may implement it
+// by looping over common_flydelta_whirlpool_search_runner.
+using common_flydelta_whirlpool_search_batch_runner = std::function<bool(
+        const common_flydelta_experiment_fixture & fixture,
+        const std::vector<common_flydelta_intervention_region_candidate> & candidates,
+        std::vector<common_flydelta_counterfactual_trial> & trials,
+        std::vector<common_flydelta_decision_margin> & margins,
+        std::vector<common_flydelta_representation_diagnostics> & geometries,
+        std::vector<bool> & geometry_available,
+        std::string & error)>;
+
+// Batched Whirlpool execution. Search decisions, dose regulation and
+// lifecycle semantics remain on the CPU; only independent probe execution is
+// delegated to the batch runner. Lower-dose retries form a second batch.
+bool common_flydelta_run_whirlpool_search_batched(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_whirlpool_search_config & config,
+        const common_flydelta_whirlpool_search_runner & baseline_runner,
+        const common_flydelta_whirlpool_search_batch_runner & batch_runner,
+        std::vector<common_flydelta_intervention_region_trial> & trials,
+        common_flydelta_intervention_region_selection & selection,
+        common_flydelta_whirlpool_trace & trace,
+        std::string & error);
+
 // Runs a bounded layer-only Whirlpool search. The baseline is evaluated once;
 // every other arm uses the existing candidate/overlay runner. UNKNOWN and
 // NEUTRAL may guide later probes through diagnostics, but only a host-known

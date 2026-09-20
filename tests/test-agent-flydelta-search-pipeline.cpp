@@ -249,6 +249,71 @@ int main() {
     CHECK(whirlpool_result.directions.front().region_trials[
         whirlpool_result.selection.region_trial_index].candidate.anchor_layer_index == 2);
 
+    // The same Whirlpool phase can hand its independent probes to a batch
+    // runner while keeping baseline, scoring and selection on the CPU.
+    common_flydelta_search_pipeline_result batched_whirlpool_result;
+    size_t batch_calls = 0;
+    CHECK(common_flydelta_run_search_pipeline_batched(
+        make_fixture(), whirlpool_config, {input},
+        [&](const common_flydelta_experiment_fixture &,
+                const common_flydelta_direction_candidate &,
+                const common_flydelta_layer_candidate * layer,
+                float, bool apply_overlay,
+                common_flydelta_counterfactual_trial & trial,
+                common_flydelta_decision_margin & margin,
+                common_flydelta_scale_geometry & geometry,
+                std::string &) {
+            if (layer != nullptr || apply_overlay) return false;
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.evidence_ref = "evidence:search-pipeline-batch-baseline";
+            margin = {};
+            geometry = {};
+            return true;
+        },
+        [&](const common_flydelta_experiment_fixture &,
+                const common_flydelta_direction_candidate &,
+                const std::vector<common_flydelta_intervention_region_candidate> & candidates,
+                std::vector<common_flydelta_counterfactual_trial> & batch_trials,
+                std::vector<common_flydelta_decision_margin> & batch_margins,
+                std::vector<common_flydelta_scale_geometry> & batch_geometries,
+                std::vector<bool> & batch_geometry_available,
+                std::string &) {
+            ++batch_calls;
+            batch_trials.clear();
+            batch_margins.clear();
+            batch_geometries.clear();
+            batch_geometry_available.clear();
+            for (const auto & candidate : candidates) {
+                common_flydelta_counterfactual_trial trial;
+                trial.executed = true;
+                trial.verifier_known = true;
+                trial.overlay_applied = true;
+                trial.evidence_ref = "evidence:search-pipeline-whirlpool-batch";
+                const bool layer_two = candidate.anchor_layer_index == 2;
+                trial.passed = layer_two;
+                trial.quality = layer_two ? 1.0f : 0.0f;
+                common_flydelta_decision_margin margin;
+                common_flydelta_scale_geometry geometry;
+                geometry.available = true;
+                geometry.cosine = layer_two ? 0.9f : 0.4f;
+                geometry.progress = layer_two ? 0.8f : 0.1f;
+                geometry.leakage = 0.05f;
+                geometry.shift_norm = candidate.total_scale;
+                batch_trials.push_back(std::move(trial));
+                batch_margins.push_back(std::move(margin));
+                batch_geometries.push_back(std::move(geometry));
+                batch_geometry_available.push_back(true);
+            }
+            return true;
+        }, batched_whirlpool_result, error));
+    CHECK(batch_calls == 1);
+    CHECK(batched_whirlpool_result.directions.front().region_trials.size() == 4);
+    CHECK(batched_whirlpool_result.selection.selected);
+    CHECK(batched_whirlpool_result.directions.front().region_trials[
+        batched_whirlpool_result.selection.region_trial_index].candidate.anchor_layer_index == 2);
+
     common_learning_in_memory_lifecycle_store region_lifecycle;
     CHECK(common_flydelta_append_search_pipeline_lifecycle(
         region_lifecycle, lifecycle_context, make_fixture(), region_result,

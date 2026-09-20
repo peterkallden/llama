@@ -131,6 +131,19 @@ using common_flydelta_search_pipeline_runner = std::function<bool(
         common_flydelta_scale_geometry & geometry,
         std::string & error)>;
 
+// Optional batch seam for independent intervention-region probes. Search
+// policy remains scalar/CPU-owned; the host may execute all candidates in one
+// backend batch and must return results in candidate order.
+using common_flydelta_search_pipeline_batch_runner = std::function<bool(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_direction_candidate & direction,
+        const std::vector<common_flydelta_intervention_region_candidate> & candidates,
+        std::vector<common_flydelta_counterfactual_trial> & trials,
+        std::vector<common_flydelta_decision_margin> & margins,
+        std::vector<common_flydelta_scale_geometry> & geometries,
+        std::vector<bool> & geometry_available,
+        std::string & error)>;
+
 // Composes the existing searches without replacing them:
 // direction -> layer plan/trials -> scale search per layer candidate.
 // Only host-verified HELPED scale trials populate selection. UNKNOWN and
@@ -141,6 +154,17 @@ bool common_flydelta_run_search_pipeline(
         const common_flydelta_search_pipeline_config & config,
         const std::vector<common_flydelta_search_pipeline_direction> & directions,
         const common_flydelta_search_pipeline_runner & runner,
+        common_flydelta_search_pipeline_result & result,
+        std::string & error);
+
+// Batch-aware pipeline entry point. The scalar runner remains the fallback
+// for phases without a compatible batch implementation.
+bool common_flydelta_run_search_pipeline_batched(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_search_pipeline_config & config,
+        const std::vector<common_flydelta_search_pipeline_direction> & directions,
+        const common_flydelta_search_pipeline_runner & runner,
+        const common_flydelta_search_pipeline_batch_runner & batch_runner,
         common_flydelta_search_pipeline_result & result,
         std::string & error);
 

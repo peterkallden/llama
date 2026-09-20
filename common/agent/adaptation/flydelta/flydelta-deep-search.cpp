@@ -14,6 +14,36 @@ float direction_score(const common_flydelta_deep_search_direction & value) {
         ? value.decision_score : value.direction.median_alignment;
 }
 
+common_flydelta_coefficient_search_batch_runner make_scalar_batch_runner(
+        const common_flydelta_coefficient_search_runner & runner) {
+    return [runner](
+            const common_flydelta_experiment_fixture & current_fixture,
+            const common_flydelta_low_rank_basis & basis,
+            const std::vector<std::vector<float>> & coefficients,
+            std::vector<common_flydelta_counterfactual_trial> & trials,
+            std::vector<common_flydelta_decision_margin> & margins,
+            std::vector<common_flydelta_representation_diagnostics> & geometries,
+            std::vector<bool> & geometry_available, std::string & batch_error) {
+        trials.clear();
+        margins.clear();
+        geometries.clear();
+        geometry_available.clear();
+        for (const auto & values : coefficients) {
+            common_flydelta_counterfactual_trial trial;
+            common_flydelta_decision_margin margin;
+            common_flydelta_representation_diagnostics geometry;
+            bool has_geometry = false;
+            if (!runner(current_fixture, basis, values, true, trial, margin,
+                    geometry, has_geometry, batch_error)) return false;
+            trials.push_back(std::move(trial));
+            margins.push_back(std::move(margin));
+            geometries.push_back(std::move(geometry));
+            geometry_available.push_back(has_geometry);
+        }
+        return true;
+    };
+}
+
 } // namespace
 
 bool common_flydelta_deep_search_config_validate(
@@ -67,19 +97,22 @@ bool common_flydelta_select_deep_search_directions(
     return true;
 }
 
-bool common_flydelta_run_deep_search(
+bool common_flydelta_run_deep_search_batched(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_deep_search_config & config,
         const std::vector<common_flydelta_deep_search_direction> & directions,
         const common_flydelta_coefficient_search_runner & diagnostic_runner,
+        const common_flydelta_coefficient_search_batch_runner & diagnostic_batch_runner,
         const common_flydelta_coefficient_search_runner & full_generation_runner,
+        const common_flydelta_coefficient_search_batch_runner & full_generation_batch_runner,
         common_flydelta_deep_search_result & result,
         std::string & error) {
     error.clear();
     result = {};
     if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
             !common_flydelta_deep_search_config_validate(config, error) ||
-            !diagnostic_runner || !full_generation_runner) {
+            !diagnostic_runner || !diagnostic_batch_runner ||
+            !full_generation_runner || !full_generation_batch_runner) {
         if (error.empty()) error = "FlyDelta deep search input is invalid";
         return false;
     }
@@ -94,8 +127,9 @@ bool common_flydelta_run_deep_search(
     result.layer_index = result.basis.layer_index;
     std::vector<common_flydelta_coefficient_trial> diagnostic_trials;
     common_flydelta_coefficient_selection diagnostic_selection;
-    if (!common_flydelta_run_low_rank_coefficient_search(
+    if (!common_flydelta_run_low_rank_coefficient_search_batched(
             fixture, result.basis, config.coefficients, diagnostic_runner,
+            diagnostic_batch_runner,
             diagnostic_trials, diagnostic_selection, error)) return false;
     result.coefficient_trials = diagnostic_trials;
 
@@ -122,17 +156,31 @@ bool common_flydelta_run_deep_search(
             diagnostic_trials[right].coefficients.size();
     });
     const size_t top_k = std::min(config.full_generation_top_k, ranking.size());
+    std::vector<std::vector<float>> top_coefficients;
+    top_coefficients.reserve(top_k);
+    for (size_t rank = 0; rank < top_k; ++rank) {
+        top_coefficients.push_back(diagnostic_trials[ranking[rank]].coefficients);
+    }
+    std::vector<common_flydelta_counterfactual_trial> full_trials;
+    std::vector<common_flydelta_decision_margin> full_margins;
+    std::vector<common_flydelta_representation_diagnostics> full_geometries;
+    std::vector<bool> full_geometry_available;
+    if (!full_generation_batch_runner(
+            fixture, result.basis, top_coefficients, full_trials, full_margins,
+            full_geometries, full_geometry_available, error) ||
+            full_trials.size() != top_k || full_margins.size() != top_k ||
+            full_geometries.size() != top_k || full_geometry_available.size() != top_k) {
+        if (error.empty()) error = "FlyDelta deep full-generation batch result is invalid";
+        return false;
+    }
     for (size_t rank = 0; rank < top_k; ++rank) {
         const size_t diagnostic_index = ranking[rank];
         const auto & diagnostic = diagnostic_trials[diagnostic_index];
-        common_flydelta_counterfactual_trial candidate;
-        common_flydelta_decision_margin margin;
-        common_flydelta_representation_diagnostics geometry;
-        bool geometry_available = false;
-        if (!full_generation_runner(
-                fixture, result.basis, diagnostic.coefficients, true, candidate, margin,
-                geometry, geometry_available, error) ||
-                !common_flydelta_counterfactual_trial_validate(candidate, error) ||
+        const auto & candidate = full_trials[rank];
+        const auto & margin = full_margins[rank];
+        const auto & geometry = full_geometries[rank];
+        const bool geometry_available = full_geometry_available[rank];
+        if (!common_flydelta_counterfactual_trial_validate(candidate, error) ||
                 !common_flydelta_decision_margin_validate(margin, error)) return false;
         common_flydelta_coefficient_trial trial;
         trial.coefficients = diagnostic.coefficients;
@@ -164,6 +212,24 @@ bool common_flydelta_run_deep_search(
         }
     }
     return true;
+}
+
+bool common_flydelta_run_deep_search(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_deep_search_config & config,
+        const std::vector<common_flydelta_deep_search_direction> & directions,
+        const common_flydelta_coefficient_search_runner & diagnostic_runner,
+        const common_flydelta_coefficient_search_runner & full_generation_runner,
+        common_flydelta_deep_search_result & result,
+        std::string & error) {
+    if (!diagnostic_runner || !full_generation_runner) {
+        error = "FlyDelta deep search runner is invalid";
+        return false;
+    }
+    return common_flydelta_run_deep_search_batched(
+        fixture, config, directions, diagnostic_runner,
+        make_scalar_batch_runner(diagnostic_runner), full_generation_runner,
+        make_scalar_batch_runner(full_generation_runner), result, error);
 }
 
 bool common_flydelta_append_deep_search_lifecycle(

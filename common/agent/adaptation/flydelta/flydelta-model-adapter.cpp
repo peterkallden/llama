@@ -470,6 +470,112 @@ common_flydelta_search_pipeline_runner common_flydelta_search_pipeline_runner_fr
     };
 }
 
+common_flydelta_search_pipeline_batch_runner
+common_flydelta_search_pipeline_batch_runner_from_model_host(
+        const common_flydelta_model_host & host,
+        std::string job_id,
+        std::string context_ref,
+        std::string intervention_ref,
+        const bool request_capture,
+        const bool request_teacher_forced_margin,
+        const bool request_generation,
+        const bool request_host_verification,
+        const size_t max_capture_bytes,
+        const size_t max_generated_tokens) {
+    return [
+            &host,
+            job_id = std::move(job_id),
+            context_ref = std::move(context_ref),
+            intervention_ref = std::move(intervention_ref),
+            request_capture,
+            request_teacher_forced_margin,
+            request_generation,
+            request_host_verification,
+            max_capture_bytes,
+            max_generated_tokens](
+            const common_flydelta_experiment_fixture & fixture,
+            const common_flydelta_direction_candidate & direction,
+            const std::vector<common_flydelta_intervention_region_candidate> & candidates,
+            std::vector<common_flydelta_counterfactual_trial> & trials,
+            std::vector<common_flydelta_decision_margin> & margins,
+            std::vector<common_flydelta_scale_geometry> & geometries,
+            std::vector<bool> & geometry_available,
+            std::string & error) {
+        if (!host.run_bounded_arm && !host.run_bounded_arm_batch) {
+            error = "FlyDelta model host has no bounded arm or batch callback";
+            return false;
+        }
+        common_flydelta_arm_batch_request batch_request;
+        batch_request.arms.reserve(candidates.size());
+        for (size_t index = 0; index < candidates.size(); ++index) {
+            const auto & candidate = candidates[index];
+            common_flydelta_arm_request request;
+            request.job_id = job_id;
+            request.context_ref = context_ref;
+            request.fixture_ref = fixture.id;
+            request.intervention_ref = intervention_ref.empty()
+                ? std::string("direction:") + common_flydelta_direction_kind_name(direction.kind)
+                : intervention_ref;
+            request.layer_indices = candidate.layer_indices;
+            request.coefficients.assign(candidate.layer_indices.size(), 1.0f);
+            request.alpha = candidate.total_scale;
+            request.apply_overlay = true;
+            request.fresh_context = true;
+            request.request_capture = request_capture;
+            request.request_teacher_forced_margin = request_teacher_forced_margin;
+            request.request_generation = request_generation;
+            request.request_host_verification = request_host_verification;
+            request.max_capture_bytes = max_capture_bytes;
+            request.max_generated_tokens = max_generated_tokens;
+            std::string identity = request.job_id + "\n" + request.context_ref + "\n" +
+                request.fixture_ref + "\n" + request.intervention_ref + "\n" +
+                std::to_string(index) + "\n" + std::to_string(request.alpha);
+            for (const uint32_t layer_index : request.layer_indices) {
+                identity += "\n" + std::to_string(layer_index);
+            }
+            request.arm_id = "flydelta://arm/" +
+                hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+            if (!common_flydelta_arm_request_validate(request, error)) return false;
+            batch_request.arms.push_back(std::move(request));
+        }
+
+        common_flydelta_arm_batch_result batch_result;
+        if (!common_flydelta_run_bounded_arm_batch(
+                host, batch_request, batch_result, error)) return false;
+        if (batch_result.arms.size() != candidates.size()) {
+            error = "FlyDelta model host returned an incomplete region batch";
+            return false;
+        }
+        trials.clear();
+        margins.clear();
+        geometries.clear();
+        geometry_available.clear();
+        trials.reserve(candidates.size());
+        margins.reserve(candidates.size());
+        geometries.reserve(candidates.size());
+        geometry_available.reserve(candidates.size());
+        for (size_t index = 0; index < candidates.size(); ++index) {
+            const auto & arm = batch_result.arms[index];
+            if (!arm.executed || arm.arm_id != batch_request.arms[index].arm_id) {
+                error = "FlyDelta model host returned an invalid region batch arm";
+                return false;
+            }
+            trials.push_back(arm_trial_from_result(
+                arm, true, candidates[index].layer_indices.size()));
+            margins.push_back(arm.margin);
+            common_flydelta_scale_geometry geometry;
+            geometry.available = arm.geometry_available;
+            geometry.cosine = arm.cosine;
+            geometry.progress = arm.progress;
+            geometry.leakage = arm.leakage;
+            geometry.shift_norm = arm.shift_norm;
+            geometries.push_back(std::move(geometry));
+            geometry_available.push_back(arm.geometry_available);
+        }
+        return true;
+    };
+}
+
 bool common_flydelta_model_host_validate(
         const common_flydelta_model_host & host,
         std::string & error) {

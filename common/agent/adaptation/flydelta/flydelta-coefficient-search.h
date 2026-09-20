@@ -136,6 +136,16 @@ using common_flydelta_coefficient_search_runner = std::function<bool(
         bool & geometry_available,
         std::string & error)>;
 
+using common_flydelta_coefficient_search_batch_runner = std::function<bool(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_low_rank_basis & basis,
+        const std::vector<std::vector<float>> & coefficients,
+        std::vector<common_flydelta_counterfactual_trial> & trials,
+        std::vector<common_flydelta_decision_margin> & margins,
+        std::vector<common_flydelta_representation_diagnostics> & geometries,
+        std::vector<bool> & geometry_available,
+        std::string & error)>;
+
 // Runs the cheap bounded coefficient stencil. Decision margin is diagnostic
 // and may rank follow-up work, while only host-verified counterfactual
 // classification can select a coefficient trial.
@@ -144,6 +154,19 @@ bool common_flydelta_run_low_rank_coefficient_search(
         const common_flydelta_low_rank_basis & basis,
         const common_flydelta_coefficient_search_config & config,
         const common_flydelta_coefficient_search_runner & runner,
+        std::vector<common_flydelta_coefficient_trial> & trials,
+        common_flydelta_coefficient_selection & selection,
+        std::string & error);
+
+// Batch-aware rank-N search. Coordinate arms and one TFO population are
+// submitted as one bounded batch; dose regulation, fitness, selection and
+// iteration transitions remain scalar control-plane decisions.
+bool common_flydelta_run_low_rank_coefficient_search_batched(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_low_rank_basis & basis,
+        const common_flydelta_coefficient_search_config & config,
+        const common_flydelta_coefficient_search_runner & baseline_runner,
+        const common_flydelta_coefficient_search_batch_runner & batch_runner,
         std::vector<common_flydelta_coefficient_trial> & trials,
         common_flydelta_coefficient_selection & selection,
         std::string & error);

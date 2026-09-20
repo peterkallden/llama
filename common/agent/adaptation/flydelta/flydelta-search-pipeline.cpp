@@ -131,11 +131,12 @@ bool common_flydelta_search_pipeline_direction_validate(
     return true;
 }
 
-bool common_flydelta_run_search_pipeline(
+bool common_flydelta_run_search_pipeline_batched(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_search_pipeline_config & config,
         const std::vector<common_flydelta_search_pipeline_direction> & directions,
         const common_flydelta_search_pipeline_runner & runner,
+        const common_flydelta_search_pipeline_batch_runner & batch_runner,
         common_flydelta_search_pipeline_result & result,
         std::string & error) {
     error.clear();
@@ -222,41 +223,82 @@ bool common_flydelta_run_search_pipeline(
                 whirlpool_config.max_shift_norm = config.scale.max_shift_norm;
                 whirlpool_config.dose_policy.max_shift_norm = config.scale.max_shift_norm;
                 whirlpool_config.dose_policy.max_leakage = config.scale.max_leakage;
-                if (!common_flydelta_run_whirlpool_search(
-                        fixture, whirlpool_config,
+                const common_flydelta_whirlpool_search_runner whirlpool_runner =
+                    [&](const common_flydelta_experiment_fixture & current_fixture,
+                        const common_flydelta_intervention_region_candidate * region,
+                        common_flydelta_counterfactual_trial & trial,
+                        common_flydelta_decision_margin & margin,
+                        common_flydelta_representation_diagnostics & diagnostics,
+                        bool & diagnostics_available,
+                        std::string & runner_error) {
+                        common_flydelta_layer_candidate layer;
+                        const common_flydelta_layer_candidate * layer_ptr = nullptr;
+                        float scale = 0.0f;
+                        if (region != nullptr) {
+                            layer = to_layer_candidate(*region);
+                            layer_ptr = &layer;
+                            scale = region->total_scale;
+                        }
+                        common_flydelta_scale_geometry geometry;
+                        const bool ok = runner(current_fixture, input.direction, layer_ptr,
+                            scale, region != nullptr, trial, margin, geometry, runner_error);
+                        diagnostics = {};
+                        diagnostics_available = ok && geometry.available;
+                        if (diagnostics_available) {
+                            diagnostics = {
+                                1,
+                                region == nullptr ? 0 : region->anchor_layer_index,
+                                geometry.cosine,
+                                geometry.progress,
+                                geometry.leakage,
+                                geometry.shift_norm,
+                            };
+                        }
+                        return ok;
+                    };
+                if (batch_runner) {
+                    const common_flydelta_whirlpool_search_batch_runner whirlpool_batch_runner =
                         [&](const common_flydelta_experiment_fixture & current_fixture,
-                            const common_flydelta_intervention_region_candidate * region,
-                            common_flydelta_counterfactual_trial & trial,
-                            common_flydelta_decision_margin & margin,
-                            common_flydelta_representation_diagnostics & diagnostics,
-                            bool & diagnostics_available,
+                            const std::vector<common_flydelta_intervention_region_candidate> & candidates,
+                            std::vector<common_flydelta_counterfactual_trial> & batch_trials,
+                            std::vector<common_flydelta_decision_margin> & batch_margins,
+                            std::vector<common_flydelta_representation_diagnostics> & batch_geometries,
+                            std::vector<bool> & batch_geometry_available,
                             std::string & runner_error) {
-                            common_flydelta_layer_candidate layer;
-                            const common_flydelta_layer_candidate * layer_ptr = nullptr;
-                            float scale = 0.0f;
-                            if (region != nullptr) {
-                                layer = to_layer_candidate(*region);
-                                layer_ptr = &layer;
-                                scale = region->total_scale;
+                            std::vector<common_flydelta_scale_geometry> geometries;
+                            if (!batch_runner(current_fixture, input.direction, candidates,
+                                    batch_trials, batch_margins, geometries,
+                                    batch_geometry_available, runner_error)) return false;
+                            if (batch_trials.size() != candidates.size() ||
+                                    batch_margins.size() != candidates.size() ||
+                                    geometries.size() != candidates.size() ||
+                                    batch_geometry_available.size() != candidates.size()) {
+                                runner_error = "FlyDelta search pipeline batch returned an incomplete probe set";
+                                return false;
                             }
-                            common_flydelta_scale_geometry geometry;
-                            const bool ok = runner(current_fixture, input.direction, layer_ptr,
-                                scale, region != nullptr, trial, margin, geometry, runner_error);
-                            diagnostics = {};
-                            diagnostics_available = ok && geometry.available;
-                            if (diagnostics_available) {
-                                diagnostics = {
-                                    1,
-                                    region == nullptr ? 0 : region->anchor_layer_index,
-                                    geometry.cosine,
-                                    geometry.progress,
-                                    geometry.leakage,
-                                    geometry.shift_norm,
-                                };
+                            batch_geometries.clear();
+                            batch_geometries.reserve(candidates.size());
+                            for (size_t index = 0; index < candidates.size(); ++index) {
+                                common_flydelta_representation_diagnostics diagnostic;
+                                if (batch_geometry_available[index]) {
+                                    diagnostic = {
+                                        1, candidates[index].anchor_layer_index,
+                                        geometries[index].cosine, geometries[index].progress,
+                                        geometries[index].leakage, geometries[index].shift_norm,
+                                    };
+                                }
+                                batch_geometries.push_back(std::move(diagnostic));
                             }
-                            return ok;
-                        }, direction_result.region_trials,
-                        direction_result.region_selection,
+                            return true;
+                        };
+                    if (!common_flydelta_run_whirlpool_search_batched(
+                            fixture, whirlpool_config, whirlpool_runner,
+                            whirlpool_batch_runner, direction_result.region_trials,
+                            direction_result.region_selection,
+                            direction_result.whirlpool_trace, error)) return false;
+                } else if (!common_flydelta_run_whirlpool_search(
+                        fixture, whirlpool_config, whirlpool_runner,
+                        direction_result.region_trials, direction_result.region_selection,
                         direction_result.whirlpool_trace, error)) return false;
             } else if (!common_flydelta_run_intervention_region_search(
                     fixture, region_config, region_runner,
@@ -378,6 +420,17 @@ bool common_flydelta_run_search_pipeline(
         result.search_status = common_flydelta_search_status::no_useful_utility;
     }
     return true;
+}
+
+bool common_flydelta_run_search_pipeline(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_search_pipeline_config & config,
+        const std::vector<common_flydelta_search_pipeline_direction> & directions,
+        const common_flydelta_search_pipeline_runner & runner,
+        common_flydelta_search_pipeline_result & result,
+        std::string & error) {
+    return common_flydelta_run_search_pipeline_batched(
+        fixture, config, directions, runner, {}, result, error);
 }
 
 bool common_flydelta_append_search_pipeline_lifecycle(

@@ -985,6 +985,15 @@ geometry and outcomes remain independent. A Vulkan/device backend can later
 evaluate these overlays as per-sequence parameters in one model batch without
 changing Whirlpool, AdaptiveAlpha, Shallow/Deep or TFO.
 
+The common batch seam is now consumed by the bounded Whirlpool region probes
+and by rank-N coordinate/TFO coefficient populations. The baseline remains a
+scalar reference; safety backoffs are submitted as a separate bounded batch,
+and TFO iterations remain sequential CPU control-plane steps. Deep uses the
+same arrangement for its diagnostic controls and pruned top-K full-generation
+arms. The scalar public entry points remain compatibility wrappers over the
+same contracts, so batching changes execution shape but not proposal order,
+dose decisions, utility gates or lifecycle semantics.
+
 Teacher-forced comparisons have the same backend boundary through
 `common_agent_teacher_forced_choice_batch_request` and its result type. The
 default inference implementation executes the entries through the existing
