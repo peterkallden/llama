@@ -15,6 +15,9 @@ common_learning_cause common_learning_classify_result(
             if (signal.type == common_learning_signal_type::user_correction) {
                 return common_learning_cause::project_knowledge;
             }
+            if (signal.type == common_learning_signal_type::user_taught_concept) {
+                return common_learning_cause::project_knowledge;
+            }
         }
         return common_learning_cause::unknown;
     }

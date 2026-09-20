@@ -95,18 +95,28 @@ provides the queue/budget seam but does not invent an evaluator callback: a host
 integration must attach the callback that resolves references and performs the
 bounded work before jobs are consumed.
 
-The runtime assembly also exposes a host-owned
-`procedure_teaching_request_provider`. It receives the completed turn and
+The runtime assembly exposes host-owned teaching providers. The narrow
+`procedure_teaching_request_provider` and
+`user_correction_teaching_request_provider` receive the completed turn and
 durable learning transaction and may return a typed procedure/blueprint
-teaching request only when the host already has immutable baseline,
-conditioned, verifier and provenance references. The assembly runs that
-request through the existing teaching-relation admission helper, maps it to
+or correction teaching request only when the host already has immutable
+baseline, conditioned, verifier, contrast and provenance references. The
+assembly runs the request through the existing teaching-relation admission
+helper, maps it to
 the shared `common_adaptation_evidence` contract and sends it through the
 same FlyDelta runtime observer, lifecycle store and capture queue used by
 other sources. A missing request, a `no_contrast` result or a missing provider
 is a normal unresolved outcome; no references are synthesized and no learning
 credit is created. The callback is invoked after the learning transaction is
 durable, and its failure cannot fail the user turn.
+
+`user_taught_concept_relation_provider` is intentionally different: it may
+return zero or more *already grounded* relations for an explicit user
+principle. Each relation represents one host-verified minimal contrast and
+must carry a contrast reference. The provider cannot manufacture pairs from
+the statement alone. The existing concept builder later requires at least two
+compatible trajectories, so a single accepted relation remains experimental
+material rather than concept learning credit.
 
 The adaptation boundary now also has one shared, reference-only evidence
 contract (`common_adaptation_evidence`). It is a view over the existing
@@ -1902,9 +1912,14 @@ evidence source
 `tool_repair` remains the strict failure/recovery convenience path. A
 `procedure_blueprint` relation uses the same reference-only contract; it does
 not create a second procedure learner or a second FlyDelta registry. Explicit
-`user_correction` can use the same seam once the host supplies the observed
-baseline, the corrected conditioned reference and a verifier. The separate
-user-confirmation source is intentionally not part of this phase.
+`user_correction` uses the same seam only when the host supplies the observed
+model baseline, a corrected conditioned reference, verifier and explicit
+contrast. The observed execution reference must equal the relation baseline;
+this prevents a correction statement from being attached to another turn.
+An explicit `user_taught_concept` is a separate source: host grounding returns
+two or more verified minimal contrasts with the same teaching key before the
+ordinary residualized concept builder can form an experimental direction. The
+separate user-confirmation source is intentionally not part of this phase.
 
 The V0 procedure/blueprint producer is deliberately narrow. The host passes
 resolved immutable references and semantic identity through a typed request:
@@ -1938,6 +1953,14 @@ learning credit. Only a `resolved`, host-approved relation enters the existing
 trajectory/capture path. This keeps source-specific interpretation in the
 host while keeping layer search, dose control, margin, worker slices and
 promotion source-neutral.
+
+The host-side contrast record contains positive, negative and optional
+control references, the one changed semantic dimension, declared invariant
+dimensions, per-side provenance and host verification. `baseline` is what the
+model did; `control` is a matched case where the principle must not fire.
+They are not interchangeable. User text supplies evidence, the host supplies
+semantic grounding, and verified contrasts supply the FlyDelta learning
+signal.
 
 The model-facing decision boundary uses the same generic seam. A bounded
 `decision_pair` contains two host-selected alternatives plus tokenizer and

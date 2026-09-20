@@ -432,6 +432,20 @@ int main() {
     assert(correction_plan->observations.front().source == "user_correction");
     assert(correction_plan->observations.front().summary.find("prior-turn-7") != std::string::npos);
 
+    common_plan_in_memory_store concept_store;
+    assert(concept_store.open("", error));
+    common_agent_runtime concept_runtime(concept_store, correction_p, e, r, &tool_runtime);
+    common_agent_request concept_request = request;
+    concept_request.plan_id.reset();
+    concept_request.user_taught_concept = common_agent_user_taught_concept{
+        "prior-turn-8", "Group code that changes together by business capability."};
+    const auto concept_taught = concept_runtime.run(concept_request);
+    assert(concept_taught.error.empty() && concept_taught.learning_signals.size() == 1);
+    assert(concept_taught.learning_signals.front().type == common_learning_signal_type::user_taught_concept);
+    const auto concept_plan = concept_store.get("turn-1", error);
+    assert(concept_plan && concept_plan->observations.size() == 2);
+    assert(concept_plan->observations.front().source == "user_taught_concept");
+
     common_plan_in_memory_store failure_store;
     assert(failure_store.open("", error));
     common_tool_registry failing_tools;

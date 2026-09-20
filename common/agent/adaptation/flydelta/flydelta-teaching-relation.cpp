@@ -74,6 +74,7 @@ bool common_flydelta_teaching_relation_validate(
             !bounded(relation.conditioned_ref) || relation.baseline_ref == relation.conditioned_ref ||
             (!relation.control_ref.empty() && !bounded(relation.control_ref)) ||
             !bounded(relation.verifier_ref) || !bounded(relation.evidence_ref) ||
+            (!relation.contrast_ref.empty() && !bounded(relation.contrast_ref)) ||
             !std::isfinite(relation.confidence) || relation.confidence < 0.0f ||
             relation.confidence > 1.0f || (complete && !relation.host_approved) ||
             (complete && relation.baseline_origin == common_flydelta_teaching_origin::none) ||
@@ -81,6 +82,31 @@ bool common_flydelta_teaching_relation_validate(
             (!relation.control_ref.empty() && relation.control_origin == common_flydelta_teaching_origin::none)) {
         error = "FlyDelta teaching relation identity, provenance or bounds are invalid";
         return false;
+    }
+    return true;
+}
+
+bool common_agent_teaching_contrast_spec_validate(
+        const common_agent_teaching_contrast_spec & spec,
+        std::string & error) {
+    error.clear();
+    if (spec.schema_version != 1 || !bounded(spec.id) ||
+            !bounded(spec.positive_ref) || !bounded(spec.negative_ref) ||
+            spec.positive_ref == spec.negative_ref ||
+            (spec.control_ref && !bounded(*spec.control_ref)) ||
+            !bounded(spec.changed_dimension) ||
+            spec.positive_origin == common_flydelta_teaching_origin::none ||
+            spec.negative_origin == common_flydelta_teaching_origin::none ||
+            (spec.control_ref && spec.control_origin == common_flydelta_teaching_origin::none) ||
+            !spec.host_verified) {
+        error = "host teaching contrast identity, provenance or verification is invalid";
+        return false;
+    }
+    for (const auto & invariant : spec.invariant_dimensions) {
+        if (!bounded(invariant) || invariant == spec.changed_dimension) {
+            error = "host teaching contrast invariants are invalid";
+            return false;
+        }
     }
     return true;
 }
@@ -177,22 +203,127 @@ common_agent_build_procedure_teaching_relation(
     return result;
 }
 
+common_agent_teaching_build_result
+common_agent_build_user_correction_teaching_relation(
+        const common_agent_user_correction_teaching_request & request) {
+    common_agent_teaching_build_result result;
+    auto reject = [&](common_agent_teaching_build_status status, const char * diagnostic) {
+        result.status = status;
+        result.diagnostic = diagnostic;
+        result.relation.reset();
+        return result;
+    };
+
+    if (request.schema_version != 1) {
+        return reject(common_agent_teaching_build_status::insufficient_evidence,
+            "user correction request schema is unsupported");
+    }
+    if (!request.host_scope_admitted) {
+        return reject(common_agent_teaching_build_status::out_of_scope,
+            "user correction relation was not admitted in the host scope");
+    }
+    if (!request.host_verified) {
+        return reject(common_agent_teaching_build_status::not_host_verified,
+            "user correction semantic repair is not host verified");
+    }
+    if (!request.reusable) {
+        return reject(common_agent_teaching_build_status::not_reusable,
+            "user correction is not admitted as reusable behavior");
+    }
+    if (!bounded(request.behavior_key)) {
+        return reject(common_agent_teaching_build_status::missing_behavior_key,
+            "user correction relation has no behavior key");
+    }
+    if (!bounded(request.verifier_ref)) {
+        return reject(common_agent_teaching_build_status::missing_verifier,
+            "user correction relation has no verifier reference");
+    }
+    if (!bounded(request.relation_id) || !bounded(request.source_turn_ref) ||
+            !bounded(request.observed_model_execution_ref) || !bounded(request.correction_ref) ||
+            !bounded(request.evidence_ref) || !bounded(request.contrast_ref) ||
+            request.scope.namespace_id.empty() || request.scope.session_id.empty() ||
+            !bounded(request.task_fingerprint)) {
+        return reject(common_agent_teaching_build_status::insufficient_evidence,
+            "user correction relation is missing immutable host references");
+    }
+    if (!bounded(request.baseline_ref) || !bounded(request.conditioned_ref) ||
+            request.baseline_ref != request.observed_model_execution_ref ||
+            request.baseline_ref == request.conditioned_ref) {
+        return reject(common_agent_teaching_build_status::no_contrast,
+            "user correction lacks an observed baseline and distinct conditioned behavior");
+    }
+    if (request.require_control &&
+            (!request.control_ref || !bounded(*request.control_ref))) {
+        return reject(common_agent_teaching_build_status::incompatible_control,
+            "user correction relation requires a compatible control reference");
+    }
+    if (!std::isfinite(request.confidence) || request.confidence < 0.0f ||
+            request.confidence > 1.0f) {
+        return reject(common_agent_teaching_build_status::insufficient_evidence,
+            "user correction relation confidence is out of bounds");
+    }
+
+    common_flydelta_teaching_relation relation;
+    relation.id = request.relation_id;
+    relation.teaching_key = bounded(request.teaching_key)
+        ? request.teaching_key : request.behavior_key;
+    relation.source = common_adaptation_evidence_source::user_correction;
+    relation.behavior_key = request.behavior_key;
+    relation.scope = request.scope;
+    relation.task_fingerprint = request.task_fingerprint;
+    relation.baseline_ref = request.baseline_ref;
+    relation.conditioned_ref = request.conditioned_ref;
+    relation.control_ref = request.control_ref.value_or("");
+    relation.verifier_ref = request.verifier_ref;
+    relation.evidence_ref = request.evidence_ref;
+    relation.contrast_ref = request.contrast_ref;
+    relation.status = common_flydelta_teaching_relation_status::resolved;
+    relation.baseline_origin = request.baseline_origin;
+    relation.conditioned_origin = request.conditioned_origin;
+    relation.control_origin = request.control_ref
+        ? request.control_origin : common_flydelta_teaching_origin::none;
+    relation.confidence = request.confidence;
+    relation.host_approved = true;
+
+    std::string error;
+    if (!common_flydelta_teaching_relation_validate(relation, error)) {
+        return reject(common_agent_teaching_build_status::insufficient_evidence,
+            error.c_str());
+    }
+    result.status = common_agent_teaching_build_status::resolved;
+    result.relation = std::move(relation);
+    result.diagnostic = "resolved host user-correction teaching relation";
+    return result;
+}
+
 bool common_agent_procedure_teaching_relation_to_evidence_relation(
         const common_flydelta_teaching_relation & teaching_relation,
         const common_learning_transaction & transaction,
         common_adaptation_evidence_relation & relation,
         std::string & error) {
-    error.clear();
-    if (teaching_relation.source != common_adaptation_evidence_source::procedure_blueprint ||
-            teaching_relation.status != common_flydelta_teaching_relation_status::resolved ||
-            !teaching_relation.host_approved || transaction.id.empty()) {
+    if (teaching_relation.source != common_adaptation_evidence_source::procedure_blueprint) {
         error = "procedure/blueprint teaching relation is not resolved for evidence";
+        return false;
+    }
+    return common_agent_teaching_relation_to_evidence_relation(
+        teaching_relation, transaction, relation, error);
+}
+
+bool common_agent_teaching_relation_to_evidence_relation(
+        const common_flydelta_teaching_relation & teaching_relation,
+        const common_learning_transaction & transaction,
+        common_adaptation_evidence_relation & relation,
+        std::string & error) {
+    error.clear();
+    if (teaching_relation.status != common_flydelta_teaching_relation_status::resolved ||
+            !teaching_relation.host_approved || transaction.id.empty()) {
+        error = "host teaching relation is not resolved for evidence";
         return false;
     }
     if (!common_flydelta_teaching_relation_validate(teaching_relation, error)) return false;
     relation = {};
     relation.id = teaching_relation.id;
-    relation.source = common_adaptation_evidence_source::procedure_blueprint;
+    relation.source = teaching_relation.source;
     relation.scope = teaching_relation.scope;
     relation.behavior_key = teaching_relation.behavior_key;
     relation.task_fingerprint = teaching_relation.task_fingerprint;

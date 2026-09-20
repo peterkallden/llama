@@ -111,6 +111,14 @@ common_adaptation_evidence_sources_for_turn(
         matches.push_back(std::move(match));
     }
 
+    if (has_signal(result, common_learning_signal_type::user_taught_concept)) {
+        common_adaptation_evidence_source_match match;
+        match.source = common_adaptation_evidence_source::user_taught_concept;
+        match.evidence_refs = signal_evidence(result, common_learning_signal_type::user_taught_concept);
+        match.candidate_ready = false;
+        matches.push_back(std::move(match));
+    }
+
     if (has_materialized_data(plan)) {
         common_adaptation_evidence_source_match match;
         match.source = common_adaptation_evidence_source::dataset_resource;

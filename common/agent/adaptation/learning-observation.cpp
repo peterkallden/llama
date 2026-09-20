@@ -34,6 +34,7 @@ bool common_learning_observation_qualifies(const common_learning_observation & o
             case common_learning_signal_type::successful_recovery:
             case common_learning_signal_type::reflection_hint:
             case common_learning_signal_type::user_correction:
+            case common_learning_signal_type::user_taught_concept:
             case common_learning_signal_type::planning_revision:
             case common_learning_signal_type::research_verification:
             case common_learning_signal_type::procedure_verification:

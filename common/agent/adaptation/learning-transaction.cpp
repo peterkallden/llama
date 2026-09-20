@@ -70,6 +70,7 @@ static bool signal_from_json(const json & value, common_learning_signal & signal
     else if (type == "successful_recovery") signal.type = common_learning_signal_type::successful_recovery;
     else if (type == "reflection_hint") signal.type = common_learning_signal_type::reflection_hint;
     else if (type == "user_correction") signal.type = common_learning_signal_type::user_correction;
+    else if (type == "user_taught_concept") signal.type = common_learning_signal_type::user_taught_concept;
     else if (type == "planning_revision") signal.type = common_learning_signal_type::planning_revision;
     else if (type == "research_verification") signal.type = common_learning_signal_type::research_verification;
     else if (type == "procedure_verification") signal.type = common_learning_signal_type::procedure_verification;

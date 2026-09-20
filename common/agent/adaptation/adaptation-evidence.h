@@ -20,6 +20,7 @@ enum class common_adaptation_evidence_source {
     workflow_code,
     procedure_blueprint,
     user_correction,
+    user_taught_concept,
 };
 
 const char * common_adaptation_evidence_source_name(

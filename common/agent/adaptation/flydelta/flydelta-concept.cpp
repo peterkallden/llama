@@ -120,7 +120,8 @@ bool common_flydelta_concept_spec_validate(
     error.clear();
     if (spec.schema_version != 1 || !bounded(spec.concept_key) ||
             !bounded(spec.extraction_id) ||
-            !bounded(spec.behavior_key) || !bounded(spec.procedure_ref) ||
+            !bounded(spec.behavior_key) || !bounded(spec.source_ref) ||
+            !bounded(spec.grounding_ref) ||
             !bounded(spec.verifier_ref) || !bounded(spec.model_profile_fingerprint) ||
             !bounded(spec.tokenizer_fingerprint) || !bounded(spec.template_fingerprint) ||
             !bounded(spec.capture_layout_revision) || !bounded(spec.scope_fingerprint) ||
@@ -141,14 +142,12 @@ bool common_flydelta_concept_trajectory_validate(
     if (trajectory.schema_version != 1 || !bounded(trajectory.id) ||
             !bounded(trajectory.fixture_ref) || !bounded(trajectory.baseline_capture_ref) ||
             !bounded(trajectory.conditioned_capture_ref) ||
-            (spec.source == common_adaptation_evidence_source::procedure_blueprint &&
-                !bounded(trajectory.control_capture_ref)) ||
+            (spec.require_control && !bounded(trajectory.control_capture_ref)) ||
             !bounded(trajectory.semantic_anchor) || trajectory.layer_index <= 0 ||
             !trajectory.aligned || !trajectory.conditioned_host_verified ||
             trajectory.baseline.size() != expected_dimension ||
             trajectory.conditioned.size() != expected_dimension ||
-            (spec.source == common_adaptation_evidence_source::procedure_blueprint &&
-                trajectory.control.size() != expected_dimension) ||
+            (spec.require_control && trajectory.control.size() != expected_dimension) ||
             !finite_vector(trajectory.baseline) || !finite_vector(trajectory.conditioned) ||
             !finite_vector(trajectory.control)) {
         error = "FlyDelta concept trajectory is incomplete, unaligned or unverified";

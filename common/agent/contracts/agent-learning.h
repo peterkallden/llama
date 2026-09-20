@@ -9,6 +9,7 @@ enum class common_learning_signal_type {
     successful_recovery,
     reflection_hint,
     user_correction,
+    user_taught_concept,
     planning_revision,
     research_verification,
     procedure_verification,
@@ -22,6 +23,7 @@ inline const char * common_learning_signal_type_name(common_learning_signal_type
         case common_learning_signal_type::successful_recovery: return "successful_recovery";
         case common_learning_signal_type::reflection_hint: return "reflection_hint";
         case common_learning_signal_type::user_correction: return "user_correction";
+        case common_learning_signal_type::user_taught_concept: return "user_taught_concept";
         case common_learning_signal_type::planning_revision: return "planning_revision";
         case common_learning_signal_type::research_verification: return "research_verification";
         case common_learning_signal_type::procedure_verification: return "procedure_verification";
@@ -31,6 +33,13 @@ inline const char * common_learning_signal_type_name(common_learning_signal_type
 }
 
 struct common_agent_user_correction {
+    std::string source_turn_id;
+    std::string statement;
+};
+
+// An explicit reusable-principle candidate from the user. It remains source
+// evidence only until host grounding supplies verified semantic contrasts.
+struct common_agent_user_taught_concept {
     std::string source_turn_id;
     std::string statement;
 };

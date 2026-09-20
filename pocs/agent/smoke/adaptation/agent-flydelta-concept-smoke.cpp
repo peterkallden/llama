@@ -181,6 +181,8 @@ common_flydelta_concept_spec make_spec(
     spec.concept_key = std::string("flydelta://concept/") + family.key;
     spec.extraction_id = std::string("flydelta://extraction/") + family.key + "/smoke-v1";
     spec.behavior_key = family.behavior;
+    spec.source_ref = std::string("relation://concept-smoke/") + family.key + "/v1";
+    spec.grounding_ref = std::string("grounding://concept-smoke/") + family.key + "/v1";
     spec.procedure_ref = std::string("procedure://") + family.key + "/v1";
     spec.verifier_ref = std::string("verifier://dataset-tool/") + family.expected_tool + "/v1";
     spec.model_profile_fingerprint = profile;

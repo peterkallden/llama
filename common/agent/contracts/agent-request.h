@@ -74,6 +74,7 @@ struct common_agent_request {
     std::optional<common_memory_policy_pack> policy_pack;
     std::vector<common_memory_hit> memories;
     std::optional<common_agent_user_correction> user_correction;
+    std::optional<common_agent_user_taught_concept> user_taught_concept;
     std::optional<common_memory_candidate> explicit_memory_candidate;
     bool explicit_memory_confirmed = false;
     std::optional<common_agent_tool_call> tool_call;

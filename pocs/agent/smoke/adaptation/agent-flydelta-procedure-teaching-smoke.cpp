@@ -95,11 +95,41 @@ int main() {
         return fail("non-reusable procedure was admitted");
     }
 
+    common_agent_user_correction_teaching_request correction;
+    correction.relation_id = "relation://smoke/user-correction/grouped-sum";
+    correction.teaching_key = request.teaching_key;
+    correction.source_turn_ref = "turn://smoke/user-correction";
+    correction.observed_model_execution_ref = "execution://smoke/model-describe";
+    correction.correction_ref = "feedback://smoke/user-correction";
+    correction.scope = request.scope;
+    correction.behavior_key = request.behavior_key;
+    correction.task_fingerprint = "sha256:smoke-user-correction-task";
+    correction.baseline_ref = correction.observed_model_execution_ref;
+    correction.conditioned_ref = "execution://smoke/host-aggregate";
+    correction.control_ref = "execution://smoke/model-describe-column";
+    correction.verifier_ref = request.verifier_ref;
+    correction.evidence_ref = "evidence://smoke/user-correction";
+    correction.contrast_ref = "contrast://smoke/user-correction/grouped-sum";
+    correction.control_origin = common_flydelta_teaching_origin::host_counterfactual;
+    correction.confidence = 1.0f;
+    correction.host_scope_admitted = true;
+    correction.host_verified = true;
+    correction.reusable = true;
+    correction.require_control = true;
+    const auto correction_result = common_agent_build_user_correction_teaching_relation(correction);
+    if (correction_result.status != common_agent_teaching_build_status::resolved ||
+            !correction_result.relation ||
+            correction_result.relation->source != common_adaptation_evidence_source::user_correction ||
+            correction_result.relation->contrast_ref != correction.contrast_ref) {
+        return fail("valid user correction relation was not resolved");
+    }
+
     std::cout << "flydelta_procedure_teaching_smoke=completed"
               << " source=procedure_blueprint"
               << " teaching_key=" << resolved.relation->teaching_key
               << " host_approved=" << (resolved.relation->host_approved ? "yes" : "no")
               << " capture_candidates=" << collector.candidates().size()
+              << " user_correction_relation=resolved"
               << " learning_credit=none"
               << " promotion=false"
               << " unresolved_no_contrast=" << common_agent_teaching_build_status_name(

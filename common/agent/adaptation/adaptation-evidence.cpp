@@ -20,6 +20,7 @@ std::optional<common_adaptation_evidence_source> parse_source(const std::string 
         common_adaptation_evidence_source::workflow_code,
         common_adaptation_evidence_source::procedure_blueprint,
         common_adaptation_evidence_source::user_correction,
+        common_adaptation_evidence_source::user_taught_concept,
     };
     for (const auto source : sources) {
         if (value == common_adaptation_evidence_source_name(source)) return source;
@@ -49,6 +50,7 @@ const char * common_adaptation_evidence_source_name(
         case common_adaptation_evidence_source::workflow_code: return "workflow_code";
         case common_adaptation_evidence_source::procedure_blueprint: return "procedure_blueprint";
         case common_adaptation_evidence_source::user_correction: return "user_correction";
+        case common_adaptation_evidence_source::user_taught_concept: return "user_taught_concept";
     }
     return "tool_repair";
 }
@@ -71,6 +73,8 @@ common_adaptation_evidence_source_for_signal(
             return common_adaptation_evidence_source::reflection_alternative;
         case common_learning_signal_type::user_correction:
             return common_adaptation_evidence_source::user_correction;
+        case common_learning_signal_type::user_taught_concept:
+            return common_adaptation_evidence_source::user_taught_concept;
         case common_learning_signal_type::planning_revision:
             return common_adaptation_evidence_source::planning_revision;
         case common_learning_signal_type::research_verification:

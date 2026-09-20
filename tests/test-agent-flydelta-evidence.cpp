@@ -195,6 +195,75 @@ int main() {
     const auto unverified_result = common_agent_build_procedure_teaching_relation(unverified_request);
     CHECK(unverified_result.status == common_agent_teaching_build_status::not_host_verified);
 
+    common_agent_teaching_contrast_spec contrast;
+    contrast.id = "contrast://user-correction/grouped-sum/1";
+    contrast.positive_ref = "execution:user-correction-conditioned";
+    contrast.negative_ref = "execution:user-correction-observed";
+    contrast.control_ref = "execution:user-correction-control";
+    contrast.changed_dimension = "dataset.operation.intent";
+    contrast.invariant_dimensions = {"dataset", "requested_fields", "output_contract"};
+    contrast.positive_origin = common_flydelta_teaching_origin::host_derived;
+    contrast.negative_origin = common_flydelta_teaching_origin::observed;
+    contrast.control_origin = common_flydelta_teaching_origin::host_counterfactual;
+    contrast.host_verified = true;
+    CHECK(common_agent_teaching_contrast_spec_validate(contrast, error));
+
+    common_agent_user_correction_teaching_request correction_request;
+    correction_request.relation_id = "relation://user-correction/grouped-sum/1";
+    correction_request.teaching_key = "dataset.grouped_sum.v1";
+    correction_request.source_turn_ref = "turn://user-correction/1";
+    correction_request.observed_model_execution_ref = contrast.negative_ref;
+    correction_request.correction_ref = "feedback://user-correction/1";
+    correction_request.scope = source.scope;
+    correction_request.behavior_key = "tool_choice/dataset/grouped_sum";
+    correction_request.task_fingerprint = "sha256:user-correction-task";
+    correction_request.baseline_ref = contrast.negative_ref;
+    correction_request.conditioned_ref = contrast.positive_ref;
+    correction_request.control_ref = contrast.control_ref;
+    correction_request.verifier_ref = "verifier://dataset/v2";
+    correction_request.evidence_ref = "evidence://user-correction/1";
+    correction_request.contrast_ref = contrast.id;
+    correction_request.control_origin = contrast.control_origin;
+    correction_request.confidence = 0.9f;
+    correction_request.host_scope_admitted = true;
+    correction_request.host_verified = true;
+    correction_request.reusable = true;
+    correction_request.require_control = true;
+    const auto correction_result = common_agent_build_user_correction_teaching_relation(correction_request);
+    CHECK(correction_result.status == common_agent_teaching_build_status::resolved);
+    CHECK(correction_result.relation.has_value());
+    CHECK(correction_result.relation->source == common_adaptation_evidence_source::user_correction);
+    CHECK(correction_result.relation->contrast_ref == contrast.id);
+
+    auto incorrect_baseline = correction_request;
+    incorrect_baseline.baseline_ref = "execution:unrelated";
+    CHECK(common_agent_build_user_correction_teaching_relation(incorrect_baseline).status ==
+        common_agent_teaching_build_status::no_contrast);
+    auto missing_correction_control = correction_request;
+    missing_correction_control.control_ref.reset();
+    CHECK(common_agent_build_user_correction_teaching_relation(missing_correction_control).status ==
+        common_agent_teaching_build_status::incompatible_control);
+
+    common_learning_transaction correction_transaction = transaction(
+        "learning://user-correction/1", common_learning_signal_type::user_correction);
+    common_adaptation_evidence_relation correction_evidence_relation;
+    CHECK(common_agent_teaching_relation_to_evidence_relation(
+        *correction_result.relation, correction_transaction, correction_evidence_relation, error));
+    common_agent_request correction_host_request;
+    correction_host_request.turn_id = source.scope.turn_id;
+    correction_host_request.session_id = source.scope.session_id;
+    correction_host_request.project_id = source.scope.project_id;
+    common_plan_state correction_host_plan;
+    correction_host_plan.id = "user-correction-plan";
+    common_agent_result correction_host_result;
+    correction_host_result.learning_signals.push_back({common_learning_signal_type::user_correction,
+        correction_host_plan.id, {}, {}, correction_request.evidence_ref, "explicit correction"});
+    common_adaptation_evidence correction_evidence;
+    CHECK(common_adaptation_evidence_from_turn(correction_host_request, correction_host_plan,
+        correction_host_result, correction_evidence_relation, correction_evidence, error));
+    CHECK(correction_evidence.source == common_adaptation_evidence_source::user_correction);
+    CHECK(correction_evidence.host_verified);
+
     auto unresolved = teaching_relation;
     unresolved.status = common_flydelta_teaching_relation_status::no_contrast;
     unresolved.host_approved = false;
@@ -213,6 +282,7 @@ int main() {
         common_adaptation_evidence_source::workflow_code,
         common_adaptation_evidence_source::procedure_blueprint,
         common_adaptation_evidence_source::user_correction,
+        common_adaptation_evidence_source::user_taught_concept,
     };
     for (const auto generic_source : generic_sources) {
         auto generic_evidence = source;

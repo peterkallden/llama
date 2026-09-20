@@ -22,6 +22,12 @@ struct common_flydelta_concept_spec {
     std::string behavior_key;
     common_adaptation_evidence_source source =
         common_adaptation_evidence_source::procedure_blueprint;
+    // Immutable host reference for the grounded teaching material. It may be
+    // a procedure, a correction bundle or a concept-grounding record; concept
+    // extraction must not depend on one specific teaching source.
+    std::string source_ref;
+    std::string grounding_ref;
+    // Optional procedure provenance retained for existing blueprint callers.
     std::string procedure_ref;
     std::string verifier_ref;
     std::string model_profile_fingerprint;
@@ -31,6 +37,7 @@ struct common_flydelta_concept_spec {
     std::string scope_fingerprint;
     bool host_approved = false;
     bool redaction_attested = false;
+    bool require_control = true;
 };
 
 bool common_flydelta_concept_spec_validate(

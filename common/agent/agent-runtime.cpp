@@ -871,6 +871,33 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             "explicit user correction recorded", plan.id, {}, {}, observation_id);
     }
 
+    if (request.user_taught_concept) {
+        const auto & concept = *request.user_taught_concept;
+        if (concept.source_turn_id.empty() || concept.statement.empty() || concept.statement.size() > 512) {
+            result.error = "explicit user-taught concept requires bounded source turn and statement";
+            return result;
+        }
+        const std::string observation_id = "feedback:concept:" + std::to_string(plan.version);
+        common_plan_operation observed;
+        observed.kind = common_plan_operation_kind::record_observation;
+        observed.plan_id = plan.id;
+        observed.expected_version = plan.version;
+        observed.reason_summary = "explicit user-taught concept";
+        observed.observation = common_plan_observation{
+            observation_id,
+            "user_taught_concept",
+            common_agent_runtime_user_correction_json(concept.source_turn_id, concept.statement),
+            1.0f, {}, {}, 0};
+        if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+        result.learning_signals.push_back({common_learning_signal_type::user_taught_concept, plan.id, {}, {}, observation_id,
+            "explicit reusable concept supplied by the caller"});
+        append_event(result, request, common_agent_event_type::plan_updated, "explicit user-taught concept recorded", {}, plan.id);
+        append_observation_and_resource_events(result, request, "explicit user-taught concept recorded", plan.id,
+            {}, observation_id, "user_taught_concept", {});
+        append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
+            "explicit user-taught concept recorded", plan.id, {}, {}, observation_id);
+    }
+
     const auto activate_next_ready_step = [&]() -> bool {
         bool has_active_step = false;
         for (const auto & step : plan.steps) if (step.status == common_plan_step_status::active) { has_active_step = true; break; }

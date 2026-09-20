@@ -152,14 +152,16 @@ base model or activate a sideband. The production worker and the
 model-capable smoke use the same bounded arm/model-host seam, while the host
 continues to own scheduling, verification and persistence authority.
 
-The runtime assembly provides the binding seam for this path through the
-host-owned procedure teaching request provider. The provider resolves the
-semantic relation; the assembly performs typed admission and forwards only a
-resolved, host-approved relation to the existing learning/evidence and
+The runtime assembly provides the binding seam for this path through
+host-owned procedure, correction and concept-grounding providers. The host
+resolves semantic relations and minimal contrasts; the assembly forwards only
+resolved, host-approved relations to the existing learning/evidence and
 FlyDelta capture observers. This is a callback after durable transaction
 append, not a recursive worker phase and not a second persistence or registry
 path. A missing or unresolved relation remains diagnostic evidence and cannot
-grant learning credit.
+grant learning credit. Explicit user concepts remain source evidence until the
+host provides independently verified grounded contrasts; user confirmation is
+not an admission source in this phase.
 
 The lifecycle stores share one persistence contract: the `payload_json` column
 contains the record payload, not the serialized lifecycle envelope. JSONL,

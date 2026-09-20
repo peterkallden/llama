@@ -8,6 +8,8 @@ static common_flydelta_concept_spec spec() {
     value.concept_key = "concept://test/verify-before-tool";
     value.extraction_id = "extraction://test/verify-before-tool/1";
     value.behavior_key = "tool_use/validated-filter";
+    value.source_ref = "relation://test/verify-before-tool/1";
+    value.grounding_ref = "grounding://test/verify-before-tool/1";
     value.procedure_ref = "procedure://test/verify-before-tool/v1";
     value.verifier_ref = "verifier://test/validated-filter/v1";
     value.model_profile_fingerprint = "sha256:model";
@@ -70,6 +72,13 @@ int main() {
     auto unapproved = concept_spec;
     unapproved.host_approved = false;
     CHECK(!common_flydelta_concept_spec_validate(unapproved, error));
+
+    auto user_grounded = concept_spec;
+    user_grounded.source = common_adaptation_evidence_source::user_correction;
+    user_grounded.source_ref = "relation://user-correction/verify-before-tool/1";
+    user_grounded.grounding_ref = "grounding://user-concept/verify-before-tool/1";
+    user_grounded.procedure_ref.clear();
+    CHECK(common_flydelta_concept_spec_validate(user_grounded, error));
 
     auto wrong_layer = trajectories;
     wrong_layer.back().layer_index = 13;

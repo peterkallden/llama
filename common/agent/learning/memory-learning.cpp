@@ -219,6 +219,10 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
         })) {
         acquisition_source = "explicit_user_correction";
     } else if (std::any_of(result.learning_signals.begin(), result.learning_signals.end(), [](const auto & signal) {
+            return signal.type == common_learning_signal_type::user_taught_concept;
+        })) {
+        acquisition_source = "explicit_user_taught_concept";
+    } else if (std::any_of(result.learning_signals.begin(), result.learning_signals.end(), [](const auto & signal) {
             return signal.type == common_learning_signal_type::successful_recovery;
         })) {
         acquisition_source = "successful_recovery";

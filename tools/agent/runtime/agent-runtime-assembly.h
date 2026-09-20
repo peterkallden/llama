@@ -72,6 +72,11 @@ struct common_agent_runtime_config {
     // refs; the assembly turns a resolved relation into the existing
     // reference-only FlyDelta capture path.
     common_agent_procedure_teaching_request_provider procedure_teaching_request_provider;
+    // Host-owned correction resolver. It must resolve the observed execution,
+    // semantic repair and contrast before returning a request; free correction
+    // text is never passed to FlyDelta as training material.
+    common_agent_user_correction_teaching_request_provider user_correction_teaching_request_provider;
+    common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
 };
 
 struct common_agent_runtime_build_config {
@@ -97,6 +102,8 @@ struct common_agent_runtime_build_config {
             const common_flydelta_capture_candidate &,
             std::string &)> flydelta_capture_job_enqueue;
     common_agent_procedure_teaching_request_provider procedure_teaching_request_provider;
+    common_agent_user_correction_teaching_request_provider user_correction_teaching_request_provider;
+    common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
 };
 
 common_agent_inference_options make_agent_inference_options(

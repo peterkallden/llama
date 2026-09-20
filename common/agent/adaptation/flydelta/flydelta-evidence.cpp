@@ -19,6 +19,7 @@ bool supported_seed_source(common_adaptation_evidence_source source) {
         case common_adaptation_evidence_source::workflow_code:
         case common_adaptation_evidence_source::procedure_blueprint:
         case common_adaptation_evidence_source::user_correction:
+        case common_adaptation_evidence_source::user_taught_concept:
             return true;
     }
     return false;
