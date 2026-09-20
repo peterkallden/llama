@@ -4,7 +4,20 @@
 
 #include <cmath>
 #include <string>
+#include <unordered_set>
 #include <utility>
+
+const char * common_flydelta_arm_execution_path_name(
+        const common_flydelta_arm_execution_metrics::path value) {
+    switch (value) {
+        case common_flydelta_arm_execution_metrics::path::unknown: return "unknown";
+        case common_flydelta_arm_execution_metrics::path::scalar: return "scalar";
+        case common_flydelta_arm_execution_metrics::path::scalar_fallback: return "scalar_fallback";
+        case common_flydelta_arm_execution_metrics::path::backend_batch: return "backend_batch";
+        case common_flydelta_arm_execution_metrics::path::device_batch: return "device_batch";
+    }
+    return "unknown";
+}
 
 bool common_flydelta_arm_request_validate(
         const common_flydelta_arm_request & request,
@@ -86,11 +99,207 @@ bool common_flydelta_arm_result_validate(
         error = "FlyDelta arm result geometry is invalid";
         return false;
     }
+    if (result.execution_metrics.schema_version != 1) {
+        error = "unsupported FlyDelta arm execution metrics schema";
+        return false;
+    }
+    if (result.execution_metrics.available &&
+            (!std::isfinite(result.execution_metrics.model_ms) ||
+             !std::isfinite(result.execution_metrics.teacher_forced_ms) ||
+             !std::isfinite(result.execution_metrics.generation_ms) ||
+             result.execution_metrics.model_ms < 0.0f ||
+             result.execution_metrics.teacher_forced_ms < 0.0f ||
+             result.execution_metrics.generation_ms < 0.0f)) {
+        error = "FlyDelta arm execution metrics are invalid";
+        return false;
+    }
+    if (result.execution_metrics.fallback_reason.size() > 512) {
+        error = "FlyDelta arm execution fallback reason is too long";
+        return false;
+    }
+    const auto execution_path = result.execution_metrics.execution_path;
+    const bool batched_path =
+        execution_path == common_flydelta_arm_execution_metrics::path::backend_batch ||
+        execution_path == common_flydelta_arm_execution_metrics::path::device_batch;
+    if (execution_path == common_flydelta_arm_execution_metrics::path::scalar_fallback &&
+            (result.execution_metrics.batched_execution_used ||
+             result.execution_metrics.fallback_reason.empty())) {
+        error = "FlyDelta scalar fallback telemetry is inconsistent";
+        return false;
+    }
+    if (batched_path && !result.execution_metrics.batched_execution_used) {
+        error = "FlyDelta batched execution path is missing its batch flag";
+        return false;
+    }
+    if (result.execution_metrics.device_reduction_used && result.geometry_available &&
+            result.execution_metrics.diagnostics_bytes_to_host <
+                common_flydelta_compact_geometry_bytes) {
+        error = "FlyDelta device diagnostics transfer is not compact geometry sized";
+        return false;
+    }
     if (!common_flydelta_decision_margin_validate(result.margin, error) ||
             !common_flydelta_margin_comparison_validate(result.margin_comparison, error)) {
         return false;
     }
     return true;
+}
+
+namespace {
+
+bool close_enough(const float left, const float right, const float tolerance) {
+    return std::fabs(left - right) <= tolerance;
+}
+
+bool margin_replay_equivalent(
+        const common_flydelta_decision_margin & expected,
+        const common_flydelta_decision_margin & actual,
+        const float tolerance) {
+    return expected.available == actual.available &&
+        close_enough(expected.positive_total_logprob,
+                     actual.positive_total_logprob, tolerance) &&
+        close_enough(expected.negative_total_logprob,
+                     actual.negative_total_logprob, tolerance) &&
+        expected.positive_token_count == actual.positive_token_count &&
+        expected.negative_token_count == actual.negative_token_count;
+}
+
+} // namespace
+
+bool common_flydelta_arm_result_replay_equivalent(
+        const common_flydelta_arm_result & expected,
+        const common_flydelta_arm_result & actual,
+        const float absolute_tolerance,
+        std::string & error) {
+    error.clear();
+    if (!std::isfinite(absolute_tolerance) || absolute_tolerance < 0.0f) {
+        error = "FlyDelta replay tolerance is invalid";
+        return false;
+    }
+    if (expected.arm_id != actual.arm_id || expected.executed != actual.executed ||
+            expected.dose_safety_limited != actual.dose_safety_limited ||
+            expected.geometry_available != actual.geometry_available ||
+            expected.margin_available != actual.margin_available ||
+            expected.generation_available != actual.generation_available ||
+            expected.host_evaluated != actual.host_evaluated ||
+            expected.verifier_known != actual.verifier_known ||
+            expected.host_outcome != actual.host_outcome) {
+        error = "FlyDelta replay result flags or identity differ";
+        return false;
+    }
+    if (!close_enough(expected.requested_alpha, actual.requested_alpha, absolute_tolerance) ||
+            !close_enough(expected.executed_alpha, actual.executed_alpha, absolute_tolerance) ||
+            (expected.geometry_available &&
+             (!close_enough(expected.cosine, actual.cosine, absolute_tolerance) ||
+              !close_enough(expected.progress, actual.progress, absolute_tolerance) ||
+              !close_enough(expected.leakage, actual.leakage, absolute_tolerance) ||
+              !close_enough(expected.shift_norm, actual.shift_norm, absolute_tolerance)))) {
+        error = "FlyDelta replay geometry or dose differs";
+        return false;
+    }
+    if (!margin_replay_equivalent(expected.margin, actual.margin, absolute_tolerance) ||
+            !margin_replay_equivalent(expected.margin_comparison.baseline,
+                                      actual.margin_comparison.baseline,
+                                      absolute_tolerance) ||
+            !margin_replay_equivalent(expected.margin_comparison.candidate,
+                                      actual.margin_comparison.candidate,
+                                      absolute_tolerance) ||
+            expected.margin_comparison.available != actual.margin_comparison.available ||
+            !close_enough(expected.margin_total, actual.margin_total, absolute_tolerance) ||
+            !close_enough(expected.margin_normalized, actual.margin_normalized, absolute_tolerance) ||
+            !close_enough(expected.margin_delta_total, actual.margin_delta_total, absolute_tolerance) ||
+            !close_enough(expected.margin_delta_normalized, actual.margin_delta_normalized,
+                          absolute_tolerance) ||
+            !close_enough(expected.quality, actual.quality, absolute_tolerance)) {
+        error = "FlyDelta replay margin or quality differs";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_arm_batch_request_validate(
+        const common_flydelta_arm_batch_request & request,
+        std::string & error) {
+    error.clear();
+    if (request.schema_version != 1 || request.arms.empty() || request.arms.size() > 256) {
+        error = "FlyDelta arm batch request is invalid";
+        return false;
+    }
+    std::unordered_set<std::string> arm_ids;
+    for (const auto & arm : request.arms) {
+        if (!common_flydelta_arm_request_validate(arm, error)) return false;
+        if (!arm_ids.insert(arm.arm_id).second) {
+            error = "FlyDelta arm batch request reuses an arm identity";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool common_flydelta_arm_batch_result_validate(
+        const common_flydelta_arm_batch_result & result,
+        const common_flydelta_arm_batch_request & request,
+        std::string & error) {
+    error.clear();
+    if (result.schema_version != 1 || result.arms.size() != request.arms.size()) {
+        error = "FlyDelta arm batch result count or schema is invalid";
+        return false;
+    }
+    for (size_t index = 0; index < result.arms.size(); ++index) {
+        if (!common_flydelta_arm_result_validate(result.arms[index], error)) return false;
+        if (result.arms[index].arm_id != request.arms[index].arm_id) {
+            error = "FlyDelta arm batch result order or identity is invalid";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool common_flydelta_run_bounded_arm_batch(
+        const common_flydelta_model_host & host,
+        const common_flydelta_arm_batch_request & request,
+        common_flydelta_arm_batch_result & result,
+        std::string & error) {
+    error.clear();
+    result = {};
+    if (!common_flydelta_arm_batch_request_validate(request, error)) return false;
+    if (host.run_bounded_arm_batch) {
+        if (!host.run_bounded_arm_batch(request, result, error)) return false;
+        for (auto & arm : result.arms) {
+            if (arm.execution_metrics.execution_path ==
+                    common_flydelta_arm_execution_metrics::path::unknown) {
+                arm.execution_metrics.available = true;
+                arm.execution_metrics.batched_execution_used = true;
+                arm.execution_metrics.execution_path =
+                    common_flydelta_arm_execution_metrics::path::backend_batch;
+            }
+        }
+        return common_flydelta_arm_batch_result_validate(result, request, error);
+    }
+    if (!host.run_bounded_arm) {
+        error = "FlyDelta model host has no bounded arm or batch callback";
+        return false;
+    }
+    result.schema_version = request.schema_version;
+    result.arms.reserve(request.arms.size());
+    for (const auto & arm_request : request.arms) {
+        common_flydelta_arm_result arm_result;
+        if (!host.run_bounded_arm(arm_request, arm_result, error)) return false;
+        if (!common_flydelta_arm_result_validate(arm_result, error)) return false;
+        if (arm_result.arm_id != arm_request.arm_id) {
+            error = "FlyDelta arm fallback result identity is invalid";
+            return false;
+        }
+        if (arm_result.execution_metrics.execution_path ==
+                common_flydelta_arm_execution_metrics::path::unknown) {
+            arm_result.execution_metrics.available = true;
+            arm_result.execution_metrics.batched_execution_used = false;
+            arm_result.execution_metrics.execution_path =
+                common_flydelta_arm_execution_metrics::path::scalar_fallback;
+            arm_result.execution_metrics.fallback_reason = "batch_callback_unavailable";
+        }
+        result.arms.push_back(std::move(arm_result));
+    }
+    return common_flydelta_arm_batch_result_validate(result, request, error);
 }
 
 namespace {
@@ -168,8 +377,8 @@ common_flydelta_search_pipeline_runner common_flydelta_search_pipeline_runner_fr
             common_flydelta_decision_margin & margin,
             common_flydelta_scale_geometry & geometry,
             std::string & error) {
-        if (!host.run_bounded_arm) {
-            error = "FlyDelta model host has no bounded arm callback";
+        if (!host.run_bounded_arm && !host.run_bounded_arm_batch) {
+            error = "FlyDelta model host has no bounded arm or batch callback";
             return false;
         }
 
@@ -222,9 +431,17 @@ common_flydelta_search_pipeline_runner common_flydelta_search_pipeline_runner_fr
 
         if (!common_flydelta_arm_request_validate(request, error)) return false;
 
-        common_flydelta_arm_result arm;
-        if (!host.run_bounded_arm(request, arm, error)) return false;
-        if (!common_flydelta_arm_result_validate(arm, error)) return false;
+        common_flydelta_arm_batch_request batch_request;
+        batch_request.arms.push_back(request);
+        common_flydelta_arm_batch_result batch_result;
+        if (!common_flydelta_run_bounded_arm_batch(host, batch_request, batch_result, error)) {
+            return false;
+        }
+        if (batch_result.arms.size() != 1) {
+            error = "FlyDelta model host returned an invalid single-arm batch result";
+            return false;
+        }
+        const common_flydelta_arm_result & arm = batch_result.arms.front();
         if (!arm.executed) {
             error = "FlyDelta model host returned an unexecuted bounded arm";
             return false;
@@ -261,8 +478,12 @@ bool common_flydelta_model_host_validate(
         error = "FlyDelta model host has no evaluator registration callback";
         return false;
     }
-    if (!host.run_bounded_arm) {
-        error = "FlyDelta model host has no bounded arm callback";
+    if (!host.run_bounded_arm && !host.run_bounded_arm_batch) {
+        error = "FlyDelta model host has no bounded arm or batch callback";
+        return false;
+    }
+    if (host.capabilities.bounded_arm_batch && !host.run_bounded_arm_batch) {
+        error = "FlyDelta model host advertises batch execution without a batch callback";
         return false;
     }
     if (!host.capabilities.host_verification &&
@@ -353,12 +574,15 @@ common_flydelta_model_adapter_from_host(
         error = "FlyDelta orthogonal capability requires a post-Bootstrap state-aware runner";
         return {};
     }
-    const auto capabilities = common_flydelta_model_capabilities_from_primitives(
+    auto capabilities = common_flydelta_model_capabilities_from_primitives(
         host.capabilities,
-        static_cast<bool>(host.run_bounded_arm),
+        static_cast<bool>(host.run_bounded_arm || host.run_bounded_arm_batch),
         static_cast<bool>(callbacks.run_search_pipeline ||
             callbacks.run_search_pipeline_with_state),
         static_cast<bool>(callbacks.run_search_pipeline_with_search_state));
+    // Registration is the source of truth for backend availability. A caller
+    // cannot advertise a batch path that was not actually bound.
+    capabilities.bounded_arm_batch = static_cast<bool>(host.run_bounded_arm_batch);
     return common_flydelta_model_adapter_from_evaluator(
         config, callbacks, capabilities, error);
 }

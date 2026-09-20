@@ -579,7 +579,25 @@ int main() {
     result_contract.margin.negative_token_count = 1;
     result_contract.margin.positive_total_logprob = -1.0f;
     result_contract.margin.negative_total_logprob = -2.0f;
+    result_contract.execution_metrics.available = true;
+    result_contract.execution_metrics.model_ms = 1.0f;
+    result_contract.execution_metrics.teacher_forced_ms = 0.5f;
+    result_contract.execution_metrics.diagnostics_bytes_to_host = 16;
+    result_contract.execution_metrics.device_reduction_used = true;
     CHECK(common_flydelta_arm_result_validate(result_contract, error));
+    result_contract.geometry_available = true;
+    result_contract.execution_metrics.diagnostics_bytes_to_host =
+        common_flydelta_compact_geometry_bytes;
+    CHECK(common_flydelta_arm_result_validate(result_contract, error));
+    result_contract.execution_metrics.diagnostics_bytes_to_host =
+        common_flydelta_compact_geometry_bytes - 1;
+    CHECK(!common_flydelta_arm_result_validate(result_contract, error));
+    result_contract.execution_metrics.diagnostics_bytes_to_host =
+        common_flydelta_compact_geometry_bytes;
+    result_contract.geometry_available = false;
+    result_contract.execution_metrics.generation_ms = -1.0f;
+    CHECK(!common_flydelta_arm_result_validate(result_contract, error));
+    result_contract.execution_metrics.generation_ms = 0.0f;
     result_contract.margin.negative_token_count = 0;
     CHECK(!common_flydelta_arm_result_validate(result_contract, error));
     result_contract.margin.negative_token_count = 1;
@@ -601,7 +619,11 @@ int main() {
     CHECK(host_adapter->capabilities.bootstrap_zoom);
     CHECK(host_adapter->capabilities.adaptive_alpha);
     CHECK(host_adapter->capabilities.teacher_forced_margin);
+    CHECK(!host_adapter->capabilities.bounded_arm_batch);
     CHECK(!host_adapter->capabilities.orthogonal_search);
+    auto lying_batch_host = model_host;
+    lying_batch_host.capabilities.bounded_arm_batch = true;
+    CHECK(!common_flydelta_model_host_validate(lying_batch_host, error));
     common_flydelta_arm_request arm_request;
     arm_request.apply_overlay = true;
     arm_request.arm_id = "flydelta://arm/direct";
@@ -611,6 +633,87 @@ int main() {
     arm_result.arm_id = arm_request.arm_id;
     CHECK(model_host.run_bounded_arm(arm_request, arm_result, error));
     CHECK(bounded_arm_called && arm_result.executed && arm_result.executed_alpha == 0.1f);
+    arm_request.layer_indices = {2};
+    arm_request.coefficients = {1.0f};
+    common_flydelta_arm_batch_request batch_request;
+    batch_request.arms = {arm_request, arm_request};
+    batch_request.arms[1].arm_id = "flydelta://arm/direct-2";
+    batch_request.arms[1].alpha = 0.2f;
+    common_flydelta_arm_batch_result batch_result;
+    CHECK(common_flydelta_run_bounded_arm_batch(
+        model_host, batch_request, batch_result, error));
+    CHECK(batch_result.arms.size() == 2);
+    CHECK(batch_result.arms[0].arm_id == batch_request.arms[0].arm_id);
+    CHECK(batch_result.arms[1].arm_id == batch_request.arms[1].arm_id);
+    CHECK(bounded_arm_called && batch_result.arms[1].executed_alpha == 0.2f);
+    CHECK(batch_result.arms[0].execution_metrics.execution_path ==
+        common_flydelta_arm_execution_metrics::path::scalar_fallback);
+    CHECK(batch_result.arms[0].execution_metrics.fallback_reason ==
+        "batch_callback_unavailable");
+
+    common_flydelta_model_host batched_model_host = model_host;
+    size_t batch_callback_calls = 0;
+    batched_model_host.run_bounded_arm_batch = [&](const auto & request,
+            auto & result, std::string & batch_error) {
+        ++batch_callback_calls;
+        result.arms.clear();
+        for (const auto & arm_request : request.arms) {
+            common_flydelta_arm_result arm_result;
+            if (!model_host.run_bounded_arm(arm_request, arm_result, batch_error)) {
+                return false;
+            }
+            result.arms.push_back(std::move(arm_result));
+        }
+        return true;
+    };
+    batch_result = {};
+    CHECK(common_flydelta_run_bounded_arm_batch(
+        batched_model_host, batch_request, batch_result, error));
+    CHECK(batch_callback_calls == 1 && batch_result.arms.size() == 2 &&
+        batch_result.arms[0].arm_id == batch_request.arms[0].arm_id &&
+        batch_result.arms[1].executed_alpha == 0.2f);
+    CHECK(batch_result.arms[0].execution_metrics.execution_path ==
+        common_flydelta_arm_execution_metrics::path::backend_batch);
+    CHECK(std::string(common_flydelta_arm_execution_path_name(
+        batch_result.arms[0].execution_metrics.execution_path)) == "backend_batch");
+    batch_result.arms[0].execution_metrics.batched_execution_used = false;
+    CHECK(!common_flydelta_arm_batch_result_validate(batch_result, batch_request, error));
+    batch_result.arms[0].execution_metrics.batched_execution_used = true;
+    auto replay_expected = batch_result.arms[0];
+    auto replay_actual = replay_expected;
+    replay_actual.execution_metrics.execution_path =
+        common_flydelta_arm_execution_metrics::path::device_batch;
+    replay_actual.execution_metrics.model_ms = 4.0f;
+    replay_actual.capture_ref = "capture://device-copy";
+    CHECK(common_flydelta_arm_result_replay_equivalent(
+        replay_expected, replay_actual, 1.0e-5f, error));
+    replay_actual.progress += 0.1f;
+    CHECK(!common_flydelta_arm_result_replay_equivalent(
+        replay_expected, replay_actual, 1.0e-5f, error));
+
+    auto duplicate_ids = batch_request;
+    duplicate_ids.arms[1].arm_id = duplicate_ids.arms[0].arm_id;
+    CHECK(!common_flydelta_run_bounded_arm_batch(
+        model_host, duplicate_ids, batch_result, error));
+
+    // A device backend may intentionally expose only the batch entry point.
+    // The production registration and the single-arm search seam must still
+    // use that backend without requiring a duplicate scalar callback.
+    common_flydelta_model_host batch_only_model_host = batched_model_host;
+    batch_only_model_host.run_bounded_arm = {};
+    const auto batch_only_adapter = common_flydelta_model_adapter_from_host(
+        batch_only_model_host, adapter_error);
+    CHECK(batch_only_adapter != nullptr && adapter_error.empty());
+    CHECK(batch_only_adapter->capabilities.bootstrap_zoom);
+    CHECK(batch_only_adapter->capabilities.bounded_arm_batch);
+    batch_result = {};
+    CHECK(common_flydelta_run_bounded_arm_batch(
+        batch_only_model_host, batch_request, batch_result, error));
+    CHECK(batch_result.arms.size() == 2 && batch_callback_calls == 2);
+
+    batch_request.arms[1].coefficients.push_back(0.5f);
+    CHECK(!common_flydelta_run_bounded_arm_batch(
+        model_host, batch_request, batch_result, error));
     common_flydelta_experiment_fixture arm_fixture;
     arm_fixture.id = "flydelta://fixture/arm";
     arm_fixture.task_fingerprint = "sha256:task";
@@ -636,6 +739,14 @@ int main() {
         arm_trial, arm_margin, arm_geometry, error));
     CHECK(arm_trial.executed && arm_trial.overlay_applied && arm_margin.available &&
         arm_geometry.available && arm_geometry.cosine == 0.8f);
+
+    auto batch_only_runner = common_flydelta_search_pipeline_runner_from_model_host(
+        batch_only_model_host, "flydelta://job/batch-only", "context://batch-only",
+        "direction://batch-only");
+    CHECK(batch_only_runner(arm_fixture, arm_direction, &arm_layer, 0.1f, true,
+        arm_trial, arm_margin, arm_geometry, error));
+    CHECK(arm_trial.executed && arm_margin.available && arm_geometry.available);
+
     CHECK(host_adapter->worker_callback(counterfactual, worker_result, error));
     CHECK(worker_result.counterfactual_reports.size() == 1);
 

@@ -64,6 +64,19 @@ int main() {
         CHECK(candidate.control_residualized);
     }
 
+    auto trim_config = config;
+    trim_config.trim_fraction = 0.25f;
+    auto trim_trajectories = trajectories;
+    trim_trajectories.push_back(trajectory(3));
+    trim_trajectories.back().conditioned = {3.2f, 1.1f, 0.4f};
+    CHECK(common_flydelta_build_concept_candidates(
+        concept_spec, trim_config, trim_trajectories, candidates, error));
+    CHECK(candidates.size() == 3);
+    // Keep the three aligned trajectories and discard the deliberately
+    // orthogonal fourth trajectory.
+    CHECK(candidates[1].retained_trajectories == 3);
+    CHECK(candidates[1].values[0] > candidates[1].values[1] + 0.1f);
+
     auto unverified = trajectories;
     unverified.front().conditioned_host_verified = false;
     CHECK(!common_flydelta_build_concept_candidates(

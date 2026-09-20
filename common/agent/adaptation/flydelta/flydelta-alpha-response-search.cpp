@@ -102,6 +102,12 @@ bool common_flydelta_alpha_response_trial_validate(
         error = "FlyDelta alpha response geometry is invalid";
         return false;
     }
+    if (trial.proposed_next_scale &&
+            (!finite_scale(*trial.proposed_next_scale) ||
+             *trial.proposed_next_scale >= trial.requested_scale)) {
+        error = "FlyDelta alpha response next scale proposal is invalid";
+        return false;
+    }
     return true;
 }
 
@@ -172,38 +178,9 @@ bool common_flydelta_run_alpha_response_search(
             if (dose_decision.action == common_flydelta_dose_action::retry_lower &&
                     dose_decision.proposed_safe_strength &&
                     config.max_dose_retries > 0) {
-                const float executed_scale = *dose_decision.proposed_safe_strength;
-                value.scale = executed_scale;
+                value.proposed_next_scale = *dose_decision.proposed_safe_strength;
                 value.dose_safety_limited = true;
                 value.dose_reason = "retry_lower: " + value.dose_reason;
-                value.counterfactual = {};
-                value.margin = {};
-                value.geometry = {};
-                value.geometry_available = false;
-                if (!runner(fixture, executed_scale, true, value.counterfactual,
-                        value.margin, value.geometry, value.geometry_available, error) ||
-                        !common_flydelta_counterfactual_trial_validate(
-                            value.counterfactual, error) ||
-                        !common_flydelta_decision_margin_validate(value.margin, error)) {
-                    return false;
-                }
-                if (value.geometry_available && !finite_geometry(value.geometry)) {
-                    error = "FlyDelta alpha response geometry is invalid";
-                    return false;
-                }
-                dose_observation = {
-                    value.geometry_available,
-                    executed_scale,
-                    value.geometry_available ? value.geometry.shift_norm : 0.0f,
-                    value.geometry_available ? value.geometry.progress : 0.0f,
-                    value.geometry_available ? value.geometry.leakage : 0.0f,
-                };
-                if (!common_flydelta_dose_observe(
-                        config.dose_policy, dose_state, dose_observation,
-                        dose_decision, error)) return false;
-                value.dose_action = dose_decision.action;
-                value.relative_dose = dose_decision.relative_dose;
-                value.dose_reason = "retry_lower: " + dose_decision.reason;
             }
         }
         value.outcome = common_flydelta_classify_counterfactual(
@@ -211,7 +188,7 @@ bool common_flydelta_run_alpha_response_search(
         value.margin_available = baseline_margin.available && value.margin.available;
         value.margin_delta_total = margin_delta(baseline_margin, value.margin, false);
         value.margin_delta_normalized = margin_delta(baseline_margin, value.margin, true);
-        value.safe_to_continue = !geometry_available || (
+        value.safe_to_continue = (!config.use_dose_controller && !geometry_available) || (
             finite_geometry(value.geometry) &&
             value.geometry.cosine >= config.min_cosine &&
             value.geometry.leakage <= config.max_leakage &&
@@ -242,6 +219,7 @@ bool common_flydelta_run_alpha_response_search(
     bool saturated = false;
     bool upper_bound_reached = false;
     std::vector<size_t> expansion_indices;
+    size_t dose_retries = 0;
     for (size_t count = 0; count < config.max_expansion_trials; ++count) {
         if (!evaluate(scale, false, index)) return false;
         expansion_indices.push_back(index);
@@ -249,6 +227,13 @@ bool common_flydelta_run_alpha_response_search(
         if (current.outcome == common_flydelta_counterfactual_outcome::helped) {
             helped_during_expansion = true;
             break;
+        }
+        if (current.dose_action == common_flydelta_dose_action::retry_lower &&
+                current.proposed_next_scale &&
+                dose_retries < config.max_dose_retries) {
+            scale = *current.proposed_next_scale;
+            ++dose_retries;
+            continue;
         }
         if (!current.safe_to_continue) {
             safety_limited = true;
@@ -307,10 +292,11 @@ bool common_flydelta_run_alpha_response_search(
         selection.last_dose_safety_limited = last.dose_safety_limited;
     }
 
-    // Golden-section refinement is used only inside the observed response
-    // interval. It is intentionally conservative: it never extrapolates
-    // beyond the geometric expansion and never turns a diagnostic into a
-    // host verdict.
+    // Golden-ratio refinement is used only inside the observed response
+    // interval. max_zoom_trials is an actual new model-evaluation budget:
+    // one new point is probed per iteration and the other golden point is
+    // represented by the already observed best/bracket endpoint. This keeps
+    // the cost contract honest for expensive model hosts.
     if (!helped_during_expansion && config.max_zoom_trials > 0 && trials.size() >= 2) {
         std::vector<size_t> order(trials.size());
         for (size_t i = 0; i < trials.size(); ++i) order[i] = i;
@@ -324,19 +310,51 @@ bool common_flydelta_run_alpha_response_search(
                 best_position = position;
             }
         }
+        size_t best_index = order[best_position];
+        float pivot = trials[best_index].scale;
         float left = best_position == 0 ? 0.0f : trials[order[best_position - 1]].scale;
         float right = best_position + 1 >= order.size()
             ? trials[order.back()].scale : trials[order[best_position + 1]].scale;
         constexpr float phi = 1.61803398875f;
         for (size_t count = 0; count < config.max_zoom_trials && right - left > 0.000001f; ++count) {
-            const float x1 = right - (right - left) / phi;
-            const float x2 = left + (right - left) / phi;
-            size_t i1 = 0, i2 = 0;
-            if (!evaluate(x1, true, i1) || !evaluate(x2, true, i2)) return false;
-            if (trials[i1].outcome == common_flydelta_counterfactual_outcome::helped ||
-                    trials[i2].outcome == common_flydelta_counterfactual_outcome::helped) break;
-            if (better(trials[i1], trials[i2], config.utility_epsilon)) right = x2;
-            else left = x1;
+            const float left_room = pivot - left;
+            const float right_room = right - pivot;
+            if (left_room <= 0.000001f && right_room <= 0.000001f) break;
+
+            // Probe the larger side first, then alternate sides as the
+            // bracket contracts. The golden ratio controls the placement;
+            // the existing pivot is reused instead of evaluating two new
+            // points in one refinement round.
+            const bool left_available = left_room > 0.000001f;
+            const bool right_available = right_room > 0.000001f;
+            const bool prefer_left = left_room >= right_room;
+            const bool probe_left = !right_available ||
+                (left_available && (count % 2 == 0 ? prefer_left : !prefer_left));
+            float candidate = probe_left
+                ? pivot - left_room / phi
+                : pivot + right_room / phi;
+            if (candidate <= left + 0.000001f || candidate >= right - 0.000001f) {
+                candidate = left + (right - left) * 0.5f;
+            }
+            if (by_scale.find(candidate) != by_scale.end()) break;
+
+            const size_t trial_count_before = trials.size();
+            size_t candidate_index = 0;
+            if (!evaluate(candidate, true, candidate_index)) return false;
+            if (trials.size() == trial_count_before) break;
+            const auto & candidate_trial = trials[candidate_index];
+            if (candidate_trial.outcome == common_flydelta_counterfactual_outcome::helped) break;
+
+            if (better(candidate_trial, trials[best_index], config.utility_epsilon)) {
+                if (candidate < pivot) right = pivot;
+                else left = pivot;
+                pivot = candidate;
+                best_index = candidate_index;
+            } else if (candidate < pivot) {
+                left = candidate;
+            } else {
+                right = candidate;
+            }
         }
     }
 

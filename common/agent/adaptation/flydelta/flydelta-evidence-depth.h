@@ -29,7 +29,12 @@ struct common_flydelta_evidence_depth_config {
 
 struct common_flydelta_evidence_depth_result {
     common_flydelta_search_depth depth = common_flydelta_search_depth::bootstrap;
+    // Only HELPED samples with explicit learning eligibility contribute to
+    // these evidence-depth statistics.
     size_t compatible_samples = 0;
+    // Compatible non-HARMED observations retained for experimental search,
+    // but excluded from evidence-depth rank and capacity.
+    size_t experimental_samples = 0;
     size_t incompatible_samples = 0;
     size_t effective_rank = 0;
     float stable_rank = 0.0f;
@@ -66,11 +71,11 @@ bool common_flydelta_evidence_depth_config_validate(
         const common_flydelta_evidence_depth_config & config,
         std::string & error);
 
-// Assesses only compatible, non-HARMED contrast samples for one direction
-// identity. UNKNOWN and NEUTRAL are valid experimental material; they do not
-// become learning evidence merely by being counted here. The rank is computed
-// from the small sample Gram matrix, so the cost is bounded by sample count and
-// does not require a dimension-sized covariance matrix.
+// Assesses only compatible, HELPED and learning-eligible contrast samples for
+// one direction identity. UNKNOWN and NEUTRAL remain visible as experimental
+// sample counts, but can never open Shallow/Deep by themselves. The rank is
+// computed from the small sample Gram matrix, so the cost is bounded by sample
+// count and does not require a dimension-sized covariance matrix.
 bool common_flydelta_assess_evidence_depth(
         const common_flydelta_direction_search_config & identity,
         const common_flydelta_evidence_depth_config & config,

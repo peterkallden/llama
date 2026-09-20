@@ -23,12 +23,16 @@ struct common_flydelta_aggregation_config {
 struct common_flydelta_aggregation_snapshot {
     size_t observations_seen = 0;
     size_t compatible_samples = 0;
+    size_t evidence_eligible_samples = 0;
+    size_t experimental_samples = 0;
     size_t rejected_samples = 0;
     std::vector<float> mean_direction;
     std::vector<float> variance;
     std::vector<std::string> seen_sample_ids;
     std::vector<std::string> retained_sample_ids;
     std::vector<common_flydelta_contrast_sample> retained_samples;
+    std::vector<std::string> evidence_retained_sample_ids;
+    std::vector<common_flydelta_contrast_sample> evidence_retained_samples;
 };
 
 bool common_flydelta_aggregation_config_validate(
@@ -58,10 +62,14 @@ private:
     common_flydelta_aggregation_config config_;
     size_t observations_seen_ = 0;
     size_t compatible_samples_ = 0;
+    size_t evidence_eligible_samples_ = 0;
+    size_t experimental_samples_ = 0;
     size_t rejected_samples_ = 0;
     std::vector<float> mean_direction_;
     std::vector<float> m2_;
     std::unordered_set<std::string> seen_sample_ids_;
     std::vector<std::string> retained_sample_ids_;
     std::vector<common_flydelta_contrast_sample> retained_samples_;
+    std::vector<std::string> evidence_retained_sample_ids_;
+    std::vector<common_flydelta_contrast_sample> evidence_retained_samples_;
 };

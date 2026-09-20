@@ -384,6 +384,12 @@ point is marked `range_not_exhausted` and must not be treated as plateau
 evidence. A verified `HELPED` arm runs the bounded minimum-effective bracket
 before it can enter the normal lifecycle.
 
+The response-search budget is counted in actual new model evaluations. In
+particular, one golden-ratio refinement iteration probes one new alpha and
+reuses the existing pivot/bracket point; it is not a two-arm model call hidden
+behind one `max_zoom_trials` unit. This keeps the persisted budget comparable
+between scalar and batched model hosts.
+
 If natural evidence has `effective_rank >= 2`, the next permitted capacity is
 Shallow controls; it does not need to spend AdaptiveAlpha first. Otherwise a
 rank-one surface may be retained/refined, or use the explicitly experimental
@@ -962,6 +968,96 @@ decision-margin or baseline-comparison contract. A host may return a lower
 These checks are transport invariants only:
 they do not convert an arm into utility, HELPED, learning credit or promotion.
 
+The same contract has an optional batch form for backend acceleration:
+`common_flydelta_arm_batch_request` contains independent arm requests and
+`common_flydelta_arm_batch_result` contains one result per request in the same
+order. A host that does not support batching uses the common CPU fallback,
+which invokes the existing scalar callback once per arm. This keeps batching
+an execution optimization rather than a new search policy or evidence path.
+The registered capability `bounded_arm_batch` is derived from the actual batch
+callback, so a scalar-only host cannot accidentally advertise device batching.
+The scalar callback is optional when a backend exposes a validated batch
+callback: a single-arm search request is wrapped as a one-arm batch, so a
+device host does not need to implement a duplicate scalar path merely to
+participate in the common search seam.
+Per-arm `alpha`, coefficients, layer mask, fresh-context semantics, margins,
+geometry and outcomes remain independent. A Vulkan/device backend can later
+evaluate these overlays as per-sequence parameters in one model batch without
+changing Whirlpool, AdaptiveAlpha, Shallow/Deep or TFO.
+
+Teacher-forced comparisons have the same backend boundary through
+`common_agent_teacher_forced_choice_batch_request` and its result type. The
+default inference implementation executes the entries through the existing
+scalar scorer in order. The resident server inference backend now submits all
+positive/negative tasks for one request through a single server response
+reader, then reconstructs one isolated result per choice. The server may
+still execute those tasks serially when their context-wide cvec identities
+differ; the batch boundary therefore removes duplicate reader/collection
+plumbing but does not claim device throughput. Prompt/KV reuse remains
+disabled for every comparison task, and cvec changes still invalidate the
+server slot prompt cache. A future Vulkan/device implementation may replace
+only this method with a true per-sequence model batch, but must preserve one
+result per choice and the context/overlay identity of every entry.
+
+This is also the intended execution shape for bounded scale search. The CPU
+may propose a small set of independent alpha arms (for example the current
+bracket and up to four golden/refinement probes), while a device backend
+evaluates those arms as separate sequences and returns one compact result per
+arm. The CPU then owns the next bracket, UtilityGate and stop decision. This
+does not move golden-section, Whirlpool or lifecycle policy to a shader. It
+requires per-sequence overlay parameters and independent KV/context state;
+the current context-wide cvec server path therefore remains a correct scalar
+or serialized fallback until that backend capability exists.
+
+The compact geometry fields in `common_flydelta_arm_result` are also the first
+GPU boundary. For ordinary search ranking the host only needs the reduced
+scalars `cosine`, `progress`, `leakage` and `shift_norm` (plus teacher-forced
+margin totals/counts). Full hidden-state captures should cross back to the CPU
+only when the arm is being retained as basis, donor, orthogonal or concept
+material. The CPU remains the owner of proposal, budget, utility, evidence and
+lifecycle decisions; the model backend owns reductions and model execution.
+
+The overlay transport now has the same split. `ArmRequest.layer_indices` and
+`coefficients` are the sparse per-arm control description. The common overlay
+composer can materialize layer-sparse data and can explicitly expand it to the
+legacy dense cvec layout. Only the legacy model boundary needs that expansion;
+a Vulkan backend should consume the sparse layer list and coefficients as
+per-sequence device parameters. This keeps dense cvec allocation out of the
+search policy and makes the sparse path an execution optimization rather than
+a second overlay representation.
+
+The sparse overlay batch contract is likewise execution-only. Every enabled
+entry in `common_flydelta_sparse_overlay_batch` must have a distinct artifact
+identity. This is intentional: two sequences may have identical prompt tokens
+but different overlays, and a backend must not alias their cvec/KV state. The
+common fallback can expand each entry independently to a legacy dense cvec
+through `common_flydelta_expand_sparse_overlay_batch()`; it never merges the
+entries. The current server therefore validates and executes these entries in
+isolation; device-side per-sequence overlay parameters are a later backend
+replacement, not a relaxation of the cvec identity rule.
+
+The four compact geometry values in an arm result have a CPU reference oracle
+in `common_flydelta_representation_diagnostics_from_vectors()`. A device
+reduction may return only `cosine`, `progress`, `leakage` and `shift_norm` plus
+the small execution telemetry record. Full capture transfer remains reserved
+for material that will become basis, donor, orthogonal or concept evidence.
+
+Arm results may also carry optional execution telemetry: model, teacher-forced
+and generation time, overlay/capture transfer bytes, and whether device
+reduction or batched execution was used. This telemetry is for benchmark and
+regression comparison only; it cannot make an arm safer, useful, HELPED or
+learning-eligible. The first GPU benchmark should compare scalar fallback and
+backend batch results on the same arm identities before introducing any
+per-sequence Vulkan overlay implementation.
+
+The telemetry also records an explicit execution path: `scalar`,
+`scalar_fallback`, `backend_batch` or `device_batch`. The common runner marks
+the fallback when a host has no batch callback, and marks an otherwise
+unlabelled batch callback as `backend_batch`. A real Vulkan implementation may
+upgrade that label to `device_batch`. The path is diagnostic provenance only;
+it never changes search utility, evidence depth, host outcome or learning
+credit.
+
 The arm identity is intentionally narrower than experiment lifecycle identity.
 `job_id`, fixture, intervention, layer mask, scale and baseline-vs-overlay
 mode form one retry-safe model arm. Surface revision, parent-best comparison
@@ -1090,8 +1186,12 @@ when supplied, but are not silently reinterpreted as behavior groups.
 Incompatible or `HARMED` samples are rejected from the aggregate.
 `UNKNOWN` and `NEUTRAL` samples remain valid experimental material, but they
 cannot become positive learning or promotion evidence merely by being
-aggregated. Retention is bounded by `aggregation_max_retained_samples`; the
-configured bound must still allow the deep threshold to be reached.
+aggregated. The aggregation snapshot therefore exposes two views: the
+experimental/search view retains compatible non-`HARMED` observations, while
+the evidence-depth view contains only `HELPED` observations with explicit
+learning eligibility. Retention is bounded by
+`aggregation_max_retained_samples`; the configured bound must still allow the
+deep threshold to be reached.
 
 Every model-facing arm also separates evaluation from decisiveness:
 `host_evaluated` means the host attempted the evaluation, `verifier_known`
@@ -1110,12 +1210,14 @@ samples from pretending to be a multidimensional basis.
 
 | Depth | Gate | Model/search budget | Diagnostic role |
 | --- | --- | --- | --- |
-| Bootstrap | one compatible sample or effective rank about one | up to 4 region arms plus bounded rank-1 BootstrapZoom/AdaptiveAlpha arms; no coefficient search | run the smallest model experiment and collect cosine, progress, leakage, shift norm and decision margin; a useful signal may refine alpha/profile locally |
+| Bootstrap | one learning-eligible `HELPED` sample or rank-one evidence; an experimental surface with no such sample remains Bootstrap-only | up to 4 region arms plus bounded rank-1 BootstrapZoom/AdaptiveAlpha arms; no coefficient search | run the smallest model experiment and collect cosine, progress, leakage, shift norm and decision margin; a useful signal may refine alpha/profile locally |
 | Shallow | at least 2 compatible samples and effective rank at least 2 | up to 8 region arms, up to 4 coefficient proposals, top 1 full arm | compare a small rank-2 basis and cheap margin/geometry controls |
 | Deep | at least 6 compatible samples, effective rank at least 2, stable geometry and valid condition bound | up to 32 region arms, up to 16 coefficient proposals, top 3 full arms; TFO-lite allowed | build robust aggregate/Deep basis and run Deep controls; coefficient search/TFO-lite only after positive Deep UtilityGate |
 
 The depth result chooses a budget; it does not itself run a model or promote a
-candidate. Bootstrap therefore does perform diagnostics when its small model
+candidate. An experimental search may still continue with a Bootstrap slice
+before any natural `HELPED` evidence exists, but that empty evidence view is
+never treated as rank one or rank two. Bootstrap therefore does perform diagnostics when its small model
 arms run, but those diagnostics are only search signals. The same rule holds
 at every depth: cosine, progress, leakage, shift norm and decision margin may
 rank or refine the next experiment, while only a host-verified baseline-fail /
@@ -1590,6 +1692,11 @@ rollback, latency and interference.
 The cvec must be set before prompt evaluation on a fresh context. Changing it
 after prompt tokens are in the KV cache would mix unsteered and steered state;
 that is not valid V0 behavior. Contexts must not be shared across cvec values.
+The server-side cvec identity includes the artifact identity, content hash,
+dimensions and payload. A changed per-sequence overlay therefore clears the
+slot's prompt/KV state before the new cvec is applied; this is covered by the
+prepared-generation contract test. A future batched Vulkan path must preserve
+the same isolation rule rather than relying on token equality alone.
 
 ### CLI V1 bounded capture and two-pass seam — implemented
 

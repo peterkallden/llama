@@ -32,6 +32,11 @@ bool compatible(
             delta.generation_semantics_fingerprint);
 }
 
+bool evidence_eligible(const common_flydelta_intervention_credit & credit) {
+    return credit.outcome == common_flydelta_counterfactual_outcome::helped &&
+        credit.eligible_for_learning;
+}
+
 } // namespace
 
 bool common_flydelta_aggregation_config_validate(
@@ -82,6 +87,11 @@ bool common_flydelta_incremental_aggregation::ingest(
         return false;
     }
     ++compatible_samples_;
+    if (evidence_eligible(sample.credit)) {
+        ++evidence_eligible_samples_;
+    } else {
+        ++experimental_samples_;
+    }
     std::vector<float> normalized(sample.delta.values.size());
     for (size_t i = 0; i < normalized.size(); ++i) {
         normalized[i] = sample.delta.values[i] / value_norm;
@@ -98,6 +108,11 @@ bool common_flydelta_incremental_aggregation::ingest(
         retained_sample_ids_.push_back(sample.delta.id);
         retained_samples_.push_back(sample);
     }
+    if (evidence_eligible(sample.credit) &&
+            evidence_retained_samples_.size() < config_.max_retained_samples) {
+        evidence_retained_sample_ids_.push_back(sample.delta.id);
+        evidence_retained_samples_.push_back(sample);
+    }
     return true;
 }
 
@@ -112,12 +127,16 @@ common_flydelta_aggregation_snapshot common_flydelta_incremental_aggregation::sn
     common_flydelta_aggregation_snapshot result;
     result.observations_seen = observations_seen_;
     result.compatible_samples = compatible_samples_;
+    result.evidence_eligible_samples = evidence_eligible_samples_;
+    result.experimental_samples = experimental_samples_;
     result.rejected_samples = rejected_samples_;
     result.mean_direction = mean_direction_;
     result.seen_sample_ids.assign(seen_sample_ids_.begin(), seen_sample_ids_.end());
     std::sort(result.seen_sample_ids.begin(), result.seen_sample_ids.end());
     result.retained_sample_ids = retained_sample_ids_;
     result.retained_samples = retained_samples_;
+    result.evidence_retained_sample_ids = evidence_retained_sample_ids_;
+    result.evidence_retained_samples = evidence_retained_samples_;
     if (compatible_samples_ > 1) {
         result.variance.resize(m2_.size(), 0.0f);
         const float divisor = static_cast<float>(compatible_samples_ - 1);

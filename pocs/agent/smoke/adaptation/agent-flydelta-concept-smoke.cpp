@@ -26,7 +26,17 @@ struct options {
     int n_predict = 64;
     int n_threads = 3;
     int n_gpu_layers = 0;
+    std::string concept_mode = "both";
 };
+
+enum class concept_model_mode {
+    host_grounded,
+    model_emitted,
+};
+
+const char * concept_model_mode_name(concept_model_mode mode) {
+    return mode == concept_model_mode::host_grounded ? "host_grounded" : "model_emitted";
+}
 
 struct concept_family {
     const char * key;
@@ -164,6 +174,17 @@ bool parse_args(int argc, char ** argv, options & value) {
             const char * count = next("--n-gpu-layers");
             if (!count) return false;
             value.n_gpu_layers = std::atoi(count);
+        } else if (arg == "--concept-mode") {
+            const char * mode = next("--concept-mode");
+            if (!mode) return false;
+            value.concept_mode = mode;
+            if (value.concept_mode != "both" &&
+                    value.concept_mode != "host-grounded" &&
+                    value.concept_mode != "model-emitted") {
+                std::cerr << "invalid --concept-mode: " << value.concept_mode
+                          << " (expected both, host-grounded, or model-emitted)\n";
+                return false;
+            }
         } else if (arg == "--help" || arg == "-h") {
             return false;
         } else {
@@ -340,7 +361,8 @@ bool run_concept_model_evaluation(
         size_t model_n_embd,
         size_t model_n_layers,
         const std::string & family_key,
-        const std::string & profile) {
+        const std::string & profile,
+        concept_model_mode mode) {
     std::string error;
     common_flydelta_model_host model_host;
     model_host.capabilities.capture = true;
@@ -426,7 +448,8 @@ bool run_concept_model_evaluation(
             : common_flydelta_counterfactual_outcome::unknown;
         arm_result.quality = helped ? 1.0f : 0.0f;
         arm_result.generation_ref = std::string("generation://concept/") + source->id;
-        arm_result.provenance_ref = std::string("evidence:concept/") + source->split;
+        arm_result.provenance_ref = std::string("evidence:concept/") +
+            concept_model_mode_name(mode) + "/" + source->split;
         return true;
     };
 
@@ -436,7 +459,8 @@ bool run_concept_model_evaluation(
     }
 
     const auto runner = common_flydelta_search_pipeline_runner_from_model_host(
-        model_host, std::string("flydelta://job/concept/") + candidate.extraction_id,
+        model_host, std::string("flydelta://job/concept/") +
+            concept_model_mode_name(mode) + "/" + candidate.extraction_id,
         "context://concept-model", "intervention://concept/" + candidate.extraction_id,
         true, true, true, true, 4U * 1024U * 1024U, static_cast<size_t>(value.n_predict));
 
@@ -483,6 +507,7 @@ bool run_concept_model_evaluation(
         ++evaluated;
         if (candidate_helped) ++helped;
         std::cout << "concept_model_evaluation fixture=" << source.id
+                  << " mode=" << concept_model_mode_name(mode)
                   << " split=" << source.split
                   << " expected_tool=" << source.expected_tool
                   << " decision_pair=" << concept_family->expected_tool
@@ -492,7 +517,9 @@ bool run_concept_model_evaluation(
                   << " margin_delta_total=" << margin_delta
                   << " experimental_only=yes learning_credit=no\n";
     }
-    std::cout << "concept_model_candidate_evaluation candidate_kind="
+    std::cout << "concept_model_candidate_evaluation mode="
+              << concept_model_mode_name(mode)
+              << " candidate_kind="
               << common_flydelta_concept_candidate_kind_name(candidate.kind)
               << " evaluated=" << evaluated
               << " helped=" << helped
@@ -671,8 +698,12 @@ bool run_model(const options & value) {
 
     size_t resolved_families = 0;
     size_t captured_pairs = 0;
+    size_t host_grounded_pairs = 0;
+    size_t host_grounded_families = 0;
+    size_t model_emitted_families = 0;
     for (const auto & family : k_families) {
-        std::vector<common_flydelta_concept_trajectory> trajectories;
+        std::vector<common_flydelta_concept_trajectory> host_grounded_trajectories;
+        std::vector<common_flydelta_concept_trajectory> model_emitted_trajectories;
         for (size_t index = 0; index < 2; ++index) {
             const std::string request_text = extraction_request(family, index);
             const std::string baseline_text =
@@ -738,79 +769,123 @@ bool run_model(const options & value) {
             trajectory.conditioned = std::move(conditioned_values);
             trajectory.control = std::move(control_values);
             trajectory.aligned = true;
-            trajectory.conditioned_host_verified =
-                std::string(conditioned_status(baseline, conditioned, family, index)) ==
-                "VERIFIED_POSITIVE";
+            const std::string status = conditioned_status(baseline, conditioned, family, index);
+            const bool model_emitted_verified = status == "VERIFIED_POSITIVE";
             std::cout << "concept_model_trajectory family=" << family.key
                       << " index=" << index
-                      << " status=" << conditioned_status(baseline, conditioned, family, index)
+                      << " status=" << status
                       << " baseline_tool=" << detected_tool(baseline)
                       << " conditioned_tool=" << detected_tool(conditioned)
                       << " control_tool=" << detected_tool(control)
                       << " conditioned_preview=\"" << generation_preview(conditioned) << "\""
-                      << " conditioned_host_verified="
-                      << (trajectory.conditioned_host_verified ? "yes" : "no")
+                      << " host_grounded_target=yes"
+                      << " model_emitted_verified="
+                      << (model_emitted_verified ? "yes" : "no")
                       << " captures=yes\n";
-            if (trajectory.conditioned_host_verified) {
-                trajectories.push_back(std::move(trajectory));
+            // The host-grounded branch uses the immutable canonical target as
+            // the conditioned semantic reference. The model serialization is
+            // reported above but is not allowed to invalidate this branch.
+            auto host_grounded = trajectory;
+            host_grounded.id += "/host-grounded";
+            host_grounded.fixture_ref += "/host-grounded";
+            host_grounded.baseline_capture_ref += "/host-grounded";
+            host_grounded.conditioned_capture_ref += "/host-grounded";
+            host_grounded.control_capture_ref += "/host-grounded";
+            host_grounded.conditioned_host_verified = true;
+            host_grounded_trajectories.push_back(std::move(host_grounded));
+            ++host_grounded_pairs;
+
+            if (model_emitted_verified) {
+                auto model_emitted = trajectory;
+                model_emitted.id += "/model-emitted";
+                model_emitted.fixture_ref += "/model-emitted";
+                model_emitted.baseline_capture_ref += "/model-emitted";
+                model_emitted.conditioned_capture_ref += "/model-emitted";
+                model_emitted.control_capture_ref += "/model-emitted";
+                model_emitted.conditioned_host_verified = true;
+                model_emitted_trajectories.push_back(std::move(model_emitted));
                 ++captured_pairs;
             }
         }
-        if (trajectories.size() < 2) {
-            std::cout << "concept_model_family=" << family.key
-                      << " status=unresolved reason=insufficient_host_verified_conditioned_pairs\n";
-            continue;
-        }
-        common_flydelta_concept_build_config config;
-        config.dimension = trajectories.front().baseline.size();
-        std::vector<common_flydelta_concept_candidate> candidates;
-        if (!common_flydelta_build_concept_candidates(
-                make_spec(family, "sha256:concept-qwen-model"), config,
-                trajectories, candidates, error)) {
-            std::cerr << "concept model build failed for " << family.key << ": " << error << '\n';
-            return false;
-        }
-        for (const auto & candidate : candidates) {
-            common_flydelta_direction_candidate direction;
-            if (!common_flydelta_concept_candidate_to_direction(
-                    candidate, direction, error) || !direction.experimental_only ||
-                    direction.origin != "host_taught_extracted") {
-                std::cerr << "concept model direction admission failed: " << error << '\n';
+
+        auto run_mode = [&](concept_model_mode mode,
+                const std::vector<common_flydelta_concept_trajectory> & trajectories) {
+            if ((mode == concept_model_mode::host_grounded &&
+                    value.concept_mode == "model-emitted") ||
+                    (mode == concept_model_mode::model_emitted &&
+                    value.concept_mode == "host-grounded")) return true;
+            if (trajectories.size() < 2) {
+                std::cout << "concept_model_family=" << family.key
+                          << " mode=" << concept_model_mode_name(mode)
+                          << " status=unresolved reason=insufficient_conditioned_pairs\n";
+                return true;
+            }
+            common_flydelta_concept_build_config config;
+            config.dimension = trajectories.front().baseline.size();
+            std::vector<common_flydelta_concept_candidate> candidates;
+            if (!common_flydelta_build_concept_candidates(
+                    make_spec(family, "sha256:concept-qwen-model"), config,
+                    trajectories, candidates, error)) {
+                std::cerr << "concept model build failed for " << family.key
+                          << " mode=" << concept_model_mode_name(mode)
+                          << ": " << error << '\n';
                 return false;
             }
-        }
-        std::cout << "concept_model_family=" << family.key
-                  << " status=extracted candidates=" << candidates.size()
-                  << " layer=" << candidates.front().layer_index
-                  << " median_alignment=" << candidates.front().median_alignment
-                  << " promotion=no\n";
-        const auto candidate_it = std::find_if(candidates.begin(), candidates.end(),
-            [](const common_flydelta_concept_candidate & candidate) {
-                return candidate.kind == common_flydelta_concept_candidate_kind::trimmed_mean;
-            });
-        if (candidate_it == candidates.end()) {
-            std::cerr << "concept model smoke did not produce a trimmed mean candidate\n";
-            return false;
-        }
-        common_flydelta_direction_candidate evaluation_direction;
-        if (!common_flydelta_concept_candidate_to_direction(
-                *candidate_it, evaluation_direction, error) ||
-                !run_concept_model_evaluation(
-                    value, loaded->model, loaded->chat_templates.get(), *inference,
-                    layer, *candidate_it, evaluation_direction,
-                    static_cast<size_t>(llama_model_n_embd(loaded->model)),
-                    static_cast<size_t>(llama_model_n_layer(loaded->model)),
-                    family.key,
-                    "sha256:concept-qwen-model")) {
-            std::cerr << "concept model candidate evaluation failed for " << family.key
-                      << ": " << error << '\n';
-            return false;
-        }
-        ++resolved_families;
+            for (const auto & candidate : candidates) {
+                common_flydelta_direction_candidate direction;
+                if (!common_flydelta_concept_candidate_to_direction(
+                        candidate, direction, error) || !direction.experimental_only ||
+                        direction.origin != "host_taught_extracted") {
+                    std::cerr << "concept model direction admission failed for "
+                              << family.key << " mode=" << concept_model_mode_name(mode)
+                              << ": " << error << '\n';
+                    return false;
+                }
+            }
+            std::cout << "concept_model_family=" << family.key
+                      << " mode=" << concept_model_mode_name(mode)
+                      << " status=extracted candidates=" << candidates.size()
+                      << " layer=" << candidates.front().layer_index
+                      << " median_alignment=" << candidates.front().median_alignment
+                      << " promotion=no\n";
+            const auto candidate_it = std::find_if(candidates.begin(), candidates.end(),
+                [](const common_flydelta_concept_candidate & candidate) {
+                    return candidate.kind == common_flydelta_concept_candidate_kind::trimmed_mean;
+                });
+            if (candidate_it == candidates.end()) {
+                std::cerr << "concept model smoke did not produce a trimmed mean candidate\n";
+                return false;
+            }
+            common_flydelta_direction_candidate evaluation_direction;
+            if (!common_flydelta_concept_candidate_to_direction(
+                    *candidate_it, evaluation_direction, error) ||
+                    !run_concept_model_evaluation(
+                        value, loaded->model, loaded->chat_templates.get(), *inference,
+                        layer, *candidate_it, evaluation_direction,
+                        static_cast<size_t>(llama_model_n_embd(loaded->model)),
+                        static_cast<size_t>(llama_model_n_layer(loaded->model)),
+                        family.key,
+                        "sha256:concept-qwen-model", mode)) {
+                std::cerr << "concept model candidate evaluation failed for " << family.key
+                          << " mode=" << concept_model_mode_name(mode)
+                          << ": " << error << '\n';
+                return false;
+            }
+            if (mode == concept_model_mode::host_grounded) ++host_grounded_families;
+            else ++model_emitted_families;
+            ++resolved_families;
+            return true;
+        };
+
+        if (!run_mode(concept_model_mode::host_grounded, host_grounded_trajectories) ||
+                !run_mode(concept_model_mode::model_emitted, model_emitted_trajectories)) return false;
     }
     std::cout << "flydelta_concept_model_smoke=completed"
               << " families=" << std::size(k_families)
               << " resolved_families=" << resolved_families
+              << " host_grounded_families=" << host_grounded_families
+              << " model_emitted_families=" << model_emitted_families
+              << " host_grounded_pairs=" << host_grounded_pairs
               << " captured_pairs=" << captured_pairs
               << " learning_credit=no\n";
     return true;
@@ -822,7 +897,8 @@ int main(int argc, char ** argv) {
     options value;
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
-                  << " [--model MODEL] [--n-predict N] [--threads N] [--n-gpu-layers N]\n";
+                  << " [--model MODEL] [--n-predict N] [--threads N] [--n-gpu-layers N]"
+                  << " [--concept-mode both|host-grounded|model-emitted]\n";
         return 2;
     }
     if (!run_offline()) return 1;

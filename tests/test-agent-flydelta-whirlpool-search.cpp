@@ -120,5 +120,33 @@ int main() {
     }));
     CHECK(trace.model_evaluations == retry_calls);
     CHECK(common_flydelta_whirlpool_trace_validate(trace, retry_config, trials.size(), error));
+
+    common_flydelta_whirlpool_search_config missing_geometry_config = config;
+    missing_geometry_config.max_rounds = 1;
+    missing_geometry_config.max_trials = 2;
+    trials.clear();
+    selection = {};
+    trace = {};
+    CHECK(common_flydelta_run_whirlpool_search(
+        fixture(), missing_geometry_config,
+        [](const auto &, const auto * candidate, auto & trial, auto & margin,
+                auto &, auto & geometry_available, std::string &) {
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.quality = candidate == nullptr ? 0.0f : 0.1f;
+            trial.evidence_ref = candidate == nullptr
+                ? "evidence:missing-geometry-baseline" : "evidence:missing-geometry-arm";
+            margin = {};
+            geometry_available = false;
+            return true;
+        }, trials, selection, trace, error));
+    CHECK(!trials.empty());
+    CHECK(std::all_of(trials.begin(), trials.end(), [](const auto & trial) {
+        return !trial.geometry_available && !trial.safe_to_continue;
+    }));
+    CHECK(!selection.selected);
+    CHECK(common_flydelta_whirlpool_trace_validate(
+        trace, missing_geometry_config, trials.size(), error));
     return 0;
 }

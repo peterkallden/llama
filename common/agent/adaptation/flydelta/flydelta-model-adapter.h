@@ -3,10 +3,15 @@
 #include "agent/adaptation/flydelta/flydelta-worker.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
+
+inline constexpr size_t common_flydelta_compact_geometry_scalar_count = 4;
+inline constexpr size_t common_flydelta_compact_geometry_bytes =
+    common_flydelta_compact_geometry_scalar_count * sizeof(float);
 
 // Generic model-facing primitive shared by every FlyDelta search phase. The
 // request describes one bounded arm; it contains references and scalar bounds,
@@ -34,6 +39,36 @@ struct common_flydelta_arm_request {
     size_t max_generated_tokens = 0;
 };
 
+// Optional backend timing/transfer telemetry. It is deliberately diagnostic:
+// search policy and lifecycle must not depend on these values. A device host
+// can use it to prove whether reductions/batching actually remove transfers
+// before a later optimization changes the runtime contract.
+struct common_flydelta_arm_execution_metrics {
+    int schema_version = 1;
+    bool available = false;
+    float model_ms = 0.0f;
+    float teacher_forced_ms = 0.0f;
+    float generation_ms = 0.0f;
+    size_t overlay_bytes_to_device = 0;
+    size_t capture_bytes_to_host = 0;
+    size_t diagnostics_bytes_to_host = 0;
+    bool device_reduction_used = false;
+    bool batched_execution_used = false;
+    // Execution provenance only; this must not affect utility, safety,
+    // evidence depth or learning credit.
+    enum class path : uint8_t {
+        unknown,
+        scalar,
+        scalar_fallback,
+        backend_batch,
+        device_batch,
+    } execution_path = path::unknown;
+    std::string fallback_reason;
+};
+
+const char * common_flydelta_arm_execution_path_name(
+        common_flydelta_arm_execution_metrics::path value);
+
 struct common_flydelta_arm_result {
     int schema_version = 1;
     // Must echo the request arm_id when a host executes the arm.
@@ -42,6 +77,10 @@ struct common_flydelta_arm_result {
     float requested_alpha = 0.0f;
     float executed_alpha = 0.0f;
     bool dose_safety_limited = false;
+    // These geometry fields are the compact reduction result. A device-aware
+    // host may compute them without transferring the full hidden-state
+    // capture; capture_ref is only needed when the vector itself is retained
+    // as later basis/donor/augmentation material.
     bool geometry_available = false;
     float cosine = 0.0f;
     float progress = 0.0f;
@@ -57,6 +96,7 @@ struct common_flydelta_arm_result {
     float margin_normalized = 0.0f;
     float margin_delta_total = 0.0f;
     float margin_delta_normalized = 0.0f;
+    common_flydelta_arm_execution_metrics execution_metrics;
     bool generation_available = false;
     float quality = 0.0f;
     bool host_evaluated = false;
@@ -77,6 +117,37 @@ bool common_flydelta_arm_result_validate(
         const common_flydelta_arm_result & result,
         std::string & error);
 
+// Compares the observable arm result for scalar/device replay. Backend path,
+// timings and temporary artifact references are deliberately excluded; those
+// belong to execution telemetry and provenance, not model semantics.
+bool common_flydelta_arm_result_replay_equivalent(
+        const common_flydelta_arm_result & expected,
+        const common_flydelta_arm_result & actual,
+        float absolute_tolerance,
+        std::string & error);
+
+// A batch is only an execution optimization boundary. Each arm retains its
+// own fresh-context, overlay, margin, geometry and host-outcome semantics.
+// Backends may execute this as one device batch; the common fallback executes
+// the same requests one by one without changing the results contract.
+struct common_flydelta_arm_batch_request {
+    int schema_version = 1;
+    std::vector<common_flydelta_arm_request> arms;
+};
+
+struct common_flydelta_arm_batch_result {
+    int schema_version = 1;
+    std::vector<common_flydelta_arm_result> arms;
+};
+
+bool common_flydelta_arm_batch_request_validate(
+        const common_flydelta_arm_batch_request & request,
+        std::string & error);
+bool common_flydelta_arm_batch_result_validate(
+        const common_flydelta_arm_batch_result & result,
+        const common_flydelta_arm_batch_request & request,
+        std::string & error);
+
 struct common_flydelta_evaluator_config;
 struct common_flydelta_evaluator_callbacks;
 
@@ -87,6 +158,7 @@ struct common_flydelta_model_capabilities {
     // Primitive capabilities are the facts a runtime registration can prove.
     // Algorithm capabilities below are derived from these facts, not merely
     // copied from a caller's requested configuration.
+    bool bounded_arm_batch = false;
     bool capture = false;
     bool overlay = false;
     bool generation = false;
@@ -111,11 +183,23 @@ struct common_flydelta_model_host {
             const common_flydelta_arm_request & request,
             common_flydelta_arm_result & result,
             std::string & error)> run_bounded_arm;
+    // Optional backend optimization. When absent, the generic helper below
+    // falls back to run_bounded_arm and preserves per-arm isolation.
+    std::function<bool(
+            const common_flydelta_arm_batch_request & request,
+            common_flydelta_arm_batch_result & result,
+            std::string & error)> run_bounded_arm_batch;
     std::function<bool(
             common_flydelta_evaluator_config & config,
             common_flydelta_evaluator_callbacks & callbacks,
             std::string & error)> register_evaluator;
 };
+
+bool common_flydelta_run_bounded_arm_batch(
+        const common_flydelta_model_host & host,
+        const common_flydelta_arm_batch_request & request,
+        common_flydelta_arm_batch_result & result,
+        std::string & error);
 
 bool common_flydelta_model_host_validate(
         const common_flydelta_model_host & host,

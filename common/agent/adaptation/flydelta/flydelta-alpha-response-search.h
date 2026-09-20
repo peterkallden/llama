@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,8 @@ struct common_flydelta_alpha_response_search_config {
     float growth_factor = 2.0f;
     float max_scale = 0.64f;
     size_t max_expansion_trials = 5;
+    // Number of new model evaluations in the golden-ratio refinement phase,
+    // not the number of two-point refinement rounds.
     size_t max_zoom_trials = 2;
     size_t max_min_effective_trials = 2;
     // Avoid stopping on one noisy utility reversal during exploration.
@@ -54,6 +57,9 @@ struct common_flydelta_alpha_response_trial {
     float requested_scale = 0.0f;
     common_flydelta_dose_action dose_action = common_flydelta_dose_action::reject;
     float relative_dose = 0.0f;
+    // A safety backoff is a proposal for the next search coordinate. It is
+    // intentionally not executed inside the current trial.
+    std::optional<float> proposed_next_scale;
     bool dose_evaluated = false;
     bool dose_safety_limited = false;
     std::string dose_reason;

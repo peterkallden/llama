@@ -18,9 +18,12 @@ bool contains(const std::vector<uint32_t> & values, uint32_t value) {
 
 bool safe_geometry(const common_flydelta_representation_diagnostics & geometry,
         bool available, const common_flydelta_whirlpool_search_config & config) {
-    return !available || (geometry.cosine >= config.min_cosine &&
+    // A margin-only Whirlpool is allowed when no dose controller is active.
+    // Once dose regulation is enabled, missing geometry is unknown rather than
+    // safe: the arm cannot be compared or admitted to the safety envelope.
+    return available ? (geometry.cosine >= config.min_cosine &&
         geometry.leakage <= config.max_leakage &&
-        geometry.shift_norm <= config.max_shift_norm);
+        geometry.shift_norm <= config.max_shift_norm) : !config.use_dose_controller;
 }
 
 float objective(const common_flydelta_counterfactual_trial & baseline,

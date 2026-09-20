@@ -24,7 +24,7 @@ static common_flydelta_intervention_credit credit(common_flydelta_counterfactual
     value.fixture_id = "flydelta://fixture/1";
     value.outcome = outcome;
     value.quality_delta = outcome == common_flydelta_counterfactual_outcome::helped ? 0.5f : 0.0f;
-    value.eligible_for_learning = outcome != common_flydelta_counterfactual_outcome::unknown;
+    value.eligible_for_learning = outcome == common_flydelta_counterfactual_outcome::helped;
     return value;
 }
 

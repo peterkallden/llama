@@ -197,7 +197,8 @@ bool common_flydelta_intervention_credit_validate(
             !nonempty_bounded(credit.candidate_id) || !nonempty_bounded(credit.fixture_id) ||
             !std::isfinite(credit.quality_delta) || credit.quality_delta < -1.0f ||
             credit.quality_delta > 1.0f ||
-            (credit.eligible_for_learning && credit.outcome == common_flydelta_counterfactual_outcome::unknown)) {
+            (credit.eligible_for_learning &&
+                credit.outcome != common_flydelta_counterfactual_outcome::helped)) {
         error = "FlyDelta intervention credit is invalid";
         return false;
     }
@@ -216,7 +217,11 @@ bool common_flydelta_intervention_credit_from_report(
     credit.fixture_id = report.fixture_id;
     credit.outcome = report.outcome;
     credit.quality_delta = report.quality_delta;
-    credit.eligible_for_learning = report.outcome != common_flydelta_counterfactual_outcome::unknown;
+    // Learning credit is deliberately stricter than search retention:
+    // NEUTRAL and UNKNOWN remain useful observations, but only HELPED can
+    // make a relation eligible for evidence-depth or promotion.
+    credit.eligible_for_learning =
+        report.outcome == common_flydelta_counterfactual_outcome::helped;
     return common_flydelta_intervention_credit_validate(credit, error);
 }
 

@@ -244,10 +244,15 @@ bool common_flydelta_evaluate_job(
             if (!aggregation.assess_depth(result.evidence_depth, error)) return false;
             result.search_budget = common_flydelta_search_budget_for_depth(result.evidence_depth.depth);
             if (!common_flydelta_search_budget_validate(result.search_budget, error)) return false;
+            const auto aggregation_snapshot = aggregation.snapshot();
+            const auto & direction_samples = config.direction.mode ==
+                    common_flydelta_direction_search_mode::experimental
+                ? aggregation_snapshot.retained_samples
+                : aggregation_snapshot.evidence_retained_samples;
             if (!common_flydelta_build_direction_candidates(
-                    config.direction, aggregation.snapshot().retained_samples,
+                    config.direction, direction_samples,
                     result.direction_candidates, error)) return false;
-            result.aggregation = aggregation.snapshot();
+            result.aggregation = aggregation_snapshot;
             result.processed_references = samples.size();
             return true;
         }

@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct common_flydelta_activation_result;
@@ -166,6 +167,19 @@ struct common_agent_teacher_forced_choice_result {
     }
 };
 
+// Backend-neutral batch form for teacher-forced comparisons. Each entry is
+// independent and retains its own context/overlay semantics. Backends may
+// execute the entries together; the default inference implementation below
+// provides a correctness-preserving scalar fallback.
+struct common_agent_teacher_forced_choice_batch_request {
+    std::vector<common_agent_teacher_forced_choice_request> choices;
+};
+
+struct common_agent_teacher_forced_choice_batch_result {
+    std::vector<common_agent_teacher_forced_choice_result> choices;
+    std::string error_message;
+};
+
 inline bool common_agent_generation_succeeded(const common_agent_generation_result & result) {
     return result.status == common_agent_generation_status::completed;
 }
@@ -188,12 +202,34 @@ public:
         const common_agent_generation_request & request,
         common_agent_generation_result & result) = 0;
     virtual bool score_teacher_forced_choice(
-        const common_agent_teacher_forced_choice_request & request,
-        common_agent_teacher_forced_choice_result & result) {
+            const common_agent_teacher_forced_choice_request & request,
+            common_agent_teacher_forced_choice_result & result) {
         (void) request;
         result = {};
         result.error_message = "teacher-forced choice scoring is unavailable for this inference backend";
         return false;
+    }
+    virtual bool score_teacher_forced_choice_batch(
+            const common_agent_teacher_forced_choice_batch_request & request,
+            common_agent_teacher_forced_choice_batch_result & result) {
+        result = {};
+        if (request.choices.empty() || request.choices.size() > 256) {
+            result.error_message = "teacher-forced scoring batch has an invalid size";
+            return false;
+        }
+        result.choices.reserve(request.choices.size());
+        for (const auto & choice_request : request.choices) {
+            common_agent_teacher_forced_choice_result choice_result;
+            if (!score_teacher_forced_choice(choice_request, choice_result)) {
+                result.error_message = choice_result.error_message.empty()
+                    ? "teacher-forced scoring batch entry failed"
+                    : choice_result.error_message;
+                result.choices.clear();
+                return false;
+            }
+            result.choices.push_back(std::move(choice_result));
+        }
+        return true;
     }
     common_agent_generation_result generate_result(const common_agent_generation_request & request) {
         common_agent_generation_result result;

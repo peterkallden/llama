@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // Ephemeral diagnostics for an overlay arm that could not be host-classified.
 // These values describe representation geometry only; they are not learning
@@ -34,3 +35,30 @@ bool common_flydelta_representation_diagnostics_from_captures(
         size_t max_capture_bytes,
         common_flydelta_representation_diagnostics & diagnostics,
         std::string & error);
+
+// Reference implementation for a compact device reduction. A backend may
+// calculate the same four scalars on device and return only those scalars;
+// this helper is retained as the CPU parity oracle and for scalar fallback.
+// The input vectors are one aligned layer, not an entire capture.
+bool common_flydelta_representation_diagnostics_from_vectors(
+        const float * baseline_values,
+        const float * overlay_values,
+        size_t dimension,
+        const common_flydelta_behavior_delta & behavior_delta,
+        common_flydelta_representation_diagnostics & diagnostics,
+        std::string & error);
+
+inline bool common_flydelta_representation_diagnostics_from_vectors(
+        const std::vector<float> & baseline_values,
+        const std::vector<float> & overlay_values,
+        const common_flydelta_behavior_delta & behavior_delta,
+        common_flydelta_representation_diagnostics & diagnostics,
+        std::string & error) {
+    if (baseline_values.size() != overlay_values.size()) {
+        error = "FlyDelta diagnostics vector sizes are not aligned";
+        return false;
+    }
+    return common_flydelta_representation_diagnostics_from_vectors(
+        baseline_values.data(), overlay_values.data(), baseline_values.size(),
+        behavior_delta, diagnostics, error);
+}

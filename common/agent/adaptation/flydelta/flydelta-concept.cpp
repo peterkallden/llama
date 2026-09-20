@@ -294,7 +294,8 @@ bool common_flydelta_build_concept_candidates(
     const size_t trim = std::min(requested_trim, max_trim);
     std::vector<size_t> retained;
     retained.reserve(residuals.size() - trim);
-    for (size_t index = trim; index < alignments.size(); ++index) {
+    const size_t keep = alignments.size() - trim;
+    for (size_t index = 0; index < keep; ++index) {
         retained.push_back(alignments[index].second);
     }
     std::vector<float> retained_alignments;

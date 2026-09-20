@@ -29,6 +29,14 @@ struct common_flydelta_dose_policy {
 struct common_flydelta_dose_state {
     int schema_version = 1;
     size_t observation_count = 0;
+    // Monotone trust-region bounds. The legacy last_* fields remain for
+    // persisted V0 state and diagnostics; decisions use these bounds first.
+    std::optional<float> max_safe_strength;
+    std::optional<float> min_unsafe_strength;
+    std::optional<float> max_safe_relative_dose;
+    std::optional<float> min_unsafe_relative_dose;
+    std::optional<float> max_safe_absolute_dose;
+    std::optional<float> min_unsafe_absolute_dose;
     std::optional<float> last_safe_strength;
     std::optional<float> last_unsafe_strength;
     std::optional<float> last_safe_relative_dose;

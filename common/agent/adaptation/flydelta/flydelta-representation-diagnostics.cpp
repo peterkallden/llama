@@ -73,13 +73,32 @@ bool common_flydelta_representation_diagnostics_from_captures(
     }
 
     const size_t dimension = static_cast<size_t>(baseline.n_embd);
+    return common_flydelta_representation_diagnostics_from_vectors(
+        baseline.values.data() + baseline_offset,
+        overlay.values.data() + overlay_offset,
+        dimension, behavior_delta, diagnostics, error);
+}
+
+bool common_flydelta_representation_diagnostics_from_vectors(
+        const float * baseline_values,
+        const float * overlay_values,
+        const size_t dimension,
+        const common_flydelta_behavior_delta & behavior_delta,
+        common_flydelta_representation_diagnostics & diagnostics,
+        std::string & error) {
+    error.clear();
+    diagnostics = {};
+    if (baseline_values == nullptr || overlay_values == nullptr ||
+            dimension == 0 || behavior_delta.values.size() != dimension) {
+        error = "FlyDelta diagnostics vector dimensions are invalid";
+        return false;
+    }
     double dot = 0.0;
     double shift_squared = 0.0;
     double delta_squared = 0.0;
     std::vector<float> shift(dimension);
     for (size_t index = 0; index < dimension; ++index) {
-        const float value = overlay.values[overlay_offset + index] -
-            baseline.values[baseline_offset + index];
+        const float value = overlay_values[index] - baseline_values[index];
         if (!finite(value) || !finite(behavior_delta.values[index])) {
             error = "FlyDelta diagnostics contain a non-finite value";
             return false;

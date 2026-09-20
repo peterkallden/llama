@@ -7,7 +7,7 @@
 static common_flydelta_contrast_sample sample(
         const char * id, const std::vector<float> & values,
         common_flydelta_counterfactual_outcome outcome =
-            common_flydelta_counterfactual_outcome::unknown) {
+            common_flydelta_counterfactual_outcome::helped) {
     common_flydelta_contrast_sample result;
     result.delta.id = id;
     result.delta.source = common_adaptation_evidence_source::tool_repair;
@@ -23,6 +23,8 @@ static common_flydelta_contrast_sample sample(
     result.credit.candidate_id = id;
     result.credit.fixture_id = "flydelta://fixture/depth";
     result.credit.outcome = outcome;
+    result.credit.eligible_for_learning =
+        outcome == common_flydelta_counterfactual_outcome::helped;
     return result;
 }
 
@@ -87,6 +89,19 @@ int main() {
         incompatible, harmed}, result, error));
     CHECK(result.compatible_samples == 1 && result.incompatible_samples == 2);
     CHECK(std::string(common_flydelta_search_depth_name(result.depth)) == "bootstrap");
+
+    auto unknown = sample("flydelta://sample/unknown", {0.0f, 1.0f, 0.0f, 0.0f},
+        common_flydelta_counterfactual_outcome::unknown);
+    auto neutral = sample("flydelta://sample/neutral", {0.0f, 0.0f, 1.0f, 0.0f},
+        common_flydelta_counterfactual_outcome::neutral);
+    neutral.credit.eligible_for_learning = false;
+    CHECK(common_flydelta_assess_evidence_depth(
+        identity(), config,
+        {sample("flydelta://sample/helped-a", {1.0f, 0.0f, 0.0f, 0.0f}),
+         sample("flydelta://sample/helped-b", {0.0f, 1.0f, 0.0f, 0.0f}),
+         unknown, neutral}, result, error));
+    CHECK(result.compatible_samples == 2 && result.experimental_samples == 2);
+    CHECK(result.shallow_ready && result.depth == common_flydelta_search_depth::shallow);
 
     auto bad_config = config;
     bad_config.max_condition_number = 0.0f;

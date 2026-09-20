@@ -44,6 +44,45 @@ common_agent_generation_request make_base_request() {
         options);
 }
 
+class teacher_forced_batch_test_inference final : public common_agent_inference {
+public:
+    bool generate(
+            const common_agent_generation_request &,
+            common_agent_generation_result &) override {
+        return false;
+    }
+
+    bool score_teacher_forced_choice(
+            const common_agent_teacher_forced_choice_request & request,
+            common_agent_teacher_forced_choice_result & result) override {
+        result = {};
+        result.available = true;
+        result.positive_total_logprob = static_cast<float>(request.positive_choice.size());
+        result.negative_total_logprob = static_cast<float>(request.negative_choice.size());
+        result.positive_token_count = request.positive_choice.size();
+        result.negative_token_count = request.negative_choice.size();
+        return true;
+    }
+};
+
+void test_teacher_forced_batch_fallback() {
+    teacher_forced_batch_test_inference inference;
+    common_agent_teacher_forced_choice_batch_request request;
+    request.choices.resize(2);
+    request.choices[0].positive_choice = "inspect";
+    request.choices[0].negative_choice = "describe";
+    request.choices[1].positive_choice = "aggregate";
+    request.choices[1].negative_choice = "query";
+
+    common_agent_teacher_forced_choice_batch_result result;
+    assert(inference.score_teacher_forced_choice_batch(request, result));
+    assert(result.error_message.empty());
+    assert(result.choices.size() == 2);
+    assert(result.choices[0].available && result.choices[1].available);
+    assert(result.choices[0].positive_token_count == 7);
+    assert(result.choices[1].negative_token_count == 5);
+}
+
 void test_prepare_tool_generation() {
     auto templates = make_templates();
     auto request = make_base_request();
@@ -190,6 +229,20 @@ void test_server_task_params_from_prepared_generation() {
     assert(std::fabs(params.cvec->data[0] - 0.125f) < 1e-6f);
     const auto serialized_params = params.to_json();
     assert(!serialized_params.contains("cvec"));
+
+    // Distinct per-sequence overlays must never compare as the same cvec.
+    // server_context uses this identity boundary to clear prompt/KV state
+    // before applying a different request-scoped overlay.
+    auto second_activation = std::make_shared<common_flydelta_activation_result>(*activation);
+    second_activation->overlay.artifact_id = "flydelta://artifact/task-2";
+    second_activation->overlay.data[0] = 0.5f;
+    request.flydelta_activation = second_activation;
+    const auto second_params = make_server_task_params_from_prepared_generation(
+        params_base, request, prepared, logit_bias_eog);
+    assert(second_params.cvec);
+    assert(!server_task_cvec_equal(params.cvec, second_params.cvec));
+    assert(!params.cache_prompt && !second_params.cache_prompt);
+
     assert(params.stream);
     assert(!params.cache_prompt);
     assert(params.n_keep == 9);
@@ -243,6 +296,7 @@ void test_server_task_cvec_contract() {
 } // namespace
 
 int main() {
+    test_teacher_forced_batch_fallback();
     test_prepare_tool_generation();
     test_prepare_json_schema_generation();
     test_flydelta_activation_is_per_request_and_server_accepts_active();

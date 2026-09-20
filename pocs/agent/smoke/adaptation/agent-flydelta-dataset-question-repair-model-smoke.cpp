@@ -208,14 +208,9 @@ std::string preview(const common_agent_generation_result & result) {
     return output;
 }
 
-std::string tool_call_continuation(const std::string & tool, const json & arguments) {
-    if (tool.empty() || !arguments.is_object()) return {};
-    return tool + "\",\"arguments\":" + arguments.dump() + "}";
-}
-
-std::string parsed_tool_call_continuation(const common_agent_generation_result & result) {
-    if (!common_agent_generation_succeeded(result)) return {};
-    json parsed = json::parse(result.content, nullptr, false);
+bool parse_model_tool_call(const common_agent_generation_result & result, json & parsed) {
+    if (!common_agent_generation_succeeded(result)) return false;
+    parsed = json::parse(result.content, nullptr, false);
     if (parsed.is_discarded()) {
         const size_t first_object = result.content.find('{');
         const size_t last_object = result.content.rfind('}');
@@ -224,8 +219,28 @@ std::string parsed_tool_call_continuation(const common_agent_generation_result &
                 last_object - first_object + 1), nullptr, false);
         }
     }
-    if (!parsed.is_object() || !parsed.contains("name") || !parsed["name"].is_string() ||
-            !parsed.contains("arguments") || !parsed["arguments"].is_object()) return {};
+    if (!parsed.is_object() || !parsed.contains("name") || !parsed["name"].is_string()) {
+        return false;
+    }
+    // The host's canonical repair uses "arguments", while several model
+    // tool-call serializers use the equivalent short form "args". Keep the
+    // host verifier strict and normalize this smoke-boundary representation
+    // before the verifier sees it.
+    if (!parsed.contains("arguments") && parsed.contains("args") &&
+            parsed["args"].is_object()) {
+        parsed["arguments"] = parsed["args"];
+    }
+    return parsed.contains("arguments") && parsed["arguments"].is_object();
+}
+
+std::string tool_call_continuation(const std::string & tool, const json & arguments) {
+    if (tool.empty() || !arguments.is_object()) return {};
+    return tool + "\",\"arguments\":" + arguments.dump() + "}";
+}
+
+std::string parsed_tool_call_continuation(const common_agent_generation_result & result) {
+    json parsed;
+    if (!parse_model_tool_call(result, parsed)) return {};
     return tool_call_continuation(parsed["name"].get<std::string>(), parsed["arguments"]);
 }
 
@@ -251,9 +266,8 @@ host_verdict verify_model_call(const common_agent_generation_result & result,
         verdict.diagnostic = "model generation failed";
         return verdict;
     }
-    const json parsed = json::parse(result.content, nullptr, false);
-    if (!parsed.is_object() || !parsed.contains("name") || !parsed["name"].is_string() ||
-            !parsed.contains("arguments") || !parsed["arguments"].is_object()) {
+    json parsed;
+    if (!parse_model_tool_call(result, parsed)) {
         verdict.diagnostic = "host rejected a non-canonical tool-call object";
         return verdict;
     }
@@ -766,7 +780,9 @@ int main(int argc, char ** argv) {
     std::error_code ignored;
     std::filesystem::remove_all(worker_root, ignored);
     std::cout << "flydelta_dataset_question_repair_model_smoke"
-              << " passed=" << passed << " failures=" << failures << " unresolved=" << unresolved
+              << " baseline_passed=" << passed
+              << " baseline_failures=" << failures
+              << " unresolved=" << unresolved
               << " config=" << (value.config.empty() ? "none" : value.config)
               << " selected_scenarios=" << selected_scenarios
               << " host_certified_repairs=" << repaired
@@ -1392,9 +1408,14 @@ int main(int argc, char ** argv) {
                     score_request.positive_continuation = tool_call_continuation(
                         bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
                     score_request.negative_continuation = bootstrap_case.failed_continuation;
-                    common_agent_teacher_forced_choice_result score_result;
-                    if (inference->score_teacher_forced_choice(score_request, score_result) &&
-                            score_result.available) {
+                    common_agent_teacher_forced_choice_batch_request score_batch_request;
+                    score_batch_request.choices.push_back(std::move(score_request));
+                    common_agent_teacher_forced_choice_batch_result score_batch_result;
+                    if (inference->score_teacher_forced_choice_batch(
+                                score_batch_request, score_batch_result) &&
+                            score_batch_result.choices.size() == 1 &&
+                            score_batch_result.choices.front().available) {
+                        const auto & score_result = score_batch_result.choices.front();
                         arm_result.margin.available = true;
                         arm_result.margin.positive_total_logprob =
                             score_result.positive_total_logprob;
@@ -1438,7 +1459,16 @@ int main(int argc, char ** argv) {
                     std::cout << " scale=" << arm_request.alpha
                               << " selected_tool=" << verdict.selected_tool
                               << " outcome=" << common_flydelta_counterfactual_outcome_name(
-                                  arm_result.host_outcome) << '\n';
+                                  arm_result.host_outcome)
+                              << " execution_path=" << common_flydelta_arm_execution_path_name(
+                                  arm_result.execution_metrics.execution_path)
+                              << " teacher_batch=single-entry"
+                              << " diagnostics_bytes_to_host="
+                              << arm_result.execution_metrics.diagnostics_bytes_to_host
+                              << " margin_available=" << (arm_result.margin.available ? "yes" : "no")
+                              << " margin_delta=" << (arm_result.margin.available
+                                  ? arm_result.margin.total_delta() : 0.0f)
+                              << '\n';
                     return true;
                 };
                 const auto model_runner = common_flydelta_search_pipeline_runner_from_model_host(
@@ -1447,16 +1477,33 @@ int main(int argc, char ** argv) {
                 const bool executed = common_flydelta_run_search_pipeline(
                     fixture, pipeline_config, {pipeline_direction}, model_runner,
                     pipeline_result, runner_error);
-                if (!executed) return false;
+                if (!executed) {
+                    if (runner_error.empty()) {
+                        runner_error = "FlyDelta model smoke search pipeline returned false";
+                    }
+                    error = runner_error;
+                    return false;
+                }
                 output = pipeline_result;
                 return true;
             };
             common_flydelta_experiment_worker_report worker_report;
             const bool enqueued = common_flydelta_experiment_queue_enqueue(worker_root, job, {}, error);
-            if (!enqueued ||
-                    !common_flydelta_experiment_worker_run_evaluator_once(
-                        worker_root, {}, evaluator_config, evaluator_callbacks,
-                        worker_report, error) ||
+            const bool worker_executed = enqueued &&
+                common_flydelta_experiment_worker_run_evaluator_once(
+                    worker_root, {}, evaluator_config, evaluator_callbacks,
+                    worker_report, error);
+            if (!enqueued && error.empty()) {
+                error = "search-pipeline worker could not enqueue job";
+            } else if (!worker_executed && error.empty()) {
+                error = "search-pipeline worker evaluator returned false";
+            } else if (worker_report.state != common_flydelta_experiment_queue_state::succeeded &&
+                    error.empty()) {
+                error = "search-pipeline worker did not reach succeeded state";
+            } else if (pipeline_result.directions.empty() && error.empty()) {
+                error = "search-pipeline completed without direction results";
+            }
+            if (!enqueued || !worker_executed ||
                     worker_report.state != common_flydelta_experiment_queue_state::succeeded ||
                     pipeline_result.directions.empty()) {
                 host.close();
@@ -1470,9 +1517,6 @@ int main(int argc, char ** argv) {
                       << " selected=" << (pipeline_result.selection.selected ? "yes" : "no")
                       << " baseline_tool=" << baseline_tool
                       << '\n';
-            std::cout << "flydelta_trace group=" << entry.first
-                      << " json=" << worker_report.trace_json << '\n';
-
             if (value.adaptive_alpha_search) {
                 const auto & pipeline_direction_result = pipeline_result.directions.front();
                 const common_flydelta_intervention_region_trial * alpha_seed = nullptr;
@@ -1672,9 +1716,14 @@ int main(int argc, char ** argv) {
                 alpha_config.seed_scale = 0.02f;
                 alpha_config.growth_factor = 2.0f;
                 alpha_config.max_scale = 0.64f;
-                alpha_config.max_expansion_trials = 5;
-                alpha_config.max_zoom_trials = 2;
-                alpha_config.max_min_effective_trials = 2;
+                // Keep the model-backed smoke bounded independently of the
+                // production V0 budget (5 + 2 + 2). Each alpha arm performs
+                // fresh model work, so this smoke only proves the wiring and
+                // trace contract; the production search retains the larger
+                // budget in its typed configuration.
+                alpha_config.max_expansion_trials = 2;
+                alpha_config.max_zoom_trials = 1;
+                alpha_config.max_min_effective_trials = 1;
                 alpha_config.max_expansion_non_improving = 2;
                 alpha_config.max_leakage = pipeline_config.scale.max_leakage;
                 alpha_config.max_shift_norm = pipeline_config.scale.max_shift_norm;
@@ -1730,7 +1779,50 @@ int main(int argc, char ** argv) {
                                   (alpha_trial.dose_safety_limited ? "yes" : "no")
                               << " reason=" << alpha_trial.dose_reason << '\n';
                 }
+                // Keep the printed trace representation in sync with the
+                // optional bounded phase. The worker trace is persisted by
+                // the worker before this smoke-only follow-up, so this is a
+                // diagnostic projection rather than a lifecycle mutation.
+                worker_report.trace.alpha_response_available = true;
+                worker_report.trace.alpha_response_status = alpha_selection.response_status;
+                worker_report.trace.alpha_range_not_exhausted =
+                    alpha_selection.range_not_exhausted;
+                worker_report.trace.alpha_last_scale = alpha_selection.last_scale;
+                worker_report.trace.alpha_last_requested_scale =
+                    alpha_selection.last_requested_scale;
+                worker_report.trace.alpha_last_executed_scale =
+                    alpha_selection.last_executed_scale;
+                worker_report.trace.alpha_last_relative_dose =
+                    alpha_selection.last_relative_dose;
+                worker_report.trace.alpha_last_dose_action = common_flydelta_dose_action_name(
+                    alpha_selection.last_dose_action);
+                worker_report.trace.alpha_last_dose_evaluated =
+                    alpha_selection.last_dose_evaluated;
+                worker_report.trace.alpha_last_dose_safety_limited =
+                    alpha_selection.last_dose_safety_limited;
+                worker_report.trace.alpha_utility_slope = alpha_selection.utility_slope;
+                worker_report.trace.alpha_best_margin_delta_normalized =
+                    alpha_selection.best_margin_delta_normalized;
+                // Emit the optional phase as an explicit trace update. The
+                // worker trace is immutable after its bounded slice; this
+                // keeps the later AdaptiveAlpha observation visible without
+                // pretending it was part of the worker's persisted trace.
+                std::cout << "flydelta_trace_update group=" << entry.first
+                          << " phase=adaptive_alpha"
+                          << " seed_layer=" << alpha_seed->candidate.anchor_layer_index
+                          << " trials=" << alpha_trials.size()
+                          << " response_status=" << common_flydelta_alpha_response_status_name(
+                              alpha_selection.response_status)
+                          << " selected=" << (alpha_selection.selected ? "yes" : "no")
+                          << " range_not_exhausted=" <<
+                              (alpha_selection.range_not_exhausted ? "yes" : "no")
+                          << " last_requested_scale=" << alpha_selection.last_requested_scale
+                          << " last_executed_scale=" << alpha_selection.last_executed_scale
+                          << " utility=" << alpha_selection.utility
+                          << '\n';
             }
+            std::cout << "flydelta_trace group=" << entry.first
+                      << " json=" << common_flydelta_trace_to_json(worker_report.trace) << '\n';
         }
     }
     std::string ledger_error;

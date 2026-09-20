@@ -102,10 +102,13 @@ bool common_flydelta_dose_preflight(
         return false;
     }
 
-    if (state.last_unsafe_strength && requested_strength >= *state.last_unsafe_strength &&
-            state.last_safe_strength) {
+    const auto & unsafe_strength = state.min_unsafe_strength
+        ? state.min_unsafe_strength : state.last_unsafe_strength;
+    const auto & safe_strength = state.max_safe_strength
+        ? state.max_safe_strength : state.last_safe_strength;
+    if (unsafe_strength && requested_strength >= *unsafe_strength && safe_strength) {
         decision.action = common_flydelta_dose_action::safety_boundary;
-        decision.known_safe_upper_bound = state.last_safe_strength;
+        decision.known_safe_upper_bound = safe_strength;
         decision.safety_limited = true;
         decision.reason = "requested strength reaches a learned unsafe boundary";
         return true;
@@ -147,6 +150,12 @@ bool common_flydelta_dose_observe(
     const bool safe = observation.absolute_dose <= policy.max_shift_norm &&
         observation.leakage <= policy.max_leakage;
     if (safe) {
+        if (!state.max_safe_strength ||
+                observation.requested_strength > *state.max_safe_strength) {
+            state.max_safe_strength = observation.requested_strength;
+            state.max_safe_relative_dose = decision.relative_dose;
+            state.max_safe_absolute_dose = observation.absolute_dose;
+        }
         state.last_safe_strength = observation.requested_strength;
         state.last_safe_relative_dose = decision.relative_dose;
         state.last_safe_absolute_dose = observation.absolute_dose;
@@ -157,6 +166,12 @@ bool common_flydelta_dose_observe(
         return true;
     }
 
+    if (!state.min_unsafe_strength ||
+            observation.requested_strength < *state.min_unsafe_strength) {
+        state.min_unsafe_strength = observation.requested_strength;
+        state.min_unsafe_relative_dose = decision.relative_dose;
+        state.min_unsafe_absolute_dose = observation.absolute_dose;
+    }
     state.last_unsafe_strength = observation.requested_strength;
     state.last_unsafe_relative_dose = decision.relative_dose;
     state.last_unsafe_absolute_dose = observation.absolute_dose;

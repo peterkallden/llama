@@ -78,6 +78,11 @@ bool same_identity(
         delta.layer_index == identity.layer_index;
 }
 
+bool evidence_eligible(const common_flydelta_intervention_credit & credit) {
+    return credit.outcome == common_flydelta_counterfactual_outcome::helped &&
+        credit.eligible_for_learning;
+}
+
 } // namespace
 
 const char * common_flydelta_search_depth_name(common_flydelta_search_depth depth) {
@@ -183,6 +188,10 @@ bool common_flydelta_assess_evidence_depth(
         if (!same_identity(sample.delta, identity) ||
                 sample.credit.outcome == common_flydelta_counterfactual_outcome::harmed) {
             ++result.incompatible_samples;
+            continue;
+        }
+        if (!evidence_eligible(sample.credit)) {
+            ++result.experimental_samples;
             continue;
         }
         const float value_norm = norm(sample.delta.values);

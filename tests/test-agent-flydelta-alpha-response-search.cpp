@@ -106,6 +106,30 @@ int main() {
     CHECK(!no_selection.minimum_effective_available);
     CHECK(no_selection.response_status == common_flydelta_alpha_response_status::saturated);
 
+    // max_zoom_trials is a budget in new model evaluations, not in pairs of
+    // golden-section probes. With two expansion observations and two zoom
+    // evaluations this must produce exactly four overlay calls.
+    common_flydelta_alpha_response_search_config bounded_zoom_config = config;
+    bounded_zoom_config.seed_scale = 0.01f;
+    bounded_zoom_config.growth_factor = 2.0f;
+    bounded_zoom_config.max_scale = 0.5f;
+    bounded_zoom_config.max_expansion_trials = 2;
+    bounded_zoom_config.max_zoom_trials = 2;
+    bounded_zoom_config.max_min_effective_trials = 0;
+    bounded_zoom_config.max_expansion_non_improving = 8;
+    std::vector<common_flydelta_alpha_response_trial> bounded_zoom_trials;
+    common_flydelta_alpha_response_selection bounded_zoom_selection;
+    CHECK(common_flydelta_run_alpha_response_search(
+        common_flydelta_experiment_fixture{
+            1, "fixture:alpha-response-zoom-budget", "task", "model", "tokenizer",
+            "template", "context", "verifier"
+        }, bounded_zoom_config, scripted_alpha_runner,
+        bounded_zoom_trials, bounded_zoom_selection, error));
+    CHECK(bounded_zoom_trials.size() ==
+        bounded_zoom_config.max_expansion_trials + bounded_zoom_config.max_zoom_trials);
+    CHECK(bounded_zoom_selection.response_status ==
+        common_flydelta_alpha_response_status::budget_limited);
+
     common_flydelta_alpha_response_selection failing_selection;
     std::vector<common_flydelta_alpha_response_trial> failing_trials;
     CHECK(!common_flydelta_run_alpha_response_search(
@@ -142,13 +166,14 @@ int main() {
     CHECK(early_helped_trials.front().outcome ==
         common_flydelta_counterfactual_outcome::helped);
 
-    // An unsafe requested alpha must be represented explicitly: the search
-    // coordinate remains the requested value while execution may retry once
-    // at the bounded dose proposed by the controller.
+    // An unsafe requested alpha is a complete observation. The controller's
+    // backoff is the next search proposal, not an in-place model rerun.
     common_flydelta_alpha_response_search_config dose_config;
     dose_config.seed_scale = 0.05f;
     dose_config.max_scale = 0.05f;
-    dose_config.max_expansion_trials = 1;
+    // A backoff is a separate model observation, so the bounded slice must
+    // reserve one expansion slot for the retry proposal.
+    dose_config.max_expansion_trials = 2;
     dose_config.max_zoom_trials = 0;
     dose_config.max_min_effective_trials = 0;
     dose_config.max_expansion_non_improving = 1;
@@ -189,13 +214,19 @@ int main() {
             geometry.shift_norm = scale >= 0.05f ? 2.0f : scale;
             return true;
         }, dose_trials, dose_selection, error));
-    CHECK(dose_trials.size() == 1);
+    CHECK(dose_trials.size() == 2);
     CHECK(dose_trials.front().requested_scale == 0.05f);
-    CHECK(dose_trials.front().scale < dose_trials.front().requested_scale);
+    CHECK(dose_trials.front().scale == dose_trials.front().requested_scale);
     CHECK(dose_trials.front().dose_evaluated);
     CHECK(dose_trials.front().dose_safety_limited);
-    CHECK(dose_trials.front().dose_action == common_flydelta_dose_action::accept);
+    CHECK(dose_trials.front().dose_action == common_flydelta_dose_action::retry_lower);
+    CHECK(dose_trials.front().proposed_next_scale);
+    CHECK(*dose_trials.front().proposed_next_scale < dose_trials.front().requested_scale);
     CHECK(dose_trials.front().dose_reason.find("retry_lower:") == 0);
     CHECK(common_flydelta_alpha_response_trial_validate(dose_trials.front(), error));
+    CHECK(dose_trials.back().requested_scale == *dose_trials.front().proposed_next_scale);
+    CHECK(dose_trials.back().scale == dose_trials.back().requested_scale);
+    CHECK(dose_trials.back().dose_action == common_flydelta_dose_action::accept);
+    CHECK(common_flydelta_alpha_response_trial_validate(dose_trials.back(), error));
     return 0;
 }

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace {
 bool finite(float value) { return std::isfinite(value); }
@@ -11,6 +12,60 @@ float l2_norm(const std::vector<float> & values) {
     float total = 0.0f;
     for (const float value : values) total += value * value;
     return std::sqrt(total);
+}
+
+// Orthogonal search operates in the small persisted BootstrapZoom profile
+// space (normally two or three local layers). Keep the solve bounded so a
+// malformed/high-dimensional input cannot turn this CPU control-plane helper
+// into an unexpectedly large dense allocation.
+bool solve_ridge_system(
+        const std::vector<std::vector<float>> & matrix,
+        const std::vector<float> & rhs,
+        std::vector<float> & solution) {
+    constexpr size_t max_dimension = 64;
+    const size_t dimension = rhs.size();
+    if (dimension == 0 || dimension > max_dimension || matrix.size() != dimension) {
+        return false;
+    }
+    std::vector<std::vector<double>> augmented(
+        dimension, std::vector<double>(dimension + 1, 0.0));
+    for (size_t row = 0; row < dimension; ++row) {
+        if (matrix[row].size() != dimension || !finite(rhs[row])) return false;
+        for (size_t column = 0; column < dimension; ++column) {
+            if (!finite(matrix[row][column])) return false;
+            augmented[row][column] = matrix[row][column];
+        }
+        augmented[row][dimension] = rhs[row];
+    }
+
+    for (size_t pivot = 0; pivot < dimension; ++pivot) {
+        size_t best = pivot;
+        for (size_t row = pivot + 1; row < dimension; ++row) {
+            if (std::fabs(augmented[row][pivot]) > std::fabs(augmented[best][pivot])) {
+                best = row;
+            }
+        }
+        if (std::fabs(augmented[best][pivot]) <= 1e-12) return false;
+        if (best != pivot) std::swap(augmented[best], augmented[pivot]);
+        const double divisor = augmented[pivot][pivot];
+        for (size_t column = pivot; column <= dimension; ++column) {
+            augmented[pivot][column] /= divisor;
+        }
+        for (size_t row = 0; row < dimension; ++row) {
+            if (row == pivot) continue;
+            const double factor = augmented[row][pivot];
+            if (std::fabs(factor) <= 1e-18) continue;
+            for (size_t column = pivot; column <= dimension; ++column) {
+                augmented[row][column] -= factor * augmented[pivot][column];
+            }
+        }
+    }
+    solution.resize(dimension);
+    for (size_t index = 0; index < dimension; ++index) {
+        solution[index] = static_cast<float>(augmented[index][dimension]);
+        if (!finite(solution[index])) return false;
+    }
+    return true;
 }
 
 bool valid_zoom_phase(common_flydelta_bootstrap_zoom_phase phase) {
@@ -59,9 +114,16 @@ bool valid_zoom_candidate(
 }
 
 bool valid_depth(const common_flydelta_evidence_depth_result & value) {
-    return value.compatible_samples > 0 && value.effective_rank > 0 &&
-        finite(value.stable_rank) && finite(value.median_alignment) &&
-        finite(value.condition_number);
+    // A search surface may be continued experimentally before any natural
+    // HELPED evidence exists. That is still Bootstrap capacity; it must not
+    // be mistaken for rank-backed Shallow/Deep capacity.
+    const bool empty_bootstrap = value.compatible_samples == 0 &&
+        value.experimental_samples > 0 &&
+        value.depth == common_flydelta_search_depth::bootstrap &&
+        value.effective_rank == 0;
+    const bool ranked = value.compatible_samples > 0 && value.effective_rank > 0;
+    return (empty_bootstrap || ranked) && finite(value.stable_rank) &&
+        finite(value.median_alignment) && finite(value.condition_number);
 }
 
 bool valid_depth_value(common_flydelta_search_depth value) {
@@ -348,7 +410,13 @@ bool common_flydelta_build_orthogonal_search_direction(
     mean_response /= count;
     for (float & value : mean) value /= count;
 
-    std::vector<float> gradient(axis.size(), 0.0f);
+    std::vector<std::vector<float>> normal_matrix(
+        axis.size(), std::vector<float>(axis.size(), 0.0f));
+    std::vector<float> normal_rhs(axis.size(), 0.0f);
+    std::vector<std::vector<float>> residuals;
+    std::vector<float> centered_responses;
+    residuals.reserve(usable.size());
+    centered_responses.reserve(usable.size());
     float response_energy = 0.0f;
     float fitted_energy = 0.0f;
     float covariance = 0.0f;
@@ -365,9 +433,21 @@ bool common_flydelta_build_orthogonal_search_direction(
         response_energy += response * response;
         const float residual_norm = l2_norm(residual);
         if (residual_norm > std::numeric_limits<float>::epsilon()) {
-            for (size_t i = 0; i < gradient.size(); ++i) gradient[i] += response * residual[i];
+            residuals.push_back(residual);
+            centered_responses.push_back(response);
+            for (size_t row = 0; row < residual.size(); ++row) {
+                normal_rhs[row] += residual[row] * response;
+                for (size_t column = 0; column < residual.size(); ++column) {
+                    normal_matrix[row][column] += residual[row] * residual[column];
+                }
+            }
         }
     }
+    for (size_t index = 0; index < normal_matrix.size(); ++index) {
+        normal_matrix[index][index] += config.ridge;
+    }
+    std::vector<float> gradient;
+    if (!solve_ridge_system(normal_matrix, normal_rhs, gradient)) return true;
     const float gradient_norm = l2_norm(gradient);
     if (!finite(gradient_norm) || gradient_norm <= config.minimum_residual_norm) return true;
     const float axis_component = [&]() {
@@ -378,19 +458,15 @@ bool common_flydelta_build_orthogonal_search_direction(
     for (size_t i = 0; i < gradient.size(); ++i) gradient[i] -= axis_component * axis[i];
     const float residual_gradient_norm = l2_norm(gradient);
     if (!finite(residual_gradient_norm) || residual_gradient_norm <= config.minimum_residual_norm) return true;
-    for (const auto * arm : usable) {
-        std::vector<float> residual(axis.size());
-        for (size_t i = 0; i < residual.size(); ++i) residual[i] = arm->intervention[i] - mean[i];
-        float along_axis = 0.0f;
-        for (size_t i = 0; i < residual.size(); ++i) along_axis += residual[i] * axis[i];
-        for (size_t i = 0; i < residual.size(); ++i) residual[i] -= along_axis * axis[i];
+    for (size_t index = 0; index < residuals.size(); ++index) {
+        const auto & residual = residuals[index];
         const float predicted = [&]() {
             float value = 0.0f;
             for (size_t i = 0; i < residual.size(); ++i) value += gradient[i] * residual[i];
             return value;
         }();
         fitted_energy += predicted * predicted;
-        covariance += predicted * (response_for(*arm) - mean_response);
+        covariance += predicted * centered_responses[index];
     }
     const float fit_denominator = std::sqrt(std::max(
         fitted_energy * response_energy + config.ridge, 0.0f));

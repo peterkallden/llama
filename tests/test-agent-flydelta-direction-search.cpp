@@ -87,7 +87,7 @@ int main() {
     auto neutral = samples[1];
     neutral.delta.id = "flydelta://delta/neutral";
     neutral.credit.outcome = common_flydelta_counterfactual_outcome::neutral;
-    neutral.credit.eligible_for_learning = true;
+    neutral.credit.eligible_for_learning = false;
     config.mode = common_flydelta_direction_search_mode::experimental;
     config.min_samples = 1;
     CHECK(common_flydelta_build_direction_candidates(
@@ -101,7 +101,7 @@ int main() {
     auto harmed = samples.front();
     harmed.delta.id = "flydelta://delta/harmed";
     harmed.credit.outcome = common_flydelta_counterfactual_outcome::harmed;
-    harmed.credit.eligible_for_learning = true;
+    harmed.credit.eligible_for_learning = false;
     CHECK(!common_flydelta_build_direction_candidates(
         config, {harmed}, raw_only, error));
 

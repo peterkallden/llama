@@ -140,6 +140,7 @@ int main() {
             result.safe_summary = "direction search completed";
             result.direction_candidates.push_back(direction_candidate());
             result.aggregation.compatible_samples = 1;
+            result.aggregation.evidence_eligible_samples = 1;
             result.evidence_depth.compatible_samples = 1;
             result.evidence_depth.depth = common_flydelta_search_depth::bootstrap;
             result.search_budget = common_flydelta_search_budget_for_depth(
@@ -152,6 +153,8 @@ int main() {
             result.bootstrap_zoom_state.capture_layout_revision = "layout:v1";
             result.bootstrap_zoom_state.anchor_layer = 2;
             result.bootstrap_zoom_state.selected_scale = 0.05f;
+            result.bootstrap_zoom_state.surface_revision = 1;
+            result.bootstrap_zoom_state.parent_surface_revision = 0;
             result.bootstrap_zoom_state.extra_model_trials = 3;
             result.bootstrap_zoom_state.next_candidate_index = 2;
             result.bootstrap_zoom_state_ref = result.bootstrap_zoom_state.state_ref;
@@ -367,7 +370,8 @@ int main() {
     CHECK(evaluator_report.state == common_flydelta_experiment_queue_state::succeeded);
     CHECK(evaluator_report.report_count == 3);
     CHECK(evaluator_report.evidence_depth.depth == common_flydelta_search_depth::bootstrap);
-    CHECK(evaluator_report.evidence_depth.compatible_samples == 1);
+    CHECK(evaluator_report.evidence_depth.compatible_samples == 0);
+    CHECK(evaluator_report.evidence_depth.experimental_samples == 1);
     CHECK(evaluator_report.search_budget.max_region_trials == 4);
     std::filesystem::remove_all(root, ignored);
     return 0;

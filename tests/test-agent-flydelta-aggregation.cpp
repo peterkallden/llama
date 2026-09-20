@@ -7,7 +7,7 @@
 static common_flydelta_contrast_sample sample(
         const char * id, const std::vector<float> & values,
         common_flydelta_counterfactual_outcome outcome =
-            common_flydelta_counterfactual_outcome::unknown) {
+            common_flydelta_counterfactual_outcome::helped) {
     common_flydelta_contrast_sample result;
     result.delta.id = id;
     result.delta.source = common_adaptation_evidence_source::tool_repair;
@@ -23,6 +23,8 @@ static common_flydelta_contrast_sample sample(
     result.credit.candidate_id = id;
     result.credit.fixture_id = "flydelta://fixture/aggregation";
     result.credit.outcome = outcome;
+    result.credit.eligible_for_learning =
+        outcome == common_flydelta_counterfactual_outcome::helped;
     return result;
 }
 
@@ -36,7 +38,7 @@ static common_flydelta_aggregation_config config() {
     result.identity.model_profile_fingerprint = "sha256:model";
     result.identity.execution_context_fingerprint = "sha256:context";
     result.identity.capture_layout_revision = "layer-input:v1";
-    result.max_retained_samples = 6;
+    result.max_retained_samples = 8;
     return result;
 }
 
@@ -69,13 +71,21 @@ int main() {
     auto harmed = sample("flydelta://sample/harmed", {0.0f, 0.0f, 1.0f, 0.0f},
         common_flydelta_counterfactual_outcome::harmed);
     CHECK(aggregation.ingest(harmed, error));
+    auto unknown = sample("flydelta://sample/unknown", {0.0f, 0.0f, 1.0f, 0.0f},
+        common_flydelta_counterfactual_outcome::unknown);
+    CHECK(aggregation.ingest(unknown, error));
+    auto neutral = sample("flydelta://sample/neutral", {0.0f, 0.0f, 0.0f, 1.0f},
+        common_flydelta_counterfactual_outcome::neutral);
+    CHECK(aggregation.ingest(neutral, error));
 
     const auto snapshot = aggregation.snapshot();
-    CHECK(snapshot.observations_seen == 10);
-    CHECK(snapshot.compatible_samples == 8 && snapshot.rejected_samples == 2);
-    CHECK(snapshot.retained_samples.size() == 6);
-    CHECK(snapshot.retained_sample_ids.size() == 6);
-    CHECK(snapshot.seen_sample_ids.size() == 10);
+    CHECK(snapshot.observations_seen == 12);
+    CHECK(snapshot.compatible_samples == 10 && snapshot.rejected_samples == 2);
+    CHECK(snapshot.evidence_eligible_samples == 8 && snapshot.experimental_samples == 2);
+    CHECK(snapshot.retained_samples.size() == 8);
+    CHECK(snapshot.retained_sample_ids.size() == 8);
+    CHECK(snapshot.seen_sample_ids.size() == 12);
+    CHECK(snapshot.evidence_retained_samples.size() == 8);
     CHECK(snapshot.mean_direction.size() == 4 && snapshot.variance.size() == 4);
     CHECK(std::isfinite(snapshot.mean_direction[0]) && std::isfinite(snapshot.variance[1]));
     CHECK(std::string(common_flydelta_search_depth_name(depth.depth)) == "deep");

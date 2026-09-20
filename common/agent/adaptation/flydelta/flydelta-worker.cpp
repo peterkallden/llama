@@ -272,7 +272,8 @@ bool validate_result(
     }
     if (!result.direction_candidates.empty()) {
         if (!common_flydelta_search_budget_validate(result.search_budget, error)) return false;
-        if (result.evidence_depth.compatible_samples != result.aggregation.compatible_samples) {
+        if (result.evidence_depth.compatible_samples !=
+                result.aggregation.evidence_eligible_samples) {
             error = "FlyDelta worker evidence depth and aggregation counts differ";
             return false;
         }
@@ -347,6 +348,11 @@ bool common_flydelta_experiment_worker_run_once(
     bool succeeded = callback && callback(claimed.job, result, callback_error);
     if (succeeded) append_derived_trace(claimed.job, result, result.trace);
     if (succeeded && !validate_result(claimed, result, callback_error)) succeeded = false;
+    if (!succeeded && callback_error.empty()) {
+        callback_error = callback
+            ? "FlyDelta experiment callback or result validation failed"
+            : "FlyDelta experiment worker has no evaluator callback";
+    }
     if (!succeeded && error.empty() && !callback_error.empty()) error = callback_error;
 
     const auto state = succeeded
@@ -355,8 +361,13 @@ bool common_flydelta_experiment_worker_run_once(
     const auto safe_summary = succeeded
         ? result.safe_summary
         : "FlyDelta experiment callback or result validation failed";
+    std::string completion_error;
     if (!common_flydelta_experiment_queue_complete(
-            queue_root, claimed, state, safe_summary, limits, error)) return false;
+            queue_root, claimed, state, safe_summary, limits, completion_error)) {
+        error = completion_error;
+        return false;
+    }
+    if (!succeeded) error = callback_error;
     report.state = state;
     report.safe_summary = safe_summary;
     report.trace = std::move(result.trace);

@@ -30,6 +30,7 @@ int main() {
     CHECK(decision.comparable);
     CHECK(std::fabs(decision.relative_dose - 1.0f) < 0.00001f);
     CHECK(state.last_safe_strength && *state.last_safe_strength == 0.02f);
+    CHECK(state.max_safe_strength && *state.max_safe_strength == 0.02f);
 
     CHECK(common_flydelta_dose_observe(
         policy, state,
@@ -40,8 +41,25 @@ int main() {
         *decision.proposed_safe_strength < 0.04f &&
         *decision.proposed_safe_strength > policy.min_strength);
     CHECK(decision.safety_limited);
+    CHECK(state.min_unsafe_strength && *state.min_unsafe_strength == 0.04f);
 
     CHECK(common_flydelta_dose_preflight(policy, state, 0.04f, decision, error));
+    CHECK(decision.action == common_flydelta_dose_action::safety_boundary);
+    CHECK(decision.known_safe_upper_bound && *decision.known_safe_upper_bound == 0.02f);
+
+    // Bounds are monotone even when observations arrive out of order. This is
+    // the trust-region contract required by golden-section/TFO proposals.
+    CHECK(common_flydelta_dose_observe(
+        policy, state,
+        common_flydelta_dose_observation{true, 0.01f, 2.0f, 0.2f, 0.1f},
+        decision, error));
+    CHECK(state.max_safe_strength && *state.max_safe_strength == 0.02f);
+    CHECK(common_flydelta_dose_observe(
+        policy, state,
+        common_flydelta_dose_observation{true, 0.03f, 20.0f, 0.8f, 0.6f},
+        decision, error));
+    CHECK(state.min_unsafe_strength && *state.min_unsafe_strength == 0.03f);
+    CHECK(common_flydelta_dose_preflight(policy, state, 0.035f, decision, error));
     CHECK(decision.action == common_flydelta_dose_action::safety_boundary);
     CHECK(decision.known_safe_upper_bound && *decision.known_safe_upper_bound == 0.02f);
 

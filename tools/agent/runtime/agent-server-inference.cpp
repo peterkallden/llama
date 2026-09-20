@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
+#include <utility>
 
 namespace {
 
@@ -482,6 +483,135 @@ public:
             std::fprintf(stderr, "server teacher-forced scoring failed: %s\n", err.what());
             return false;
         }
+    }
+
+    bool score_teacher_forced_choice_batch(
+            const common_agent_teacher_forced_choice_batch_request & request,
+            common_agent_teacher_forced_choice_batch_result & result) override {
+        result = {};
+        if (request.choices.empty() || request.choices.size() > 256) {
+            result.error_message = "server teacher-forced scoring batch has an invalid size";
+            return false;
+        }
+
+        // Submit the complete batch through one server response reader. The
+        // server may still execute entries serially when their cvecs differ
+        // (the current context-wide cvec contract requires that), but this
+        // keeps task construction, response collection and cancellation at a
+        // single backend boundary. It is therefore a real backend batch
+        // implementation without pretending that per-sequence overlays are
+        // already supported by the server graph.
+        struct pending_choice {
+            size_t result_index = 0;
+        };
+        std::vector<server_task> tasks;
+        tasks.reserve(request.choices.size() * 2);
+        std::vector<pending_choice> pending;
+        pending.reserve(request.choices.size());
+
+        for (const auto & choice_request : request.choices) {
+            const std::string & positive = choice_request.positive_continuation.empty()
+                ? choice_request.positive_choice : choice_request.positive_continuation;
+            const std::string & negative = choice_request.negative_continuation.empty()
+                ? choice_request.negative_choice : choice_request.negative_continuation;
+            if (choice_request.choice_prefix.empty() || positive.empty() || negative.empty()) {
+                result.error_message =
+                    "server teacher-forced scoring requires a prefix and two continuations";
+                return false;
+            }
+            if (!choice_request.context.input_resources.empty()) {
+                result.error_message =
+                    "server teacher-forced scoring does not support multimodal resources yet";
+                return false;
+            }
+
+            common_agent_prepared_generation prepared;
+            common_chat_params chat_params;
+            if (!common_agent_prepare_chat_generation(
+                    templates, choice_request.context, prepared, &chat_params)) {
+                result.error_message =
+                    "failed to prepare server teacher-forced scoring prompt";
+                return false;
+            }
+
+            const std::string prefix = prepared.prompt + choice_request.choice_prefix;
+            auto make_score_task = [&](const std::string & continuation) {
+                server_task task(SERVER_TASK_TYPE_TEACHER_FORCED_SCORE);
+                task.id = 0; // assigned by server_response_reader::post_tasks
+                task.cli = true;
+                task.cli_prompt = prefix;
+                task.teacher_forced_target = continuation;
+                task.params = make_server_task_params_from_prepared_generation(
+                    params_base, choice_request.context, prepared, logit_bias_eog);
+                // Every task is a fresh isolated comparison. In particular,
+                // do not let one arm reuse prompt/KV state produced by a
+                // different cvec or continuation.
+                task.params.stream = false;
+                task.params.cache_prompt = false;
+                task.params.n_predict = 0;
+                return task;
+            };
+
+            pending.push_back({tasks.size()});
+            tasks.push_back(make_score_task(positive));
+            tasks.push_back(make_score_task(negative));
+        }
+
+        server_response_reader reader = server.get_response_reader();
+        for (auto & task : tasks) {
+            task.id = reader.get_new_id();
+        }
+        reader.post_tasks(std::move(tasks));
+        const auto responses = reader.wait_for_all([]() { return false; });
+        if (responses.is_terminated || responses.error) {
+            if (responses.error && responses.error->is_error()) {
+                const auto * error =
+                    static_cast<const server_task_result_error *>(responses.error.get());
+                result.error_message = error->err_msg;
+            } else {
+                result.error_message = responses.is_terminated
+                    ? "server teacher-forced scoring batch was terminated"
+                    : "server teacher-forced scoring batch returned an error";
+            }
+            return false;
+        }
+
+        result.choices.reserve(request.choices.size());
+        for (size_t choice_index = 0; choice_index < pending.size(); ++choice_index) {
+            const size_t positive_index = pending[choice_index].result_index;
+            const size_t negative_index = positive_index + 1;
+            if (negative_index >= responses.results.size() ||
+                    responses.results[positive_index] == nullptr ||
+                    responses.results[negative_index] == nullptr) {
+                result.error_message =
+                    "server teacher-forced scoring batch returned incomplete results";
+                result.choices.clear();
+                return false;
+            }
+
+            const auto * positive_result = dynamic_cast<const server_task_result_teacher_score *>(
+                responses.results[positive_index].get());
+            const auto * negative_result = dynamic_cast<const server_task_result_teacher_score *>(
+                responses.results[negative_index].get());
+            if (positive_result == nullptr || negative_result == nullptr) {
+                result.error_message =
+                    "server returned a non-scoring result for teacher-forced batch task";
+                result.choices.clear();
+                return false;
+            }
+
+            common_agent_teacher_forced_choice_result choice_result;
+            choice_result.available = positive_result->token_count > 0 &&
+                negative_result->token_count > 0;
+            choice_result.positive_total_logprob =
+                static_cast<float>(positive_result->total_logprob);
+            choice_result.negative_total_logprob =
+                static_cast<float>(negative_result->total_logprob);
+            choice_result.positive_token_count = positive_result->token_count;
+            choice_result.negative_token_count = negative_result->token_count;
+            result.choices.push_back(std::move(choice_result));
+        }
+        return true;
     }
 
 private:
