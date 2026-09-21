@@ -873,6 +873,10 @@ public:
         metrics.reset_bucket();
     }
 
+    bool per_sequence_cvec_batch_enabled() const {
+        return cvec_batch_enabled;
+    }
+
 private:
     // note: accessing these fields outside of this class is not thread-safe
     // use server_context methods instead
@@ -4509,6 +4513,10 @@ void server_context::terminate() {
 
 llama_context * server_context::get_llama_context() const {
     return impl->ctx_tgt;
+}
+
+bool server_context::per_sequence_cvec_batch_enabled() const {
+    return impl->per_sequence_cvec_batch_enabled();
 }
 
 server_response_reader server_context::get_response_reader() {

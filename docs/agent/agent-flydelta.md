@@ -408,21 +408,24 @@ resume can be audited without replaying prior model arms.
 The daemon does not manufacture a model host for this lane. A production
 runtime must register the existing backend-neutral `common_flydelta_model_host`
 or a fully built `common_flydelta_model_adapter` before the lane becomes
-consuming. That registration is the host-owned binding to model residency,
-fresh inference contexts, reference resolution, overlay/capture transport,
-teacher-forced scoring and host verification. The worker must not reach into a
-session manager, `llama_context`, server context or model path directly. If no
-registration is present, the FlyDelta lane remains configured-but-idle and a
-queued job is not consumed; this is a capability/configuration gap, not a
-successful search with no utility.
+consuming. The resident server-context runtime now provides
+`common_agent_server_context_host_make_flydelta_model_host()` as the concrete
+composition seam: it owns model residency, fresh inference contexts, the
+`generate_batch()` backend call and execution telemetry, while the caller binds
+opaque reference resolution, semantic request construction, finalization and
+host verification. The worker must not reach into a session manager,
+`llama_context`, server context or model path directly. If no registration is
+present, the FlyDelta lane remains configured-but-idle and a queued job is not
+consumed; this is a capability/configuration gap, not a successful search with
+no utility.
 
-The existing runtime already exposes the lower-level pieces needed by that
-host binding: the inference object accepts immutable FlyDelta activations and
+The existing runtime also exposes the lower-level pieces needed by that host
+binding: the inference object accepts immutable FlyDelta activations and
 capture requests, and the server-context backend supports isolated
-teacher-forced choice scoring. The missing production step is to bind those
-pieces through the host's opaque fixture/intervention resolver and bounded-arm
-callback. This is intentionally not implemented in the generic worker or as a
-second inference adapter hierarchy.
+teacher-forced choice scoring. The semantic resolver/finalizer remains host
+owned because only that layer can resolve fixture and intervention references
+and assign host outcomes. This is intentionally not implemented in the
+generic worker or as a second inference adapter hierarchy.
 
 The repair smoke partitions its captures by the scenario's explicit
 `behavior_key` before assessing depth. The key describes the behavior being

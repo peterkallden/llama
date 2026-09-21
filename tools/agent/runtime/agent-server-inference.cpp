@@ -6,10 +6,12 @@
 #include "server-context.h"
 #include "server-task.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <unordered_set>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -379,6 +381,37 @@ public:
             std::fprintf(stderr, "server_context agent inference failed: %s\n", err.what());
             return false;
         }
+    }
+
+    bool generate_batch(
+            const std::vector<common_agent_generation_request> & requests,
+            std::vector<common_agent_generation_result> & results) override {
+        results.clear();
+        results.resize(requests.size());
+        if (requests.empty()) {
+            return true;
+        }
+
+        // Each request owns a fresh response reader and its own slot state.
+        // Posting them concurrently lets server_context coalesce compatible
+        // slot tokens into one llama batch; the per-sequence cvec binding then
+        // supplies the corresponding sparse overlay row. The scalar generate
+        // implementation remains the single source of request preparation,
+        // capture and result decoding semantics.
+        std::vector<bool> completed(requests.size(), false);
+        std::vector<std::thread> workers;
+        workers.reserve(requests.size());
+        for (size_t index = 0; index < requests.size(); ++index) {
+            workers.emplace_back([&, index]() {
+                completed[index] = generate(requests[index], results[index]);
+            });
+        }
+        for (auto & worker : workers) {
+            worker.join();
+        }
+        return std::all_of(completed.begin(), completed.end(), [](bool value) {
+            return value;
+        });
     }
 
     bool score_teacher_forced_choice(

@@ -214,6 +214,24 @@ public:
     virtual bool generate(
         const common_agent_generation_request & request,
         common_agent_generation_result & result) = 0;
+
+    // Backend-neutral batch boundary for independent generation requests.
+    // The default is deliberately scalar and preserves the existing result
+    // contract. A resident model host may override it when its server/context
+    // can submit the requests concurrently with independent overlay/KV state.
+    virtual bool generate_batch(
+            const std::vector<common_agent_generation_request> & requests,
+            std::vector<common_agent_generation_result> & results) {
+        results.clear();
+        results.resize(requests.size());
+        for (size_t index = 0; index < requests.size(); ++index) {
+            if (!generate(requests[index], results[index])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     virtual bool score_teacher_forced_choice(
             const common_agent_teacher_forced_choice_request & request,
             common_agent_teacher_forced_choice_result & result) {

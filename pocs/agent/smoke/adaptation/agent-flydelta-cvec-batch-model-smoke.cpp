@@ -4,13 +4,10 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <condition_variable>
 #include <filesystem>
 #include <iostream>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -20,6 +17,7 @@ struct options {
     int n_predict = 8;
     int n_threads = 3;
     int n_gpu_layers = 0;
+    bool scalar = false;
 };
 
 bool parse_args(int argc, char ** argv, options & value) {
@@ -50,6 +48,8 @@ bool parse_args(int argc, char ** argv, options & value) {
             const char * value_arg = next("--n-gpu-layers");
             if (!value_arg) return false;
             value.n_gpu_layers = std::stoi(value_arg);
+        } else if (argument == "--scalar") {
+            value.scalar = true;
         } else if (argument == "--help" || argument == "-h") {
             return false;
         } else {
@@ -103,7 +103,7 @@ int main(int argc, char ** argv) {
     options value;
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
-                  << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N]\n";
+                  << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N] [--scalar]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -113,40 +113,30 @@ int main(int argc, char ** argv) {
     if (value.n_threads <= 0 || value.n_threads > 3 || value.n_predict <= 0) return 2;
 
     const char * opt_in = std::getenv("LLAMA_SERVER_PER_SEQUENCE_CVEC");
-    if (opt_in == nullptr || (std::string(opt_in) != "1" && std::string(opt_in) != "true")) {
+    if (!value.scalar && (opt_in == nullptr ||
+            (std::string(opt_in) != "1" && std::string(opt_in) != "true"))) {
         std::cerr << "FlyDelta cvec batch model smoke requires LLAMA_SERVER_PER_SEQUENCE_CVEC=1\n";
         return 77;
     }
 
-    common_agent_server_context_host host;
+    auto host = std::make_shared<common_agent_server_context_host>();
     common_agent_server_context_host_config config;
     config.context_key.load_key.model = value.model;
     config.context_key.load_key.n_gpu_layers = value.n_gpu_layers;
     config.context_key.load_key.fit_params = true;
-    config.context_key.n_parallel = 2;
-    config.context_key.n_sequences = 2;
+    config.context_key.n_parallel = value.scalar ? 1 : 2;
+    config.context_key.n_sequences = value.scalar ? 1 : 2;
     config.context_key.n_ctx = 4096;
     config.context_key.n_threads = value.n_threads;
     config.verbosity = LOG_LEVEL_INFO;
 
     std::string error;
-    if (!host.start(config, error)) {
+    if (!host->start(config, error)) {
         std::cerr << "could not start two-slot server host: " << error << '\n';
         return 1;
     }
 
-    std::vector<common_agent_inference_session> sessions(2);
-    for (auto & session : sessions) {
-        if (!host.build_inference_session(session, error) || !session.inference) {
-            std::cerr << "could not build two-slot inference session: " << error << '\n';
-            return 1;
-        }
-    }
-    if (!sessions[0].inference || !sessions[1].inference) {
-        std::cerr << "two-slot inference sessions were not initialized\n";
-        return 1;
-    }
-    auto * context = host.server().get_llama_context();
+    auto * context = host->server().get_llama_context();
     if (context == nullptr || llama_get_model(context) == nullptr) {
         std::cerr << "two-slot server host did not expose a loaded model\n";
         return 1;
@@ -154,64 +144,107 @@ int main(int argc, char ** argv) {
     const auto * model = llama_get_model(context);
     if (llama_model_n_embd(model) <= 0 || llama_model_n_layer(model) <= 2) return 1;
 
-    auto activation_a = make_activation(model, 0.0001f,
-        "flydelta://artifact/cvec-batch-smoke/a", error);
-    auto activation_b = make_activation(model, 0.0002f,
-        "flydelta://artifact/cvec-batch-smoke/b", error);
-    if (!activation_a || !activation_b || !activation_a->sparse_overlay.enabled ||
-            !activation_b->sparse_overlay.enabled ||
-            activation_a->sparse_overlay.layer_indices.empty() ||
-            activation_b->sparse_overlay.layer_indices.empty() ||
-            activation_a->overlay.artifact_id == activation_b->overlay.artifact_id ||
-            activation_a->overlay.data == activation_b->overlay.data) {
-        std::cerr << "could not prepare distinct cvec smoke overlays: " << error << '\n';
+    common_agent_server_flydelta_binding binding;
+    binding.primitives.generation = true;
+    binding.primitives.overlay = true;
+    binding.primitives.host_verification = true;
+    binding.prepare_arm = [model, n_predict = value.n_predict, n_threads = value.n_threads](
+            const common_flydelta_arm_request & arm,
+            common_agent_generation_request & request,
+            std::string & prepare_error) {
+        auto activation = make_activation(
+            model, arm.alpha, arm.intervention_ref + "/" + arm.arm_id, prepare_error);
+        if (!activation) return false;
+        request = {};
+        request.purpose = common_agent_generation_purpose::conversation;
+        request.options.n_predict = n_predict;
+        request.options.n_threads = n_threads;
+        request.messages = {
+            {"system", "Reply with exactly PASS."},
+            {"user", "Run isolated FlyDelta arm " + arm.arm_id},
+        };
+        request.flydelta_activation = std::move(activation);
+        return true;
+    };
+    binding.finalize_arm = [](
+            const common_flydelta_arm_request & arm,
+            const common_agent_generation_result & generation,
+            common_flydelta_arm_result & result,
+            std::string & finalize_error) {
+        (void) finalize_error;
+        result = {};
+        result.arm_id = arm.arm_id;
+        result.executed = common_agent_generation_succeeded(generation);
+        result.generation_available = true;
+        result.quality = static_cast<float>(generation.decoded_tokens);
+        result.host_outcome = common_flydelta_counterfactual_outcome::unknown;
+        if (!result.executed && !generation.error_message.empty()) {
+            result.provenance_ref = generation.error_message;
+        }
+        return result.executed;
+    };
+    binding.register_evaluator = [](
+            common_flydelta_evaluator_config &,
+            common_flydelta_evaluator_callbacks &,
+            std::string & register_error) {
+        register_error.clear();
+        return true;
+    };
+
+    auto model_host = common_agent_server_context_host_make_flydelta_model_host(
+        host, std::move(binding), error);
+    if (!model_host || (!value.scalar && !model_host->capabilities.bounded_arm_batch)) {
+        std::cerr << "could not bind production FlyDelta batch host: " << error << '\n';
         return 1;
     }
 
-    std::mutex mutex;
-    std::condition_variable condition;
-    bool start = false;
-    std::vector<common_agent_generation_result> results(2);
-    std::vector<bool> executed(2, false);
-    std::vector<std::thread> workers;
-    workers.reserve(2);
+    common_flydelta_arm_batch_request request;
+    request.arms.resize(2);
     for (size_t index = 0; index < 2; ++index) {
-        workers.emplace_back([&, index]() {
-            {
-                std::unique_lock<std::mutex> lock(mutex);
-                condition.wait(lock, [&]() { return start; });
-            }
-            common_agent_generation_request request;
-            request.purpose = common_agent_generation_purpose::conversation;
-            request.options.n_predict = value.n_predict;
-            request.options.n_threads = value.n_threads;
-            request.messages = {
-                {"system", "Reply with exactly PASS."},
-                {"user", index == 0 ? "Run the first isolated check." : "Run the second isolated check."},
-            };
-            request.flydelta_activation = index == 0 ? activation_a : activation_b;
-            executed[index] = sessions[index].inference->generate(request, results[index]);
-        });
+        auto & arm = request.arms[index];
+        arm.job_id = "flydelta://job/cvec-batch-smoke";
+        arm.arm_id = "flydelta://arm/cvec-batch-smoke/" + std::to_string(index);
+        arm.context_ref = "context://cvec-batch-smoke/" + std::to_string(index);
+        arm.fixture_ref = "fixture://cvec-batch-smoke";
+        arm.intervention_ref = "flydelta://artifact/cvec-batch-smoke/" + std::to_string(index);
+        arm.layer_indices = {1};
+        arm.coefficients = {1.0f};
+        arm.alpha = index == 0 ? 0.0001f : 0.0002f;
+        arm.apply_overlay = true;
+        arm.fresh_context = true;
+        arm.request_generation = true;
+        arm.max_generated_tokens = static_cast<size_t>(value.n_predict);
     }
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        start = true;
-    }
-    condition.notify_all();
-    for (auto & worker : workers) worker.join();
 
-    for (size_t index = 0; index < results.size(); ++index) {
-        if (!executed[index] || !common_agent_generation_succeeded(results[index])) {
-            std::cerr << "cvec batch arm " << index << " failed: " << results[index].error_message << '\n';
+    common_flydelta_arm_batch_result result;
+    if (!common_flydelta_run_bounded_arm_batch(*model_host, request, result, error)) {
+        std::cerr << "production FlyDelta batch execution failed: " << error << '\n';
+        return 1;
+    }
+
+    for (size_t index = 0; index < result.arms.size(); ++index) {
+        if (!result.arms[index].executed) {
+            std::cerr << "cvec batch arm " << index << " did not execute\n";
             return 1;
         }
     }
 
     std::cout << "flydelta_cvec_batch_model_smoke=passed\n"
-              << "slots=2\n"
+              << "slots=" << (value.scalar ? 1 : 2) << "\n"
               << "distinct_overlays=yes\n"
               << "sparse_overlays=yes\n"
-              << "active_layers=" << activation_a->sparse_overlay.layer_indices.size() << "\n"
-              << "results=2\n";
+              << "active_layers=1\n"
+              << "results=" << result.arms.size() << "\n"
+              << "execution_path="
+              << common_flydelta_arm_execution_path_name(
+                  result.arms.front().execution_metrics.execution_path) << "\n"
+              << "batched_execution="
+              << (result.arms.front().execution_metrics.batched_execution_used ? "yes" : "no") << "\n"
+              << "model_ms=" << result.arms.front().execution_metrics.model_ms << "\n"
+              << "overlay_bytes_to_device="
+              << result.arms.front().execution_metrics.overlay_bytes_to_device << "\n"
+              << "capture_bytes_to_host="
+              << result.arms.front().execution_metrics.capture_bytes_to_host << "\n"
+              << "mode=" << (value.scalar ? "scalar_fallback" : "backend_batch") << "\n";
     return 0;
 }

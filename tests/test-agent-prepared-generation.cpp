@@ -68,6 +68,36 @@ public:
     }
 };
 
+class scalar_batch_fallback_test_inference final : public common_agent_inference {
+public:
+    bool generate(
+            const common_agent_generation_request & request,
+            common_agent_generation_result & result) override {
+        result = {};
+        result.status = common_agent_generation_status::completed;
+        result.stop_reason = common_agent_generation_stop_reason::eos;
+        result.content = request.trace_id.value_or("no-trace");
+        result.decoded_tokens = static_cast<int>(request.messages.size());
+        return true;
+    }
+};
+
+void test_generation_batch_scalar_fallback() {
+    scalar_batch_fallback_test_inference inference;
+    auto first = make_base_request();
+    first.trace_id = "batch:first";
+    auto second = make_base_request();
+    second.trace_id = "batch:second";
+
+    std::vector<common_agent_generation_result> results;
+    assert(inference.generate_batch({first, second}, results));
+    assert(results.size() == 2);
+    assert(results[0].content == "batch:first");
+    assert(results[1].content == "batch:second");
+    assert(results[0].status == common_agent_generation_status::completed);
+    assert(results[1].status == common_agent_generation_status::completed);
+}
+
 void test_teacher_forced_batch_fallback() {
     teacher_forced_batch_test_inference inference;
     common_agent_teacher_forced_choice_batch_request request;
@@ -365,6 +395,7 @@ void test_server_task_cvec_batch_view() {
 } // namespace
 
 int main() {
+    test_generation_batch_scalar_fallback();
     test_teacher_forced_batch_fallback();
     test_prepare_tool_generation();
     test_prepare_json_schema_generation();

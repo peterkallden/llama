@@ -1,6 +1,7 @@
 #include "agent-server-context-host.h"
 
 #include "../cli/agent-cli-inference.h"
+#include "agent/adaptation/flydelta/flydelta-activation.h"
 
 #include "log.h"
 #include "common.h"
@@ -8,9 +9,11 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <mutex>
 #include <system_error>
+#include <utility>
 
 namespace {
 
@@ -227,4 +230,147 @@ server_context & common_agent_server_context_host::server() {
 
 const server_context & common_agent_server_context_host::server() const {
     return *instance->server;
+}
+
+namespace {
+
+bool run_server_flydelta_arm_batch(
+        const std::shared_ptr<common_agent_server_context_host> & host,
+        const common_agent_server_flydelta_binding & binding,
+        const bool native_batch,
+        const common_flydelta_arm_batch_request & request,
+        common_flydelta_arm_batch_result & result,
+        std::string & error) {
+    error.clear();
+    result = {};
+    if (!host || !binding.prepare_arm || !binding.finalize_arm) {
+        error = "resident FlyDelta host binding is incomplete";
+        return false;
+    }
+    if (!common_flydelta_arm_batch_request_validate(request, error)) {
+        return false;
+    }
+
+    common_agent_inference_session session;
+    if (!host->build_inference_session(session, error) || !session.inference) {
+        if (error.empty()) error = "resident FlyDelta host could not build inference session";
+        return false;
+    }
+
+    std::vector<common_agent_generation_request> generation_requests;
+    generation_requests.reserve(request.arms.size());
+    for (const auto & arm : request.arms) {
+        common_agent_generation_request generation_request;
+        if (!binding.prepare_arm(arm, generation_request, error)) {
+            if (error.empty()) error = "resident FlyDelta host failed to prepare an arm";
+            return false;
+        }
+        generation_requests.push_back(std::move(generation_request));
+    }
+
+    const auto generation_start = std::chrono::steady_clock::now();
+    std::vector<common_agent_generation_result> generation_results;
+    if (!session.inference->generate_batch(generation_requests, generation_results) ||
+            generation_results.size() != request.arms.size()) {
+        error = "resident FlyDelta host batch generation returned incomplete results";
+        return false;
+    }
+    const float generation_ms = static_cast<float>(
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - generation_start).count());
+
+    result.schema_version = request.schema_version;
+    result.arms.reserve(request.arms.size());
+    for (size_t index = 0; index < request.arms.size(); ++index) {
+        common_flydelta_arm_result arm_result;
+        if (!binding.finalize_arm(
+                request.arms[index], generation_results[index], arm_result, error)) {
+            if (error.empty()) error = "resident FlyDelta host failed to finalize an arm";
+            return false;
+        }
+        if (arm_result.arm_id.empty()) {
+            arm_result.arm_id = request.arms[index].arm_id;
+        }
+        if (arm_result.arm_id != request.arms[index].arm_id) {
+            error = "resident FlyDelta host returned an arm identity mismatch";
+            return false;
+        }
+        arm_result.execution_metrics.available = true;
+        arm_result.execution_metrics.model_ms = generation_ms;
+        arm_result.execution_metrics.generation_ms = generation_ms;
+        arm_result.execution_metrics.batched_execution_used =
+            request.arms.size() > 1 && native_batch;
+        if (generation_requests[index].flydelta_activation &&
+                generation_requests[index].flydelta_activation->sparse_overlay.enabled) {
+            const auto & sparse = generation_requests[index].flydelta_activation->sparse_overlay;
+            arm_result.execution_metrics.overlay_bytes_to_device =
+                sparse.layer_indices.size() * sizeof(uint32_t) +
+                sparse.data.size() * sizeof(float);
+        }
+        if (generation_results[index].flydelta_capture) {
+            arm_result.execution_metrics.capture_bytes_to_host =
+                generation_results[index].flydelta_capture->values.size() * sizeof(float);
+        }
+        if (arm_result.execution_metrics.execution_path ==
+                common_flydelta_arm_execution_metrics::path::unknown) {
+            arm_result.execution_metrics.execution_path =
+                request.arms.size() > 1 && native_batch
+                    ? common_flydelta_arm_execution_metrics::path::backend_batch
+                    : request.arms.size() > 1
+                        ? common_flydelta_arm_execution_metrics::path::scalar_fallback
+                        : common_flydelta_arm_execution_metrics::path::scalar;
+            if (request.arms.size() > 1 && !native_batch) {
+                arm_result.execution_metrics.fallback_reason =
+                    "per_sequence_cvec_batch_not_enabled";
+            }
+        }
+        result.arms.push_back(std::move(arm_result));
+    }
+    return common_flydelta_arm_batch_result_validate(result, request, error);
+}
+
+} // namespace
+
+std::shared_ptr<const common_flydelta_model_host>
+common_agent_server_context_host_make_flydelta_model_host(
+        std::shared_ptr<common_agent_server_context_host> host,
+        common_agent_server_flydelta_binding binding,
+        std::string & error) {
+    error.clear();
+    if (!host || !binding.prepare_arm || !binding.finalize_arm ||
+            !binding.register_evaluator) {
+        error = "resident FlyDelta host binding requires arm and evaluator callbacks";
+        return {};
+    }
+
+    const bool native_batch = host->server().per_sequence_cvec_batch_enabled() &&
+        host->context_key().n_parallel > 1;
+    auto model_host = std::make_shared<common_flydelta_model_host>();
+    model_host->capabilities = binding.primitives;
+    model_host->capabilities.bounded_arm_batch = native_batch;
+    model_host->run_bounded_arm_batch = [host, binding, native_batch](
+            const common_flydelta_arm_batch_request & request,
+            common_flydelta_arm_batch_result & result,
+            std::string & callback_error) {
+        return run_server_flydelta_arm_batch(
+            host, binding, native_batch, request, result, callback_error);
+    };
+    model_host->run_bounded_arm = [host, binding](
+            const common_flydelta_arm_request & request,
+            common_flydelta_arm_result & result,
+            std::string & callback_error) {
+        common_flydelta_arm_batch_request batch;
+        batch.arms.push_back(request);
+        common_flydelta_arm_batch_result batch_result;
+        if (!run_server_flydelta_arm_batch(
+                host, binding, false, batch, batch_result, callback_error) ||
+                batch_result.arms.size() != 1) {
+            return false;
+        }
+        result = std::move(batch_result.arms.front());
+        return true;
+    };
+    model_host->register_evaluator = std::move(binding.register_evaluator);
+    error.clear();
+    return model_host;
 }

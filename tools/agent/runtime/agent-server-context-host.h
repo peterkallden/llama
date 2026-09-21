@@ -4,7 +4,9 @@
 
 #include "common.h"
 #include "log.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -36,6 +38,27 @@ struct common_agent_server_context_running_instance {
     common_params params;
     std::unique_ptr<std::thread> loop;
     bool running = false;
+};
+
+// Production host-side translation for one generic FlyDelta arm. The server
+// context owns model execution; the callbacks own reference resolution,
+// semantic request construction and host verification. No search policy is
+// implemented here.
+struct common_agent_server_flydelta_binding {
+    common_flydelta_model_capabilities primitives;
+    std::function<bool(
+            const common_flydelta_arm_request &,
+            common_agent_generation_request &,
+            std::string &)> prepare_arm;
+    std::function<bool(
+            const common_flydelta_arm_request &,
+            const common_agent_generation_result &,
+            common_flydelta_arm_result &,
+            std::string &)> finalize_arm;
+    std::function<bool(
+            common_flydelta_evaluator_config &,
+            common_flydelta_evaluator_callbacks &,
+            std::string &)> register_evaluator;
 };
 
 common_agent_server_context_load_key make_agent_server_context_load_key(
@@ -75,3 +98,13 @@ private:
     common_agent_server_context_host_config current_config;
     std::unique_ptr<common_agent_server_context_running_instance> instance;
 };
+
+// Creates the existing generic FlyDelta model-host registration around a
+// resident server context. The returned host advertises bounded-arm batch
+// capability only when the server was started with the explicit per-sequence
+// cvec opt-in and at least two parallel sequences are available.
+std::shared_ptr<const common_flydelta_model_host>
+common_agent_server_context_host_make_flydelta_model_host(
+        std::shared_ptr<common_agent_server_context_host> host,
+        common_agent_server_flydelta_binding binding,
+        std::string & error);

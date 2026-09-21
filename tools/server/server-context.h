@@ -101,6 +101,11 @@ struct server_context {
     // not thread-safe, should only be used from the main thread
     llama_context * get_llama_context() const;
 
+    // True only when the explicit experimental per-sequence cvec binding was
+    // enabled for this resident server. It is a capability fact for host
+    // registration, not a request to enable the feature.
+    bool per_sequence_cvec_batch_enabled() const;
+
     // get a new response reader, used by CLI application
     server_response_reader get_response_reader();
 
