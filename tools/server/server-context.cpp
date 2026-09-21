@@ -967,26 +967,46 @@ private:
         cvec_batch_request.clear();
         server_task_cvec_ptr first;
         bool distinct = false;
+        bool has_cvec = false;
+        bool has_missing_cvec = false;
         std::unordered_set<int32_t> seen_slots;
+        std::vector<int32_t> slot_ids;
         for (const auto & token : batch.tokens) {
             if (!seen_slots.insert(token.id_slot).second) {
                 continue;
             }
+            slot_ids.push_back(token.id_slot);
             if (token.id_slot < 0 || token.id_slot >= static_cast<int32_t>(slots.size())) {
                 error = "per-sequence cvec batch contains an invalid slot";
                 return false;
             }
             const auto & cvec = slots[token.id_slot].cvec;
             if (!cvec) {
-                error = "per-sequence cvec batch cannot mix cvec and non-cvec slots";
-                return false;
+                has_missing_cvec = true;
+                continue;
             }
+            has_cvec = true;
             if (!first) {
                 first = cvec;
             } else {
                 distinct = distinct || !server_task_cvec_equal(first, cvec);
             }
-            if (!cvec_batch_request.add(token.id_slot, cvec, error)) {
+        }
+
+        // A normal batch with no active FlyDelta overlay is not a cvec batch;
+        // leave the authoritative scalar path untouched. A partial batch is
+        // unsafe because one sequence would otherwise receive another
+        // sequence's overlay, so reject it explicitly.
+        if (!has_cvec) {
+            return false;
+        }
+        if (has_missing_cvec) {
+            error = "per-sequence cvec batch cannot mix cvec and non-cvec slots";
+            return false;
+        }
+
+        for (const int32_t slot_id : slot_ids) {
+            if (!cvec_batch_request.add(slot_id, slots[slot_id].cvec, error)) {
                 return false;
             }
         }
