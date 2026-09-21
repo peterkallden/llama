@@ -55,6 +55,11 @@ struct common_flydelta_coefficient_search_config {
         common_flydelta_coefficient_search_strategy::coordinate;
     float step = 0.05f;
     size_t max_candidates = 16;
+    // Backend batch wave limit for diagnostic/model-facing coefficient arms.
+    // Zero lets the registered batch runner own the limit. This is an
+    // execution bound only; it does not change the number or order of search
+    // proposals and it does not make coefficient search concurrent.
+    size_t max_batch_arms = 0;
     float max_l2_norm = 0.32f;
     // TFO-lite only. These limits are intentionally small so the strategy
     // remains a bounded experiment rather than a background optimizer.

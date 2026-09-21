@@ -1013,6 +1013,12 @@ arms. The scalar public entry points remain compatibility wrappers over the
 same contracts, so batching changes execution shape but not proposal order,
 dose decisions, utility gates or lifecycle semantics.
 
+Rank-N coefficient search also accepts an explicit `max_batch_arms` wave limit.
+Production callers should copy the registered model-host capacity into this
+field for Shallow/Deep/TFO; zero leaves the limit to the batch callback. The
+field only bounds one device-facing submission and never changes the proposed
+coefficient population, retry order or CPU-side dose/utility decisions.
+
 Batch capacity is owned by the registered model host, not by an individual
 search algorithm. The resident server derives `max_arms_per_batch` from its
 validated number of parallel sequences and the common adapter partitions a

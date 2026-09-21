@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <random>
 
@@ -182,12 +183,59 @@ bool run_coefficient_arms_batched(
         std::string & error) {
     results.clear();
     if (requested.empty()) return true;
+
+    auto run_batch_waves = [&](const std::vector<std::vector<float>> & coefficients,
+            std::vector<common_flydelta_counterfactual_trial> & batch_counterfactuals,
+            std::vector<common_flydelta_decision_margin> & batch_margins,
+            std::vector<common_flydelta_representation_diagnostics> & batch_geometries,
+            std::vector<bool> & batch_geometry_available) {
+        batch_counterfactuals.clear();
+        batch_margins.clear();
+        batch_geometries.clear();
+        batch_geometry_available.clear();
+        if (coefficients.empty()) return true;
+        const size_t wave_size = config.max_batch_arms == 0
+            ? coefficients.size() : config.max_batch_arms;
+        for (size_t start = 0; start < coefficients.size(); start += wave_size) {
+            const size_t end = std::min(coefficients.size(), start + wave_size);
+            std::vector<std::vector<float>> wave_coefficients(
+                coefficients.begin() + start, coefficients.begin() + end);
+            std::vector<common_flydelta_counterfactual_trial> wave_counterfactuals;
+            std::vector<common_flydelta_decision_margin> wave_margins;
+            std::vector<common_flydelta_representation_diagnostics> wave_geometries;
+            std::vector<bool> wave_geometry_available;
+            if (!batch_runner(fixture, basis, wave_coefficients, wave_counterfactuals,
+                    wave_margins, wave_geometries, wave_geometry_available, error) ||
+                    wave_counterfactuals.size() != wave_coefficients.size() ||
+                    wave_margins.size() != wave_coefficients.size() ||
+                    wave_geometries.size() != wave_coefficients.size() ||
+                    wave_geometry_available.size() != wave_coefficients.size()) {
+                if (error.empty()) {
+                    error = "FlyDelta coefficient batch returned an incomplete arm wave";
+                }
+                return false;
+            }
+            batch_counterfactuals.insert(batch_counterfactuals.end(),
+                std::make_move_iterator(wave_counterfactuals.begin()),
+                std::make_move_iterator(wave_counterfactuals.end()));
+            batch_margins.insert(batch_margins.end(),
+                std::make_move_iterator(wave_margins.begin()),
+                std::make_move_iterator(wave_margins.end()));
+            batch_geometries.insert(batch_geometries.end(),
+                std::make_move_iterator(wave_geometries.begin()),
+                std::make_move_iterator(wave_geometries.end()));
+            batch_geometry_available.insert(batch_geometry_available.end(),
+                wave_geometry_available.begin(), wave_geometry_available.end());
+        }
+        return true;
+    };
+
     std::vector<common_flydelta_counterfactual_trial> counterfactuals;
     std::vector<common_flydelta_decision_margin> margins;
     std::vector<common_flydelta_representation_diagnostics> geometries;
     std::vector<bool> geometry_available;
-    if (!batch_runner(fixture, basis, requested, counterfactuals, margins,
-            geometries, geometry_available, error) ||
+    if (!run_batch_waves(requested, counterfactuals, margins, geometries,
+            geometry_available) ||
             counterfactuals.size() != requested.size() ||
             margins.size() != requested.size() ||
             geometries.size() != requested.size() ||
@@ -246,8 +294,8 @@ bool run_coefficient_arms_batched(
     margins.clear();
     geometries.clear();
     geometry_available.clear();
-    if (!batch_runner(fixture, basis, retry_coefficients, counterfactuals, margins,
-            geometries, geometry_available, error) ||
+    if (!run_batch_waves(retry_coefficients, counterfactuals, margins, geometries,
+            geometry_available) ||
             counterfactuals.size() != retry_coefficients.size() ||
             margins.size() != retry_coefficients.size() ||
             geometries.size() != retry_coefficients.size() ||
@@ -389,6 +437,10 @@ bool common_flydelta_coefficient_search_config_validate(
             config.max_candidates > 64 || !finite(config.max_l2_norm) ||
             config.max_l2_norm <= 0.0f || config.max_l2_norm > 1.0f) {
         error = "FlyDelta coefficient search configuration is invalid";
+        return false;
+    }
+    if (config.max_batch_arms > 64) {
+        error = "FlyDelta coefficient batch wave limit is invalid";
         return false;
     }
     switch (config.strategy) {

@@ -64,6 +64,10 @@ int main() {
     config.population_size = 0;
     config.iterations = 0;
     CHECK(common_flydelta_coefficient_search_config_validate(config, 2, error));
+    config.max_batch_arms = 65;
+    CHECK(!common_flydelta_coefficient_search_config_validate(config, 2, error));
+    config.max_batch_arms = 0;
+    CHECK(common_flydelta_coefficient_search_config_validate(config, 2, error));
     config.strategy = common_flydelta_coefficient_search_strategy::tfo_lite;
     config.population_size = 3;
     config.iterations = 2;
@@ -145,8 +149,10 @@ int main() {
     common_flydelta_coefficient_search_config batch_config = tfo_config;
     batch_config.strategy = common_flydelta_coefficient_search_strategy::coordinate;
     batch_config.max_candidates = 5;
+    batch_config.max_batch_arms = 2;
     batch_config.use_dose_controller = false;
     size_t coefficient_batch_calls = 0;
+    size_t largest_coefficient_batch = 0;
     std::vector<common_flydelta_coefficient_trial> batch_trials_result;
     common_flydelta_coefficient_selection batch_selection;
     const common_flydelta_coefficient_search_runner batch_baseline_runner =
@@ -166,6 +172,8 @@ int main() {
                 auto & batch_counterfactuals, auto & batch_margins,
                 auto & batch_geometries, auto & batch_geometry_available, std::string &) {
             ++coefficient_batch_calls;
+            largest_coefficient_batch = std::max(
+                largest_coefficient_batch, coefficients.size());
             batch_counterfactuals.clear();
             batch_margins.clear();
             batch_geometries.clear();
@@ -189,7 +197,8 @@ int main() {
     CHECK(common_flydelta_run_low_rank_coefficient_search_batched(
         fixture(), basis, batch_config, batch_baseline_runner,
         coefficient_batch_runner, batch_trials_result, batch_selection, error));
-    CHECK(coefficient_batch_calls == 1);
+    CHECK(coefficient_batch_calls == 2);
+    CHECK(largest_coefficient_batch <= batch_config.max_batch_arms);
     CHECK(batch_trials_result.size() == 4);
     CHECK(batch_selection.selected);
 
