@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent-server-generation.h"
 #include "chat.h"
+#include "../src/llama-graph.h"
 
 #include <cassert>
 #include <cmath>
@@ -304,6 +305,20 @@ void test_server_task_cvec_contract() {
     assert(!server_task_cvec_validate(over_bound, 2, 3, 1024, error));
 }
 
+void test_cvec_batch_graph_identity() {
+    llama_adapter_cvec_batch_ref first;
+    llama_adapter_cvec_batch_ref second;
+
+    llm_graph_params params{};
+    params.cvec_batch = &first;
+
+    auto same = params;
+    assert(params.allow_reuse(same));
+
+    same.cvec_batch = &second;
+    assert(!params.allow_reuse(same));
+}
+
 } // namespace
 
 int main() {
@@ -314,5 +329,6 @@ int main() {
     test_prepare_plain_chat_has_no_tool_grammar();
     test_server_task_params_from_prepared_generation();
     test_server_task_cvec_contract();
+    test_cvec_batch_graph_identity();
     return 0;
 }
