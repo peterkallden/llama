@@ -349,6 +349,77 @@ bool common_flydelta_run_bounded_arm_batch(
     return common_flydelta_arm_batch_result_validate(result, request, error);
 }
 
+bool common_flydelta_run_layer_profile_batch(
+        const common_flydelta_model_host & host,
+        const std::string & job_id,
+        const std::string & context_ref,
+        const std::string & fixture_ref,
+        const std::string & intervention_ref,
+        const std::vector<common_flydelta_layer_profile_arm> & proposals,
+        const bool request_capture,
+        const bool request_teacher_forced_margin,
+        const bool request_generation,
+        const bool request_host_verification,
+        const size_t max_capture_bytes,
+        const size_t max_generated_tokens,
+        common_flydelta_arm_batch_result & result,
+        std::string & error) {
+    error.clear();
+    result = {};
+    if (job_id.empty() || context_ref.empty() || fixture_ref.empty() ||
+            intervention_ref.empty() || proposals.empty() || proposals.size() > 256) {
+        error = "FlyDelta layer profile batch identity or size is invalid";
+        return false;
+    }
+
+    common_flydelta_arm_batch_request request;
+    request.arms.reserve(proposals.size());
+    for (size_t index = 0; index < proposals.size(); ++index) {
+        const auto & proposal = proposals[index];
+        if (!std::isfinite(proposal.alpha) || proposal.alpha < 0.0f ||
+                (proposal.apply_overlay &&
+                 (proposal.layer_indices.empty() ||
+                  proposal.layer_indices.size() != proposal.coefficients.size())) ||
+                (!proposal.apply_overlay &&
+                 (!proposal.layer_indices.empty() || !proposal.coefficients.empty()))) {
+            error = "FlyDelta layer profile proposal is invalid";
+            return false;
+        }
+        common_flydelta_arm_request arm;
+        arm.job_id = job_id;
+        arm.context_ref = context_ref;
+        arm.fixture_ref = fixture_ref;
+        arm.intervention_ref = intervention_ref;
+        arm.layer_indices = proposal.layer_indices;
+        arm.coefficients = proposal.coefficients;
+        arm.alpha = proposal.apply_overlay ? proposal.alpha : 0.0f;
+        arm.apply_overlay = proposal.apply_overlay;
+        arm.fresh_context = true;
+        arm.request_capture = request_capture;
+        arm.request_teacher_forced_margin = request_teacher_forced_margin;
+        arm.request_generation = request_generation;
+        arm.request_host_verification = request_host_verification;
+        arm.max_capture_bytes = max_capture_bytes;
+        arm.max_generated_tokens = max_generated_tokens;
+
+        std::string identity = job_id + "\n" + context_ref + "\n" + fixture_ref +
+            "\n" + intervention_ref + "\n" + std::to_string(index) + "\n" +
+            std::to_string(arm.alpha) + "\n" + (arm.apply_overlay ? "overlay" : "baseline");
+        for (const uint32_t layer : arm.layer_indices) identity += "\n" + std::to_string(layer);
+        for (const float coefficient : arm.coefficients) identity += "\n" + std::to_string(coefficient);
+        arm.arm_id = "flydelta://arm/" +
+            hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+        if (!common_flydelta_arm_request_validate(arm, error)) return false;
+        request.arms.push_back(std::move(arm));
+    }
+    if (!common_flydelta_run_bounded_arm_batch(host, request, result, error)) return false;
+    if (result.arms.size() != proposals.size()) {
+        error = "FlyDelta layer profile batch returned an incomplete result";
+        return false;
+    }
+    return true;
+}
+
 namespace {
 
 common_flydelta_counterfactual_trial arm_trial_from_result(

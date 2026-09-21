@@ -140,6 +140,16 @@ struct common_flydelta_arm_batch_result {
     std::vector<common_flydelta_arm_result> arms;
 };
 
+// A backend-neutral layer/profile proposal used by BootstrapZoom, Shallow
+// controls and later coefficient search. The model host only executes these
+// proposals; it does not decide which search phase produced them.
+struct common_flydelta_layer_profile_arm {
+    std::vector<uint32_t> layer_indices;
+    std::vector<float> coefficients;
+    float alpha = 0.0f;
+    bool apply_overlay = true;
+};
+
 bool common_flydelta_arm_batch_request_validate(
         const common_flydelta_arm_batch_request & request,
         std::string & error);
@@ -218,6 +228,25 @@ struct common_flydelta_model_host {
 bool common_flydelta_run_bounded_arm_batch(
         const common_flydelta_model_host & host,
         const common_flydelta_arm_batch_request & request,
+        common_flydelta_arm_batch_result & result,
+        std::string & error);
+
+// Materializes a bounded layer/profile wave into the generic ArmRequest
+// contract and executes it through the existing scalar-or-device batch seam.
+// The returned arms preserve proposal order and per-arm isolation.
+bool common_flydelta_run_layer_profile_batch(
+        const common_flydelta_model_host & host,
+        const std::string & job_id,
+        const std::string & context_ref,
+        const std::string & fixture_ref,
+        const std::string & intervention_ref,
+        const std::vector<common_flydelta_layer_profile_arm> & proposals,
+        bool request_capture,
+        bool request_teacher_forced_margin,
+        bool request_generation,
+        bool request_host_verification,
+        size_t max_capture_bytes,
+        size_t max_generated_tokens,
         common_flydelta_arm_batch_result & result,
         std::string & error);
 

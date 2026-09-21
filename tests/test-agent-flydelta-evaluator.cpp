@@ -719,6 +719,33 @@ int main() {
         scalar_batch_result, batch_result, 1.0e-5f, error));
     batch_result.arms[0].margin.positive_total_logprob -= 0.25f;
 
+    // BootstrapZoom and Shallow controls share the same layer/profile wave
+    // contract. The helper preserves proposal order while using the backend
+    // batch path and rejects malformed profiles before execution.
+    const std::vector<common_flydelta_layer_profile_arm> profile_proposals = {
+        {{24}, {1.0f}, 0.05f, true},
+        {{23, 24}, {0.5f, 0.5f}, 0.08f, true},
+    };
+    common_flydelta_arm_batch_result profile_result;
+    CHECK(common_flydelta_run_layer_profile_batch(
+        batched_model_host, "flydelta://job/profile-wave", "context://profile",
+        "flydelta://fixture/profile", "intervention://profile", profile_proposals,
+        true, true, false, false, 1024, 0, profile_result, error));
+    CHECK(profile_result.arms.size() == profile_proposals.size());
+    CHECK(profile_result.arms[0].executed && profile_result.arms[1].executed);
+    CHECK(profile_result.arms[0].executed_alpha == profile_proposals[0].alpha);
+    CHECK(profile_result.arms[1].executed_alpha == profile_proposals[1].alpha);
+    CHECK(profile_result.arms[0].arm_id != profile_result.arms[1].arm_id);
+    CHECK(profile_result.arms[0].execution_metrics.execution_path ==
+        common_flydelta_arm_execution_metrics::path::backend_batch);
+    auto invalid_profile_proposals = profile_proposals;
+    invalid_profile_proposals[1].coefficients.pop_back();
+    CHECK(!common_flydelta_run_layer_profile_batch(
+        batched_model_host, "flydelta://job/profile-wave", "context://profile",
+        "flydelta://fixture/profile", "intervention://profile",
+        invalid_profile_proposals, true, true, false, false, 1024, 0,
+        profile_result, error));
+
     batch_request.arms[1].coefficients.push_back(0.5f);
     CHECK(!common_flydelta_run_bounded_arm_batch(
         model_host, batch_request, batch_result, error));
