@@ -63,6 +63,63 @@ private:
 
 using llama_adapter_cvec_ptr = std::shared_ptr<llama_adapter_cvec>;
 
+// Backend-resident per-sequence control-vector table. Row order follows
+// seq_ids; the graph callback selects the row for each token in the current
+// ubatch. This is the low-level implementation behind
+// llama_adapter_cvec_batch_ref. It is deliberately unaware of FlyDelta,
+// server slots and search policy.
+struct llama_adapter_cvec_batch {
+    llama_adapter_cvec_batch() = default;
+    ~llama_adapter_cvec_batch() = default;
+
+    llama_adapter_cvec_batch(const llama_adapter_cvec_batch &) = delete;
+    llama_adapter_cvec_batch & operator=(const llama_adapter_cvec_batch &) = delete;
+    llama_adapter_cvec_batch(llama_adapter_cvec_batch &&) = delete;
+    llama_adapter_cvec_batch & operator=(llama_adapter_cvec_batch &&) = delete;
+
+    bool apply(
+            const llama_model & model,
+            const std::vector<llama_seq_id> & seq_ids,
+            const std::vector<const float *> & data,
+            size_t data_len,
+            int32_t n_embd,
+            int32_t il_start,
+            int32_t il_end);
+
+    void clear();
+
+    bool enabled() const { return active; }
+
+    const llama_adapter_cvec_batch_ref & ref() const { return batch_ref; }
+
+private:
+    static ggml_tensor * apply_callback(
+            ggml_context * ctx,
+            ggml_tensor * cur,
+            int il,
+            const llama_ubatch & ubatch,
+            void * user_data);
+
+    bool init(const llama_model & model, int32_t n_embd, size_t n_seq);
+    ggml_tensor * tensor_for(int il) const;
+    int32_t row_for_token(const llama_ubatch & ubatch, uint32_t token_index) const;
+
+    int32_t layer_start = -1;
+    int32_t layer_end   = -1;
+    int32_t n_embd      = 0;
+    bool active         = false;
+
+    std::vector<llama_seq_id> seq_ids;
+    std::vector<ggml_context_ptr> ctxs;
+    std::vector<ggml_backend_buffer_ptr> bufs;
+    std::vector<ggml_tensor *> tensors;
+
+    llama_adapter_cvec_batch_ref batch_ref {
+        /* .apply = */ apply_callback,
+        /* .user_data = */ this,
+    };
+};
+
 //
 // llama_adapter_lora
 //

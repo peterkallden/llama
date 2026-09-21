@@ -13,6 +13,7 @@
 #include <sstream>
 #include <cmath>
 #include <limits>
+#include <algorithm>
 
 using json = nlohmann::ordered_json;
 
@@ -36,6 +37,64 @@ bool server_task_cvec_equal(
     // A host-provided hash is the normal fast path.  Compare the payload when
     // no hash is available so an incomplete identity can never alias state.
     return !left->content_hash.empty() || left->data == right->data;
+}
+
+bool server_task_cvec_batch::add(
+        const llama_seq_id seq_id,
+        server_task_cvec_ptr cvec,
+        std::string & error) {
+    error.clear();
+    if (!cvec) {
+        error = "per-sequence control vector is null";
+        return false;
+    }
+    if (std::any_of(entries.begin(), entries.end(), [seq_id](const entry & value) {
+            return value.seq_id == seq_id;
+        })) {
+        error = "duplicate sequence id in per-sequence control-vector batch";
+        return false;
+    }
+    if (!entries.empty()) {
+        const server_task_cvec & first = *entries.front().cvec;
+        if (cvec->n_embd != first.n_embd || cvec->il_start != first.il_start ||
+                cvec->il_end != first.il_end || cvec->data.size() != first.data.size()) {
+            error = "per-sequence control vectors have incompatible geometry";
+            return false;
+        }
+    }
+    entries.push_back({seq_id, std::move(cvec)});
+    return true;
+}
+
+bool server_task_cvec_batch::materialize(
+        std::vector<llama_seq_id> & seq_ids,
+        std::vector<const float *> & data,
+        int32_t & n_embd,
+        int32_t & il_start,
+        int32_t & il_end,
+        std::string & error) const {
+    error.clear();
+    seq_ids.clear();
+    data.clear();
+    n_embd = 0;
+    il_start = 1;
+    il_end = 0;
+    if (entries.empty()) {
+        error = "per-sequence control-vector batch is empty";
+        return false;
+    }
+
+    const server_task_cvec & first = *entries.front().cvec;
+    n_embd = first.n_embd;
+    il_start = first.il_start;
+    il_end = first.il_end;
+    seq_ids.reserve(entries.size());
+    data.reserve(entries.size());
+    for (const entry & value : entries) {
+        seq_ids.push_back(value.seq_id);
+        data.push_back(value.cvec->data.data());
+    }
+    return true;
 }
 
 bool server_task_cvec_validate(

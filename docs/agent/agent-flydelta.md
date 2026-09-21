@@ -1030,6 +1030,18 @@ has completed; changing the reference also participates in graph reuse
 identity. This is an integration seam only, not a claim that the resident
 server already has true per-sequence Vulkan batching.
 
+The core also contains `llama_adapter_cvec_batch`, a small backend-neutral
+reference table behind that hook. It owns one backend-resident F32 row per
+sequence and uses `ggml_get_rows()` to select the row for each token. It is
+not a FlyDelta or server policy object, and it rejects a token shared by
+multiple sequence IDs with different rows instead of silently selecting the
+first ID. The server-side `server_task_cvec_batch` is the matching
+ownership/geometry view: it keeps the immutable request cvecs alive and
+materializes sequence IDs plus payload pointers for a backend. It does not
+install a callback or change the current scalar server path. A later runtime
+binding can therefore connect the two without moving model execution or
+search policy into FlyDelta.
+
 A backend integration is intentionally small and can be kept behind its
 existing model-host abstraction. The usual flow is:
 

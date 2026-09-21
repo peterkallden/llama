@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent-server-generation.h"
 #include "chat.h"
+#include "../src/llama-adapter.h"
 #include "../src/llama-graph.h"
 
 #include <cassert>
@@ -319,6 +320,46 @@ void test_cvec_batch_graph_identity() {
     assert(!params.allow_reuse(same));
 }
 
+void test_server_task_cvec_batch_view() {
+    auto first = std::make_shared<server_task_cvec>();
+    first->identity = "flydelta://artifact/slot-a";
+    first->n_embd = 2;
+    first->il_start = 1;
+    first->il_end = 2;
+    first->data = {0.25f, 0.5f, 0.75f, 1.0f};
+
+    auto second = std::make_shared<server_task_cvec>(*first);
+    second->identity = "flydelta://artifact/slot-b";
+    second->data[0] = -0.25f;
+
+    server_task_cvec_batch batch;
+    std::string error;
+    assert(batch.add(3, first, error));
+    assert(batch.add(7, second, error));
+    assert(batch.size() == 2);
+
+    std::vector<llama_seq_id> seq_ids;
+    std::vector<const float *> data;
+    int32_t n_embd = 0;
+    int32_t il_start = 0;
+    int32_t il_end = 0;
+    assert(batch.materialize(seq_ids, data, n_embd, il_start, il_end, error));
+    assert(seq_ids == std::vector<llama_seq_id>({3, 7}));
+    assert(data.size() == 2);
+    assert(data[0] == first->data.data());
+    assert(data[1] == second->data.data());
+    assert(n_embd == 2 && il_start == 1 && il_end == 2);
+
+    assert(!batch.add(3, second, error));
+
+    auto incompatible = std::make_shared<server_task_cvec>(*first);
+    incompatible->il_end = 1;
+    assert(!batch.add(9, incompatible, error));
+
+    server_task_cvec_batch empty;
+    assert(!empty.materialize(seq_ids, data, n_embd, il_start, il_end, error));
+}
+
 } // namespace
 
 int main() {
@@ -330,5 +371,6 @@ int main() {
     test_server_task_params_from_prepared_generation();
     test_server_task_cvec_contract();
     test_cvec_batch_graph_identity();
+    test_server_task_cvec_batch_view();
     return 0;
 }
