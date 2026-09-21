@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-deep-search.h"
 
 #include <cmath>
+#include <iostream>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -119,6 +120,7 @@ int main() {
             trial.executed = true;
             trial.verifier_known = true;
             trial.overlay_applied = apply_overlay;
+            trial.evidence_ref = "evidence:deep-search-batch";
             trial.quality = apply_overlay && !coefficients.empty() && coefficients[0] > 0.0f
                 ? 1.0f : 0.0f;
             margin = {};
@@ -163,12 +165,15 @@ int main() {
                 }
                 return true;
             };
-        };
+    };
     common_flydelta_deep_search_result batched_result;
-    CHECK(common_flydelta_run_deep_search_batched(
-        fixture(), config, input, batch_probe,
-        batch_probe_runner(&diagnostic_batch_calls, batch_probe), batch_probe,
-        batch_probe_runner(&full_batch_calls, batch_probe), batched_result, error));
+    if (!common_flydelta_run_deep_search_batched(
+            fixture(), config, input, batch_probe,
+            batch_probe_runner(&diagnostic_batch_calls, batch_probe), batch_probe,
+            batch_probe_runner(&full_batch_calls, batch_probe), batched_result, error)) {
+        std::cerr << "deep batch search failed: " << error << '\n';
+        return __LINE__;
+    }
     CHECK(diagnostic_batch_calls == 1);
     CHECK(full_batch_calls == 1);
     CHECK(batched_result.coefficient_trials.size() == result.coefficient_trials.size());

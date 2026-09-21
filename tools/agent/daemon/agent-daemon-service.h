@@ -21,6 +21,8 @@
 #include <vector>
 
 class common_agent_inference_capacity_gate;
+class common_agent_server_context_host;
+struct common_agent_server_flydelta_binding;
 struct common_flydelta_evaluator_config;
 struct common_flydelta_evaluator_callbacks;
 
@@ -111,6 +113,17 @@ struct common_agent_daemon_runtime {
         common_agent_daemon_reload_result & result,
         std::string & error)> reload_config;
 };
+
+// Registers the host-owned semantic prepare/finalize/verifier callbacks on
+// the daemon runtime. The daemon stores only the resulting backend-neutral
+// adapter; model contexts remain owned by the supplied resident host. This
+// keeps semantic authority in the host while making registration explicit and
+// usable by both the daemon and embedding runtimes.
+bool common_agent_daemon_register_flydelta_server_binding(
+        common_agent_daemon_runtime & runtime,
+        std::shared_ptr<common_agent_server_context_host> host,
+        common_agent_server_flydelta_binding binding,
+        std::string & error);
 
 struct common_agent_daemon_turn_payload {
     common_agent_runtime_session_manager_turn_request request;

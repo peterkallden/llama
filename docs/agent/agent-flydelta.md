@@ -419,6 +419,15 @@ present, the FlyDelta lane remains configured-but-idle and a queued job is not
 consumed; this is a capability/configuration gap, not a successful search with
 no utility.
 
+Embedding daemons use
+`common_agent_daemon_register_flydelta_server_binding()` to perform that
+registration as one operation. It accepts the resident server-context host and
+the host-owned `prepare_arm`, `finalize_arm`, `register_evaluator` and semantic
+verification binding, then installs the resulting backend-neutral host and
+adapter in the daemon runtime. The helper is deliberately explicit: the
+daemon cannot invent a semantic verifier, and a runtime with no binding keeps
+the lane idle rather than falling back to an unverified model path.
+
 The existing runtime also exposes the lower-level pieces needed by that host
 binding: the inference object accepts immutable FlyDelta activations and
 capture requests, and the server-context backend supports isolated
@@ -1003,6 +1012,31 @@ same arrangement for its diagnostic controls and pruned top-K full-generation
 arms. The scalar public entry points remain compatibility wrappers over the
 same contracts, so batching changes execution shape but not proposal order,
 dose decisions, utility gates or lifecycle semantics.
+
+Batch capacity is owned by the registered model host, not by an individual
+search algorithm. The resident server derives `max_arms_per_batch` from its
+validated number of parallel sequences and the common adapter partitions a
+larger request into bounded waves. The current runtime keeps
+`max_inflight_batches` at one: model execution is synchronous at this seam and
+the host scheduler remains responsible for cross-job admission. The effective
+shape is therefore:
+
+```text
+Whirlpool round / Shallow controls / Deep controls / TFO population
+        -> independent arm request set
+        -> host-capacity waves (<= resident parallel slots)
+        -> ordered arm results
+        -> CPU policy, dose, UtilityGate and lifecycle decision
+```
+
+AlphaResponse remains sequential at the policy level because the next alpha
+depends on the previous response, safety boundary and bracket. Its future
+device optimization is to batch only independent refinement probes; it must
+not hide a retry or backoff inside the host callback. This makes the phase
+budgets comparable: Whirlpool uses its probes-per-round, Shallow/Deep use
+their bounded control/top-K budgets, and TFO uses its population size, while
+the model host caps the actual concurrent wave without changing any proposal
+or evidence semantics.
 
 Teacher-forced comparisons have the same backend boundary through
 `common_agent_teacher_forced_choice_batch_request` and its result type. The

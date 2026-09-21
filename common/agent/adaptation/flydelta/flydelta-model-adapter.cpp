@@ -2,6 +2,7 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "hash/hash.h"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <unordered_set>
@@ -290,15 +291,31 @@ bool common_flydelta_run_bounded_arm_batch(
     // explicitly after its backend/server opt-in has been validated.  This
     // keeps FlyDelta enabled independently from the batch optimization.
     if (host.capabilities.bounded_arm_batch && host.run_bounded_arm_batch) {
-        if (!host.run_bounded_arm_batch(request, result, error)) return false;
-        for (auto & arm : result.arms) {
-            if (arm.execution_metrics.execution_path ==
-                    common_flydelta_arm_execution_metrics::path::unknown) {
-                arm.execution_metrics.available = true;
-                arm.execution_metrics.batched_execution_used = true;
-                arm.execution_metrics.execution_path =
-                    common_flydelta_arm_execution_metrics::path::backend_batch;
+        const size_t max_arms = host.batch_capacity.max_arms_per_batch;
+        result.schema_version = request.schema_version;
+        for (size_t start = 0; start < request.arms.size();) {
+            const size_t end = max_arms == 0
+                ? request.arms.size()
+                : std::min(request.arms.size(), start + max_arms);
+            common_flydelta_arm_batch_request wave;
+            wave.schema_version = request.schema_version;
+            wave.arms.assign(request.arms.begin() + start, request.arms.begin() + end);
+            common_flydelta_arm_batch_result wave_result;
+            if (!host.run_bounded_arm_batch(wave, wave_result, error)) return false;
+            if (!common_flydelta_arm_batch_result_validate(wave_result, wave, error)) {
+                return false;
             }
+            for (auto & arm : wave_result.arms) {
+                if (arm.execution_metrics.execution_path ==
+                        common_flydelta_arm_execution_metrics::path::unknown) {
+                    arm.execution_metrics.available = true;
+                    arm.execution_metrics.batched_execution_used = true;
+                    arm.execution_metrics.execution_path =
+                        common_flydelta_arm_execution_metrics::path::backend_batch;
+                }
+                result.arms.push_back(std::move(arm));
+            }
+            start = end;
         }
         return common_flydelta_arm_batch_result_validate(result, request, error);
     }

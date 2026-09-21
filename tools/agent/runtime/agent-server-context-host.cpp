@@ -7,6 +7,7 @@
 #include "common.h"
 #include "server-context.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
@@ -351,6 +352,10 @@ common_agent_server_context_host_make_flydelta_model_host(
     auto model_host = std::make_shared<common_flydelta_model_host>();
     model_host->capabilities = binding.primitives;
     model_host->capabilities.bounded_arm_batch = native_batch;
+    model_host->batch_capacity.max_arms_per_batch = native_batch
+        ? static_cast<size_t>(std::max(1, host->context_key().n_parallel))
+        : 1;
+    model_host->batch_capacity.max_inflight_batches = 1;
     model_host->run_bounded_arm_batch = [host, binding, native_batch](
             const common_flydelta_arm_batch_request & request,
             common_flydelta_arm_batch_result & result,

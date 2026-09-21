@@ -1,6 +1,7 @@
 #include "agent-daemon-service.h"
 #include "agent-daemon-adapter.h"
 #include "../mcp/agent-mcp-server-tool-registry.h"
+#include "../runtime/agent-server-context-host.h"
 
 #include <set>
 
@@ -17,6 +18,31 @@ void common_agent_daemon_config_store::replace(
         std::shared_ptr<const daemon_options> next) {
     std::lock_guard<std::mutex> lock(mutex_);
     current_ = std::move(next);
+}
+
+bool common_agent_daemon_register_flydelta_server_binding(
+        common_agent_daemon_runtime & runtime,
+        std::shared_ptr<common_agent_server_context_host> host,
+        common_agent_server_flydelta_binding binding,
+        std::string & error) {
+    error.clear();
+    if (!host) {
+        error = "FlyDelta daemon registration requires a resident server host";
+        return false;
+    }
+
+    auto model_host = common_agent_server_context_host_make_flydelta_model_host(
+        std::move(host), std::move(binding), error);
+    if (!model_host) return false;
+
+    auto adapter = common_flydelta_model_adapter_from_host(*model_host, error);
+    if (!adapter) return false;
+
+    runtime.flydelta_model_host = std::move(model_host);
+    runtime.flydelta_model_adapter = std::move(adapter);
+    runtime.flydelta_model_capabilities = runtime.flydelta_model_adapter->capabilities;
+    error.clear();
+    return true;
 }
 
 namespace {

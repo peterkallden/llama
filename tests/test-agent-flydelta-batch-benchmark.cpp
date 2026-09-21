@@ -1,5 +1,6 @@
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -55,7 +56,13 @@ int main() {
 
     common_flydelta_model_host batch_host = scalar_host;
     batch_host.capabilities.bounded_arm_batch = true;
-    batch_host.run_bounded_arm_batch = [](const auto & batch, auto & result, auto &) {
+    batch_host.batch_capacity.max_arms_per_batch = 2;
+    size_t largest_batch_seen = 0;
+    size_t batch_callback_calls = 0;
+    batch_host.run_bounded_arm_batch = [&largest_batch_seen, &batch_callback_calls](
+            const auto & batch, auto & result, auto &) {
+        ++batch_callback_calls;
+        largest_batch_seen = std::max(largest_batch_seen, batch.arms.size());
         result = {};
         result.arms.reserve(batch.arms.size());
         for (const auto & arm : batch.arms) {
@@ -69,6 +76,11 @@ int main() {
     if (!common_flydelta_run_bounded_arm_batch(scalar_host, request, scalar_result, error) ||
             !common_flydelta_run_bounded_arm_batch(batch_host, request, batch_result, error)) {
         std::cerr << "FlyDelta batch benchmark setup failed: " << error << '\n';
+        return 1;
+    }
+    if (largest_batch_seen > batch_host.batch_capacity.max_arms_per_batch ||
+            batch_callback_calls != arm_count / batch_host.batch_capacity.max_arms_per_batch) {
+        std::cerr << "FlyDelta batch capacity was exceeded\n";
         return 1;
     }
     if (!common_flydelta_arm_batch_result_replay_equivalent(

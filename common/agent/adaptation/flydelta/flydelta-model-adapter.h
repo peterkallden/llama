@@ -182,11 +182,21 @@ struct common_flydelta_model_capabilities {
     bool representation_augmentation = false;
 };
 
+// Backend-neutral execution capacity. Search algorithms may propose a larger
+// independent arm set, but the model host can partition it into bounded waves
+// that fit its resident slots/device batch. A zero arm limit means that the
+// registered batch callback owns the limit itself.
+struct common_flydelta_model_batch_capacity {
+    size_t max_arms_per_batch = 0;
+    size_t max_inflight_batches = 1;
+};
+
 // Runtime-owned registration point for model-facing FlyDelta execution. The
 // host owns model contexts, opaque reference resolution, fresh inference and
 // host verification; the common worker only receives the resulting callback.
 struct common_flydelta_model_host {
     common_flydelta_model_capabilities capabilities;
+    common_flydelta_model_batch_capacity batch_capacity;
     // Executes one generic bounded model-facing arm. Search policy remains in
     // FlyDelta; the host owns contexts, reference resolution and verification.
     std::function<bool(
