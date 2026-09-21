@@ -1030,6 +1030,49 @@ has completed; changing the reference also participates in graph reuse
 identity. This is an integration seam only, not a claim that the resident
 server already has true per-sequence Vulkan batching.
 
+A backend integration is intentionally small and can be kept behind its
+existing model-host abstraction. The usual flow is:
+
+```cpp
+struct backend_overlay_table {
+    // Device buffers, layer lookup and the per-sequence overlay identity.
+};
+
+static ggml_tensor * apply_sequence_overlays(
+        ggml_context * ctx,
+        ggml_tensor * cur,
+        int il,
+        const llama_ubatch & ubatch,
+        void * opaque) {
+    auto & table = *static_cast<backend_overlay_table *>(opaque);
+
+    // Backend-specific: map each token in ubatch to its sequence and build
+    // one [hidden_size, n_tokens] overlay tensor for this layer. A typical
+    // implementation uses a sequence-index tensor plus ggml_get_rows().
+    ggml_tensor * overlay = table.overlay_for_layer(ctx, il, ubatch);
+    return overlay != nullptr ? ggml_add(ctx, cur, overlay) : cur;
+}
+
+backend_overlay_table table = make_overlay_table(...);
+llama_adapter_cvec_batch_ref ref {
+    /* .apply = */ apply_sequence_overlays,
+    /* .user_data = */ &table,
+};
+
+context.set_adapter_cvec_batch(&ref);
+// Build/decode the bounded batch while `ref` and `table` remain alive.
+context.set_adapter_cvec_batch(nullptr); // restore scalar cvec handling
+```
+
+This is pseudocode for the binding seam, not a new public C API. The backend
+must decide how `ubatch.seq_id`/`seq_id_unq` select rows, how layer overlays
+are stored, and how device execution is scheduled. The callback is invoked
+once for each graph layer that requests cvec application; it should only build
+the corresponding graph expression. It must not mutate FlyDelta state, choose
+the next search arm, or perform host verification. If a backend cannot provide
+per-sequence overlays, it simply does not install the reference and the
+existing scalar/serialized path remains authoritative.
+
 The compact geometry fields in `common_flydelta_arm_result` are also the first
 GPU boundary. For ordinary search ranking the host only needs the reduced
 scalars `cosine`, `progress`, `leakage` and `shift_norm` (plus teacher-forced

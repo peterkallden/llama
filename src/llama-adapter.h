@@ -11,8 +11,12 @@
 struct llama_ubatch;
 
 // Non-owning graph hook for a backend that can apply different control
-// vectors to different sequences in one ubatch. The scalar cvec path remains
-// the default; the backend owns the table, device buffers and lifetime.
+// vectors to different sequences in one ubatch. The callback runs while the
+// graph is being built and must return `cur` unchanged when no overlay is
+// selected for the layer. It may construct backend tensors in `ctx`, but must
+// not execute the graph or retain `ctx`/`cur` after the callback returns.
+// The scalar cvec path remains the default; the backend owns the table,
+// device buffers and lifetime.
 using llama_adapter_cvec_batch_apply_fn = ggml_tensor * (*) (
         ggml_context * ctx,
         ggml_tensor * cur,
@@ -21,6 +25,7 @@ using llama_adapter_cvec_batch_apply_fn = ggml_tensor * (*) (
         void * user_data);
 
 struct llama_adapter_cvec_batch_ref {
+    // The reference and user_data must remain valid through graph execution.
     llama_adapter_cvec_batch_apply_fn apply = nullptr;
     void * user_data = nullptr;
 };
