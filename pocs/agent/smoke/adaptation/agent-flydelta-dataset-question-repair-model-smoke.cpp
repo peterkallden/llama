@@ -1474,9 +1474,13 @@ int main(int argc, char ** argv) {
                 const auto model_runner = common_flydelta_search_pipeline_runner_from_model_host(
                     model_host, queued_job.id, "context://dataset-question-repair",
                     "intervention://dataset-question-repair/" + bootstrap_case.id);
-                const bool executed = common_flydelta_run_search_pipeline(
+                const auto model_batch_runner =
+                    common_flydelta_search_pipeline_batch_runner_from_model_host(
+                        model_host, queued_job.id, "context://dataset-question-repair",
+                        "intervention://dataset-question-repair/" + bootstrap_case.id);
+                const bool executed = common_flydelta_run_search_pipeline_batched(
                     fixture, pipeline_config, {pipeline_direction}, model_runner,
-                    pipeline_result, runner_error);
+                    model_batch_runner, pipeline_result, runner_error);
                 if (!executed) {
                     if (runner_error.empty()) {
                         runner_error = "FlyDelta model smoke search pipeline returned false";

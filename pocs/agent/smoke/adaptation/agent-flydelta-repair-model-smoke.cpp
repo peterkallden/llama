@@ -845,10 +845,13 @@ int main(int argc, char ** argv) {
         const auto model_runner = common_flydelta_search_pipeline_runner_from_model_host(
             model_host, "flydelta://job/model-repair-region", "context://model-repair",
             "intervention://model-repair-region");
+        const auto model_batch_runner = common_flydelta_search_pipeline_batch_runner_from_model_host(
+            model_host, "flydelta://job/model-repair-region", "context://model-repair",
+            "intervention://model-repair-region");
         common_flydelta_search_pipeline_result pipeline_result;
-        if (!common_flydelta_run_search_pipeline(
+        if (!common_flydelta_run_search_pipeline_batched(
                 experiment_fixture, pipeline_config, {pipeline_direction}, model_runner,
-                pipeline_result, error)) {
+                model_batch_runner, pipeline_result, error)) {
             std::cerr << "FlyDelta search pipeline failed: " << error << '\n';
             return 1;
         }
