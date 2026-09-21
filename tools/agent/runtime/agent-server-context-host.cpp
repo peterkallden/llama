@@ -281,6 +281,11 @@ bool run_server_flydelta_arm_batch(
             std::chrono::steady_clock::now() - generation_start).count());
 
     result.schema_version = request.schema_version;
+    result.execution_stats.logical_arm_count = request.arms.size();
+    result.execution_stats.physical_batch_count = 1;
+    result.execution_stats.largest_physical_batch = request.arms.size();
+    result.execution_stats.native_batch_used = native_batch && request.arms.size() > 1;
+    result.execution_stats.model_ms = generation_ms;
     result.arms.reserve(request.arms.size());
     for (size_t index = 0; index < request.arms.size(); ++index) {
         common_flydelta_arm_result arm_result;

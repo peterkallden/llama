@@ -19,6 +19,12 @@ inline constexpr size_t common_flydelta_compact_geometry_bytes =
 struct common_flydelta_arm_request {
     int schema_version = 1;
     std::string job_id;
+    // Physical execution metadata. These fields never participate in arm_id
+    // or search semantics; they describe which logical wave produced the arm
+    // and which compatible host batch may execute it.
+    std::string wave_id;
+    size_t proposal_index = 0;
+    std::string batch_compatibility_key;
     // Stable identity for one model-facing arm. The host uses this as the
     // retry/resume idempotency key; it is derived by the common runner from
     // the immutable job, fixture, intervention, layer and scale identity.
@@ -132,12 +138,27 @@ bool common_flydelta_arm_result_replay_equivalent(
 // the same requests one by one without changing the results contract.
 struct common_flydelta_arm_batch_request {
     int schema_version = 1;
+    // A logical batch/wave may be partitioned into several physical device
+    // batches. The identifiers remain stable across that partitioning.
+    std::string batch_id;
+    std::string wave_id;
     std::vector<common_flydelta_arm_request> arms;
+};
+
+struct common_flydelta_arm_batch_execution_stats {
+    int schema_version = 1;
+    size_t logical_arm_count = 0;
+    size_t physical_batch_count = 0;
+    size_t largest_physical_batch = 0;
+    size_t scalar_fallback_arm_count = 0;
+    bool native_batch_used = false;
+    float model_ms = 0.0f;
 };
 
 struct common_flydelta_arm_batch_result {
     int schema_version = 1;
     std::vector<common_flydelta_arm_result> arms;
+    common_flydelta_arm_batch_execution_stats execution_stats;
 };
 
 // A backend-neutral layer/profile proposal used by BootstrapZoom, Shallow

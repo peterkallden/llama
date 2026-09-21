@@ -677,6 +677,9 @@ int main() {
         common_flydelta_arm_execution_metrics::path::backend_batch);
     CHECK(std::string(common_flydelta_arm_execution_path_name(
         batch_result.arms[0].execution_metrics.execution_path)) == "backend_batch");
+    CHECK(batch_result.execution_stats.logical_arm_count == 2);
+    CHECK(batch_result.execution_stats.physical_batch_count == 1);
+    CHECK(batch_result.execution_stats.largest_physical_batch == 2);
     const auto scalar_batch_result = batch_result;
     batch_result.arms[0].execution_metrics.batched_execution_used = false;
     CHECK(!common_flydelta_arm_batch_result_validate(batch_result, batch_request, error));
@@ -718,6 +721,41 @@ int main() {
     CHECK(!common_flydelta_arm_batch_result_replay_equivalent(
         scalar_batch_result, batch_result, 1.0e-5f, error));
     batch_result.arms[0].margin.positive_total_logprob -= 0.25f;
+
+    // A logical wave may contain arms that require different physical host
+    // contexts. Partitioning must keep compatible arms together while
+    // restoring the original logical order in the result.
+    common_flydelta_model_host partition_host = batched_model_host;
+    size_t partition_callback_calls = 0;
+    partition_host.run_bounded_arm_batch = [&partition_callback_calls, &model_host](
+            const auto & request, auto & result, std::string & partition_error) {
+        ++partition_callback_calls;
+        result = {};
+        for (const auto & arm_request : request.arms) {
+            common_flydelta_arm_result arm_result;
+            if (!model_host.run_bounded_arm(arm_request, arm_result, partition_error)) {
+                return false;
+            }
+            result.arms.push_back(std::move(arm_result));
+        }
+        return true;
+    };
+    common_flydelta_arm_batch_request partition_request = batch_request;
+    partition_request.batch_id = "flydelta://batch/partition";
+    partition_request.wave_id = "wave:partition";
+    partition_request.arms[0].wave_id = partition_request.wave_id;
+    partition_request.arms[1].wave_id = partition_request.wave_id;
+    partition_request.arms[0].batch_compatibility_key = "context:shared";
+    partition_request.arms[1].batch_compatibility_key = "context:shared";
+    partition_request.arms[1].request_generation = false;
+    common_flydelta_arm_batch_result partition_result;
+    CHECK(common_flydelta_run_bounded_arm_batch(
+        partition_host, partition_request, partition_result, error));
+    CHECK(partition_callback_calls == 2);
+    CHECK(partition_result.execution_stats.physical_batch_count == 2);
+    CHECK(partition_result.execution_stats.largest_physical_batch == 1);
+    CHECK(partition_result.arms[0].arm_id == partition_request.arms[0].arm_id);
+    CHECK(partition_result.arms[1].arm_id == partition_request.arms[1].arm_id);
 
     // BootstrapZoom and Shallow controls share the same layer/profile wave
     // contract. The helper preserves proposal order while using the backend

@@ -8,6 +8,26 @@
 #include <unordered_set>
 #include <utility>
 
+namespace {
+
+bool batch_execution_compatible(
+        const common_flydelta_arm_request & left,
+        const common_flydelta_arm_request & right) {
+    return left.batch_compatibility_key == right.batch_compatibility_key &&
+        left.context_ref == right.context_ref &&
+        left.fixture_ref == right.fixture_ref &&
+        left.fresh_context == right.fresh_context &&
+        left.apply_overlay == right.apply_overlay &&
+        left.request_capture == right.request_capture &&
+        left.request_teacher_forced_margin == right.request_teacher_forced_margin &&
+        left.request_generation == right.request_generation &&
+        left.request_host_verification == right.request_host_verification &&
+        left.max_capture_bytes == right.max_capture_bytes &&
+        left.max_generated_tokens == right.max_generated_tokens;
+}
+
+} // namespace
+
 const char * common_flydelta_arm_execution_path_name(
         const common_flydelta_arm_execution_metrics::path value) {
     switch (value) {
@@ -30,6 +50,10 @@ bool common_flydelta_arm_request_validate(
     }
     if (request.arm_id.empty() || request.arm_id.size() > 512) {
         error = "FlyDelta arm request arm id is invalid";
+        return false;
+    }
+    if (request.wave_id.size() > 512 || request.batch_compatibility_key.size() > 512) {
+        error = "FlyDelta arm request execution metadata is too long";
         return false;
     }
     if (!std::isfinite(request.alpha) || request.alpha < 0.0f) {
@@ -225,9 +249,18 @@ bool common_flydelta_arm_batch_request_validate(
         error = "FlyDelta arm batch request is invalid";
         return false;
     }
+    if (request.batch_id.size() > 512 || request.wave_id.size() > 512) {
+        error = "FlyDelta arm batch execution identity is too long";
+        return false;
+    }
     std::unordered_set<std::string> arm_ids;
     for (const auto & arm : request.arms) {
         if (!common_flydelta_arm_request_validate(arm, error)) return false;
+        if (!request.wave_id.empty() && !arm.wave_id.empty() &&
+                request.wave_id != arm.wave_id) {
+            error = "FlyDelta arm batch wave identity is inconsistent";
+            return false;
+        }
         if (!arm_ids.insert(arm.arm_id).second) {
             error = "FlyDelta arm batch request reuses an arm identity";
             return false;
@@ -241,8 +274,19 @@ bool common_flydelta_arm_batch_result_validate(
         const common_flydelta_arm_batch_request & request,
         std::string & error) {
     error.clear();
-    if (result.schema_version != 1 || result.arms.size() != request.arms.size()) {
+    if (result.schema_version != 1 || result.arms.size() != request.arms.size() ||
+            result.execution_stats.schema_version != 1) {
         error = "FlyDelta arm batch result count or schema is invalid";
+        return false;
+    }
+    if (result.execution_stats.logical_arm_count != 0 &&
+            result.execution_stats.logical_arm_count != request.arms.size()) {
+        error = "FlyDelta arm batch execution statistics have an invalid arm count";
+        return false;
+    }
+    if (!std::isfinite(result.execution_stats.model_ms) ||
+            result.execution_stats.model_ms < 0.0f) {
+        error = "FlyDelta arm batch execution statistics have an invalid model time";
         return false;
     }
     for (size_t index = 0; index < result.arms.size(); ++index) {
@@ -293,19 +337,55 @@ bool common_flydelta_run_bounded_arm_batch(
     if (host.capabilities.bounded_arm_batch && host.run_bounded_arm_batch) {
         const size_t max_arms = host.batch_capacity.max_arms_per_batch;
         result.schema_version = request.schema_version;
-        for (size_t start = 0; start < request.arms.size();) {
-            const size_t end = max_arms == 0
-                ? request.arms.size()
-                : std::min(request.arms.size(), start + max_arms);
+        result.execution_stats.logical_arm_count = request.arms.size();
+        result.arms.resize(request.arms.size());
+        std::vector<bool> filled(request.arms.size(), false);
+
+        // Keep compatible arms together while preserving the logical request
+        // order in the returned result. The explicit key is the host's
+        // compatibility hint, but the request contract is checked as well so
+        // a stale/miscomputed key cannot mix different output or cache needs.
+        std::vector<size_t> group_representatives;
+        std::vector<std::vector<size_t>> groups;
+        for (size_t index = 0; index < request.arms.size(); ++index) {
+            size_t group_index = 0;
+            while (group_index < group_representatives.size() &&
+                    !batch_execution_compatible(
+                        request.arms[index], request.arms[group_representatives[group_index]])) {
+                ++group_index;
+            }
+            if (group_index == group_representatives.size()) {
+                group_representatives.push_back(index);
+                groups.emplace_back();
+            }
+            groups[group_index].push_back(index);
+        }
+
+        for (const auto & group : groups) {
+            for (size_t start = 0; start < group.size();) {
+                const size_t end = max_arms == 0
+                    ? group.size()
+                    : std::min(group.size(), start + max_arms);
             common_flydelta_arm_batch_request wave;
             wave.schema_version = request.schema_version;
-            wave.arms.assign(request.arms.begin() + start, request.arms.begin() + end);
+            wave.batch_id = request.batch_id;
+            wave.wave_id = request.wave_id;
+            wave.arms.reserve(end - start);
+            for (size_t position = start; position < end; ++position) {
+                wave.arms.push_back(request.arms[group[position]]);
+            }
             common_flydelta_arm_batch_result wave_result;
             if (!host.run_bounded_arm_batch(wave, wave_result, error)) return false;
             if (!common_flydelta_arm_batch_result_validate(wave_result, wave, error)) {
                 return false;
             }
-            for (auto & arm : wave_result.arms) {
+            ++result.execution_stats.physical_batch_count;
+            result.execution_stats.largest_physical_batch = std::max(
+                result.execution_stats.largest_physical_batch, wave.arms.size());
+            result.execution_stats.native_batch_used = true;
+            result.execution_stats.model_ms += wave_result.execution_stats.model_ms;
+            for (size_t position = 0; position < wave_result.arms.size(); ++position) {
+                auto arm = std::move(wave_result.arms[position]);
                 if (arm.execution_metrics.execution_path ==
                         common_flydelta_arm_execution_metrics::path::unknown) {
                     arm.execution_metrics.available = true;
@@ -313,9 +393,17 @@ bool common_flydelta_run_bounded_arm_batch(
                     arm.execution_metrics.execution_path =
                         common_flydelta_arm_execution_metrics::path::backend_batch;
                 }
-                result.arms.push_back(std::move(arm));
+                result.arms[group[start + position]] = std::move(arm);
+                filled[group[start + position]] = true;
             }
-            start = end;
+                start = end;
+            }
+        }
+        for (const bool value : filled) {
+            if (!value) {
+                error = "FlyDelta physical batch partition returned an incomplete result";
+                return false;
+            }
         }
         return common_flydelta_arm_batch_result_validate(result, request, error);
     }
@@ -324,6 +412,10 @@ bool common_flydelta_run_bounded_arm_batch(
         return false;
     }
     result.schema_version = request.schema_version;
+    result.execution_stats.logical_arm_count = request.arms.size();
+    result.execution_stats.physical_batch_count = request.arms.size();
+    result.execution_stats.largest_physical_batch = 1;
+    result.execution_stats.scalar_fallback_arm_count = request.arms.size();
     result.arms.reserve(request.arms.size());
     for (const auto & arm_request : request.arms) {
         common_flydelta_arm_result arm_result;
@@ -373,6 +465,8 @@ bool common_flydelta_run_layer_profile_batch(
     }
 
     common_flydelta_arm_batch_request request;
+    request.batch_id = job_id + ":layer-profile";
+    request.wave_id = "layer-profile";
     request.arms.reserve(proposals.size());
     for (size_t index = 0; index < proposals.size(); ++index) {
         const auto & proposal = proposals[index];
@@ -387,6 +481,9 @@ bool common_flydelta_run_layer_profile_batch(
         }
         common_flydelta_arm_request arm;
         arm.job_id = job_id;
+        arm.wave_id = request.wave_id;
+        arm.proposal_index = index;
+        arm.batch_compatibility_key = context_ref + "\n" + fixture_ref;
         arm.context_ref = context_ref;
         arm.fixture_ref = fixture_ref;
         arm.intervention_ref = intervention_ref;
@@ -624,11 +721,16 @@ common_flydelta_search_pipeline_batch_runner_from_model_host(
             return false;
         }
         common_flydelta_arm_batch_request batch_request;
+        batch_request.batch_id = job_id + ":region";
+        batch_request.wave_id = "region";
         batch_request.arms.reserve(candidates.size());
         for (size_t index = 0; index < candidates.size(); ++index) {
             const auto & candidate = candidates[index];
             common_flydelta_arm_request request;
             request.job_id = job_id;
+            request.wave_id = batch_request.wave_id;
+            request.proposal_index = index;
+            request.batch_compatibility_key = context_ref + "\n" + fixture.id;
             request.context_ref = context_ref;
             request.fixture_ref = fixture.id;
             request.intervention_ref = intervention_ref.empty()
