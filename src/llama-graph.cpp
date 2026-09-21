@@ -1459,6 +1459,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     sched            (params.sched),
     backend_cpu      (params.backend_cpu),
     cvec             (params.cvec),
+    cvec_batch       (params.cvec_batch),
     loras            (params.loras),
     mctx             (params.mctx),
     cross            (params.cross),
@@ -1481,6 +1482,9 @@ void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
 ggml_tensor * llm_graph_context::build_cvec(
          ggml_tensor * cur,
                  int   il) const {
+    if (cvec_batch != nullptr && cvec_batch->apply != nullptr) {
+        return cvec_batch->apply(ctx0, cur, il, ubatch, cvec_batch->user_data);
+    }
     return cvec->apply_to(ctx0, cur, il);
 }
 

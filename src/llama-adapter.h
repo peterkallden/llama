@@ -8,6 +8,23 @@
 #include <unordered_map>
 #include <vector>
 
+struct llama_ubatch;
+
+// Non-owning graph hook for a backend that can apply different control
+// vectors to different sequences in one ubatch. The scalar cvec path remains
+// the default; the backend owns the table, device buffers and lifetime.
+using llama_adapter_cvec_batch_apply_fn = ggml_tensor * (*) (
+        ggml_context * ctx,
+        ggml_tensor * cur,
+        int il,
+        const llama_ubatch & ubatch,
+        void * user_data);
+
+struct llama_adapter_cvec_batch_ref {
+    llama_adapter_cvec_batch_apply_fn apply = nullptr;
+    void * user_data = nullptr;
+};
+
 // TODO: pimpl
 
 //

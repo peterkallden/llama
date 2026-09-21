@@ -1018,6 +1018,18 @@ requires per-sequence overlay parameters and independent KV/context state;
 the current context-wide cvec server path therefore remains a correct scalar
 or serialized fallback until that backend capability exists.
 
+The llama core now exposes a deliberately small opt-in graph hook for that
+future backend: `llama_adapter_cvec_batch_ref` is a non-owning callback
+reference carried alongside the existing scalar cvec in `llm_graph_params`.
+When installed through the internal `llama_context` seam, the callback may
+apply backend-owned per-sequence control vectors for the current `llama_ubatch`.
+The scalar `llama_set_adapter_cvec()` path remains the default, and the core
+does not allocate, persist or interpret the backend's overlay table. The
+reference and all data it points to must remain valid until graph execution
+has completed; changing the reference also participates in graph reuse
+identity. This is an integration seam only, not a claim that the resident
+server already has true per-sequence Vulkan batching.
+
 The compact geometry fields in `common_flydelta_arm_result` are also the first
 GPU boundary. For ordinary search ranking the host only needs the reduced
 scalars `cosine`, `progress`, `leakage` and `shift_norm` (plus teacher-forced
