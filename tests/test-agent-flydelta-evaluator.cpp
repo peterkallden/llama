@@ -652,6 +652,7 @@ int main() {
         "batch_callback_unavailable");
 
     common_flydelta_model_host batched_model_host = model_host;
+    batched_model_host.capabilities.bounded_arm_batch = true;
     size_t batch_callback_calls = 0;
     batched_model_host.run_bounded_arm_batch = [&](const auto & request,
             auto & result, std::string & batch_error) {

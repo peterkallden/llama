@@ -285,7 +285,11 @@ bool common_flydelta_run_bounded_arm_batch(
     error.clear();
     result = {};
     if (!common_flydelta_arm_batch_request_validate(request, error)) return false;
-    if (host.run_bounded_arm_batch) {
+    // A registered callback is not sufficient to opt into multi-arm model
+    // execution.  The concrete llama-agent host must advertise the capability
+    // explicitly after its backend/server opt-in has been validated.  This
+    // keeps FlyDelta enabled independently from the batch optimization.
+    if (host.capabilities.bounded_arm_batch && host.run_bounded_arm_batch) {
         if (!host.run_bounded_arm_batch(request, result, error)) return false;
         for (auto & arm : result.arms) {
             if (arm.execution_metrics.execution_path ==
@@ -318,7 +322,10 @@ bool common_flydelta_run_bounded_arm_batch(
             arm_result.execution_metrics.batched_execution_used = false;
             arm_result.execution_metrics.execution_path =
                 common_flydelta_arm_execution_metrics::path::scalar_fallback;
-            arm_result.execution_metrics.fallback_reason = "batch_callback_unavailable";
+            arm_result.execution_metrics.fallback_reason =
+                host.run_bounded_arm_batch
+                    ? "batch_capability_not_opted_in"
+                    : "batch_callback_unavailable";
         }
         result.arms.push_back(std::move(arm_result));
     }

@@ -54,6 +54,7 @@ int main() {
     };
 
     common_flydelta_model_host batch_host = scalar_host;
+    batch_host.capabilities.bounded_arm_batch = true;
     batch_host.run_bounded_arm_batch = [](const auto & batch, auto & result, auto &) {
         result = {};
         result.arms.reserve(batch.arms.size());
@@ -73,6 +74,23 @@ int main() {
     if (!common_flydelta_arm_batch_result_replay_equivalent(
             scalar_result, batch_result, 1.0e-6f, error)) {
         std::cerr << "FlyDelta batch benchmark replay mismatch: " << error << '\n';
+        return 1;
+    }
+
+    // A backend callback must not bypass the explicit batch opt-in.  This
+    // host has the callback but has not advertised the capability, so the
+    // generic helper must preserve the scalar fallback contract.
+    common_flydelta_model_host unopted_host = batch_host;
+    unopted_host.capabilities.bounded_arm_batch = false;
+    common_flydelta_arm_batch_result unopted_result;
+    if (!common_flydelta_run_bounded_arm_batch(
+                unopted_host, request, unopted_result, error) ||
+            unopted_result.arms.empty() ||
+            unopted_result.arms.front().execution_metrics.execution_path !=
+                common_flydelta_arm_execution_metrics::path::scalar_fallback ||
+            unopted_result.arms.front().execution_metrics.fallback_reason !=
+                "batch_capability_not_opted_in") {
+        std::cerr << "FlyDelta batch opt-in gate failed: " << error << '\n';
         return 1;
     }
 
