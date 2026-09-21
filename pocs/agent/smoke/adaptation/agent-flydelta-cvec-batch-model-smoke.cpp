@@ -158,8 +158,12 @@ int main(int argc, char ** argv) {
         "flydelta://artifact/cvec-batch-smoke/a", error);
     auto activation_b = make_activation(model, 0.0002f,
         "flydelta://artifact/cvec-batch-smoke/b", error);
-    if (!activation_a || !activation_b || activation_a->overlay.artifact_id ==
-            activation_b->overlay.artifact_id || activation_a->overlay.data == activation_b->overlay.data) {
+    if (!activation_a || !activation_b || !activation_a->sparse_overlay.enabled ||
+            !activation_b->sparse_overlay.enabled ||
+            activation_a->sparse_overlay.layer_indices.empty() ||
+            activation_b->sparse_overlay.layer_indices.empty() ||
+            activation_a->overlay.artifact_id == activation_b->overlay.artifact_id ||
+            activation_a->overlay.data == activation_b->overlay.data) {
         std::cerr << "could not prepare distinct cvec smoke overlays: " << error << '\n';
         return 1;
     }
@@ -206,6 +210,8 @@ int main(int argc, char ** argv) {
     std::cout << "flydelta_cvec_batch_model_smoke=passed\n"
               << "slots=2\n"
               << "distinct_overlays=yes\n"
+              << "sparse_overlays=yes\n"
+              << "active_layers=" << activation_a->sparse_overlay.layer_indices.size() << "\n"
               << "results=2\n";
     return 0;
 }

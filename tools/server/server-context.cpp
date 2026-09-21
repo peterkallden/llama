@@ -1022,21 +1022,33 @@ private:
         int32_t n_embd = 0;
         int32_t il_start = 1;
         int32_t il_end = 0;
-        if (!cvec_batch_request.materialize(
-                    seq_ids, data, data_len, n_embd, il_start, il_end, error)) {
-            cvec_batch_request.clear();
-            return false;
+        const bool sparse = cvec_batch_request.has_sparse();
+        std::vector<uint32_t> layer_indices;
+        bool applied = false;
+        if (sparse) {
+            applied = cvec_batch_request.materialize_sparse(
+                seq_ids, data, data_len, n_embd, layer_indices, error) &&
+                cvec_batch_device.apply_sparse(
+                    *model_tgt, seq_ids, data, data_len, n_embd, layer_indices);
+        } else {
+            applied = cvec_batch_request.materialize(
+                seq_ids, data, data_len, n_embd, il_start, il_end, error) &&
+                cvec_batch_device.apply(
+                    *model_tgt, seq_ids, data, data_len, n_embd, il_start, il_end);
         }
-        if (!cvec_batch_device.apply(
-                    *model_tgt, seq_ids, data, data_len, n_embd, il_start, il_end)) {
-            error = "failed to allocate per-sequence cvec table";
+        if (!applied) {
+            if (error.empty()) {
+                error = "failed to allocate per-sequence cvec table";
+            }
             cvec_batch_request.clear();
             return false;
         }
 
         ctx_tgt->set_adapter_cvec_batch(&cvec_batch_device.ref());
         cvec_batch_active = true;
-        SRV_INF("per-sequence cvec batch bound rows=%zu\n", seq_ids.size());
+        SRV_INF("per-sequence cvec batch bound rows=%zu representation=%s layers=%zu\n",
+            seq_ids.size(), sparse ? "sparse" : "dense",
+            sparse ? layer_indices.size() : static_cast<size_t>(il_end - il_start + 1));
         return true;
     }
 

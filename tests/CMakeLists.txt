@@ -403,6 +403,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-promotion.cpp
         test-agent-flydelta-overlay.cpp
         test-agent-flydelta-activation.cpp
+        test-agent-flydelta-sparse-cvec.cpp
         test-agent-flydelta-sideband.cpp
         test-agent-flydelta-capture-manifest.cpp
         test-agent-flydelta-repair-deltas.cpp
@@ -466,6 +467,10 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/mtmd)
             target_link_libraries(${TEST_NAME} PRIVATE server-context)
             target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-generation.cpp)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-flydelta-sparse-cvec")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
+            target_link_libraries(${TEST_NAME} PRIVATE server-context)
         endif()
         if (TEST_NAME STREQUAL "test-agent-clangd-protocol")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)

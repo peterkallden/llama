@@ -87,6 +87,16 @@ struct llama_adapter_cvec_batch {
             int32_t il_start,
             int32_t il_end);
 
+    // Sparse counterpart for device-aware backends. Each row contains only
+    // the layers listed in layer_indices, in sorted layer-major order.
+    bool apply_sparse(
+            const llama_model & model,
+            const std::vector<llama_seq_id> & seq_ids,
+            const std::vector<const float *> & data,
+            size_t data_len,
+            int32_t n_embd,
+            const std::vector<uint32_t> & layer_indices);
+
     void clear();
 
     bool enabled() const { return active; }
@@ -101,7 +111,19 @@ private:
             const llama_ubatch & ubatch,
             void * user_data);
 
-    bool init(const llama_model & model, int32_t n_embd, size_t n_seq);
+    bool init(
+            const llama_model & model,
+            int32_t n_embd,
+            size_t n_seq,
+            const std::vector<uint32_t> & layer_indices);
+    bool apply_impl(
+            const llama_model & model,
+            const std::vector<llama_seq_id> & seq_ids,
+            const std::vector<const float *> & data,
+            size_t data_len,
+            int32_t n_embd,
+            const std::vector<uint32_t> & layer_indices,
+            bool dense_layout);
     ggml_tensor * tensor_for(int il) const;
     int32_t row_for_token(const llama_ubatch & ubatch, uint32_t token_index) const;
 
@@ -119,6 +141,7 @@ private:
     struct selector_state {
         ggml_context_ptr ctx;
         ggml_tensor * tensor = nullptr;
+        ggml_backend_buffer_ptr buf;
         uint32_t count = 0;
     };
     mutable std::mutex selector_mutex;

@@ -63,6 +63,10 @@ struct server_task_cvec {
     int32_t il_start = 1;
     int32_t il_end = 0;
     std::vector<float> data;
+    // Optional layer-sparse material for the per-sequence device batch path.
+    // The dense data remains authoritative for the scalar compatibility path.
+    std::vector<uint32_t> sparse_layer_indices;
+    std::vector<float> sparse_data;
 };
 
 using server_task_cvec_ptr = std::shared_ptr<const server_task_cvec>;
@@ -91,6 +95,19 @@ struct server_task_cvec_batch {
             int32_t & il_start,
             int32_t & il_end,
             std::string & error) const;
+
+    bool materialize_sparse(
+            std::vector<llama_seq_id> & seq_ids,
+            std::vector<const float *> & data,
+            size_t & data_len,
+            int32_t & n_embd,
+            std::vector<uint32_t> & layer_indices,
+            std::string & error) const;
+
+    bool has_sparse() const {
+        return !entries.empty() && entries.front().cvec &&
+            !entries.front().cvec->sparse_layer_indices.empty();
+    }
 
     size_t size() const { return entries.size(); }
 

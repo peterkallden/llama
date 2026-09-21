@@ -986,9 +986,11 @@ callback: a single-arm search request is wrapped as a one-arm batch, so a
 device host does not need to implement a duplicate scalar path merely to
 participate in the common search seam.
 Per-arm `alpha`, coefficients, layer mask, fresh-context semantics, margins,
-geometry and outcomes remain independent. A Vulkan/device backend can later
-evaluate these overlays as per-sequence parameters in one model batch without
-changing Whirlpool, AdaptiveAlpha, Shallow/Deep or TFO.
+geometry and outcomes remain independent. The experimental resident-server
+binding can now evaluate compatible sparse overlays as per-sequence parameters
+in one Vulkan model batch without changing Whirlpool, AdaptiveAlpha,
+Shallow/Deep or TFO; hosts without the opt-in capability retain the scalar
+fallback.
 
 The common batch seam is now consumed by the bounded Whirlpool region probes
 and by rank-N coordinate/TFO coefficient populations. The baseline remains a
@@ -1020,11 +1022,11 @@ evaluates those arms as separate sequences and returns one compact result per
 arm. The CPU then owns the next bracket, UtilityGate and stop decision. This
 does not move golden-section, Whirlpool or lifecycle policy to a shader. It
 requires per-sequence overlay parameters and independent KV/context state;
-the current context-wide cvec server path therefore remains a correct scalar
-or serialized fallback until that backend capability exists.
+the resident server provides that capability behind its explicit opt-in;
+other hosts retain the correct scalar or serialized fallback.
 
-The llama core now exposes a deliberately small opt-in graph hook for that
-future backend: `llama_adapter_cvec_batch_ref` is a non-owning callback
+The llama core exposes a deliberately small opt-in graph hook for this
+backend: `llama_adapter_cvec_batch_ref` is a non-owning callback
 reference carried alongside the existing scalar cvec in `llm_graph_params`.
 When installed through the internal `llama_context` seam, the callback may
 apply backend-owned per-sequence control vectors for the current `llama_ubatch`.
@@ -1032,8 +1034,10 @@ The scalar `llama_set_adapter_cvec()` path remains the default, and the core
 does not allocate, persist or interpret the backend's overlay table. The
 reference and all data it points to must remain valid until graph execution
 has completed; changing the reference also participates in graph reuse
-identity. This is an integration seam only, not a claim that the resident
-server already has true per-sequence Vulkan batching.
+identity. The resident server now uses this seam for its experimental
+per-sequence Vulkan binding when the explicit runtime opt-in and backend
+preconditions are satisfied; other hosts may continue to use the scalar
+fallback.
 
 The core also contains `llama_adapter_cvec_batch`, a small backend-neutral
 reference table behind that hook. It owns one backend-resident F32 row per
@@ -1042,21 +1046,22 @@ not a FlyDelta or server policy object, and it rejects a token shared by
 multiple sequence IDs with different rows instead of silently selecting the
 first ID. The server-side `server_task_cvec_batch` is the matching
 ownership/geometry view: it keeps the immutable request cvecs alive and
-materializes sequence IDs plus payload pointers for a backend. It does not
-install a callback or change the current scalar server path. A later runtime
-binding can therefore connect the two without moving model execution or
-search policy into FlyDelta.
+materializes sequence IDs plus payload pointers for a backend. The resident
+server connects this view to the core callback without moving model execution
+or search policy into FlyDelta; hosts that do not enable the binding continue
+through the scalar path.
 
 The resident server binding is currently experimental and opt-in through
 `LLAMA_SERVER_PER_SEQUENCE_CVEC=1`. It is enabled only when the target
 context has no speculative draft context and every participating slot has a
-compatible dense cvec layout. Different cvec identities then become rows in
-one graph table; equal identities continue through the scalar path. If the
-binding cannot be prepared, the server fails the batch rather than applying
-one slot's overlay to another slot. The table is synchronized and detached
-before it is replaced, so asynchronous decode cannot observe freed overlay
-buffers. Without the environment opt-in, the existing context-wide scalar
-behavior is unchanged. This server opt-in is separate from
+compatible dense cvec layout and sparse layer mask. Different cvec identities
+then become rows in one graph table; equal identities continue through the
+scalar path. If the binding cannot be prepared, the server fails the batch
+rather than applying one slot's overlay to another slot. The table, selector
+indices and device buffers are synchronized and detached before replacement,
+so asynchronous decode cannot observe freed overlay buffers. Without the
+environment opt-in, the existing context-wide scalar behavior is unchanged.
+This server opt-in is separate from
 `runtime.adaptation.flydelta.enabled`: enabling FlyDelta does not enable
 per-sequence batching, and enabling the server capability does not start a
 FlyDelta worker. The production model host must bind both the bounded-arm
@@ -1131,8 +1136,9 @@ dense-only activation results remain accepted so older host integrations can
 migrate without changing search semantics. When the dense cvec path is active,
 the runtime also disables prompt/KV reuse for that request; changing the cvec
 identity clears slot-local prompt state, but the persistent prompt cache does
-not yet carry per-sequence overlay identity. A future device backend may
-re-enable safe reuse only after it owns that identity in the graph/cache key.
+not yet carry per-sequence overlay identity. The current per-sequence binding
+therefore preserves the conservative fresh-context contract rather than
+attempting unsafe cache reuse.
 
 The sparse overlay batch contract is likewise execution-only. Every enabled
 entry in `common_flydelta_sparse_overlay_batch` must have a distinct artifact
@@ -1140,9 +1146,9 @@ identity. This is intentional: two sequences may have identical prompt tokens
 but different overlays, and a backend must not alias their cvec/KV state. The
 common fallback can expand each entry independently to a legacy dense cvec
 through `common_flydelta_expand_sparse_overlay_batch()`; it never merges the
-entries. The current server therefore validates and executes these entries in
-isolation; device-side per-sequence overlay parameters are a later backend
-replacement, not a relaxation of the cvec identity rule.
+entries. The current server validates and executes these entries either
+through the opt-in per-sequence device table or through the isolated scalar
+fallback; neither path relaxes the cvec identity rule.
 
 The four compact geometry values in an arm result have a CPU reference oracle
 in `common_flydelta_representation_diagnostics_from_vectors()`. A device

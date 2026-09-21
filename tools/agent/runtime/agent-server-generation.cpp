@@ -10,7 +10,8 @@
 namespace {
 
 server_task_cvec_ptr make_server_task_cvec(
-        const common_flydelta_static_overlay & overlay) {
+        const common_flydelta_activation_result & activation) {
+    const auto & overlay = activation.overlay;
     auto cvec = std::make_shared<server_task_cvec>();
     cvec->identity = overlay.artifact_id;
     cvec->n_embd = overlay.n_embd;
@@ -19,6 +20,10 @@ server_task_cvec_ptr make_server_task_cvec(
     cvec->data = overlay.data;
     for (float & value : cvec->data) {
         value *= overlay.scale;
+    }
+    if (activation.sparse_overlay.enabled) {
+        cvec->sparse_layer_indices = activation.sparse_overlay.layer_indices;
+        cvec->sparse_data = activation.sparse_overlay.data;
     }
 
     std::string fingerprint;
@@ -34,6 +39,12 @@ server_task_cvec_ptr make_server_task_cvec(
     if (!overlay.data.empty()) {
         fingerprint.append(reinterpret_cast<const char *>(overlay.data.data()),
             overlay.data.size() * sizeof(float));
+    }
+    if (!cvec->sparse_layer_indices.empty()) {
+        fingerprint.append(reinterpret_cast<const char *>(cvec->sparse_layer_indices.data()),
+            cvec->sparse_layer_indices.size() * sizeof(uint32_t));
+        fingerprint.append(reinterpret_cast<const char *>(cvec->sparse_data.data()),
+            cvec->sparse_data.size() * sizeof(float));
     }
     cvec->content_hash = "sha256:" + hash_sha256_hex(fingerprint.data(), fingerprint.size());
     return cvec;
@@ -93,7 +104,7 @@ task_params make_server_task_params_from_prepared_generation(
     params.chat_parser_params.parse_tool_calls = prepared.parse_tool_calls;
 
     if (request.flydelta_activation && request.flydelta_activation->overlay.enabled) {
-        params.cvec = make_server_task_cvec(request.flydelta_activation->overlay);
+        params.cvec = make_server_task_cvec(*request.flydelta_activation);
         // The current server cvec is context-wide. Until the backend has
         // per-sequence overlay parameters in its graph, prompt/KV reuse must
         // not cross an active FlyDelta intervention boundary.
