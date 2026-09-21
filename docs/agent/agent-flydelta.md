@@ -1042,6 +1042,17 @@ install a callback or change the current scalar server path. A later runtime
 binding can therefore connect the two without moving model execution or
 search policy into FlyDelta.
 
+The resident server binding is currently experimental and opt-in through
+`LLAMA_SERVER_PER_SEQUENCE_CVEC=1`. It is enabled only when the target
+context has no speculative draft context and every participating slot has a
+compatible dense cvec layout. Different cvec identities then become rows in
+one graph table; equal identities continue through the scalar path. If the
+binding cannot be prepared, the server fails the batch rather than applying
+one slot's overlay to another slot. The table is synchronized and detached
+before it is replaced, so asynchronous decode cannot observe freed overlay
+buffers. Without the environment opt-in, the existing context-wide scalar
+behavior is unchanged.
+
 A backend integration is intentionally small and can be kept behind its
 existing model-host abstraction. The usual flow is:
 

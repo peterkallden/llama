@@ -39,6 +39,18 @@ bool server_task_cvec_equal(
     return !left->content_hash.empty() || left->data == right->data;
 }
 
+bool server_task_cvec_batch_compatible(
+        const server_task_cvec_ptr & left,
+        const server_task_cvec_ptr & right) {
+    return left && right && left->n_embd == right->n_embd &&
+        left->il_start == right->il_start && left->il_end == right->il_end &&
+        left->data.size() == right->data.size();
+}
+
+void server_task_cvec_batch::clear() {
+    entries.clear();
+}
+
 bool server_task_cvec_batch::add(
         const llama_seq_id seq_id,
         server_task_cvec_ptr cvec,
@@ -55,9 +67,8 @@ bool server_task_cvec_batch::add(
         return false;
     }
     if (!entries.empty()) {
-        const server_task_cvec & first = *entries.front().cvec;
-        if (cvec->n_embd != first.n_embd || cvec->il_start != first.il_start ||
-                cvec->il_end != first.il_end || cvec->data.size() != first.data.size()) {
+        const server_task_cvec_ptr & first = entries.front().cvec;
+        if (!server_task_cvec_batch_compatible(first, cvec)) {
             error = "per-sequence control vectors have incompatible geometry";
             return false;
         }
@@ -69,6 +80,7 @@ bool server_task_cvec_batch::add(
 bool server_task_cvec_batch::materialize(
         std::vector<llama_seq_id> & seq_ids,
         std::vector<const float *> & data,
+        size_t & data_len,
         int32_t & n_embd,
         int32_t & il_start,
         int32_t & il_end,
@@ -76,6 +88,7 @@ bool server_task_cvec_batch::materialize(
     error.clear();
     seq_ids.clear();
     data.clear();
+    data_len = 0;
     n_embd = 0;
     il_start = 1;
     il_end = 0;
@@ -85,6 +98,7 @@ bool server_task_cvec_batch::materialize(
     }
 
     const server_task_cvec & first = *entries.front().cvec;
+    data_len = first.data.size();
     n_embd = first.n_embd;
     il_start = first.il_start;
     il_end = first.il_end;

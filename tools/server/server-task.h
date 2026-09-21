@@ -67,16 +67,26 @@ struct server_task_cvec {
 
 using server_task_cvec_ptr = std::shared_ptr<const server_task_cvec>;
 
+// Compatibility is intentionally weaker than identity equality: different
+// sequence rows may carry different payloads, but the backend table still
+// requires one common dense layout.
+bool server_task_cvec_batch_compatible(
+        const server_task_cvec_ptr & left,
+        const server_task_cvec_ptr & right);
+
 // Backend-neutral ownership and validation view for a future per-sequence
 // cvec binding. It deliberately does not know about llama_context, graph
 // construction or server scheduling. The shared pointers keep every row's
 // payload alive while a backend materializes its own device-resident table.
 struct server_task_cvec_batch {
+    void clear();
+
     bool add(llama_seq_id seq_id, server_task_cvec_ptr cvec, std::string & error);
 
     bool materialize(
             std::vector<llama_seq_id> & seq_ids,
             std::vector<const float *> & data,
+            size_t & data_len,
             int32_t & n_embd,
             int32_t & il_start,
             int32_t & il_end,

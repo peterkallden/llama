@@ -340,14 +340,16 @@ void test_server_task_cvec_batch_view() {
 
     std::vector<llama_seq_id> seq_ids;
     std::vector<const float *> data;
+    size_t data_len = 0;
     int32_t n_embd = 0;
     int32_t il_start = 0;
     int32_t il_end = 0;
-    assert(batch.materialize(seq_ids, data, n_embd, il_start, il_end, error));
+    assert(batch.materialize(seq_ids, data, data_len, n_embd, il_start, il_end, error));
     assert(seq_ids == std::vector<llama_seq_id>({3, 7}));
     assert(data.size() == 2);
     assert(data[0] == first->data.data());
     assert(data[1] == second->data.data());
+    assert(data_len == first->data.size());
     assert(n_embd == 2 && il_start == 1 && il_end == 2);
 
     assert(!batch.add(3, second, error));
@@ -357,7 +359,7 @@ void test_server_task_cvec_batch_view() {
     assert(!batch.add(9, incompatible, error));
 
     server_task_cvec_batch empty;
-    assert(!empty.materialize(seq_ids, data, n_embd, il_start, il_end, error));
+    assert(!empty.materialize(seq_ids, data, data_len, n_embd, il_start, il_end, error));
 }
 
 } // namespace

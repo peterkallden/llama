@@ -1,5 +1,7 @@
 #include "server-context.h"
 #include "src/llama-ext.h"
+#include "src/llama-adapter.h"
+#include "src/llama-context.h"
 #include "server-chat.h"
 #include "server-common.h"
 #include "server-http.h"
@@ -300,6 +302,7 @@ struct server_slot {
     // The active request-scoped control vector. It stays attached to the
     // slot while its prompt/KV state is reusable.
     server_task_cvec_ptr cvec;
+    bool cvec_batch_enabled = false;
     server_task_capture_request_ptr capture_request;
     server_task_capture_result capture_result;
     int32_t alora_invocation_start = -1;
@@ -436,10 +439,15 @@ struct server_slot {
     bool can_batch_with(server_slot & other_slot) const {
         GGML_ASSERT(task);
 
+        const bool cvec_equal = server_task_cvec_equal(cvec, other_slot.cvec);
+        const bool cvec_batch_compatible = cvec_batch_enabled &&
+            other_slot.cvec_batch_enabled &&
+            server_task_cvec_batch_compatible(cvec, other_slot.cvec);
+
         return task->type == other_slot.task->type
             && inp_embd.size() == other_slot.inp_embd.size()
             && are_lora_equal(lora, other_slot.lora)
-            && server_task_cvec_equal(cvec, other_slot.cvec);
+            && (cvec_equal || cvec_batch_compatible);
     }
 
     // returns -1 if the generation is limitless
@@ -840,6 +848,13 @@ public:
 
     server_context_impl() {
         mtmd_helper_log_set(common_log_default_callback, nullptr);
+
+        const char * opt_in = getenv("LLAMA_SERVER_PER_SEQUENCE_CVEC");
+        cvec_batch_enabled = opt_in != nullptr &&
+            (std::string(opt_in) == "1" || std::string(opt_in) == "true");
+        if (cvec_batch_enabled) {
+            SRV_INF("%s", "per-sequence cvec batching is opt-in enabled\n");
+        }
     }
 
     ~server_context_impl() {
@@ -868,6 +883,13 @@ private:
     common_init_result_ptr llama_init;
 
     llama_context * ctx_tgt = nullptr;
+
+    // Experimental opt-in. The scalar server path remains authoritative
+    // unless this is explicitly enabled and the current batch is compatible.
+    bool cvec_batch_enabled = false;
+    bool cvec_batch_active = false;
+    server_task_cvec_batch cvec_batch_request;
+    llama_adapter_cvec_batch cvec_batch_device;
 
     server_batch batch;
 
@@ -919,7 +941,86 @@ private:
 
     int64_t t_last_load_progress_ms = 0;
 
+    void clear_cvec_batch_binding() {
+        if (!cvec_batch_active) {
+            cvec_batch_request.clear();
+            cvec_batch_device.clear();
+            return;
+        }
+
+        // llama_decode() may submit work asynchronously when no logits are
+        // requested. Keep the table and callback alive until the backend has
+        // consumed the graph, then restore scalar cvec handling.
+        llama_synchronize(ctx_tgt);
+        ctx_tgt->set_adapter_cvec_batch(nullptr);
+        cvec_batch_device.clear();
+        cvec_batch_request.clear();
+        cvec_batch_active = false;
+    }
+
+    bool prepare_cvec_batch_binding(std::string & error) {
+        error.clear();
+        if (!cvec_batch_enabled || ctx_dft || !batch.slot_batched || batch.tokens.empty()) {
+            return false;
+        }
+
+        cvec_batch_request.clear();
+        server_task_cvec_ptr first;
+        bool distinct = false;
+        std::unordered_set<int32_t> seen_slots;
+        for (const auto & token : batch.tokens) {
+            if (!seen_slots.insert(token.id_slot).second) {
+                continue;
+            }
+            if (token.id_slot < 0 || token.id_slot >= static_cast<int32_t>(slots.size())) {
+                error = "per-sequence cvec batch contains an invalid slot";
+                return false;
+            }
+            const auto & cvec = slots[token.id_slot].cvec;
+            if (!cvec) {
+                error = "per-sequence cvec batch cannot mix cvec and non-cvec slots";
+                return false;
+            }
+            if (!first) {
+                first = cvec;
+            } else {
+                distinct = distinct || !server_task_cvec_equal(first, cvec);
+            }
+            if (!cvec_batch_request.add(token.id_slot, cvec, error)) {
+                return false;
+            }
+        }
+
+        if (!distinct) {
+            cvec_batch_request.clear();
+            return false;
+        }
+
+        std::vector<llama_seq_id> seq_ids;
+        std::vector<const float *> data;
+        size_t data_len = 0;
+        int32_t n_embd = 0;
+        int32_t il_start = 1;
+        int32_t il_end = 0;
+        if (!cvec_batch_request.materialize(
+                    seq_ids, data, data_len, n_embd, il_start, il_end, error)) {
+            cvec_batch_request.clear();
+            return false;
+        }
+        if (!cvec_batch_device.apply(
+                    *model_tgt, seq_ids, data, data_len, n_embd, il_start, il_end)) {
+            error = "failed to allocate per-sequence cvec table";
+            cvec_batch_request.clear();
+            return false;
+        }
+
+        ctx_tgt->set_adapter_cvec_batch(&cvec_batch_device.ref());
+        cvec_batch_active = true;
+        return true;
+    }
+
     void destroy() {
+        clear_cvec_batch_binding();
         spec.reset();
         spec_init.reset();
 
@@ -1295,6 +1396,7 @@ private:
             slot.id      = i;
             slot.ctx_tgt = ctx_tgt;
             slot.ctx_dft = ctx_dft;
+            slot.cvec_batch_enabled = cvec_batch_enabled && ctx_dft == nullptr;
             slot.mem.init(ctx_tgt, ctx_dft);
             slot.spec    = spec.get();
             slot.n_ctx   = n_ctx_slot;
@@ -2956,6 +3058,8 @@ private:
 #endif
 
     void update_slots() {
+        clear_cvec_batch_binding();
+
 #ifdef DEBUG_TIMINGS
         static int64_t t_prev = 0;
         int64_t t_start = ggml_time_us();
@@ -3037,6 +3141,15 @@ private:
                 SRV_ERR("failed to apply request control vector for slot %d\n", slot_batched->id);
                 abort_all_slots("failed to apply request control vector");
                 return;
+            }
+
+            if (cvec_batch_enabled) {
+                std::string cvec_batch_error;
+                if (!prepare_cvec_batch_binding(cvec_batch_error) && !cvec_batch_error.empty()) {
+                    SRV_ERR("failed to prepare per-sequence cvec batch: %s\n", cvec_batch_error.c_str());
+                    abort_all_slots("failed to prepare per-sequence cvec batch: " + cvec_batch_error);
+                    return;
+                }
             }
 
             // if the lora is temporarily disabled for an alora, re-enable it
