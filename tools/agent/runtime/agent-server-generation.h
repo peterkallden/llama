@@ -14,3 +14,10 @@ task_params make_server_task_params_from_prepared_generation(
 bool server_context_agent_generation_supports_flydelta(
         const common_agent_generation_request & request,
         std::string & error);
+
+// An active FlyDelta overlay is request-scoped model state. Until the server
+// graph can prove per-sequence overlay-aware KV reuse, prompt/KV reuse must be
+// disabled for that request. Baseline requests remain eligible for the normal
+// host cache policy.
+bool server_context_agent_generation_requires_fresh_prompt_kv(
+        const common_agent_generation_request & request);

@@ -66,8 +66,17 @@ bool server_context_agent_generation_supports_flydelta(
             error = "server-context received an empty active FlyDelta overlay";
             return false;
         }
+        if (activation.overlay.enabled && activation.overlay.artifact_id.empty()) {
+            error = "server-context received an active FlyDelta overlay without identity";
+            return false;
+        }
     }
     return true;
+}
+
+bool server_context_agent_generation_requires_fresh_prompt_kv(
+        const common_agent_generation_request & request) {
+    return request.flydelta_activation && request.flydelta_activation->overlay.enabled;
 }
 
 task_params make_server_task_params_from_prepared_generation(
@@ -103,7 +112,7 @@ task_params make_server_task_params_from_prepared_generation(
     params.chat_parser_params.generation_prompt = prepared.parser_generation_prompt;
     params.chat_parser_params.parse_tool_calls = prepared.parse_tool_calls;
 
-    if (request.flydelta_activation && request.flydelta_activation->overlay.enabled) {
+    if (server_context_agent_generation_requires_fresh_prompt_kv(request)) {
         params.cvec = make_server_task_cvec(*request.flydelta_activation);
         // The current server cvec is context-wide. Until the backend has
         // per-sequence overlay parameters in its graph, prompt/KV reuse must

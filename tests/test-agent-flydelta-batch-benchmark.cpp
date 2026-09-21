@@ -112,20 +112,60 @@ int main() {
         if (!common_flydelta_run_bounded_arm_batch(
                 scalar_host, request, ignored, ignored_error)) std::abort();
     }, repetitions);
-    const long long batch_us = measure_us([&]() {
-        common_flydelta_arm_batch_result ignored;
-        std::string ignored_error;
-        if (!common_flydelta_run_bounded_arm_batch(
-                batch_host, request, ignored, ignored_error)) std::abort();
-    }, repetitions);
-
     std::cout << "flydelta_batch_benchmark kind=callback-seam"
               << " arms=" << arm_count
               << " repetitions=" << repetitions
-              << " scalar_us=" << scalar_us
-              << " batch_us=" << batch_us
+              << " scalar_total_us=" << scalar_us
+              << " scalar_per_arm_us="
+              << static_cast<double>(scalar_us) / static_cast<double>(arm_count)
               << " note=not-device-throughput"
-              << " scalar_path=scalar_fallback"
-              << " batch_path=backend_batch" << '\n';
+              << " scalar_path=scalar_fallback" << '\n';
+
+    // A search wave is a logical set; the host may partition it into several
+    // physical batches. Report each capacity separately so batching gains are
+    // not hidden by a single aggregate measurement.
+    for (const size_t wave_size : {size_t(1), size_t(2), size_t(4), size_t(8), size_t(16), size_t(32)}) {
+        batch_host.batch_capacity.max_arms_per_batch = wave_size;
+        common_flydelta_arm_batch_result warm_result;
+        std::string warm_error;
+        if (!common_flydelta_run_bounded_arm_batch(
+                    batch_host, request, warm_result, warm_error)) {
+            std::cerr << "FlyDelta per-wave benchmark setup failed: " << warm_error << '\n';
+            return 1;
+        }
+        const long long batch_us = measure_us([&]() {
+            common_flydelta_arm_batch_result ignored;
+            std::string ignored_error;
+            if (!common_flydelta_run_bounded_arm_batch(
+                    batch_host, request, ignored, ignored_error)) std::abort();
+        }, repetitions);
+        const size_t expected_physical_batches =
+            (arm_count + wave_size - 1) / wave_size;
+        if (warm_result.execution_stats.physical_batch_count != expected_physical_batches ||
+                warm_result.execution_stats.largest_physical_batch !=
+                    std::min(arm_count, wave_size)) {
+            std::cerr << "FlyDelta per-wave benchmark reported invalid physical wave stats\n";
+            return 1;
+        }
+        std::cout << "flydelta_batch_benchmark kind=callback-seam"
+                  << " wave_arms=" << wave_size
+                  << " logical_arms=" << arm_count
+                  << " physical_batches=" << warm_result.execution_stats.physical_batch_count
+                  << " largest_physical_batch="
+                  << warm_result.execution_stats.largest_physical_batch
+                  << " repetitions=" << repetitions
+                  << " scalar_total_us=" << scalar_us
+                  << " batch_total_us=" << batch_us
+                  << " scalar_per_arm_us="
+                  << static_cast<double>(scalar_us) / static_cast<double>(arm_count)
+                  << " batch_per_arm_us="
+                  << static_cast<double>(batch_us) / static_cast<double>(arm_count)
+                  << " batch_per_physical_wave_us="
+                  << static_cast<double>(batch_us) /
+                      static_cast<double>(warm_result.execution_stats.physical_batch_count)
+                  << " note=not-device-throughput"
+                  << " scalar_path=scalar_fallback"
+                  << " batch_path=backend_batch" << '\n';
+    }
     return 0;
 }

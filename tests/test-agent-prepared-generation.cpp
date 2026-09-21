@@ -261,6 +261,7 @@ void test_server_task_params_from_prepared_generation() {
     };
 
     const auto params = make_server_task_params_from_prepared_generation(params_base, request, prepared, logit_bias_eog);
+    assert(server_context_agent_generation_requires_fresh_prompt_kv(request));
     assert(params.cvec);
     assert(params.cvec->identity == "flydelta://artifact/task");
     assert(params.cvec->n_embd == 2);
@@ -285,6 +286,23 @@ void test_server_task_params_from_prepared_generation() {
     assert(second_params.cvec);
     assert(!server_task_cvec_equal(params.cvec, second_params.cvec));
     assert(!params.cache_prompt && !second_params.cache_prompt);
+
+    auto invalid_overlay_request = request;
+    auto invalid_activation = std::make_shared<common_flydelta_activation_result>(*second_activation);
+    invalid_activation->overlay.artifact_id.clear();
+    invalid_overlay_request.flydelta_activation = invalid_activation;
+    std::string invalid_overlay_error;
+    assert(!server_context_agent_generation_supports_flydelta(
+        invalid_overlay_request, invalid_overlay_error));
+
+    auto baseline_request = request;
+    baseline_request.flydelta_activation.reset();
+    assert(!server_context_agent_generation_requires_fresh_prompt_kv(baseline_request));
+    const auto baseline_params = make_server_task_params_from_prepared_generation(
+        params_base, baseline_request, prepared, logit_bias_eog);
+    assert(!baseline_params.cvec);
+    assert(baseline_params.cache_prompt);
+    assert(baseline_params.n_cache_reuse == params_base.n_cache_reuse);
 
     assert(params.stream);
     assert(!params.cache_prompt);
