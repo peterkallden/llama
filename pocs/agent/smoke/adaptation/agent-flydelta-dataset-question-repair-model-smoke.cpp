@@ -912,6 +912,10 @@ int main(int argc, char ** argv) {
                 : common_flydelta_coefficient_search_strategy::coordinate;
             deep_config.coefficients.step = 0.05f;
             deep_config.coefficients.max_candidates = 8;
+            // Exercise the same bounded wave semantics used by a production
+            // coefficient host. The smoke still permits scalar fallback, but
+            // TFO must not bypass the batch runner or exceed this wave size.
+            deep_config.coefficients.max_batch_arms = 2;
             deep_config.coefficients.max_l2_norm = 0.32f;
             deep_config.coefficients.norm_penalty = 0.05f;
             deep_config.coefficients.leakage_penalty = 0.10f;
@@ -1052,11 +1056,8 @@ int main(int argc, char ** argv) {
                 return generated;
             };
 
-            common_flydelta_deep_search_result deep_result;
-            const auto deep_started = std::chrono::steady_clock::now();
-            if (!common_flydelta_run_deep_search(
-                    deep_fixture, deep_config, deep_directions,
-                    [&](const common_flydelta_experiment_fixture & fixture,
+            const common_flydelta_coefficient_search_runner deep_diagnostic_runner =
+                [&](const common_flydelta_experiment_fixture & fixture,
                             const common_flydelta_low_rank_basis & basis,
                             const std::vector<float> & coefficients,
                             bool apply_overlay, common_flydelta_counterfactual_trial & trial,
@@ -1096,8 +1097,9 @@ int main(int argc, char ** argv) {
                             std::cout << '\n';
                         }
                         return executed;
-                    },
-                    [&](const common_flydelta_experiment_fixture & fixture,
+                    };
+            const common_flydelta_coefficient_search_runner deep_full_runner =
+                [&](const common_flydelta_experiment_fixture & fixture,
                             const common_flydelta_low_rank_basis & basis,
                             const std::vector<float> & coefficients,
                             bool apply_overlay, common_flydelta_counterfactual_trial & trial,
@@ -1106,7 +1108,50 @@ int main(int argc, char ** argv) {
                             bool & geometry_available, std::string & runner_error) {
                         return run_deep_arm(basis, coefficients, apply_overlay, trial, margin,
                             geometry, geometry_available, runner_error);
-                    }, deep_result, error)) {
+                    };
+            const auto make_deep_batch_runner = [](
+                    const common_flydelta_coefficient_search_runner & scalar_runner) {
+                return [scalar_runner](
+                        const common_flydelta_experiment_fixture & fixture,
+                        const common_flydelta_low_rank_basis & basis,
+                        const std::vector<std::vector<float>> & coefficients,
+                        std::vector<common_flydelta_counterfactual_trial> & trials,
+                        std::vector<common_flydelta_decision_margin> & margins,
+                        std::vector<common_flydelta_representation_diagnostics> & geometries,
+                        std::vector<bool> & geometry_available,
+                        std::string & runner_error) {
+                    trials.clear();
+                    margins.clear();
+                    geometries.clear();
+                    geometry_available.clear();
+                    trials.reserve(coefficients.size());
+                    margins.reserve(coefficients.size());
+                    geometries.reserve(coefficients.size());
+                    geometry_available.reserve(coefficients.size());
+                    for (const auto & values : coefficients) {
+                        common_flydelta_counterfactual_trial trial;
+                        common_flydelta_decision_margin margin;
+                        common_flydelta_representation_diagnostics geometry;
+                        bool has_geometry = false;
+                        if (!scalar_runner(fixture, basis, values, true, trial, margin,
+                                geometry, has_geometry, runner_error)) return false;
+                        trials.push_back(std::move(trial));
+                        margins.push_back(std::move(margin));
+                        geometries.push_back(std::move(geometry));
+                        geometry_available.push_back(has_geometry);
+                    }
+                    return true;
+                };
+            };
+            const auto deep_diagnostic_batch_runner = make_deep_batch_runner(
+                deep_diagnostic_runner);
+            const auto deep_full_batch_runner = make_deep_batch_runner(deep_full_runner);
+            common_flydelta_deep_search_result deep_result;
+            const auto deep_started = std::chrono::steady_clock::now();
+            if (!common_flydelta_run_deep_search_batched(
+                    deep_fixture, deep_config, deep_directions,
+                    deep_diagnostic_runner, deep_diagnostic_batch_runner,
+                    deep_full_runner, deep_full_batch_runner, deep_result, error)) {
                 host.close();
                 std::cerr << "forced Deep search failed for " << entry.first << ": " << error << '\n';
                 return 1;
@@ -1129,6 +1174,8 @@ int main(int argc, char ** argv) {
                       << " basis_rank=" << deep_result.basis.vectors.size()
                       << " diagnostic_trials=" << deep_group_diagnostic_trials
                       << " full_generation_trials=" << deep_group_full_generation_trials
+                      << " max_batch_arms=" << deep_config.coefficients.max_batch_arms
+                      << " batch_runner=enabled_scalar_fallback"
                       << " selected=" << (deep_result.coefficient_selection.selected ? "yes" : "no")
                       << " elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
                           std::chrono::steady_clock::now() - deep_started).count() << '\n';
@@ -1391,6 +1438,17 @@ int main(int argc, char ** argv) {
                     arm_result.provenance_ref = arm_request.apply_overlay
                         ? "evidence:flydelta-search-overlay"
                         : "evidence:flydelta-search-baseline";
+                    arm_result.execution_metrics.available = true;
+                    if (generated_result.flydelta_capture &&
+                            generated_result.flydelta_capture->captured) {
+                        arm_result.execution_metrics.capture_bytes_to_host =
+                            generated_result.flydelta_capture->values.size() * sizeof(float);
+                    }
+                    // This smoke currently calculates geometry through the
+                    // CPU reference after capture. Keep that fact explicit so
+                    // a future device reduction cannot be mistaken for the
+                    // current full-capture path.
+                    arm_result.execution_metrics.device_reduction_used = false;
 
                     arm_result.margin = {};
                     if (bootstrap_case.failed_tool.empty() &&
