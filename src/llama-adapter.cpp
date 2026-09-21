@@ -198,6 +198,7 @@ bool llama_adapter_cvec_batch::init(
     }
 
     bufs.reserve(ctx_map.size());
+    device_resident_flag = false;
     for (const auto & [buft, ctx] : ctx_map) {
         ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
         if (!buf) {
@@ -205,6 +206,9 @@ bool llama_adapter_cvec_batch::init(
             return false;
         }
         ggml_backend_buffer_clear(buf, 0);
+        const ggml_backend_dev_t device = ggml_backend_buft_get_device(buft);
+        device_resident_flag = device_resident_flag ||
+            (device != nullptr && ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_CPU);
         bufs.emplace_back(buf);
     }
 
@@ -213,6 +217,7 @@ bool llama_adapter_cvec_batch::init(
 
 void llama_adapter_cvec_batch::clear() {
     active = false;
+    device_resident_flag = false;
     layer_start = -1;
     layer_end = -1;
     n_embd = 0;

@@ -991,7 +991,7 @@ participate in the common search seam.
 Per-arm `alpha`, coefficients, layer mask, fresh-context semantics, margins,
 geometry and outcomes remain independent. The experimental resident-server
 binding can now evaluate compatible sparse overlays as per-sequence parameters
-in one Vulkan model batch without changing Whirlpool, AdaptiveAlpha,
+in one resident-server model batch without changing Whirlpool, AdaptiveAlpha,
 Shallow/Deep or TFO; hosts without the opt-in capability retain the scalar
 fallback.
 
@@ -1163,15 +1163,22 @@ Arm results may also carry optional execution telemetry: model, teacher-forced
 and generation time, overlay/capture transfer bytes, and whether device
 reduction or batched execution was used. This telemetry is for benchmark and
 regression comparison only; it cannot make an arm safer, useful, HELPED or
-learning-eligible. The first GPU benchmark should compare scalar fallback and
-backend batch results on the same arm identities before introducing any
-per-sequence Vulkan overlay implementation.
+learning-eligible. The resident binding records whether its overlay table was
+allocated in a non-CPU backend buffer. When that fact is present, the
+production adapter reports `device_batch`; otherwise it reports
+`backend_batch` or the scalar fallback. This is measured graph/buffer
+provenance, not an assumption based only on the batch callback. It still does
+not mean compact geometry reductions or teacher-forced scoring are
+device-batched: those remain separate capabilities until their backend
+results carry the same proof. Benchmarks must compare scalar fallback,
+backend batch and device batch on the same arm identities.
 
 The telemetry also records an explicit execution path: `scalar`,
 `scalar_fallback`, `backend_batch` or `device_batch`. The common runner marks
 the fallback when a host has no batch callback, and marks an otherwise
-unlabelled batch callback as `backend_batch`. A real Vulkan implementation may
-upgrade that label to `device_batch`. The path is diagnostic provenance only;
+unlabelled batch callback as `backend_batch`. A concrete host may upgrade that
+label to `device_batch` only when it proves non-CPU per-sequence overlay
+execution. The path is diagnostic provenance only;
 it never changes search utility, evidence depth, host outcome or learning
 credit.
 

@@ -300,6 +300,7 @@ bool run_server_flydelta_arm_batch(
         arm_result.execution_metrics.generation_ms = generation_ms;
         arm_result.execution_metrics.batched_execution_used =
             request.arms.size() > 1 && native_batch;
+        const bool device_batch = generation_results[index].flydelta_device_batch;
         if (generation_requests[index].flydelta_activation &&
                 generation_requests[index].flydelta_activation->sparse_overlay.enabled) {
             const auto & sparse = generation_requests[index].flydelta_activation->sparse_overlay;
@@ -314,7 +315,9 @@ bool run_server_flydelta_arm_batch(
         if (arm_result.execution_metrics.execution_path ==
                 common_flydelta_arm_execution_metrics::path::unknown) {
             arm_result.execution_metrics.execution_path =
-                request.arms.size() > 1 && native_batch
+                request.arms.size() > 1 && native_batch && device_batch
+                    ? common_flydelta_arm_execution_metrics::path::device_batch
+                    : request.arms.size() > 1 && native_batch
                     ? common_flydelta_arm_execution_metrics::path::backend_batch
                     : request.arms.size() > 1
                         ? common_flydelta_arm_execution_metrics::path::scalar_fallback

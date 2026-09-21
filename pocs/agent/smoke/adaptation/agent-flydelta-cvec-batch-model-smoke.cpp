@@ -245,6 +245,8 @@ int main(int argc, char ** argv) {
               << result.arms.front().execution_metrics.overlay_bytes_to_device << "\n"
               << "capture_bytes_to_host="
               << result.arms.front().execution_metrics.capture_bytes_to_host << "\n"
-              << "mode=" << (value.scalar ? "scalar_fallback" : "backend_batch") << "\n";
+              << "mode="
+              << common_flydelta_arm_execution_path_name(
+                  result.arms.front().execution_metrics.execution_path) << "\n";
     return 0;
 }

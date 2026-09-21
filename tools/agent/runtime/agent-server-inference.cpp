@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <iterator>
 #include <utility>
 
 namespace {
@@ -373,6 +374,7 @@ public:
             apply_server_success(result, std::move(content), decoded_tokens, stop_reason);
             if (const auto * final_response = dynamic_cast<const server_task_result_cmpl_final *>(response)) {
                 apply_server_capture(*final_response, request, result);
+                result.flydelta_device_batch = final_response->flydelta_device_batch;
             }
             resident_trace("nonstream-success", request);
             return true;
@@ -398,20 +400,31 @@ public:
         // supplies the corresponding sparse overlay row. The scalar generate
         // implementation remains the single source of request preparation,
         // capture and result decoding semantics.
-        std::vector<bool> completed(requests.size(), false);
-        std::vector<std::thread> workers;
-        workers.reserve(requests.size());
-        for (size_t index = 0; index < requests.size(); ++index) {
-            workers.emplace_back([&, index]() {
-                completed[index] = generate(requests[index], results[index]);
-            });
+        // Bound host-side concurrency to the number of resident server
+        // sequences. Posting an unbounded number of threads merely increases
+        // queue pressure and can prevent the server from coalescing prompt
+        // tokens into the intended llama batch.
+        const size_t max_parallel = static_cast<size_t>(std::max(1, params_base.n_parallel));
+        for (size_t start = 0; start < requests.size(); start += max_parallel) {
+            const size_t end = std::min(requests.size(), start + max_parallel);
+            std::vector<bool> completed(end - start, false);
+            std::vector<std::thread> workers;
+            workers.reserve(end - start);
+            for (size_t index = start; index < end; ++index) {
+                workers.emplace_back([&, index, start]() {
+                    completed[index - start] = generate(requests[index], results[index]);
+                });
+            }
+            for (auto & worker : workers) {
+                worker.join();
+            }
+            if (!std::all_of(completed.begin(), completed.end(), [](bool value) {
+                    return value;
+                })) {
+                return false;
+            }
         }
-        for (auto & worker : workers) {
-            worker.join();
-        }
-        return std::all_of(completed.begin(), completed.end(), [](bool value) {
-            return value;
-        });
+        return true;
     }
 
     bool score_teacher_forced_choice(
@@ -527,6 +540,40 @@ public:
         if (request.choices.empty() || request.choices.size() > 256) {
             result.error_message = "server teacher-forced scoring batch has an invalid size";
             return false;
+        }
+
+        // Keep teacher-score waves bounded by resident server sequences. The
+        // recursive call only partitions the transport batch; each result
+        // retains its original sequence identity and overlay/KV isolation.
+        const size_t max_parallel = static_cast<size_t>(std::max(1, params_base.n_parallel));
+        if (request.choices.size() > max_parallel) {
+            std::unordered_set<std::string> all_sequence_ids;
+            for (size_t index = 0; index < request.choices.size(); ++index) {
+                if (!all_sequence_ids.insert(common_agent_teacher_forced_choice_sequence_id(
+                        request.choices[index], index)).second) {
+                    result.error_message =
+                        "server teacher-forced scoring batch has duplicate sequence identity";
+                    return false;
+                }
+            }
+            result.choices.reserve(request.choices.size());
+            for (size_t start = 0; start < request.choices.size(); start += max_parallel) {
+                const size_t end = std::min(request.choices.size(), start + max_parallel);
+                common_agent_teacher_forced_choice_batch_request wave;
+                wave.choices.assign(request.choices.begin() + start, request.choices.begin() + end);
+                common_agent_teacher_forced_choice_batch_result wave_result;
+                if (!score_teacher_forced_choice_batch(wave, wave_result)) {
+                    result.error_message = wave_result.error_message.empty()
+                        ? "server teacher-forced scoring wave failed"
+                        : wave_result.error_message;
+                    result.choices.clear();
+                    return false;
+                }
+                result.choices.insert(result.choices.end(),
+                    std::make_move_iterator(wave_result.choices.begin()),
+                    std::make_move_iterator(wave_result.choices.end()));
+            }
+            return true;
         }
 
         // Submit the complete batch through one server response reader. The
@@ -654,6 +701,8 @@ public:
                 static_cast<float>(negative_result->total_logprob);
             choice_result.positive_token_count = positive_result->token_count;
             choice_result.negative_token_count = negative_result->token_count;
+            choice_result.flydelta_device_batch = positive_result->flydelta_device_batch ||
+                negative_result->flydelta_device_batch;
             result.choices.push_back(std::move(choice_result));
         }
         return true;

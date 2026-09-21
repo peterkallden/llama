@@ -444,6 +444,8 @@ struct completion_token_output {
 struct server_task_result_teacher_score : server_task_result {
     double total_logprob = 0.0;
     size_t token_count = 0;
+    // Internal execution provenance; not serialized in public JSON.
+    bool flydelta_device_batch = false;
 
     virtual json to_json() override;
 };
@@ -474,6 +476,10 @@ struct server_task_result_cmpl_final : server_task_result {
 
     // Internal FlyDelta capture, omitted from the public JSON payload.
     server_task_capture_result capture;
+
+    // True when this completion used per-sequence overlay rows in a
+    // non-CPU backend graph.
+    bool flydelta_device_batch = false;
 
     // response formatting
     bool               verbose  = false;

@@ -2252,6 +2252,7 @@ private:
         res->id_slot = slot.id;
         res->total_logprob = slot.teacher_forced_logprob;
         res->token_count = slot.teacher_forced_tokens.size();
+        res->flydelta_device_batch = cvec_batch_active && cvec_batch_device.device_resident();
         queue_results.send(std::move(res));
     }
 
@@ -2429,6 +2430,7 @@ private:
 
         res->generation_params = slot.task->params; // copy the parameters
         res->capture = std::move(slot.capture_result);
+        res->flydelta_device_batch = cvec_batch_active && cvec_batch_device.device_resident();
 
         queue_results.send(std::move(res));
     }

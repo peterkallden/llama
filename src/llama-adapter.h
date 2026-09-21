@@ -101,6 +101,10 @@ struct llama_adapter_cvec_batch {
 
     bool enabled() const { return active; }
 
+    // Telemetry: true when at least one per-layer table buffer is owned by a
+    // non-CPU backend. The graph callback remains backend-neutral.
+    bool device_resident() const { return device_resident_flag; }
+
     const llama_adapter_cvec_batch_ref & ref() const { return batch_ref; }
 
 private:
@@ -131,6 +135,7 @@ private:
     int32_t layer_end   = -1;
     int32_t n_embd      = 0;
     bool active         = false;
+    bool device_resident_flag = false;
 
     std::vector<llama_seq_id> seq_ids;
     // The row-selector is a small host-resident graph input.  It cannot be

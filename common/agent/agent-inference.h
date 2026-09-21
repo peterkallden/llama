@@ -131,6 +131,8 @@ struct common_agent_generation_result {
     std::string error_message;
     std::optional<common_chat_params> chat_params;
     std::shared_ptr<const common_flydelta_hidden_state_capture> flydelta_capture;
+    // Internal runtime provenance; does not affect generation semantics.
+    bool flydelta_device_batch = false;
 };
 
 // A bounded teacher-forced comparison over one model-facing choice slot.
@@ -162,6 +164,7 @@ struct common_agent_teacher_forced_choice_result {
     size_t positive_token_count = 0;
     size_t negative_token_count = 0;
     std::string error_message;
+    bool flydelta_device_batch = false;
 
     float total_delta() const {
         return positive_total_logprob - negative_total_logprob;
