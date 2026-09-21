@@ -974,8 +974,13 @@ The same contract has an optional batch form for backend acceleration:
 order. A host that does not support batching uses the common CPU fallback,
 which invokes the existing scalar callback once per arm. This keeps batching
 an execution optimization rather than a new search policy or evidence path.
-The registered capability `bounded_arm_batch` is derived from the actual batch
-callback, so a scalar-only host cannot accidentally advertise device batching.
+The registered capability `bounded_arm_batch` is an explicit runtime opt-in,
+and must be advertised only after the concrete backend/server binding has
+validated that multi-arm execution is supported. A registered callback alone
+does not enable batching, so a scalar-only or otherwise unvalidated host
+cannot accidentally advertise device batching. The host adapter may derive
+the final capability view from its validated registration, but it must not
+infer it from callback presence alone.
 The scalar callback is optional when a backend exposes a validated batch
 callback: a single-arm search request is wrapped as a one-arm batch, so a
 device host does not need to implement a duplicate scalar path merely to
@@ -1051,7 +1056,13 @@ binding cannot be prepared, the server fails the batch rather than applying
 one slot's overlay to another slot. The table is synchronized and detached
 before it is replaced, so asynchronous decode cannot observe freed overlay
 buffers. Without the environment opt-in, the existing context-wide scalar
-behavior is unchanged.
+behavior is unchanged. This server opt-in is separate from
+`runtime.adaptation.flydelta.enabled`: enabling FlyDelta does not enable
+per-sequence batching, and enabling the server capability does not start a
+FlyDelta worker. The production model host must bind both the bounded-arm
+callback and the explicit `bounded_arm_batch` capability before the common
+FlyDelta adapter can use the batch path; otherwise the common scalar fallback
+is retained.
 
 A backend integration is intentionally small and can be kept behind its
 existing model-host abstraction. The usual flow is:
