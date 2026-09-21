@@ -1,5 +1,6 @@
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -36,6 +37,36 @@ bool common_flydelta_representation_diagnostics_validate(
         return false;
     }
     return true;
+}
+
+bool common_flydelta_representation_diagnostics_from_reductions(
+        const uint32_t layer_index,
+        const double dot_shift_delta,
+        const double shift_squared,
+        const double delta_squared,
+        const double residual_squared,
+        common_flydelta_representation_diagnostics & diagnostics,
+        std::string & error) {
+    error.clear();
+    diagnostics = {};
+    if (!std::isfinite(dot_shift_delta) || !std::isfinite(shift_squared) ||
+            !std::isfinite(delta_squared) || !std::isfinite(residual_squared) ||
+            shift_squared < 0.0 || delta_squared <= std::numeric_limits<double>::epsilon() ||
+            residual_squared < -1.0e-8) {
+        error = "FlyDelta compact diagnostics reductions are invalid";
+        return false;
+    }
+
+    const double bounded_residual_squared = std::max(0.0, residual_squared);
+    const double shift_norm = std::sqrt(shift_squared);
+    const double delta_norm = std::sqrt(delta_squared);
+    diagnostics.layer_index = layer_index;
+    diagnostics.cosine = shift_norm > std::numeric_limits<double>::epsilon()
+        ? static_cast<float>(dot_shift_delta / (shift_norm * delta_norm)) : 0.0f;
+    diagnostics.progress = static_cast<float>(dot_shift_delta / delta_squared);
+    diagnostics.leakage = static_cast<float>(std::sqrt(bounded_residual_squared) / delta_norm);
+    diagnostics.shift_norm = static_cast<float>(shift_norm);
+    return common_flydelta_representation_diagnostics_validate(diagnostics, error);
 }
 
 bool common_flydelta_representation_diagnostics_from_captures(
@@ -113,8 +144,6 @@ bool common_flydelta_representation_diagnostics_from_vectors(
         return false;
     }
 
-    const double shift_norm = std::sqrt(shift_squared);
-    const double delta_norm = std::sqrt(delta_squared);
     const double progress = dot / delta_squared;
     double residual_squared = 0.0;
     for (size_t index = 0; index < dimension; ++index) {
@@ -123,11 +152,7 @@ bool common_flydelta_representation_diagnostics_from_vectors(
         residual_squared += residual * residual;
     }
 
-    diagnostics.layer_index = static_cast<uint32_t>(behavior_delta.layer_index);
-    diagnostics.cosine = shift_norm > std::numeric_limits<double>::epsilon()
-        ? static_cast<float>(dot / (shift_norm * delta_norm)) : 0.0f;
-    diagnostics.progress = static_cast<float>(progress);
-    diagnostics.leakage = static_cast<float>(std::sqrt(residual_squared) / delta_norm);
-    diagnostics.shift_norm = static_cast<float>(shift_norm);
-    return common_flydelta_representation_diagnostics_validate(diagnostics, error);
+    return common_flydelta_representation_diagnostics_from_reductions(
+        static_cast<uint32_t>(behavior_delta.layer_index), dot, shift_squared,
+        delta_squared, residual_squared, diagnostics, error);
 }

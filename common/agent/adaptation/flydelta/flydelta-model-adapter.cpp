@@ -254,6 +254,29 @@ bool common_flydelta_arm_batch_result_validate(
     return true;
 }
 
+bool common_flydelta_arm_batch_result_replay_equivalent(
+        const common_flydelta_arm_batch_result & expected,
+        const common_flydelta_arm_batch_result & actual,
+        const float absolute_tolerance,
+        std::string & error) {
+    error.clear();
+    if (!std::isfinite(absolute_tolerance) || absolute_tolerance < 0.0f ||
+            expected.schema_version != actual.schema_version ||
+            expected.arms.size() != actual.arms.size()) {
+        error = "FlyDelta batch replay results have incompatible shape";
+        return false;
+    }
+    for (size_t index = 0; index < expected.arms.size(); ++index) {
+        if (expected.arms[index].arm_id != actual.arms[index].arm_id ||
+                !common_flydelta_arm_result_replay_equivalent(
+                    expected.arms[index], actual.arms[index], absolute_tolerance, error)) {
+            if (error.empty()) error = "FlyDelta batch replay arm identity differs";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool common_flydelta_run_bounded_arm_batch(
         const common_flydelta_model_host & host,
         const common_flydelta_arm_batch_request & request,

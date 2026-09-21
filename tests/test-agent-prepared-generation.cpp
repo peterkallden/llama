@@ -56,6 +56,7 @@ public:
             const common_agent_teacher_forced_choice_request & request,
             common_agent_teacher_forced_choice_result & result) override {
         result = {};
+        result.sequence_id = request.sequence_id;
         result.available = true;
         result.positive_total_logprob = static_cast<float>(request.positive_choice.size());
         result.negative_total_logprob = static_cast<float>(request.negative_choice.size());
@@ -69,6 +70,8 @@ void test_teacher_forced_batch_fallback() {
     teacher_forced_batch_test_inference inference;
     common_agent_teacher_forced_choice_batch_request request;
     request.choices.resize(2);
+    request.choices[0].sequence_id = "arm:alpha-01";
+    request.choices[1].sequence_id = "arm:alpha-02";
     request.choices[0].positive_choice = "inspect";
     request.choices[0].negative_choice = "describe";
     request.choices[1].positive_choice = "aggregate";
@@ -79,8 +82,14 @@ void test_teacher_forced_batch_fallback() {
     assert(result.error_message.empty());
     assert(result.choices.size() == 2);
     assert(result.choices[0].available && result.choices[1].available);
+    assert(result.choices[0].sequence_id == "arm:alpha-01");
+    assert(result.choices[1].sequence_id == "arm:alpha-02");
     assert(result.choices[0].positive_token_count == 7);
     assert(result.choices[1].negative_token_count == 5);
+    request.choices[1].sequence_id = request.choices[0].sequence_id;
+    result = {};
+    assert(!inference.score_teacher_forced_choice_batch(request, result));
+    assert(result.error_message.find("duplicate sequence identity") != std::string::npos);
 }
 
 void test_prepare_tool_generation() {
@@ -198,7 +207,7 @@ void test_server_task_params_from_prepared_generation() {
     common_params params_base;
     params_base.n_keep = 9;
     params_base.n_cache_reuse = 17;
-    params_base.cache_prompt = false;
+    params_base.cache_prompt = true;
     params_base.antiprompt = {"<|stop|>"};
     params_base.sampling.temp = 0.6f;
     params_base.speculative.draft.n_max = 3;
@@ -227,6 +236,8 @@ void test_server_task_params_from_prepared_generation() {
     assert(params.cvec->il_end == 2);
     assert(params.cvec->data.size() == 4);
     assert(std::fabs(params.cvec->data[0] - 0.125f) < 1e-6f);
+    assert(!params.cache_prompt);
+    assert(params.n_cache_reuse == 0);
     const auto serialized_params = params.to_json();
     assert(!serialized_params.contains("cvec"));
 

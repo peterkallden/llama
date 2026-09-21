@@ -324,6 +324,7 @@ int main() {
             prepared_arm.safe_to_continue == (index + 1 < orthogonal_input.arms.size()) &&
             !prepared_arm.decision_margin_available);
     }
+    CHECK(std::fabs(orthogonal_input.arms.front().geometric_response - 0.065f) < 1.0e-6f);
 
     common_flydelta_bootstrap_zoom_state surface_state;
     surface_state.behavior_key = "tool_choice/data_query";

@@ -59,6 +59,7 @@ public:
             const common_agent_teacher_forced_choice_request & request,
             common_agent_teacher_forced_choice_result & result) override {
         result = {};
+        result.sequence_id = request.sequence_id;
         common_flydelta_static_overlay no_overlay;
         const common_flydelta_static_overlay * overlay = &no_overlay;
         if (request.context.flydelta_activation) {

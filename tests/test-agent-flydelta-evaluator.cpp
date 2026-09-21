@@ -676,6 +676,7 @@ int main() {
         common_flydelta_arm_execution_metrics::path::backend_batch);
     CHECK(std::string(common_flydelta_arm_execution_path_name(
         batch_result.arms[0].execution_metrics.execution_path)) == "backend_batch");
+    const auto scalar_batch_result = batch_result;
     batch_result.arms[0].execution_metrics.batched_execution_used = false;
     CHECK(!common_flydelta_arm_batch_result_validate(batch_result, batch_request, error));
     batch_result.arms[0].execution_metrics.batched_execution_used = true;
@@ -710,6 +711,12 @@ int main() {
     CHECK(common_flydelta_run_bounded_arm_batch(
         batch_only_model_host, batch_request, batch_result, error));
     CHECK(batch_result.arms.size() == 2 && batch_callback_calls == 2);
+    CHECK(common_flydelta_arm_batch_result_replay_equivalent(
+        scalar_batch_result, batch_result, 1.0e-5f, error));
+    batch_result.arms[0].margin.positive_total_logprob += 0.25f;
+    CHECK(!common_flydelta_arm_batch_result_replay_equivalent(
+        scalar_batch_result, batch_result, 1.0e-5f, error));
+    batch_result.arms[0].margin.positive_total_logprob -= 0.25f;
 
     batch_request.arms[1].coefficients.push_back(0.5f);
     CHECK(!common_flydelta_run_bounded_arm_batch(

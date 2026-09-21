@@ -1035,6 +1035,16 @@ per-sequence device parameters. This keeps dense cvec allocation out of the
 search policy and makes the sparse path an execution optimization rather than
 a second overlay representation.
 
+Activation results carry both forms during this migration: the sparse overlay
+is the canonical per-arm material, while the dense overlay is its validated
+compatibility expansion for the current scalar cvec server path. Legacy
+dense-only activation results remain accepted so older host integrations can
+migrate without changing search semantics. When the dense cvec path is active,
+the runtime also disables prompt/KV reuse for that request; changing the cvec
+identity clears slot-local prompt state, but the persistent prompt cache does
+not yet carry per-sequence overlay identity. A future device backend may
+re-enable safe reuse only after it owns that identity in the graph/cache key.
+
 The sparse overlay batch contract is likewise execution-only. Every enabled
 entry in `common_flydelta_sparse_overlay_batch` must have a distinct artifact
 identity. This is intentional: two sequences may have identical prompt tokens

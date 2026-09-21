@@ -217,10 +217,11 @@ struct common_flydelta_orthogonal_search_arm {
     // geometric response before a behavior-specific margin becomes useful.
     bool decision_margin_available = false;
     float decision_margin_delta = 0.0f;
-    // The caller supplies a dimensionless response derived from compatible
-    // diagnostics (normally the relative dose sqrt(progress^2 + leakage^2)).
-    // It may only open one experimental orthogonal probe; it never supplies
-    // learning credit or permission for further rank-two expenditure.
+    // The caller supplies a dimensionless directional response derived from
+    // compatible diagnostics. Relative dose is kept separate as a safety and
+    // response-presence signal. This arm may only open one experimental
+    // orthogonal probe; it never supplies learning credit or permission for
+    // further rank-two expenditure.
     bool geometric_response_available = false;
     float geometric_response = 0.0f;
     bool safe_to_continue = false;
@@ -250,6 +251,10 @@ struct common_flydelta_orthogonal_search_config {
     float minimum_cosine = 0.3f;
     float maximum_leakage = 1.0f;
     float maximum_shift_norm = 1.0f;
+    // Relative dose indicates that an intervention moved the representation;
+    // this separate penalty keeps leakage from being mistaken for useful
+    // orthogonal response when no teacher-forced margin is available.
+    float geometric_leakage_penalty = 0.10f;
 };
 
 struct common_flydelta_orthogonal_search_result {

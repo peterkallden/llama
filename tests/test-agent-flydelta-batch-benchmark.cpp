@@ -63,10 +63,16 @@ int main() {
         return true;
     };
 
-    common_flydelta_arm_batch_result result;
-    if (!common_flydelta_run_bounded_arm_batch(scalar_host, request, result, error) ||
-            !common_flydelta_run_bounded_arm_batch(batch_host, request, result, error)) {
+    common_flydelta_arm_batch_result scalar_result;
+    common_flydelta_arm_batch_result batch_result;
+    if (!common_flydelta_run_bounded_arm_batch(scalar_host, request, scalar_result, error) ||
+            !common_flydelta_run_bounded_arm_batch(batch_host, request, batch_result, error)) {
         std::cerr << "FlyDelta batch benchmark setup failed: " << error << '\n';
+        return 1;
+    }
+    if (!common_flydelta_arm_batch_result_replay_equivalent(
+            scalar_result, batch_result, 1.0e-6f, error)) {
+        std::cerr << "FlyDelta batch benchmark replay mismatch: " << error << '\n';
         return 1;
     }
 

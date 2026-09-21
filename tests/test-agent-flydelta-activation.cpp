@@ -31,11 +31,20 @@ int main() {
     common_flydelta_activation_result result;
     CHECK(common_flydelta_prepare_activation(gate_config, request, 1024, result, error));
     CHECK(result.gate.apply && result.overlay.enabled);
+    CHECK(result.sparse_overlay.enabled);
+    CHECK(result.sparse_overlay.layer_indices.size() == 1);
+    CHECK(result.sparse_overlay.layer_indices[0] == 2);
+    CHECK(result.sparse_overlay.data[0] == 0.25f && result.sparse_overlay.data[1] == 0.5f);
     CHECK(result.overlay.data[2] == 0.25f && result.overlay.data[3] == 0.5f);
+    CHECK(common_flydelta_activation_result_validate(result, 2, 4, 1024, error));
+    auto inconsistent = result;
+    inconsistent.sparse_overlay.data.front() += 0.25f;
+    CHECK(!common_flydelta_activation_result_validate(inconsistent, 2, 4, 1024, error));
 
     request.gate_request.explicit_opt_in = false;
     CHECK(common_flydelta_prepare_activation(gate_config, request, 1024, result, error));
     CHECK(!result.gate.apply && !result.overlay.enabled);
+    CHECK(!result.sparse_overlay.enabled);
 
     request.gate_request.explicit_opt_in = true;
     request.artifact_id.clear();
@@ -82,6 +91,10 @@ int main() {
             result,
             error));
     CHECK(result.gate.apply && result.overlay.enabled);
+    CHECK(result.sparse_overlay.enabled);
+    CHECK(result.sparse_overlay.artifact_id == artifact.id);
+    CHECK(result.sparse_overlay.layer_indices.size() == 1);
+    CHECK(result.sparse_overlay.data[0] == 0.5f && result.sparse_overlay.data[1] == 1.0f);
     CHECK(result.overlay.artifact_id == artifact.id);
     CHECK(result.overlay.data.size() == 6);
     CHECK(result.overlay.data[2] == 0.5f && result.overlay.data[3] == 1.0f);

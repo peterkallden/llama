@@ -48,6 +48,19 @@ bool common_flydelta_representation_diagnostics_from_vectors(
         common_flydelta_representation_diagnostics & diagnostics,
         std::string & error);
 
+// Completes the compact reduction contract used by device backends. The
+// backend computes these scalar sums while the aligned vectors are resident
+// on the device; only the reductions cross the model boundary. The formula is
+// identical to the vector reference implementation below.
+bool common_flydelta_representation_diagnostics_from_reductions(
+        uint32_t layer_index,
+        double dot_shift_delta,
+        double shift_squared,
+        double delta_squared,
+        double residual_squared,
+        common_flydelta_representation_diagnostics & diagnostics,
+        std::string & error);
+
 inline bool common_flydelta_representation_diagnostics_from_vectors(
         const std::vector<float> & baseline_values,
         const std::vector<float> & overlay_values,

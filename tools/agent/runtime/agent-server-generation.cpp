@@ -94,6 +94,11 @@ task_params make_server_task_params_from_prepared_generation(
 
     if (request.flydelta_activation && request.flydelta_activation->overlay.enabled) {
         params.cvec = make_server_task_cvec(request.flydelta_activation->overlay);
+        // The current server cvec is context-wide. Until the backend has
+        // per-sequence overlay parameters in its graph, prompt/KV reuse must
+        // not cross an active FlyDelta intervention boundary.
+        params.cache_prompt = false;
+        params.n_cache_reuse = 0;
     }
 
     if (request.flydelta_capture && request.flydelta_capture->enabled) {

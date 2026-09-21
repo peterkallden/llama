@@ -25,6 +25,9 @@ struct common_flydelta_activation_request {
 
 struct common_flydelta_activation_result {
     common_flydelta_gate_decision gate;
+    // Canonical per-arm material for a device-aware backend. The dense
+    // overlay remains alongside it as the current scalar cvec bridge.
+    common_flydelta_sparse_overlay sparse_overlay;
     common_flydelta_static_overlay overlay;
 };
 

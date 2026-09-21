@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -137,6 +138,10 @@ struct common_agent_generation_result {
 // into a decision-margin diagnostic, while the host still owns verification
 // and learning credit.
 struct common_agent_teacher_forced_choice_request {
+    // Stable identity for one independent batch entry. Empty is allowed for
+    // legacy callers; batch implementations derive a deterministic index
+    // identity in that case and always echo it in the result.
+    std::string sequence_id;
     common_agent_generation_request context;
     std::string choice_prefix;
     std::string positive_choice;
@@ -150,6 +155,7 @@ struct common_agent_teacher_forced_choice_request {
 };
 
 struct common_agent_teacher_forced_choice_result {
+    std::string sequence_id;
     bool available = false;
     float positive_total_logprob = 0.0f;
     float negative_total_logprob = 0.0f;
@@ -166,6 +172,13 @@ struct common_agent_teacher_forced_choice_result {
             negative_total_logprob / static_cast<float>(negative_token_count);
     }
 };
+
+inline std::string common_agent_teacher_forced_choice_sequence_id(
+        const common_agent_teacher_forced_choice_request & request,
+        size_t index) {
+    return request.sequence_id.empty()
+        ? "choice:" + std::to_string(index) : request.sequence_id;
+}
 
 // Backend-neutral batch form for teacher-forced comparisons. Each entry is
 // independent and retains its own context/overlay semantics. Backends may
@@ -218,8 +231,17 @@ public:
             return false;
         }
         result.choices.reserve(request.choices.size());
-        for (const auto & choice_request : request.choices) {
+        std::unordered_set<std::string> sequence_ids;
+        for (size_t index = 0; index < request.choices.size(); ++index) {
+            const auto & choice_request = request.choices[index];
             common_agent_teacher_forced_choice_result choice_result;
+            choice_result.sequence_id = common_agent_teacher_forced_choice_sequence_id(
+                choice_request, index);
+            if (!sequence_ids.insert(choice_result.sequence_id).second) {
+                result.error_message = "teacher-forced scoring batch has duplicate sequence identity";
+                result.choices.clear();
+                return false;
+            }
             if (!score_teacher_forced_choice(choice_request, choice_result)) {
                 result.error_message = choice_result.error_message.empty()
                     ? "teacher-forced scoring batch entry failed"

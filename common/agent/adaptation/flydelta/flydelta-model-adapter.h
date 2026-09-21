@@ -148,6 +148,16 @@ bool common_flydelta_arm_batch_result_validate(
         const common_flydelta_arm_batch_request & request,
         std::string & error);
 
+// Compares scalar/device and fallback batch results by arm identity and
+// observable semantics. Execution path, timings and temporary references are
+// intentionally ignored so this can be used as a correctness gate before a
+// backend is allowed to claim device batching.
+bool common_flydelta_arm_batch_result_replay_equivalent(
+        const common_flydelta_arm_batch_result & expected,
+        const common_flydelta_arm_batch_result & actual,
+        float absolute_tolerance,
+        std::string & error);
+
 struct common_flydelta_evaluator_config;
 struct common_flydelta_evaluator_callbacks;
 

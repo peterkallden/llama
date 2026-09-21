@@ -45,6 +45,19 @@ int main() {
     CHECK(std::fabs(diagnostics.cosine - 0.7071067f) < 0.0001f);
     CHECK(std::fabs(diagnostics.progress - 1.0f) < 0.0001f);
     CHECK(std::fabs(diagnostics.leakage - 1.0f) < 0.0001f);
+
+    common_flydelta_representation_diagnostics reduced;
+    CHECK(common_flydelta_representation_diagnostics_from_reductions(
+        4, 4.0, 8.0, 4.0, 4.0, reduced, error));
+    CHECK(std::fabs(reduced.cosine - diagnostics.cosine) < 0.0001f);
+    CHECK(std::fabs(reduced.progress - diagnostics.progress) < 0.0001f);
+    CHECK(std::fabs(reduced.leakage - diagnostics.leakage) < 0.0001f);
+    CHECK(std::fabs(reduced.shift_norm - diagnostics.shift_norm) < 0.0001f);
+
+    CHECK(!common_flydelta_representation_diagnostics_from_reductions(
+        4, 0.0, 1.0, 0.0, 0.0, reduced, error));
+    CHECK(!common_flydelta_representation_diagnostics_from_reductions(
+        4, 0.0, -1.0, 1.0, 0.0, reduced, error));
     CHECK(std::fabs(diagnostics.shift_norm - 2.8284271f) < 0.0001f);
 
     // The vector form is the CPU reference oracle for a compact device

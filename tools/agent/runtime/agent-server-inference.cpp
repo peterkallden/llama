@@ -7,6 +7,7 @@
 #include "server-task.h"
 
 #include <cstdio>
+#include <unordered_set>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
 #include <utility>
@@ -384,6 +385,7 @@ public:
             const common_agent_teacher_forced_choice_request & request,
             common_agent_teacher_forced_choice_result & result) override {
         result = {};
+        result.sequence_id = request.sequence_id;
 
         try {
             std::string flydelta_error;
@@ -508,8 +510,16 @@ public:
         tasks.reserve(request.choices.size() * 2);
         std::vector<pending_choice> pending;
         pending.reserve(request.choices.size());
+        std::unordered_set<std::string> sequence_ids;
 
-        for (const auto & choice_request : request.choices) {
+        for (size_t choice_index = 0; choice_index < request.choices.size(); ++choice_index) {
+            const auto & choice_request = request.choices[choice_index];
+            if (!sequence_ids.insert(common_agent_teacher_forced_choice_sequence_id(
+                    choice_request, choice_index)).second) {
+                result.error_message =
+                    "server teacher-forced scoring batch has duplicate sequence identity";
+                return false;
+            }
             const std::string & positive = choice_request.positive_continuation.empty()
                 ? choice_request.positive_choice : choice_request.positive_continuation;
             const std::string & negative = choice_request.negative_continuation.empty()
@@ -601,6 +611,8 @@ public:
             }
 
             common_agent_teacher_forced_choice_result choice_result;
+            choice_result.sequence_id = common_agent_teacher_forced_choice_sequence_id(
+                request.choices[choice_index], choice_index);
             choice_result.available = positive_result->token_count > 0 &&
                 negative_result->token_count > 0;
             choice_result.positive_total_logprob =

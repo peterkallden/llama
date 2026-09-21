@@ -326,7 +326,9 @@ bool common_flydelta_orthogonal_search_config_validate(
             !finite(config.minimum_cosine) || config.minimum_cosine < -1.0f ||
             config.minimum_cosine > 1.0f || !finite(config.maximum_leakage) ||
             config.maximum_leakage < 0.0f || !finite(config.maximum_shift_norm) ||
-            config.maximum_shift_norm <= 0.0f) {
+            config.maximum_shift_norm <= 0.0f ||
+            !finite(config.geometric_leakage_penalty) ||
+            config.geometric_leakage_penalty < 0.0f) {
         error = "FlyDelta orthogonal-search configuration is invalid";
         return false;
     }
@@ -799,9 +801,13 @@ bool common_flydelta_prepare_orthogonal_search_input(
         arm.decision_margin_delta = trial.margin_delta;
         arm.geometric_response_available = trial.diagnostics_available;
         if (trial.diagnostics_available) {
-            arm.geometric_response = std::sqrt(
-                trial.diagnostics.progress * trial.diagnostics.progress +
-                trial.diagnostics.leakage * trial.diagnostics.leakage);
+            // The Euclidean relative dose remains available to the dose
+            // controller, but is not itself a search utility: leakage must
+            // not make an arm look more promising. This fallback therefore
+            // uses directional progress with an explicit leakage penalty.
+            arm.geometric_response = trial.diagnostics.progress *
+                std::max(0.0f, trial.diagnostics.cosine) -
+                config.geometric_leakage_penalty * trial.diagnostics.leakage;
         }
         arm.safe_to_continue = trial.host_evaluated &&
             trial.outcome != common_flydelta_counterfactual_outcome::harmed &&
