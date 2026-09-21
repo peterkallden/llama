@@ -1036,6 +1036,7 @@ private:
 
         ctx_tgt->set_adapter_cvec_batch(&cvec_batch_device.ref());
         cvec_batch_active = true;
+        SRV_INF("per-sequence cvec batch bound rows=%zu\n", seq_ids.size());
         return true;
     }
 

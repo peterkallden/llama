@@ -8,6 +8,7 @@
 #include <map>
 #include <algorithm>
 #include <cassert>
+#include <cinttypes>
 #include <sstream>
 #include <stdexcept>
 
@@ -212,6 +213,10 @@ void llama_adapter_cvec_batch::clear() {
     layer_end = -1;
     n_embd = 0;
     seq_ids.clear();
+    {
+        std::lock_guard<std::mutex> lock(selector_mutex);
+        selector_states.clear();
+    }
     tensors.clear();
     bufs.clear();
     ctxs.clear();
@@ -310,16 +315,62 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
         return cur;
     }
 
-    ggml_tensor * indices = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, ubatch.n_tokens);
-    for (uint32_t i = 0; i < ubatch.n_tokens; ++i) {
-        const int32_t row = batch->row_for_token(ubatch, i);
-        if (row < 0) {
-            return cur;
-        }
-        ggml_set_i32_1d(indices, i, row);
+    if (cur->ne[2] != 1 || cur->ne[3] != 1 || cur->ne[1] <= 0) {
+        LLAMA_LOG_ERROR(
+            "%s: unsupported batched cvec graph shape [%" PRId64 ",%" PRId64 ",%" PRId64 ",%" PRId64 "]\n",
+            __func__, cur->ne[0], cur->ne[1], cur->ne[2], cur->ne[3]);
+        return cur;
     }
 
-    return ggml_add(ctx, cur, ggml_get_rows(ctx, table, indices));
+    const uint32_t index_count = static_cast<uint32_t>(cur->ne[1]);
+
+    std::lock_guard<std::mutex> lock(batch->selector_mutex);
+    auto & selector = batch->selector_states[ctx];
+    if (selector.tensor == nullptr || selector.count != index_count) {
+        selector.tensor = nullptr;
+        selector.count = 0;
+        selector.ctx.reset();
+
+        ggml_init_params params = {
+            /*.mem_size   =*/ ggml_tensor_overhead() +
+                static_cast<size_t>(index_count) * sizeof(int32_t),
+            /*.mem_buffer =*/ nullptr,
+            /*.no_alloc   =*/ false,
+        };
+        selector.ctx.reset(ggml_init(params));
+        if (!selector.ctx) {
+            return cur;
+        }
+        selector.tensor = ggml_new_tensor_1d(
+            selector.ctx.get(), GGML_TYPE_I32, index_count);
+        if (selector.tensor == nullptr) {
+            selector.ctx.reset();
+            return cur;
+        }
+        selector.count = index_count;
+    }
+
+    for (uint32_t i = 0; i < index_count; ++i) {
+        int32_t row = -1;
+        if (index_count == ubatch.n_tokens) {
+            row = batch->row_for_token(ubatch, i);
+        } else if (index_count == ubatch.n_seqs_unq && ubatch.seq_id_unq != nullptr) {
+            const auto it = std::find(
+                batch->seq_ids.begin(), batch->seq_ids.end(), ubatch.seq_id_unq[i]);
+            if (it != batch->seq_ids.end()) {
+                row = static_cast<int32_t>(it - batch->seq_ids.begin());
+            }
+        }
+        if (row < 0) {
+            LLAMA_LOG_ERROR(
+                "%s: cannot map graph indices to cvec batch (index_count=%u tokens=%u seqs=%u)\n",
+                __func__, index_count, ubatch.n_tokens, ubatch.n_seqs_unq);
+            return cur;
+        }
+        ggml_set_i32_1d(selector.tensor, i, row);
+    }
+
+    return ggml_add(ctx, cur, ggml_get_rows(ctx, table, selector.tensor));
 }
 
 // lora

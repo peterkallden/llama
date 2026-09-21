@@ -5,6 +5,7 @@
 #include "ggml-cpp.h"
 
 #include <string>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -110,6 +111,18 @@ private:
     bool active         = false;
 
     std::vector<llama_seq_id> seq_ids;
+    // The row-selector is a small host-resident graph input.  It cannot be
+    // written through ggml_set_i32_1d() on the graph metadata context because
+    // that context is created with no_alloc=true.  A selector is kept per
+    // graph context: concurrent server slots must never rewrite one another's
+    // indices while their graphs are being built or executed.
+    struct selector_state {
+        ggml_context_ptr ctx;
+        ggml_tensor * tensor = nullptr;
+        uint32_t count = 0;
+    };
+    mutable std::mutex selector_mutex;
+    std::unordered_map<ggml_context *, selector_state> selector_states;
     std::vector<ggml_context_ptr> ctxs;
     std::vector<ggml_backend_buffer_ptr> bufs;
     std::vector<ggml_tensor *> tensors;

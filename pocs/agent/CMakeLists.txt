@@ -1034,6 +1034,21 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Optional real-model cvec batch smoke. It uses two resident server slots and
+# two concurrent generation requests with distinct FlyDelta overlays. The
+# smoke is skipped unless both a model and the explicit server opt-in exist.
+set(TARGET llama-agent-flydelta-cvec-batch-model-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-cvec-batch-model-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Optional real-model FlyDelta runtime smoke. It exercises the public
 # session-host turn path with exactly three counterfactual arms: no-op, small
 # overlay, and larger overlay. It is skipped unless a model is supplied.
@@ -2165,6 +2180,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-flydelta-representation-augmentation-smoke
     llama-agent-flydelta-procedure-teaching-smoke
     llama-agent-flydelta-model-ab-smoke
+    llama-agent-flydelta-cvec-batch-model-smoke
     llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-flydelta-dataset-question-contract-smoke
     llama-agent-flydelta-repair-echo-replay-smoke
@@ -2362,6 +2378,13 @@ if (BUILD_TESTING)
     set_property(TEST llama-agent-flydelta-model-ab-ctest PROPERTY LABELS agent-adaptation)
     set_tests_properties(llama-agent-flydelta-model-ab-ctest PROPERTIES
         SKIP_RETURN_CODE 77 TIMEOUT 180)
+
+    add_test(NAME llama-agent-flydelta-cvec-batch-model-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-cvec-batch-model-smoke>)
+    set_property(TEST llama-agent-flydelta-cvec-batch-model-ctest PROPERTY LABELS agent-adaptation)
+    set_tests_properties(llama-agent-flydelta-cvec-batch-model-ctest PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 600
+        ENVIRONMENT "LLAMA_SERVER_PER_SEQUENCE_CVEC=1")
 
     add_test(NAME llama-agent-flydelta-runtime-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-runtime-smoke>)
