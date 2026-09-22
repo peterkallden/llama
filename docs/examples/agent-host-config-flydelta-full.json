@@ -4,6 +4,7 @@
     "profile": "agent-default"
   },
   "models": {
+    "schema_version": 1,
     "directory": "models",
     "bases": {
       "agent-small": {
@@ -23,7 +24,7 @@
       "agent-default": {
         "base": "agent-small",
         "adapters": [],
-        "context_size": 4096,
+        "context_size": 8192,
         "n_parallel": 2,
         "n_sequences": 2,
         "load": "resident"
@@ -39,7 +40,7 @@
     }
   },
   "runtime": {
-    "context_size": 4096,
+    "context_size": 8192,
     "n_predict": 256,
     "n_threads": 4,
     "n_gpu_layers": 0,
