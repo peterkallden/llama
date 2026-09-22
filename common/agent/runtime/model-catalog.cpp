@@ -55,6 +55,8 @@ bool parse_profile(const std::string & id, const json & value,
     profile = {};
     profile.base_model_id = value.value("base", value.value("base_model_id", ""));
     profile.context_size_tokens = value.value("context_size", value.value("context_size_tokens", size_t{0}));
+    profile.n_parallel = value.value("n_parallel", 1);
+    profile.n_sequences = value.value("n_sequences", 1);
     profile.load_policy = value.value("load", value.value("load_policy", ""));
     const auto adapters = value.value("adapters", json::array());
     if (!adapters.is_array()) { error = "model profile adapters must be an array: " + id; return false; }
@@ -90,7 +92,9 @@ bool parse_profile(const std::string & id, const json & value,
             profile.context_size_tokens == 0 ||
             profile.context_size_tokens > 1024 * 1024 ||
             (!profile.load_policy.empty() && profile.load_policy != "resident" && profile.load_policy != "lazy") ||
-            profile.adapters.size() > 8) {
+            profile.adapters.size() > 8 ||
+            profile.n_parallel < 1 || profile.n_parallel > 256 ||
+            profile.n_sequences < 1 || profile.n_sequences > 256) {
         error = "model profile has invalid identity or bounds: " + id;
         return false;
     }
@@ -199,6 +203,8 @@ std::string common_agent_model_catalog_to_json(
             {"adapters", adapters},
             {"sidebands", sidebands},
             {"context_size", entry.second.context_size_tokens},
+            {"n_parallel", entry.second.n_parallel},
+            {"n_sequences", entry.second.n_sequences},
             {"load", entry.second.load_policy},
         };
     }
@@ -279,6 +285,8 @@ bool common_agent_model_catalog_make_profile(
     profile.tokenizer_fingerprint = tokenizer_fingerprint;
     profile.chat_template_fingerprint = chat_template_fingerprint;
     profile.context_size_tokens = selected->second.context_size_tokens;
+    profile.n_parallel = selected->second.n_parallel;
+    profile.n_sequences = selected->second.n_sequences;
     profile.load_policy = selected->second.load_policy.empty()
         ? base->second.load_policy : selected->second.load_policy;
     profile.adapters = selected->second.adapters;
@@ -313,6 +321,8 @@ bool common_agent_model_catalog_resolve_profile(
         selection.mmproj = (std::filesystem::path(catalog.directory) / base->second.mmproj).lexically_normal().string();
     }
     selection.context_size_tokens = selected->second.context_size_tokens;
+    selection.n_parallel = selected->second.n_parallel;
+    selection.n_sequences = selected->second.n_sequences;
     selection.load_policy = selected->second.load_policy.empty()
         ? base->second.load_policy : selected->second.load_policy;
     selection.adapters = selected->second.adapters;
@@ -330,6 +340,8 @@ std::string common_agent_model_selection_cache_key(
         << selection.path << '\n'
         << selection.mmproj << '\n'
         << selection.context_size_tokens << '\n'
+        << selection.n_parallel << '\n'
+        << selection.n_sequences << '\n'
         << selection.load_policy << '\n';
     for (const auto & adapter : selection.adapters) {
         key << adapter.adapter_id << ':' << adapter.scale << '\n';

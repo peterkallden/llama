@@ -23,6 +23,8 @@ struct common_agent_model_profile_spec {
     std::vector<common_agent_adapter_overlay> adapters;
     std::vector<common_agent_flydelta_sideband_overlay> sidebands;
     size_t context_size_tokens = 0;
+    int n_parallel = 1;
+    int n_sequences = 1;
     // Empty means inherit the base model's load policy.
     std::string load_policy;
 };
@@ -47,6 +49,8 @@ struct common_agent_model_selection {
     std::string path;
     std::string mmproj;
     size_t context_size_tokens = 0;
+    int n_parallel = 1;
+    int n_sequences = 1;
     std::string load_policy;
     std::vector<common_agent_adapter_overlay> adapters;
     std::vector<common_agent_flydelta_sideband_overlay> sidebands;

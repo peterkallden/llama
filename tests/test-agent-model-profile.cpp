@@ -10,6 +10,8 @@ static common_agent_model_profile profile() {
     value.tokenizer_fingerprint = "tokenizer:v1";
     value.chat_template_fingerprint = "chat:v1";
     value.context_size_tokens = 4096;
+    value.n_parallel = 2;
+    value.n_sequences = 3;
     value.load_policy = "resident";
     value.adapters.push_back({"adapter-v1", 0.75});
     return value;
@@ -24,6 +26,8 @@ int main() {
     common_agent_model_profile parsed;
     assert(common_agent_model_profile_from_json(text, parsed, error));
     assert(common_agent_model_profile_cache_key(parsed) == key);
+    assert(parsed.n_parallel == 2);
+    assert(parsed.n_sequences == 3);
 
     value.adapters.push_back({"adapter-v1", 1.0});
     assert(!common_agent_validate_model_profile(value, error));

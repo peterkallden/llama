@@ -43,6 +43,11 @@ bool common_agent_validate_model_profile(
         error = "model profile context size is outside bounds";
         return false;
     }
+    if (profile.n_parallel < 1 || profile.n_parallel > 256 ||
+            profile.n_sequences < 1 || profile.n_sequences > 256) {
+        error = "model profile parallel capacity is outside bounds";
+        return false;
+    }
     if (profile.load_policy != "resident" && profile.load_policy != "lazy") {
         error = "model profile load policy is invalid";
         return false;
@@ -90,6 +95,8 @@ std::string common_agent_model_profile_cache_key(
         << profile.tokenizer_fingerprint << '\n'
         << profile.chat_template_fingerprint << '\n'
         << profile.context_size_tokens << '\n';
+    key << profile.n_parallel << '\n'
+        << profile.n_sequences << '\n';
     for (const auto & adapter : profile.adapters) {
         key << adapter.adapter_id << ':' << adapter.scale << '\n';
     }
@@ -117,6 +124,8 @@ std::string common_agent_model_profile_to_json(
         {"tokenizer_fingerprint", profile.tokenizer_fingerprint},
         {"chat_template_fingerprint", profile.chat_template_fingerprint},
         {"context_size_tokens", profile.context_size_tokens},
+        {"n_parallel", profile.n_parallel},
+        {"n_sequences", profile.n_sequences},
         {"load_policy", profile.load_policy},
         {"adapters", adapters},
         {"sidebands", sidebands},
@@ -141,6 +150,8 @@ bool common_agent_model_profile_from_json(
         profile = {};
         profile.schema_version = value.at("schema_version").get<int>();
         profile.context_size_tokens = value.at("context_size_tokens").get<size_t>();
+        profile.n_parallel = value.value("n_parallel", 1);
+        profile.n_sequences = value.value("n_sequences", 1);
         if (!json_string(value, "id", profile.id, error) ||
                 !json_string(value, "base_model_id", profile.base_model_id, error) ||
                 !json_string(value, "base_model_fingerprint", profile.base_model_fingerprint, error) ||

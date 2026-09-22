@@ -9,6 +9,7 @@
 #include "../runtime/agent-server-context-host.h"
 #include "../tooling/agent-tool-provider.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
+#include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-teaching-material.h"
 
 #include "memory/memory-store.h"
@@ -100,6 +101,19 @@ struct common_agent_daemon_runtime {
     std::shared_ptr<common_flydelta_teaching_material_runtime>
         flydelta_teaching_material_runtime;
     std::shared_ptr<const common_flydelta_evaluator_callbacks> flydelta_evaluator_callbacks;
+    // Host-owned learning ingress. These are forwarded into the existing
+    // runtime assembly; the daemon does not interpret semantic evidence.
+    common_agent_procedure_teaching_request_provider
+        procedure_teaching_request_provider;
+    common_agent_user_correction_teaching_request_provider
+        user_correction_teaching_request_provider;
+    common_agent_user_taught_concept_relation_provider
+        user_taught_concept_relation_provider;
+    common_agent_flydelta_teaching_material_observer
+        flydelta_teaching_material_observer;
+    std::function<bool(
+        const common_flydelta_capture_candidate &,
+        std::string &)> flydelta_capture_job_enqueue;
     // Optional production composition hook. The daemon resolves the selected
     // resident server-context model, asks the host integration to bind its
     // semantic prepare/finalize/verifier callbacks, then registers the

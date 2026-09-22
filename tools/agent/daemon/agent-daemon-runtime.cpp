@@ -187,7 +187,9 @@ common_agent_runtime_policy make_daemon_runtime_policy(const daemon_options & op
     return policy;
 }
 
-common_agent_runtime_config make_daemon_runtime_config(const daemon_options & options) {
+common_agent_runtime_config make_daemon_runtime_config(
+        const daemon_options & options,
+        const common_agent_daemon_runtime & runtime) {
     common_agent_runtime_config config;
     config.generation_config.n_predict = options.n_predict;
     config.generation_config.n_threads = options.n_threads;
@@ -228,6 +230,20 @@ common_agent_runtime_config make_daemon_runtime_config(const daemon_options & op
         options.adaptation_flydelta_capture_layout_revision;
     config.flydelta_max_capture_candidates =
         options.adaptation_flydelta_max_capture_candidates;
+    // Forward host-owned learning ingress into the existing runtime assembly.
+    // The daemon transports these callbacks but never interprets semantic
+    // evidence or manufactures capture jobs.
+    config.flydelta_capture_job_enqueue = runtime.flydelta_capture_job_enqueue;
+    config.procedure_teaching_request_provider =
+        runtime.procedure_teaching_request_provider;
+    config.user_correction_teaching_request_provider =
+        runtime.user_correction_teaching_request_provider;
+    config.user_taught_concept_relation_provider =
+        runtime.user_taught_concept_relation_provider;
+    config.flydelta_teaching_material_observer =
+        runtime.flydelta_teaching_material_observer;
+    config.flydelta_teaching_material_runtime =
+        runtime.flydelta_teaching_material_runtime;
     return config;
 }
 
@@ -520,13 +536,14 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         agent_resource_store & resource_store,
         common_agent_data_store * data_store,
         const daemon_options & options,
-        const std::shared_ptr<common_agent_daemon_config_store> & config_store) {
+        const std::shared_ptr<common_agent_daemon_config_store> & config_store,
+        const common_agent_daemon_runtime & runtime) {
     return {
         memory_store,
         plan_store,
         make_resident_request_config(options),
         make_daemon_runtime_policy(options),
-        make_daemon_runtime_config(options),
+        make_daemon_runtime_config(options, runtime),
         make_daemon_orchestration_config(options),
         common_memory_scope::session,
         true,
@@ -690,7 +707,8 @@ bool initialize_agent_daemon_environment(
         *runtime.resource_store,
         runtime.data_store.get(),
         options,
-        runtime.config_store);
+        runtime.config_store,
+        runtime);
     session_manager_build_config.runtime_config.flydelta_teaching_material_runtime =
         runtime.flydelta_teaching_material_runtime;
     runtime.inference_gate = std::make_shared<common_agent_inference_capacity_gate>(

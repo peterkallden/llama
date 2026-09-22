@@ -32,6 +32,8 @@ const char * kCatalog = R"json({
         {"sideband_id": "flydelta://sideband/tool-repair-v1", "scale": 0.5}
       ],
       "context_size": 4096,
+      "n_parallel": 2,
+      "n_sequences": 3,
       "load": "resident"
     }
   },
@@ -51,7 +53,9 @@ bool test_parse_and_resolve() {
     if (!common_agent_model_catalog_from_json(kCatalog, catalog, error)) return false;
     if (!error.empty() || catalog.directory != "/models" ||
             catalog.bases.at("nomic").kind != "embedding" ||
-            catalog.profiles.at("agent-default").context_size_tokens != 4096) return false;
+            catalog.profiles.at("agent-default").context_size_tokens != 4096 ||
+            catalog.profiles.at("agent-default").n_parallel != 2 ||
+            catalog.profiles.at("agent-default").n_sequences != 3) return false;
 
     const auto roundtrip = common_agent_model_catalog_to_json(catalog);
     common_agent_model_catalog decoded;
@@ -63,6 +67,7 @@ bool test_parse_and_resolve() {
         profile, error)) return false;
     if (!(profile.id == "agent-default" && profile.base_model_id == "small" &&
         profile.context_size_tokens == 4096 && profile.adapters.size() == 1 &&
+        profile.n_parallel == 2 && profile.n_sequences == 3 &&
         profile.sidebands.size() == 1 &&
         profile.sidebands.front().sideband_id == "flydelta://sideband/tool-repair-v1" &&
         profile.load_policy == "resident")) return false;
@@ -73,6 +78,7 @@ bool test_parse_and_resolve() {
         selection.base_model_id == "small" &&
         selection.path == (std::filesystem::path("/models") / "qwen.gguf").lexically_normal().string() &&
         selection.mmproj.empty() && selection.context_size_tokens == 4096 &&
+        selection.n_parallel == 2 && selection.n_sequences == 3 &&
         selection.adapters.size() == 1 && selection.sidebands.size() == 1;
 }
 

@@ -643,6 +643,18 @@ int main() {
             std::fprintf(stderr, "unbound FlyDelta lane was not fail-closed\n");
             return 1;
         }
+        common_agent_daemon_command status_command;
+        status_command.request_id = "unbound-flydelta-status";
+        status_command.type = common_agent_daemon_command_type::get_status;
+        common_agent_daemon_command_result status_result;
+        std::string status_error;
+        if (!unbound_dispatcher.execute(status_command, status_result, status_error) ||
+                status_result.status.readiness.warnings.empty()) {
+            std::fprintf(stderr,
+                "unbound FlyDelta lane did not expose its missing-binding warning: %s\n",
+                status_error.c_str());
+            return 1;
+        }
     }
 
     std::atomic<size_t> flydelta_callback_count{0};

@@ -97,6 +97,8 @@ bool common_agent_runtime_server_context_model_loader::load(
     options.fit_params = config_.fit_params;
     options.n_threads = config_.n_threads;
     options.context_size_tokens = selection.context_size_tokens;
+    options.n_parallel = selection.n_parallel;
+    options.n_sequences = selection.n_sequences;
     auto host = std::make_shared<common_agent_server_context_host>();
     if (!host->start(make_agent_server_context_host_config(options), error)) {
         return false;

@@ -68,8 +68,8 @@ common_agent_server_context_context_key make_agent_server_context_context_key(
         const common_agent_inference_options & options) {
     return {
         make_agent_server_context_load_key(options),
-        1,
-        1,
+        std::max(1, options.n_parallel),
+        std::max(1, options.n_sequences),
         static_cast<int>(options.context_size_tokens),
         options.n_threads,
     };

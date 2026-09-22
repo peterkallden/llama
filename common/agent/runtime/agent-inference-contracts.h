@@ -25,5 +25,7 @@ struct common_agent_inference_options {
     bool fit_params = true;
     int n_threads = 2;
     size_t context_size_tokens = 0;
+    int n_parallel = 1;
+    int n_sequences = 1;
     std::string mmproj;
 };

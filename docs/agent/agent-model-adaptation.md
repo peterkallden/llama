@@ -1180,12 +1180,16 @@ The host configuration now accepts the following catalog shape:
         "base": "qwen-small",
         "adapters": ["agent-adaptation-v1"],
         "context_size": 4096,
+        "n_parallel": 1,
+        "n_sequences": 1,
         "load": "resident"
       },
       "agent-baseline": {
         "base": "qwen-small",
         "adapters": [],
         "context_size": 4096,
+        "n_parallel": 1,
+        "n_sequences": 1,
         "load": "lazy"
       },
       "research": {
@@ -1231,6 +1235,11 @@ positive scale, and supports `resident` or `lazy` loading. Its cache key
 includes the ordered overlay list, so changing an adapter or scale cannot
 reuse a resident context created for another profile. It does not itself
 resolve adapter paths, load a model, switch profiles, or authorize a candidate.
+The optional `n_parallel` and `n_sequences` fields describe the model-host
+capacity available to compatible bounded-arm batches; both default to `1`, so
+existing profiles retain scalar execution. They are serving capacity hints,
+not FlyDelta search policy: the host must still advertise a validated batch
+capability before the worker may use more than one physical arm at a time.
 
 At the host boundary, registry resolution verifies every referenced overlay
 before a runtime loader sees it. Only `active` adapters are runtime-resolvable;

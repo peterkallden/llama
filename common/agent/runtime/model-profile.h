@@ -29,6 +29,8 @@ struct common_agent_model_profile {
     std::string tokenizer_fingerprint;
     std::string chat_template_fingerprint;
     size_t context_size_tokens = 0;
+    int n_parallel = 1;
+    int n_sequences = 1;
     std::string load_policy = "lazy";
     std::vector<common_agent_adapter_overlay> adapters;
     std::vector<common_agent_flydelta_sideband_overlay> sidebands;
