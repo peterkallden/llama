@@ -420,7 +420,7 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    std::unique_ptr<common_agent_server_context_host> server_host;
+    std::shared_ptr<common_agent_server_context_host> server_host;
     std::unique_ptr<common_agent_inference> inference;
     std::shared_ptr<common_agent_runtime_resident_model> resident;
     size_t n_embd = 0;
@@ -441,15 +441,19 @@ int main(int argc, char ** argv) {
         n_embd = static_cast<size_t>(llama_model_n_embd(loaded->model));
         n_layers = static_cast<size_t>(llama_model_n_layer(loaded->model));
     } else {
-        server_host = std::make_unique<common_agent_server_context_host>();
+        server_host = std::make_shared<common_agent_server_context_host>();
         common_agent_server_context_host_config server_config;
         server_config.context_key.load_key.model = value.model;
         server_config.context_key.load_key.n_gpu_layers = value.n_gpu_layers;
         server_config.context_key.load_key.fit_params = true;
-        server_config.context_key.n_parallel = 1;
-        server_config.context_key.n_sequences = 1;
+        // The model-backed repair smoke uses the production server-host
+        // binding when requested. Keep two resident sequences so FlyDelta
+        // waves can use the same per-sequence overlay/batch path as runtime.
+        server_config.context_key.n_parallel = 2;
+        server_config.context_key.n_sequences = 2;
         server_config.context_key.n_ctx = 2048;
         server_config.context_key.n_threads = value.n_threads;
+        server_config.per_sequence_cvec_batch = true;
         if (!server_host->start(server_config, error)) {
             host.close();
             std::cerr << "could not start server backend: " << error << '\n';
@@ -1350,14 +1354,9 @@ int main(int argc, char ** argv) {
                     return normalized_delta(*delta_it, direction.values, direction_error);
                 };
 
-                common_flydelta_model_host model_host;
-                model_host.capabilities.capture = true;
-                model_host.capabilities.overlay = true;
-                model_host.capabilities.generation = true;
-                model_host.capabilities.teacher_forced_scoring = true;
-                model_host.capabilities.host_verification = true;
-                model_host.run_bounded_arm = [&](const common_flydelta_arm_request & arm_request,
-                        common_flydelta_arm_result & arm_result, std::string & arm_error) {
+                const auto prepare_arm = [&](const common_flydelta_arm_request & arm_request,
+                        common_agent_generation_request & generation_request,
+                        std::string & arm_error) {
                     std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
                     if (arm_request.apply_overlay) {
                         if (arm_request.layer_indices.empty() ||
@@ -1402,14 +1401,21 @@ int main(int argc, char ** argv) {
                             std::move(activation));
                     }
 
-                    common_agent_generation_result generated_result;
-                    if (!inference->generate(make_request(
-                            value, contract, bootstrap_case.question, capture, activation_ptr),
-                            generated_result)) {
+                    generation_request = make_request(
+                        value, contract, bootstrap_case.question, capture, activation_ptr);
+                    return true;
+                };
+
+                const auto finalize_arm = [&](const common_flydelta_arm_request & arm_request,
+                        const common_agent_generation_result & generated_result,
+                        common_flydelta_arm_result & arm_result,
+                        std::string & arm_error) {
+                    if (!common_agent_generation_succeeded(generated_result)) {
                         arm_error = generated_result.error_message.empty()
                             ? "dataset model host generation failed" : generated_result.error_message;
                         return false;
                     }
+
                     const auto verdict = verify_model_call(
                         generated_result, bootstrap_case.expected_tool,
                         bootstrap_case.canonical_arguments, bootstrap_case.verification_mode,
@@ -1456,31 +1462,43 @@ int main(int argc, char ** argv) {
                         arm_error = "fixture has no distinct failed tool for decision pair";
                         return false;
                     }
-                    common_agent_teacher_forced_choice_request score_request;
-                    score_request.context = make_request(
-                        value, contract, bootstrap_case.question, capture, activation_ptr);
-                    score_request.context.flydelta_capture.reset();
-                    score_request.choice_prefix = "{\"name\":\"";
-                    score_request.positive_choice = bootstrap_case.expected_tool;
-                    score_request.negative_choice = bootstrap_case.failed_tool;
-                    score_request.positive_continuation = tool_call_continuation(
-                        bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
-                    score_request.negative_continuation = bootstrap_case.failed_continuation;
-                    common_agent_teacher_forced_choice_batch_request score_batch_request;
-                    score_batch_request.choices.push_back(std::move(score_request));
-                    common_agent_teacher_forced_choice_batch_result score_batch_result;
-                    if (inference->score_teacher_forced_choice_batch(
-                                score_batch_request, score_batch_result) &&
-                            score_batch_result.choices.size() == 1 &&
-                            score_batch_result.choices.front().available) {
-                        const auto & score_result = score_batch_result.choices.front();
-                        arm_result.margin.available = true;
-                        arm_result.margin.positive_total_logprob =
-                            score_result.positive_total_logprob;
-                        arm_result.margin.negative_total_logprob =
-                            score_result.negative_total_logprob;
-                        arm_result.margin.positive_token_count = score_result.positive_token_count;
-                        arm_result.margin.negative_token_count = score_result.negative_token_count;
+                    // A server-native generation batch owns its response
+                    // reader until the wave is finalized. Do not reuse the
+                    // older single-session teacher scorer from inside that
+                    // callback: it can consume the same task result IDs and
+                    // produce a duplicate-result abort. The scalar CLI path
+                    // retains the existing teacher-forced diagnostic.
+                    // This callback is also used for a server-side backend
+                    // batch when the overlay itself is not device-resident.
+                    // The server batch response reader must remain isolated
+                    // from the legacy single-choice teacher scorer in both
+                    // native device-batch and backend-batch modes.
+                    if (value.backend != "server") {
+                        common_agent_teacher_forced_choice_request score_request;
+                        if (!prepare_arm(arm_request, score_request.context, arm_error)) return false;
+                        score_request.context.flydelta_capture.reset();
+                        score_request.choice_prefix = "{\"name\":\"";
+                        score_request.positive_choice = bootstrap_case.expected_tool;
+                        score_request.negative_choice = bootstrap_case.failed_tool;
+                        score_request.positive_continuation = tool_call_continuation(
+                            bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
+                        score_request.negative_continuation = bootstrap_case.failed_continuation;
+                        common_agent_teacher_forced_choice_batch_request score_batch_request;
+                        score_batch_request.choices.push_back(std::move(score_request));
+                        common_agent_teacher_forced_choice_batch_result score_batch_result;
+                        if (inference->score_teacher_forced_choice_batch(
+                                    score_batch_request, score_batch_result) &&
+                                score_batch_result.choices.size() == 1 &&
+                                score_batch_result.choices.front().available) {
+                            const auto & score_result = score_batch_result.choices.front();
+                            arm_result.margin.available = true;
+                            arm_result.margin.positive_total_logprob =
+                                score_result.positive_total_logprob;
+                            arm_result.margin.negative_total_logprob =
+                                score_result.negative_total_logprob;
+                            arm_result.margin.positive_token_count = score_result.positive_token_count;
+                            arm_result.margin.negative_token_count = score_result.negative_token_count;
+                        }
                     }
                     arm_result.margin_available = arm_result.margin.available;
                     if (!arm_request.apply_overlay && generated_result.flydelta_capture &&
@@ -1508,33 +1526,65 @@ int main(int argc, char ** argv) {
                             arm_result.shift_norm = diagnostics.shift_norm;
                         }
                     }
-                    std::cout << "flydelta_search_arm group=" << entry.first << " layers=";
-                    if (arm_request.layer_indices.empty()) std::cout << "baseline";
-                    else for (size_t index = 0; index < arm_request.layer_indices.size(); ++index) {
-                        if (index != 0) std::cout << ',';
-                        std::cout << arm_request.layer_indices[index];
-                    }
-                    std::cout << " scale=" << arm_request.alpha
-                              << " selected_tool=" << verdict.selected_tool
-                              << " outcome=" << common_flydelta_counterfactual_outcome_name(
-                                  arm_result.host_outcome)
-                              << " execution_path=" << common_flydelta_arm_execution_path_name(
-                                  arm_result.execution_metrics.execution_path)
-                              << " teacher_batch=single-entry"
-                              << " diagnostics_bytes_to_host="
-                              << arm_result.execution_metrics.diagnostics_bytes_to_host
-                              << " margin_available=" << (arm_result.margin.available ? "yes" : "no")
-                              << " margin_delta=" << (arm_result.margin.available
-                                  ? arm_result.margin.total_delta() : 0.0f)
-                              << '\n';
                     return true;
                 };
+
+                std::shared_ptr<const common_flydelta_model_host> model_host;
+                if (value.backend == "server") {
+                    common_agent_server_flydelta_binding_callbacks callbacks;
+                    callbacks.primitives.capture = true;
+                    callbacks.primitives.overlay = true;
+                    callbacks.primitives.generation = true;
+                    callbacks.primitives.teacher_forced_scoring = true;
+                    callbacks.primitives.host_verification = true;
+                    callbacks.prepare_arm = prepare_arm;
+                    callbacks.finalize_arm = finalize_arm;
+                    callbacks.register_evaluator = [](
+                            common_flydelta_evaluator_config &,
+                            common_flydelta_evaluator_callbacks &,
+                            std::string & register_error) {
+                        register_error.clear();
+                        return true;
+                    };
+                    auto binding = common_agent_server_flydelta_binding_from_callbacks(
+                        std::move(callbacks));
+                    model_host = common_agent_server_context_host_make_flydelta_model_host(
+                        server_host, std::move(binding), runner_error);
+                    if (!model_host) return false;
+                    if (!model_host->capabilities.bounded_arm_batch) {
+                        runner_error = "dataset repair smoke server host did not advertise FlyDelta batch capability";
+                        return false;
+                    }
+                } else {
+                    auto scalar_host = std::make_shared<common_flydelta_model_host>();
+                    scalar_host->capabilities.capture = true;
+                    scalar_host->capabilities.overlay = true;
+                    scalar_host->capabilities.generation = true;
+                    scalar_host->capabilities.teacher_forced_scoring = true;
+                    scalar_host->capabilities.host_verification = true;
+                    scalar_host->run_bounded_arm = [&, prepare_arm, finalize_arm](
+                            const common_flydelta_arm_request & arm_request,
+                            common_flydelta_arm_result & arm_result,
+                            std::string & arm_error) {
+                        common_agent_generation_request generation_request;
+                        if (!prepare_arm(arm_request, generation_request, arm_error)) return false;
+                        common_agent_generation_result generated_result;
+                        if (!inference->generate(generation_request, generated_result)) {
+                            arm_error = generated_result.error_message.empty()
+                                ? "dataset model host generation failed" : generated_result.error_message;
+                            return false;
+                        }
+                        return finalize_arm(arm_request, generated_result, arm_result, arm_error);
+                    };
+                    model_host = std::move(scalar_host);
+                }
+
                 const auto model_runner = common_flydelta_search_pipeline_runner_from_model_host(
-                    model_host, queued_job.id, "context://dataset-question-repair",
+                    *model_host, queued_job.id, "context://dataset-question-repair",
                     "intervention://dataset-question-repair/" + bootstrap_case.id);
                 const auto model_batch_runner =
                     common_flydelta_search_pipeline_batch_runner_from_model_host(
-                        model_host, queued_job.id, "context://dataset-question-repair",
+                        *model_host, queued_job.id, "context://dataset-question-repair",
                         "intervention://dataset-question-repair/" + bootstrap_case.id);
                 const bool executed = common_flydelta_run_search_pipeline_batched(
                     fixture, pipeline_config, {pipeline_direction}, model_runner,
