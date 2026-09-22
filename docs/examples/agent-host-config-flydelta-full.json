@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "model": {
+    "profile": "agent-default"
+  },
+  "models": {
+    "directory": "models",
+    "bases": {
+      "agent-small": {
+        "kind": "generation",
+        "backend": "server-context",
+        "path": "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+        "load": "resident"
+      },
+      "nomic": {
+        "kind": "embedding",
+        "backend": "server-context",
+        "path": "nomic-embed-text-v1.5.Q4_K_M.gguf",
+        "load": "resident"
+      }
+    },
+    "profiles": {
+      "agent-default": {
+        "base": "agent-small",
+        "adapters": [],
+        "context_size": 4096,
+        "load": "resident"
+      }
+    },
+    "routing": {
+      "default_profile": "agent-default",
+      "embedding_model": "nomic"
+    },
+    "limits": {
+      "max_loaded_generation_models": 1,
+      "model_eviction": "lru"
+    }
+  },
+  "runtime": {
+    "context_size": 4096,
+    "n_predict": 256,
+    "n_threads": 4,
+    "n_gpu_layers": 0,
+    "default_mode": "agent",
+    "thinking_mode": "auto",
+    "memory_learn": "post-turn",
+    "agent_plan": "auto",
+    "agent_blueprint": "auto",
+    "agent_trace": true,
+    "adaptation": {
+      "capture": true,
+      "collection_allowed": true,
+      "max_evidence": 32,
+      "backend": "cozo",
+      "transaction_path": "var/agent/adaptation.cozo",
+      "stable_model_facing_tools": [
+        "data.inspect",
+        "data.query",
+        "data.filter",
+        "data.aggregate",
+        "data.transform"
+      ],
+      "domains": {
+        "planning": true,
+        "tool_use": true,
+        "research": true,
+        "procedure_learning": true,
+        "families": {
+          "data": true,
+          "research": true,
+          "planning": true
+        }
+      },
+      "flydelta": {
+        "enabled": true,
+        "worker_count": 1,
+        "queue_path": "var/agent/flydelta/queue",
+        "capture_candidates": true,
+        "lifecycle_backend": "cozo",
+        "lifecycle_path": "var/agent/flydelta/lifecycle.cozo",
+        "model_profile_fingerprint": "profile:agent-default",
+        "capture_layout_revision": "layer-input:generation-boundary:v1",
+        "max_capture_candidates": 128
+      }
+    }
+  },
+  "stores": {
+    "memory": {
+      "backend": "auto",
+      "path": "var/agent/memory.cozo"
+    },
+    "plan": {
+      "backend": "auto",
+      "path": "var/agent/plan.cozo"
+    },
+    "data": {
+      "backend": "auto",
+      "path": "var/agent/structured.cozo"
+    }
+  },
+  "resources": {
+    "blob_backend": "auto",
+    "blob_root": "var/agent/resources",
+    "metadata_backend": "auto",
+    "metadata_db": "var/agent/resources.cozo"
+  },
+  "limits": {
+    "queue_capacity": 16,
+    "worker_count": 3,
+    "inference_max_active": 1,
+    "turn_timeout_ms": 120000,
+    "inference_step_timeout_ms": 0,
+    "tool_timeout_ms": 18000,
+    "max_tool_rounds": 0,
+    "max_continuations": 2
+  }
+}

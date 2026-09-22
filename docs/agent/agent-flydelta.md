@@ -131,6 +131,17 @@ the in-memory behavior used by tests and ephemeral hosts. Concept capture is
 therefore demand-driven, not an unconditional model operation at process
 startup.
 
+The complete host configuration is illustrated by
+`docs/examples/agent-host-config-flydelta-full.json`. It is JSON configuration,
+not JSONL: JSONL is used by selected portable ledgers and daemon request
+protocols, while FlyDelta queue entries are written as reference-only files
+under the configured `runtime.adaptation.flydelta.queue_path`. The example
+keeps the transaction Cozo database, FlyDelta lifecycle Cozo database, queue
+directory, model catalog, and ordinary agent stores separate so they can be
+inspected and recovered independently. It still requires the host integration
+to provide the semantic server-context binding factory; no config file can
+invent the prepare/finalize/verifier callbacks.
+
 `user_taught_concept_relation_provider` is intentionally different: it may
 return zero or more *already grounded* relations for an explicit user
 principle. Each relation represents one host-verified minimal contrast and
