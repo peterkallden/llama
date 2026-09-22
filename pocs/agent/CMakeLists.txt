@@ -1019,6 +1019,20 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Model-free functional smoke for the complete teaching-material capture path:
+# relation readiness, bounded capture worker slice, persisted trajectory refs,
+# and the synthesis follow-up job.
+set(TARGET llama-agent-flydelta-concept-capture-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-concept-capture-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Optional real-model FlyDelta A/B smoke. It is CTest-compatible but skips
 # when LLAMA_AGENT_MODEL is not supplied, like the existing model smokes.
 set(TARGET llama-agent-flydelta-model-ab-smoke)
@@ -2179,6 +2193,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-flydelta-tool-repair-smoke
     llama-agent-flydelta-representation-augmentation-smoke
     llama-agent-flydelta-procedure-teaching-smoke
+    llama-agent-flydelta-concept-capture-smoke
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-cvec-batch-model-smoke
     llama-agent-flydelta-dataset-question-model-smoke
@@ -2372,6 +2387,11 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-flydelta-procedure-teaching-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-procedure-teaching-smoke>)
     set_property(TEST llama-agent-flydelta-procedure-teaching-ctest PROPERTY LABELS agent-adaptation)
+
+    add_test(NAME llama-agent-flydelta-concept-capture-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-concept-capture-smoke>)
+    set_property(TEST llama-agent-flydelta-concept-capture-ctest PROPERTY LABELS agent-adaptation)
+    set_tests_properties(llama-agent-flydelta-concept-capture-ctest PROPERTIES TIMEOUT 60)
 
     add_test(NAME llama-agent-flydelta-model-ab-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-model-ab-smoke>)

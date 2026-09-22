@@ -7,6 +7,7 @@
 #include "agent/learning/memory-learning.h"
 #include "agent/adaptation/learning-transaction.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-teaching-material.h"
 #include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
 #include "agent/adaptation/flydelta/flydelta-runtime-observer.h"
 #include "../adaptation/agent-learning-transaction-store.h"
@@ -28,6 +29,13 @@ struct common_agent_inference_capabilities {
 };
 
 bool parse_agent_inference_backend(const std::string & value, agent_inference_backend & backend);
+
+// Host-owned observer for resolved, verified teaching material. The runtime
+// assembly only forwards the relation; persistence/readiness remain outside
+// the generic runtime and may use the existing host artifact store.
+using common_agent_flydelta_teaching_material_observer = std::function<bool(
+        const common_flydelta_teaching_relation & relation,
+        std::string & error)>;
 
 struct common_agent_generation_config {
     int n_predict = 0;
@@ -77,6 +85,12 @@ struct common_agent_runtime_config {
     // text is never passed to FlyDelta as training material.
     common_agent_user_correction_teaching_request_provider user_correction_teaching_request_provider;
     common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
+    common_agent_flydelta_teaching_material_observer flydelta_teaching_material_observer;
+    // Optional shared host-owned material index. When present and no explicit
+    // observer is supplied, the runtime assembly observes resolved relations
+    // in this index so the model-host readiness callback can inspect the same
+    // state.
+    std::shared_ptr<common_flydelta_teaching_material_runtime> flydelta_teaching_material_runtime;
 };
 
 struct common_agent_runtime_build_config {
@@ -104,6 +118,8 @@ struct common_agent_runtime_build_config {
     common_agent_procedure_teaching_request_provider procedure_teaching_request_provider;
     common_agent_user_correction_teaching_request_provider user_correction_teaching_request_provider;
     common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
+    common_agent_flydelta_teaching_material_observer flydelta_teaching_material_observer;
+    std::shared_ptr<common_flydelta_teaching_material_runtime> flydelta_teaching_material_runtime;
 };
 
 common_agent_inference_options make_agent_inference_options(

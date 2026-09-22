@@ -2139,6 +2139,29 @@ It does not introduce gradient steering, SFT, a new concept registry or a new
 model-residency path. Later concept families can reuse the same contract by
 changing the explicit host-approved `behavior_key` and evidence source.
 
+Resolved teaching relations now have a host-owned material accumulator seam.
+The runtime assembly forwards each admitted procedure, user-correction or
+user-taught relation to that observer; the accumulator groups only by
+`teaching_key`, `behavior_key` and the complete model/tokenizer/template,
+capture, context, scope and verifier compatibility identity. It deduplicates
+relation IDs and exposes two separate readiness levels: a relation set is
+ready when enough compatible relations exist, while concept material is ready
+only after enough matched baseline/conditioned/control trajectory references
+have been captured. Persistence remains in the existing host
+artifact/lifecycle layer; the generic runtime does not create a second store
+or retain prompts/activations. A small host-owned material-runtime façade may
+be shared by the runtime assembly and model host so both inspect the same
+reference index.
+
+When a bounded augmentation branch is terminal, the evaluator may ask the
+host for both readiness levels. A relation-ready but trajectory-incomplete
+group schedules one `concept_capture` bounded job; that callback resolves the
+opaque relation refs, runs the matched capture slice and records trajectory
+refs. Only a trajectory-ready group schedules `concept_synthesis`. The
+production model adapter advertises the capture/synthesis callbacks only when
+they are actually registered; neither capability grants learning credit or
+bypasses verification.
+
 The concept smoke has two layers. Its default offline mode covers grouped
 aggregation, validated filtering and ordered querying with synthetic matched
 trajectories, explicit `seen`/`holdout`/`transfer`/`contrastive` fixture

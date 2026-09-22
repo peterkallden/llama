@@ -10,6 +10,7 @@
 #include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-concept.h"
 
 #include <cstddef>
 #include <functional>
@@ -61,6 +62,36 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_experiment_job & job,
             std::vector<common_flydelta_capture_manifest> & manifests,
             std::string & error)> run_donor_capture;
+
+    // Builds one bounded set of ordinary experimental directions from a
+    // host-resolved teaching-material group. The host resolves trajectory
+    // references and owns capture/model access.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            std::vector<common_flydelta_concept_candidate> & candidates,
+            std::string & error)> run_concept_synthesis;
+    // Answers whether the reference-only teaching-material group is ready.
+    // The host owns the material store; a false answer is a normal retain
+    // path, not an evaluator failure.
+    std::function<bool(
+            const std::string & group_ref,
+            bool & available,
+            std::string & error)> has_teaching_material_group;
+    // Returns the two readiness levels separately. Relation readiness is
+    // enough to schedule capture preparation; trajectory readiness is the
+    // only level that may schedule ConceptSynthesis.
+    std::function<bool(
+            const std::string & group_ref,
+            bool & relation_set_ready,
+            bool & trajectory_material_ready,
+            std::string & error)> inspect_teaching_material_group;
+
+    // Executes one bounded host/model capture slice for a relation-ready
+    // teaching group and returns opaque ConceptTrajectory refs.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            std::vector<std::string> & trajectory_refs,
+            std::string & error)> run_concept_capture;
 
     // Executes the composed direction/layer/scale search. The callback owns
     // reference resolution, fresh inference contexts and host verification.
@@ -140,6 +171,8 @@ struct common_flydelta_evaluator_result {
     std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;
     std::vector<common_flydelta_search_continuation> search_continuations;
     std::vector<float> delta_memory_weights;
+    std::vector<common_flydelta_concept_candidate> concept_candidates;
+    std::vector<std::string> concept_trajectory_refs;
     common_flydelta_aggregation_snapshot aggregation;
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;

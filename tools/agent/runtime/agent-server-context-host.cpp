@@ -2,6 +2,7 @@
 
 #include "../cli/agent-cli-inference.h"
 #include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
 #include "log.h"
 #include "common.h"
@@ -383,7 +384,58 @@ common_agent_server_context_host_make_flydelta_model_host(
         result = std::move(batch_result.arms.front());
         return true;
     };
-    model_host->register_evaluator = std::move(binding.register_evaluator);
+    auto teaching_material_runtime = std::move(binding.teaching_material_runtime);
+    auto inspect_teaching_material_group = std::move(binding.inspect_teaching_material_group);
+    if (!inspect_teaching_material_group && teaching_material_runtime) {
+        const auto material_runtime = teaching_material_runtime;
+        inspect_teaching_material_group = [material_runtime](
+                const std::string & group_ref,
+                bool & relation_set_ready,
+                bool & trajectory_material_ready,
+                std::string & callback_error) {
+            return material_runtime->inspect_group(
+                group_ref, relation_set_ready, trajectory_material_ready, callback_error);
+        };
+    }
+    model_host->register_evaluator = [register_evaluator = std::move(binding.register_evaluator),
+            inspect_teaching_material_group = std::move(inspect_teaching_material_group),
+            run_concept_capture = std::move(binding.run_concept_capture),
+            teaching_material_runtime = std::move(teaching_material_runtime)](
+            common_flydelta_evaluator_config & config,
+            common_flydelta_evaluator_callbacks & callbacks,
+            std::string & callback_error) {
+        if (!register_evaluator(config, callbacks, callback_error)) return false;
+        if (inspect_teaching_material_group) {
+            callbacks.inspect_teaching_material_group = inspect_teaching_material_group;
+        }
+        if (run_concept_capture) {
+            callbacks.run_concept_capture = [run_concept_capture, teaching_material_runtime](
+                    const common_flydelta_experiment_job & job,
+                    std::vector<std::string> & trajectory_refs,
+                    std::string & capture_error) {
+                if (!run_concept_capture(job, trajectory_refs, capture_error)) return false;
+                if (!teaching_material_runtime) return true;
+                if (job.teaching_material_group_ref.empty()) {
+                    capture_error = "FlyDelta concept capture requires a teaching material group";
+                    return false;
+                }
+                for (const auto & trajectory_ref : trajectory_refs) {
+                    if (trajectory_ref.empty() || trajectory_ref.size() > 512) {
+                        capture_error = "FlyDelta concept capture returned an invalid trajectory reference";
+                        return false;
+                    }
+                }
+                for (const auto & trajectory_ref : trajectory_refs) {
+                    if (!teaching_material_runtime->observe_trajectory(
+                            job.teaching_material_group_ref, trajectory_ref, capture_error)) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+        }
+        return true;
+    };
     error.clear();
     return model_host;
 }

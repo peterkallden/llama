@@ -121,6 +121,8 @@ common_flydelta_next_action next_action_from_augmentation(
     if (action == "retain") return common_flydelta_next_action::retain;
     if (action == "refine_bootstrap") return common_flydelta_next_action::refine_bootstrap;
     if (action == "recenter_augmented_surface") return common_flydelta_next_action::recenter_surface;
+    if (action == "prepare_concept_material") return common_flydelta_next_action::prepare_concept_material;
+    if (action == "run_concept_synthesis") return common_flydelta_next_action::run_concept_synthesis;
     if (action == "allow_tfo_lite") return common_flydelta_next_action::allow_tfo_lite;
     return common_flydelta_next_action::run_representation_augmentation;
 }
@@ -145,6 +147,49 @@ bool common_flydelta_evaluate_job(
     }
 
     switch (job.kind) {
+        case common_flydelta_experiment_job_kind::concept_capture: {
+            if (!callbacks.run_concept_capture) {
+                error = "FlyDelta concept capture evaluator requires a host runner";
+                return false;
+            }
+            if (!callbacks.run_concept_capture(job, result.concept_trajectory_refs, error) ||
+                    result.concept_trajectory_refs.empty()) {
+                if (error.empty()) error = "FlyDelta concept capture returned no trajectories";
+                return false;
+            }
+            for (const auto & ref : result.concept_trajectory_refs) {
+                if (ref.empty() || ref.size() > 512) {
+                    error = "FlyDelta concept capture returned an invalid trajectory reference";
+                    return false;
+                }
+            }
+            result.processed_references = result.concept_trajectory_refs.size();
+            result.has_next_action = true;
+            result.next_action = common_flydelta_next_action::run_concept_synthesis;
+            result.next_action_reason = "Concept trajectories captured; schedule synthesis";
+            return true;
+        }
+        case common_flydelta_experiment_job_kind::concept_synthesis: {
+            if (!callbacks.run_concept_synthesis) {
+                error = "FlyDelta concept synthesis evaluator requires a host runner";
+                return false;
+            }
+            if (!callbacks.run_concept_synthesis(job, result.concept_candidates, error) ||
+                    result.concept_candidates.empty()) {
+                if (error.empty()) error = "FlyDelta concept synthesis returned no candidates";
+                return false;
+            }
+            for (const auto & candidate : result.concept_candidates) {
+                if (!common_flydelta_concept_candidate_validate(
+                        candidate, config.pipeline.dimension, error)) return false;
+                common_flydelta_direction_candidate direction;
+                if (!common_flydelta_concept_candidate_to_direction(
+                        candidate, direction, error)) return false;
+                result.direction_candidates.push_back(std::move(direction));
+            }
+            result.processed_references = result.concept_candidates.size();
+            return true;
+        }
         case common_flydelta_experiment_job_kind::donor_capture: {
             if (!callbacks.run_donor_capture) {
                 error = "FlyDelta donor capture evaluator requires a host runner";
@@ -303,13 +348,54 @@ bool common_flydelta_evaluate_job(
                     result.representation_augmentation_state.next_action);
                 result.next_action_reason =
                     result.representation_augmentation_state.next_action;
+                const bool augmentation_terminal =
+                    result.representation_augmentation_state.phase ==
+                        common_flydelta_representation_augmentation_phase::done ||
+                    result.representation_augmentation_state.remaining_budget == 0;
+                if (augmentation_terminal && callbacks.inspect_teaching_material_group &&
+                        !job.teaching_material_group_ref.empty() &&
+                        result.next_action == common_flydelta_next_action::retain) {
+                    bool relation_set_ready = false;
+                    bool trajectory_material_ready = false;
+                    if (!callbacks.inspect_teaching_material_group(
+                            job.teaching_material_group_ref, relation_set_ready,
+                            trajectory_material_ready, error)) return false;
+                    common_flydelta_representation_augmentation_action escape_action;
+                    if (!common_flydelta_select_concept_material_escape(
+                            true, relation_set_ready, trajectory_material_ready,
+                            escape_action, error)) return false;
+                    result.next_action = next_action_from_augmentation(
+                        common_flydelta_representation_augmentation_action_name(escape_action));
+                    if (result.next_action == common_flydelta_next_action::prepare_concept_material) {
+                        result.next_action_reason = "Teaching relations ready; schedule bounded concept capture";
+                    } else if (result.next_action == common_flydelta_next_action::run_concept_synthesis) {
+                        result.next_action_reason = "Concept trajectory material ready; schedule synthesis";
+                    }
+                } else if (augmentation_terminal && callbacks.has_teaching_material_group &&
+                        !job.teaching_material_group_ref.empty() &&
+                        result.next_action == common_flydelta_next_action::retain) {
+                    bool material_available = false;
+                    if (!callbacks.has_teaching_material_group(
+                            job.teaching_material_group_ref, material_available, error)) {
+                        return false;
+                    }
+                    common_flydelta_representation_augmentation_action escape_action;
+                    if (!common_flydelta_select_concept_synthesis_escape(
+                            true, material_available, escape_action, error)) return false;
+                    result.next_action = next_action_from_augmentation(
+                        common_flydelta_representation_augmentation_action_name(escape_action));
+                    if (result.next_action == common_flydelta_next_action::run_concept_synthesis) {
+                        result.next_action_reason = "Augmentation exhausted; schedule host-grounded concept synthesis";
+                    }
+                }
                 common_flydelta_search_continuation continuation;
                 if (!common_flydelta_select_search_continuation(
                         pipeline_result, continuation, error)) return false;
                 result.search_pipeline_results.push_back(std::move(pipeline_result));
                 if (!continuation.region.layer_indices.empty()) {
                     result.search_continuations.push_back(std::move(continuation));
-                } else {
+                } else if (result.next_action != common_flydelta_next_action::run_concept_synthesis &&
+                        result.next_action != common_flydelta_next_action::prepare_concept_material) {
                     result.has_next_action = true;
                     result.next_action = common_flydelta_next_action::stop;
                     result.next_action_reason =

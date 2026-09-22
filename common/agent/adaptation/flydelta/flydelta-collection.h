@@ -41,6 +41,9 @@ struct common_flydelta_experiment_collection_request {
     // transports it; the host resolves its typed state.
     std::string search_state_ref;
     std::string representation_augmentation_state_ref;
+    // Optional host-owned material group carried forward for a later
+    // concept-synthesis escape.
+    std::string teaching_material_group_ref;
 };
 
 enum class common_flydelta_experiment_collection_result {

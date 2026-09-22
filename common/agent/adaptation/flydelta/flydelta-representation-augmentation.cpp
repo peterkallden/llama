@@ -86,6 +86,10 @@ const char * common_flydelta_representation_augmentation_action_name(
             return "run_controls";
         case common_flydelta_representation_augmentation_action::recenter_augmented_surface:
             return "recenter_augmented_surface";
+        case common_flydelta_representation_augmentation_action::prepare_concept_material:
+            return "prepare_concept_material";
+        case common_flydelta_representation_augmentation_action::run_concept_synthesis:
+            return "run_concept_synthesis";
         case common_flydelta_representation_augmentation_action::allow_tfo_lite:
             return "allow_tfo_lite";
     }
@@ -432,6 +436,37 @@ bool common_flydelta_decide_representation_augmentation(
             break;
         case common_flydelta_representation_augmentation_phase::done:
             break;
+    }
+    return true;
+}
+
+bool common_flydelta_select_concept_synthesis_escape(
+        bool augmentation_terminal,
+        bool concept_material_available,
+        common_flydelta_representation_augmentation_action & action,
+        std::string & error) {
+    error.clear();
+    action = common_flydelta_representation_augmentation_action::retain;
+    if (!augmentation_terminal) return true;
+    if (concept_material_available) {
+        action = common_flydelta_representation_augmentation_action::run_concept_synthesis;
+    }
+    return true;
+}
+
+bool common_flydelta_select_concept_material_escape(
+        bool augmentation_terminal,
+        bool relation_set_available,
+        bool trajectory_material_available,
+        common_flydelta_representation_augmentation_action & action,
+        std::string & error) {
+    error.clear();
+    action = common_flydelta_representation_augmentation_action::retain;
+    if (!augmentation_terminal) return true;
+    if (trajectory_material_available) {
+        action = common_flydelta_representation_augmentation_action::run_concept_synthesis;
+    } else if (relation_set_available) {
+        action = common_flydelta_representation_augmentation_action::prepare_concept_material;
     }
     return true;
 }

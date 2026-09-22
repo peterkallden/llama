@@ -8,6 +8,7 @@
 #include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-concept.h"
 
 #include <functional>
 #include <string>
@@ -102,6 +103,8 @@ struct common_flydelta_experiment_worker_result {
     std::string safe_summary;
     common_flydelta_trace trace;
     std::vector<common_flydelta_capture_manifest> capture_manifests;
+    std::vector<common_flydelta_concept_candidate> concept_candidates;
+    std::vector<std::string> concept_trajectory_refs;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
     std::vector<common_flydelta_direction_candidate> direction_candidates;
     std::vector<common_flydelta_basis_direction> basis_directions;
@@ -145,6 +148,8 @@ struct common_flydelta_experiment_worker_report {
     std::string trace_json;
     size_t report_count = 0;
     std::vector<common_flydelta_capture_manifest> capture_manifests;
+    std::vector<common_flydelta_concept_candidate> concept_candidates;
+    std::vector<std::string> concept_trajectory_refs;
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;
     bool has_experiment_plan = false;

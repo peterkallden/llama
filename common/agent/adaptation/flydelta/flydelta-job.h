@@ -13,6 +13,8 @@ enum class common_flydelta_experiment_job_kind {
     search_pipeline,
     delta_memory,
     donor_capture,
+    concept_capture,
+    concept_synthesis,
 };
 
 const char * common_flydelta_experiment_job_kind_name(
@@ -43,6 +45,8 @@ struct common_flydelta_experiment_job {
     // Keeping this separate prevents a resumed augmentation slice from being
     // mistaken for an ordinary rank-one search state.
     std::string representation_augmentation_state_ref;
+    // Host-owned, reference-only group of compatible TeachingRelations.
+    std::string teaching_material_group_ref;
     common_flydelta_alpha_search_config alpha_search;
     float learning_rate = 0.1f;
     float decay = 1.0f;

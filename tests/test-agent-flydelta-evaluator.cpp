@@ -483,6 +483,47 @@ int main() {
         result.representation_augmentation_state.surface_revision == 2 &&
         result.search_state_ref == augmentation_state.state_ref);
 
+    // A terminal augmentation slice with a ready host material group takes
+    // the bounded ConceptSynthesis escape instead of being rewritten to stop.
+    augmentation_state.phase = common_flydelta_representation_augmentation_phase::done;
+    augmentation_state.remaining_budget = 0;
+    augmentation_state.next_action = "retain";
+    augmentation_job.teaching_material_group_ref =
+        "flydelta://teaching-material/evaluator";
+    callbacks.has_teaching_material_group = [](
+            const auto & group_ref, bool & available, std::string &) {
+        available = group_ref == "flydelta://teaching-material/evaluator";
+        return true;
+    };
+    callbacks.run_representation_augmentation_with_state =
+        [&](const auto &, const auto *, auto & value, auto & next, std::string &) {
+            value = search_pipeline_result();
+            next = augmentation_state;
+            return true;
+        };
+    CHECK(common_flydelta_evaluate_job(augmentation_job, config, callbacks, result, error));
+    CHECK(result.next_action == common_flydelta_next_action::run_concept_synthesis);
+
+    // The production material seam distinguishes a relation-ready group
+    // (which still needs bounded captures) from a trajectory-ready group.
+    callbacks.has_teaching_material_group = {};
+    callbacks.inspect_teaching_material_group = [](
+            const auto &, bool & relation_ready, bool & trajectory_ready, std::string &) {
+        relation_ready = true;
+        trajectory_ready = false;
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(augmentation_job, config, callbacks, result, error));
+    CHECK(result.next_action == common_flydelta_next_action::prepare_concept_material);
+    callbacks.inspect_teaching_material_group = [](
+            const auto &, bool & relation_ready, bool & trajectory_ready, std::string &) {
+        relation_ready = true;
+        trajectory_ready = true;
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(augmentation_job, config, callbacks, result, error));
+    CHECK(result.next_action == common_flydelta_next_action::run_concept_synthesis);
+
     auto memory = base_job(common_flydelta_experiment_job_kind::delta_memory,
             "flydelta://job/memory");
     memory.training_example_ids = {"flydelta://training/evaluator"};
@@ -558,6 +599,8 @@ int main() {
         registered_callbacks = callbacks;
         registered_callbacks.run_search_pipeline =
             [](const auto &, auto &, std::string &) { return true; };
+        registered_callbacks.run_concept_synthesis =
+            [](const auto &, auto &, std::string &) { return true; };
         registration_error.clear();
         return true;
     };
@@ -619,6 +662,7 @@ int main() {
     CHECK(host_adapter->capabilities.bootstrap_zoom);
     CHECK(host_adapter->capabilities.adaptive_alpha);
     CHECK(host_adapter->capabilities.teacher_forced_margin);
+    CHECK(host_adapter->capabilities.concept_synthesis);
     CHECK(!host_adapter->capabilities.bounded_arm_batch);
     CHECK(!host_adapter->capabilities.orthogonal_search);
     auto lying_batch_host = model_host;

@@ -549,6 +549,8 @@ common_flydelta_model_capabilities common_flydelta_model_capabilities_from_primi
     result.teacher_forced_margin = false;
     result.orthogonal_search = false;
     result.representation_augmentation = false;
+    result.concept_synthesis = false;
+    result.concept_capture = false;
     result.bootstrap_zoom = has_bounded_arm && primitives.capture &&
         primitives.overlay && primitives.generation && has_search_runner;
     result.adaptive_alpha = result.bootstrap_zoom;
@@ -836,6 +838,8 @@ bool common_flydelta_model_adapter_validate(
             !adapter.capabilities.teacher_forced_margin &&
             !adapter.capabilities.orthogonal_search &&
             !adapter.capabilities.representation_augmentation &&
+            !adapter.capabilities.concept_synthesis &&
+            !adapter.capabilities.concept_capture &&
             !adapter.capabilities.host_verification) {
         error = "FlyDelta model adapter advertises no capabilities";
         return false;
@@ -849,7 +853,9 @@ bool common_flydelta_model_adapter_supports_search(
         (adapter.capabilities.bootstrap_zoom ||
          adapter.capabilities.adaptive_alpha ||
          adapter.capabilities.orthogonal_search ||
-         adapter.capabilities.representation_augmentation);
+         adapter.capabilities.representation_augmentation ||
+         adapter.capabilities.concept_synthesis ||
+         adapter.capabilities.concept_capture);
 }
 
 std::shared_ptr<const common_flydelta_model_adapter>
@@ -906,6 +912,11 @@ common_flydelta_model_adapter_from_host(
         static_cast<bool>(callbacks.run_search_pipeline ||
             callbacks.run_search_pipeline_with_state),
         static_cast<bool>(callbacks.run_search_pipeline_with_search_state));
+    // Concept synthesis is a host-owned callback over persisted teaching
+    // material. It is intentionally derived from registration, not from the
+    // model primitive flags above.
+    capabilities.concept_synthesis = static_cast<bool>(callbacks.run_concept_synthesis);
+    capabilities.concept_capture = static_cast<bool>(callbacks.run_concept_capture);
     // Registration is the source of truth for backend availability. A caller
     // cannot advertise a batch path that was not actually bound.
     capabilities.bounded_arm_batch = static_cast<bool>(host.run_bounded_arm_batch);

@@ -22,6 +22,8 @@ const char * phase_name(const common_flydelta_experiment_job_kind kind) {
         case common_flydelta_experiment_job_kind::delta_memory: return "delta_memory";
         case common_flydelta_experiment_job_kind::search_pipeline: return "search_pipeline";
         case common_flydelta_experiment_job_kind::donor_capture: return "donor_capture";
+        case common_flydelta_experiment_job_kind::concept_capture: return "concept_capture";
+        case common_flydelta_experiment_job_kind::concept_synthesis: return "concept_synthesis";
     }
     return "unknown";
 }
@@ -270,6 +272,10 @@ bool validate_result(
         if (!common_flydelta_direction_candidate_validate(
                 direction, direction.values.size(), error)) return false;
     }
+    for (const auto & candidate : result.concept_candidates) {
+        if (!common_flydelta_concept_candidate_validate(
+                candidate, candidate.values.size(), error)) return false;
+    }
     if (!result.direction_candidates.empty()) {
         if (!common_flydelta_search_budget_validate(result.search_budget, error)) return false;
         if (result.evidence_depth.compatible_samples !=
@@ -320,6 +326,16 @@ bool validate_result(
             (result.capture_manifests.empty() ||
              result.capture_manifests.size() != claimed.job.capture_candidate_ids.size())) {
         error = "FlyDelta donor capture worker result requires a manifest";
+        return false;
+    }
+    if (claimed.job.kind == common_flydelta_experiment_job_kind::concept_synthesis &&
+            (result.concept_candidates.empty() || result.direction_candidates.empty())) {
+        error = "FlyDelta concept synthesis worker result requires candidates";
+        return false;
+    }
+    if (claimed.job.kind == common_flydelta_experiment_job_kind::concept_capture &&
+            result.concept_trajectory_refs.empty()) {
+        error = "FlyDelta concept capture worker result requires trajectory references";
         return false;
     }
     return true;
@@ -374,8 +390,12 @@ bool common_flydelta_experiment_worker_run_once(
     report.trace_json = common_flydelta_trace_to_json(report.trace);
     report.report_count = result.capture_manifests.size() +
         result.counterfactual_reports.size() + result.direction_candidates.size() +
+        result.concept_candidates.size() +
+        result.concept_trajectory_refs.size() +
         result.search_pipeline_results.size();
     report.capture_manifests = std::move(result.capture_manifests);
+    report.concept_candidates = std::move(result.concept_candidates);
+    report.concept_trajectory_refs = std::move(result.concept_trajectory_refs);
     report.evidence_depth = result.evidence_depth;
     report.search_budget = result.search_budget;
     report.has_experiment_plan = result.has_experiment_plan;
@@ -493,6 +513,8 @@ bool common_flydelta_worker_result_from_evaluator(
     error.clear();
     target = {};
     target.capture_manifests = source.capture_manifests;
+    target.concept_candidates = source.concept_candidates;
+    target.concept_trajectory_refs = source.concept_trajectory_refs;
     target.counterfactual_reports = source.counterfactual_reports;
     target.direction_candidates = source.direction_candidates;
     target.basis_directions = source.basis_directions;

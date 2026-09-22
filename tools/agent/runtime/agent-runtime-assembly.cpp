@@ -35,6 +35,8 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.procedure_teaching_request_provider = std::move(build_config.procedure_teaching_request_provider);
     config.user_correction_teaching_request_provider = std::move(build_config.user_correction_teaching_request_provider);
     config.user_taught_concept_relation_provider = std::move(build_config.user_taught_concept_relation_provider);
+    config.flydelta_teaching_material_observer = std::move(build_config.flydelta_teaching_material_observer);
+    config.flydelta_teaching_material_runtime = std::move(build_config.flydelta_teaching_material_runtime);
     return config;
 }
 
@@ -85,7 +87,13 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
         if (!assembly.adaptation_store) assembly.adaptation_error = std::move(store_error);
         if (assembly.adaptation_store) {
             auto adaptation_config = runtime_config.adaptation_config;
-            if (runtime_config.enable_flydelta_capture_candidates) {
+            const bool has_teaching_relation_path =
+                static_cast<bool>(runtime_config.procedure_teaching_request_provider) ||
+                static_cast<bool>(runtime_config.user_correction_teaching_request_provider) ||
+                static_cast<bool>(runtime_config.user_taught_concept_relation_provider) ||
+                static_cast<bool>(runtime_config.flydelta_teaching_material_observer);
+            if (runtime_config.enable_flydelta_capture_candidates || has_teaching_relation_path) {
+                if (runtime_config.enable_flydelta_capture_candidates) {
                 assembly.flydelta_capture_collector = std::make_unique<common_flydelta_capture_candidate_collector>(
                     runtime_config.flydelta_model_profile_fingerprint,
                     runtime_config.flydelta_capture_layout_revision,
@@ -111,13 +119,24 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                 } else {
                     adaptation_config.source_observer = assembly.flydelta_capture_collector->source_observer();
                 }
+                }
+                auto teaching_material_observer = runtime_config.flydelta_teaching_material_observer;
+                if (!teaching_material_observer && runtime_config.flydelta_teaching_material_runtime) {
+                    const auto material_runtime = runtime_config.flydelta_teaching_material_runtime;
+                    teaching_material_observer = [material_runtime](
+                            const common_flydelta_teaching_relation & relation,
+                            std::string & error) {
+                        return material_runtime->observe_relation(relation, error);
+                    };
+                }
                 if (runtime_config.procedure_teaching_request_provider) {
                     const auto provider = runtime_config.procedure_teaching_request_provider;
                     auto configured_relation_observer = adaptation_config.host_relation_observer;
                     auto * runtime_candidate_observer = assembly.flydelta_runtime_candidate_observer.get();
                     auto * capture_collector = assembly.flydelta_capture_collector.get();
                     adaptation_config.host_relation_observer =
-                        [provider, configured_relation_observer, runtime_candidate_observer, capture_collector](
+                        [provider, configured_relation_observer, teaching_material_observer,
+                            runtime_candidate_observer, capture_collector](
                                 const common_agent_request & request,
                                 const common_plan_state & plan,
                                 const common_agent_result & result,
@@ -130,6 +149,8 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                             if (!request_value) return true;
                             const auto built = common_agent_build_procedure_teaching_relation(*request_value);
                             if (!built.relation) return true;
+                            if (teaching_material_observer &&
+                                    !teaching_material_observer(*built.relation, error)) return false;
 
                             common_adaptation_evidence_relation relation;
                             if (!common_agent_teaching_relation_to_evidence_relation(
@@ -142,8 +163,11 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                                 return runtime_candidate_observer->observe_verified_relation(
                                     relation, evidence, transaction, error);
                             }
-                            return capture_collector && capture_collector->observe_verified_relation(
-                                relation, evidence, transaction, error);
+                            if (capture_collector) {
+                                return capture_collector->observe_verified_relation(
+                                    relation, evidence, transaction, error);
+                            }
+                            return true;
                         };
                 }
                 if (runtime_config.user_correction_teaching_request_provider) {
@@ -152,7 +176,8 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                     auto * runtime_candidate_observer = assembly.flydelta_runtime_candidate_observer.get();
                     auto * capture_collector = assembly.flydelta_capture_collector.get();
                     adaptation_config.host_relation_observer =
-                        [provider, configured_relation_observer, runtime_candidate_observer, capture_collector](
+                        [provider, configured_relation_observer, teaching_material_observer,
+                            runtime_candidate_observer, capture_collector](
                                 const common_agent_request & request,
                                 const common_plan_state & plan,
                                 const common_agent_result & result,
@@ -165,6 +190,8 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                             if (!request_value) return true;
                             const auto built = common_agent_build_user_correction_teaching_relation(*request_value);
                             if (!built.relation) return true;
+                            if (teaching_material_observer &&
+                                    !teaching_material_observer(*built.relation, error)) return false;
 
                             common_adaptation_evidence_relation relation;
                             if (!common_agent_teaching_relation_to_evidence_relation(
@@ -176,8 +203,11 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                                 return runtime_candidate_observer->observe_verified_relation(
                                     relation, evidence, transaction, error);
                             }
-                            return capture_collector && capture_collector->observe_verified_relation(
-                                relation, evidence, transaction, error);
+                            if (capture_collector) {
+                                return capture_collector->observe_verified_relation(
+                                    relation, evidence, transaction, error);
+                            }
+                            return true;
                         };
                 }
                 if (runtime_config.user_taught_concept_relation_provider) {
@@ -186,7 +216,8 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                     auto * runtime_candidate_observer = assembly.flydelta_runtime_candidate_observer.get();
                     auto * capture_collector = assembly.flydelta_capture_collector.get();
                     adaptation_config.host_relation_observer =
-                        [provider, configured_relation_observer, runtime_candidate_observer, capture_collector](
+                        [provider, configured_relation_observer, teaching_material_observer,
+                            runtime_candidate_observer, capture_collector](
                                 const common_agent_request & request,
                                 const common_plan_state & plan,
                                 const common_agent_result & result,
@@ -203,6 +234,8 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                                     error = "user-taught concept provider returned an unresolved or ungrounded relation";
                                     return false;
                                 }
+                                if (teaching_material_observer &&
+                                        !teaching_material_observer(teaching_relation, error)) return false;
                                 common_adaptation_evidence_relation relation;
                                 if (!common_agent_teaching_relation_to_evidence_relation(
                                         teaching_relation, transaction, relation, error)) return false;
@@ -212,9 +245,9 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                                 if (runtime_candidate_observer) {
                                     if (!runtime_candidate_observer->observe_verified_relation(
                                             relation, evidence, transaction, error)) return false;
-                                } else if (!capture_collector || !capture_collector->observe_verified_relation(
-                                        relation, evidence, transaction, error)) {
-                                    return false;
+                                } else if (capture_collector) {
+                                    if (!capture_collector->observe_verified_relation(
+                                            relation, evidence, transaction, error)) return false;
                                 }
                             }
                             return true;

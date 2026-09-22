@@ -211,6 +211,11 @@ struct common_flydelta_model_capabilities {
     bool teacher_forced_margin = false;
     bool orthogonal_search = false;
     bool representation_augmentation = false;
+    // Host-owned trajectory resolution and concept compilation are exposed
+    // through the evaluator registration seam, not through the generic arm
+    // runner. This flag is true only when that callback is registered.
+    bool concept_synthesis = false;
+    bool concept_capture = false;
 };
 
 // Backend-neutral execution capacity. Search algorithms may propose a larger

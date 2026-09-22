@@ -50,6 +50,8 @@ bool common_flydelta_collect_experiment_job(
             (!request.search_state_ref.empty() && !bounded(request.search_state_ref)) ||
             (!request.representation_augmentation_state_ref.empty() &&
                 !bounded(request.representation_augmentation_state_ref)) ||
+            (!request.teaching_material_group_ref.empty() &&
+                !bounded(request.teaching_material_group_ref)) ||
             !references_empty_except(request, request.kind)) {
         error = "FlyDelta experiment collection request is incomplete or mixes job references";
         return false;
@@ -82,6 +84,7 @@ bool common_flydelta_collect_experiment_job(
     job.search_state_ref = request.search_state_ref;
     job.representation_augmentation_state_ref =
         request.representation_augmentation_state_ref;
+    job.teaching_material_group_ref = request.teaching_material_group_ref;
     job.alpha_search = request.alpha_search;
     job.learning_rate = request.learning_rate;
     job.decay = request.decay;
@@ -177,13 +180,16 @@ bool common_flydelta_collect_next_action_job(
             next_action == common_flydelta_next_action::retain) {
         return true;
     }
-    if (queue_root.empty() || parent_job.kind != common_flydelta_experiment_job_kind::search_pipeline ||
+    if (queue_root.empty() ||
+            (parent_job.kind != common_flydelta_experiment_job_kind::search_pipeline &&
+             parent_job.kind != common_flydelta_experiment_job_kind::concept_capture) ||
             parent_job.id.empty() || parent_job.seed.id.empty()) {
-        error = "FlyDelta next-action scheduling requires a search-pipeline parent job";
+        error = "FlyDelta next-action scheduling requires a bounded FlyDelta parent job";
         return false;
     }
     const std::string state_key = bootstrap_zoom_state_ref + "\n" +
-        search_state_ref + "\n" + representation_augmentation_state_ref;
+        search_state_ref + "\n" + representation_augmentation_state_ref + "\n" +
+        parent_job.teaching_material_group_ref;
     common_flydelta_experiment_job follow_up = parent_job;
     follow_up.id = parent_job.id + "/next/" +
         common_flydelta_next_action_name(next_action) + "/" +
@@ -192,6 +198,23 @@ bool common_flydelta_collect_next_action_job(
     follow_up.search_state_ref = search_state_ref;
     follow_up.representation_augmentation_state_ref =
         representation_augmentation_state_ref;
+    if (next_action == common_flydelta_next_action::prepare_concept_material ||
+            next_action == common_flydelta_next_action::run_concept_synthesis) {
+        if (parent_job.teaching_material_group_ref.empty()) {
+            error = "FlyDelta concept material scheduling requires teaching material";
+            return false;
+        }
+        follow_up.kind = next_action == common_flydelta_next_action::prepare_concept_material
+            ? common_flydelta_experiment_job_kind::concept_capture
+            : common_flydelta_experiment_job_kind::concept_synthesis;
+        follow_up.capture_candidate_ids.clear();
+        follow_up.capture_manifest_ids.clear();
+        follow_up.behavior_delta_ids.clear();
+        follow_up.training_example_ids.clear();
+        follow_up.bootstrap_zoom_state_ref.clear();
+        follow_up.search_state_ref.clear();
+        follow_up.representation_augmentation_state_ref.clear();
+    }
     if (follow_up.id.size() > 512) {
         error = "FlyDelta next-action job identity exceeds its bound";
         return false;

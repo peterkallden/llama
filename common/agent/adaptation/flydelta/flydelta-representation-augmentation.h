@@ -32,6 +32,8 @@ enum class common_flydelta_representation_augmentation_action {
     refine_bootstrap,
     run_controls,
     recenter_augmented_surface,
+    prepare_concept_material,
+    run_concept_synthesis,
     allow_tfo_lite,
 };
 
@@ -196,6 +198,22 @@ bool common_flydelta_decide_representation_augmentation(
         const std::vector<common_flydelta_representation_donor_qualification> & observations,
         bool controls_have_positive_utility,
         bool tfo_has_positive_utility,
+        common_flydelta_representation_augmentation_action & action,
+        std::string & error);
+
+// Selects the knowledge-grounded escape only after the host has explicitly
+// marked the augmentation branch terminal. Material availability alone must
+// not spend model budget.
+bool common_flydelta_select_concept_synthesis_escape(
+        bool augmentation_terminal,
+        bool concept_material_available,
+        common_flydelta_representation_augmentation_action & action,
+        std::string & error);
+
+bool common_flydelta_select_concept_material_escape(
+        bool augmentation_terminal,
+        bool relation_set_available,
+        bool trajectory_material_available,
         common_flydelta_representation_augmentation_action & action,
         std::string & error);
 

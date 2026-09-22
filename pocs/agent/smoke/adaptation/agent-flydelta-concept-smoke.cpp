@@ -293,7 +293,7 @@ bool validate_evaluation_manifest() {
 
 const concept_evaluation_fixture * find_evaluation_fixture(const std::string & id) {
     for (const auto & fixture : k_evaluation_fixtures) {
-        if (fixture.id == id) return &fixture;
+        if (std::string(fixture.id) == id) return &fixture;
     }
     return nullptr;
 }
@@ -391,7 +391,7 @@ bool run_concept_model_evaluation(
             return false;
         }
         const auto * family = find_concept_family(family_key);
-        if (family == nullptr || source->family != family_key) {
+        if (family == nullptr || std::string(source->family) != family_key) {
             runner_error = "concept model host received a fixture from another behavior family";
             return false;
         }

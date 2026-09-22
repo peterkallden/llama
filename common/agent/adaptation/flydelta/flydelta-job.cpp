@@ -23,6 +23,8 @@ const char * common_flydelta_experiment_job_kind_name(
         case common_flydelta_experiment_job_kind::search_pipeline: return "search_pipeline";
         case common_flydelta_experiment_job_kind::delta_memory: return "delta_memory";
         case common_flydelta_experiment_job_kind::donor_capture: return "donor_capture";
+        case common_flydelta_experiment_job_kind::concept_capture: return "concept_capture";
+        case common_flydelta_experiment_job_kind::concept_synthesis: return "concept_synthesis";
     }
     return "basis";
 }
@@ -36,6 +38,8 @@ bool common_flydelta_experiment_job_kind_from_name(
     else if (value == "search_pipeline") kind = common_flydelta_experiment_job_kind::search_pipeline;
     else if (value == "delta_memory") kind = common_flydelta_experiment_job_kind::delta_memory;
     else if (value == "donor_capture") kind = common_flydelta_experiment_job_kind::donor_capture;
+    else if (value == "concept_capture") kind = common_flydelta_experiment_job_kind::concept_capture;
+    else if (value == "concept_synthesis") kind = common_flydelta_experiment_job_kind::concept_synthesis;
     else return false;
     return true;
 }
@@ -50,6 +54,8 @@ bool common_flydelta_experiment_job_validate(
             (!job.search_state_ref.empty() && !bounded(job.search_state_ref)) ||
             (!job.representation_augmentation_state_ref.empty() &&
                 !bounded(job.representation_augmentation_state_ref)) ||
+            (!job.teaching_material_group_ref.empty() &&
+                !bounded(job.teaching_material_group_ref)) ||
             max_references == 0 || !common_flydelta_experiment_seed_validate(job.seed, error) ||
             !std::isfinite(job.learning_rate) || job.learning_rate <= 0.0f ||
             !std::isfinite(job.decay) || job.decay < 0.0f || job.decay > 1.0f) {
@@ -103,6 +109,12 @@ bool common_flydelta_experiment_job_validate(
         error = "FlyDelta DeltaMemory job requires train examples only";
         return false;
     }
+    if ((job.kind == common_flydelta_experiment_job_kind::concept_capture ||
+            job.kind == common_flydelta_experiment_job_kind::concept_synthesis) &&
+            !bounded(job.teaching_material_group_ref)) {
+        error = "FlyDelta concept material job requires teaching material";
+        return false;
+    }
     return true;
 }
 
@@ -141,6 +153,7 @@ std::string common_flydelta_experiment_job_to_json(
         {"bootstrap_zoom_state_ref", job.bootstrap_zoom_state_ref},
         {"search_state_ref", job.search_state_ref},
         {"representation_augmentation_state_ref", job.representation_augmentation_state_ref},
+        {"teaching_material_group_ref", job.teaching_material_group_ref},
         {"alpha_search", {
             {"candidates", job.alpha_search.candidates},
             {"magnitude_penalty", job.alpha_search.magnitude_penalty},
@@ -200,6 +213,7 @@ bool common_flydelta_experiment_job_from_json(
         job.search_state_ref = value.value("search_state_ref", "");
         job.representation_augmentation_state_ref = value.value(
             "representation_augmentation_state_ref", "");
+        job.teaching_material_group_ref = value.value("teaching_material_group_ref", "");
         const auto alpha = value.value("alpha_search", json::object());
         job.alpha_search.candidates = alpha.value("candidates", std::vector<float>{});
         job.alpha_search.magnitude_penalty = alpha.value("magnitude_penalty", 0.0f);

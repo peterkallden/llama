@@ -136,6 +136,8 @@ enum class common_flydelta_next_action {
     run_deep_controls,
     recenter_surface,
     run_representation_augmentation,
+    prepare_concept_material,
+    run_concept_synthesis,
     allow_tfo_lite,
 };
 

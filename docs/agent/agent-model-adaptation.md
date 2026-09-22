@@ -163,6 +163,21 @@ grant learning credit. Explicit user concepts remain source evidence until the
 host provides independently verified grounded contrasts; user confirmation is
 not an admission source in this phase.
 
+The same assembly may forward each resolved relation to the host-owned
+FlyDelta teaching-material accumulator. That accumulator keeps relation
+references only, groups them by teaching/behavior identity plus the complete
+execution compatibility identity, and exposes separate relation-set and
+trajectory-material readiness. It is independent of capture-candidate
+collection, so concept material does not create a second inference path. A
+terminal augmentation slice with only a relation-ready group first enqueues a
+bounded `concept_capture` job; only a trajectory-ready group may enqueue
+`concept_synthesis`. The model adapter advertises each capability only when
+its corresponding host evaluator callback is actually registered. When the
+shared production material runtime is supplied, the server-host binding
+records the returned trajectory references in that same index before the
+worker reports the slice complete; the capture callback therefore cannot leave
+readiness stale after a successful capture.
+
 The lifecycle stores share one persistence contract: the `payload_json` column
 contains the record payload, not the serialized lifecycle envelope. JSONL,
 SQLite and Cozo must therefore produce the same idempotent read-back; the

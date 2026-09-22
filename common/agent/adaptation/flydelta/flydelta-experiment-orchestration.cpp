@@ -209,6 +209,10 @@ const char * common_flydelta_next_action_name(common_flydelta_next_action action
         case common_flydelta_next_action::recenter_surface: return "recenter_surface";
         case common_flydelta_next_action::run_representation_augmentation:
             return "run_representation_augmentation";
+        case common_flydelta_next_action::prepare_concept_material:
+            return "prepare_concept_material";
+        case common_flydelta_next_action::run_concept_synthesis:
+            return "run_concept_synthesis";
         case common_flydelta_next_action::allow_tfo_lite: return "allow_tfo_lite";
     }
     return "retain";

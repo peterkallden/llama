@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 struct server_context;
 
@@ -46,6 +47,12 @@ struct common_agent_server_context_running_instance {
 // implemented here.
 struct common_agent_server_flydelta_binding {
     common_flydelta_model_capabilities primitives;
+    // Optional shared host-owned material index. If the explicit readiness
+    // callback is absent, the model-host seam derives it from this object.
+    // Successful concept-capture refs are also observed here, so the
+    // readiness state seen by the scheduler is advanced by the same
+    // production callback that executed the bounded capture slice.
+    std::shared_ptr<common_flydelta_teaching_material_runtime> teaching_material_runtime;
     std::function<bool(
             const common_flydelta_arm_request &,
             common_agent_generation_request &,
@@ -59,6 +66,15 @@ struct common_agent_server_flydelta_binding {
             common_flydelta_evaluator_config &,
             common_flydelta_evaluator_callbacks &,
             std::string &)> register_evaluator;
+    std::function<bool(
+            const std::string & group_ref,
+            bool & relation_set_ready,
+            bool & trajectory_material_ready,
+            std::string &)> inspect_teaching_material_group;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            std::vector<std::string> &,
+            std::string &)> run_concept_capture;
 };
 
 common_agent_server_context_load_key make_agent_server_context_load_key(

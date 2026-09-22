@@ -516,6 +516,8 @@ void append_agent_daemon_status_snapshot(
         {"teacher_forced_margin", status.flydelta_model_capabilities.teacher_forced_margin},
         {"orthogonal_search", status.flydelta_model_capabilities.orthogonal_search},
         {"representation_augmentation", status.flydelta_model_capabilities.representation_augmentation},
+        {"concept_synthesis", status.flydelta_model_capabilities.concept_synthesis},
+        {"concept_capture", status.flydelta_model_capabilities.concept_capture},
     };
     response["accepting_commands"] = status.accepting_commands;
     response["shutdown_requested"] = status.shutdown_requested;
