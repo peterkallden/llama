@@ -881,11 +881,20 @@ public:
         cvec_batch_enabled = enabled;
     }
 
+    bool agent_trace_enabled() const {
+        return trace_enabled;
+    }
+
+    void set_agent_trace_enabled(const bool enabled) {
+        trace_enabled = enabled;
+    }
+
 private:
     // note: accessing these fields outside of this class is not thread-safe
     // use server_context methods instead
 
     common_params params_base;
+    bool trace_enabled = false;
 
     // note: keep these alive - they determine the lifetime of the model, context, etc.
     common_init_result_ptr llama_init;
@@ -3043,6 +3052,29 @@ private:
                 callback(slot);
             } catch (const std::exception & e) {
                 SLT_ERR(slot, "got exception: %s\n", e.what());
+                if (agent_trace_enabled() &&
+                        slot.task != nullptr &&
+                        !slot.task->params.sampling.grammar.empty()) {
+                    std::string generated = slot.generated_text;
+                    constexpr size_t max_trace_bytes = 4096;
+                    if (generated.size() > max_trace_bytes) {
+                        generated.resize(max_trace_bytes);
+                        generated += "...[truncated]";
+                    }
+                    std::fprintf(stderr,
+                        "agent grammar trace: event=exception slot=%d task=%d "
+                        "grammar=present lazy=%s triggers=%zu generated_tokens=%zu "
+                        "generated_bytes=%zu error=%s generated=%s\n",
+                        slot.id,
+                        slot.task->id,
+                        slot.task->params.sampling.grammar_lazy ? "yes" : "no",
+                        slot.task->params.sampling.grammar_triggers.size(),
+                        slot.generated_tokens.size(),
+                        slot.generated_text.size(),
+                        e.what(),
+                        generated.c_str());
+                    std::fflush(stderr);
+                }
                 send_error(slot, std::string("got exception: ") + e.what(), ERROR_TYPE_SERVER);
                 slot.release();
             }
@@ -3055,6 +3087,29 @@ private:
                 callback(*slot);
             } catch (const std::exception & e) {
                 SLT_ERR(*slot, "got exception: %s\n", e.what());
+                if (agent_trace_enabled() &&
+                        slot->task != nullptr &&
+                        !slot->task->params.sampling.grammar.empty()) {
+                    std::string generated = slot->generated_text;
+                    constexpr size_t max_trace_bytes = 4096;
+                    if (generated.size() > max_trace_bytes) {
+                        generated.resize(max_trace_bytes);
+                        generated += "...[truncated]";
+                    }
+                    std::fprintf(stderr,
+                        "agent grammar trace: event=exception slot=%d task=%d "
+                        "grammar=present lazy=%s triggers=%zu generated_tokens=%zu "
+                        "generated_bytes=%zu error=%s generated=%s\n",
+                        slot->id,
+                        slot->task->id,
+                        slot->task->params.sampling.grammar_lazy ? "yes" : "no",
+                        slot->task->params.sampling.grammar_triggers.size(),
+                        slot->generated_tokens.size(),
+                        slot->generated_text.size(),
+                        e.what(),
+                        generated.c_str());
+                    std::fflush(stderr);
+                }
                 send_error(*slot, std::string("got exception: ") + e.what(), ERROR_TYPE_SERVER);
                 slot->release();
             }
@@ -4527,6 +4582,14 @@ bool server_context::per_sequence_cvec_batch_enabled() const {
 
 void server_context::set_per_sequence_cvec_batch_enabled(const bool enabled) {
     impl->set_per_sequence_cvec_batch_enabled(enabled);
+}
+
+void server_context::set_agent_trace_enabled(const bool enabled) {
+    impl->set_agent_trace_enabled(enabled);
+}
+
+bool server_context::agent_trace_enabled() const {
+    return impl->agent_trace_enabled();
 }
 
 server_response_reader server_context::get_response_reader() {

@@ -951,6 +951,12 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
         options.n_predict,
         options.n_gpu_layers,
         true,
+        options.n_threads,
+        0,
+        1,
+        1,
+        false,
+        options.agent_trace,
     });
     turn_request.inference_options.n_threads = options.n_threads;
     turn_request.inference_options.context_size_tokens = static_cast<size_t>(std::max(0, options.context_size));

@@ -605,6 +605,7 @@ bool open_daemon_model_residency(
         options.n_threads,
         true,
         flydelta_native_batch_requested(options),
+        options.agent_trace,
         options.adaptation_flydelta_batch_mode != "required",
     };
     std::unordered_map<std::string,

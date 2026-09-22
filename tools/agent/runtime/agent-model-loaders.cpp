@@ -100,6 +100,7 @@ bool common_agent_runtime_server_context_model_loader::load(
     options.n_parallel = selection.n_parallel;
     options.n_sequences = selection.n_sequences;
     options.per_sequence_cvec_batch = config_.per_sequence_cvec_batch;
+    options.agent_trace = config_.agent_trace;
     auto host = std::make_shared<common_agent_server_context_host>();
     if (!host->start(make_agent_server_context_host_config(options), error)) {
         if (!config_.allow_flydelta_scalar_fallback ||

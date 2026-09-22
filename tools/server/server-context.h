@@ -111,6 +111,9 @@ struct server_context {
     // configured resident contexts cannot affect one another.
     void set_per_sequence_cvec_batch_enabled(bool enabled);
 
+    void set_agent_trace_enabled(bool enabled);
+    bool agent_trace_enabled() const;
+
     // get a new response reader, used by CLI application
     server_response_reader get_response_reader();
 

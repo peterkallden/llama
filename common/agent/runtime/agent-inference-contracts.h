@@ -31,5 +31,7 @@ struct common_agent_inference_options {
     // resident model is loaded; it does not consult process environment for
     // agent runtime behavior.
     bool per_sequence_cvec_batch = false;
+    // Explicitly carries --agent-trace into the resident context.
+    bool agent_trace = false;
     std::string mmproj;
 };
