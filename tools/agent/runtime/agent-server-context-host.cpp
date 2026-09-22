@@ -280,9 +280,7 @@ common_agent_server_flydelta_binding_factory_from_callbacks(
     };
 }
 
-namespace {
-
-bool run_server_flydelta_arm_batch(
+bool common_agent_server_context_host_run_flydelta_arm_batch(
         const std::shared_ptr<common_agent_server_context_host> & host,
         const common_agent_server_flydelta_binding & binding,
         const bool native_batch,
@@ -385,8 +383,6 @@ bool run_server_flydelta_arm_batch(
     return common_flydelta_arm_batch_result_validate(result, request, error);
 }
 
-} // namespace
-
 std::shared_ptr<const common_flydelta_model_host>
 common_agent_server_context_host_make_flydelta_model_host(
         std::shared_ptr<common_agent_server_context_host> host,
@@ -412,7 +408,7 @@ common_agent_server_context_host_make_flydelta_model_host(
             const common_flydelta_arm_batch_request & request,
             common_flydelta_arm_batch_result & result,
             std::string & callback_error) {
-        return run_server_flydelta_arm_batch(
+        return common_agent_server_context_host_run_flydelta_arm_batch(
             host, binding, native_batch, request, result, callback_error);
     };
     model_host->run_bounded_arm = [host, binding](
@@ -422,7 +418,7 @@ common_agent_server_context_host_make_flydelta_model_host(
         common_flydelta_arm_batch_request batch;
         batch.arms.push_back(request);
         common_flydelta_arm_batch_result batch_result;
-        if (!run_server_flydelta_arm_batch(
+        if (!common_agent_server_context_host_run_flydelta_arm_batch(
                 host, binding, false, batch, batch_result, callback_error) ||
                 batch_result.arms.size() != 1) {
             return false;

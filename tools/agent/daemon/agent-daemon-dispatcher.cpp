@@ -199,6 +199,44 @@ bool common_agent_daemon_dispatcher::execute(
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result,
         std::string & error) {
+    if (command.type == common_agent_daemon_command_type::enqueue_flydelta_job) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!accepting_commands) {
+            error = "daemon dispatcher is not accepting new commands";
+            return fail_lifecycle_result_locked(
+                command, result, error, "command_rejected",
+                common_agent_daemon_event_type::unknown);
+        }
+        if (!command.flydelta_job.has_value()) {
+            error = "enqueue_flydelta_job command missing job payload";
+            return fail_lifecycle_result_locked(
+                command, result, error, "flydelta_job_enqueue_failed",
+                common_agent_daemon_event_type::unknown);
+        }
+        if (!flydelta_config.enabled || flydelta_config.queue_root.empty() ||
+                !flydelta_config.callback) {
+            error = "FlyDelta worker lane is not configured";
+            return fail_lifecycle_result_locked(
+                command, result, error, "flydelta_job_enqueue_failed",
+                common_agent_daemon_event_type::unknown);
+        }
+        if (!common_flydelta_experiment_queue_enqueue(
+                flydelta_config.queue_root, *command.flydelta_job,
+                flydelta_config.queue_limits, error)) {
+            return fail_lifecycle_result_locked(
+                command, result, error, "flydelta_job_enqueue_failed",
+                common_agent_daemon_event_type::unknown);
+        }
+        ++commands_accepted;
+        ++commands_completed;
+        initialize_lifecycle_result(command, result);
+        result.ok = true;
+        result.event = "flydelta_job_enqueued";
+        result.target_request_id = command.flydelta_job->id;
+        fill_status_snapshot_locked(result.status);
+        error.clear();
+        return true;
+    }
     if (command.type == common_agent_daemon_command_type::cancel_turn) {
         return execute_cancel_turn(command, result, error);
     }

@@ -228,6 +228,21 @@ bool parse_agent_daemon_command_name(
         error.clear();
         return true;
     }
+    if (command_name == "enqueue_flydelta_job") {
+        if (!parsed.contains("job") || !parsed["job"].is_object()) {
+            error = "enqueue_flydelta_job requires a job object";
+            return false;
+        }
+        common_flydelta_experiment_job job;
+        if (!common_flydelta_experiment_job_from_json(parsed["job"].dump(), job, error)) {
+            error = "enqueue_flydelta_job job is invalid: " + error;
+            return false;
+        }
+        command.type = common_agent_daemon_command_type::enqueue_flydelta_job;
+        command.flydelta_job = std::move(job);
+        error.clear();
+        return true;
+    }
     if (command_name == "drain") {
         command.type = common_agent_daemon_command_type::drain;
         error.clear();

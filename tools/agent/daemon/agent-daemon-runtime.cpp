@@ -6,6 +6,11 @@
 #include "../runtime/agent-inference-capacity-gate.h"
 #include "../runtime/agent-model-loaders.h"
 #include "../runtime/agent-server-context-host.h"
+#include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
+#include "tools/server/server-context.h"
+#include "llama.h"
 #include "agent/agent-scope.h"
 #include "tools/agent/cli/agent-cli-memory-tools.h"
 #include "memory/memory-in-memory.h"
@@ -25,10 +30,519 @@
 #endif
 
 #include <cstdio>
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <nlohmann/json.hpp>
+#include <set>
 #include <utility>
 
 namespace {
+
+using json = nlohmann::ordered_json;
+
+// V0 production provider.  The daemon owns opaque resource references; this
+// provider resolves only explicitly supplied JSON resources and fails closed
+// when any semantic material is absent.  It deliberately does not infer a
+// prompt, repair, decision pair or verifier from a FlyDelta job.
+struct daemon_flydelta_resource_provider {
+    std::shared_ptr<common_agent_server_context_host> host;
+    agent_resource_store * resources = nullptr;
+    agent_resource_read_authority authority;
+    std::string model_profile_fingerprint;
+    std::string capture_layout_revision;
+    int n_predict = 0;
+    int n_threads = 0;
+    size_t model_n_embd = 0;
+    size_t model_n_layers = 0;
+};
+
+bool daemon_flydelta_read_json(
+        const daemon_flydelta_resource_provider & provider,
+        const std::string & reference,
+        json & parsed,
+        std::string & error) {
+    error.clear();
+    if (provider.resources == nullptr || reference.empty() || reference.size() > 512) {
+        error = "FlyDelta resource provider received an invalid reference";
+        return false;
+    }
+    std::string text;
+    if (!provider.resources->read_text(reference, provider.authority, 1024U * 1024U, text, error)) {
+        return false;
+    }
+    try {
+        parsed = json::parse(text);
+    } catch (const std::exception & exception) {
+        error = std::string("FlyDelta referenced resource is not valid JSON: ") + exception.what();
+        return false;
+    }
+    if (!parsed.is_object()) {
+        error = "FlyDelta referenced resource must be a JSON object";
+        return false;
+    }
+    return true;
+}
+
+bool daemon_flydelta_parse_context(
+        const daemon_flydelta_resource_provider & provider,
+        const std::string & reference,
+        common_agent_generation_request & request,
+        std::string & error) {
+    json parsed;
+    if (!daemon_flydelta_read_json(provider, reference, parsed, error)) return false;
+    request = {};
+    request.purpose = common_agent_generation_purpose::draft;
+    request.options.n_predict = provider.n_predict;
+    request.options.n_threads = provider.n_threads;
+    if (parsed.contains("n_predict")) {
+        if (!parsed["n_predict"].is_number_integer() || parsed["n_predict"].get<int>() <= 0) {
+            error = "FlyDelta context n_predict must be positive";
+            return false;
+        }
+        request.options.n_predict = std::min(provider.n_predict, parsed["n_predict"].get<int>());
+    }
+    try {
+        if (parsed.contains("messages")) {
+            if (!parsed["messages"].is_array() || parsed["messages"].empty()) {
+                error = "FlyDelta context messages must be a non-empty array";
+                return false;
+            }
+            request.messages = common_chat_msgs_parse_oaicompat(parsed["messages"]);
+        } else if (parsed.contains("prompt") && parsed["prompt"].is_string() &&
+                !parsed["prompt"].get<std::string>().empty()) {
+            request.messages = {{"user", parsed["prompt"].get<std::string>()}};
+        } else {
+            error = "FlyDelta context requires messages or prompt";
+            return false;
+        }
+    } catch (const std::exception & exception) {
+        error = std::string("FlyDelta context messages are invalid: ") + exception.what();
+        return false;
+    }
+    return true;
+}
+
+bool daemon_flydelta_parse_directions(
+        const daemon_flydelta_resource_provider & provider,
+        const std::string & reference,
+        std::vector<common_flydelta_basis_direction> & directions,
+        std::string & error) {
+    json parsed;
+    if (!daemon_flydelta_read_json(provider, reference, parsed, error)) return false;
+    if (!parsed.contains("directions") || !parsed["directions"].is_array() ||
+            parsed["directions"].empty() || parsed["directions"].size() > 64) {
+        error = "FlyDelta intervention requires a bounded directions array";
+        return false;
+    }
+    directions.clear();
+    directions.reserve(parsed["directions"].size());
+    std::set<uint32_t> layers;
+    try {
+        for (const auto & item : parsed["directions"]) {
+            if (!item.is_object() || !item.contains("layer_index") ||
+                    !item["layer_index"].is_number_unsigned() ||
+                    (!item.contains("values") && !item.contains("sparse_values"))) {
+                error = "FlyDelta intervention direction is malformed";
+                return false;
+            }
+            common_flydelta_basis_direction direction;
+            direction.layer_index = static_cast<int32_t>(item["layer_index"].get<uint32_t>());
+            if (item.contains("values")) {
+                if (!item["values"].is_array()) {
+                    error = "FlyDelta intervention direction values must be an array";
+                    return false;
+                }
+                direction.values = item["values"].get<std::vector<float>>();
+            } else {
+                if (!item["sparse_values"].is_array() || item["sparse_values"].empty() ||
+                        item["sparse_values"].size() > provider.model_n_embd) {
+                    error = "FlyDelta sparse intervention direction is malformed";
+                    return false;
+                }
+                direction.values.assign(provider.model_n_embd, 0.0f);
+                std::set<size_t> indices;
+                for (const auto & entry : item["sparse_values"]) {
+                    if (!entry.is_object() || !entry.contains("index") ||
+                            !entry["index"].is_number_unsigned() || !entry.contains("value") ||
+                            !entry["value"].is_number()) {
+                        error = "FlyDelta sparse intervention entry is malformed";
+                        return false;
+                    }
+                    const auto index = entry["index"].get<size_t>();
+                    const auto value = entry["value"].get<float>();
+                    if (index >= provider.model_n_embd || !std::isfinite(value) ||
+                            !indices.insert(index).second) {
+                        error = "FlyDelta sparse intervention entry is invalid";
+                        return false;
+                    }
+                    direction.values[index] = value;
+                }
+            }
+            if (direction.layer_index < 1 ||
+                    static_cast<size_t>(direction.layer_index) >= provider.model_n_layers ||
+                    direction.values.size() != provider.model_n_embd ||
+                    !layers.insert(static_cast<uint32_t>(direction.layer_index)).second) {
+                error = "FlyDelta intervention direction is incompatible with the resident model";
+                return false;
+            }
+            double squared = 0.0;
+            for (const float value : direction.values) {
+                if (!std::isfinite(value)) {
+                    error = "FlyDelta intervention direction contains a non-finite value";
+                    return false;
+                }
+                squared += static_cast<double>(value) * value;
+            }
+            if (!std::isfinite(squared) || squared <= 0.0) {
+                error = "FlyDelta intervention direction has zero norm";
+                return false;
+            }
+            const float inverse_norm = static_cast<float>(1.0 / std::sqrt(squared));
+            for (float & value : direction.values) value *= inverse_norm;
+            directions.push_back(std::move(direction));
+        }
+    } catch (const std::exception & exception) {
+        error = std::string("FlyDelta intervention direction values are invalid: ") + exception.what();
+        return false;
+    }
+    return true;
+}
+
+bool daemon_flydelta_prepare_arm(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_arm_request & arm,
+        common_agent_generation_request & request,
+        std::string & error) {
+    if (!daemon_flydelta_parse_context(*provider, arm.context_ref, request, error)) return false;
+    if (arm.max_generated_tokens != 0) {
+        request.options.n_predict = std::min(
+            request.options.n_predict, static_cast<int>(arm.max_generated_tokens));
+    }
+    if (arm.apply_overlay) {
+        std::vector<common_flydelta_basis_direction> available;
+        if (!daemon_flydelta_parse_directions(*provider, arm.intervention_ref, available, error)) {
+            return false;
+        }
+        std::vector<common_flydelta_basis_direction> selected;
+        std::vector<float> coefficients;
+        selected.reserve(arm.layer_indices.size());
+        coefficients.reserve(arm.layer_indices.size());
+        for (size_t index = 0; index < arm.layer_indices.size(); ++index) {
+            const auto it = std::find_if(available.begin(), available.end(), [&](const auto & direction) {
+                return direction.layer_index == static_cast<int32_t>(arm.layer_indices[index]);
+            });
+            if (it == available.end()) {
+                error = "FlyDelta arm requests a layer missing from its intervention resource";
+                return false;
+            }
+            selected.push_back(*it);
+            coefficients.push_back(arm.coefficients[index]);
+        }
+        common_flydelta_gate_config gate_config;
+        gate_config.enabled = true;
+        gate_config.max_scale = 1.0f;
+        common_flydelta_activation_request activation_request;
+        activation_request.candidate_id = arm.intervention_ref;
+        activation_request.artifact_id = arm.arm_id;
+        activation_request.model_profile_fingerprint = provider->model_profile_fingerprint;
+        activation_request.capture_layout_revision = provider->capture_layout_revision;
+        activation_request.model_n_embd = provider->model_n_embd;
+        activation_request.model_n_layers = provider->model_n_layers;
+        activation_request.il_start = 1;
+        activation_request.il_end = static_cast<int32_t>(provider->model_n_layers - 1);
+        activation_request.directions = std::move(selected);
+        activation_request.coefficients = std::move(coefficients);
+        activation_request.gate_request.explicit_opt_in = true;
+        activation_request.gate_request.candidate_status = common_flydelta_candidate_status::approved;
+        activation_request.gate_request.basis_available = true;
+        activation_request.gate_request.familiarity = 1.0f;
+        activation_request.gate_request.novelty = 0.0f;
+        activation_request.gate_request.requested_scale = arm.alpha;
+        common_flydelta_activation_result activation;
+        if (!common_flydelta_prepare_activation(
+                gate_config, activation_request, 64U * 1024U * 1024U, activation, error)) {
+            return false;
+        }
+        request.flydelta_activation = std::make_shared<const common_flydelta_activation_result>(
+            std::move(activation));
+    }
+    if (arm.request_capture) {
+        auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
+        capture->enabled = true;
+        capture->layer_indices = arm.layer_indices;
+        capture->position = common_flydelta_capture_position::generation_boundary;
+        capture->token_index = -1;
+        capture->max_bytes = arm.max_capture_bytes == 0
+            ? 4U * 1024U * 1024U : arm.max_capture_bytes;
+        capture->model_profile_fingerprint = provider->model_profile_fingerprint;
+        capture->capture_layout_revision = provider->capture_layout_revision;
+        request.flydelta_capture = std::move(capture);
+    }
+    return true;
+}
+
+bool daemon_flydelta_finalize_arm(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_arm_request & arm,
+        const common_agent_generation_result & generation,
+        common_flydelta_arm_result & result,
+        std::string & error) {
+    error.clear();
+    result = {};
+    result.arm_id = arm.arm_id;
+    result.executed = common_agent_generation_succeeded(generation);
+    result.requested_alpha = arm.alpha;
+    result.executed_alpha = arm.alpha;
+    result.generation_available = arm.request_generation;
+    result.quality = static_cast<float>(generation.decoded_tokens);
+    if (!result.executed) {
+        result.provenance_ref = generation.error_message;
+        return false;
+    }
+    if (generation.flydelta_capture && generation.flydelta_capture->captured) {
+        result.capture_ref = "flydelta://runtime/capture/" + arm.arm_id;
+    }
+    json fixture;
+    if (!daemon_flydelta_read_json(*provider, arm.fixture_ref, fixture, error)) return false;
+    if (arm.request_teacher_forced_margin && fixture.contains("positive_continuation") &&
+            fixture.contains("negative_continuation")) {
+        if (!fixture["positive_continuation"].is_string() ||
+                !fixture["negative_continuation"].is_string()) {
+            error = "FlyDelta fixture decision continuations must be strings";
+            return false;
+        }
+        common_agent_generation_request score_context;
+        if (!daemon_flydelta_prepare_arm(provider, arm, score_context, error)) return false;
+        score_context.flydelta_capture.reset();
+        common_agent_inference_session session;
+        if (!provider->host->build_inference_session(session, error) || !session.inference) {
+            if (error.empty()) error = "FlyDelta provider could not build a scoring session";
+            return false;
+        }
+        common_agent_teacher_forced_choice_request score_request;
+        score_request.sequence_id = arm.arm_id;
+        score_request.context = std::move(score_context);
+        score_request.choice_prefix = fixture.value("choice_prefix", "");
+        score_request.positive_continuation = fixture["positive_continuation"].get<std::string>();
+        score_request.negative_continuation = fixture["negative_continuation"].get<std::string>();
+        common_agent_teacher_forced_choice_result score;
+        if (!session.inference->score_teacher_forced_choice(score_request, score)) {
+            error = score.error_message.empty()
+                ? "FlyDelta teacher-forced scoring failed" : score.error_message;
+            return false;
+        }
+        result.margin.available = score.available;
+        result.margin.positive_total_logprob = score.positive_total_logprob;
+        result.margin.negative_total_logprob = score.negative_total_logprob;
+        result.margin.positive_token_count = score.positive_token_count;
+        result.margin.negative_token_count = score.negative_token_count;
+        result.margin_available = score.available;
+        result.margin_total = result.margin.total_delta();
+        result.margin_normalized = result.margin.normalized_delta();
+    }
+    if (arm.request_host_verification && fixture.contains("expected_contains")) {
+        if (!fixture["expected_contains"].is_string()) {
+            error = "FlyDelta fixture expected_contains must be a string";
+            return false;
+        }
+        result.host_evaluated = true;
+        result.verifier_known = true;
+        const std::string expected = fixture["expected_contains"].get<std::string>();
+        // An individual arm has no paired baseline in this callback. A match
+        // is therefore retained as NEUTRAL experimental truth, never HELPED.
+        result.host_outcome = generation.content.find(expected) != std::string::npos
+            ? common_flydelta_counterfactual_outcome::neutral
+            : common_flydelta_counterfactual_outcome::harmed;
+        result.quality = result.host_outcome == common_flydelta_counterfactual_outcome::neutral
+            ? 1.0f : 0.0f;
+    }
+    result.generation_ref = "flydelta://runtime/generation/" + arm.arm_id;
+    return common_flydelta_arm_result_validate(result, error);
+}
+
+bool daemon_flydelta_execute_batch(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_arm_batch_request & request,
+        common_flydelta_arm_batch_result & result,
+        std::string & error) {
+    common_agent_server_flydelta_binding binding;
+    binding.prepare_arm = [provider](const auto & arm, auto & generation, std::string & callback_error) {
+        return daemon_flydelta_prepare_arm(provider, arm, generation, callback_error);
+    };
+    binding.finalize_arm = [provider](const auto & arm, const auto & generation,
+            auto & arm_result, std::string & callback_error) {
+        return daemon_flydelta_finalize_arm(provider, arm, generation, arm_result, callback_error);
+    };
+    const bool native_batch = provider->host->server().per_sequence_cvec_batch_enabled() &&
+        provider->host->context_key().n_parallel > 1;
+    return common_agent_server_context_host_run_flydelta_arm_batch(
+        provider->host, binding, native_batch, request, result, error);
+}
+
+bool daemon_flydelta_run_search_pipeline(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_search_pipeline_config & config,
+        common_flydelta_search_pipeline_result & result,
+        std::string & error) {
+    common_flydelta_experiment_fixture fixture;
+    fixture.id = job.seed.verifier_ref;
+    fixture.task_fingerprint = job.seed.task_fingerprint;
+    fixture.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+    fixture.tokenizer_fingerprint = job.seed.tokenizer_fingerprint;
+    fixture.template_fingerprint = job.seed.template_fingerprint;
+    fixture.execution_context_fingerprint = job.seed.execution_context_fingerprint;
+    fixture.verifier_revision = job.seed.verifier_ref;
+    if (!common_flydelta_experiment_fixture_validate(fixture, error)) return false;
+
+    std::vector<common_flydelta_basis_direction> basis;
+    if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref, basis, error)) return false;
+    common_flydelta_search_pipeline_direction input;
+    input.direction.kind = common_flydelta_direction_kind::raw_repair;
+    input.direction.layer_index = basis.front().layer_index;
+    input.direction.values = basis.front().values;
+    input.direction.origin = "runtime_resource";
+    input.direction.extraction_id = job.seed.candidate_ref;
+    input.direction.source_samples = 1;
+    input.direction.retained_samples = 1;
+    input.direction.experimental_only = true;
+    for (const auto & direction : basis) {
+        input.available_layers.push_back(static_cast<uint32_t>(direction.layer_index));
+        input.layer_anchors.push_back(static_cast<uint32_t>(direction.layer_index));
+    }
+    std::sort(input.available_layers.begin(), input.available_layers.end());
+    std::sort(input.layer_anchors.begin(), input.layer_anchors.end());
+    input.layer_anchors.erase(std::unique(input.layer_anchors.begin(), input.layer_anchors.end()),
+        input.layer_anchors.end());
+    if (!common_flydelta_search_pipeline_direction_validate(input, config, error)) return false;
+
+    size_t arm_index = 0;
+    common_flydelta_search_pipeline_runner runner = [provider, &job, &arm_index](
+            const common_flydelta_experiment_fixture & current_fixture,
+            const common_flydelta_direction_candidate &,
+            const common_flydelta_layer_candidate * layer,
+            float scale,
+            bool apply_overlay,
+            common_flydelta_counterfactual_trial & trial,
+            common_flydelta_decision_margin & margin,
+            common_flydelta_scale_geometry & geometry,
+            std::string & runner_error) {
+        common_flydelta_arm_request arm;
+        arm.job_id = job.id;
+        arm.arm_id = "flydelta://runtime/" + job.id + "/" + std::to_string(arm_index++);
+        arm.context_ref = job.seed.baseline_ref;
+        arm.fixture_ref = current_fixture.id;
+        arm.intervention_ref = job.seed.candidate_ref;
+        arm.apply_overlay = apply_overlay;
+        arm.fresh_context = true;
+        arm.alpha = apply_overlay ? scale : 0.0f;
+        arm.request_teacher_forced_margin = true;
+        arm.request_generation = true;
+        arm.request_host_verification = true;
+        arm.max_generated_tokens = 64;
+        if (layer != nullptr && apply_overlay) {
+            arm.layer_indices = layer->layer_indices;
+            arm.coefficients.assign(layer->layer_indices.size(), 1.0f);
+        }
+        if (!common_flydelta_arm_request_validate(arm, runner_error)) return false;
+        common_flydelta_arm_batch_request batch;
+        batch.batch_id = job.id + ":runtime";
+        batch.arms.push_back(arm);
+        common_flydelta_arm_batch_result batch_result;
+        if (!daemon_flydelta_execute_batch(provider, batch, batch_result, runner_error) ||
+                batch_result.arms.size() != 1) return false;
+        const auto & arm_result = batch_result.arms.front();
+        trial.executed = arm_result.executed;
+        trial.verifier_known = arm_result.verifier_known;
+        trial.passed = arm_result.host_outcome == common_flydelta_counterfactual_outcome::helped;
+        trial.quality = arm_result.quality;
+        trial.overlay_applied = apply_overlay;
+        trial.intervention_count = arm.layer_indices.size();
+        trial.evidence_ref = arm_result.generation_ref;
+        margin = arm_result.margin;
+        geometry = {};
+        return arm_result.executed;
+    };
+    return common_flydelta_run_search_pipeline(
+        fixture, config, {input}, runner, result, error);
+}
+
+std::function<bool(
+        const std::shared_ptr<common_agent_server_context_host> &,
+        common_agent_server_flydelta_binding &,
+        std::string &)>
+make_daemon_flydelta_resource_binding_factory(
+        const daemon_options & options,
+        agent_resource_store * resources) {
+    return [options, resources](const std::shared_ptr<common_agent_server_context_host> & host,
+            common_agent_server_flydelta_binding & binding, std::string & error) {
+        error.clear();
+        if (!host || resources == nullptr) {
+            error = "FlyDelta resource provider requires a resident host and resource store";
+            return false;
+        }
+        const auto * context = host->server().get_llama_context();
+        const auto * model = context == nullptr ? nullptr : llama_get_model(context);
+        if (model == nullptr || llama_model_n_embd(model) <= 0 || llama_model_n_layer(model) <= 2) {
+            error = "FlyDelta resource provider requires a loaded compatible model";
+            return false;
+        }
+        auto provider = std::make_shared<daemon_flydelta_resource_provider>();
+        provider->host = host;
+        provider->resources = resources;
+        provider->authority.namespace_id = "default-namespace";
+        provider->authority.session_id = "default-session";
+        provider->model_profile_fingerprint = options.adaptation_flydelta_model_profile_fingerprint.empty()
+            ? "model:" + std::filesystem::path(options.model).filename().string()
+            : options.adaptation_flydelta_model_profile_fingerprint;
+        provider->capture_layout_revision = options.adaptation_flydelta_capture_layout_revision;
+        provider->n_predict = options.n_predict;
+        provider->n_threads = options.n_threads;
+        provider->model_n_embd = static_cast<size_t>(llama_model_n_embd(model));
+        provider->model_n_layers = static_cast<size_t>(llama_model_n_layer(model));
+
+        binding.primitives.capture = true;
+        binding.primitives.overlay = true;
+        binding.primitives.generation = true;
+        binding.primitives.teacher_forced_scoring = true;
+        binding.primitives.host_verification = true;
+        binding.prepare_arm = [provider](const auto & arm, auto & request, std::string & callback_error) {
+            return daemon_flydelta_prepare_arm(provider, arm, request, callback_error);
+        };
+        binding.finalize_arm = [provider](const auto & arm, const auto & generation,
+                auto & result, std::string & callback_error) {
+            return daemon_flydelta_finalize_arm(provider, arm, generation, result, callback_error);
+        };
+        binding.register_evaluator = [provider](common_flydelta_evaluator_config & config,
+                common_flydelta_evaluator_callbacks & callbacks, std::string & callback_error) {
+            config = {};
+            config.pipeline.dimension = provider->model_n_embd;
+            config.pipeline.max_directions = 1;
+            config.pipeline.whirlpool_max_rounds = 1;
+            config.pipeline.whirlpool_probes_per_round = 4;
+            config.pipeline.whirlpool_max_trials = 4;
+            config.pipeline.region_max_trials = 4;
+            config.direction.dimension = provider->model_n_embd;
+            config.direction.layer_index = 1;
+            config.direction.behavior_key = "runtime/resource";
+            config.direction.model_profile_fingerprint = provider->model_profile_fingerprint;
+            config.direction.execution_context_fingerprint = "runtime-resource-v0";
+            config.direction.capture_layout_revision = provider->capture_layout_revision;
+            callbacks = {};
+            const auto pipeline = config.pipeline;
+            callbacks.run_search_pipeline = [provider, pipeline](
+                    const common_flydelta_experiment_job & job,
+                    common_flydelta_search_pipeline_result & result,
+                    std::string & runner_error) {
+                return daemon_flydelta_run_search_pipeline(provider, job, pipeline, result, runner_error);
+            };
+            callback_error.clear();
+            return true;
+        };
+        return true;
+    };
+}
 
 bool flydelta_batch_mode_valid(const std::string & mode) {
     return mode == "disabled" || mode == "auto" || mode == "required";
@@ -742,6 +1256,17 @@ bool initialize_agent_daemon_environment(
     }
     if (!open_daemon_model_residency(options, runtime.model_residency, error)) {
         return false;
+    }
+    if (options.adaptation_flydelta_enabled &&
+            !runtime.flydelta_server_binding_factory &&
+            !runtime.flydelta_server_binding_callbacks.has_value()) {
+        // The default llama-agent provider resolves explicit, durable resource
+        // refs.  It is a real production binding, but it remains fail-closed:
+        // a job without a context, fixture or intervention resource cannot
+        // reach the model.
+        runtime.flydelta_server_binding_factory =
+            make_daemon_flydelta_resource_binding_factory(
+                options, runtime.resource_store.get());
     }
     if (!configure_daemon_flydelta_teaching_material(
             options, runtime, error)) {

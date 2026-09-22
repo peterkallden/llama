@@ -57,6 +57,7 @@ enum class common_agent_daemon_command_type {
     close_session,
     read_resource,
     put_resource,
+    enqueue_flydelta_job,
     get_status,
     drain,
     shutdown,
@@ -228,6 +229,10 @@ struct common_agent_daemon_command {
     std::optional<common_agent_daemon_cancel_payload> cancel;
     std::optional<common_agent_daemon_resource_payload> resource;
     std::optional<common_agent_daemon_resource_put_payload> resource_put;
+    // Reference-only bounded FlyDelta work. The daemon validates and stores
+    // the typed envelope in the existing FlyDelta queue; model execution is
+    // performed later by the registered FlyDelta worker lane.
+    std::optional<common_flydelta_experiment_job> flydelta_job;
     std::optional<common_agent_daemon_scope_payload> scope;
     std::string reload_path;
 };

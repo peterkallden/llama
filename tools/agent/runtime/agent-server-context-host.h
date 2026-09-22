@@ -169,6 +169,18 @@ private:
     std::unique_ptr<common_agent_server_context_running_instance> instance;
 };
 
+// Executes one already host-prepared bounded FlyDelta arm wave against the
+// resident server context.  This is the shared production execution primitive
+// used by the model host and by host-owned evaluator callbacks; it does not
+// resolve semantic references or decide search policy.
+bool common_agent_server_context_host_run_flydelta_arm_batch(
+        const std::shared_ptr<common_agent_server_context_host> & host,
+        const common_agent_server_flydelta_binding & binding,
+        bool native_batch,
+        const common_flydelta_arm_batch_request & request,
+        common_flydelta_arm_batch_result & result,
+        std::string & error);
+
 // Creates the existing generic FlyDelta model-host registration around a
 // resident server context. The returned host advertises bounded-arm batch
 // capability only when the server was started with the explicit per-sequence
