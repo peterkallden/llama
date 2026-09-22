@@ -460,6 +460,38 @@ adapter in the daemon runtime. The helper is deliberately explicit: the
 daemon cannot invent a semantic verifier, and a runtime with no binding keeps
 the lane idle rather than falling back to an unverified model path.
 
+The canonical callback bundle is
+`common_agent_server_flydelta_binding_callbacks`. An embedding host normally
+constructs it once during runtime composition and uses
+`common_agent_server_flydelta_binding_from_callbacks()` from its startup
+factory:
+
+```cpp
+common_agent_server_flydelta_binding_callbacks callbacks;
+callbacks.primitives = host_flydelta_capabilities;
+callbacks.prepare_arm = host_resolve_and_prepare_arm;
+callbacks.finalize_arm = host_finalize_and_verify_arm;
+callbacks.register_evaluator = host_register_flydelta_evaluator;
+callbacks.run_concept_capture = host_run_concept_capture;
+
+common_agent_daemon_set_flydelta_server_binding_callbacks(
+    runtime, std::move(callbacks), error);
+```
+
+The daemon converts this callback bundle into the existing startup factory
+before acquiring the resident model. An embedding host may still assign
+`runtime.flydelta_server_binding_factory` directly when construction needs the
+resident server host. If neither form is supplied, FlyDelta remains explicitly
+configured-but-idle; the generic daemon never fabricates semantic references or
+host outcomes from JSON configuration.
+
+`host_resolve_and_prepare_arm` remains responsible for resolving the opaque
+context, fixture and intervention references. `host_finalize_and_verify_arm`
+is the only place that may assign a semantic host outcome. The factory is a
+composition helper, not a default semantic implementation; missing callbacks
+must remain a startup/configuration failure or an idle lane, never a fabricated
+`HELPED` result.
+
 The existing runtime also exposes the lower-level pieces needed by that host
 binding: the inference object accepts immutable FlyDelta activations and
 capture requests, and the server-context backend supports isolated

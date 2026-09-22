@@ -234,6 +234,49 @@ const server_context & common_agent_server_context_host::server() const {
     return *instance->server;
 }
 
+common_agent_server_flydelta_binding
+common_agent_server_flydelta_binding_from_callbacks(
+        common_agent_server_flydelta_binding_callbacks callbacks) {
+    common_agent_server_flydelta_binding binding;
+    binding.primitives = callbacks.primitives;
+    binding.teaching_material_runtime = std::move(callbacks.teaching_material_runtime);
+    binding.prepare_arm = std::move(callbacks.prepare_arm);
+    binding.finalize_arm = std::move(callbacks.finalize_arm);
+    binding.register_evaluator = std::move(callbacks.register_evaluator);
+    binding.inspect_teaching_material_group =
+        std::move(callbacks.inspect_teaching_material_group);
+    binding.run_concept_capture = std::move(callbacks.run_concept_capture);
+    return binding;
+}
+
+std::function<bool(
+        const std::shared_ptr<common_agent_server_context_host> &,
+        common_agent_server_flydelta_binding &,
+        std::string &)>
+common_agent_server_flydelta_binding_factory_from_callbacks(
+        common_agent_server_flydelta_binding_callbacks callbacks) {
+    auto shared_callbacks = std::make_shared<
+        common_agent_server_flydelta_binding_callbacks>(std::move(callbacks));
+    return [shared_callbacks](
+            const std::shared_ptr<common_agent_server_context_host> & host,
+            common_agent_server_flydelta_binding & binding,
+            std::string & error) {
+        error.clear();
+        if (!host) {
+            error = "FlyDelta binding factory requires a resident server host";
+            return false;
+        }
+        if (!shared_callbacks->prepare_arm ||
+                !shared_callbacks->finalize_arm ||
+                !shared_callbacks->register_evaluator) {
+            error = "FlyDelta binding factory requires prepare, finalize and evaluator callbacks";
+            return false;
+        }
+        binding = common_agent_server_flydelta_binding_from_callbacks(*shared_callbacks);
+        return true;
+    };
+}
+
 namespace {
 
 bool run_server_flydelta_arm_batch(

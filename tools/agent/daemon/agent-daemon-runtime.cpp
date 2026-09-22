@@ -276,8 +276,18 @@ bool configure_daemon_flydelta_server_binding(
         common_agent_daemon_runtime & runtime,
         std::string & error) {
     error.clear();
-    if (!options.adaptation_flydelta_enabled ||
-            !runtime.flydelta_server_binding_factory) return true;
+    if (!options.adaptation_flydelta_enabled) return true;
+    if (!runtime.flydelta_server_binding_factory &&
+            runtime.flydelta_server_binding_callbacks.has_value()) {
+        runtime.flydelta_server_binding_factory =
+            common_agent_server_flydelta_binding_factory_from_callbacks(
+                std::move(*runtime.flydelta_server_binding_callbacks));
+        runtime.flydelta_server_binding_callbacks.reset();
+    }
+    // A generic daemon may be configured for FlyDelta before an embedding
+    // host has supplied semantic callbacks. Keep that state explicitly idle;
+    // never invent prompts, repairs or host outcomes here.
+    if (!runtime.flydelta_server_binding_factory) return true;
     if (!runtime.model_residency) {
         error = "FlyDelta startup binding requires a model catalog/residency manager";
         return false;

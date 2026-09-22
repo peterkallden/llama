@@ -13,6 +13,7 @@
 #include <vector>
 
 struct server_context;
+class common_agent_server_context_host;
 
 struct common_agent_server_context_load_key {
     std::string model;
@@ -76,6 +77,58 @@ struct common_agent_server_flydelta_binding {
             std::vector<std::string> &,
             std::string &)> run_concept_capture;
 };
+
+// Host-owned semantic callbacks used to compose a production binding.  This
+// keeps the startup factory small and makes the same binding shape reusable by
+// the daemon, embedders and model-backed smokes.  The callbacks still own
+// opaque-reference resolution and semantic verification; this struct does not
+// manufacture either from configuration.
+struct common_agent_server_flydelta_binding_callbacks {
+    common_flydelta_model_capabilities primitives;
+    std::shared_ptr<common_flydelta_teaching_material_runtime>
+        teaching_material_runtime;
+    std::function<bool(
+            const common_flydelta_arm_request &,
+            common_agent_generation_request &,
+            std::string &)> prepare_arm;
+    std::function<bool(
+            const common_flydelta_arm_request &,
+            const common_agent_generation_result &,
+            common_flydelta_arm_result &,
+            std::string &)> finalize_arm;
+    std::function<bool(
+            common_flydelta_evaluator_config &,
+            common_flydelta_evaluator_callbacks &,
+            std::string &)> register_evaluator;
+    std::function<bool(
+            const std::string & group_ref,
+            bool & relation_set_ready,
+            bool & trajectory_material_ready,
+            std::string &)> inspect_teaching_material_group;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            std::vector<std::string> &,
+            std::string &)> run_concept_capture;
+};
+
+// Canonical composition helper for the existing daemon startup seam.  It is
+// intentionally a pure field transfer: the host integration supplies the
+// semantic callbacks and this helper does not create a fallback verifier.
+common_agent_server_flydelta_binding
+common_agent_server_flydelta_binding_from_callbacks(
+        common_agent_server_flydelta_binding_callbacks callbacks);
+
+// Produces the daemon's startup factory from the host-owned callback bundle.
+// The factory validates the callbacks needed by the model-host seam and fails
+// closed before workers can consume a job.  The resident host is still passed
+// to the factory so a provider may capture host-specific state in its
+// callbacks before returning the bundle.
+std::function<bool(
+        const std::shared_ptr<common_agent_server_context_host> &,
+        common_agent_server_flydelta_binding &,
+        std::string &)>
+common_agent_server_flydelta_binding_factory_from_callbacks(
+        common_agent_server_flydelta_binding_callbacks callbacks);
 
 common_agent_server_context_load_key make_agent_server_context_load_key(
     const common_agent_inference_options & options);

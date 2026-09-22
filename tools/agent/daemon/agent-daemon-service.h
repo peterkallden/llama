@@ -6,6 +6,7 @@
 #include "../resource/agent-resource-store.h"
 #include "../runtime/agent-runtime-session-manager.h"
 #include "../runtime/agent-model-residency.h"
+#include "../runtime/agent-server-context-host.h"
 #include "../tooling/agent-tool-provider.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/adaptation/flydelta/flydelta-teaching-material.h"
@@ -19,11 +20,11 @@
 #include <atomic>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 class common_agent_inference_capacity_gate;
 class common_agent_server_context_host;
-struct common_agent_server_flydelta_binding;
 struct common_flydelta_evaluator_config;
 struct common_flydelta_evaluator_callbacks;
 
@@ -107,6 +108,10 @@ struct common_agent_daemon_runtime {
         const std::shared_ptr<common_agent_server_context_host> &,
         common_agent_server_flydelta_binding &,
         std::string &)> flydelta_server_binding_factory;
+    // Optional host-owned callback bundle. Startup converts this into the
+    // existing factory when no explicit factory was supplied.
+    std::optional<common_agent_server_flydelta_binding_callbacks>
+        flydelta_server_binding_callbacks;
     std::optional<common_agent_runtime_model_resident_handle> flydelta_model_handle;
     common_flydelta_model_capabilities flydelta_model_capabilities;
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
@@ -138,6 +143,28 @@ bool common_agent_daemon_register_flydelta_server_binding(
         std::shared_ptr<common_agent_server_context_host> host,
         common_agent_server_flydelta_binding binding,
         std::string & error);
+
+// Registers host-owned semantic callbacks before daemon startup. The runtime
+// turns this bundle into the existing resident-host factory during
+// initialization; no semantic fallback is created here.
+inline bool common_agent_daemon_set_flydelta_server_binding_callbacks(
+        common_agent_daemon_runtime & runtime,
+        common_agent_server_flydelta_binding_callbacks callbacks,
+        std::string & error) {
+    error.clear();
+    if (runtime.flydelta_server_binding_factory ||
+            runtime.flydelta_server_binding_callbacks.has_value()) {
+        error = "FlyDelta server binding is already registered";
+        return false;
+    }
+    if (!callbacks.prepare_arm || !callbacks.finalize_arm ||
+            !callbacks.register_evaluator) {
+        error = "FlyDelta callback registration requires prepare, finalize and evaluator callbacks";
+        return false;
+    }
+    runtime.flydelta_server_binding_callbacks = std::move(callbacks);
+    return true;
+}
 
 struct common_agent_daemon_turn_payload {
     common_agent_runtime_session_manager_turn_request request;

@@ -416,6 +416,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-direction-search.cpp
         test-agent-flydelta-candidate-lifecycle.cpp
         test-agent-flydelta-runtime-observer.cpp
+        test-agent-flydelta-server-binding.cpp
 test-agent-flydelta-layer-search.cpp
 test-agent-flydelta-scale-search.cpp
 test-agent-flydelta-alpha-response-search.cpp
@@ -468,6 +469,16 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/mtmd)
             target_link_libraries(${TEST_NAME} PRIVATE server-context)
             target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-generation.cpp)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-flydelta-server-binding")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime)
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
+            target_link_libraries(${TEST_NAME} PRIVATE server-context)
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-context-host.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-generation.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-inference.cpp)
         endif()
         if (TEST_NAME STREQUAL "test-agent-flydelta-sparse-cvec")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)

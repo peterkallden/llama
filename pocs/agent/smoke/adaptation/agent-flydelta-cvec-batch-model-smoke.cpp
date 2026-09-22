@@ -144,11 +144,11 @@ int main(int argc, char ** argv) {
     const auto * model = llama_get_model(context);
     if (llama_model_n_embd(model) <= 0 || llama_model_n_layer(model) <= 2) return 1;
 
-    common_agent_server_flydelta_binding binding;
-    binding.primitives.generation = true;
-    binding.primitives.overlay = true;
-    binding.primitives.host_verification = true;
-    binding.prepare_arm = [model, n_predict = value.n_predict, n_threads = value.n_threads](
+    common_agent_server_flydelta_binding_callbacks callbacks;
+    callbacks.primitives.generation = true;
+    callbacks.primitives.overlay = true;
+    callbacks.primitives.host_verification = true;
+    callbacks.prepare_arm = [model, n_predict = value.n_predict, n_threads = value.n_threads](
             const common_flydelta_arm_request & arm,
             common_agent_generation_request & request,
             std::string & prepare_error) {
@@ -166,7 +166,7 @@ int main(int argc, char ** argv) {
         request.flydelta_activation = std::move(activation);
         return true;
     };
-    binding.finalize_arm = [](
+    callbacks.finalize_arm = [](
             const common_flydelta_arm_request & arm,
             const common_agent_generation_result & generation,
             common_flydelta_arm_result & result,
@@ -183,13 +183,15 @@ int main(int argc, char ** argv) {
         }
         return result.executed;
     };
-    binding.register_evaluator = [](
+    callbacks.register_evaluator = [](
             common_flydelta_evaluator_config &,
             common_flydelta_evaluator_callbacks &,
             std::string & register_error) {
         register_error.clear();
         return true;
     };
+    auto binding = common_agent_server_flydelta_binding_from_callbacks(
+        std::move(callbacks));
 
     auto model_host = common_agent_server_context_host_make_flydelta_model_host(
         host, std::move(binding), error);
