@@ -293,6 +293,8 @@ endif()
 add_library(llama-agent-adaptation-storage
     ../../tools/agent/adaptation/agent-learning-transaction-store-factory.cpp
     ../../tools/agent/adaptation/agent-learning-lifecycle-store-factory.cpp
+    ../../tools/agent/adaptation/flydelta-teaching-material-store.cpp
+    ../../tools/agent/adaptation/flydelta-teaching-material-store.h
 )
 if (LLAMA_MEMORY_COZO)
     target_sources(llama-agent-adaptation-storage PRIVATE

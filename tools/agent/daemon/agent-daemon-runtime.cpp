@@ -1,9 +1,11 @@
 #include "agent-daemon-adapter.h"
+#include "../adaptation/flydelta-teaching-material-store.h"
 
 #include "../cli/agent-cli-host-adapter.h"
 #include "../cli/agent-cli-selection.h"
 #include "../runtime/agent-inference-capacity-gate.h"
 #include "../runtime/agent-model-loaders.h"
+#include "../runtime/agent-server-context-host.h"
 #include "agent/agent-scope.h"
 #include "tools/agent/cli/agent-cli-memory-tools.h"
 #include "memory/memory-in-memory.h"
@@ -24,6 +26,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <utility>
 
 namespace {
 
@@ -226,6 +229,91 @@ common_agent_runtime_config make_daemon_runtime_config(const daemon_options & op
     config.flydelta_max_capture_candidates =
         options.adaptation_flydelta_max_capture_candidates;
     return config;
+}
+
+bool configure_daemon_flydelta_teaching_material(
+        const daemon_options & options,
+        common_agent_daemon_runtime & runtime,
+        std::string & error) {
+    error.clear();
+    if (!options.adaptation_capture) return true;
+    // The existing transaction backend may intentionally be JSONL/SQLite.
+    // Do not silently reinterpret those paths as teaching-material storage;
+    // only the shared Cozo relation is wired in this V0.
+    if (options.adaptation_transaction_backend != "auto" &&
+            options.adaptation_transaction_backend != "cozo") return true;
+
+    common_flydelta_teaching_material_identity identity;
+    identity.model_profile_fingerprint =
+        options.adaptation_flydelta_model_profile_fingerprint.empty()
+            ? (options.model_profile.empty()
+                ? "model:" + std::filesystem::path(options.model).filename().string()
+                : "profile:" + options.model_profile)
+            : options.adaptation_flydelta_model_profile_fingerprint;
+    identity.tokenizer_fingerprint = "daemon:tokenizer-unspecified-v1";
+    identity.template_fingerprint = "daemon:template-unspecified-v1";
+    identity.capture_layout_revision = options.adaptation_flydelta_capture_layout_revision;
+    identity.execution_context_fingerprint = "daemon:server-context-v1";
+    identity.scope_fingerprint = "daemon:teaching-material-v1";
+    identity.verifier_revision = "daemon:host-verifier-v1";
+
+    // The adaptation transaction path is already the host's durable Cozo
+    // location. Cozo stores teaching material in its own relation, so this
+    // does not mix ledger rows with material rows. An empty path deliberately
+    // keeps the existing in-memory behavior for ephemeral hosts/tests.
+    auto material_runtime = make_agent_flydelta_teaching_material_runtime(
+        options.adaptation_transaction_backend,
+        options.adaptation_transaction_path,
+        std::move(identity),
+        error);
+    if (!material_runtime) return false;
+    runtime.flydelta_teaching_material_runtime = material_runtime;
+    return true;
+}
+
+bool configure_daemon_flydelta_server_binding(
+        const daemon_options & options,
+        common_agent_daemon_runtime & runtime,
+        std::string & error) {
+    error.clear();
+    if (!options.adaptation_flydelta_enabled ||
+            !runtime.flydelta_server_binding_factory) return true;
+    if (!runtime.model_residency) {
+        error = "FlyDelta startup binding requires a model catalog/residency manager";
+        return false;
+    }
+
+    const std::string profile_id = options.model_profile.empty()
+        ? runtime.model_residency->catalog().default_profile
+        : options.model_profile;
+    common_agent_runtime_model_resident_handle handle;
+    if (!runtime.model_residency->acquire(profile_id, handle, error)) return false;
+    const auto loaded = common_agent_runtime_loaded_model_cast(handle.model);
+    if (!loaded || !loaded->server_context_host) {
+        std::string release_error;
+        runtime.model_residency->release(handle, release_error);
+        error = "FlyDelta startup binding requires a resident server-context model";
+        return false;
+    }
+
+    common_agent_server_flydelta_binding binding;
+    if (!runtime.flydelta_server_binding_factory(
+            loaded->server_context_host, binding, error)) {
+        std::string release_error;
+        runtime.model_residency->release(handle, release_error);
+        return false;
+    }
+    if (!binding.teaching_material_runtime) {
+        binding.teaching_material_runtime = runtime.flydelta_teaching_material_runtime;
+    }
+    if (!common_agent_daemon_register_flydelta_server_binding(
+            runtime, loaded->server_context_host, std::move(binding), error)) {
+        std::string release_error;
+        runtime.model_residency->release(handle, release_error);
+        return false;
+    }
+    runtime.flydelta_model_handle = std::move(handle);
+    return true;
 }
 
 common_agent_orchestration_config make_daemon_orchestration_config(const daemon_options & options) {
@@ -572,6 +660,15 @@ bool initialize_agent_daemon_environment(
     if (!open_daemon_model_residency(options, runtime.model_residency, error)) {
         return false;
     }
+    if (!configure_daemon_flydelta_teaching_material(
+            options, runtime, error)) {
+        error = "FlyDelta teaching-material runtime initialization failed: " + error;
+        return false;
+    }
+    if (!configure_daemon_flydelta_server_binding(options, runtime, error)) {
+        error = "FlyDelta server binding initialization failed: " + error;
+        return false;
+    }
     if (!parse_mode(options.default_mode, runtime.default_mode)) {
         error = "unsupported default mode: " + options.default_mode;
         return false;
@@ -584,6 +681,8 @@ bool initialize_agent_daemon_environment(
         runtime.data_store.get(),
         options,
         runtime.config_store);
+    session_manager_build_config.runtime_config.flydelta_teaching_material_runtime =
+        runtime.flydelta_teaching_material_runtime;
     runtime.inference_gate = std::make_shared<common_agent_inference_capacity_gate>(
         options.inference_max_active);
     runtime.host = std::make_unique<common_agent_runtime_session_manager>(

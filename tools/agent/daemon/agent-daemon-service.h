@@ -8,6 +8,7 @@
 #include "../runtime/agent-model-residency.h"
 #include "../tooling/agent-tool-provider.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
+#include "agent/adaptation/flydelta/flydelta-teaching-material.h"
 
 #include "memory/memory-store.h"
 #include "agent/data-store.h"
@@ -93,7 +94,20 @@ struct common_agent_daemon_runtime {
     // Optional host-owned evaluator registration. The daemon composes this
     // into flydelta_model_adapter at startup when no adapter was supplied.
     std::shared_ptr<const common_flydelta_evaluator_config> flydelta_evaluator_config;
+    // Shared host-owned material index. The session assembly and the
+    // production FlyDelta binding must observe the same durable state.
+    std::shared_ptr<common_flydelta_teaching_material_runtime>
+        flydelta_teaching_material_runtime;
     std::shared_ptr<const common_flydelta_evaluator_callbacks> flydelta_evaluator_callbacks;
+    // Optional production composition hook. The daemon resolves the selected
+    // resident server-context model, asks the host integration to bind its
+    // semantic prepare/finalize/verifier callbacks, then registers the
+    // resulting backend-neutral FlyDelta host before starting workers.
+    std::function<bool(
+        const std::shared_ptr<common_agent_server_context_host> &,
+        common_agent_server_flydelta_binding &,
+        std::string &)> flydelta_server_binding_factory;
+    std::optional<common_agent_runtime_model_resident_handle> flydelta_model_handle;
     common_flydelta_model_capabilities flydelta_model_capabilities;
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
     std::unique_ptr<common_agent_runtime_session_manager> host;

@@ -166,7 +166,31 @@ bool common_flydelta_teaching_material_store::observe_trajectory(
 bool common_flydelta_teaching_material_runtime::observe_relation(
         const common_flydelta_teaching_relation & relation,
         std::string & error) {
-    return store_.observe(relation, identity_, error);
+    common_flydelta_teaching_material_store next = store_;
+    if (!next.observe(relation, identity_, error)) return false;
+    if (!persist(next, error)) return false;
+    store_ = std::move(next);
+    return true;
+}
+
+bool common_flydelta_teaching_material_runtime::load(std::string & error) {
+    error.clear();
+    if (!persistence_.load) return true;
+    std::string snapshot;
+    if (!persistence_.load(snapshot, error)) return false;
+    if (snapshot.empty()) return true;
+    common_flydelta_teaching_material_store next;
+    if (!common_flydelta_teaching_material_store_from_json(snapshot, next, error)) return false;
+    store_ = std::move(next);
+    return true;
+}
+
+bool common_flydelta_teaching_material_runtime::persist(
+        const common_flydelta_teaching_material_store & store,
+        std::string & error) const {
+    error.clear();
+    if (!persistence_.save) return true;
+    return persistence_.save(common_flydelta_teaching_material_store_to_json(store), error);
 }
 
 bool common_flydelta_teaching_material_runtime::inspect_group(
@@ -188,7 +212,11 @@ bool common_flydelta_teaching_material_runtime::observe_trajectory(
         const std::string & group_ref,
         const std::string & trajectory_ref,
         std::string & error) {
-    return store_.observe_trajectory(group_ref, trajectory_ref, identity_, error);
+    common_flydelta_teaching_material_store next = store_;
+    if (!next.observe_trajectory(group_ref, trajectory_ref, identity_, error)) return false;
+    if (!persist(next, error)) return false;
+    store_ = std::move(next);
+    return true;
 }
 
 bool common_flydelta_teaching_material_store::resolve_ready_group(

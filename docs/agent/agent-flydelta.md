@@ -110,6 +110,27 @@ is a normal unresolved outcome; no references are synthesized and no learning
 credit is created. The callback is invoked after the learning transaction is
 durable, and its failure cannot fail the user turn.
 
+For a production server-context runtime, the startup composition is explicit:
+
+```text
+start resident server context
+  -> host binding factory supplies prepare/finalize/verifier callbacks
+  -> register common_flydelta_model_host
+  -> create common_flydelta_model_adapter
+  -> start the reserved FlyDelta worker lane
+  -> schedule bounded concept-capture jobs only when the orchestrator requests them
+```
+
+The daemon owns this composition seam, but it does not invent semantic
+verification callbacks. A host integration must provide the binding factory;
+without it, FlyDelta may be configured but remains intentionally idle. The
+teaching-material runtime uses the existing Cozo adaptation database when the
+adaptation backend is `auto` with a persistent path or explicitly `cozo`, and
+stores its own relation alongside the transaction ledger. An empty path keeps
+the in-memory behavior used by tests and ephemeral hosts. Concept capture is
+therefore demand-driven, not an unconditional model operation at process
+startup.
+
 `user_taught_concept_relation_provider` is intentionally different: it may
 return zero or more *already grounded* relations for an explicit user
 principle. Each relation represents one host-verified minimal contrast and

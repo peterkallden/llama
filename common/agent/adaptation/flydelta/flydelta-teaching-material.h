@@ -3,6 +3,8 @@
 #include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
 
 #include <cstddef>
+#include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -88,6 +90,14 @@ private:
     std::vector<common_flydelta_teaching_material_group> groups_;
 };
 
+// Optional host-owned persistence seam. The core keeps the compatibility and
+// readiness rules; a backend only loads/saves the reference-only store
+// snapshot. This keeps Cozo/SQLite out of the common agent core.
+struct common_flydelta_teaching_material_persistence {
+    std::function<bool(std::string &, std::string &)> load;
+    std::function<bool(const std::string &, std::string &)> save;
+};
+
 // Host-owned façade used when the same material index must be observed by
 // the runtime learning path and inspected by the FlyDelta model host. It
 // keeps the compatibility identity in one place and still stores references,
@@ -95,8 +105,11 @@ private:
 class common_flydelta_teaching_material_runtime {
 public:
     explicit common_flydelta_teaching_material_runtime(
-            common_flydelta_teaching_material_identity identity)
-        : identity_(std::move(identity)) {}
+            common_flydelta_teaching_material_identity identity,
+            common_flydelta_teaching_material_persistence persistence = {})
+        : identity_(std::move(identity)), persistence_(std::move(persistence)) {}
+
+    bool load(std::string & error);
 
     bool observe_relation(
             const common_flydelta_teaching_relation & relation,
@@ -122,7 +135,11 @@ public:
     }
 
 private:
+    bool persist(const common_flydelta_teaching_material_store & store,
+            std::string & error) const;
+
     common_flydelta_teaching_material_identity identity_;
+    common_flydelta_teaching_material_persistence persistence_;
     common_flydelta_teaching_material_store store_;
 };
 

@@ -533,6 +533,17 @@ test-agent-flydelta-alpha-response-search.cpp
         target_compile_definitions(test-agent-learning-transaction-backends PRIVATE
             LLAMA_AGENT_ADAPTATION_TEST_SQLITE)
     endif()
+
+    if (LLAMA_MEMORY_COZO)
+        llama_build_and_test(test-agent-flydelta-teaching-material-cozo.cpp)
+        target_link_libraries(test-agent-flydelta-teaching-material-cozo PRIVATE
+            llama-agent-core llama-agent-adaptation-storage)
+        target_include_directories(test-agent-flydelta-teaching-material-cozo PRIVATE
+            ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
+        target_compile_definitions(test-agent-flydelta-teaching-material-cozo PRIVATE
+            LLAMA_AGENT_ADAPTATION_TEST_COZO)
+        set_property(TEST test-agent-flydelta-teaching-material-cozo PROPERTY LABELS agent-adaptation)
+    endif()
     set_property(TEST test-agent-learning-transaction-backends PROPERTY LABELS agent)
 
     # This contract intentionally has no llama/CLI dependency.  Keeping it as
