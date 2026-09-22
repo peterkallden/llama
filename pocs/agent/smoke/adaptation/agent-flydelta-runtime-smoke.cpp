@@ -86,7 +86,7 @@ common_agent_model_catalog make_catalog(
         "generation", value.backend,
         std::filesystem::path(value.model).filename().string(), {}, "resident"});
     catalog.profiles.emplace(profile_id, common_agent_model_profile_spec{
-        "generation", {}, {}, 2048, "resident"});
+        "generation", {}, {}, 2048, 1, 1, "resident"});
     return catalog;
 }
 
