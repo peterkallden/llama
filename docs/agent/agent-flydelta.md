@@ -1158,21 +1158,25 @@ server connects this view to the core callback without moving model execution
 or search policy into FlyDelta; hosts that do not enable the binding continue
 through the scalar path.
 
-The resident server binding is currently experimental and opt-in through
-`LLAMA_SERVER_PER_SEQUENCE_CVEC=1`. It is enabled only when the target
-context has no speculative draft context and every participating slot has a
-compatible dense cvec layout and sparse layer mask. Different cvec identities
-then become rows in one graph table; equal identities continue through the
-scalar path. If the binding cannot be prepared, the server fails the batch
-rather than applying one slot's overlay to another slot. The table, selector
-indices and device buffers are synchronized and detached before replacement,
-so asynchronous decode cannot observe freed overlay buffers. Without the
-environment opt-in, the existing context-wide scalar behavior is unchanged.
-This server opt-in is separate from
-`runtime.adaptation.flydelta.enabled`: enabling FlyDelta does not enable
-per-sequence batching, and enabling the server capability does not start a
-FlyDelta worker. The production model host must bind both the bounded-arm
-callback and the explicit `bounded_arm_batch` capability before the common
+The resident server receives per-sequence cvec batching through the typed
+`runtime.adaptation.flydelta.batch_mode` policy: `disabled`, `auto` (the
+default) or `required`. In `auto`, a FlyDelta-enabled server-context profile
+without an explicit parallel capacity receives a low two-arm capacity when
+GPU layers are configured. If the context, backend or overlay geometry cannot
+support the binding, the same logical wave uses the isolated scalar fallback
+and daemon status records that fact. `required` instead fails startup when
+native batching cannot be registered. The binding remains available only when
+the target context has no speculative draft context and every participating
+slot has a compatible dense cvec layout and sparse layer mask. Different cvec
+identities then become rows in one graph table; equal identities continue
+through the scalar path. If the binding cannot be prepared, the server fails
+that physical batch rather than applying one slot's overlay to another slot.
+The table, selector indices and device buffers are synchronized and detached
+before replacement, so asynchronous decode cannot observe freed overlay
+buffers. The legacy `LLAMA_SERVER_PER_SEQUENCE_CVEC` environment setting is
+retained only for direct non-agent server users; the agent host applies its
+typed setting before model load. The production model host must bind both the
+bounded-arm callback and the explicit `bounded_arm_batch` capability before the common
 FlyDelta adapter can use the batch path; otherwise the common scalar fallback
 is retained.
 

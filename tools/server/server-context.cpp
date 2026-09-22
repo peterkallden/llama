@@ -877,6 +877,10 @@ public:
         return cvec_batch_enabled;
     }
 
+    void set_per_sequence_cvec_batch_enabled(const bool enabled) {
+        cvec_batch_enabled = enabled;
+    }
+
 private:
     // note: accessing these fields outside of this class is not thread-safe
     // use server_context methods instead
@@ -4519,6 +4523,10 @@ llama_context * server_context::get_llama_context() const {
 
 bool server_context::per_sequence_cvec_batch_enabled() const {
     return impl->per_sequence_cvec_batch_enabled();
+}
+
+void server_context::set_per_sequence_cvec_batch_enabled(const bool enabled) {
+    impl->set_per_sequence_cvec_batch_enabled(enabled);
 }
 
 server_response_reader server_context::get_response_reader() {

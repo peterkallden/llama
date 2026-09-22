@@ -27,5 +27,9 @@ struct common_agent_inference_options {
     size_t context_size_tokens = 0;
     int n_parallel = 1;
     int n_sequences = 1;
+    // A typed host decision. The server-context host applies this before the
+    // resident model is loaded; it does not consult process environment for
+    // agent runtime behavior.
+    bool per_sequence_cvec_batch = false;
     std::string mmproj;
 };

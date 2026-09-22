@@ -1236,10 +1236,14 @@ includes the ordered overlay list, so changing an adapter or scale cannot
 reuse a resident context created for another profile. It does not itself
 resolve adapter paths, load a model, switch profiles, or authorize a candidate.
 The optional `n_parallel` and `n_sequences` fields describe the model-host
-capacity available to compatible bounded-arm batches; both default to `1`, so
-existing profiles retain scalar execution. They are serving capacity hints,
-not FlyDelta search policy: the host must still advertise a validated batch
-capability before the worker may use more than one physical arm at a time.
+capacity available to compatible bounded-arm batches. A FlyDelta-enabled
+server-context profile under the default `batch_mode: "auto"` receives a low
+effective capacity of two when GPU layers are configured and the profile has
+not requested a larger capacity. Other profiles retain their explicit scalar
+or parallel setting. They are serving capacity hints, not FlyDelta search
+policy: the host must still advertise a validated batch capability before the
+worker may use more than one physical arm at a time; otherwise the same wave
+uses the scalar fallback.
 
 At the host boundary, registry resolution verifies every referenced overlay
 before a runtime loader sees it. Only `active` adapters are runtime-resolvable;

@@ -88,6 +88,8 @@ struct daemon_options {
     bool adaptation_flydelta_enabled = false;
     size_t adaptation_flydelta_worker_count = 0;
     std::string adaptation_flydelta_queue_path;
+    std::string adaptation_flydelta_batch_mode = "auto";
+    size_t adaptation_flydelta_batch_parallelism = 2;
     bool adaptation_flydelta_capture_candidates = false;
     std::string adaptation_flydelta_lifecycle_backend = "auto";
     std::string adaptation_flydelta_lifecycle_path;

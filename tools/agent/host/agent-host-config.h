@@ -71,6 +71,12 @@ struct agent_host_config {
     bool adaptation_flydelta_enabled = false;
     size_t adaptation_flydelta_worker_count = 0;
     std::string adaptation_flydelta_queue_path;
+    // Device batching is an execution preference, never a search-policy
+    // decision. "auto" prefers a small native batch when the selected
+    // server-context profile and backend can support it; otherwise the model
+    // host reports and uses the scalar fallback.
+    std::string adaptation_flydelta_batch_mode = "auto";
+    size_t adaptation_flydelta_batch_parallelism = 2;
     // Optional durable FlyDelta capture/lifecycle wiring.  These values are
     // metadata and storage selection only; they do not grant learning credit.
     bool adaptation_flydelta_capture_candidates = false;

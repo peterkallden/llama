@@ -88,6 +88,8 @@ int main() {
                     {"enabled", true},
                     {"worker_count", 1},
                     {"queue_path", "var/agent/flydelta/jobs"},
+                    {"batch_mode", "auto"},
+                    {"batch_parallelism", 2},
                     {"capture_candidates", true},
                     {"lifecycle_backend", "jsonl"},
                     {"lifecycle_path", "var/agent/flydelta/lifecycle.jsonl"},
@@ -104,6 +106,8 @@ int main() {
             !flydelta_config.adaptation_flydelta_enabled ||
             flydelta_config.adaptation_flydelta_worker_count != 1 ||
             flydelta_config.adaptation_flydelta_queue_path != "var/agent/flydelta/jobs" ||
+            flydelta_config.adaptation_flydelta_batch_mode != "auto" ||
+            flydelta_config.adaptation_flydelta_batch_parallelism != 2 ||
             !flydelta_config.adaptation_flydelta_capture_candidates ||
             flydelta_config.adaptation_flydelta_lifecycle_backend != "jsonl" ||
             flydelta_config.adaptation_flydelta_lifecycle_path != "var/agent/flydelta/lifecycle.jsonl" ||
@@ -116,6 +120,8 @@ int main() {
     const auto flydelta_serialized = agent_host_config_to_json(flydelta_config);
     if (!flydelta_serialized["runtime"]["adaptation"]["flydelta"]["enabled"].get<bool>() ||
             flydelta_serialized["runtime"]["adaptation"]["flydelta"]["worker_count"] != 1 ||
+            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["batch_mode"] != "auto" ||
+            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["batch_parallelism"] != 2 ||
             !flydelta_serialized["runtime"]["adaptation"]["flydelta"]["capture_candidates"].get<bool>() ||
             flydelta_serialized["runtime"]["adaptation"]["flydelta"]["max_capture_candidates"] != 32) {
         std::fprintf(stderr, "FlyDelta worker reservation was not serialized\n");
@@ -125,6 +131,8 @@ int main() {
     apply_agent_host_config_to_daemon_options(flydelta_config, flydelta_options);
     if (!flydelta_options.adaptation_flydelta_enabled ||
             flydelta_options.adaptation_flydelta_worker_count != 1 ||
+            flydelta_options.adaptation_flydelta_batch_mode != "auto" ||
+            flydelta_options.adaptation_flydelta_batch_parallelism != 2 ||
             !flydelta_options.adaptation_flydelta_capture_candidates ||
             flydelta_options.adaptation_flydelta_lifecycle_path != "var/agent/flydelta/lifecycle.jsonl") {
         std::fprintf(stderr, "FlyDelta worker reservation was not copied to daemon options\n");
@@ -146,6 +154,13 @@ int main() {
     if (parse_agent_host_config_json(invalid_flydelta_json, invalid_flydelta_config, flydelta_error) ||
             flydelta_error.find("cannot exceed") == std::string::npos) {
         std::fprintf(stderr, "invalid FlyDelta worker reservation was accepted\n");
+        return 1;
+    }
+    invalid_flydelta_config = flydelta_config;
+    invalid_flydelta_config.adaptation_flydelta_batch_mode = "unexpected";
+    if (validate_agent_host_config(invalid_flydelta_config, flydelta_error) ||
+            flydelta_error.find("batch_mode") == std::string::npos) {
+        std::fprintf(stderr, "invalid FlyDelta batch mode was accepted\n");
         return 1;
     }
     const auto root = std::filesystem::temp_directory_path() / "llama-agent-config-discovery-smoke";

@@ -30,6 +30,38 @@
 
 namespace {
 
+bool flydelta_batch_mode_valid(const std::string & mode) {
+    return mode == "disabled" || mode == "auto" || mode == "required";
+}
+
+bool flydelta_native_batch_requested(const daemon_options & options) {
+    return options.adaptation_flydelta_enabled &&
+        options.adaptation_flydelta_batch_mode != "disabled" &&
+        options.n_gpu_layers > 0;
+}
+
+void apply_flydelta_auto_batch_capacity(
+        const daemon_options & options,
+        common_agent_model_catalog & catalog) {
+    if (!flydelta_native_batch_requested(options)) return;
+    const std::string profile_id = options.model_profile.empty()
+        ? catalog.default_profile
+        : options.model_profile;
+    const auto profile = catalog.profiles.find(profile_id);
+    if (profile == catalog.profiles.end()) return;
+    const auto base = catalog.bases.find(profile->second.base_model_id);
+    if (base == catalog.bases.end() || base->second.backend != "server-context") return;
+
+    // A profile can request a larger capacity explicitly. The ordinary 1/1
+    // compatibility default is upgraded only for the selected FlyDelta
+    // profile; disabling the batch policy keeps a deliberately scalar profile.
+    if (profile->second.n_parallel == 1 && profile->second.n_sequences == 1) {
+        const auto capacity = static_cast<int>(options.adaptation_flydelta_batch_parallelism);
+        profile->second.n_parallel = capacity;
+        profile->second.n_sequences = capacity;
+    }
+}
+
 bool open_daemon_model_residency(
         const daemon_options & options,
         std::shared_ptr<common_agent_runtime_model_residency> & residency,
@@ -39,7 +71,18 @@ bool open_daemon_model_residency(
         error.clear();
         return true;
     }
-    if (!common_agent_validate_model_catalog(options.model_catalog, error)) {
+    if (!flydelta_batch_mode_valid(options.adaptation_flydelta_batch_mode)) {
+        error = "runtime.adaptation.flydelta.batch_mode must be disabled, auto or required";
+        return false;
+    }
+    if (options.adaptation_flydelta_batch_parallelism == 0 ||
+            options.adaptation_flydelta_batch_parallelism > 8) {
+        error = "runtime.adaptation.flydelta.batch_parallelism must be between 1 and 8";
+        return false;
+    }
+    auto catalog = options.model_catalog;
+    apply_flydelta_auto_batch_capacity(options, catalog);
+    if (!common_agent_validate_model_catalog(catalog, error)) {
         error = "models: " + error;
         return false;
     }
@@ -47,6 +90,8 @@ bool open_daemon_model_residency(
         options.n_gpu_layers,
         options.n_threads,
         true,
+        flydelta_native_batch_requested(options),
+        options.adaptation_flydelta_batch_mode != "required",
     };
     std::unordered_map<std::string,
         std::shared_ptr<common_agent_runtime_model_loader>> loaders;
@@ -57,7 +102,7 @@ bool open_daemon_model_residency(
         std::make_shared<common_agent_runtime_server_context_model_loader>(loader_config));
 #endif
     residency = std::make_shared<common_agent_runtime_model_residency>(
-        options.model_catalog,
+        std::move(catalog),
         std::move(loaders));
     error.clear();
     return true;
@@ -336,6 +381,17 @@ bool configure_daemon_flydelta_server_binding(
             runtime, loaded->server_context_host, std::move(binding), error)) {
         std::string release_error;
         runtime.model_residency->release(handle, release_error);
+        return false;
+    }
+    if (options.adaptation_flydelta_batch_mode == "required" &&
+            (!runtime.flydelta_model_adapter ||
+                !runtime.flydelta_model_adapter->capabilities.bounded_arm_batch)) {
+        std::string release_error;
+        runtime.model_residency->release(handle, release_error);
+        runtime.flydelta_model_adapter.reset();
+        runtime.flydelta_model_host.reset();
+        runtime.flydelta_model_capabilities = {};
+        error = "FlyDelta native batch mode is required but unavailable for the selected resident model";
         return false;
     }
     runtime.flydelta_model_handle = std::move(handle);

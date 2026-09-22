@@ -10,6 +10,8 @@
         "enabled": true,
         "worker_count": 1,
         "queue_path": "var/agent/flydelta/jobs",
+        "batch_mode": "auto",
+        "batch_parallelism": 2,
         "capture_candidates": true,
         "lifecycle_backend": "jsonl",
         "lifecycle_path": "var/agent/flydelta/lifecycle.jsonl",

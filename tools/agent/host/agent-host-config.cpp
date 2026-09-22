@@ -514,6 +514,8 @@ bool parse_agent_host_config_json(
                 read_optional(flydelta, "enabled", config.adaptation_flydelta_enabled);
                 read_optional(flydelta, "worker_count", config.adaptation_flydelta_worker_count);
                 read_optional(flydelta, "queue_path", config.adaptation_flydelta_queue_path);
+                read_optional(flydelta, "batch_mode", config.adaptation_flydelta_batch_mode);
+                read_optional(flydelta, "batch_parallelism", config.adaptation_flydelta_batch_parallelism);
                 read_optional(flydelta, "capture_candidates", config.adaptation_flydelta_capture_candidates);
                 read_optional(flydelta, "lifecycle_backend", config.adaptation_flydelta_lifecycle_backend);
                 read_optional(flydelta, "lifecycle_path", config.adaptation_flydelta_lifecycle_path);
@@ -1224,6 +1226,8 @@ nlohmann::ordered_json agent_host_config_to_json(
                     {"enabled", config.adaptation_flydelta_enabled},
                     {"worker_count", config.adaptation_flydelta_worker_count},
                     {"queue_path", config.adaptation_flydelta_queue_path},
+                    {"batch_mode", config.adaptation_flydelta_batch_mode},
+                    {"batch_parallelism", config.adaptation_flydelta_batch_parallelism},
                     {"capture_candidates", config.adaptation_flydelta_capture_candidates},
                     {"lifecycle_backend", config.adaptation_flydelta_lifecycle_backend},
                     {"lifecycle_path", config.adaptation_flydelta_lifecycle_path},
@@ -1461,6 +1465,17 @@ bool validate_agent_host_config(
     }
     if (config.adaptation_flydelta_enabled && config.adaptation_flydelta_queue_path.empty()) {
         error = "runtime.adaptation.flydelta.queue_path is required when FlyDelta is enabled";
+        return false;
+    }
+    if (config.adaptation_flydelta_batch_mode != "disabled" &&
+            config.adaptation_flydelta_batch_mode != "auto" &&
+            config.adaptation_flydelta_batch_mode != "required") {
+        error = "runtime.adaptation.flydelta.batch_mode must be disabled, auto or required";
+        return false;
+    }
+    if (config.adaptation_flydelta_batch_parallelism == 0 ||
+            config.adaptation_flydelta_batch_parallelism > 8) {
+        error = "runtime.adaptation.flydelta.batch_parallelism must be between 1 and 8";
         return false;
     }
     if (config.adaptation_flydelta_enabled && flydelta_budget.agent_workers == 0) {
@@ -1949,6 +1964,8 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_flydelta_enabled = config.adaptation_flydelta_enabled;
     options.adaptation_flydelta_worker_count = config.adaptation_flydelta_worker_count;
     options.adaptation_flydelta_queue_path = config.adaptation_flydelta_queue_path;
+    options.adaptation_flydelta_batch_mode = config.adaptation_flydelta_batch_mode;
+    options.adaptation_flydelta_batch_parallelism = config.adaptation_flydelta_batch_parallelism;
     options.adaptation_flydelta_capture_candidates = config.adaptation_flydelta_capture_candidates;
     options.adaptation_flydelta_lifecycle_backend = config.adaptation_flydelta_lifecycle_backend;
     options.adaptation_flydelta_lifecycle_path = config.adaptation_flydelta_lifecycle_path;

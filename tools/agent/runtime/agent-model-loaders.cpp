@@ -99,13 +99,28 @@ bool common_agent_runtime_server_context_model_loader::load(
     options.context_size_tokens = selection.context_size_tokens;
     options.n_parallel = selection.n_parallel;
     options.n_sequences = selection.n_sequences;
+    options.per_sequence_cvec_batch = config_.per_sequence_cvec_batch;
     auto host = std::make_shared<common_agent_server_context_host>();
     if (!host->start(make_agent_server_context_host_config(options), error)) {
-        return false;
+        if (!config_.allow_flydelta_scalar_fallback ||
+                options.n_parallel <= 1 || options.n_sequences <= 1) {
+            return false;
+        }
+        // The low auto-batch profile is an optimization. If the resident
+        // context cannot allocate it, retry once with the same model and a
+        // scalar context rather than failing FlyDelta startup.
+        options.n_parallel = 1;
+        options.n_sequences = 1;
+        options.per_sequence_cvec_batch = false;
+        if (!host->start(make_agent_server_context_host_config(options), error)) {
+            return false;
+        }
     }
 
     auto loaded = std::make_shared<common_agent_runtime_loaded_model>();
     loaded->selection = selection;
+    loaded->selection.n_parallel = options.n_parallel;
+    loaded->selection.n_sequences = options.n_sequences;
     loaded->server_context_host = std::move(host);
     model = std::move(loaded);
     error.clear();

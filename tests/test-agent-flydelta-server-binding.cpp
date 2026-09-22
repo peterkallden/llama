@@ -7,6 +7,16 @@
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
 int main() {
+    common_agent_inference_options options;
+    options.model = "model.gguf";
+    options.n_parallel = 2;
+    options.n_sequences = 2;
+    options.per_sequence_cvec_batch = true;
+    const auto host_config = make_agent_server_context_host_config(options);
+    CHECK(host_config.context_key.n_parallel == 2);
+    CHECK(host_config.context_key.n_sequences == 2);
+    CHECK(host_config.per_sequence_cvec_batch);
+
     common_agent_server_flydelta_binding_callbacks callbacks;
     callbacks.primitives.capture = true;
     callbacks.primitives.generation = true;

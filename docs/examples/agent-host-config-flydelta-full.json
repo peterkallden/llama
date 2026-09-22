@@ -24,6 +24,8 @@
         "base": "agent-small",
         "adapters": [],
         "context_size": 4096,
+        "n_parallel": 2,
+        "n_sequences": 2,
         "load": "resident"
       }
     },
@@ -75,6 +77,8 @@
         "enabled": true,
         "worker_count": 1,
         "queue_path": "var/agent/flydelta/queue",
+        "batch_mode": "auto",
+        "batch_parallelism": 2,
         "capture_candidates": true,
         "lifecycle_backend": "cozo",
         "lifecycle_path": "var/agent/flydelta/lifecycle.cozo",

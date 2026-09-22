@@ -2405,8 +2405,7 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-flydelta-cvec-batch-model-smoke>)
     set_property(TEST llama-agent-flydelta-cvec-batch-model-ctest PROPERTY LABELS agent-adaptation)
     set_tests_properties(llama-agent-flydelta-cvec-batch-model-ctest PROPERTIES
-        SKIP_RETURN_CODE 77 TIMEOUT 600
-        ENVIRONMENT "LLAMA_SERVER_PER_SEQUENCE_CVEC=1")
+        SKIP_RETURN_CODE 77 TIMEOUT 600)
 
     add_test(NAME llama-agent-flydelta-runtime-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-runtime-smoke>)

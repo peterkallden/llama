@@ -106,6 +106,11 @@ struct server_context {
     // registration, not a request to enable the feature.
     bool per_sequence_cvec_batch_enabled() const;
 
+    // Agent/server hosts set this before load_model(). It intentionally
+    // overrides the legacy process-environment default so independently
+    // configured resident contexts cannot affect one another.
+    void set_per_sequence_cvec_batch_enabled(bool enabled);
+
     // get a new response reader, used by CLI application
     server_response_reader get_response_reader();
 

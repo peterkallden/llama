@@ -112,13 +112,6 @@ int main(int argc, char ** argv) {
     }
     if (value.n_threads <= 0 || value.n_threads > 3 || value.n_predict <= 0) return 2;
 
-    const char * opt_in = std::getenv("LLAMA_SERVER_PER_SEQUENCE_CVEC");
-    if (!value.scalar && (opt_in == nullptr ||
-            (std::string(opt_in) != "1" && std::string(opt_in) != "true"))) {
-        std::cerr << "FlyDelta cvec batch model smoke requires LLAMA_SERVER_PER_SEQUENCE_CVEC=1\n";
-        return 77;
-    }
-
     auto host = std::make_shared<common_agent_server_context_host>();
     common_agent_server_context_host_config config;
     config.context_key.load_key.model = value.model;
@@ -129,6 +122,7 @@ int main(int argc, char ** argv) {
     config.context_key.n_ctx = 4096;
     config.context_key.n_threads = value.n_threads;
     config.verbosity = LOG_LEVEL_INFO;
+    config.per_sequence_cvec_batch = !value.scalar;
 
     std::string error;
     if (!host->start(config, error)) {

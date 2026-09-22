@@ -343,6 +343,8 @@ int main(int argc, char ** argv) {
             candidate.adaptation_flydelta_enabled != options.adaptation_flydelta_enabled ||
             candidate.adaptation_flydelta_worker_count != options.adaptation_flydelta_worker_count ||
             candidate.adaptation_flydelta_queue_path != options.adaptation_flydelta_queue_path ||
+            candidate.adaptation_flydelta_batch_mode != options.adaptation_flydelta_batch_mode ||
+            candidate.adaptation_flydelta_batch_parallelism != options.adaptation_flydelta_batch_parallelism ||
             candidate.adaptation_flydelta_capture_candidates != options.adaptation_flydelta_capture_candidates ||
             candidate.adaptation_flydelta_lifecycle_backend != options.adaptation_flydelta_lifecycle_backend ||
             candidate.adaptation_flydelta_lifecycle_path != options.adaptation_flydelta_lifecycle_path ||

@@ -643,6 +643,11 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
             "FlyDelta is enabled but no production model binding is registered; "
             "the FlyDelta lane is idle");
     }
+    if (flydelta_config.enabled && status.flydelta_model_adapter_configured &&
+            !status.flydelta_model_capabilities.bounded_arm_batch) {
+        status.readiness.warnings.push_back(
+            "FlyDelta native arm batching is unavailable; compatible waves use the scalar fallback");
+    }
     status.live = status.state != common_agent_daemon_state::stopped && worker_running;
     status.ready = status.state == common_agent_daemon_state::ready &&
         accepting_commands &&

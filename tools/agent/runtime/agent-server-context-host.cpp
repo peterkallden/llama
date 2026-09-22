@@ -80,6 +80,7 @@ common_agent_server_context_host_config make_agent_server_context_host_config(
     return {
         make_agent_server_context_context_key(options),
         LOG_LEVEL_WARN,
+        options.per_sequence_cvec_batch,
     };
 }
 
@@ -155,6 +156,8 @@ bool common_agent_server_context_host::start(
     current_load_key = config.context_key.load_key;
     instance = std::make_unique<common_agent_server_context_running_instance>();
     instance->server = std::make_unique<server_context>();
+    instance->server->set_per_sequence_cvec_batch_enabled(
+        config.per_sequence_cvec_batch);
     instance->params = make_agent_server_context_params(config);
 
     server_context_host_trace("before-load-model", &config);

@@ -26,6 +26,8 @@ struct common_agent_runtime_model_loader_config {
     int n_gpu_layers = 0;
     int n_threads = 2;
     bool fit_params = true;
+    bool per_sequence_cvec_batch = false;
+    bool allow_flydelta_scalar_fallback = true;
 };
 
 class common_agent_runtime_cli_model_loader final
