@@ -247,6 +247,8 @@ common_agent_server_flydelta_binding_from_callbacks(
     binding.teaching_material_runtime = std::move(callbacks.teaching_material_runtime);
     binding.prepare_arm = std::move(callbacks.prepare_arm);
     binding.finalize_arm = std::move(callbacks.finalize_arm);
+    binding.score_teacher_forced_margin_batch =
+        std::move(callbacks.score_teacher_forced_margin_batch);
     binding.register_evaluator = std::move(callbacks.register_evaluator);
     binding.inspect_teaching_material_group =
         std::move(callbacks.inspect_teaching_material_group);
@@ -327,6 +329,24 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - generation_start).count());
 
+    std::vector<common_flydelta_decision_margin> margins(request.arms.size());
+    float teacher_forced_ms = 0.0f;
+    if (binding.score_teacher_forced_margin_batch) {
+        const auto scoring_start = std::chrono::steady_clock::now();
+        if (!binding.score_teacher_forced_margin_batch(
+                request.arms, generation_requests, *session.inference, margins, error)) {
+            if (error.empty()) error = "resident FlyDelta host batch teacher scoring failed";
+            return false;
+        }
+        if (margins.size() != request.arms.size()) {
+            error = "resident FlyDelta host batch teacher scoring returned incomplete margins";
+            return false;
+        }
+        teacher_forced_ms = static_cast<float>(
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - scoring_start).count());
+    }
+
     result.schema_version = request.schema_version;
     result.execution_stats.logical_arm_count = request.arms.size();
     result.execution_stats.physical_batch_count = 1;
@@ -348,9 +368,16 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
             error = "resident FlyDelta host returned an arm identity mismatch";
             return false;
         }
+        if (margins[index].available) {
+            arm_result.margin = margins[index];
+            arm_result.margin_available = true;
+            arm_result.margin_total = margins[index].total_delta();
+            arm_result.margin_normalized = margins[index].normalized_delta();
+        }
         arm_result.execution_metrics.available = true;
         arm_result.execution_metrics.model_ms = generation_ms;
         arm_result.execution_metrics.generation_ms = generation_ms;
+        arm_result.execution_metrics.teacher_forced_ms = teacher_forced_ms;
         arm_result.execution_metrics.batched_execution_used =
             request.arms.size() > 1 && native_batch;
         const bool device_batch = generation_results[index].flydelta_device_batch;
@@ -401,6 +428,9 @@ common_agent_server_context_host_make_flydelta_model_host(
         host->context_key().n_parallel > 1;
     auto model_host = std::make_shared<common_flydelta_model_host>();
     model_host->capabilities = binding.primitives;
+    model_host->capabilities.teacher_forced_scoring =
+        binding.primitives.teacher_forced_scoring &&
+        static_cast<bool>(binding.score_teacher_forced_margin_batch);
     model_host->capabilities.bounded_arm_batch = native_batch;
     model_host->batch_capacity.max_arms_per_batch = native_batch
         ? static_cast<size_t>(std::max(1, host->context_key().n_parallel))

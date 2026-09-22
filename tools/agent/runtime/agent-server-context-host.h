@@ -65,6 +65,15 @@ struct common_agent_server_flydelta_binding {
             const common_agent_generation_result &,
             common_flydelta_arm_result &,
             std::string &)> finalize_arm;
+    // Runs after the generation wave is complete and before final arm
+    // materialization.  It keeps decision-margin scoring outside
+    // finalize_arm, so one response reader owns each server task wave.
+    std::function<bool(
+            const std::vector<common_flydelta_arm_request> &,
+            const std::vector<common_agent_generation_request> &,
+            common_agent_inference &,
+            std::vector<common_flydelta_decision_margin> &,
+            std::string &)> score_teacher_forced_margin_batch;
     std::function<bool(
             common_flydelta_evaluator_config &,
             common_flydelta_evaluator_callbacks &,
@@ -98,6 +107,12 @@ struct common_agent_server_flydelta_binding_callbacks {
             const common_agent_generation_result &,
             common_flydelta_arm_result &,
             std::string &)> finalize_arm;
+    std::function<bool(
+            const std::vector<common_flydelta_arm_request> &,
+            const std::vector<common_agent_generation_request> &,
+            common_agent_inference &,
+            std::vector<common_flydelta_decision_margin> &,
+            std::string &)> score_teacher_forced_margin_batch;
     std::function<bool(
             common_flydelta_evaluator_config &,
             common_flydelta_evaluator_callbacks &,

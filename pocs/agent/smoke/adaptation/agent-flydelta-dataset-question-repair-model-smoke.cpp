@@ -1341,7 +1341,6 @@ int main(int argc, char ** argv) {
                     return false;
                 }
                 std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_capture;
-                std::optional<common_flydelta_decision_margin> baseline_choice_margin;
                 const auto direction_for_layer = [&](uint32_t layer,
                         common_flydelta_basis_direction & direction, std::string & direction_error) {
                     const auto delta_it = std::find_if(case_deltas.begin(), case_deltas.end(),
@@ -1455,56 +1454,11 @@ int main(int argc, char ** argv) {
                     // a future device reduction cannot be mistaken for the
                     // current full-capture path.
                     arm_result.execution_metrics.device_reduction_used = false;
-
                     arm_result.margin = {};
-                    if (bootstrap_case.failed_tool.empty() &&
-                            bootstrap_case.failed_continuation.empty()) {
-                        arm_error = "fixture has no distinct failed tool for decision pair";
-                        return false;
-                    }
-                    // A server-native generation batch owns its response
-                    // reader until the wave is finalized. Do not reuse the
-                    // older single-session teacher scorer from inside that
-                    // callback: it can consume the same task result IDs and
-                    // produce a duplicate-result abort. The scalar CLI path
-                    // retains the existing teacher-forced diagnostic.
-                    // This callback is also used for a server-side backend
-                    // batch when the overlay itself is not device-resident.
-                    // The server batch response reader must remain isolated
-                    // from the legacy single-choice teacher scorer in both
-                    // native device-batch and backend-batch modes.
-                    if (value.backend != "server") {
-                        common_agent_teacher_forced_choice_request score_request;
-                        if (!prepare_arm(arm_request, score_request.context, arm_error)) return false;
-                        score_request.context.flydelta_capture.reset();
-                        score_request.choice_prefix = "{\"name\":\"";
-                        score_request.positive_choice = bootstrap_case.expected_tool;
-                        score_request.negative_choice = bootstrap_case.failed_tool;
-                        score_request.positive_continuation = tool_call_continuation(
-                            bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
-                        score_request.negative_continuation = bootstrap_case.failed_continuation;
-                        common_agent_teacher_forced_choice_batch_request score_batch_request;
-                        score_batch_request.choices.push_back(std::move(score_request));
-                        common_agent_teacher_forced_choice_batch_result score_batch_result;
-                        if (inference->score_teacher_forced_choice_batch(
-                                    score_batch_request, score_batch_result) &&
-                                score_batch_result.choices.size() == 1 &&
-                                score_batch_result.choices.front().available) {
-                            const auto & score_result = score_batch_result.choices.front();
-                            arm_result.margin.available = true;
-                            arm_result.margin.positive_total_logprob =
-                                score_result.positive_total_logprob;
-                            arm_result.margin.negative_total_logprob =
-                                score_result.negative_total_logprob;
-                            arm_result.margin.positive_token_count = score_result.positive_token_count;
-                            arm_result.margin.negative_token_count = score_result.negative_token_count;
-                        }
-                    }
-                    arm_result.margin_available = arm_result.margin.available;
+                    arm_result.margin_available = false;
                     if (!arm_request.apply_overlay && generated_result.flydelta_capture &&
                             generated_result.flydelta_capture->captured) {
                         baseline_capture = generated_result.flydelta_capture;
-                        if (arm_result.margin.available) baseline_choice_margin = arm_result.margin;
                     }
                     if (arm_request.apply_overlay && generated_result.flydelta_capture &&
                             generated_result.flydelta_capture->captured && baseline_capture) {
@@ -1529,6 +1483,77 @@ int main(int argc, char ** argv) {
                     return true;
                 };
 
+                const auto score_teacher_forced_margin_batch = [&](
+                        const std::vector<common_flydelta_arm_request> & arms,
+                        const std::vector<common_agent_generation_request> & contexts,
+                        common_agent_inference & scorer,
+                        std::vector<common_flydelta_decision_margin> & margins,
+                        std::string & score_error) {
+                    score_error.clear();
+                    margins.assign(arms.size(), {});
+                    if (arms.size() != contexts.size()) {
+                        score_error = "dataset repair smoke received mismatched arm and score contexts";
+                        return false;
+                    }
+                    // A free-form baseline can be a perfectly valid failed
+                    // generation yet provide no canonical negative decision.
+                    // That is an unavailable *fixture* margin, not a batch
+                    // execution failure. Replay fixtures below supply an
+                    // explicit host-owned contrast when the smoke needs to
+                    // exercise teacher-score batching.
+                    if (bootstrap_case.failed_tool.empty() ||
+                            bootstrap_case.failed_continuation.empty()) {
+                        return true;
+                    }
+
+                    common_agent_teacher_forced_choice_batch_request score_batch;
+                    std::vector<size_t> score_indices;
+                    score_batch.choices.reserve(arms.size());
+                    score_indices.reserve(arms.size());
+                    for (size_t index = 0; index < arms.size(); ++index) {
+                        if (!arms[index].request_teacher_forced_margin) continue;
+                        common_agent_teacher_forced_choice_request score_request;
+                        score_request.sequence_id = arms[index].arm_id;
+                        // Rebuild the immutable score context. Generation
+                        // requests are transport input and may have been
+                        // consumed by a backend implementation; the host
+                        // keeps the semantic arm->context mapping here.
+                        if (!prepare_arm(arms[index], score_request.context, score_error)) return false;
+                        score_request.context.flydelta_capture.reset();
+                        score_request.choice_prefix = "{\"name\":\"";
+                        score_request.positive_choice = bootstrap_case.expected_tool;
+                        score_request.negative_choice = bootstrap_case.failed_tool;
+                        score_request.positive_continuation = tool_call_continuation(
+                            bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
+                        score_request.negative_continuation = bootstrap_case.failed_continuation;
+                        score_batch.choices.push_back(std::move(score_request));
+                        score_indices.push_back(index);
+                    }
+                    if (score_batch.choices.empty()) return true;
+
+                    common_agent_teacher_forced_choice_batch_result score_result;
+                    if (!scorer.score_teacher_forced_choice_batch(score_batch, score_result)) {
+                        score_error = score_result.error_message.empty()
+                            ? "dataset repair smoke teacher-forced batch scoring failed"
+                            : score_result.error_message;
+                        return false;
+                    }
+                    if (score_result.choices.size() != score_indices.size()) {
+                        score_error = "dataset repair smoke teacher-forced batch returned incomplete scores";
+                        return false;
+                    }
+                    for (size_t index = 0; index < score_indices.size(); ++index) {
+                        const auto & choice = score_result.choices[index];
+                        auto & margin = margins[score_indices[index]];
+                        margin.available = choice.available;
+                        margin.positive_total_logprob = choice.positive_total_logprob;
+                        margin.negative_total_logprob = choice.negative_total_logprob;
+                        margin.positive_token_count = choice.positive_token_count;
+                        margin.negative_token_count = choice.negative_token_count;
+                    }
+                    return true;
+                };
+
                 std::shared_ptr<const common_flydelta_model_host> model_host;
                 if (value.backend == "server") {
                     common_agent_server_flydelta_binding_callbacks callbacks;
@@ -1539,6 +1564,7 @@ int main(int argc, char ** argv) {
                     callbacks.primitives.host_verification = true;
                     callbacks.prepare_arm = prepare_arm;
                     callbacks.finalize_arm = finalize_arm;
+                    callbacks.score_teacher_forced_margin_batch = score_teacher_forced_margin_batch;
                     callbacks.register_evaluator = [](
                             common_flydelta_evaluator_config &,
                             common_flydelta_evaluator_callbacks &,
@@ -1562,7 +1588,8 @@ int main(int argc, char ** argv) {
                     scalar_host->capabilities.generation = true;
                     scalar_host->capabilities.teacher_forced_scoring = true;
                     scalar_host->capabilities.host_verification = true;
-                    scalar_host->run_bounded_arm = [&, prepare_arm, finalize_arm](
+                    scalar_host->run_bounded_arm = [&, prepare_arm, finalize_arm,
+                            score_teacher_forced_margin_batch](
                             const common_flydelta_arm_request & arm_request,
                             common_flydelta_arm_result & arm_result,
                             std::string & arm_error) {
@@ -1574,7 +1601,21 @@ int main(int argc, char ** argv) {
                                 ? "dataset model host generation failed" : generated_result.error_message;
                             return false;
                         }
-                        return finalize_arm(arm_request, generated_result, arm_result, arm_error);
+                        if (!finalize_arm(arm_request, generated_result, arm_result, arm_error)) return false;
+                        std::vector<common_flydelta_decision_margin> margins;
+                        if (!score_teacher_forced_margin_batch(
+                                {arm_request}, {generation_request}, *inference, margins, arm_error)) {
+                            return false;
+                        }
+                        if (margins.size() != 1) {
+                            arm_error = "dataset repair smoke scalar teacher scoring returned no margin";
+                            return false;
+                        }
+                        arm_result.margin = margins.front();
+                        arm_result.margin_available = arm_result.margin.available;
+                        arm_result.margin_total = arm_result.margin.total_delta();
+                        arm_result.margin_normalized = arm_result.margin.normalized_delta();
+                        return true;
                     };
                     model_host = std::move(scalar_host);
                 }
@@ -1621,6 +1662,27 @@ int main(int argc, char ** argv) {
                 host.close();
                 std::cerr << "Search-pipeline worker failed for " << entry.first << ": " << error << '\n';
                 return 1;
+            }
+            // The server path must preserve the same fixture-specific
+            // teacher-forced margin that scalar execution exposes. A missing
+            // margin is a smoke failure, not a reason to silently downgrade
+            // the search objective merely because a logical arm wave was
+            // batched.
+            if (value.backend == "server" &&
+                    !bootstrap_case.failed_tool.empty() &&
+                    !bootstrap_case.failed_continuation.empty()) {
+                const auto & region_trials = pipeline_result.directions.front().region_trials;
+                const bool all_margins_available = !region_trials.empty() &&
+                    std::all_of(region_trials.begin(), region_trials.end(),
+                        [](const common_flydelta_intervention_region_trial & trial) {
+                            return trial.margin.available;
+                        });
+                if (!all_margins_available) {
+                    host.close();
+                    std::cerr << "Search-pipeline server batch did not preserve teacher-forced margins for "
+                              << entry.first << '\n';
+                    return 1;
+                }
             }
             std::cout << "flydelta_search_pipeline_worker group=" << entry.first
                       << " state=" << common_flydelta_experiment_queue_state_name(worker_report.state)

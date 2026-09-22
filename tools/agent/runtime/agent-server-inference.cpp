@@ -542,11 +542,15 @@ public:
             return false;
         }
 
-        // Keep teacher-score waves bounded by resident server sequences. The
-        // recursive call only partitions the transport batch; each result
-        // retains its original sequence identity and overlay/KV isolation.
+        // One logical choice expands to a positive and a negative teacher-score
+        // task. Bound a transport wave by those physical server tasks, rather
+        // than by choices, so a two-slot server receives one complete decision
+        // pair instead of an over-capacity four-task wave. The recursive call
+        // only partitions transport; each result keeps its original sequence
+        // identity and overlay/KV isolation.
         const size_t max_parallel = static_cast<size_t>(std::max(1, params_base.n_parallel));
-        if (request.choices.size() > max_parallel) {
+        const size_t max_choices_per_wave = std::max<size_t>(1, max_parallel / 2);
+        if (request.choices.size() > max_choices_per_wave) {
             std::unordered_set<std::string> all_sequence_ids;
             for (size_t index = 0; index < request.choices.size(); ++index) {
                 if (!all_sequence_ids.insert(common_agent_teacher_forced_choice_sequence_id(
@@ -557,8 +561,8 @@ public:
                 }
             }
             result.choices.reserve(request.choices.size());
-            for (size_t start = 0; start < request.choices.size(); start += max_parallel) {
-                const size_t end = std::min(request.choices.size(), start + max_parallel);
+            for (size_t start = 0; start < request.choices.size(); start += max_choices_per_wave) {
+                const size_t end = std::min(request.choices.size(), start + max_choices_per_wave);
                 common_agent_teacher_forced_choice_batch_request wave;
                 wave.choices.assign(request.choices.begin() + start, request.choices.begin() + end);
                 common_agent_teacher_forced_choice_batch_result wave_result;

@@ -282,6 +282,75 @@ bool daemon_flydelta_prepare_arm(
     return true;
 }
 
+bool daemon_flydelta_score_teacher_forced_margin_batch(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const std::vector<common_flydelta_arm_request> & arms,
+        const std::vector<common_agent_generation_request> & contexts,
+        common_agent_inference & scorer,
+        std::vector<common_flydelta_decision_margin> & margins,
+        std::string & error) {
+    error.clear();
+    margins.assign(arms.size(), {});
+    if (arms.size() != contexts.size()) {
+        error = "FlyDelta teacher-score batch has mismatched arms and contexts";
+        return false;
+    }
+
+    common_agent_teacher_forced_choice_batch_request score_batch;
+    std::vector<size_t> score_indices;
+    score_batch.choices.reserve(arms.size());
+    score_indices.reserve(arms.size());
+    for (size_t index = 0; index < arms.size(); ++index) {
+        const auto & arm = arms[index];
+        if (!arm.request_teacher_forced_margin) continue;
+        json fixture;
+        if (!daemon_flydelta_read_json(*provider, arm.fixture_ref, fixture, error)) return false;
+        if (!fixture.contains("positive_continuation") ||
+                !fixture.contains("negative_continuation")) {
+            continue;
+        }
+        if (!fixture["positive_continuation"].is_string() ||
+                !fixture["negative_continuation"].is_string()) {
+            error = "FlyDelta fixture decision continuations must be strings";
+            return false;
+        }
+        common_agent_teacher_forced_choice_request score_request;
+        score_request.sequence_id = arm.arm_id;
+        // Score from a fresh immutable arm context. The generation request
+        // belongs to backend transport; semantic reference resolution stays
+        // host-owned and must not depend on that transport object's lifetime.
+        if (!daemon_flydelta_prepare_arm(provider, arm, score_request.context, error)) return false;
+        score_request.context.flydelta_capture.reset();
+        score_request.choice_prefix = fixture.value("choice_prefix", "");
+        score_request.positive_continuation = fixture["positive_continuation"].get<std::string>();
+        score_request.negative_continuation = fixture["negative_continuation"].get<std::string>();
+        score_batch.choices.push_back(std::move(score_request));
+        score_indices.push_back(index);
+    }
+    if (score_batch.choices.empty()) return true;
+
+    common_agent_teacher_forced_choice_batch_result scores;
+    if (!scorer.score_teacher_forced_choice_batch(score_batch, scores)) {
+        error = scores.error_message.empty()
+            ? "FlyDelta teacher-forced batch scoring failed" : scores.error_message;
+        return false;
+    }
+    if (scores.choices.size() != score_indices.size()) {
+        error = "FlyDelta teacher-forced batch scoring returned incomplete results";
+        return false;
+    }
+    for (size_t index = 0; index < score_indices.size(); ++index) {
+        const auto & score = scores.choices[index];
+        auto & margin = margins[score_indices[index]];
+        margin.available = score.available;
+        margin.positive_total_logprob = score.positive_total_logprob;
+        margin.negative_total_logprob = score.negative_total_logprob;
+        margin.positive_token_count = score.positive_token_count;
+        margin.negative_token_count = score.negative_token_count;
+    }
+    return true;
+}
+
 bool daemon_flydelta_finalize_arm(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const common_flydelta_arm_request & arm,
@@ -305,42 +374,6 @@ bool daemon_flydelta_finalize_arm(
     }
     json fixture;
     if (!daemon_flydelta_read_json(*provider, arm.fixture_ref, fixture, error)) return false;
-    if (arm.request_teacher_forced_margin && fixture.contains("positive_continuation") &&
-            fixture.contains("negative_continuation")) {
-        if (!fixture["positive_continuation"].is_string() ||
-                !fixture["negative_continuation"].is_string()) {
-            error = "FlyDelta fixture decision continuations must be strings";
-            return false;
-        }
-        common_agent_generation_request score_context;
-        if (!daemon_flydelta_prepare_arm(provider, arm, score_context, error)) return false;
-        score_context.flydelta_capture.reset();
-        common_agent_inference_session session;
-        if (!provider->host->build_inference_session(session, error) || !session.inference) {
-            if (error.empty()) error = "FlyDelta provider could not build a scoring session";
-            return false;
-        }
-        common_agent_teacher_forced_choice_request score_request;
-        score_request.sequence_id = arm.arm_id;
-        score_request.context = std::move(score_context);
-        score_request.choice_prefix = fixture.value("choice_prefix", "");
-        score_request.positive_continuation = fixture["positive_continuation"].get<std::string>();
-        score_request.negative_continuation = fixture["negative_continuation"].get<std::string>();
-        common_agent_teacher_forced_choice_result score;
-        if (!session.inference->score_teacher_forced_choice(score_request, score)) {
-            error = score.error_message.empty()
-                ? "FlyDelta teacher-forced scoring failed" : score.error_message;
-            return false;
-        }
-        result.margin.available = score.available;
-        result.margin.positive_total_logprob = score.positive_total_logprob;
-        result.margin.negative_total_logprob = score.negative_total_logprob;
-        result.margin.positive_token_count = score.positive_token_count;
-        result.margin.negative_token_count = score.negative_token_count;
-        result.margin_available = score.available;
-        result.margin_total = result.margin.total_delta();
-        result.margin_normalized = result.margin.normalized_delta();
-    }
     if (arm.request_host_verification && fixture.contains("expected_contains")) {
         if (!fixture["expected_contains"].is_string()) {
             error = "FlyDelta fixture expected_contains must be a string";
@@ -373,6 +406,12 @@ bool daemon_flydelta_execute_batch(
     binding.finalize_arm = [provider](const auto & arm, const auto & generation,
             auto & arm_result, std::string & callback_error) {
         return daemon_flydelta_finalize_arm(provider, arm, generation, arm_result, callback_error);
+    };
+    binding.score_teacher_forced_margin_batch = [provider](
+            const auto & arms, const auto & contexts, auto & scorer, auto & margins,
+            std::string & callback_error) {
+        return daemon_flydelta_score_teacher_forced_margin_batch(
+            provider, arms, contexts, scorer, margins, callback_error);
     };
     const bool native_batch = provider->host->server().per_sequence_cvec_batch_enabled() &&
         provider->host->context_key().n_parallel > 1;
@@ -418,22 +457,24 @@ bool daemon_flydelta_run_search_pipeline(
     if (!common_flydelta_search_pipeline_direction_validate(input, config, error)) return false;
 
     size_t arm_index = 0;
-    common_flydelta_search_pipeline_runner runner = [provider, &job, &arm_index](
+    const auto make_arm = [provider, &job, &arm_index](
             const common_flydelta_experiment_fixture & current_fixture,
-            const common_flydelta_direction_candidate &,
             const common_flydelta_layer_candidate * layer,
-            float scale,
-            bool apply_overlay,
-            common_flydelta_counterfactual_trial & trial,
-            common_flydelta_decision_margin & margin,
-            common_flydelta_scale_geometry & geometry,
+            const float scale,
+            const bool apply_overlay,
+            const std::string & wave_id,
+            const size_t proposal_index,
+            common_flydelta_arm_request & arm,
             std::string & runner_error) {
-        common_flydelta_arm_request arm;
+        arm = {};
         arm.job_id = job.id;
+        arm.wave_id = wave_id;
+        arm.proposal_index = proposal_index;
         arm.arm_id = "flydelta://runtime/" + job.id + "/" + std::to_string(arm_index++);
         arm.context_ref = job.seed.baseline_ref;
         arm.fixture_ref = current_fixture.id;
         arm.intervention_ref = job.seed.candidate_ref;
+        arm.batch_compatibility_key = arm.context_ref + "\n" + arm.fixture_ref;
         arm.apply_overlay = apply_overlay;
         arm.fresh_context = true;
         arm.alpha = apply_overlay ? scale : 0.0f;
@@ -445,9 +486,24 @@ bool daemon_flydelta_run_search_pipeline(
             arm.layer_indices = layer->layer_indices;
             arm.coefficients.assign(layer->layer_indices.size(), 1.0f);
         }
-        if (!common_flydelta_arm_request_validate(arm, runner_error)) return false;
+        return common_flydelta_arm_request_validate(arm, runner_error);
+    };
+    common_flydelta_search_pipeline_runner runner = [provider, &job, &make_arm](
+            const common_flydelta_experiment_fixture & current_fixture,
+            const common_flydelta_direction_candidate &,
+            const common_flydelta_layer_candidate * layer,
+            float scale,
+            bool apply_overlay,
+            common_flydelta_counterfactual_trial & trial,
+            common_flydelta_decision_margin & margin,
+            common_flydelta_scale_geometry & geometry,
+            std::string & runner_error) {
+        common_flydelta_arm_request arm;
+        if (!make_arm(current_fixture, layer, scale, apply_overlay,
+                apply_overlay ? "region-scalar" : "baseline", 0, arm, runner_error)) return false;
         common_flydelta_arm_batch_request batch;
         batch.batch_id = job.id + ":runtime";
+        batch.wave_id = arm.wave_id;
         batch.arms.push_back(arm);
         common_flydelta_arm_batch_result batch_result;
         if (!daemon_flydelta_execute_batch(provider, batch, batch_result, runner_error) ||
@@ -462,10 +518,78 @@ bool daemon_flydelta_run_search_pipeline(
         trial.evidence_ref = arm_result.generation_ref;
         margin = arm_result.margin;
         geometry = {};
+        geometry.available = arm_result.geometry_available;
+        geometry.cosine = arm_result.cosine;
+        geometry.progress = arm_result.progress;
+        geometry.leakage = arm_result.leakage;
+        geometry.shift_norm = arm_result.shift_norm;
         return arm_result.executed;
     };
-    return common_flydelta_run_search_pipeline(
-        fixture, config, {input}, runner, result, error);
+    const common_flydelta_search_pipeline_batch_runner batch_runner = [provider, &job, &make_arm](
+            const common_flydelta_experiment_fixture & current_fixture,
+            const common_flydelta_direction_candidate &,
+            const std::vector<common_flydelta_intervention_region_candidate> & candidates,
+            std::vector<common_flydelta_counterfactual_trial> & trials,
+            std::vector<common_flydelta_decision_margin> & margins,
+            std::vector<common_flydelta_scale_geometry> & geometries,
+            std::vector<bool> & geometry_available,
+            std::string & runner_error) {
+        common_flydelta_arm_batch_request batch;
+        batch.batch_id = job.id + ":region";
+        batch.wave_id = "whirlpool-region";
+        batch.arms.reserve(candidates.size());
+        for (size_t index = 0; index < candidates.size(); ++index) {
+            common_flydelta_layer_candidate layer;
+            layer.layer_indices = candidates[index].layer_indices;
+            layer.total_scale = candidates[index].total_scale;
+            common_flydelta_arm_request arm;
+            if (!make_arm(current_fixture, &layer, candidates[index].total_scale, true,
+                    batch.wave_id, index, arm, runner_error)) return false;
+            batch.arms.push_back(std::move(arm));
+        }
+        common_flydelta_arm_batch_result batch_result;
+        if (!daemon_flydelta_execute_batch(provider, batch, batch_result, runner_error) ||
+                batch_result.arms.size() != candidates.size()) {
+            if (runner_error.empty()) runner_error = "FlyDelta daemon region batch returned incomplete arms";
+            return false;
+        }
+        trials.clear();
+        margins.clear();
+        geometries.clear();
+        geometry_available.clear();
+        trials.reserve(candidates.size());
+        margins.reserve(candidates.size());
+        geometries.reserve(candidates.size());
+        geometry_available.reserve(candidates.size());
+        for (size_t index = 0; index < candidates.size(); ++index) {
+            const auto & arm = batch_result.arms[index];
+            if (!arm.executed || arm.arm_id != batch.arms[index].arm_id) {
+                runner_error = "FlyDelta daemon region batch returned an invalid arm";
+                return false;
+            }
+            common_flydelta_counterfactual_trial trial;
+            trial.executed = arm.executed;
+            trial.verifier_known = arm.verifier_known;
+            trial.passed = arm.host_outcome == common_flydelta_counterfactual_outcome::helped;
+            trial.quality = arm.quality;
+            trial.overlay_applied = true;
+            trial.intervention_count = batch.arms[index].layer_indices.size();
+            trial.evidence_ref = arm.generation_ref;
+            trials.push_back(std::move(trial));
+            margins.push_back(arm.margin);
+            common_flydelta_scale_geometry geometry;
+            geometry.available = arm.geometry_available;
+            geometry.cosine = arm.cosine;
+            geometry.progress = arm.progress;
+            geometry.leakage = arm.leakage;
+            geometry.shift_norm = arm.shift_norm;
+            geometries.push_back(std::move(geometry));
+            geometry_available.push_back(arm.geometry_available);
+        }
+        return true;
+    };
+    return common_flydelta_run_search_pipeline_batched(
+        fixture, config, {input}, runner, batch_runner, result, error);
 }
 
 std::function<bool(
@@ -513,6 +637,12 @@ make_daemon_flydelta_resource_binding_factory(
         binding.finalize_arm = [provider](const auto & arm, const auto & generation,
                 auto & result, std::string & callback_error) {
             return daemon_flydelta_finalize_arm(provider, arm, generation, result, callback_error);
+        };
+        binding.score_teacher_forced_margin_batch = [provider](
+                const auto & arms, const auto & contexts, auto & scorer, auto & margins,
+                std::string & callback_error) {
+            return daemon_flydelta_score_teacher_forced_margin_batch(
+                provider, arms, contexts, scorer, margins, callback_error);
         };
         binding.register_evaluator = [provider](common_flydelta_evaluator_config & config,
                 common_flydelta_evaluator_callbacks & callbacks, std::string & callback_error) {

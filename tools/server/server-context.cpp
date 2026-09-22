@@ -2263,6 +2263,11 @@ private:
         auto res = std::make_unique<server_task_result_teacher_score>();
         res->id = slot.task->id;
         res->id_slot = slot.id;
+        // A response reader may own a wave of teacher-score tasks. Preserve
+        // the task's slot within that wave just as completion results do;
+        // otherwise every score result keeps the default index 0 and the
+        // reader treats the second result as a duplicate.
+        res->index = slot.task->index;
         res->total_logprob = slot.teacher_forced_logprob;
         res->token_count = slot.teacher_forced_tokens.size();
         res->flydelta_device_batch = cvec_batch_active && cvec_batch_device.device_resident();
