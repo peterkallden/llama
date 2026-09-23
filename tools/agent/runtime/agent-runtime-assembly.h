@@ -10,6 +10,7 @@
 #include "agent/adaptation/flydelta/flydelta-teaching-material.h"
 #include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
 #include "agent/adaptation/flydelta/flydelta-runtime-observer.h"
+#include "agent/adaptation/semantic-teaching.h"
 #include "../adaptation/agent-learning-transaction-store.h"
 #include "agent/runtime/agent-inference-contracts.h"
 
@@ -85,6 +86,8 @@ struct common_agent_runtime_config {
     // text is never passed to FlyDelta as training material.
     common_agent_user_correction_teaching_request_provider user_correction_teaching_request_provider;
     common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
+    common_agent_concept_hypothesis_provider semantic_concept_hypothesis_provider;
+    common_agent_concept_grounding_provider semantic_concept_grounding_provider;
     common_agent_flydelta_teaching_material_observer flydelta_teaching_material_observer;
     // Optional shared host-owned material index. When present and no explicit
     // observer is supplied, the runtime assembly observes resolved relations
@@ -118,6 +121,8 @@ struct common_agent_runtime_build_config {
     common_agent_procedure_teaching_request_provider procedure_teaching_request_provider;
     common_agent_user_correction_teaching_request_provider user_correction_teaching_request_provider;
     common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
+    common_agent_concept_hypothesis_provider semantic_concept_hypothesis_provider;
+    common_agent_concept_grounding_provider semantic_concept_grounding_provider;
     common_agent_flydelta_teaching_material_observer flydelta_teaching_material_observer;
     std::shared_ptr<common_flydelta_teaching_material_runtime> flydelta_teaching_material_runtime;
 };

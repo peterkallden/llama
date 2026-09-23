@@ -2396,6 +2396,41 @@ They are not interchangeable. User text supplies evidence, the host supplies
 semantic grounding, and verified contrasts supply the FlyDelta learning
 signal.
 
+### Semantic preparation before representation synthesis
+
+Research, reflection and conversation may also propose a reusable principle,
+but those inputs first enter the host-side semantic preparation seam as a
+`ConceptHypothesis`. A hypothesis is not evidence and is not a direction. It
+contains a bounded semantic kind, preconditions, optional state transitions,
+invariants, counterexamples and source references. Facts remain eligible for
+the knowledge/memory path; only a host-grounded procedure, decision rule or
+concept may proceed toward FlyDelta teaching material.
+
+The host then creates a grounded verifier/fixture family and checks a set of
+minimal contrasts:
+
+```text
+ConceptHypothesis
+    -> host grounding
+    -> baseline / conditioned / control fixtures
+    -> semantic verification
+    -> independent verified contrasts
+    -> existing TeachingRelation
+    -> existing TeachingMaterialStore
+    -> concept_capture
+    -> ConceptSynthesis
+```
+
+The model may propose a hypothesis or fixture variation, but it cannot certify
+its own meaning. The host owns semantic normalization, verifier admission,
+independence and provenance. The semantic preparation provider therefore
+returns either no hypothesis/material (a normal outcome) or already verified
+relations; it must never manufacture learning credit. At least two compatible
+and independent contrasts are required before material is eligible for the
+existing capture path. No new FlyDelta job or material store is introduced by
+this layer: `concept_capture`, `concept_synthesis`, grafting and ordinary
+FlyDelta search remain the existing bounded pipeline.
+
 The model-facing decision boundary uses the same generic seam. A bounded
 `decision_pair` contains two host-selected alternatives plus tokenizer and
 template fingerprints; it is not limited to tool names. The host adapter finds

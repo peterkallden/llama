@@ -4137,6 +4137,10 @@ common_agent_runtime_config make_daemon_runtime_config(
         runtime.user_correction_teaching_request_provider;
     config.user_taught_concept_relation_provider =
         runtime.user_taught_concept_relation_provider;
+    config.semantic_concept_hypothesis_provider =
+        runtime.semantic_concept_hypothesis_provider;
+    config.semantic_concept_grounding_provider =
+        runtime.semantic_concept_grounding_provider;
     config.flydelta_teaching_material_observer =
         runtime.flydelta_teaching_material_observer;
     config.flydelta_teaching_material_runtime =

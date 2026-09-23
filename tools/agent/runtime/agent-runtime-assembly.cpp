@@ -35,6 +35,8 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.procedure_teaching_request_provider = std::move(build_config.procedure_teaching_request_provider);
     config.user_correction_teaching_request_provider = std::move(build_config.user_correction_teaching_request_provider);
     config.user_taught_concept_relation_provider = std::move(build_config.user_taught_concept_relation_provider);
+    config.semantic_concept_hypothesis_provider = std::move(build_config.semantic_concept_hypothesis_provider);
+    config.semantic_concept_grounding_provider = std::move(build_config.semantic_concept_grounding_provider);
     config.flydelta_teaching_material_observer = std::move(build_config.flydelta_teaching_material_observer);
     config.flydelta_teaching_material_runtime = std::move(build_config.flydelta_teaching_material_runtime);
     return config;
@@ -91,6 +93,8 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                 static_cast<bool>(runtime_config.procedure_teaching_request_provider) ||
                 static_cast<bool>(runtime_config.user_correction_teaching_request_provider) ||
                 static_cast<bool>(runtime_config.user_taught_concept_relation_provider) ||
+                static_cast<bool>(runtime_config.semantic_concept_hypothesis_provider) ||
+                static_cast<bool>(runtime_config.semantic_concept_grounding_provider) ||
                 static_cast<bool>(runtime_config.flydelta_teaching_material_observer);
             if (runtime_config.enable_flydelta_capture_candidates || has_teaching_relation_path) {
                 if (runtime_config.enable_flydelta_capture_candidates) {
@@ -248,6 +252,62 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                                 } else if (capture_collector) {
                                     if (!capture_collector->observe_verified_relation(
                                             relation, evidence, transaction, error)) return false;
+                                }
+                            }
+                            return true;
+                        };
+                }
+                if (runtime_config.semantic_concept_hypothesis_provider &&
+                        runtime_config.semantic_concept_grounding_provider) {
+                    const auto hypothesis_provider = runtime_config.semantic_concept_hypothesis_provider;
+                    const auto grounding_provider = runtime_config.semantic_concept_grounding_provider;
+                    auto configured_relation_observer = adaptation_config.host_relation_observer;
+                    auto * runtime_candidate_observer = assembly.flydelta_runtime_candidate_observer.get();
+                    auto * capture_collector = assembly.flydelta_capture_collector.get();
+                    adaptation_config.host_relation_observer =
+                        [hypothesis_provider, grounding_provider, configured_relation_observer,
+                            teaching_material_observer, runtime_candidate_observer, capture_collector](
+                            const common_agent_request & request,
+                            const common_plan_state & plan,
+                            const common_agent_result & result,
+                            const common_learning_transaction & transaction,
+                            std::string & error) {
+                            if (configured_relation_observer &&
+                                    !configured_relation_observer(request, plan, result, transaction, error)) return false;
+                            std::optional<common_agent_concept_hypothesis> hypothesis;
+                            if (!hypothesis_provider(request, plan, result, transaction, hypothesis, error)) return false;
+                            if (!hypothesis) return true;
+                            if (!common_agent_concept_hypothesis_validate(*hypothesis, error)) return false;
+                            if (hypothesis->status != common_agent_concept_hypothesis_status::grounded ||
+                                    !hypothesis->host_grounded || !hypothesis->reusable) return true;
+                            std::vector<common_flydelta_teaching_relation> relations;
+                            common_agent_concept_grounding grounding;
+                            if (!grounding_provider(request, plan, result, transaction,
+                                    *hypothesis, grounding, relations, error)) return false;
+                            if (relations.empty()) return true;
+                            if (!common_agent_validate_concept_teaching_relations(
+                                    *hypothesis, grounding, relations, error)) return false;
+                            for (const auto & relation : relations) {
+                                if (relation.teaching_key != hypothesis->concept_key ||
+                                        relation.status != common_flydelta_teaching_relation_status::resolved ||
+                                        !relation.host_approved || relation.contrast_ref.empty()) {
+                                    error = "semantic grounding provider returned an unverified concept relation";
+                                    return false;
+                                }
+                                if (teaching_material_observer &&
+                                        !teaching_material_observer(relation, error)) return false;
+                                common_adaptation_evidence_relation evidence_relation;
+                                if (!common_agent_teaching_relation_to_evidence_relation(
+                                        relation, transaction, evidence_relation, error)) return false;
+                                common_adaptation_evidence evidence;
+                                if (!common_adaptation_evidence_from_turn(
+                                        request, plan, result, evidence_relation, evidence, error)) return false;
+                                if (runtime_candidate_observer) {
+                                    if (!runtime_candidate_observer->observe_verified_relation(
+                                            evidence_relation, evidence, transaction, error)) return false;
+                                } else if (capture_collector) {
+                                    if (!capture_collector->observe_verified_relation(
+                                            evidence_relation, evidence, transaction, error)) return false;
                                 }
                             }
                             return true;
