@@ -918,6 +918,12 @@ common_flydelta_model_adapter_from_host(
     capabilities.concept_synthesis = static_cast<bool>(
         callbacks.run_concept_synthesis && callbacks.persist_experimental_direction);
     capabilities.concept_capture = static_cast<bool>(callbacks.run_concept_capture);
+    // Representation augmentation is a daemon-owned typed continuation. A
+    // generic post-Bootstrap runner is not sufficient to advertise it: the
+    // concrete state callback must be registered as well.
+    capabilities.representation_augmentation =
+        capabilities.representation_augmentation && static_cast<bool>(
+            callbacks.run_representation_augmentation_with_state);
     // Registration is the source of truth for backend availability. A caller
     // cannot advertise a batch path that was not actually bound.
     capabilities.bounded_arm_batch = static_cast<bool>(host.run_bounded_arm_batch);
