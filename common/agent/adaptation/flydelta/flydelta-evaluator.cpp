@@ -164,6 +164,10 @@ bool common_flydelta_evaluate_job(
                 }
             }
             result.processed_references = result.concept_trajectory_refs.size();
+            result.bootstrap_zoom_state_ref = job.bootstrap_zoom_state_ref;
+            result.search_state_ref = job.search_state_ref;
+            result.representation_augmentation_state_ref =
+                job.representation_augmentation_state_ref;
             result.has_next_action = true;
             result.next_action = common_flydelta_next_action::run_concept_synthesis;
             result.next_action_reason = "Concept trajectories captured; schedule synthesis";
@@ -188,6 +192,10 @@ bool common_flydelta_evaluate_job(
                 result.direction_candidates.push_back(std::move(direction));
             }
             result.processed_references = result.concept_candidates.size();
+            result.bootstrap_zoom_state_ref = job.bootstrap_zoom_state_ref;
+            result.search_state_ref = job.search_state_ref;
+            result.representation_augmentation_state_ref =
+                job.representation_augmentation_state_ref;
             if (!callbacks.persist_experimental_direction) {
                 error = "FlyDelta concept synthesis requires an experimental direction persistence callback for graft";
                 return false;
@@ -359,6 +367,7 @@ bool common_flydelta_evaluate_job(
                 result.has_representation_augmentation_state = true;
                 result.representation_augmentation_state = std::move(next_state);
                 result.search_state_ref = result.representation_augmentation_state_ref;
+                result.bootstrap_zoom_state_ref = job.bootstrap_zoom_state_ref;
                 result.has_next_action = true;
                 result.next_action = next_action_from_augmentation(
                     result.representation_augmentation_state.next_action);
@@ -443,6 +452,7 @@ bool common_flydelta_evaluate_job(
                     return false;
                 }
                 result.search_state_ref = std::move(next_state_ref);
+                result.bootstrap_zoom_state_ref = job.bootstrap_zoom_state_ref;
             } else if (callbacks.run_search_pipeline_with_state) {
                 common_flydelta_bootstrap_zoom_state resume_state;
                 const common_flydelta_bootstrap_zoom_state * resume = nullptr;

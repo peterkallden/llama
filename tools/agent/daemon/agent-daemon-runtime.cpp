@@ -46,6 +46,7 @@
 #include <cmath>
 #include <ctime>
 #include <filesystem>
+#include <functional>
 #include <nlohmann/json.hpp>
 #include <mutex>
 #include <set>
@@ -85,6 +86,18 @@ struct daemon_flydelta_resource_provider {
         std::pair<common_flydelta_experiment_plan, common_flydelta_utility_history>> orchestration_states;
     std::unordered_map<std::string, std::string> bootstrap_state_by_orchestration_ref;
     std::unordered_map<std::string, std::string> bootstrap_state_by_continuation;
+    // These are installed from the same durable lifecycle callbacks that
+    // serve ordinary worker resumes. Concept capture uses them only to locate
+    // WHERE; it never creates a second state store or search policy.
+    std::function<bool(
+            const std::string &, common_flydelta_bootstrap_zoom_state &,
+            std::string &)> resolve_bootstrap_zoom_state;
+    std::function<bool(
+            const std::string &, common_flydelta_representation_augmentation_state &,
+            std::string &)> resolve_representation_augmentation_state;
+    std::function<bool(
+            const std::string &, common_flydelta_experiment_plan &,
+            common_flydelta_utility_history &, std::string &)> resolve_search_orchestration_state;
 };
 
 bool daemon_flydelta_read_json(
@@ -97,6 +110,9 @@ struct daemon_flydelta_concept_relation_material {
     common_flydelta_teaching_relation relation;
     std::string semantic_anchor;
     int32_t layer_index = -1;
+    std::string parent_surface_ref;
+    uint64_t parent_surface_revision = 0;
+    float parent_evidence_rank = 0.0f;
 };
 
 bool daemon_flydelta_parse_teaching_origin(
@@ -141,11 +157,9 @@ json daemon_flydelta_teaching_relation_json(
         {"control_origin", common_flydelta_teaching_origin_name(relation.control_origin)},
         {"confidence", relation.confidence},
         {"host_approved", relation.host_approved},
-        // V0 uses the daemon's existing capture anchor.  The host relation
-        // remains semantic/provenance material; the ordinary model-host
-        // direction layer is the only layer policy used by this binding.
+        // The relation describes WHAT should be taught. WHERE is supplied by
+        // the persisted FlyDelta search surface when a capture plan is made.
         {"semantic_anchor", relation.task_fingerprint},
-        {"layer_index", 1},
     };
 }
 
@@ -242,16 +256,16 @@ bool daemon_flydelta_parse_teaching_relation(
             return false;
         }
         material.semantic_anchor = value.value("semantic_anchor", relation.task_fingerprint);
+        // Kept only as legacy metadata. The capture planner overwrites this
+        // from the localized search state and never trusts a relation layer.
         material.layer_index = value.value("layer_index", -1);
     } catch (const std::exception & exception) {
         error = std::string("FlyDelta teaching relation resource is malformed: ") + exception.what();
         return false;
     }
     if (!common_flydelta_teaching_relation_validate(material.relation, error) ||
-            material.semantic_anchor.empty() || material.semantic_anchor.size() > 512 ||
-            material.layer_index < 0 ||
-            static_cast<size_t>(material.layer_index) >= provider.model_n_layers) {
-        if (error.empty()) error = "FlyDelta teaching relation material has no valid capture anchor";
+            material.semantic_anchor.empty() || material.semantic_anchor.size() > 512) {
+        if (error.empty()) error = "FlyDelta teaching relation material has no semantic anchor";
         return false;
     }
     return true;
@@ -764,6 +778,106 @@ bool daemon_flydelta_capture_layer(
     return true;
 }
 
+struct daemon_flydelta_concept_target {
+    int32_t layer_index = -1;
+    std::vector<uint32_t> local_layers;
+    std::string parent_surface_ref;
+    uint64_t parent_surface_revision = 0;
+    float parent_evidence_rank = 0.0f;
+};
+
+// Resolve the latest localized search surface for concept capture. The
+// relation supplies WHAT, while the persisted search/augmentation state
+// supplies WHERE. If that state cannot identify one anchor, fail closed
+// rather than silently reverting to a relation/default layer.
+bool daemon_flydelta_resolve_concept_target(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        daemon_flydelta_concept_target & target,
+        std::string & error) {
+    error.clear();
+    target = {};
+    if (!provider) {
+        error = "FlyDelta concept target has no resource provider";
+        return false;
+    }
+
+    common_flydelta_representation_augmentation_state augmentation;
+    bool has_augmentation = false;
+    if (!job.representation_augmentation_state_ref.empty()) {
+        if (!provider->resolve_representation_augmentation_state ||
+                !provider->resolve_representation_augmentation_state(
+                    job.representation_augmentation_state_ref, augmentation, error)) {
+            if (error.empty()) error = "FlyDelta concept target augmentation state is unavailable";
+            return false;
+        }
+        has_augmentation = true;
+        target.local_layers = augmentation.selected_region;
+        target.parent_surface_ref = augmentation.parent_search_state_ref;
+        target.parent_surface_revision = augmentation.parent_surface_revision;
+        target.parent_evidence_rank = augmentation.parent_evidence_rank;
+    }
+
+    const auto apply_orchestration = [&](const std::string & reference) {
+        if (reference.empty() || !provider->resolve_search_orchestration_state) return false;
+        common_flydelta_experiment_plan plan;
+        common_flydelta_utility_history history;
+        std::string resolve_error;
+        if (!provider->resolve_search_orchestration_state(
+                reference, plan, history, resolve_error)) return false;
+        target.layer_index = static_cast<int32_t>(
+            plan.continuation.region.anchor_layer_index);
+        target.local_layers = plan.continuation.region.layer_indices;
+        target.parent_surface_ref = reference;
+        return target.layer_index > 0;
+    };
+    const auto apply_bootstrap = [&](const std::string & reference) {
+        if (reference.empty() || !provider->resolve_bootstrap_zoom_state) return false;
+        common_flydelta_bootstrap_zoom_state state;
+        std::string resolve_error;
+        if (!provider->resolve_bootstrap_zoom_state(reference, state, resolve_error)) return false;
+        target.layer_index = static_cast<int32_t>(state.anchor_layer);
+        target.local_layers = state.local_layers;
+        target.parent_surface_ref = reference;
+        target.parent_surface_revision = state.surface_revision;
+        target.parent_evidence_rank = state.evidence_rank;
+        return target.layer_index > 0;
+    };
+
+    // The augmentation state's parent is the most localized explicit search
+    // reference. Prefer it over the job envelope, then use the BootstrapZoom
+    // ref carried through the same queued lineage.
+    const std::string parent_search_ref = has_augmentation
+        ? augmentation.parent_search_state_ref : job.search_state_ref;
+    bool resolved = apply_orchestration(parent_search_ref);
+    if (!resolved && parent_search_ref != job.bootstrap_zoom_state_ref) {
+        resolved = apply_bootstrap(parent_search_ref);
+    }
+    if (!resolved) resolved = apply_orchestration(job.search_state_ref);
+    if (!resolved) resolved = apply_bootstrap(job.bootstrap_zoom_state_ref);
+
+    // A one-layer selected region is already an unambiguous localized
+    // surface. Multi-layer regions require their parent state so we do not
+    // invent an anchor by choosing an arbitrary member.
+    if (!resolved && has_augmentation && augmentation.selected_region.size() == 1) {
+        target.layer_index = static_cast<int32_t>(augmentation.selected_region.front());
+        target.local_layers = augmentation.selected_region;
+        resolved = true;
+    }
+    if (!resolved || target.layer_index <= 0 ||
+            static_cast<size_t>(target.layer_index) >= provider->model_n_layers) {
+        error = "FlyDelta concept capture requires a persisted localized anchor layer";
+        return false;
+    }
+    if (!target.local_layers.empty() &&
+            std::find(target.local_layers.begin(), target.local_layers.end(),
+                static_cast<uint32_t>(target.layer_index)) == target.local_layers.end()) {
+        error = "FlyDelta concept target anchor is outside its localized region";
+        return false;
+    }
+    return true;
+}
+
 bool daemon_flydelta_persist_capture(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const std::string & arm_id,
@@ -838,6 +952,9 @@ bool daemon_flydelta_persist_concept_trajectory(
         {"template_fingerprint", provider->model_profile_fingerprint + ":template"},
         {"capture_layout_revision", provider->capture_layout_revision},
         {"scope_fingerprint", relation.scope.namespace_id + ":" + relation.scope.session_id},
+        {"parent_surface_ref", material.parent_surface_ref},
+        {"parent_surface_revision", material.parent_surface_revision},
+        {"parent_evidence_rank", material.parent_evidence_rank},
     };
     return daemon_flydelta_put_json_resource(
         provider,
@@ -958,6 +1075,9 @@ bool daemon_flydelta_run_concept_capture(
         return false;
     }
 
+    daemon_flydelta_concept_target target;
+    if (!daemon_flydelta_resolve_concept_target(provider, job, target, error)) return false;
+
     std::vector<daemon_flydelta_concept_relation_material> materials;
     materials.reserve(group.relation_refs.size());
     for (const auto & relation_ref : group.relation_refs) {
@@ -971,6 +1091,23 @@ bool daemon_flydelta_run_concept_capture(
             error = "FlyDelta concept relation is incompatible with its material group";
             return false;
         }
+        common_flydelta_concept_capture_plan plan;
+        const std::string plan_identity = job.id + "\n" + relation_ref;
+        plan.id = "flydelta://concept-plan/" +
+            hash_sha256_hex(plan_identity.data(), plan_identity.size()).substr(0, 32);
+        plan.group_ref = job.teaching_material_group_ref;
+        plan.relation_ref = relation_ref;
+        plan.baseline_ref = material.relation.baseline_ref;
+        plan.conditioned_ref = material.relation.conditioned_ref;
+        plan.control_ref = material.relation.control_ref;
+        plan.semantic_anchor = material.semantic_anchor;
+        plan.layer_index = target.layer_index;
+        plan.identity = group.identity;
+        if (!common_flydelta_concept_capture_plan_validate(plan, error)) return false;
+        material.layer_index = plan.layer_index;
+        material.parent_surface_ref = target.parent_surface_ref;
+        material.parent_surface_revision = target.parent_surface_revision;
+        material.parent_evidence_rank = target.parent_evidence_rank;
         materials.push_back(std::move(material));
     }
 
@@ -1096,6 +1233,12 @@ bool daemon_flydelta_run_concept_synthesis(
     daemon_flydelta_concept_relation_material material;
     if (!daemon_flydelta_parse_teaching_relation(
             *provider, group.relation_refs.front(), material, error)) return false;
+    daemon_flydelta_concept_target target;
+    if (!daemon_flydelta_resolve_concept_target(provider, job, target, error)) return false;
+    material.layer_index = target.layer_index;
+    material.parent_surface_ref = target.parent_surface_ref;
+    material.parent_surface_revision = target.parent_surface_revision;
+    material.parent_evidence_rank = target.parent_evidence_rank;
     const auto & relation = material.relation;
     common_flydelta_concept_spec spec;
     spec.concept_key = relation.teaching_key;
@@ -1141,6 +1284,10 @@ bool daemon_flydelta_run_concept_synthesis(
             trajectory.control = value.value("control", std::vector<float>{});
             trajectory.aligned = value.value("aligned", false);
             trajectory.conditioned_host_verified = value.value("conditioned_host_verified", false);
+            if (trajectory.layer_index != target.layer_index) {
+                error = "FlyDelta concept trajectory layer does not match localized graft anchor";
+                return false;
+            }
             if (!common_flydelta_concept_trajectory_validate(
                     spec, trajectory, provider->model_n_embd, error)) return false;
             trajectories.push_back(std::move(trajectory));
@@ -3701,6 +3848,7 @@ make_daemon_flydelta_resource_binding_factory(
                     *provider->lifecycle_store, bootstrap_context, callbacks, callback_error)) {
                 return false;
             }
+            provider->resolve_bootstrap_zoom_state = callbacks.resolve_bootstrap_zoom_state;
             const auto lifecycle_persist_bootstrap_state = callbacks.persist_bootstrap_zoom_state;
             callbacks.persist_bootstrap_zoom_state = [provider, lifecycle_persist_bootstrap_state](
                     const common_flydelta_bootstrap_zoom_state & state,
@@ -3721,6 +3869,8 @@ make_daemon_flydelta_resource_binding_factory(
                     *provider->lifecycle_store, augmentation_context, callbacks, callback_error)) {
                 return false;
             }
+            provider->resolve_representation_augmentation_state =
+                callbacks.resolve_representation_augmentation_state;
             const auto resolve_bootstrap_state = callbacks.resolve_bootstrap_zoom_state;
             callbacks.resolve_search_orchestration_state = [provider, resolve_bootstrap_state](
                     const std::string & state_ref,
@@ -3816,6 +3966,8 @@ make_daemon_flydelta_resource_binding_factory(
                 }
                 return true;
             };
+            provider->resolve_search_orchestration_state =
+                callbacks.resolve_search_orchestration_state;
             const auto resolve_orchestration_state = callbacks.resolve_search_orchestration_state;
             const auto persist_bootstrap_state = callbacks.persist_bootstrap_zoom_state;
             callbacks.run_search_pipeline_with_search_state = [provider, resolve_bootstrap_state,

@@ -73,8 +73,10 @@ bool common_flydelta_experiment_job_validate(
         return false;
     }
     if (job.kind != common_flydelta_experiment_job_kind::search_pipeline &&
+            job.kind != common_flydelta_experiment_job_kind::concept_capture &&
+            job.kind != common_flydelta_experiment_job_kind::concept_synthesis &&
             !job.representation_augmentation_state_ref.empty()) {
-        error = "FlyDelta augmentation state references are only valid for search pipelines";
+        error = "FlyDelta augmentation state references are only valid for search or concept jobs";
         return false;
     }
     if (job.kind == common_flydelta_experiment_job_kind::donor_capture &&

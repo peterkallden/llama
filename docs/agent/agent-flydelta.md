@@ -2293,10 +2293,33 @@ reference as `graft_direction_ref`; the collection seam then schedules a normal
 `search_pipeline` job with the reference as its seed candidate. The originating
 capture-manifest and behavior-delta references are carried through the bounded
 concept jobs so the grafted search still has its ordinary model inputs. Old
-search/augmentation state is cleared for the new Bootstrap slice, but no
-evidence rank, learning credit or promotion status is granted by the graft.
+BootstrapZoom state is carried into the new Bootstrap slice, while the
+concept-only search/augmentation continuation refs are cleared at the graft
+boundary. This preserves the localized WHERE anchor and HOW-MUCH resume
+surface while replacing only WHAT with the synthesized direction. No evidence
+rank, learning credit or promotion status is granted by the graft.
 This is a wiring handoff, not a second concept-search engine or a learned-vector
 training path.
+
+Concept capture is likewise localized. The relation supplies semantic WHAT;
+the latest durable Bootstrap/augmentation search state supplies WHERE. The
+daemon creates a `common_flydelta_concept_capture_plan` per relation and uses
+the persisted anchor layer for all three captures:
+
+```text
+Whirlpool / Bootstrap local surface
+    -> anchor layer L*
+    -> baseline @ L*, conditioned @ L*, control @ L*
+    -> ConceptSynthesis candidate @ L*
+    -> grafted ordinary search @ L*
+```
+
+If a multi-layer selected region has no resolvable persisted anchor, capture
+fails closed rather than selecting an arbitrary layer. The relation resource
+does not choose a model layer; its legacy layer field, when present, is
+ignored. The concept trajectory retains the parent surface reference and
+revision for comparison and restart provenance, while the evidence rank is
+unchanged by synthesis or grafting.
 
 Teacher-forced margin scoring in the model smoke is behavior-specific as well:
 the positive continuation is the family target and the negative continuation

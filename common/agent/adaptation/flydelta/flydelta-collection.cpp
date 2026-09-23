@@ -222,9 +222,9 @@ bool common_flydelta_collect_next_action_job(
         // synthesis hands an experimental direction back to ordinary search.
         follow_up.capture_candidate_ids.clear();
         follow_up.training_example_ids.clear();
-        follow_up.bootstrap_zoom_state_ref.clear();
-        follow_up.search_state_ref.clear();
-        follow_up.representation_augmentation_state_ref.clear();
+        // Keep the originating search/augmentation refs on concept jobs.
+        // They identify the localized WHERE surface used by concept capture
+        // and must survive the capture -> synthesis transition.
     } else if (parent_job.kind == common_flydelta_experiment_job_kind::concept_synthesis &&
             next_action == common_flydelta_next_action::run_bootstrap) {
         if (graft_direction_ref.empty()) {
@@ -234,7 +234,8 @@ bool common_flydelta_collect_next_action_job(
         follow_up.kind = common_flydelta_experiment_job_kind::search_pipeline;
         follow_up.capture_candidate_ids.clear();
         follow_up.training_example_ids.clear();
-        follow_up.bootstrap_zoom_state_ref.clear();
+        // Keep BootstrapZoom state: the graft changes WHAT through
+        // candidate_ref, but resumes HOW MUCH at the existing WHERE anchor.
         follow_up.search_state_ref.clear();
         follow_up.representation_augmentation_state_ref.clear();
     }
