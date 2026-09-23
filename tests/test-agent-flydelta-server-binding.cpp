@@ -42,6 +42,10 @@ int main() {
             const common_flydelta_experiment_job &,
             std::vector<common_flydelta_counterfactual_report> &,
             std::string &) { return true; };
+    callbacks.run_concept_capture = [](
+            const common_flydelta_experiment_job &,
+            std::vector<std::string> &,
+            std::string &) { return true; };
     callbacks.run_concept_synthesis = [](
             const common_flydelta_experiment_job &,
             std::vector<common_flydelta_concept_candidate> &,
@@ -63,6 +67,7 @@ int main() {
     CHECK(static_cast<bool>(binding.register_evaluator));
     CHECK(static_cast<bool>(binding.run_donor_capture));
     CHECK(static_cast<bool>(binding.run_counterfactual));
+    CHECK(static_cast<bool>(binding.run_concept_capture));
     CHECK(static_cast<bool>(binding.run_concept_synthesis));
     CHECK(static_cast<bool>(binding.run_representation_augmentation_with_state));
 
@@ -86,6 +91,7 @@ int main() {
     factory_callbacks.register_evaluator = binding.register_evaluator;
     factory_callbacks.run_donor_capture = binding.run_donor_capture;
     factory_callbacks.run_counterfactual = binding.run_counterfactual;
+    factory_callbacks.run_concept_capture = binding.run_concept_capture;
     factory_callbacks.run_concept_synthesis = binding.run_concept_synthesis;
     factory_callbacks.run_representation_augmentation_with_state =
         binding.run_representation_augmentation_with_state;

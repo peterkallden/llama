@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <cmath>
+#include <ctime>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <mutex>
@@ -1196,6 +1197,70 @@ bool daemon_flydelta_run_search_pipeline(
         fixture, config, {input}, runner, batch_runner, result, error);
 }
 
+bool daemon_flydelta_register_composed_directions(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const std::string & source_ref,
+        std::vector<common_flydelta_basis_direction> directions,
+        const std::string & derivation,
+        std::string & reference,
+        std::string & error) {
+    error.clear();
+    if (directions.empty() || directions.size() > 64 || derivation.empty()) {
+        error = "FlyDelta composed direction artifact is invalid";
+        return false;
+    }
+    json serialized = {{"directions", json::array()}};
+    std::string identity = source_ref + "\n" + derivation;
+    for (const auto & direction : directions) {
+        if (direction.layer_index < 1 || direction.values.size() != provider->model_n_embd) {
+            error = "FlyDelta composed direction artifact has an invalid layer or dimension";
+            return false;
+        }
+        serialized["directions"].push_back({
+            {"layer_index", static_cast<uint32_t>(direction.layer_index)},
+            {"values", direction.values},
+        });
+        identity += "\n" + std::to_string(direction.layer_index);
+        for (const float value : direction.values) identity += ":" + std::to_string(value);
+    }
+    reference = "flydelta://runtime/composed/" +
+        hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+    if (provider->resources != nullptr) {
+        agent_resource_put_request request;
+        request.name = "flydelta-composed-" +
+            hash_sha256_hex(identity.data(), identity.size()).substr(0, 16) + ".json";
+        request.description = "Durable composed FlyDelta intervention direction";
+        request.mime_type = "application/json";
+        request.text = serialized.dump();
+        request.scope = common_runtime_resource_scope::session;
+        request.namespace_id = provider->authority.namespace_id;
+        request.session_id = provider->authority.session_id;
+        request.source_provider = "flydelta";
+        request.source_tool = "compose-direction";
+        request.created_at = std::time(nullptr);
+        request.metadata.purpose = "flydelta_composed_direction";
+        request.metadata.content_summary =
+            "Durable normalized composed FlyDelta direction for a resumed bounded slice.";
+        request.metadata.processing_cache_key = reference;
+        request.lineage.parent_uri = source_ref;
+        request.lineage.chunk_count = 1;
+        request.lineage.chunk_index = 0;
+        request.lineage.derivation = derivation;
+        agent_resource_descriptor descriptor;
+        if (!provider->resources->put_text(request, descriptor, error)) return false;
+        if (descriptor.uri.empty()) {
+            error = "FlyDelta composed direction resource has no URI";
+            return false;
+        }
+        reference = descriptor.uri;
+    }
+    {
+        std::lock_guard<std::mutex> lock(provider->composed_direction_mutex);
+        provider->composed_directions[reference] = std::move(directions);
+    }
+    return true;
+}
+
 bool daemon_flydelta_register_composed_direction(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const std::string & source_ref,
@@ -1230,16 +1295,12 @@ bool daemon_flydelta_register_composed_direction(
     }
     const float inverse_norm = static_cast<float>(1.0 / std::sqrt(squared));
     for (float & value : values) value *= inverse_norm;
-    reference = "flydelta://runtime/composed/" +
-        hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
     common_flydelta_basis_direction direction;
     direction.layer_index = basis.layer_index;
     direction.values = std::move(values);
-    {
-        std::lock_guard<std::mutex> lock(provider->composed_direction_mutex);
-        provider->composed_directions[reference] = {std::move(direction)};
-    }
-    return true;
+    return daemon_flydelta_register_composed_directions(
+        provider, source_ref, {std::move(direction)},
+        "flydelta:coefficient-composition", reference, error);
 }
 
 bool daemon_flydelta_run_coefficient_arm_batch(
@@ -1575,6 +1636,258 @@ bool daemon_flydelta_run_adaptive_alpha_slice(
         ? common_flydelta_search_status::candidate_available
         : common_flydelta_search_status::no_useful_utility;
     return true;
+}
+
+// Orthogonal remains a same-phase experimental escape.  The common layer
+// derives the profile-space residual from persisted BootstrapZoom trials; the
+// daemon owns only the fresh baseline/control wave that validates it.
+bool daemon_flydelta_run_orthogonal_slice(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_bootstrap_zoom_state & resume,
+        common_flydelta_search_pipeline_result & output,
+        common_flydelta_bootstrap_zoom_state & next,
+        std::string & error) {
+    error.clear();
+    common_flydelta_experiment_fixture fixture;
+    if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
+    common_flydelta_orthogonal_search_config config;
+    common_flydelta_orthogonal_search_input input;
+    if (!common_flydelta_prepare_orthogonal_search_input(config, resume, input, error)) {
+        return false;
+    }
+    common_flydelta_orthogonal_search_result orthogonal;
+    if (!common_flydelta_build_orthogonal_search_direction(
+            config, input.rank1_intervention, input.arms, orthogonal, error)) return false;
+    if (!orthogonal.available) {
+        output = {};
+        output.search_status = common_flydelta_search_status::no_useful_utility;
+        next = resume;
+        return true;
+    }
+    std::vector<common_flydelta_basis_direction> available;
+    if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref, available, error)) {
+        return false;
+    }
+    const auto normalize = [](std::vector<float> values) {
+        double energy = 0.0;
+        for (const float value : values) energy += static_cast<double>(value) * value;
+        if (energy > 0.0) {
+            const float inverse = static_cast<float>(1.0 / std::sqrt(energy));
+            for (float & value : values) value *= inverse;
+        }
+        return values;
+    };
+    struct orthogonal_control {
+        std::string label;
+        std::vector<float> profile;
+        bool opposite = false;
+    };
+    std::vector<orthogonal_control> controls;
+    controls.push_back({"rank1", input.rank1_intervention, false});
+    controls.push_back({"orthogonal", orthogonal.direction, false});
+    std::vector<float> sum(input.rank1_intervention.size(), 0.0f);
+    std::vector<float> difference(input.rank1_intervention.size(), 0.0f);
+    for (size_t index = 0; index < sum.size(); ++index) {
+        sum[index] = input.rank1_intervention[index] + orthogonal.direction[index];
+        difference[index] = input.rank1_intervention[index] - orthogonal.direction[index];
+    }
+    controls.push_back({"sum", normalize(std::move(sum)), false});
+    controls.push_back({"difference", normalize(std::move(difference)), true});
+
+    common_flydelta_arm_batch_request batch;
+    batch.batch_id = job.id + ":orthogonal";
+    batch.wave_id = "orthogonal-controls";
+    common_flydelta_arm_request baseline;
+    baseline.job_id = job.id;
+    baseline.wave_id = batch.wave_id;
+    baseline.proposal_index = 0;
+    baseline.context_ref = job.seed.baseline_ref;
+    baseline.fixture_ref = fixture.id;
+    baseline.intervention_ref = job.seed.candidate_ref;
+    baseline.batch_compatibility_key = baseline.context_ref + "\n" + baseline.fixture_ref;
+    baseline.layer_indices = input.local_layers;
+    baseline.coefficients.assign(input.local_layers.size(), 0.0f);
+    baseline.fresh_context = true;
+    baseline.request_capture = true;
+    baseline.request_teacher_forced_margin = true;
+    baseline.max_capture_bytes = 4U * 1024U * 1024U;
+    baseline.max_generated_tokens = 64;
+    baseline.arm_id = "flydelta://runtime/" + job.id + "/orthogonal/baseline";
+    if (!common_flydelta_arm_request_validate(baseline, error)) return false;
+    batch.arms.push_back(baseline);
+
+    std::vector<common_flydelta_bootstrap_zoom_candidate> candidates;
+    candidates.reserve(controls.size());
+    for (size_t control_index = 0; control_index < controls.size(); ++control_index) {
+        const auto & control = controls[control_index];
+        common_flydelta_bootstrap_zoom_candidate candidate;
+        candidate.phase = control.opposite
+            ? common_flydelta_bootstrap_zoom_phase::sign_control
+            : common_flydelta_bootstrap_zoom_phase::profile_zoom;
+        candidate.total_scale = std::max(0.0001f, resume.selected_scale);
+        candidate.opposite_sign_control = control.opposite;
+        for (size_t layer = 0; layer < input.local_layers.size(); ++layer) {
+            if (std::fabs(control.profile[layer]) <= 0.000001f) continue;
+            const auto direction = std::find_if(available.begin(), available.end(),
+                [&](const auto & value) {
+                    return value.layer_index == static_cast<int32_t>(input.local_layers[layer]);
+                });
+            if (direction == available.end()) {
+                error = "FlyDelta orthogonal control lacks a compatible source direction";
+                return false;
+            }
+            candidate.layer_indices.push_back(input.local_layers[layer]);
+            candidate.layer_weights.push_back(control.profile[layer]);
+        }
+        candidate.layer_weights = normalize(std::move(candidate.layer_weights));
+        if (!common_flydelta_bootstrap_zoom_candidate_validate(candidate, error)) return false;
+        common_flydelta_arm_request arm;
+        arm.job_id = job.id;
+        arm.wave_id = batch.wave_id;
+        arm.proposal_index = control_index + 1;
+        arm.context_ref = job.seed.baseline_ref;
+        arm.fixture_ref = fixture.id;
+        arm.intervention_ref = job.seed.candidate_ref;
+        arm.batch_compatibility_key = arm.context_ref + "\n" + arm.fixture_ref;
+        arm.layer_indices = candidate.layer_indices;
+        arm.coefficients = candidate.layer_weights;
+        arm.alpha = candidate.total_scale;
+        arm.apply_overlay = true;
+        arm.fresh_context = true;
+        arm.request_capture = true;
+        arm.request_teacher_forced_margin = true;
+        arm.request_generation = true;
+        arm.request_host_verification = true;
+        arm.max_capture_bytes = 4U * 1024U * 1024U;
+        arm.max_generated_tokens = 64;
+        const std::string identity = job.id + "\n" + batch.wave_id + "\n" + control.label;
+        arm.arm_id = "flydelta://runtime/" + job.id + "/orthogonal/" +
+            hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+        if (!common_flydelta_arm_request_validate(arm, error)) return false;
+        candidates.push_back(std::move(candidate));
+        batch.arms.push_back(std::move(arm));
+    }
+    common_flydelta_arm_batch_result executed;
+    if (!daemon_flydelta_execute_batch(provider, batch, executed, error) ||
+            executed.arms.size() != batch.arms.size()) {
+        if (error.empty()) error = "FlyDelta orthogonal control batch returned incomplete arms";
+        return false;
+    }
+    const auto & baseline_result = executed.arms.front();
+    if (!baseline_result.executed || baseline_result.arm_id != baseline.arm_id) {
+        error = "FlyDelta orthogonal baseline arm is invalid";
+        return false;
+    }
+    std::vector<common_flydelta_bootstrap_zoom_trial> trials;
+    trials.reserve(candidates.size());
+    const auto anchor_direction = std::find_if(available.begin(), available.end(),
+        [&](const auto & value) {
+            return value.layer_index == static_cast<int32_t>(resume.anchor_layer);
+        });
+    if (anchor_direction == available.end()) {
+        error = "FlyDelta orthogonal surface lacks the rank-one anchor direction";
+        return false;
+    }
+    common_flydelta_search_pipeline_direction_result direction_result;
+    // A direction candidate is an embedding-space vector.  Orthogonal here
+    // is a local layer-profile coordinate, so retain the compatible anchor
+    // vector and record the new experimental surface exclusively in origin
+    // and the persisted surface trials rather than fabricating a mismatched
+    // embedding-space direction.
+    direction_result.direction.kind = common_flydelta_direction_kind::raw_repair;
+    direction_result.direction.layer_index = anchor_direction->layer_index;
+    direction_result.direction.values = anchor_direction->values;
+    direction_result.direction.origin = "runtime_orthogonal_profile";
+    direction_result.direction.extraction_id = job.seed.candidate_ref;
+    direction_result.direction.source_samples = orthogonal.source_arm_count;
+    direction_result.direction.retained_samples = orthogonal.source_arm_count;
+    direction_result.direction.experimental_only = true;
+    for (size_t index = 0; index < candidates.size(); ++index) {
+        const auto & arm = executed.arms[index + 1];
+        if (!arm.executed || arm.arm_id != batch.arms[index + 1].arm_id) {
+            error = "FlyDelta orthogonal control arm is invalid";
+            return false;
+        }
+        common_flydelta_bootstrap_zoom_trial trial;
+        trial.candidate = candidates[index];
+        trial.outcome = arm.host_outcome;
+        trial.host_evaluated = arm.host_evaluated;
+        trial.verifier_known = arm.verifier_known;
+        trial.margin_available = arm.margin.available && baseline_result.margin.available;
+        trial.margin_delta = trial.margin_available
+            ? arm.margin.normalized_delta() - baseline_result.margin.normalized_delta() : 0.0f;
+        if (!daemon_flydelta_diagnostics_for_arm(provider, job, baseline.arm_id,
+                batch.arms[index + 1], trial.candidate.layer_indices.front(),
+                trial.diagnostics, error)) return false;
+        trial.diagnostics_available = trial.diagnostics.schema_version == 1 &&
+            trial.diagnostics.layer_index != 0;
+        if (!common_flydelta_bootstrap_zoom_trial_validate(trial, error)) return false;
+        trials.push_back(trial);
+        common_flydelta_intervention_region_trial region_trial;
+        region_trial.candidate.layer_indices = trial.candidate.layer_indices;
+        region_trial.candidate.anchor_layer_index = resume.anchor_layer;
+        region_trial.candidate.total_scale = trial.candidate.total_scale;
+        region_trial.candidate.per_layer_scale = trial.candidate.total_scale /
+            std::sqrt(static_cast<float>(std::max<size_t>(1, trial.candidate.layer_indices.size())));
+        region_trial.requested_total_scale = trial.candidate.total_scale;
+        region_trial.executed_total_scale = trial.candidate.total_scale;
+        region_trial.outcome = trial.outcome;
+        region_trial.quality_delta = arm.quality - baseline_result.quality;
+        region_trial.margin = arm.margin;
+        region_trial.executed = arm.executed;
+        region_trial.verifier_known = arm.verifier_known;
+        region_trial.geometry_available = trial.diagnostics_available;
+        region_trial.geometry = trial.diagnostics;
+        region_trial.safe_to_continue = trial.diagnostics_available &&
+            trial.diagnostics.cosine >= config.minimum_cosine &&
+            trial.diagnostics.progress > 0.0f &&
+            trial.diagnostics.leakage <= config.maximum_leakage &&
+            trial.diagnostics.shift_norm <= config.maximum_shift_norm;
+        region_trial.promising = region_trial.safe_to_continue &&
+            trial.margin_available && trial.margin_delta > 0.0f;
+        region_trial.search_score = trial.margin_available ? trial.margin_delta : 0.0f;
+        region_trial.evidence_ref = arm.generation_ref;
+        if (!common_flydelta_intervention_region_trial_validate(region_trial, error)) return false;
+        direction_result.region_trials.push_back(std::move(region_trial));
+    }
+    common_flydelta_bootstrap_zoom_selection selection;
+    bool has_safe_trial = false;
+    for (const auto & trial : trials) {
+        if (trial.outcome == common_flydelta_counterfactual_outcome::harmed) continue;
+        const bool geometry_safe = !trial.diagnostics_available ||
+            (trial.diagnostics.cosine >= config.minimum_cosine &&
+             trial.diagnostics.progress > 0.0f &&
+             trial.diagnostics.leakage <= config.maximum_leakage &&
+             trial.diagnostics.shift_norm <= config.maximum_shift_norm);
+        if (geometry_safe) {
+            has_safe_trial = true;
+            break;
+        }
+    }
+    if (has_safe_trial && !common_flydelta_select_bootstrap_zoom_trial(
+            trials, selection, error)) return false;
+    direction_result.region_selection.selected = selection.selected;
+    direction_result.region_selection.trial_index = selection.trial_index;
+    direction_result.region_selection.score = selection.search_score;
+    output = {};
+    output.directions.push_back(std::move(direction_result));
+    output.search_status = selection.selected
+        ? common_flydelta_search_status::candidate_available
+        : common_flydelta_search_status::no_useful_utility;
+    output.selection.selected = selection.selected;
+    output.selection.intervention_region = selection.selected;
+    output.selection.direction_index = 0;
+    output.selection.region_trial_index = selection.trial_index;
+    output.selection.score = selection.search_score;
+    next = resume;
+    next.parent_surface_revision = resume.surface_revision;
+    next.surface_revision = resume.surface_revision + 1;
+    next.search_rank = 2;
+    next.surface_origin = "orthogonal_profile";
+    next.parent_surface_ref = resume.state_ref;
+    next.surface_trials = std::move(trials);
+    return common_flydelta_bootstrap_zoom_state_validate(next, error);
 }
 
 bool daemon_flydelta_run_post_bootstrap_slice(
@@ -2001,7 +2314,10 @@ make_daemon_flydelta_resource_binding_factory(
                 }
                 common_flydelta_bootstrap_zoom_state bootstrap;
                 if (!resolve_bootstrap_state(bootstrap_ref, bootstrap, state_error)) return false;
-                if (bootstrap.phase == common_flydelta_bootstrap_zoom_phase::adaptive_alpha) {
+                if (plan.run_orthogonal_search) {
+                    if (!daemon_flydelta_run_orthogonal_slice(
+                            provider, job, bootstrap, result, bootstrap, state_error)) return false;
+                } else if (bootstrap.phase == common_flydelta_bootstrap_zoom_phase::adaptive_alpha) {
                     if (!daemon_flydelta_run_adaptive_alpha_slice(
                             provider, job, bootstrap, result, bootstrap, state_error)) return false;
                 } else if (!daemon_flydelta_run_bootstrap_zoom_slice(
