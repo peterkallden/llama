@@ -12,6 +12,8 @@
 #include "agent/adaptation/flydelta/flydelta-alpha-response-search.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
+#include "agent/adaptation/flydelta/flydelta-concept.h"
+#include "agent/adaptation/flydelta/flydelta-concept-capture.h"
 #include "agent/adaptation/flydelta/flydelta-deep-search.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation-state-store.h"
@@ -40,6 +42,7 @@
 
 #include <cstdio>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <ctime>
 #include <filesystem>
@@ -63,13 +66,15 @@ struct daemon_flydelta_resource_provider {
     agent_resource_read_authority authority;
     std::string model_profile_fingerprint;
     std::string capture_layout_revision;
+    std::shared_ptr<common_flydelta_teaching_material_runtime> teaching_material_runtime;
     int n_predict = 0;
     int n_threads = 0;
     size_t model_n_embd = 0;
     size_t model_n_layers = 0;
-    // The lifecycle journal is the daemon-owned durable state seam.  Raw
-    // activations remain ephemeral and are retained only for the bounded
-    // arm wave that produced them.
+    // The lifecycle journal is the daemon-owned durable state seam. Captures
+    // are kept in memory for the active bounded wave and mirrored to the
+    // existing resource store when a later resume/materialization step needs
+    // them; they are never embedded in queue state.
     std::shared_ptr<common_learning_lifecycle_store> lifecycle_store;
     std::mutex capture_mutex;
     std::unordered_map<std::string, std::shared_ptr<const common_flydelta_hidden_state_capture>> captures;
@@ -81,6 +86,176 @@ struct daemon_flydelta_resource_provider {
     std::unordered_map<std::string, std::string> bootstrap_state_by_orchestration_ref;
     std::unordered_map<std::string, std::string> bootstrap_state_by_continuation;
 };
+
+bool daemon_flydelta_read_json(
+        const daemon_flydelta_resource_provider & provider,
+        const std::string & reference,
+        json & parsed,
+        std::string & error);
+
+struct daemon_flydelta_concept_relation_material {
+    common_flydelta_teaching_relation relation;
+    std::string semantic_anchor;
+    int32_t layer_index = -1;
+};
+
+bool daemon_flydelta_parse_teaching_origin(
+        const std::string & value,
+        common_flydelta_teaching_origin & origin) {
+    if (value == "none") origin = common_flydelta_teaching_origin::none;
+    else if (value == "observed") origin = common_flydelta_teaching_origin::observed;
+    else if (value == "host_derived") origin = common_flydelta_teaching_origin::host_derived;
+    else if (value == "user_supplied") origin = common_flydelta_teaching_origin::user_supplied;
+    else if (value == "host_counterfactual") origin = common_flydelta_teaching_origin::host_counterfactual;
+    else return false;
+    return true;
+}
+
+json daemon_flydelta_teaching_relation_json(
+        const common_flydelta_teaching_relation & relation) {
+    return {
+        {"kind", "flydelta_teaching_relation"},
+        {"schema_version", relation.schema_version},
+        {"id", relation.id},
+        {"teaching_key", relation.teaching_key},
+        {"source", common_adaptation_evidence_source_name(relation.source)},
+        {"behavior_key", relation.behavior_key},
+        {"scope", {
+            {"namespace_id", relation.scope.namespace_id},
+            {"project_id", relation.scope.project_id},
+            {"session_id", relation.scope.session_id},
+            {"turn_id", relation.scope.turn_id},
+        }},
+        {"task_fingerprint", relation.task_fingerprint},
+        {"baseline_ref", relation.baseline_ref},
+        {"conditioned_ref", relation.conditioned_ref},
+        {"control_ref", relation.control_ref},
+        {"verifier_ref", relation.verifier_ref},
+        {"evidence_ref", relation.evidence_ref},
+        {"contrast_ref", relation.contrast_ref},
+        {"procedure_ref", relation.procedure_ref},
+        {"blueprint_ref", relation.blueprint_ref},
+        {"status", common_flydelta_teaching_relation_status_name(relation.status)},
+        {"baseline_origin", common_flydelta_teaching_origin_name(relation.baseline_origin)},
+        {"conditioned_origin", common_flydelta_teaching_origin_name(relation.conditioned_origin)},
+        {"control_origin", common_flydelta_teaching_origin_name(relation.control_origin)},
+        {"confidence", relation.confidence},
+        {"host_approved", relation.host_approved},
+        // V0 uses the daemon's existing capture anchor.  The host relation
+        // remains semantic/provenance material; the ordinary model-host
+        // direction layer is the only layer policy used by this binding.
+        {"semantic_anchor", relation.task_fingerprint},
+        {"layer_index", 1},
+    };
+}
+
+bool daemon_flydelta_persist_teaching_relation(
+        agent_resource_store * resources,
+        const agent_resource_read_authority & authority,
+        const common_flydelta_teaching_relation & relation,
+        common_flydelta_teaching_relation & persisted_relation,
+        std::string & error) {
+    error.clear();
+    if (resources == nullptr || relation.id.empty()) {
+        error = "FlyDelta teaching relation persistence is not configured";
+        return false;
+    }
+    const std::string identity = relation.id + "\n" +
+        relation.teaching_key + "\n" + relation.behavior_key;
+    agent_resource_put_request request;
+    request.name = "flydelta-teaching-relation-" +
+        hash_sha256_hex(identity.data(), identity.size()).substr(0, 24) + ".json";
+    request.description = "Durable host-verified FlyDelta teaching relation";
+    request.mime_type = "application/json";
+    request.text = daemon_flydelta_teaching_relation_json(relation).dump();
+    request.scope = common_runtime_resource_scope::session;
+    request.namespace_id = authority.namespace_id;
+    request.session_id = authority.session_id;
+    request.source_provider = "flydelta";
+    request.source_tool = "teaching-relation";
+    request.created_at = std::time(nullptr);
+    request.metadata.purpose = "flydelta_teaching_relation";
+    request.metadata.content_summary =
+        "Durable host-verified teaching relation for concept capture and synthesis.";
+    request.metadata.processing_cache_key = identity;
+    request.lineage.parent_uri = relation.evidence_ref;
+    request.lineage.chunk_count = 1;
+    request.lineage.chunk_index = 0;
+    request.lineage.derivation = "host-teaching-relation";
+    agent_resource_descriptor descriptor;
+    if (!resources->put_text(request, descriptor, error) || descriptor.uri.empty()) {
+        if (error.empty()) error = "FlyDelta teaching relation resource has no URI";
+        return false;
+    }
+    persisted_relation = relation;
+    persisted_relation.id = descriptor.uri;
+    return true;
+}
+
+bool daemon_flydelta_parse_teaching_relation(
+        const daemon_flydelta_resource_provider & provider,
+        const std::string & reference,
+        daemon_flydelta_concept_relation_material & material,
+        std::string & error) {
+    json parsed;
+    if (!daemon_flydelta_read_json(provider, reference, parsed, error)) return false;
+    const json value = parsed.contains("relation") && parsed["relation"].is_object()
+        ? parsed["relation"] : parsed;
+    try {
+        material = {};
+        auto & relation = material.relation;
+        relation.schema_version = value.value("schema_version", 0);
+        relation.id = value.value("id", reference);
+        relation.teaching_key = value.value("teaching_key", "");
+        relation.behavior_key = value.value("behavior_key", "");
+        relation.task_fingerprint = value.value("task_fingerprint", "");
+        relation.baseline_ref = value.value("baseline_ref", "");
+        relation.conditioned_ref = value.value("conditioned_ref", "");
+        relation.control_ref = value.value("control_ref", "");
+        relation.verifier_ref = value.value("verifier_ref", "");
+        relation.evidence_ref = value.value("evidence_ref", "");
+        relation.contrast_ref = value.value("contrast_ref", "");
+        relation.procedure_ref = value.value("procedure_ref", "");
+        relation.blueprint_ref = value.value("blueprint_ref", "");
+        relation.confidence = value.value("confidence", 0.0f);
+        relation.host_approved = value.value("host_approved", false);
+        relation.status = common_flydelta_teaching_relation_status::resolved;
+        const auto source = common_adaptation_evidence_source_from_name(
+            value.value("source", ""));
+        if (!source) {
+            error = "FlyDelta teaching relation source is invalid";
+            return false;
+        }
+        relation.source = *source;
+        const auto scope = value.value("scope", json::object());
+        relation.scope.namespace_id = scope.value("namespace_id", "");
+        relation.scope.project_id = scope.value("project_id", "");
+        relation.scope.session_id = scope.value("session_id", "");
+        relation.scope.turn_id = scope.value("turn_id", "");
+        if (!daemon_flydelta_parse_teaching_origin(
+                value.value("baseline_origin", "none"), relation.baseline_origin) ||
+            !daemon_flydelta_parse_teaching_origin(
+                value.value("conditioned_origin", "none"), relation.conditioned_origin) ||
+            !daemon_flydelta_parse_teaching_origin(
+                value.value("control_origin", "none"), relation.control_origin)) {
+            error = "FlyDelta teaching relation provenance is invalid";
+            return false;
+        }
+        material.semantic_anchor = value.value("semantic_anchor", relation.task_fingerprint);
+        material.layer_index = value.value("layer_index", -1);
+    } catch (const std::exception & exception) {
+        error = std::string("FlyDelta teaching relation resource is malformed: ") + exception.what();
+        return false;
+    }
+    if (!common_flydelta_teaching_relation_validate(material.relation, error) ||
+            material.semantic_anchor.empty() || material.semantic_anchor.size() > 512 ||
+            material.layer_index < 0 ||
+            static_cast<size_t>(material.layer_index) >= provider.model_n_layers) {
+        if (error.empty()) error = "FlyDelta teaching relation material has no valid capture anchor";
+        return false;
+    }
+    return true;
+}
 
 bool daemon_flydelta_read_json(
         const daemon_flydelta_resource_provider & provider,
@@ -451,6 +626,229 @@ bool daemon_flydelta_score_teacher_forced_margin_batch(
     return true;
 }
 
+bool daemon_flydelta_put_json_resource(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const std::string & name,
+        const std::string & purpose,
+        const std::string & parent_uri,
+        const std::string & text,
+        std::string & reference,
+        std::string & error) {
+    error.clear();
+    if (!provider || provider->resources == nullptr || name.empty() || purpose.empty() ||
+            text.empty() || text.size() > 16U * 1024U * 1024U) {
+        error = "FlyDelta resource persistence request is invalid";
+        return false;
+    }
+    agent_resource_put_request request;
+    request.name = name;
+    request.description = "Durable FlyDelta runtime material";
+    request.mime_type = "application/json";
+    request.text = text;
+    request.scope = common_runtime_resource_scope::session;
+    request.namespace_id = provider->authority.namespace_id;
+    request.session_id = provider->authority.session_id;
+    request.source_provider = "flydelta";
+    request.source_tool = purpose;
+    request.created_at = std::time(nullptr);
+    request.metadata.purpose = purpose;
+    request.metadata.content_summary = "Opaque FlyDelta material for bounded worker resume.";
+    request.lineage.parent_uri = parent_uri;
+    request.lineage.chunk_count = 1;
+    request.lineage.chunk_index = 0;
+    request.lineage.derivation = purpose;
+    agent_resource_descriptor descriptor;
+    if (!provider->resources->put_text(request, descriptor, error) || descriptor.uri.empty()) {
+        if (error.empty()) error = "FlyDelta resource store returned no URI";
+        return false;
+    }
+    reference = descriptor.uri;
+    return true;
+}
+
+json daemon_flydelta_capture_json(
+        const common_flydelta_hidden_state_capture & capture) {
+    return {
+        {"kind", "flydelta_hidden_state_capture"},
+        {"schema_version", capture.schema_version},
+        {"captured", capture.captured},
+        {"model_profile_fingerprint", capture.model_profile_fingerprint},
+        {"capture_layout_revision", capture.capture_layout_revision},
+        {"layer_indices", capture.layer_indices},
+        {"n_embd", capture.n_embd},
+        {"position", common_flydelta_capture_position_name(capture.position)},
+        {"token_index", capture.token_index},
+        {"values", capture.values},
+        {"failure_reason", capture.failure_reason},
+    };
+}
+
+bool daemon_flydelta_capture_from_json(
+        const json & value,
+        common_flydelta_hidden_state_capture & capture,
+        std::string & error) {
+    error.clear();
+    try {
+        capture = {};
+        capture.schema_version = value.value("schema_version", 0);
+        capture.captured = value.value("captured", false);
+        capture.model_profile_fingerprint = value.value("model_profile_fingerprint", "");
+        capture.capture_layout_revision = value.value("capture_layout_revision", "");
+        capture.layer_indices = value.value("layer_indices", std::vector<uint32_t>{});
+        capture.n_embd = value.value("n_embd", 0U);
+        const auto position = value.value("position", "prompt_row");
+        capture.position = position == "generation_boundary"
+            ? common_flydelta_capture_position::generation_boundary
+            : common_flydelta_capture_position::prompt_row;
+        capture.token_index = value.value("token_index", -1);
+        capture.values = value.value("values", std::vector<float>{});
+        capture.failure_reason = value.value("failure_reason", "");
+    } catch (const std::exception & exception) {
+        error = std::string("FlyDelta capture resource is malformed: ") + exception.what();
+        return false;
+    }
+    return common_flydelta_hidden_state_capture_validate(
+        capture, 16U * 1024U * 1024U, error);
+}
+
+bool daemon_flydelta_load_persisted_capture(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const std::string & arm_id,
+        std::shared_ptr<const common_flydelta_hidden_state_capture> & capture) {
+    if (!provider || provider->resources == nullptr || arm_id.empty()) return false;
+    const std::string name = "flydelta-capture-" +
+        hash_sha256_hex(arm_id.data(), arm_id.size()).substr(0, 24) + ".json";
+    std::vector<agent_resource_descriptor> descriptors;
+    std::string error;
+    if (!provider->resources->list(provider->authority, descriptors, error)) return false;
+    for (const auto & descriptor : descriptors) {
+        if (descriptor.name != name || descriptor.mime_type != "application/json") continue;
+        std::string text;
+        if (!provider->resources->read_text(
+                descriptor.uri, provider->authority, 16U * 1024U * 1024U, text, error)) {
+            return false;
+        }
+        json value;
+        try {
+            value = json::parse(text);
+        } catch (...) {
+            return false;
+        }
+        common_flydelta_hidden_state_capture parsed;
+        if (!daemon_flydelta_capture_from_json(value, parsed, error)) return false;
+        capture = std::make_shared<const common_flydelta_hidden_state_capture>(
+            std::move(parsed));
+        std::lock_guard<std::mutex> lock(provider->capture_mutex);
+        provider->captures[arm_id] = capture;
+        return true;
+    }
+    return false;
+}
+
+bool daemon_flydelta_capture_layer(
+        const common_flydelta_hidden_state_capture & capture,
+        int32_t layer_index,
+        std::vector<float> & values,
+        std::string & error) {
+    error.clear();
+    const auto it = std::find(capture.layer_indices.begin(), capture.layer_indices.end(),
+        static_cast<uint32_t>(layer_index));
+    if (it == capture.layer_indices.end() || capture.n_embd == 0) {
+        error = "FlyDelta concept capture does not contain the requested layer";
+        return false;
+    }
+    const size_t offset = static_cast<size_t>(std::distance(capture.layer_indices.begin(), it)) *
+        capture.n_embd;
+    values.assign(capture.values.begin() + static_cast<std::ptrdiff_t>(offset),
+        capture.values.begin() + static_cast<std::ptrdiff_t>(offset + capture.n_embd));
+    return true;
+}
+
+bool daemon_flydelta_persist_capture(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const std::string & arm_id,
+        const std::shared_ptr<const common_flydelta_hidden_state_capture> & capture,
+        std::string & reference,
+        std::string & error) {
+    if (!capture || !capture->captured) {
+        error = "FlyDelta cannot persist an empty hidden-state capture";
+        return false;
+    }
+    return daemon_flydelta_put_json_resource(
+        provider,
+        "flydelta-capture-" + hash_sha256_hex(arm_id.data(), arm_id.size()).substr(0, 24) + ".json",
+        "flydelta_hidden_state_capture",
+        arm_id,
+        daemon_flydelta_capture_json(*capture).dump(),
+        reference,
+        error);
+}
+
+bool daemon_flydelta_persist_concept_trajectory(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const daemon_flydelta_concept_relation_material & material,
+        const std::string & group_ref,
+        const std::string & job_id,
+        const std::string & baseline_capture_ref,
+        const std::string & conditioned_capture_ref,
+        const std::string & control_capture_ref,
+        const common_flydelta_hidden_state_capture & baseline,
+        const common_flydelta_hidden_state_capture & conditioned,
+        const common_flydelta_hidden_state_capture & control,
+        std::string & trajectory_ref,
+        std::string & error) {
+    std::vector<float> baseline_values;
+    std::vector<float> conditioned_values;
+    std::vector<float> control_values;
+    if (!daemon_flydelta_capture_layer(baseline, material.layer_index, baseline_values, error) ||
+            !daemon_flydelta_capture_layer(conditioned, material.layer_index, conditioned_values, error) ||
+            !daemon_flydelta_capture_layer(control, material.layer_index, control_values, error)) {
+        return false;
+    }
+    const auto & relation = material.relation;
+    const std::string trajectory_identity = job_id + "\n" + relation.id;
+    const std::string trajectory_id = "flydelta://trajectory/" +
+        hash_sha256_hex(trajectory_identity.data(), trajectory_identity.size()).substr(0, 32);
+    const json payload = {
+        {"kind", "flydelta_concept_trajectory"},
+        {"schema_version", 1},
+        {"id", trajectory_id},
+        {"group_ref", group_ref},
+        {"fixture_ref", relation.verifier_ref},
+        {"semantic_anchor", material.semantic_anchor},
+        {"layer_index", material.layer_index},
+        {"baseline_capture_ref", baseline_capture_ref},
+        {"conditioned_capture_ref", conditioned_capture_ref},
+        {"control_capture_ref", control_capture_ref},
+        {"baseline", baseline_values},
+        {"conditioned", conditioned_values},
+        {"control", control_values},
+        {"aligned", true},
+        {"conditioned_host_verified", relation.host_approved},
+        {"teaching_key", relation.teaching_key},
+        {"concept_key", relation.teaching_key},
+        {"extraction_id", "flydelta://extraction/" + relation.teaching_key},
+        {"behavior_key", relation.behavior_key},
+        {"source", common_adaptation_evidence_source_name(relation.source)},
+        {"source_ref", relation.id},
+        {"grounding_ref", relation.contrast_ref},
+        {"verifier_ref", relation.verifier_ref},
+        {"model_profile_fingerprint", provider->model_profile_fingerprint},
+        {"tokenizer_fingerprint", provider->model_profile_fingerprint + ":tokenizer"},
+        {"template_fingerprint", provider->model_profile_fingerprint + ":template"},
+        {"capture_layout_revision", provider->capture_layout_revision},
+        {"scope_fingerprint", relation.scope.namespace_id + ":" + relation.scope.session_id},
+    };
+    return daemon_flydelta_put_json_resource(
+        provider,
+        "flydelta-concept-trajectory-" + hash_sha256_hex(trajectory_id.data(), trajectory_id.size()).substr(0, 24) + ".json",
+        "flydelta_concept_trajectory",
+        relation.id,
+        payload.dump(),
+        trajectory_ref,
+        error);
+}
+
 bool daemon_flydelta_finalize_arm(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const common_flydelta_arm_request & arm,
@@ -471,8 +869,19 @@ bool daemon_flydelta_finalize_arm(
     }
     if (generation.flydelta_capture && generation.flydelta_capture->captured) {
         result.capture_ref = "flydelta://runtime/capture/" + arm.arm_id;
-        std::lock_guard<std::mutex> lock(provider->capture_mutex);
-        provider->captures[arm.arm_id] = generation.flydelta_capture;
+        {
+            std::lock_guard<std::mutex> lock(provider->capture_mutex);
+            provider->captures[arm.arm_id] = generation.flydelta_capture;
+        }
+        std::string persisted_capture_ref;
+        if (!daemon_flydelta_persist_capture(
+                provider, arm.arm_id, generation.flydelta_capture,
+                persisted_capture_ref, error)) return false;
+        result.capture_ref = persisted_capture_ref;
+    }
+    if (!arm.request_host_verification) {
+        result.generation_ref = "flydelta://runtime/generation/" + arm.arm_id;
+        return common_flydelta_arm_result_validate(result, error);
     }
     json fixture;
     if (!daemon_flydelta_read_json(*provider, arm.fixture_ref, fixture, error)) return false;
@@ -527,6 +936,225 @@ bool daemon_flydelta_execute_batch(
         provider->host->context_key().n_parallel > 1;
     return common_agent_server_context_host_run_flydelta_arm_batch(
         provider->host, binding, native_batch, request, result, error);
+}
+
+bool daemon_flydelta_run_concept_capture(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        std::vector<std::string> & trajectory_refs,
+        std::string & error) {
+    error.clear();
+    trajectory_refs.clear();
+    if (!provider || !provider->teaching_material_runtime ||
+            job.teaching_material_group_ref.empty()) {
+        error = "MODEL_ADAPTER_CAPABILITY_UNAVAILABLE: FlyDelta teaching material runtime is not bound";
+        return false;
+    }
+    common_flydelta_teaching_material_group group;
+    if (!provider->teaching_material_runtime->store().resolve_relation_set(
+            job.teaching_material_group_ref, group, error)) return false;
+    if (!group.relation_set_ready || group.relation_refs.size() < group.minimum_relations) {
+        error = "FlyDelta concept capture requires a relation-ready teaching material group";
+        return false;
+    }
+
+    std::vector<daemon_flydelta_concept_relation_material> materials;
+    materials.reserve(group.relation_refs.size());
+    for (const auto & relation_ref : group.relation_refs) {
+        daemon_flydelta_concept_relation_material material;
+        if (!daemon_flydelta_parse_teaching_relation(*provider, relation_ref, material, error)) {
+            return false;
+        }
+        if (material.relation.behavior_key != group.behavior_key ||
+                material.relation.teaching_key != group.teaching_key ||
+                material.relation.control_ref.empty()) {
+            error = "FlyDelta concept relation is incompatible with its material group";
+            return false;
+        }
+        materials.push_back(std::move(material));
+    }
+
+    common_flydelta_arm_batch_request batch;
+    batch.batch_id = job.id + ":concept-capture";
+    batch.wave_id = "concept-capture";
+    struct capture_binding {
+        size_t material_index = 0;
+        size_t baseline_arm = 0;
+        size_t conditioned_arm = 0;
+        size_t control_arm = 0;
+    };
+    std::vector<capture_binding> bindings;
+    bindings.reserve(materials.size());
+    const std::string intervention_ref = job.seed.candidate_ref.empty()
+        ? job.seed.verifier_ref : job.seed.candidate_ref;
+    for (size_t index = 0; index < materials.size(); ++index) {
+        const auto & material = materials[index];
+        capture_binding binding;
+        binding.material_index = index;
+        const std::array<std::string, 3> contexts = {
+            material.relation.baseline_ref,
+            material.relation.conditioned_ref,
+            material.relation.control_ref,
+        };
+        for (size_t side = 0; side < contexts.size(); ++side) {
+            common_flydelta_arm_request arm;
+            arm.job_id = job.id;
+            arm.wave_id = batch.wave_id;
+            arm.proposal_index = batch.arms.size();
+            arm.context_ref = contexts[side];
+            arm.fixture_ref = material.relation.verifier_ref;
+            arm.intervention_ref = intervention_ref;
+            arm.layer_indices = {static_cast<uint32_t>(material.layer_index)};
+            arm.coefficients = {1.0f};
+            arm.alpha = 0.0f;
+            arm.apply_overlay = false;
+            arm.fresh_context = true;
+            arm.request_capture = true;
+            arm.request_generation = true;
+            arm.request_host_verification = false;
+            arm.max_capture_bytes = 4U * 1024U * 1024U;
+            arm.max_generated_tokens = 1;
+            const std::string identity = job.id + "\n" + material.relation.id + "\n" +
+                std::to_string(side) + "\n" + contexts[side];
+            arm.arm_id = "flydelta://concept-arm/" +
+                hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+            if (!common_flydelta_arm_request_validate(arm, error)) return false;
+            const size_t arm_index = batch.arms.size();
+            batch.arms.push_back(std::move(arm));
+            if (side == 0) binding.baseline_arm = arm_index;
+            else if (side == 1) binding.conditioned_arm = arm_index;
+            else binding.control_arm = arm_index;
+        }
+        bindings.push_back(binding);
+    }
+
+    common_flydelta_arm_batch_result batch_result;
+    if (!daemon_flydelta_execute_batch(provider, batch, batch_result, error) ||
+            batch_result.arms.size() != batch.arms.size()) {
+        if (error.empty()) error = "FlyDelta concept capture batch returned incomplete arms";
+        return false;
+    }
+    for (const auto & binding : bindings) {
+        const auto & material = materials[binding.material_index];
+        const auto & baseline_result = batch_result.arms[binding.baseline_arm];
+        const auto & conditioned_result = batch_result.arms[binding.conditioned_arm];
+        const auto & control_result = batch_result.arms[binding.control_arm];
+        if (!baseline_result.executed || !conditioned_result.executed || !control_result.executed) {
+            error = "FlyDelta concept capture contains an unexecuted arm";
+            return false;
+        }
+        std::shared_ptr<const common_flydelta_hidden_state_capture> baseline;
+        std::shared_ptr<const common_flydelta_hidden_state_capture> conditioned;
+        std::shared_ptr<const common_flydelta_hidden_state_capture> control;
+        {
+            std::lock_guard<std::mutex> lock(provider->capture_mutex);
+            const auto baseline_it = provider->captures.find(batch.arms[binding.baseline_arm].arm_id);
+            const auto conditioned_it = provider->captures.find(batch.arms[binding.conditioned_arm].arm_id);
+            const auto control_it = provider->captures.find(batch.arms[binding.control_arm].arm_id);
+            if (baseline_it != provider->captures.end()) baseline = baseline_it->second;
+            if (conditioned_it != provider->captures.end()) conditioned = conditioned_it->second;
+            if (control_it != provider->captures.end()) control = control_it->second;
+        }
+        if (!baseline || !conditioned || !control) {
+            error = "FlyDelta concept capture did not retain all hidden-state captures";
+            return false;
+        }
+        std::string trajectory_ref;
+        if (!daemon_flydelta_persist_concept_trajectory(
+                provider, material, job.teaching_material_group_ref, job.id,
+                baseline_result.capture_ref, conditioned_result.capture_ref,
+                control_result.capture_ref, *baseline, *conditioned, *control,
+                trajectory_ref, error)) return false;
+        trajectory_refs.push_back(std::move(trajectory_ref));
+    }
+    return !trajectory_refs.empty();
+}
+
+bool daemon_flydelta_run_concept_synthesis(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        std::vector<common_flydelta_concept_candidate> & candidates,
+        std::string & error) {
+    error.clear();
+    candidates.clear();
+    if (!provider || !provider->teaching_material_runtime ||
+            job.teaching_material_group_ref.empty()) {
+        error = "MODEL_ADAPTER_CAPABILITY_UNAVAILABLE: FlyDelta teaching material runtime is not bound";
+        return false;
+    }
+    common_flydelta_teaching_material_group group;
+    if (!provider->teaching_material_runtime->store().resolve_ready_group(
+            job.teaching_material_group_ref, group, error)) return false;
+    if (!group.trajectory_material_ready || group.trajectory_refs.size() < group.minimum_trajectories) {
+        error = "FlyDelta concept synthesis requires complete trajectory material";
+        return false;
+    }
+    if (group.relation_refs.empty()) {
+        error = "FlyDelta concept synthesis has no source relation";
+        return false;
+    }
+    daemon_flydelta_concept_relation_material material;
+    if (!daemon_flydelta_parse_teaching_relation(
+            *provider, group.relation_refs.front(), material, error)) return false;
+    const auto & relation = material.relation;
+    common_flydelta_concept_spec spec;
+    spec.concept_key = relation.teaching_key;
+    spec.extraction_id = "flydelta://extraction/" +
+        hash_sha256_hex(group.group_ref.data(), group.group_ref.size()).substr(0, 32);
+    spec.behavior_key = relation.behavior_key;
+    spec.source = relation.source;
+    spec.source_ref = relation.id;
+    spec.grounding_ref = relation.contrast_ref.empty()
+        ? (relation.procedure_ref.empty()
+            ? (relation.blueprint_ref.empty() ? relation.evidence_ref : relation.blueprint_ref)
+            : relation.procedure_ref)
+        : relation.contrast_ref;
+    spec.procedure_ref = relation.procedure_ref;
+    spec.verifier_ref = relation.verifier_ref;
+    spec.model_profile_fingerprint = group.identity.model_profile_fingerprint;
+    spec.tokenizer_fingerprint = group.identity.tokenizer_fingerprint;
+    spec.template_fingerprint = group.identity.template_fingerprint;
+    spec.capture_layout_revision = group.identity.capture_layout_revision;
+    spec.scope_fingerprint = group.identity.scope_fingerprint;
+    spec.host_approved = relation.host_approved;
+    spec.redaction_attested = true;
+    spec.require_control = true;
+    if (!common_flydelta_concept_spec_validate(spec, error)) return false;
+
+    std::vector<common_flydelta_concept_trajectory> trajectories;
+    trajectories.reserve(group.trajectory_refs.size());
+    for (const auto & trajectory_ref : group.trajectory_refs) {
+        json value;
+        if (!daemon_flydelta_read_json(*provider, trajectory_ref, value, error)) return false;
+        try {
+            common_flydelta_concept_trajectory trajectory;
+            trajectory.schema_version = value.value("schema_version", 0);
+            trajectory.id = value.value("id", trajectory_ref);
+            trajectory.fixture_ref = value.value("fixture_ref", relation.verifier_ref);
+            trajectory.baseline_capture_ref = value.value("baseline_capture_ref", "");
+            trajectory.conditioned_capture_ref = value.value("conditioned_capture_ref", "");
+            trajectory.control_capture_ref = value.value("control_capture_ref", "");
+            trajectory.semantic_anchor = value.value("semantic_anchor", material.semantic_anchor);
+            trajectory.layer_index = value.value("layer_index", material.layer_index);
+            trajectory.baseline = value.value("baseline", std::vector<float>{});
+            trajectory.conditioned = value.value("conditioned", std::vector<float>{});
+            trajectory.control = value.value("control", std::vector<float>{});
+            trajectory.aligned = value.value("aligned", false);
+            trajectory.conditioned_host_verified = value.value("conditioned_host_verified", false);
+            if (!common_flydelta_concept_trajectory_validate(
+                    spec, trajectory, provider->model_n_embd, error)) return false;
+            trajectories.push_back(std::move(trajectory));
+        } catch (const std::exception & exception) {
+            error = std::string("FlyDelta concept trajectory resource is malformed: ") + exception.what();
+            return false;
+        }
+    }
+    common_flydelta_concept_build_config build_config;
+    build_config.dimension = provider->model_n_embd;
+    build_config.min_trajectories = group.minimum_trajectories;
+    build_config.max_trajectories = std::min<size_t>(64, trajectories.size());
+    return common_flydelta_build_concept_candidates(
+        spec, build_config, trajectories, candidates, error);
 }
 
 bool daemon_flydelta_fixture_from_job(
@@ -708,11 +1336,15 @@ bool daemon_flydelta_capture_for_arm(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const std::string & arm_id,
         std::shared_ptr<const common_flydelta_hidden_state_capture> & capture) {
-    std::lock_guard<std::mutex> lock(provider->capture_mutex);
-    const auto it = provider->captures.find(arm_id);
-    if (it == provider->captures.end()) return false;
-    capture = it->second;
-    return static_cast<bool>(capture);
+    {
+        std::lock_guard<std::mutex> lock(provider->capture_mutex);
+        const auto it = provider->captures.find(arm_id);
+        if (it != provider->captures.end()) {
+            capture = it->second;
+            return static_cast<bool>(capture);
+        }
+    }
+    return daemon_flydelta_load_persisted_capture(provider, arm_id, capture);
 }
 
 bool daemon_flydelta_diagnostics_for_arm(
@@ -2032,8 +2664,10 @@ std::function<bool(
         std::string &)>
 make_daemon_flydelta_resource_binding_factory(
         const daemon_options & options,
-        agent_resource_store * resources) {
-    return [options, resources](const std::shared_ptr<common_agent_server_context_host> & host,
+        agent_resource_store * resources,
+        std::shared_ptr<common_flydelta_teaching_material_runtime> teaching_material_runtime) {
+    return [options, resources, teaching_material_runtime](
+            const std::shared_ptr<common_agent_server_context_host> & host,
             common_agent_server_flydelta_binding & binding, std::string & error) {
         error.clear();
         if (!host || resources == nullptr) {
@@ -2055,6 +2689,7 @@ make_daemon_flydelta_resource_binding_factory(
             ? "model:" + std::filesystem::path(options.model).filename().string()
             : options.adaptation_flydelta_model_profile_fingerprint;
         provider->capture_layout_revision = options.adaptation_flydelta_capture_layout_revision;
+        provider->teaching_material_runtime = teaching_material_runtime;
         provider->n_predict = options.n_predict;
         provider->n_threads = options.n_threads;
         provider->model_n_embd = static_cast<size_t>(llama_model_n_embd(model));
@@ -2130,6 +2765,20 @@ make_daemon_flydelta_resource_binding_factory(
                 return daemon_flydelta_register_composed_directions(
                     provider, source_ref, {std::move(direction)},
                     "flydelta:concept-graft", direction_ref, persist_error);
+            };
+            callbacks.run_concept_capture = [provider](
+                    const common_flydelta_experiment_job & job,
+                    std::vector<std::string> & trajectory_refs,
+                    std::string & capture_error) {
+                return daemon_flydelta_run_concept_capture(
+                    provider, job, trajectory_refs, capture_error);
+            };
+            callbacks.run_concept_synthesis = [provider](
+                    const common_flydelta_experiment_job & job,
+                    std::vector<common_flydelta_concept_candidate> & candidates,
+                    std::string & synthesis_error) {
+                return daemon_flydelta_run_concept_synthesis(
+                    provider, job, candidates, synthesis_error);
             };
             callbacks.run_search_pipeline = [provider, pipeline](
                     const common_flydelta_experiment_job & job,
@@ -2666,6 +3315,30 @@ bool configure_daemon_flydelta_teaching_material(
         error);
     if (!material_runtime) return false;
     runtime.flydelta_teaching_material_runtime = material_runtime;
+    // Keep the existing runtime observer seam, but make the daemon's
+    // reference-only index restartable by persisting each resolved relation
+    // in the same resource store that the FlyDelta worker already reads.
+    // The material store receives the durable URI, so queued concept jobs do
+    // not depend on an in-process relation map.
+    const auto configured_observer = runtime.flydelta_teaching_material_observer;
+    agent_resource_store * resource_store = runtime.resource_store.get();
+    agent_resource_read_authority authority;
+    authority.namespace_id = "default-namespace";
+    authority.session_id = "default-session";
+    runtime.flydelta_teaching_material_observer = [
+            material_runtime, configured_observer, resource_store, authority](
+            const common_flydelta_teaching_relation & relation,
+            std::string & observer_error) mutable {
+        if (configured_observer && !configured_observer(relation, observer_error)) {
+            return false;
+        }
+        common_flydelta_teaching_relation persisted_relation;
+        if (!daemon_flydelta_persist_teaching_relation(
+                resource_store, authority, relation, persisted_relation, observer_error)) {
+            return false;
+        }
+        return material_runtime->observe_relation(persisted_relation, observer_error);
+    };
     return true;
 }
 
@@ -3080,21 +3753,21 @@ bool initialize_agent_daemon_environment(
     if (!open_daemon_model_residency(options, runtime.model_residency, error)) {
         return false;
     }
-    if (options.adaptation_flydelta_enabled &&
-            !runtime.flydelta_server_binding_factory &&
-            !runtime.flydelta_server_binding_callbacks.has_value()) {
-        // The default llama-agent provider resolves explicit, durable resource
-        // refs.  It is a real production binding, but it remains fail-closed:
-        // a job without a context, fixture or intervention resource cannot
-        // reach the model.
-        runtime.flydelta_server_binding_factory =
-            make_daemon_flydelta_resource_binding_factory(
-                options, runtime.resource_store.get());
-    }
     if (!configure_daemon_flydelta_teaching_material(
             options, runtime, error)) {
         error = "FlyDelta teaching-material runtime initialization failed: " + error;
         return false;
+    }
+    if (options.adaptation_flydelta_enabled &&
+            !runtime.flydelta_server_binding_factory &&
+            !runtime.flydelta_server_binding_callbacks.has_value()) {
+        // The default llama-agent provider resolves explicit, durable resource
+        // refs. It is a real production binding, but remains fail-closed when
+        // host-owned semantic material is absent.
+        runtime.flydelta_server_binding_factory =
+            make_daemon_flydelta_resource_binding_factory(
+                options, runtime.resource_store.get(),
+                runtime.flydelta_teaching_material_runtime);
     }
     if (!configure_daemon_flydelta_server_binding(options, runtime, error)) {
         error = "FlyDelta server binding initialization failed: " + error;
