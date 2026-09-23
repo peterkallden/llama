@@ -83,7 +83,9 @@ struct args {
     std::string plan_id;
     std::string agent_plan = "auto";
     std::string repository_root;
-    std::string agent_bootstrap = "none";
+    // Agent profiles use the built-in bootstrap by default.  Static mode is
+    // handled as a non-runtime profile by the CLI preparation path.
+    std::string agent_bootstrap = "default";
     std::string agent_import;
     std::string agent_export;
     std::string agent_blueprint = "auto";
