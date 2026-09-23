@@ -10,6 +10,8 @@ param(
     [ValidateRange(1, 1048576)] [int]$Threads = 4,
     [ValidateRange(0, 1048576)] [int]$GpuLayers = 0,
     [ValidateRange(1, 1048576)] [int]$WorkerCount = 2,
+    [switch]$EnableAdaptation,
+    [switch]$EnableFlyDelta,
     [ValidateRange(1, 1048576)] [int]$QueueCapacity = 8,
     [ValidateRange(1, 1048576)] [int]$InferenceMaxActive = 1,
     [ValidateSet('chat', 'agent')] [string]$DefaultMode = 'agent',
@@ -92,6 +94,11 @@ if ($LxcNetworkMode -eq 'profile' -and [string]::IsNullOrWhiteSpace($LxcNetworkP
 if ($LxcNetworkMode -eq 'none' -and $LxcNetworkProfileScope -ne 'none') {
     throw 'LxcNetworkMode none requires LxcNetworkProfileScope none'
 }
+if ($EnableFlyDelta -and $WorkerCount -lt 2) {
+    throw 'EnableFlyDelta requires WorkerCount at least 2 so one agent worker remains available'
+}
+
+$adaptationEnabled = $EnableAdaptation -or $EnableFlyDelta
 
 $processorPolicies = [ordered]@{}
 if ($PdfPageImageExecution -ne 'disabled') {
@@ -150,6 +157,23 @@ $config = [ordered]@{
         default_mode = $DefaultMode; thinking_mode = $ThinkingMode; max_reflection_rounds = 2
         max_plan_revisions = 3; max_research_iterations = 4; memory_learn = 'post-turn'
         agent_trace = $true
+        adaptation = [ordered]@{
+            capture = $adaptationEnabled; collection_allowed = $adaptationEnabled; max_evidence = 32
+            backend = 'cozo'; transaction_path = "$CozoRoot/adaptation.cozo"
+            stable_model_facing_tools = @('data.inspect', 'data.query', 'data.filter', 'data.aggregate', 'data.transform')
+            domains = [ordered]@{
+                planning = $true; tool_use = $true; research = $true; procedure_learning = $true
+                families = [ordered]@{ data = $true; research = $true; planning = $true }
+            }
+            flydelta = [ordered]@{
+                enabled = [bool]$EnableFlyDelta; worker_count = 1
+                queue_path = "$CozoRoot/flydelta/queue"; batch_mode = 'auto'; batch_parallelism = 2
+                capture_candidates = [bool]$EnableFlyDelta; lifecycle_backend = 'cozo'
+                lifecycle_path = "$CozoRoot/flydelta/lifecycle.cozo"
+                model_profile_fingerprint = ''; capture_layout_revision = 'layer-input:generation-boundary:v1'
+                max_capture_candidates = 128
+            }
+        }
     }
     stores = [ordered]@{
         memory = [ordered]@{ backend = 'cozo'; path = "$CozoRoot/memory.cozo" }

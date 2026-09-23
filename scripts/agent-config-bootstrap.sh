@@ -17,6 +17,8 @@ Usage: agent-config-bootstrap.sh [options]
   --threads N                Inference threads (default: 4)
   --gpu-layers N             GPU layers (default: 0)
   --worker-count N           Scheduler workers (default: 2)
+  --enable-adaptation        Enable host adaptation capture/collection (default: off)
+  --enable-flydelta          Enable FlyDelta capture/workers (implies adaptation)
   --queue-capacity N         Pending request capacity (default: 8)
   --inference-max-active N   Concurrent inference limit (default: 1)
   --default-mode MODE        chat or agent (default: agent)
@@ -79,6 +81,8 @@ family_descriptions=()
 threads=4
 gpu_layers=0
 worker_count=2
+enable_adaptation=false
+enable_flydelta=false
 queue_capacity=8
 inference_max_active=1
 default_mode=agent
@@ -151,7 +155,8 @@ EOF
 
 while (($# > 0)); do
     option=$1
-    if [[ $option != --help && $option != -h && $option != --list-tools && $# -lt 2 ]]; then
+    if [[ $option != --help && $option != -h && $option != --list-tools &&
+            $option != --enable-adaptation && $option != --enable-flydelta && $# -lt 2 ]]; then
         echo "Missing value for $option" >&2
         exit 2
     fi
@@ -169,6 +174,8 @@ while (($# > 0)); do
         --threads) threads=$2 ;;
         --gpu-layers) gpu_layers=$2 ;;
         --worker-count) worker_count=$2 ;;
+        --enable-adaptation) enable_adaptation=true; shift; continue ;;
+        --enable-flydelta) enable_flydelta=true; enable_adaptation=true; shift; continue ;;
         --queue-capacity) queue_capacity=$2 ;;
         --inference-max-active) inference_max_active=$2 ;;
         --default-mode) default_mode=$2 ;;
@@ -215,6 +222,10 @@ positive --worker-count "$worker_count"
 positive --queue-capacity "$queue_capacity"
 positive --inference-max-active "$inference_max_active"
 [[ $gpu_layers =~ ^[0-9]+$ && $port =~ ^[1-9][0-9]*$ ]] || exit 2
+if [[ $enable_flydelta == true && $worker_count -lt 2 ]]; then
+    echo "--enable-flydelta requires --worker-count at least 2 so one agent worker remains available" >&2
+    exit 2
+fi
 case $default_mode in chat|agent) ;; *) exit 2 ;; esac
 case $thinking_mode in auto|reflective|deliberate|research) ;; *) exit 2 ;; esac
 case $sandbox in none|docker|kubernetes|lxc) ;; *) exit 2 ;; esac
@@ -378,7 +389,34 @@ cat > "$output" <<EOF
 {
   "schema_version": 1,
   "model": {"backend":"server-context","path":"$model","embedding_model":"$embedding_model"},
-  "runtime": {"context_size":3072,"n_predict":256,"n_threads":$threads,"n_gpu_layers":$gpu_layers,"default_mode":"$default_mode","thinking_mode":"$thinking_mode","max_reflection_rounds":2,"max_plan_revisions":3,"max_research_iterations":4,"memory_learn":"post-turn","agent_trace":true},
+  "runtime": {
+    "context_size":3072,"n_predict":256,"n_threads":$threads,"n_gpu_layers":$gpu_layers,
+    "default_mode":"$default_mode","thinking_mode":"$thinking_mode",
+    "max_reflection_rounds":2,"max_plan_revisions":3,"max_research_iterations":4,
+    "memory_learn":"post-turn","agent_trace":true,
+    "adaptation": {
+      "capture":$enable_adaptation,
+      "collection_allowed":$enable_adaptation,
+      "max_evidence":32,
+      "backend":"cozo",
+      "transaction_path":"$cozo_root/adaptation.cozo",
+      "stable_model_facing_tools":["data.inspect","data.query","data.filter","data.aggregate","data.transform"],
+      "domains":{"planning":true,"tool_use":true,"research":true,"procedure_learning":true,"families":{"data":true,"research":true,"planning":true}},
+      "flydelta": {
+        "enabled":$enable_flydelta,
+        "worker_count":1,
+        "queue_path":"$cozo_root/flydelta/queue",
+        "batch_mode":"auto",
+        "batch_parallelism":2,
+        "capture_candidates":$enable_flydelta,
+        "lifecycle_backend":"cozo",
+        "lifecycle_path":"$cozo_root/flydelta/lifecycle.cozo",
+        "model_profile_fingerprint":"",
+        "capture_layout_revision":"layer-input:generation-boundary:v1",
+        "max_capture_candidates":128
+      }
+    }
+  },
   "stores": {
     "memory":{"backend":"cozo","path":"$cozo_root/memory.cozo"},
     "plan":{"backend":"cozo","path":"$cozo_root/plan.cozo"},

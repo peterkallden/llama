@@ -88,6 +88,29 @@ host executable:
   --output agent-daemon-config.json
 ```
 
+The bootstrap scripts always emit the complete adaptation and FlyDelta
+configuration, but keep both collection and FlyDelta disabled by default.
+This makes the storage and worker paths visible without enabling background
+learning accidentally. Enable them explicitly when desired:
+
+```bash
+./scripts/agent-config-bootstrap.sh \
+  --model models/model.gguf \
+  --cozo-root data \
+  --enable-flydelta \
+  --output agent-daemon-config.json
+```
+
+`--enable-flydelta` also enables the required adaptation capture and collection
+gates. `--enable-adaptation` enables ordinary adaptation collection without
+starting the FlyDelta worker lane. The generated configuration reserves one
+FlyDelta worker when enabled, keeps `batch_mode` at `auto`, and stores the
+transaction ledger, reference-only queue and lifecycle journal separately
+under the selected Cozo root. `memory_learn` is a separate ordinary memory
+feature and is not changed by these switches.
+
+The PowerShell equivalents are `-EnableAdaptation` and `-EnableFlyDelta`.
+
 On Linux, LXC/Incus can be selected as the sandbox backend when Docker,
 Podman or Kubernetes is unavailable:
 
