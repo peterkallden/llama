@@ -35,8 +35,8 @@ common_agent_model_catalog make_catalog() {
         {"research", {"generation", "server-context", "research.gguf", "", "lazy"}},
     };
     catalog.profiles = {
-        {"small", {"small", {}, {}, 4096, "lazy"}},
-        {"research", {"research", {}, {}, 4096, "lazy"}},
+        {"small", {"small", {}, {}, 4096, 1, 1, "lazy"}},
+        {"research", {"research", {}, {}, 4096, 1, 1, "lazy"}},
     };
     catalog.default_profile = "small";
     return catalog;
