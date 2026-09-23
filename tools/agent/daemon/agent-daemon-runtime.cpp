@@ -9,6 +9,7 @@
 #include "../runtime/agent-server-context-host.h"
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-bootstrap-zoom-state-store.h"
+#include "agent/adaptation/flydelta/flydelta-alpha-response-search.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
 #include "agent/adaptation/flydelta/flydelta-deep-search.h"
@@ -1338,6 +1339,244 @@ bool daemon_flydelta_run_coefficient_arm_batch(
     return true;
 }
 
+// Resolves the existing host-certified behavior deltas into the low-rank
+// basis material consumed by Shallow/Deep.  A direction resource is a
+// rank-one intervention transport; it must not be reused as an invented
+// rank-two basis merely because a later phase needs one.
+bool daemon_flydelta_resolve_evidence_direction_candidates(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        const int32_t layer_index,
+        const size_t required_count,
+        std::vector<common_flydelta_direction_candidate> & candidates,
+        std::string & error) {
+    error.clear();
+    candidates.clear();
+    for (const auto & reference : job.behavior_delta_ids) {
+        common_flydelta_behavior_delta delta;
+        common_flydelta_intervention_credit credit;
+        if (!daemon_flydelta_parse_behavior_delta(*provider, reference, delta, credit, error)) {
+            return false;
+        }
+        // Natural Shallow/Deep capacity is based on verified positive
+        // evidence. Experimental UNKNOWN/NEUTRAL material belongs to the
+        // orthogonal/augmentation paths and must not raise this basis.
+        if (credit.outcome != common_flydelta_counterfactual_outcome::helped ||
+                !credit.eligible_for_learning || delta.layer_index != layer_index) {
+            continue;
+        }
+        if (delta.behavior_key != job.seed.behavior_key ||
+                delta.model_profile_fingerprint != job.seed.model_profile_fingerprint ||
+                delta.execution_context_fingerprint != job.seed.execution_context_fingerprint ||
+                delta.capture_layout_revision != provider->capture_layout_revision) {
+            error = "FlyDelta post-Bootstrap evidence delta is incompatible with the resumed job";
+            return false;
+        }
+        common_flydelta_direction_candidate candidate;
+        candidate.kind = common_flydelta_direction_kind::raw_repair;
+        candidate.layer_index = delta.layer_index;
+        candidate.values = std::move(delta.values);
+        candidate.origin = "runtime_verified_evidence";
+        candidate.extraction_id = reference;
+        candidate.source_samples = 1;
+        candidate.retained_samples = 1;
+        candidate.experimental_only = false;
+        if (!common_flydelta_direction_candidate_validate(
+                candidate, provider->model_n_embd, error)) return false;
+        candidates.push_back(std::move(candidate));
+    }
+    if (candidates.size() < required_count) {
+        error = "FlyDelta post-Bootstrap phase requires compatible HELPED evidence directions at the selected layer";
+        return false;
+    }
+    return true;
+}
+
+bool daemon_flydelta_run_rank1_alpha_arm(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_experiment_fixture & fixture,
+        const uint32_t layer_index,
+        const float scale,
+        const bool apply_overlay,
+        const size_t proposal_index,
+        common_flydelta_counterfactual_trial & trial,
+        common_flydelta_decision_margin & margin,
+        common_flydelta_representation_diagnostics & geometry,
+        bool & geometry_available,
+        std::string & arm_id,
+        std::string & error) {
+    error.clear();
+    trial = {};
+    margin = {};
+    geometry = {};
+    geometry_available = false;
+    arm_id.clear();
+    common_flydelta_arm_batch_request batch;
+    batch.wave_id = "adaptive-alpha";
+    const std::string identity = job.id + "\n" + batch.wave_id + "\n" +
+        std::to_string(proposal_index) + "\n" + std::to_string(scale) + "\n" +
+        (apply_overlay ? "overlay" : "baseline");
+    batch.batch_id = job.id + ":adaptive-alpha:" +
+        hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+    common_flydelta_arm_request arm;
+    arm.job_id = job.id;
+    arm.wave_id = batch.wave_id;
+    arm.proposal_index = proposal_index;
+    arm.arm_id = batch.batch_id + ":0";
+    arm.context_ref = job.seed.baseline_ref;
+    arm.fixture_ref = fixture.id;
+    arm.intervention_ref = job.seed.candidate_ref;
+    arm.batch_compatibility_key = arm.context_ref + "\n" + arm.fixture_ref;
+    arm.layer_indices = {layer_index};
+    arm.coefficients = {apply_overlay ? 1.0f : 0.0f};
+    arm.alpha = apply_overlay ? scale : 0.0f;
+    arm.apply_overlay = apply_overlay;
+    arm.fresh_context = true;
+    arm.request_capture = true;
+    arm.request_teacher_forced_margin = true;
+    arm.request_generation = true;
+    arm.request_host_verification = true;
+    arm.max_capture_bytes = 4U * 1024U * 1024U;
+    arm.max_generated_tokens = 64;
+    if (!common_flydelta_arm_request_validate(arm, error)) return false;
+    batch.arms.push_back(arm);
+    common_flydelta_arm_batch_result results;
+    if (!daemon_flydelta_execute_batch(provider, batch, results, error) ||
+            results.arms.size() != 1 || !results.arms.front().executed) {
+        if (error.empty()) error = "FlyDelta AdaptiveAlpha arm did not execute";
+        return false;
+    }
+    const auto & result = results.arms.front();
+    trial.executed = result.executed;
+    trial.verifier_known = result.verifier_known;
+    trial.passed = result.host_outcome == common_flydelta_counterfactual_outcome::helped;
+    trial.quality = result.quality;
+    trial.overlay_applied = apply_overlay;
+    trial.intervention_count = apply_overlay ? 1 : 0;
+    trial.evidence_ref = result.generation_ref;
+    margin = result.margin;
+    arm_id = arm.arm_id;
+    return common_flydelta_counterfactual_trial_validate(trial, error) &&
+        common_flydelta_decision_margin_validate(margin, error);
+}
+
+bool daemon_flydelta_run_adaptive_alpha_slice(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_bootstrap_zoom_state & resume,
+        common_flydelta_search_pipeline_result & output,
+        common_flydelta_bootstrap_zoom_state & next,
+        std::string & error) {
+    error.clear();
+    common_flydelta_experiment_fixture fixture;
+    if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
+    std::vector<common_flydelta_basis_direction> directions;
+    if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref, directions, error)) {
+        return false;
+    }
+    const auto direction = std::find_if(directions.begin(), directions.end(), [&](const auto & value) {
+        return value.layer_index == static_cast<int32_t>(resume.anchor_layer);
+    });
+    if (direction == directions.end()) {
+        error = "FlyDelta AdaptiveAlpha anchor direction is absent from the intervention resource";
+        return false;
+    }
+    common_flydelta_alpha_response_search_config config;
+    const float prior_scale = resume.alpha_response_available && resume.alpha_response.selected
+        ? resume.alpha_response.scale : resume.selected_scale;
+    config.seed_scale = std::max(0.0001f, std::min(config.max_scale, prior_scale));
+    std::string baseline_arm_id;
+    size_t proposal_index = resume.next_candidate_index;
+    const auto runner = [provider, &job, &fixture, layer = resume.anchor_layer,
+            &baseline_arm_id, &proposal_index](const common_flydelta_experiment_fixture &,
+            const float scale, const bool apply_overlay,
+            common_flydelta_counterfactual_trial & trial,
+            common_flydelta_decision_margin & margin,
+            common_flydelta_representation_diagnostics & geometry,
+            bool & geometry_available, std::string & runner_error) mutable {
+        std::string arm_id;
+        if (!daemon_flydelta_run_rank1_alpha_arm(provider, job, fixture, layer, scale,
+                apply_overlay, proposal_index++, trial, margin, geometry,
+                geometry_available, arm_id, runner_error)) return false;
+        if (!apply_overlay) {
+            baseline_arm_id = std::move(arm_id);
+            return true;
+        }
+        if (baseline_arm_id.empty()) {
+            runner_error = "FlyDelta AdaptiveAlpha candidate ran before its baseline";
+            return false;
+        }
+        common_flydelta_arm_request diagnostic_arm;
+        diagnostic_arm.arm_id = arm_id;
+        diagnostic_arm.context_ref = job.seed.baseline_ref;
+        diagnostic_arm.intervention_ref = job.seed.candidate_ref;
+        if (!daemon_flydelta_diagnostics_for_arm(provider, job, baseline_arm_id,
+                diagnostic_arm, layer, geometry, runner_error)) return false;
+        geometry_available = geometry.layer_index != 0;
+        return true;
+    };
+    std::vector<common_flydelta_alpha_response_trial> trials;
+    common_flydelta_alpha_response_selection selection;
+    if (!common_flydelta_run_alpha_response_search(
+            fixture, config, runner, trials, selection, error)) return false;
+
+    next = resume;
+    next.phase = common_flydelta_bootstrap_zoom_phase::adaptive_alpha;
+    next.refinement_kind = common_flydelta_bootstrap_refinement_kind::adaptive_alpha;
+    next.alpha_response_available = true;
+    next.alpha_response = selection;
+    if (selection.selected) {
+        next.selected_scale = selection.scale;
+        next.best_search_score = selection.utility;
+        if (selection.best_margin_available) {
+            next.best_margin_delta = selection.best_margin_delta_normalized;
+        }
+    }
+    next.next_candidate_index = proposal_index;
+
+    common_flydelta_search_pipeline_direction_result direction_result;
+    direction_result.direction.kind = common_flydelta_direction_kind::raw_repair;
+    direction_result.direction.layer_index = direction->layer_index;
+    direction_result.direction.values = direction->values;
+    direction_result.direction.origin = "runtime_adaptive_alpha";
+    direction_result.direction.extraction_id = job.seed.candidate_ref;
+    direction_result.direction.source_samples = 1;
+    direction_result.direction.retained_samples = 1;
+    direction_result.direction.experimental_only = true;
+    for (const auto & alpha_trial : trials) {
+        common_flydelta_intervention_region_trial region_trial;
+        region_trial.candidate.layer_indices = {resume.anchor_layer};
+        region_trial.candidate.anchor_layer_index = resume.anchor_layer;
+        region_trial.candidate.total_scale = alpha_trial.scale;
+        region_trial.candidate.per_layer_scale = alpha_trial.scale;
+        region_trial.requested_total_scale = alpha_trial.requested_scale;
+        region_trial.executed_total_scale = alpha_trial.scale;
+        region_trial.outcome = alpha_trial.outcome;
+        region_trial.quality_delta = alpha_trial.counterfactual.quality;
+        region_trial.margin = alpha_trial.margin;
+        region_trial.executed = alpha_trial.counterfactual.executed;
+        region_trial.verifier_known = alpha_trial.counterfactual.verifier_known;
+        region_trial.geometry_available = alpha_trial.geometry_available;
+        region_trial.geometry = alpha_trial.geometry;
+        region_trial.safe_to_continue = alpha_trial.safe_to_continue;
+        region_trial.promising = alpha_trial.safe_to_continue &&
+            alpha_trial.utility > config.utility_epsilon;
+        region_trial.search_score = alpha_trial.utility;
+        region_trial.evidence_ref = alpha_trial.counterfactual.evidence_ref;
+        if (!common_flydelta_intervention_region_trial_validate(region_trial, error)) return false;
+        direction_result.region_trials.push_back(std::move(region_trial));
+    }
+    output = {};
+    output.directions.push_back(std::move(direction_result));
+    output.alpha_response_available = true;
+    output.alpha_response = selection;
+    output.search_status = selection.selected
+        ? common_flydelta_search_status::candidate_available
+        : common_flydelta_search_status::no_useful_utility;
+    return true;
+}
+
 bool daemon_flydelta_run_post_bootstrap_slice(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const common_flydelta_experiment_job & job,
@@ -1347,31 +1586,12 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     error.clear();
     common_flydelta_experiment_fixture fixture;
     if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
-    std::vector<common_flydelta_basis_direction> directions;
-    if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref, directions, error)) {
-        return false;
-    }
     const int32_t layer_index = static_cast<int32_t>(plan.continuation.region.anchor_layer_index);
     std::vector<common_flydelta_direction_candidate> candidates;
-    for (const auto & direction : directions) {
-        if (direction.layer_index != layer_index) continue;
-        common_flydelta_direction_candidate candidate;
-        candidate.kind = common_flydelta_direction_kind::raw_repair;
-        candidate.layer_index = direction.layer_index;
-        candidate.values = direction.values;
-        candidate.origin = "runtime_resource";
-        candidate.extraction_id = job.seed.candidate_ref;
-        candidate.source_samples = 1;
-        candidate.retained_samples = 1;
-        candidate.experimental_only = true;
-        candidates.push_back(std::move(candidate));
-    }
     const size_t max_rank = plan.phase == common_flydelta_experiment_phase::shallow_controls
         ? 2 : 4;
-    if (candidates.size() < 2) {
-        error = "FlyDelta post-Bootstrap phase requires two compatible directions at the selected layer";
-        return false;
-    }
+    if (!daemon_flydelta_resolve_evidence_direction_candidates(
+            provider, job, layer_index, 2, candidates, error)) return false;
     if (candidates.size() > max_rank) candidates.resize(max_rank);
     common_flydelta_low_rank_basis basis;
     if (!common_flydelta_build_low_rank_basis(
@@ -1781,8 +2001,13 @@ make_daemon_flydelta_resource_binding_factory(
                 }
                 common_flydelta_bootstrap_zoom_state bootstrap;
                 if (!resolve_bootstrap_state(bootstrap_ref, bootstrap, state_error)) return false;
-                if (!daemon_flydelta_run_bootstrap_zoom_slice(
-                        provider, job, bootstrap, result, bootstrap, state_error)) return false;
+                if (bootstrap.phase == common_flydelta_bootstrap_zoom_phase::adaptive_alpha) {
+                    if (!daemon_flydelta_run_adaptive_alpha_slice(
+                            provider, job, bootstrap, result, bootstrap, state_error)) return false;
+                } else if (!daemon_flydelta_run_bootstrap_zoom_slice(
+                        provider, job, bootstrap, result, bootstrap, state_error)) {
+                    return false;
+                }
                 std::string persisted_bootstrap_ref;
                 if (!persist_bootstrap_state || !persist_bootstrap_state(
                         bootstrap, persisted_bootstrap_ref, state_error)) return false;
