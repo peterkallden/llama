@@ -2,14 +2,15 @@
 
 ## Status and purpose
 
-**Status: V0 host seam, bounded capture, two-pass experiment, explicit CLI
-activation and request-scoped server-context activation are implemented. The
-daemon's production model-host binding currently runs the initial Whirlpool
-and Bootstrap/BootstrapZoom slices through the batch arm host, including the
-separate teacher-score batch. The typed Shallow/Deep/TFO, orthogonal,
-augmentation and concept-capture/synthesis contracts exist, but their
-post-Bootstrap daemon state resolvers and production callbacks are not yet
-complete. Automatic runtime learning and activation remain disabled.**
+**Status: V0 host seam, bounded capture, explicit CLI activation and
+request-scoped server-context activation are implemented. The daemon's
+production model-host binding runs the bounded FlyDelta phase chain through
+the common batch arm host: Whirlpool, Bootstrap/BootstrapZoom, AdaptiveAlpha,
+orthogonal escape, Shallow/Deep controls, TFO-lite, representation
+augmentation and the host-material concept capture/synthesis path. The
+separate teacher-score batch, post-Bootstrap state resolvers, next-action
+scheduler and lifecycle persistence are part of the same production seam.
+Automatic learning credit, promotion and sideband activation remain disabled.**
 FlyDelta is not enabled by default and is not a replacement for
 the current model-adaptation path. It must not be activated until it has
 passed explicit evaluation and promotion gates.
@@ -176,7 +177,7 @@ source/behavior identity when they become activation material.
 ## Production daemon phase boundary
 
 The production daemon is a bounded-slice scheduler around the common batch
-model host. The currently verified production path is:
+model host. The production path is:
 
 ```text
 daemon job
@@ -186,11 +187,20 @@ daemon job
   -> Whirlpool
   -> Bootstrap rank-1
   -> BootstrapZoom state persistence/resume
+  -> AdaptiveAlpha when rank-1 utility remains promising
+  -> UtilityGate
+  -> orthogonal escape or Shallow controls
+  -> Deep basis and Deep controls when capacity and utility allow
+  -> optional TFO-lite after positive Deep utility
+  -> representation augmentation on the rank-one escape path
+  -> concept capture/synthesis when grounded teaching material is ready
+  -> grafted direction and a new bounded FlyDelta search slice
 ```
 
-The following are implemented as common FlyDelta algorithms and typed
-continuation contracts, but are not production-complete merely because their
-headers, evaluator branches or smoke adapters exist:
+These phases are production-bound through the daemon's typed post-Bootstrap
+state resolver, the same batch arm host, lifecycle persistence and the
+host-scheduler `next_action` seam. The evaluator still executes exactly one
+bounded phase slice; it never recursively runs the following phase.
 
 ```text
 Shallow controls
@@ -202,13 +212,12 @@ concept capture
 concept synthesis
 ```
 
-For these phases the daemon still needs a durable post-Bootstrap state
-resolver, a bounded runner using the same batch host, and persistence of the
-resulting state/reference before the scheduler can enqueue the next slice.
-Concept capture additionally needs production resolution of teaching-material
-and matched trajectory references. Augmentation additionally needs production
-resolution of donor/capture references. These are host-wiring and material
-gaps, not parallel algorithm implementations.
+Concept capture and synthesis are conditional on a shared production teaching-
+material runtime and ready relation/trajectory references. Augmentation is
+conditional on resolvable donor/capture references. If those host-owned
+dependencies are absent, the daemon reports the phase as unavailable or
+configured-but-idle; it does not invent prompts, semantic outcomes or
+material references.
 
 Capability reporting must follow the same boundary: a capability is available
 only when its production callback and durable resolver are registered. The
