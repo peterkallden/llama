@@ -2286,6 +2286,18 @@ unresolved model smoke is diagnostic and carries no learning credit; it is not
 allowed to fabricate concept evidence. This gives the smoke useful model
 coverage without creating a private model path unavailable to production.
 
+When a registered concept-synthesis callback emits a candidate, the evaluator
+persists one immutable experimental direction reference through the same
+direction registry used by ordinary FlyDelta search. The worker reports that
+reference as `graft_direction_ref`; the collection seam then schedules a normal
+`search_pipeline` job with the reference as its seed candidate. The originating
+capture-manifest and behavior-delta references are carried through the bounded
+concept jobs so the grafted search still has its ordinary model inputs. Old
+search/augmentation state is cleared for the new Bootstrap slice, but no
+evidence rank, learning credit or promotion status is granted by the graft.
+This is a wiring handoff, not a second concept-search engine or a learned-vector
+training path.
+
 Teacher-forced margin scoring in the model smoke is behavior-specific as well:
 the positive continuation is the family target and the negative continuation
 is the fixture's nearest declared alternative. It must not use one global

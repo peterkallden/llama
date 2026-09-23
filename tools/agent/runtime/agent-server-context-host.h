@@ -100,6 +100,10 @@ struct common_agent_server_flydelta_binding {
             std::vector<common_flydelta_concept_candidate> &,
             std::string &)> run_concept_synthesis;
     std::function<bool(
+            const common_flydelta_direction_candidate &,
+            std::string &,
+            std::string &)> persist_experimental_direction;
+    std::function<bool(
             const common_flydelta_experiment_job &,
             const common_flydelta_representation_augmentation_state *,
             common_flydelta_search_pipeline_result &,
@@ -156,6 +160,10 @@ struct common_agent_server_flydelta_binding_callbacks {
             const common_flydelta_experiment_job &,
             std::vector<common_flydelta_concept_candidate> &,
             std::string &)> run_concept_synthesis;
+    std::function<bool(
+            const common_flydelta_direction_candidate &,
+            std::string &,
+            std::string &)> persist_experimental_direction;
     std::function<bool(
             const common_flydelta_experiment_job &,
             const common_flydelta_representation_augmentation_state *,

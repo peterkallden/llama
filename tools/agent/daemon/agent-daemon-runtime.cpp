@@ -2110,6 +2110,27 @@ make_daemon_flydelta_resource_binding_factory(
                 return daemon_flydelta_parse_behavior_delta(
                     *provider, reference, delta, credit, resolver_error);
             };
+            // ConceptSynthesis produces ordinary experimental direction
+            // material. Persist it in the same immutable direction registry
+            // used by the normal search path; the scheduler passes the
+            // returned reference as the next job's candidate_ref. This seam
+            // never approves, activates or promotes the concept direction.
+            callbacks.persist_experimental_direction = [provider](
+                    const common_flydelta_direction_candidate & candidate,
+                    std::string & direction_ref,
+                    std::string & persist_error) {
+                if (!common_flydelta_direction_candidate_validate(
+                        candidate, provider->model_n_embd, persist_error)) return false;
+                common_flydelta_basis_direction direction;
+                direction.layer_index = candidate.layer_index;
+                direction.values = candidate.values;
+                const std::string source_ref = candidate.extraction_id.empty()
+                    ? "flydelta://concept-graft/anonymous"
+                    : candidate.extraction_id;
+                return daemon_flydelta_register_composed_directions(
+                    provider, source_ref, {std::move(direction)},
+                    "flydelta:concept-graft", direction_ref, persist_error);
+            };
             callbacks.run_search_pipeline = [provider, pipeline](
                     const common_flydelta_experiment_job & job,
                     common_flydelta_search_pipeline_result & result,

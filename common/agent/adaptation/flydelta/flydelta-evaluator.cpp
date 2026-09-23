@@ -188,6 +188,22 @@ bool common_flydelta_evaluate_job(
                 result.direction_candidates.push_back(std::move(direction));
             }
             result.processed_references = result.concept_candidates.size();
+            if (!callbacks.persist_experimental_direction) {
+                error = "FlyDelta concept synthesis requires an experimental direction persistence callback for graft";
+                return false;
+            }
+            if (result.direction_candidates.empty() ||
+                    !callbacks.persist_experimental_direction(
+                        result.direction_candidates.front(), result.graft_direction_ref, error) ||
+                    result.graft_direction_ref.empty() || result.graft_direction_ref.size() > 512) {
+                if (error.empty()) {
+                    error = "FlyDelta concept synthesis did not return a bounded graft direction reference";
+                }
+                return false;
+            }
+            result.has_next_action = true;
+            result.next_action = common_flydelta_next_action::run_bootstrap;
+            result.next_action_reason = "Concept direction persisted; graft into ordinary FlyDelta search surface";
             return true;
         }
         case common_flydelta_experiment_job_kind::donor_capture: {

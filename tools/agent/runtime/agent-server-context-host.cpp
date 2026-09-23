@@ -256,6 +256,8 @@ common_agent_server_flydelta_binding_from_callbacks(
     binding.run_donor_capture = std::move(callbacks.run_donor_capture);
     binding.run_counterfactual = std::move(callbacks.run_counterfactual);
     binding.run_concept_synthesis = std::move(callbacks.run_concept_synthesis);
+    binding.persist_experimental_direction =
+        std::move(callbacks.persist_experimental_direction);
     binding.run_representation_augmentation_with_state =
         std::move(callbacks.run_representation_augmentation_with_state);
     return binding;
@@ -482,6 +484,8 @@ common_agent_server_context_host_make_flydelta_model_host(
             run_donor_capture = std::move(binding.run_donor_capture),
             run_counterfactual = std::move(binding.run_counterfactual),
             run_concept_synthesis = std::move(binding.run_concept_synthesis),
+            persist_experimental_direction =
+                std::move(binding.persist_experimental_direction),
             run_representation_augmentation_with_state =
                 std::move(binding.run_representation_augmentation_with_state),
             teaching_material_runtime = std::move(teaching_material_runtime)](
@@ -526,6 +530,9 @@ common_agent_server_context_host_make_flydelta_model_host(
         }
         if (run_concept_synthesis) {
             callbacks.run_concept_synthesis = run_concept_synthesis;
+        }
+        if (persist_experimental_direction) {
+            callbacks.persist_experimental_direction = persist_experimental_direction;
         }
         if (run_representation_augmentation_with_state) {
             callbacks.run_representation_augmentation_with_state =

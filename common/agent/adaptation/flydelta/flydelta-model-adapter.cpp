@@ -915,7 +915,8 @@ common_flydelta_model_adapter_from_host(
     // Concept synthesis is a host-owned callback over persisted teaching
     // material. It is intentionally derived from registration, not from the
     // model primitive flags above.
-    capabilities.concept_synthesis = static_cast<bool>(callbacks.run_concept_synthesis);
+    capabilities.concept_synthesis = static_cast<bool>(
+        callbacks.run_concept_synthesis && callbacks.persist_experimental_direction);
     capabilities.concept_capture = static_cast<bool>(callbacks.run_concept_capture);
     // Registration is the source of truth for backend availability. A caller
     // cannot advertise a batch path that was not actually bound.

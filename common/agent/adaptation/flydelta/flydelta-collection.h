@@ -101,5 +101,6 @@ bool common_flydelta_collect_next_action_job(
         const std::string & bootstrap_zoom_state_ref,
         const std::string & search_state_ref,
         const std::string & representation_augmentation_state_ref,
+        const std::string & graft_direction_ref,
         common_flydelta_experiment_collection_result & result,
         std::string & error);

@@ -601,6 +601,11 @@ int main() {
             [](const auto &, auto &, std::string &) { return true; };
         registered_callbacks.run_concept_synthesis =
             [](const auto &, auto &, std::string &) { return true; };
+        registered_callbacks.persist_experimental_direction =
+            [](const auto &, std::string & reference, std::string &) {
+                reference = "flydelta://direction/test";
+                return true;
+            };
         registration_error.clear();
         return true;
     };

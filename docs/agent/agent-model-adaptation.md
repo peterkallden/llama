@@ -183,6 +183,18 @@ records the returned trajectory references in that same index before the
 worker reports the slice complete; the capture callback therefore cannot leave
 readiness stale after a successful capture.
 
+Concept synthesis remains a bounded producer of experimental direction
+material. Once its host callback is actually registered, the worker persists an
+immutable direction reference and reports it as a graft reference. The daemon
+scheduler uses that reference to enqueue the ordinary FlyDelta search pipeline
+again, carrying forward the originating capture and behavior-delta references
+while resetting stale search/augmentation state for the new Bootstrap slice.
+The graft does not promote the direction, increase evidence depth, or grant
+learning credit; subsequent utility, host verification and lifecycle gates are
+unchanged. If the model-facing concept callbacks are not registered, the
+capabilities remain unavailable rather than being advertised by the generic
+worker.
+
 The lifecycle stores share one persistence contract: the `payload_json` column
 contains the record payload, not the serialized lifecycle envelope. JSONL,
 SQLite and Cozo must therefore produce the same idempotent read-back; the

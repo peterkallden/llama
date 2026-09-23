@@ -92,6 +92,7 @@ int main() {
         "flydelta://state/bootstrap-zoom/next",
         "flydelta://state/search/orthogonal",
         "flydelta://state/augmentation/next",
+        "",
         result, error));
     CHECK(result == common_flydelta_experiment_collection_result::enqueued);
     CHECK(common_flydelta_collect_next_action_job(
@@ -100,6 +101,7 @@ int main() {
         "flydelta://state/bootstrap-zoom/next",
         "flydelta://state/search/orthogonal",
         "flydelta://state/augmentation/next",
+        "",
         result, error));
     CHECK(result == common_flydelta_experiment_collection_result::already_present);
     common_flydelta_claimed_experiment_job next_action_job;

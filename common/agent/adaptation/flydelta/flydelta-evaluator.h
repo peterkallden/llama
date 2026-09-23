@@ -70,6 +70,14 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_experiment_job & job,
             std::vector<common_flydelta_concept_candidate> & candidates,
             std::string & error)> run_concept_synthesis;
+    // Persists one synthesized candidate as immutable experimental direction
+    // material and returns the opaque intervention reference used by the
+    // ordinary FlyDelta search lane. This is the graft seam: it does not
+    // activate or promote the candidate.
+    std::function<bool(
+            const common_flydelta_direction_candidate & candidate,
+            std::string & direction_ref,
+            std::string & error)> persist_experimental_direction;
     // Answers whether the reference-only teaching-material group is ready.
     // The host owns the material store; a false answer is a normal retain
     // path, not an evaluator failure.
@@ -173,6 +181,8 @@ struct common_flydelta_evaluator_result {
     std::vector<float> delta_memory_weights;
     std::vector<common_flydelta_concept_candidate> concept_candidates;
     std::vector<std::string> concept_trajectory_refs;
+    // Opaque intervention reference for the next ordinary search surface.
+    std::string graft_direction_ref;
     common_flydelta_aggregation_snapshot aggregation;
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;

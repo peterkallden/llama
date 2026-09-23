@@ -140,7 +140,7 @@ int main() {
     if (!common_flydelta_collect_next_action_job(
             root, {}, parent.job,
             common_flydelta_next_action::prepare_concept_material,
-            {}, {}, {}, collection_result, error) ||
+            {}, {}, {}, {}, collection_result, error) ||
             collection_result != common_flydelta_experiment_collection_result::enqueued) {
         return fail("concept capture follow-up was not queued: " + error);
     }
@@ -186,7 +186,7 @@ int main() {
     if (!common_flydelta_collect_next_action_job(
             root, {}, capture_report.completed_job,
             common_flydelta_next_action::run_concept_synthesis,
-            {}, {}, {}, collection_result, error) ||
+            {}, {}, {}, {}, collection_result, error) ||
             collection_result != common_flydelta_experiment_collection_result::enqueued) {
         return fail("synthesis follow-up was not queued: " + error);
     }
@@ -199,6 +199,14 @@ int main() {
         candidates.push_back(candidate());
         return true;
     };
+    callbacks.persist_experimental_direction = [](
+            const common_flydelta_direction_candidate & value,
+            std::string & direction_ref,
+            std::string &) {
+        if (!value.experimental_only || value.values.size() != 3) return false;
+        direction_ref = "flydelta://concept-direction/smoke";
+        return true;
+    };
     common_flydelta_experiment_worker_report synthesis_report;
     if (!common_flydelta_experiment_worker_run_evaluator_once(
             root, {}, evaluator_config, callbacks, synthesis_report, error) ||
@@ -206,9 +214,27 @@ int main() {
             synthesis_report.completed_job.kind != common_flydelta_experiment_job_kind::concept_synthesis ||
             synthesis_report.completed_job.teaching_material_group_ref != group.group_ref ||
             synthesis_report.concept_candidates.size() != 1 ||
+            synthesis_report.graft_direction_ref != "flydelta://concept-direction/smoke" ||
+            !synthesis_report.has_next_action ||
+            synthesis_report.next_action != common_flydelta_next_action::run_bootstrap ||
             synthesis_report.concept_candidates.front().concept_key !=
                 "dataset.grouped_sum.v1") {
         return fail("concept synthesis handoff failed: " + error);
+    }
+
+    if (!common_flydelta_collect_next_action_job(
+            root, {}, synthesis_report.completed_job,
+            common_flydelta_next_action::run_bootstrap,
+            {}, {}, {}, synthesis_report.graft_direction_ref,
+            collection_result, error) ||
+            collection_result != common_flydelta_experiment_collection_result::enqueued) {
+        return fail("concept graft search follow-up was not queued: " + error);
+    }
+    common_flydelta_claimed_experiment_job graft_search;
+    if (!common_flydelta_experiment_queue_claim_next(root, {}, graft_search, error) ||
+            graft_search.job.kind != common_flydelta_experiment_job_kind::search_pipeline ||
+            graft_search.job.seed.candidate_ref != synthesis_report.graft_direction_ref) {
+        return fail("concept graft did not resume the ordinary search pipeline: " + error);
     }
 
     fs::remove_all(root, ignored);
@@ -217,6 +243,7 @@ int main() {
               << " capture_refs=" << capture_report.concept_trajectory_refs.size()
               << " trajectory_material_ready=yes"
               << " synthesis_handoff=yes"
+              << " graft_to_search=yes"
               << " candidate_count=" << synthesis_report.concept_candidates.size()
               << " learning_credit=none"
               << " promotion=false\n";

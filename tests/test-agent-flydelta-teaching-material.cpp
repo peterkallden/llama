@@ -197,6 +197,14 @@ int main() {
         candidates.push_back(std::move(candidate));
         return true;
     };
+    callbacks.persist_experimental_direction = [](
+            const common_flydelta_direction_candidate & candidate,
+            std::string & direction_ref,
+            std::string &) {
+        if (!candidate.experimental_only || candidate.values.size() != 3) return false;
+        direction_ref = "flydelta://concept-direction/test";
+        return true;
+    };
     common_flydelta_evaluator_result evaluator_result;
     CHECK(common_flydelta_evaluate_job(
         job, evaluator_config, callbacks, evaluator_result, error));
@@ -205,6 +213,8 @@ int main() {
     CHECK(evaluator_result.direction_candidates.front().experimental_only);
     CHECK(evaluator_result.direction_candidates.front().origin ==
         "host_taught_extracted");
+    CHECK(evaluator_result.graft_direction_ref == "flydelta://concept-direction/test");
+    CHECK(evaluator_result.next_action == common_flydelta_next_action::run_bootstrap);
 
     common_flydelta_evaluator_callbacks capture_callbacks;
     capture_callbacks.run_concept_capture = [](

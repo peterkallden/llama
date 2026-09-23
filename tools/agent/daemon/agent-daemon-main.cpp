@@ -564,6 +564,7 @@ int main(int argc, char ** argv) {
                 queue_root, queue_limits, parent_job, report.next_action,
                 report.bootstrap_zoom_state_ref, report.search_state_ref,
                 report.representation_augmentation_state_ref,
+                report.graft_direction_ref,
                 collection_result, schedule_error);
         };
     common_agent_daemon_dispatcher dispatcher(

@@ -172,6 +172,7 @@ bool common_flydelta_collect_next_action_job(
         const std::string & bootstrap_zoom_state_ref,
         const std::string & search_state_ref,
         const std::string & representation_augmentation_state_ref,
+        const std::string & graft_direction_ref,
         common_flydelta_experiment_collection_result & result,
         std::string & error) {
     error.clear();
@@ -182,7 +183,8 @@ bool common_flydelta_collect_next_action_job(
     }
     if (queue_root.empty() ||
             (parent_job.kind != common_flydelta_experiment_job_kind::search_pipeline &&
-             parent_job.kind != common_flydelta_experiment_job_kind::concept_capture) ||
+             parent_job.kind != common_flydelta_experiment_job_kind::concept_capture &&
+             parent_job.kind != common_flydelta_experiment_job_kind::concept_synthesis) ||
             parent_job.id.empty() || parent_job.seed.id.empty()) {
         error = "FlyDelta next-action scheduling requires a bounded FlyDelta parent job";
         return false;
@@ -198,6 +200,13 @@ bool common_flydelta_collect_next_action_job(
     follow_up.search_state_ref = search_state_ref;
     follow_up.representation_augmentation_state_ref =
         representation_augmentation_state_ref;
+    if (!graft_direction_ref.empty()) {
+        if (!bounded(graft_direction_ref)) {
+            error = "FlyDelta graft direction reference is invalid";
+            return false;
+        }
+        follow_up.seed.candidate_ref = graft_direction_ref;
+    }
     if (next_action == common_flydelta_next_action::prepare_concept_material ||
             next_action == common_flydelta_next_action::run_concept_synthesis) {
         if (parent_job.teaching_material_group_ref.empty()) {
@@ -207,9 +216,23 @@ bool common_flydelta_collect_next_action_job(
         follow_up.kind = next_action == common_flydelta_next_action::prepare_concept_material
             ? common_flydelta_experiment_job_kind::concept_capture
             : common_flydelta_experiment_job_kind::concept_synthesis;
+        // Preserve the originating search material through the concept jobs.
+        // Concept capture/synthesis consumes teaching material in addition to
+        // the original captures and deltas; it must not strand those refs when
+        // synthesis hands an experimental direction back to ordinary search.
         follow_up.capture_candidate_ids.clear();
-        follow_up.capture_manifest_ids.clear();
-        follow_up.behavior_delta_ids.clear();
+        follow_up.training_example_ids.clear();
+        follow_up.bootstrap_zoom_state_ref.clear();
+        follow_up.search_state_ref.clear();
+        follow_up.representation_augmentation_state_ref.clear();
+    } else if (parent_job.kind == common_flydelta_experiment_job_kind::concept_synthesis &&
+            next_action == common_flydelta_next_action::run_bootstrap) {
+        if (graft_direction_ref.empty()) {
+            error = "FlyDelta graft search scheduling requires a persisted direction reference";
+            return false;
+        }
+        follow_up.kind = common_flydelta_experiment_job_kind::search_pipeline;
+        follow_up.capture_candidate_ids.clear();
         follow_up.training_example_ids.clear();
         follow_up.bootstrap_zoom_state_ref.clear();
         follow_up.search_state_ref.clear();

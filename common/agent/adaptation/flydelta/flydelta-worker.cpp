@@ -147,6 +147,7 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
     trace.has_next_action = result.has_next_action;
     trace.next_action = result.next_action;
     trace.next_action_reason = result.next_action_reason;
+    trace.graft_direction_ref = result.graft_direction_ref;
 
     if (result.counterfactual_reports.size() <= 256) {
         for (const auto & report : result.counterfactual_reports) {
@@ -261,6 +262,10 @@ bool validate_result(
         error = "FlyDelta worker representation augmentation state reference is invalid";
         return false;
     }
+    if (result.graft_direction_ref.size() > 512) {
+        error = "FlyDelta worker graft direction reference is invalid";
+        return false;
+    }
     for (const auto & counterfactual : result.counterfactual_reports) {
         if (!common_flydelta_counterfactual_report_validate(counterfactual, error)) return false;
         if (counterfactual.experiment_id != claimed.job.id) {
@@ -329,8 +334,9 @@ bool validate_result(
         return false;
     }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::concept_synthesis &&
-            (result.concept_candidates.empty() || result.direction_candidates.empty())) {
-        error = "FlyDelta concept synthesis worker result requires candidates";
+            (result.concept_candidates.empty() || result.direction_candidates.empty() ||
+             result.graft_direction_ref.empty())) {
+        error = "FlyDelta concept synthesis worker result requires candidates and a graft reference";
         return false;
     }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::concept_capture &&
@@ -408,6 +414,7 @@ bool common_flydelta_experiment_worker_run_once(
     report.next_action = result.next_action;
     report.utility_decision = result.utility_decision;
     report.next_action_reason = std::move(result.next_action_reason);
+    report.graft_direction_ref = std::move(result.graft_direction_ref);
     report.has_representation_augmentation_state = result.has_representation_augmentation_state;
     report.representation_augmentation_state = std::move(result.representation_augmentation_state);
     report.representation_augmentation_state_ref =
@@ -422,7 +429,8 @@ bool common_flydelta_trace_validate(
             trace.phase.size() > 64 || trace.behavior_key.size() > 256 ||
             trace.fixture_baseline_ref.size() > 512 ||
             trace.surface_parent_best_ref.size() > 512 ||
-            trace.next_action_reason.size() > 512 || trace.arms.size() > 256 ||
+            trace.next_action_reason.size() > 512 || trace.graft_direction_ref.size() > 512 ||
+            trace.arms.size() > 256 ||
             trace.whirlpool.size() > 32 || trace.bootstrap_refinement.size() > 64 ||
             !finite(trace.alpha_last_scale) || !finite(trace.alpha_utility_slope) ||
             !finite(trace.alpha_best_margin_delta_normalized)) {
@@ -501,6 +509,7 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
         {"has_next_action", trace.has_next_action},
         {"next_action", common_flydelta_next_action_name(trace.next_action)},
         {"next_action_reason", trace.next_action_reason},
+        {"graft_direction_ref", trace.graft_direction_ref},
         {"arms", std::move(arms)}, {"whirlpool", std::move(whirlpool)}
     };
     return payload.dump();
@@ -515,6 +524,7 @@ bool common_flydelta_worker_result_from_evaluator(
     target.capture_manifests = source.capture_manifests;
     target.concept_candidates = source.concept_candidates;
     target.concept_trajectory_refs = source.concept_trajectory_refs;
+    target.graft_direction_ref = source.graft_direction_ref;
     target.counterfactual_reports = source.counterfactual_reports;
     target.direction_candidates = source.direction_candidates;
     target.basis_directions = source.basis_directions;
