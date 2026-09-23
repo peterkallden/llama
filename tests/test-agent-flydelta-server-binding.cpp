@@ -34,6 +34,24 @@ int main() {
             common_flydelta_evaluator_config &,
             common_flydelta_evaluator_callbacks &,
             std::string &) { return true; };
+    callbacks.run_donor_capture = [](
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_capture_manifest> &,
+            std::string &) { return true; };
+    callbacks.run_counterfactual = [](
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_counterfactual_report> &,
+            std::string &) { return true; };
+    callbacks.run_concept_synthesis = [](
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_concept_candidate> &,
+            std::string &) { return true; };
+    callbacks.run_representation_augmentation_with_state = [](
+            const common_flydelta_experiment_job &,
+            const common_flydelta_representation_augmentation_state *,
+            common_flydelta_search_pipeline_result &,
+            common_flydelta_representation_augmentation_state &,
+            std::string &) { return true; };
 
     auto binding = common_agent_server_flydelta_binding_from_callbacks(
         std::move(callbacks));
@@ -43,6 +61,10 @@ int main() {
     CHECK(static_cast<bool>(binding.prepare_arm));
     CHECK(static_cast<bool>(binding.finalize_arm));
     CHECK(static_cast<bool>(binding.register_evaluator));
+    CHECK(static_cast<bool>(binding.run_donor_capture));
+    CHECK(static_cast<bool>(binding.run_counterfactual));
+    CHECK(static_cast<bool>(binding.run_concept_synthesis));
+    CHECK(static_cast<bool>(binding.run_representation_augmentation_with_state));
 
     common_flydelta_arm_request arm;
     common_agent_generation_request request;
@@ -57,15 +79,18 @@ int main() {
     CHECK(binding.register_evaluator(
         evaluator_config, evaluator_callbacks, error));
 
-    auto factory = common_agent_server_flydelta_binding_factory_from_callbacks({
-        binding.primitives,
-        {},
-        binding.prepare_arm,
-        binding.finalize_arm,
-        binding.register_evaluator,
-        {},
-        {},
-    });
+    common_agent_server_flydelta_binding_callbacks factory_callbacks;
+    factory_callbacks.primitives = binding.primitives;
+    factory_callbacks.prepare_arm = binding.prepare_arm;
+    factory_callbacks.finalize_arm = binding.finalize_arm;
+    factory_callbacks.register_evaluator = binding.register_evaluator;
+    factory_callbacks.run_donor_capture = binding.run_donor_capture;
+    factory_callbacks.run_counterfactual = binding.run_counterfactual;
+    factory_callbacks.run_concept_synthesis = binding.run_concept_synthesis;
+    factory_callbacks.run_representation_augmentation_with_state =
+        binding.run_representation_augmentation_with_state;
+    auto factory = common_agent_server_flydelta_binding_factory_from_callbacks(
+        std::move(factory_callbacks));
     common_agent_server_flydelta_binding produced;
     auto resident_host = std::make_shared<common_agent_server_context_host>();
     CHECK(factory(resident_host, produced, error));

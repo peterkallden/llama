@@ -253,6 +253,11 @@ common_agent_server_flydelta_binding_from_callbacks(
     binding.inspect_teaching_material_group =
         std::move(callbacks.inspect_teaching_material_group);
     binding.run_concept_capture = std::move(callbacks.run_concept_capture);
+    binding.run_donor_capture = std::move(callbacks.run_donor_capture);
+    binding.run_counterfactual = std::move(callbacks.run_counterfactual);
+    binding.run_concept_synthesis = std::move(callbacks.run_concept_synthesis);
+    binding.run_representation_augmentation_with_state =
+        std::move(callbacks.run_representation_augmentation_with_state);
     return binding;
 }
 
@@ -474,6 +479,11 @@ common_agent_server_context_host_make_flydelta_model_host(
     model_host->register_evaluator = [register_evaluator = std::move(binding.register_evaluator),
             inspect_teaching_material_group = std::move(inspect_teaching_material_group),
             run_concept_capture = std::move(binding.run_concept_capture),
+            run_donor_capture = std::move(binding.run_donor_capture),
+            run_counterfactual = std::move(binding.run_counterfactual),
+            run_concept_synthesis = std::move(binding.run_concept_synthesis),
+            run_representation_augmentation_with_state =
+                std::move(binding.run_representation_augmentation_with_state),
             teaching_material_runtime = std::move(teaching_material_runtime)](
             common_flydelta_evaluator_config & config,
             common_flydelta_evaluator_callbacks & callbacks,
@@ -506,7 +516,20 @@ common_agent_server_context_host_make_flydelta_model_host(
                     }
                 }
                 return true;
-            };
+                };
+        }
+        if (run_donor_capture) {
+            callbacks.run_donor_capture = run_donor_capture;
+        }
+        if (run_counterfactual) {
+            callbacks.run_counterfactual = run_counterfactual;
+        }
+        if (run_concept_synthesis) {
+            callbacks.run_concept_synthesis = run_concept_synthesis;
+        }
+        if (run_representation_augmentation_with_state) {
+            callbacks.run_representation_augmentation_with_state =
+                run_representation_augmentation_with_state;
         }
         return true;
     };

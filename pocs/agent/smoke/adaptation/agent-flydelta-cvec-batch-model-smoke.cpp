@@ -119,7 +119,10 @@ int main(int argc, char ** argv) {
     config.context_key.load_key.fit_params = true;
     config.context_key.n_parallel = value.scalar ? 1 : 2;
     config.context_key.n_sequences = value.scalar ? 1 : 2;
-    config.context_key.n_ctx = 4096;
+    // Keep the direct model smoke on the same bounded resident context as the
+    // production runtime smoke.  The batch contract is what this fixture
+    // exercises; a larger standalone context is not part of that contract.
+    config.context_key.n_ctx = 2048;
     config.context_key.n_threads = value.n_threads;
     config.verbosity = LOG_LEVEL_INFO;
     config.per_sequence_cvec_batch = !value.scalar;
@@ -200,7 +203,11 @@ int main(int argc, char ** argv) {
         auto & arm = request.arms[index];
         arm.job_id = "flydelta://job/cvec-batch-smoke";
         arm.arm_id = "flydelta://arm/cvec-batch-smoke/" + std::to_string(index);
-        arm.context_ref = "context://cvec-batch-smoke/" + std::to_string(index);
+        // Both arms intentionally share the same immutable prompt/context
+        // identity.  The overlays are the varying dimension; distinct
+        // context refs would correctly partition the logical wave into scalar
+        // batches under the host compatibility contract.
+        arm.context_ref = "context://cvec-batch-smoke";
         arm.fixture_ref = "fixture://cvec-batch-smoke";
         arm.intervention_ref = "flydelta://artifact/cvec-batch-smoke/" + std::to_string(index);
         arm.layer_indices = {1};

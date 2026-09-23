@@ -87,6 +87,24 @@ struct common_agent_server_flydelta_binding {
             const common_flydelta_experiment_job &,
             std::vector<std::string> &,
             std::string &)> run_concept_capture;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_capture_manifest> &,
+            std::string &)> run_donor_capture;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_counterfactual_report> &,
+            std::string &)> run_counterfactual;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_concept_candidate> &,
+            std::string &)> run_concept_synthesis;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            const common_flydelta_representation_augmentation_state *,
+            common_flydelta_search_pipeline_result &,
+            common_flydelta_representation_augmentation_state &,
+            std::string &)> run_representation_augmentation_with_state;
 };
 
 // Host-owned semantic callbacks used to compose a production binding.  This
@@ -126,6 +144,24 @@ struct common_agent_server_flydelta_binding_callbacks {
             const common_flydelta_experiment_job &,
             std::vector<std::string> &,
             std::string &)> run_concept_capture;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_capture_manifest> &,
+            std::string &)> run_donor_capture;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_counterfactual_report> &,
+            std::string &)> run_counterfactual;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_concept_candidate> &,
+            std::string &)> run_concept_synthesis;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            const common_flydelta_representation_augmentation_state *,
+            common_flydelta_search_pipeline_result &,
+            common_flydelta_representation_augmentation_state &,
+            std::string &)> run_representation_augmentation_with_state;
 };
 
 // Canonical composition helper for the existing daemon startup seam.  It is
