@@ -402,7 +402,7 @@ after this checkpoint.
 | Focused build | `llama-agent-inference-smoke` and `llama-agent-daemon` rebuilt successfully with two build workers |
 | Model-free CTest | `llama-agent-inference-ctest`: `1/1 passed`, `0 failed`, `0 not-run` |
 | Focused smoke | `llama-agent-inference-smoke runtime-server-context-host-invalid-model-paths`: passed |
-| Model-backed daemon smoke | Qwen2.5 1.5B instruct GGUF through `llama-agent-daemon --model ... --default-mode chat --agent-plan off --n-predict 8 --context-size 2048 --worker-count 1 --queue-capacity 2`: passed, response `OK.`, `turn.completed` |
+| Model-backed daemon smoke | Qwen2.5 1.5B instruct GGUF through `llama-agent-daemon --model ... --default-mode chat --n-predict 8 --context-size 2048 --worker-count 1 --queue-capacity 2`: passed, response `OK.`, `turn.completed` |
 | Negative daemon smoke | Missing model path failed quickly with `turn.failed` and `resident server_context model does not exist` |
 | Not run | Full agent CTest label, Docker sandbox backend, Kubernetes backend, Nomic-backed embedding flow |
 

@@ -7,7 +7,7 @@
   },
   "runtime": {
     "context_size": 3072,
-    "n_predict": 128,
+    "n_predict": 256,
     "n_threads": 4,
     "n_gpu_layers": 0,
     "default_mode": "agent",
@@ -16,7 +16,6 @@
     "max_plan_revisions": 3,
     "max_research_iterations": 4,
     "memory_learn": "post-turn",
-    "agent_plan": "auto",
     "agent_trace": true,
     "context_budgets": {
       "plan_chars": 12000,

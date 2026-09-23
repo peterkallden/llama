@@ -72,9 +72,15 @@ int main() {
     agent_host_config default_config;
     std::string default_error;
     if (!parse_agent_host_config_json(nlohmann::ordered_json::object(),
-            default_config, default_error) || default_config.tool_timeout_ms != 18000) {
-        std::fprintf(stderr, "unexpected default tool timeout: %u (%s)\n",
-            default_config.tool_timeout_ms, default_error.c_str());
+            default_config, default_error) ||
+            default_config.tool_timeout_ms != 18000 ||
+            default_config.n_predict != 256 ||
+            default_config.agent_plan != "auto" ||
+            default_config.agent_blueprint != "auto") {
+        std::fprintf(stderr, "unexpected automatic agent defaults: n_predict=%d plan=%s blueprint=%s timeout=%u (%s)\n",
+            default_config.n_predict, default_config.agent_plan.c_str(),
+            default_config.agent_blueprint.c_str(), default_config.tool_timeout_ms,
+            default_error.c_str());
         return 1;
     }
     agent_host_config flydelta_config;
@@ -118,6 +124,11 @@ int main() {
         return 1;
     }
     const auto flydelta_serialized = agent_host_config_to_json(flydelta_config);
+    if (flydelta_serialized["runtime"].contains("agent_plan") ||
+            flydelta_serialized["runtime"].contains("agent_blueprint")) {
+        std::fprintf(stderr, "legacy plan/blueprint configuration leaked into new config output\n");
+        return 1;
+    }
     if (!flydelta_serialized["runtime"]["adaptation"]["flydelta"]["enabled"].get<bool>() ||
             flydelta_serialized["runtime"]["adaptation"]["flydelta"]["worker_count"] != 1 ||
             flydelta_serialized["runtime"]["adaptation"]["flydelta"]["batch_mode"] != "auto" ||

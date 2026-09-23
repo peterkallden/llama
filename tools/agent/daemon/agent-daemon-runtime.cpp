@@ -10,6 +10,9 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-bootstrap-zoom-state-store.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
+#include "agent/adaptation/flydelta/flydelta-deep-search.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation-state-store.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
@@ -1073,9 +1076,15 @@ bool daemon_flydelta_run_search_pipeline(
                     delta.capture_layout_revision = provider->capture_layout_revision;
                     delta.layer_index = direction->layer_index;
                     delta.values = direction->values;
+                    common_flydelta_representation_diagnostics diagnostics;
                     if (!common_flydelta_representation_diagnostics_from_captures(
                             *baseline_capture, *overlay_capture, delta,
-                            4U * 1024U * 1024U, geometry, runner_error)) return false;
+                            4U * 1024U * 1024U, diagnostics, runner_error)) return false;
+                    geometry.available = true;
+                    geometry.cosine = diagnostics.cosine;
+                    geometry.progress = diagnostics.progress;
+                    geometry.leakage = diagnostics.leakage;
+                    geometry.shift_norm = diagnostics.shift_norm;
                 }
             }
         }
@@ -1147,7 +1156,7 @@ bool daemon_flydelta_run_search_pipeline(
                 }
                 std::vector<common_flydelta_basis_direction> available;
                 if (baseline_capture && overlay_capture &&
-                        daemon_flydelta_parse_directions(*provider, arm.intervention_ref,
+                        daemon_flydelta_parse_directions(*provider, batch.arms[index].intervention_ref,
                             available, runner_error)) {
                     const auto direction = std::find_if(available.begin(), available.end(),
                         [&](const auto & value) {
@@ -1158,7 +1167,7 @@ bool daemon_flydelta_run_search_pipeline(
                         common_flydelta_behavior_delta delta;
                         delta.id = arm.arm_id + ":diagnostic";
                         delta.behavior_key = job.seed.behavior_key;
-                        delta.capture_manifest_id = arm.context_ref;
+                        delta.capture_manifest_id = batch.arms[index].context_ref;
                         delta.host_evidence_ref = job.seed.evidence_ref;
                         delta.model_profile_fingerprint = provider->model_profile_fingerprint;
                         delta.execution_context_fingerprint = job.seed.execution_context_fingerprint;
@@ -1184,6 +1193,304 @@ bool daemon_flydelta_run_search_pipeline(
     };
     return common_flydelta_run_search_pipeline_batched(
         fixture, config, {input}, runner, batch_runner, result, error);
+}
+
+bool daemon_flydelta_register_composed_direction(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const std::string & source_ref,
+        const common_flydelta_low_rank_basis & basis,
+        const std::vector<float> & coefficients,
+        std::string & reference,
+        std::string & error) {
+    error.clear();
+    if (basis.vectors.empty() || basis.vectors.size() != coefficients.size() ||
+            basis.layer_index < 1 || basis.dimension == 0) {
+        error = "FlyDelta composed coefficient direction has invalid basis shape";
+        return false;
+    }
+    std::vector<float> values(basis.dimension, 0.0f);
+    double squared = 0.0;
+    std::string identity = source_ref + "\n" + std::to_string(basis.layer_index);
+    for (size_t index = 0; index < coefficients.size(); ++index) {
+        if (!std::isfinite(coefficients[index]) ||
+                basis.vectors[index].size() != basis.dimension) {
+            error = "FlyDelta composed coefficient direction contains invalid values";
+            return false;
+        }
+        identity += "\n" + std::to_string(coefficients[index]);
+        for (size_t value = 0; value < basis.dimension; ++value) {
+            values[value] += coefficients[index] * basis.vectors[index][value];
+        }
+    }
+    for (const float value : values) squared += static_cast<double>(value) * value;
+    if (!std::isfinite(squared) || squared <= 0.0) {
+        error = "FlyDelta composed coefficient direction has zero norm";
+        return false;
+    }
+    const float inverse_norm = static_cast<float>(1.0 / std::sqrt(squared));
+    for (float & value : values) value *= inverse_norm;
+    reference = "flydelta://runtime/composed/" +
+        hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+    common_flydelta_basis_direction direction;
+    direction.layer_index = basis.layer_index;
+    direction.values = std::move(values);
+    {
+        std::lock_guard<std::mutex> lock(provider->composed_direction_mutex);
+        provider->composed_directions[reference] = {std::move(direction)};
+    }
+    return true;
+}
+
+bool daemon_flydelta_run_coefficient_arm_batch(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_low_rank_basis & basis,
+        const std::vector<std::vector<float>> & coefficients,
+        const bool apply_overlay,
+        std::vector<common_flydelta_counterfactual_trial> & trials,
+        std::vector<common_flydelta_decision_margin> & margins,
+        std::vector<common_flydelta_representation_diagnostics> & geometries,
+        std::vector<bool> & geometry_available,
+        std::string & error) {
+    error.clear();
+    if (coefficients.empty()) {
+        error = "FlyDelta coefficient batch is empty";
+        return false;
+    }
+    common_flydelta_arm_batch_request request;
+    request.batch_id = job.id + ":coefficient";
+    request.wave_id = apply_overlay ? "coefficient-controls" : "coefficient-baseline";
+    request.arms.reserve(coefficients.size());
+    for (size_t index = 0; index < coefficients.size(); ++index) {
+        const auto & values = coefficients[index];
+        std::string intervention_ref = job.seed.candidate_ref;
+        float strength = 0.0f;
+        if (apply_overlay) {
+            if (!daemon_flydelta_register_composed_direction(
+                    provider, job.seed.candidate_ref, basis, values,
+                    intervention_ref, error)) return false;
+            for (const float value : values) strength += value * value;
+            strength = std::sqrt(strength);
+        }
+        common_flydelta_arm_request arm;
+        arm.job_id = job.id;
+        arm.wave_id = request.wave_id;
+        arm.proposal_index = index;
+        arm.context_ref = job.seed.baseline_ref;
+        arm.fixture_ref = fixture.id;
+        arm.intervention_ref = intervention_ref;
+        arm.batch_compatibility_key = arm.context_ref + "\n" + arm.fixture_ref;
+        arm.layer_indices = apply_overlay ? std::vector<uint32_t>{
+            static_cast<uint32_t>(basis.layer_index)} : std::vector<uint32_t>{};
+        arm.coefficients = apply_overlay ? std::vector<float>{1.0f} : std::vector<float>{};
+        arm.alpha = apply_overlay ? strength : 0.0f;
+        arm.apply_overlay = apply_overlay;
+        arm.fresh_context = true;
+        arm.request_capture = true;
+        arm.request_teacher_forced_margin = true;
+        arm.request_generation = true;
+        arm.request_host_verification = true;
+        arm.max_capture_bytes = 4U * 1024U * 1024U;
+        arm.max_generated_tokens = 64;
+        const std::string identity = job.id + "\n" + request.wave_id + "\n" +
+            std::to_string(index) + "\n" + intervention_ref + "\n" +
+            std::to_string(arm.alpha);
+        arm.arm_id = "flydelta://runtime/" + job.id + "/coefficient/" +
+            hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+        if (!common_flydelta_arm_request_validate(arm, error)) return false;
+        request.arms.push_back(std::move(arm));
+    }
+    common_flydelta_arm_batch_result batch;
+    if (!daemon_flydelta_execute_batch(provider, request, batch, error) ||
+            batch.arms.size() != request.arms.size()) {
+        if (error.empty()) error = "FlyDelta coefficient batch returned incomplete arms";
+        return false;
+    }
+    trials.clear();
+    margins.clear();
+    geometries.clear();
+    geometry_available.clear();
+    for (size_t index = 0; index < batch.arms.size(); ++index) {
+        const auto & arm = batch.arms[index];
+        if (!arm.executed || arm.arm_id != request.arms[index].arm_id) {
+            error = "FlyDelta coefficient batch returned an invalid arm";
+            return false;
+        }
+        common_flydelta_counterfactual_trial trial;
+        trial.executed = arm.executed;
+        trial.verifier_known = arm.verifier_known;
+        trial.passed = arm.host_outcome == common_flydelta_counterfactual_outcome::helped;
+        trial.quality = arm.quality;
+        trial.overlay_applied = apply_overlay;
+        trial.intervention_count = request.arms[index].layer_indices.size();
+        trial.evidence_ref = arm.generation_ref;
+        trials.push_back(std::move(trial));
+        margins.push_back(arm.margin);
+        common_flydelta_representation_diagnostics geometry;
+        geometry.cosine = arm.cosine;
+        geometry.progress = arm.progress;
+        geometry.leakage = arm.leakage;
+        geometry.shift_norm = arm.shift_norm;
+        geometries.push_back(geometry);
+        geometry_available.push_back(arm.geometry_available);
+    }
+    return true;
+}
+
+bool daemon_flydelta_run_post_bootstrap_slice(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_experiment_plan & plan,
+        common_flydelta_search_pipeline_result & output,
+        std::string & error) {
+    error.clear();
+    common_flydelta_experiment_fixture fixture;
+    if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
+    std::vector<common_flydelta_basis_direction> directions;
+    if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref, directions, error)) {
+        return false;
+    }
+    const int32_t layer_index = static_cast<int32_t>(plan.continuation.region.anchor_layer_index);
+    std::vector<common_flydelta_direction_candidate> candidates;
+    for (const auto & direction : directions) {
+        if (direction.layer_index != layer_index) continue;
+        common_flydelta_direction_candidate candidate;
+        candidate.kind = common_flydelta_direction_kind::raw_repair;
+        candidate.layer_index = direction.layer_index;
+        candidate.values = direction.values;
+        candidate.origin = "runtime_resource";
+        candidate.extraction_id = job.seed.candidate_ref;
+        candidate.source_samples = 1;
+        candidate.retained_samples = 1;
+        candidate.experimental_only = true;
+        candidates.push_back(std::move(candidate));
+    }
+    const size_t max_rank = plan.phase == common_flydelta_experiment_phase::shallow_controls
+        ? 2 : 4;
+    if (candidates.size() < 2) {
+        error = "FlyDelta post-Bootstrap phase requires two compatible directions at the selected layer";
+        return false;
+    }
+    if (candidates.size() > max_rank) candidates.resize(max_rank);
+    common_flydelta_low_rank_basis basis;
+    if (!common_flydelta_build_low_rank_basis(
+            candidates.front().values.size(), max_rank, candidates, basis, error)) return false;
+
+    common_flydelta_coefficient_search_config coefficient_config;
+    coefficient_config.max_candidates = plan.budget.max_coefficient_trials == 0
+        ? 16 : std::min<size_t>(16, plan.budget.max_coefficient_trials);
+    coefficient_config.strategy = plan.run_tfo_lite
+        ? common_flydelta_coefficient_search_strategy::tfo_lite
+        : common_flydelta_coefficient_search_strategy::coordinate;
+    const auto run_single = [provider, &job, &fixture](
+            const common_flydelta_experiment_fixture &,
+            const common_flydelta_low_rank_basis & current_basis,
+            const std::vector<float> & coefficients,
+            const bool apply_overlay,
+            common_flydelta_counterfactual_trial & trial,
+            common_flydelta_decision_margin & margin,
+            common_flydelta_representation_diagnostics & geometry,
+            bool & has_geometry, std::string & runner_error) {
+        std::vector<common_flydelta_counterfactual_trial> trials;
+        std::vector<common_flydelta_decision_margin> margins;
+        std::vector<common_flydelta_representation_diagnostics> geometries;
+        std::vector<bool> geometry_flags;
+        if (!daemon_flydelta_run_coefficient_arm_batch(
+                provider, job, fixture, current_basis, {coefficients}, apply_overlay,
+                trials, margins, geometries, geometry_flags, runner_error)) return false;
+        trial = std::move(trials.front());
+        margin = std::move(margins.front());
+        geometry = std::move(geometries.front());
+        has_geometry = geometry_flags.front();
+        return true;
+    };
+    const auto run_batch = [provider, &job, &fixture] (
+            const common_flydelta_experiment_fixture &,
+            const common_flydelta_low_rank_basis & current_basis,
+            const std::vector<std::vector<float>> & coefficients,
+            std::vector<common_flydelta_counterfactual_trial> & trials,
+            std::vector<common_flydelta_decision_margin> & margins,
+            std::vector<common_flydelta_representation_diagnostics> & geometries,
+            std::vector<bool> & geometry_flags, std::string & runner_error) {
+        return daemon_flydelta_run_coefficient_arm_batch(
+            provider, job, fixture, current_basis, coefficients, true,
+            trials, margins, geometries, geometry_flags, runner_error);
+    };
+    std::vector<common_flydelta_coefficient_trial> trials;
+    common_flydelta_coefficient_selection selection;
+    if (plan.phase == common_flydelta_experiment_phase::deep_controls) {
+        common_flydelta_deep_search_config deep_config;
+        deep_config.max_rank = std::min<size_t>(max_rank, 4);
+        deep_config.max_directions = std::min<size_t>(candidates.size(), 4);
+        deep_config.full_generation_top_k = plan.budget.full_generation_top_k == 0
+            ? 3 : std::min<size_t>(3, plan.budget.full_generation_top_k);
+        deep_config.coefficients = coefficient_config;
+        std::vector<common_flydelta_deep_search_direction> deep_directions;
+        for (const auto & candidate : candidates) {
+            common_flydelta_deep_search_direction value;
+            value.direction = candidate;
+            value.decision_score_available = true;
+            value.decision_score = candidate.median_alignment;
+            deep_directions.push_back(std::move(value));
+        }
+        common_flydelta_deep_search_result deep_result;
+        if (!common_flydelta_run_deep_search_batched(
+                fixture, deep_config, deep_directions, run_single, run_batch,
+                run_single, run_batch, deep_result, error)) return false;
+        basis = deep_result.basis;
+        trials = deep_result.coefficient_trials;
+        selection = deep_result.coefficient_selection;
+    } else if (!common_flydelta_run_low_rank_coefficient_search_batched(
+            fixture, basis, coefficient_config, run_single, run_batch,
+            trials, selection, error)) {
+        return false;
+    }
+
+    common_flydelta_search_pipeline_direction_result direction_result;
+    direction_result.direction = candidates.front();
+    direction_result.direction.values = basis.vectors.front();
+    direction_result.direction.layer_index = basis.layer_index;
+    direction_result.direction.origin = "runtime_post_bootstrap_basis";
+    direction_result.region_trials.reserve(trials.size());
+    for (const auto & coefficient_trial : trials) {
+        common_flydelta_intervention_region_trial trial;
+        trial.candidate.layer_indices = {static_cast<uint32_t>(basis.layer_index)};
+        trial.candidate.anchor_layer_index = static_cast<uint32_t>(basis.layer_index);
+        trial.candidate.total_scale = coefficient_trial.executed_strength;
+        trial.candidate.per_layer_scale = coefficient_trial.executed_strength;
+        trial.requested_total_scale = coefficient_trial.requested_strength;
+        trial.executed_total_scale = coefficient_trial.executed_strength;
+        trial.outcome = coefficient_trial.outcome;
+        trial.quality_delta = coefficient_trial.quality_delta;
+        trial.margin = coefficient_trial.margin;
+        trial.executed = coefficient_trial.executed;
+        trial.verifier_known = coefficient_trial.verifier_known;
+        trial.geometry_available = coefficient_trial.geometry_available;
+        trial.geometry = coefficient_trial.geometry;
+        trial.search_score = coefficient_trial.search_fitness;
+        trial.promising = coefficient_trial.search_fitness > 0.0f;
+        trial.safe_to_continue = !coefficient_trial.geometry_available ||
+            (coefficient_trial.geometry.shift_norm <= 1.0f &&
+             coefficient_trial.geometry.leakage <= 1.0f);
+        trial.evidence_ref = "flydelta://runtime/coefficient-trial/" + job.id;
+        if (!common_flydelta_intervention_region_trial_validate(trial, error)) return false;
+        direction_result.region_trials.push_back(std::move(trial));
+    }
+    direction_result.region_selection.selected = selection.selected;
+    direction_result.region_selection.trial_index = selection.trial_index;
+    direction_result.region_selection.score = selection.score;
+    output = {};
+    output.directions.push_back(std::move(direction_result));
+    output.search_status = trials.empty()
+        ? common_flydelta_search_status::no_useful_utility
+        : common_flydelta_search_status::candidate_available;
+    output.selection.selected = selection.selected;
+    output.selection.intervention_region = true;
+    output.selection.direction_index = 0;
+    output.selection.region_trial_index = selection.trial_index;
+    output.selection.score = selection.score;
+    return true;
 }
 
 std::function<bool(
@@ -1452,7 +1759,14 @@ make_daemon_flydelta_resource_binding_factory(
                 common_flydelta_utility_history history;
                 if (!resolve_orchestration_state(state_ref, plan, history, state_error)) return false;
                 if (plan.phase != common_flydelta_experiment_phase::bootstrap) {
-                    state_error = "FlyDelta daemon post-Bootstrap phase is not yet bound to its typed arm runner";
+                    if (plan.phase == common_flydelta_experiment_phase::shallow_controls ||
+                            plan.phase == common_flydelta_experiment_phase::deep_controls) {
+                        if (!daemon_flydelta_run_post_bootstrap_slice(
+                                provider, job, plan, result, state_error)) return false;
+                        next_state_ref = state_ref;
+                        return true;
+                    }
+                    state_error = "FlyDelta daemon received an unsupported post-Bootstrap phase";
                     return false;
                 }
                 std::string bootstrap_ref = job.bootstrap_zoom_state_ref;

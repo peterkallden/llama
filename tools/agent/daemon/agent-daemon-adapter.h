@@ -46,15 +46,15 @@ struct daemon_options {
     int max_reflection_rounds = 1;
     int max_plan_revisions = 0;
     size_t max_research_iterations = 0;
-    int n_predict = 64;
+    int n_predict = 256;
     int n_threads = 2;
     int context_size = 3072;
     common_agent_context_budget_config context_budgets;
     size_t max_continuations = 2;
     int n_gpu_layers = 0;
     std::string memory_learn = "off";
-    std::string agent_plan = "off";
-    std::string agent_blueprint = "off";
+    std::string agent_plan = "auto";
+    std::string agent_blueprint = "auto";
     std::string tool_profile;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
     std::map<std::string, std::string> tool_family_descriptions;

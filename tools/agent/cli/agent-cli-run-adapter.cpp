@@ -110,15 +110,15 @@ bool prepare_agent_cli_args(args & options, std::string & error) {
     if (bootstrap_enabled && options.agent_runtime && options.agent_blueprint.empty()) {
         options.agent_blueprint = "auto";
     }
-    if (bootstrap_enabled && options.agent_blueprint == "auto" && options.plan_id.empty()) {
+    const bool blueprint_selection_enabled =
+        !options.agent_blueprint.empty() && options.agent_blueprint != "off";
+    if (bootstrap_enabled && blueprint_selection_enabled && options.plan_id.empty()) {
         options.plan_id = "agent-blueprint:" + options.memory_session + ":" +
             (options.memory_turn.empty() ? std::string("turn") : options.memory_turn);
     }
     // Host configuration uses the explicit value "off" for a disabled
     // blueprint selector. Treat it like the CLI default (empty), rather than
     // as a literal blueprint id that would require bootstrap and a plan.
-    const bool blueprint_selection_enabled =
-        !options.agent_blueprint.empty() && options.agent_blueprint != "off";
     if (!options.agent_export.empty() && (bootstrap_enabled || blueprint_selection_enabled)) {
         error = "--agent-export cannot be combined with bootstrap or blueprint selection";
         return false;
@@ -127,8 +127,8 @@ bool prepare_agent_cli_args(args & options, std::string & error) {
         error = "--agent-bootstrap requires the agent runtime";
         return false;
     }
-    if (blueprint_selection_enabled && (!bootstrap_enabled || options.plan_id.empty())) {
-        error = "--agent-blueprint requires bootstrap and an explicit --plan-id";
+    if (blueprint_selection_enabled && !bootstrap_enabled) {
+        error = "--agent-blueprint requires agent bootstrap";
         return false;
     }
     if (options.memory_learn != "off" && options.memory_learn != "post-turn") {

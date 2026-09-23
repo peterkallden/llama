@@ -114,7 +114,7 @@ Invoke-LoggedCommand -Name "Qwen/Nomic document table" -LogPath $logPath -FilePa
     "--model", $ChatModel, "--embedding-model", $EmbeddingModel,
     "--agent-profile", "research", "--tool-profile", "research",
     "--thinking-mode", $ThinkingMode, "--max-reflection-rounds", "1",
-    "--max-research-iterations", "1", "--agent-plan", "auto",
+    "--max-research-iterations", "1",
     "--max-plan-revisions", "1", "--max-tool-rounds", $MaxToolRounds.ToString(),
     "--resource-blob-backend", "fs", "--resource-blob-root", $resourceRoot,
     "--resource-metadata-backend", "in-memory",

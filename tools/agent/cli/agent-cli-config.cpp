@@ -23,21 +23,21 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--resource PATH ...] [--resource-mime-type MIME]\n"
         "         [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID]\n"
-        "         [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-id ID] [--agent-plan off|auto]\n"
-        "         [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--agent-blueprint ID] [--repository-root PATH]\n"
+        "         [--plan-backend in-memory|cozo]\n"
+        "         [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--repository-root PATH]\n"
         "         [--agent-trace] [--plan-show-summary] [--include-summary]\n"
         "  %s daemon-chat --model MODEL --prompt TEXT [--embedding-model MODEL] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F] [--memory-learn-show-candidate]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
-        "         [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--include-summary] [--memory-scope turn|session|project|global]\n"
+        "         [--agent-trace] [--plan-show-summary] [--include-summary] [--memory-scope turn|session|project|global]\n"
         "         [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--plan-scope turn|session|project|global]\n"
         "         [--n-predict N] [--context-size N] [--threads N] [-ngl N] [--agent-inference-backend server-context]\n"
         "  %s daemon-session --model MODEL [--prompt TEXT] [--embedding-model MODEL] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F] [--memory-learn-show-candidate]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
-        "         [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--include-summary] [--memory-scope turn|session|project|global]\n"
+        "         [--agent-trace] [--plan-show-summary] [--include-summary] [--memory-scope turn|session|project|global]\n"
         "         [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--plan-scope turn|session|project|global]\n"
         "         [--n-predict N] [--context-size N] [-ngl N] [--agent-inference-backend server-context]\n",
         argv0, command_name, argv0, argv0);
@@ -183,8 +183,6 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.data_backend = v;
         } else if (strcmp(argv[i], "--data-db") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.data_db = v;
-        } else if (strcmp(argv[i], "--plan-id") == 0) {
-            const char * v = need_value(argv[i]); if (!v) return false; out.plan_id = v;
         } else if (strcmp(argv[i], "--agent-plan") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_plan = v;
         } else if (strcmp(argv[i], "--repository-root") == 0) {

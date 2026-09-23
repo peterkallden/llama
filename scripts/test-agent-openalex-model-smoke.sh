@@ -66,7 +66,7 @@ prompt="Use only the openalex.listWorks tool. Call it with the search argument s
 args=(
     run --config "$config" --model "$model"
     --agent-profile default --tool-profile openalex-smoke
-    --thinking-mode deliberate --agent-plan off
+    --thinking-mode deliberate
     --max-tool-rounds 4
     --require-tool-execution --agent-trace --generation-trace
     --prompt "$prompt"

@@ -95,7 +95,7 @@ $previousTrace = $env:LLAMA_AGENT_RESIDENT_TRACE
 $env:LLAMA_AGENT_RESIDENT_TRACE = "1"
 
 try {
-    $cmd = "type `"$requestsPath`" | `"$exePath`" --model `"$ChatModel`" --default-mode agent --thinking-mode reflective --memory-learn off --agent-plan auto -n 64 -ngl 0 1> `"$stdoutPath`" 2> `"$stderrPath`""
+    $cmd = "type `"$requestsPath`" | `"$exePath`" --model `"$ChatModel`" --default-mode agent --thinking-mode reflective --memory-learn off -n 64 -ngl 0 1> `"$stdoutPath`" 2> `"$stderrPath`""
     cmd /d /c $cmd | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Show-Diagnostics -Path $stderrPath

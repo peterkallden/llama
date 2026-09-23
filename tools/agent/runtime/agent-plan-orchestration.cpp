@@ -209,9 +209,17 @@ bool maybe_auto_select_plan(
 }
 
 bool maybe_auto_select_blueprint(
-    const common_agent_orchestration_runtime_context & context,
-    std::string & error) {
+        const common_agent_orchestration_runtime_context & context,
+        std::string & error) {
     if (context.config.agent_blueprint != "auto") {
+        error.clear();
+        return true;
+    }
+
+    // The first automatic turn may not have a task plan yet.  Blueprint
+    // selection is deferred until the normal agent path has created one;
+    // missing lifecycle state is not a user-turn failure.
+    if (context.current_plan_id.empty() || context.scope.session_id.empty()) {
         error.clear();
         return true;
     }

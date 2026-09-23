@@ -849,8 +849,7 @@ tool families:
 - memory: Search and manage scoped runtime memory
 ```
 
-When `agent_plan=auto` is enabled, this is an active two-stage tool-intent
-flow, not only a future extension. The host first exposes only the family
+The agent always uses the automatic two-stage tool-intent flow, not only a future extension. The host first exposes only the family
 names and descriptions, then renders exact tool names and compact contracts
 for selected families. The first decision uses a bounded plain-text contract:
 
@@ -896,9 +895,9 @@ tool use mandatory. When the request concerns an attachment, the selector is
 instructed to choose the corresponding family. A `TOOLS:` selection is
 validated against the generated family index and intersected with the active
 host tool view before full planning. Routing cannot grant access to a tool
-that the profile did not expose. The daemon and CLI both map
-`agent_plan=auto` to the runtime family-routing flag; this keeps their
-separate host configuration paths semantically aligned.
+that the profile did not expose. The daemon and CLI use the same automatic
+family-routing path, keeping their separate host configuration paths
+semantically aligned.
 
 If a small model emits an exact call to an already registered tool before the
 family prefix, the host may conservatively recover the owning family, for
@@ -4001,8 +4000,7 @@ One concrete "full current functionality" foreground run looks like this on Wind
     "max_plan_revisions": 3,
     "max_research_iterations": 4,
     "memory_learn": "post-turn",
-    "agent_plan": "auto",
-    "n_predict": 96
+    "n_predict": 256
   },
   "stores": {
     "memory": {
@@ -4866,9 +4864,8 @@ select a blueprint that is outside scope, has a known-false assumption, lacks
 a resolved required capability, or conflicts with a host-blocked hard
 constraint.
 
-The daemon exposes the same path through `--agent-blueprint off|auto|ID` and
-the `runtime.agent_blueprint` configuration field. Before automatic ranking,
-the daemon resolves the active host tool profile for the turn and passes its
+Blueprint selection is automatic and is not a required CLI or configuration
+field. Before automatic ranking, the daemon resolves the active host tool profile for the turn and passes its
 semantic capability set to native selection. A blueprint requirement such as
 `development.build` is compared with that set, not with a model-selected tool
 name. The `ready` response reports the configured profile, effective

@@ -18,8 +18,8 @@ struct common_agent_generation_config;
 
 struct common_agent_orchestration_config {
     std::string prompt;
-    std::string agent_plan = "off";
-    std::string agent_blueprint;
+    std::string agent_plan = "auto";
+    std::string agent_blueprint = "auto";
     std::string agent_bootstrap = "none";
     std::string agent_import;
     std::string agent_export;
@@ -27,8 +27,8 @@ struct common_agent_orchestration_config {
 
 struct common_agent_orchestration_build_config {
     std::string prompt;
-    std::string agent_plan = "off";
-    std::string agent_blueprint;
+    std::string agent_plan = "auto";
+    std::string agent_blueprint = "auto";
     std::string agent_bootstrap = "none";
     std::string agent_import;
     std::string agent_export;

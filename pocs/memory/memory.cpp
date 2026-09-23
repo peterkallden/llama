@@ -31,7 +31,7 @@ static void usage(const char * argv0) {
         "  %s add --memory-db PATH --id ID --kind KIND --content TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s search --memory-db PATH --query TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--limit N] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s relate --memory-db PATH --from ID --relation REL --to ID [--weight W] [--backend cozo]\n"
-        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static] [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--agent-plan off|auto] [--agent-blueprint ID --plan-id ID] [--plan-backend in-memory|cozo] [--plan-db PATH]\n",
+        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static] [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--plan-backend in-memory|cozo] [--plan-db PATH]\n",
         argv0, argv0, argv0, argv0);
 }
 

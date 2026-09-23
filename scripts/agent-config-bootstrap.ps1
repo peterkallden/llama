@@ -146,10 +146,10 @@ $config = [ordered]@{
     schema_version = 1
     model = [ordered]@{ backend = 'server-context'; path = $Model; embedding_model = $EmbeddingModel }
     runtime = [ordered]@{
-        context_size = 3072; n_predict = 128; n_threads = $Threads; n_gpu_layers = $GpuLayers
+        context_size = 3072; n_predict = 256; n_threads = $Threads; n_gpu_layers = $GpuLayers
         default_mode = $DefaultMode; thinking_mode = $ThinkingMode; max_reflection_rounds = 2
         max_plan_revisions = 3; max_research_iterations = 4; memory_learn = 'post-turn'
-        agent_plan = 'auto'; agent_trace = $true
+        agent_trace = $true
     }
     stores = [ordered]@{
         memory = [ordered]@{ backend = 'cozo'; path = "$CozoRoot/memory.cozo" }

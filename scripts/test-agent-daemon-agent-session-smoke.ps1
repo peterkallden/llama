@@ -93,7 +93,7 @@ Remove-Item -LiteralPath $stdoutPath -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $stderrPath -ErrorAction SilentlyContinue
 
 try {
-    $cmd = "type `"$requestsPath`" | `"$exePath`" --model `"$ChatModel`" --default-mode agent --thinking-mode reflective --memory-learn off --agent-plan auto -n 64 -ngl 0 1> `"$stdoutPath`" 2> `"$stderrPath`""
+    $cmd = "type `"$requestsPath`" | `"$exePath`" --model `"$ChatModel`" --default-mode agent --thinking-mode reflective --memory-learn off -n 64 -ngl 0 1> `"$stdoutPath`" 2> `"$stderrPath`""
     cmd /d /c $cmd | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Show-Diagnostics -Path $stderrPath

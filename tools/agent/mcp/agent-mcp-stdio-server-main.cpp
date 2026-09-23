@@ -362,8 +362,6 @@ bool parse_server_args(
             const char * value = need_value(argv[i], i); if (!value) return false; options.plan_backend = value;
         } else if (std::strcmp(argv[i], "--plan-db") == 0) {
             const char * value = need_value(argv[i], i); if (!value) return false; options.plan_db = value;
-        } else if (std::strcmp(argv[i], "--plan-id") == 0) {
-            const char * value = need_value(argv[i], i); if (!value) return false; options.plan_id = value;
         } else if (std::strcmp(argv[i], "--memory-scope") == 0) {
             const char * value = need_value(argv[i], i); if (!value) return false; options.memory_scope = value;
         } else if (std::strcmp(argv[i], "--memory-namespace") == 0) {

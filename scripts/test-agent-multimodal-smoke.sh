@@ -50,7 +50,6 @@ run_media_case() {
         --mmproj "$mmproj" \
         --agent-inference-backend server-context \
         --agent-profile static \
-        --agent-plan off \
         --thinking-mode reflective \
         --n-predict 64 \
         --threads 4 \
@@ -76,7 +75,6 @@ run_audio_case() {
         --mmproj "$mmproj" \
         --agent-inference-backend server-context \
         --agent-profile static \
-        --agent-plan off \
         --thinking-mode reflective \
         --n-predict 64 \
         --threads 4 \

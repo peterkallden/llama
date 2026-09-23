@@ -40,7 +40,7 @@ struct agent_host_config {
     common_agent_model_catalog model_catalog;
 
     int runtime_context_size = 3072;
-    int n_predict = 64;
+    int n_predict = 256;
     int n_threads = 2;
     common_agent_context_budget_config context_budgets;
     size_t max_continuations = 2;
@@ -51,8 +51,8 @@ struct agent_host_config {
     int max_plan_revisions = 0;
     size_t max_research_iterations = 0;
     std::string memory_learn = "off";
-    std::string agent_plan = "off";
-    std::string agent_blueprint = "off";
+    std::string agent_plan = "auto";
+    std::string agent_blueprint = "auto";
     bool memory_learn_show_candidate = false;
     float memory_learn_min_confidence = 0.75f;
     float memory_learn_min_reuse = 0.65f;

@@ -462,12 +462,10 @@ The daemon `ready` response includes a `tooling` object with the active
 profile, configured capabilities, resolved tool names and effective
 network/write policy. It also reports `effective_capabilities`, the semantic
 capabilities supplied by the resolved tools, and the selected
-`agent_blueprint` mode. This is the authoritative startup diagnostic for what
+automatic blueprint capability state. This is the authoritative startup diagnostic for what
 the instance exposes before blueprint eligibility and ranking run.
 
-For automatic blueprint reuse, set `runtime.agent_blueprint` to `auto` (or
-use `--agent-blueprint auto`). A fixed blueprint id can be selected explicitly.
-The daemon still filters persisted candidates by scope, assumptions, hard
+Blueprint selection is automatic. The daemon filters persisted candidates by scope, assumptions, hard
 constraints, and the resolved capability set before any model ranking. A
 requirement such as `development.build` is therefore checked against the
 host-owned profile; callers cannot add capabilities by choosing a blueprint.
@@ -527,7 +525,7 @@ Useful overrides are:
 | Area | Flags |
 | --- | --- |
 | model | `--model`, optional `--embedding-model`, `--n-predict`, `--n-gpu-layers` |
-| runtime | `--default-mode`, `--thinking-mode`, `--memory-learn`, `--max-reflection-rounds`, `--max-plan-revisions`, `--max-research-iterations`, `--agent-plan`, `--agent-blueprint`, `--agent-trace` |
+| runtime | `--default-mode`, `--thinking-mode`, `--memory-learn`, `--max-reflection-rounds`, `--max-plan-revisions`, `--max-research-iterations`, `--agent-trace` |
 | stores | `--backend`, `--memory-db`, `--plan-backend`, `--plan-db`, `--data-backend`, `--data-db` |
 | resources | `--resource-blob-backend`, `--resource-blob-root`, `--resource-metadata-backend`, `--resource-metadata-db` |
 | tools | `--tool-profile`, `--repository-root`, `--mcp-tool-command`, `--mcp-tool-arg`, `--mcp-tool-server-name`, `--mcp-tool-prefix` |

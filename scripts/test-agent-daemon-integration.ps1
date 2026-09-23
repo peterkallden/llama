@@ -639,7 +639,6 @@ $traceArgs = @(
     "--thinking-mode", "deliberate",
     "--max-reflection-rounds", "1",
     "--max-plan-revisions", "1",
-    "--agent-plan", "auto",
     "-n", "64",
     "-ngl", "0"
 )
@@ -653,7 +652,6 @@ if ($haveEmbeddingModel) {
         "--default-mode", "agent",
         "--thinking-mode", "reflective",
         "--memory-learn", "post-turn",
-        "--agent-plan", "auto",
         "-n", "64",
         "-ngl", "0"
     )

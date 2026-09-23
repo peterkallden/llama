@@ -44,7 +44,7 @@ struct args {
     size_t limit = 8;
     size_t memory_token_budget = 768;
     size_t max_tool_rounds = 16;
-    int n_predict = 128;
+    int n_predict = 256;
     int n_threads = 2;
     // Leave enough room for the compact plan, verified observations and a
     // bounded reflection JSON response in the default CLI/daemon path.
@@ -81,12 +81,12 @@ struct args {
     std::string data_backend = "auto";
     std::string data_db;
     std::string plan_id;
-    std::string agent_plan = "off";
+    std::string agent_plan = "auto";
     std::string repository_root;
     std::string agent_bootstrap = "none";
     std::string agent_import;
     std::string agent_export;
-    std::string agent_blueprint;
+    std::string agent_blueprint = "auto";
     bool plan_show_summary = false;
     bool include_summary = false;
     bool agent_trace = false;

@@ -1209,8 +1209,6 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"max_plan_revisions", config.max_plan_revisions},
             {"max_research_iterations", config.max_research_iterations},
             {"memory_learn", config.memory_learn},
-            {"agent_plan", config.agent_plan},
-            {"agent_blueprint", config.agent_blueprint},
             {"memory_learn_show_candidate", config.memory_learn_show_candidate},
             {"memory_learn_min_confidence", config.memory_learn_min_confidence},
             {"memory_learn_min_reuse", config.memory_learn_min_reuse},

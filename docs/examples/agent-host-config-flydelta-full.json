@@ -47,8 +47,6 @@
     "default_mode": "agent",
     "thinking_mode": "auto",
     "memory_learn": "post-turn",
-    "agent_plan": "auto",
-    "agent_blueprint": "auto",
     "agent_trace": true,
     "adaptation": {
       "capture": true,

@@ -26,7 +26,7 @@ state and wait forever.
 
 Tool selection and ordinary conversation were coupled too late. The host must
 decide whether a turn needs external tools before exposing the larger planner
-contract. The daemon and CLI now both connect `agent_plan=auto` to
+contract. The daemon and CLI now both use automatic plan routing connected to
 `enable_tool_family_routing`, so the family selection phase is actually run
 before the full planner. This daemon wiring is important because the CLI and
 daemon have separate configuration adapters.
@@ -204,7 +204,7 @@ Unknown families and other malformed expressions remain hard failures.
 
 - Status: Fixed locally; deterministic contract tests and a Qwen web smoke are
   required for verification
-- Affected area: daemon/web agent turns using `agent_plan=auto`
+- Affected area: daemon/web agent turns using automatic plan routing
 - Symptom: a request such as `what time is it?` selected the `time` family, but
   the planner could still produce a reasoning/answer step without completing
   `time_now`. The turn then returned a placeholder-like answer instead of the
