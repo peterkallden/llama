@@ -148,9 +148,14 @@ explicit host-approved relation, such as a verified procedure blueprint with
 matched controls, not automatic reflection, user-correction inference or a
 new SFT route. The extractor produces experimental direction material for the
 existing FlyDelta search lane; it does not create learning credit, modify the
-base model or activate a sideband. The production worker and the
-model-capable smoke use the same bounded arm/model-host seam, while the host
-continues to own scheduling, verification and persistence authority.
+base model or activate a sideband. The model-capable smoke uses the same
+bounded arm/model-host seam as the daemon's currently verified Whirlpool and
+Bootstrap/BootstrapZoom path. The daemon does not yet claim production
+completion for post-Bootstrap Shallow, Deep, TFO, orthogonal, augmentation
+or concept-capture/synthesis slices; those require their typed state
+resolvers and host callbacks to be registered before their capabilities are
+advertised. The host continues to own scheduling, verification and
+persistence authority.
 
 The runtime assembly provides the binding seam for this path through
 host-owned procedure, correction and concept-grounding providers. The host

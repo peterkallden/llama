@@ -2,11 +2,14 @@
 
 ## Status and purpose
 
-**Status: V0 host seam, bounded CPU capture, two-pass experiment, explicit CLI
-activation and request-scoped server-context activation are implemented;
-the host evaluator, split validation, search queue, verified transition
-adapters, low-rank coefficient search and experimental artifact materializer
-are now implemented, while automatic runtime learning and activation are not.**
+**Status: V0 host seam, bounded capture, two-pass experiment, explicit CLI
+activation and request-scoped server-context activation are implemented. The
+daemon's production model-host binding currently runs the initial Whirlpool
+and Bootstrap/BootstrapZoom slices through the batch arm host, including the
+separate teacher-score batch. The typed Shallow/Deep/TFO, orthogonal,
+augmentation and concept-capture/synthesis contracts exist, but their
+post-Bootstrap daemon state resolvers and production callbacks are not yet
+complete. Automatic runtime learning and activation remain disabled.**
 FlyDelta is not enabled by default and is not a replacement for
 the current model-adaptation path. It must not be activated until it has
 passed explicit evaluation and promotion gates.
@@ -169,6 +172,49 @@ tool-repair default or compatibility migration. This keeps a planning,
 research, procedure or dataset observation from being accidentally compared
 with a different behavior. Capture manifests use the same explicit
 source/behavior identity when they become activation material.
+
+## Production daemon phase boundary
+
+The production daemon is a bounded-slice scheduler around the common batch
+model host. The currently verified production path is:
+
+```text
+daemon job
+  -> prepare/finalize arm callbacks
+  -> batch capture/overlay/generation
+  -> separate batch teacher scoring
+  -> Whirlpool
+  -> Bootstrap rank-1
+  -> BootstrapZoom state persistence/resume
+```
+
+The following are implemented as common FlyDelta algorithms and typed
+continuation contracts, but are not production-complete merely because their
+headers, evaluator branches or smoke adapters exist:
+
+```text
+Shallow controls
+Deep basis and Deep controls
+TFO-lite
+orthogonal search
+representation augmentation
+concept capture
+concept synthesis
+```
+
+For these phases the daemon still needs a durable post-Bootstrap state
+resolver, a bounded runner using the same batch host, and persistence of the
+resulting state/reference before the scheduler can enqueue the next slice.
+Concept capture additionally needs production resolution of teaching-material
+and matched trajectory references. Augmentation additionally needs production
+resolution of donor/capture references. These are host-wiring and material
+gaps, not parallel algorithm implementations.
+
+Capability reporting must follow the same boundary: a capability is available
+only when its production callback and durable resolver are registered. The
+presence of a common algorithm or model-free smoke callback is not sufficient.
+Scalar fallback remains a backend policy; when the production batch host is
+enabled, FlyDelta logical waves must use it.
 
 ## Natural dataset-question smoke
 

@@ -1,5 +1,6 @@
 #include "agent-daemon-adapter.h"
 #include "../adaptation/flydelta-teaching-material-store.h"
+#include "../adaptation/agent-learning-lifecycle-store.h"
 
 #include "../cli/agent-cli-host-adapter.h"
 #include "../cli/agent-cli-selection.h"
@@ -7,8 +8,12 @@
 #include "../runtime/agent-model-loaders.h"
 #include "../runtime/agent-server-context-host.h"
 #include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-bootstrap-zoom-state-store.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "agent/adaptation/flydelta/flydelta-representation-augmentation-state-store.h"
+#include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
+#include "hash/hash.h"
 #include "tools/server/server-context.h"
 #include "llama.h"
 #include "agent/agent-scope.h"
@@ -34,7 +39,9 @@
 #include <cmath>
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <mutex>
 #include <set>
+#include <unordered_map>
 #include <utility>
 
 namespace {
@@ -55,6 +62,19 @@ struct daemon_flydelta_resource_provider {
     int n_threads = 0;
     size_t model_n_embd = 0;
     size_t model_n_layers = 0;
+    // The lifecycle journal is the daemon-owned durable state seam.  Raw
+    // activations remain ephemeral and are retained only for the bounded
+    // arm wave that produced them.
+    std::shared_ptr<common_learning_lifecycle_store> lifecycle_store;
+    std::mutex capture_mutex;
+    std::unordered_map<std::string, std::shared_ptr<const common_flydelta_hidden_state_capture>> captures;
+    mutable std::mutex composed_direction_mutex;
+    std::unordered_map<std::string, std::vector<common_flydelta_basis_direction>> composed_directions;
+    std::mutex orchestration_mutex;
+    std::unordered_map<std::string,
+        std::pair<common_flydelta_experiment_plan, common_flydelta_utility_history>> orchestration_states;
+    std::unordered_map<std::string, std::string> bootstrap_state_by_orchestration_ref;
+    std::unordered_map<std::string, std::string> bootstrap_state_by_continuation;
 };
 
 bool daemon_flydelta_read_json(
@@ -128,6 +148,18 @@ bool daemon_flydelta_parse_directions(
         const std::string & reference,
         std::vector<common_flydelta_basis_direction> & directions,
         std::string & error) {
+    {
+        std::lock_guard<std::mutex> lock(provider.composed_direction_mutex);
+        const auto composed = provider.composed_directions.find(reference);
+        if (composed != provider.composed_directions.end()) {
+            directions = composed->second;
+            if (directions.empty() || directions.size() > 64) {
+                error = "FlyDelta composed intervention is invalid";
+                return false;
+            }
+            return true;
+        }
+    }
     json parsed;
     if (!daemon_flydelta_read_json(provider, reference, parsed, error)) return false;
     if (!parsed.contains("directions") || !parsed["directions"].is_array() ||
@@ -207,6 +239,69 @@ bool daemon_flydelta_parse_directions(
         return false;
     }
     return true;
+}
+
+bool daemon_flydelta_parse_behavior_delta(
+        const daemon_flydelta_resource_provider & provider,
+        const std::string & reference,
+        common_flydelta_behavior_delta & delta,
+        common_flydelta_intervention_credit & credit,
+        std::string & error) {
+    json value;
+    if (!daemon_flydelta_read_json(provider, reference, value, error)) return false;
+    try {
+        if (value.value("kind", "") != "flydelta_behavior_delta" ||
+                !value.contains("values") || !value["values"].is_array() ||
+                !value.contains("credit") || !value["credit"].is_object()) {
+            error = "FlyDelta behavior-delta resource is missing typed delta or credit material";
+            return false;
+        }
+        delta = {};
+        delta.id = value.value("id", reference);
+        delta.behavior_key = value.value("behavior_key", "");
+        delta.capture_manifest_id = value.value("capture_manifest_id", "");
+        delta.host_evidence_ref = value.value("host_evidence_ref", "");
+        delta.scope_fingerprint = value.value("scope_fingerprint", "");
+        delta.tokenizer_fingerprint = value.value("tokenizer_fingerprint", "");
+        delta.template_fingerprint = value.value("template_fingerprint", "");
+        delta.generation_semantics_fingerprint = value.value("generation_semantics_fingerprint", "");
+        delta.model_profile_fingerprint = value.value("model_profile_fingerprint", "");
+        delta.execution_context_fingerprint = value.value("execution_context_fingerprint", "");
+        delta.capture_layout_revision = value.value("capture_layout_revision", "");
+        delta.layer_index = value.value("layer_index", -1);
+        delta.values = value.at("values").get<std::vector<float>>();
+        const auto source = value.value("source", "tool_repair");
+        if (source == "tool_repair") delta.source = common_adaptation_evidence_source::tool_repair;
+        else if (source == "procedure_blueprint") delta.source = common_adaptation_evidence_source::procedure_blueprint;
+        else if (source == "user_correction") delta.source = common_adaptation_evidence_source::user_correction;
+        else if (source == "user_taught_concept") delta.source = common_adaptation_evidence_source::user_taught_concept;
+        else {
+            error = "FlyDelta behavior-delta source is unsupported";
+            return false;
+        }
+        credit = {};
+        const auto & credit_json = value.at("credit");
+        credit.experiment_id = credit_json.value("experiment_id", "");
+        credit.candidate_id = credit_json.value("candidate_id", "");
+        credit.fixture_id = credit_json.value("fixture_id", "");
+        credit.quality_delta = credit_json.value("quality_delta", 0.0f);
+        credit.eligible_for_learning = credit_json.value("eligible_for_learning", false);
+        const auto outcome = credit_json.value("outcome", "unknown");
+        if (outcome == "helped") credit.outcome = common_flydelta_counterfactual_outcome::helped;
+        else if (outcome == "neutral") credit.outcome = common_flydelta_counterfactual_outcome::neutral;
+        else if (outcome == "harmed") credit.outcome = common_flydelta_counterfactual_outcome::harmed;
+        else if (outcome == "unknown") credit.outcome = common_flydelta_counterfactual_outcome::unknown;
+        else {
+            error = "FlyDelta behavior-delta credit outcome is invalid";
+            return false;
+        }
+    } catch (const std::exception & exception) {
+        error = std::string("FlyDelta behavior-delta resource is malformed: ") + exception.what();
+        return false;
+    }
+    return common_flydelta_behavior_delta_validate(
+        delta, provider.model_n_embd, 4U * 1024U * 1024U, error) &&
+        common_flydelta_intervention_credit_validate(credit, error);
 }
 
 bool daemon_flydelta_prepare_arm(
@@ -371,17 +466,27 @@ bool daemon_flydelta_finalize_arm(
     }
     if (generation.flydelta_capture && generation.flydelta_capture->captured) {
         result.capture_ref = "flydelta://runtime/capture/" + arm.arm_id;
+        std::lock_guard<std::mutex> lock(provider->capture_mutex);
+        provider->captures[arm.arm_id] = generation.flydelta_capture;
     }
     json fixture;
     if (!daemon_flydelta_read_json(*provider, arm.fixture_ref, fixture, error)) return false;
-    if (arm.request_host_verification && fixture.contains("expected_contains")) {
-        if (!fixture["expected_contains"].is_string()) {
+    if (arm.request_host_verification &&
+            (fixture.contains("expected_contains") || fixture.contains("expected_tool"))) {
+        std::string expected;
+        if (fixture.contains("expected_tool")) {
+            if (!fixture["expected_tool"].is_string()) {
+                error = "FlyDelta fixture expected_tool must be a string";
+                return false;
+            }
+            expected = fixture["expected_tool"].get<std::string>();
+        } else if (!fixture["expected_contains"].is_string()) {
             error = "FlyDelta fixture expected_contains must be a string";
             return false;
         }
         result.host_evaluated = true;
         result.verifier_known = true;
-        const std::string expected = fixture["expected_contains"].get<std::string>();
+        if (expected.empty()) expected = fixture["expected_contains"].get<std::string>();
         // An individual arm has no paired baseline in this callback. A match
         // is therefore retained as NEUTRAL experimental truth, never HELPED.
         result.host_outcome = generation.content.find(expected) != std::string::npos
@@ -417,6 +522,412 @@ bool daemon_flydelta_execute_batch(
         provider->host->context_key().n_parallel > 1;
     return common_agent_server_context_host_run_flydelta_arm_batch(
         provider->host, binding, native_batch, request, result, error);
+}
+
+bool daemon_flydelta_fixture_from_job(
+        const common_flydelta_experiment_job & job,
+        common_flydelta_experiment_fixture & fixture,
+        std::string & error) {
+    fixture = {};
+    fixture.id = job.seed.verifier_ref;
+    fixture.task_fingerprint = job.seed.task_fingerprint;
+    fixture.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+    fixture.tokenizer_fingerprint = job.seed.tokenizer_fingerprint;
+    fixture.template_fingerprint = job.seed.template_fingerprint;
+    fixture.execution_context_fingerprint = job.seed.execution_context_fingerprint;
+    fixture.verifier_revision = job.seed.verifier_ref;
+    return common_flydelta_experiment_fixture_validate(fixture, error);
+}
+
+bool daemon_flydelta_parse_depth(
+        const std::string & value, common_flydelta_search_depth & depth) {
+    if (value == "bootstrap") depth = common_flydelta_search_depth::bootstrap;
+    else if (value == "shallow") depth = common_flydelta_search_depth::shallow;
+    else if (value == "deep") depth = common_flydelta_search_depth::deep;
+    else return false;
+    return true;
+}
+
+bool daemon_flydelta_parse_phase(
+        const std::string & value, common_flydelta_experiment_phase & phase) {
+    if (value == "bootstrap") phase = common_flydelta_experiment_phase::bootstrap;
+    else if (value == "shallow_controls") phase = common_flydelta_experiment_phase::shallow_controls;
+    else if (value == "deep_controls") phase = common_flydelta_experiment_phase::deep_controls;
+    else return false;
+    return true;
+}
+
+bool daemon_flydelta_parse_refinement(
+        const std::string & value, common_flydelta_bootstrap_refinement_kind & kind) {
+    if (value == "bootstrap_zoom") kind = common_flydelta_bootstrap_refinement_kind::bootstrap_zoom;
+    else if (value == "adaptive_alpha") kind = common_flydelta_bootstrap_refinement_kind::adaptive_alpha;
+    else return false;
+    return true;
+}
+
+json daemon_flydelta_orchestration_state_json(
+        const common_flydelta_experiment_plan & plan,
+        const common_flydelta_utility_history & history,
+        const std::string & bootstrap_state_ref = {}) {
+    const auto & region = plan.continuation.region;
+    return {
+        {"kind", "flydelta_daemon_orchestration_state"},
+        {"continuation", {
+            {"direction_index", plan.continuation.direction_index},
+            {"region_trial_index", plan.continuation.region_trial_index},
+            {"search_score", plan.continuation.search_score},
+            {"host_helped", plan.continuation.host_helped},
+            {"region", {
+                {"layer_indices", region.layer_indices},
+                {"anchor_layer_index", region.anchor_layer_index},
+                {"total_scale", region.total_scale},
+                {"per_layer_scale", region.per_layer_scale},
+                {"source", common_flydelta_layer_search_candidate_source_name(region.source)},
+            }},
+        }},
+        {"depth", common_flydelta_search_depth_name(plan.depth)},
+        {"phase", common_flydelta_experiment_phase_name(plan.phase)},
+        {"bootstrap_refinement", common_flydelta_bootstrap_refinement_kind_name(plan.bootstrap_refinement)},
+        {"budget", {
+            {"depth", common_flydelta_search_depth_name(plan.budget.depth)},
+            {"max_region_trials", plan.budget.max_region_trials},
+            {"max_coefficient_trials", plan.budget.max_coefficient_trials},
+            {"full_generation_top_k", plan.budget.full_generation_top_k},
+            {"build_aggregate_directions", plan.budget.build_aggregate_directions},
+            {"require_decision_margin", plan.budget.require_decision_margin},
+            {"allow_tfo_lite", plan.budget.allow_tfo_lite},
+            {"include_opposite_control", plan.budget.include_opposite_control},
+        }},
+        {"required_compatible_directions", plan.required_compatible_directions},
+        {"require_decision_margin", plan.require_decision_margin},
+        {"run_rank_two_controls_first", plan.run_rank_two_controls_first},
+        {"tfo_lite_permitted_by_evidence", plan.tfo_lite_permitted_by_evidence},
+        {"tfo_lite_requires_utility_gate", plan.tfo_lite_requires_utility_gate},
+        {"run_tfo_lite", plan.run_tfo_lite},
+        {"run_orthogonal_search", plan.run_orthogonal_search},
+        {"history", {
+            {"qualifying_streak", history.qualifying_streak},
+            {"nonqualifying_streak", history.nonqualifying_streak},
+        }},
+        {"bootstrap_state_ref", bootstrap_state_ref},
+    };
+}
+
+std::string daemon_flydelta_continuation_key(const common_flydelta_experiment_plan & plan) {
+    std::string identity = std::to_string(plan.continuation.region.anchor_layer_index);
+    for (const auto layer : plan.continuation.region.layer_indices) {
+        identity += "\n" + std::to_string(layer);
+    }
+    return hash_sha256_hex(identity.data(), identity.size());
+}
+
+std::string daemon_flydelta_bootstrap_key(const common_flydelta_bootstrap_zoom_state & state) {
+    std::string identity = std::to_string(state.anchor_layer);
+    for (const auto layer : state.local_layers) identity += "\n" + std::to_string(layer);
+    return hash_sha256_hex(identity.data(), identity.size());
+}
+
+bool daemon_flydelta_orchestration_state_from_json(
+        const std::string & text,
+        common_flydelta_experiment_plan & plan,
+        common_flydelta_utility_history & history,
+        std::string & error) {
+    try {
+        const auto value = json::parse(text);
+        if (!value.is_object() || value.value("kind", "") != "flydelta_daemon_orchestration_state") {
+            error = "FlyDelta lifecycle record is not an orchestration state";
+            return false;
+        }
+        plan = {};
+        const auto continuation = value.at("continuation");
+        const auto region = continuation.at("region");
+        plan.continuation.direction_index = continuation.value("direction_index", size_t{0});
+        plan.continuation.region_trial_index = continuation.value("region_trial_index", size_t{0});
+        plan.continuation.search_score = continuation.value("search_score", 0.0f);
+        plan.continuation.host_helped = continuation.value("host_helped", false);
+        plan.continuation.region.layer_indices = region.at("layer_indices").get<std::vector<uint32_t>>();
+        plan.continuation.region.anchor_layer_index = region.value("anchor_layer_index", 0U);
+        plan.continuation.region.total_scale = region.value("total_scale", 0.0f);
+        plan.continuation.region.per_layer_scale = region.value("per_layer_scale", 0.0f);
+        const auto source = region.value("source", "diagnostic_singleton");
+        if (source == "diagnostic_singleton") {
+            plan.continuation.region.source = common_flydelta_layer_search_candidate_source::diagnostic_singleton;
+        } else if (source == "neighborhood_expansion") {
+            plan.continuation.region.source = common_flydelta_layer_search_candidate_source::neighborhood_expansion;
+        } else {
+            error = "FlyDelta orchestration region source is invalid";
+            return false;
+        }
+        if (!daemon_flydelta_parse_depth(value.at("depth").get<std::string>(), plan.depth) ||
+                !daemon_flydelta_parse_phase(value.at("phase").get<std::string>(), plan.phase) ||
+                !daemon_flydelta_parse_refinement(value.at("bootstrap_refinement").get<std::string>(),
+                    plan.bootstrap_refinement)) {
+            error = "FlyDelta orchestration phase metadata is invalid";
+            return false;
+        }
+        const auto budget = value.at("budget");
+        if (!daemon_flydelta_parse_depth(budget.at("depth").get<std::string>(), plan.budget.depth)) {
+            error = "FlyDelta orchestration budget depth is invalid";
+            return false;
+        }
+        plan.budget.max_region_trials = budget.value("max_region_trials", size_t{0});
+        plan.budget.max_coefficient_trials = budget.value("max_coefficient_trials", size_t{0});
+        plan.budget.full_generation_top_k = budget.value("full_generation_top_k", size_t{0});
+        plan.budget.build_aggregate_directions = budget.value("build_aggregate_directions", false);
+        plan.budget.require_decision_margin = budget.value("require_decision_margin", false);
+        plan.budget.allow_tfo_lite = budget.value("allow_tfo_lite", false);
+        plan.budget.include_opposite_control = budget.value("include_opposite_control", false);
+        plan.required_compatible_directions = value.value("required_compatible_directions", size_t{1});
+        plan.require_decision_margin = value.value("require_decision_margin", false);
+        plan.run_rank_two_controls_first = value.value("run_rank_two_controls_first", false);
+        plan.tfo_lite_permitted_by_evidence = value.value("tfo_lite_permitted_by_evidence", false);
+        plan.tfo_lite_requires_utility_gate = value.value("tfo_lite_requires_utility_gate", false);
+        plan.run_tfo_lite = value.value("run_tfo_lite", false);
+        plan.run_orthogonal_search = value.value("run_orthogonal_search", false);
+        const auto state_history = value.at("history");
+        history.qualifying_streak = state_history.value("qualifying_streak", size_t{0});
+        history.nonqualifying_streak = state_history.value("nonqualifying_streak", size_t{0});
+        std::string validation_error;
+        if (!common_flydelta_search_budget_validate(plan.budget, validation_error)) {
+            error = "FlyDelta orchestration state budget is invalid: " + validation_error;
+            return false;
+        }
+        return true;
+    } catch (const std::exception & exception) {
+        error = std::string("FlyDelta orchestration state JSON is invalid: ") + exception.what();
+        return false;
+    }
+}
+
+bool daemon_flydelta_capture_for_arm(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const std::string & arm_id,
+        std::shared_ptr<const common_flydelta_hidden_state_capture> & capture) {
+    std::lock_guard<std::mutex> lock(provider->capture_mutex);
+    const auto it = provider->captures.find(arm_id);
+    if (it == provider->captures.end()) return false;
+    capture = it->second;
+    return static_cast<bool>(capture);
+}
+
+bool daemon_flydelta_diagnostics_for_arm(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        const std::string & baseline_arm_id,
+        const common_flydelta_arm_request & arm,
+        uint32_t layer,
+        common_flydelta_representation_diagnostics & diagnostics,
+        std::string & error) {
+    diagnostics = {};
+    std::shared_ptr<const common_flydelta_hidden_state_capture> baseline;
+    std::shared_ptr<const common_flydelta_hidden_state_capture> overlay;
+    if (!daemon_flydelta_capture_for_arm(provider, baseline_arm_id, baseline) ||
+            !daemon_flydelta_capture_for_arm(provider, arm.arm_id, overlay)) {
+        return true;
+    }
+    std::vector<common_flydelta_basis_direction> directions;
+    if (!daemon_flydelta_parse_directions(*provider, arm.intervention_ref, directions, error)) return false;
+    const auto direction = std::find_if(directions.begin(), directions.end(), [&](const auto & value) {
+        return value.layer_index == static_cast<int32_t>(layer);
+    });
+    if (direction == directions.end()) {
+        error = "FlyDelta diagnostic arm has no compatible direction";
+        return false;
+    }
+    common_flydelta_behavior_delta delta;
+    delta.id = arm.arm_id + ":diagnostic";
+    delta.behavior_key = job.seed.behavior_key;
+    delta.capture_manifest_id = arm.context_ref;
+    delta.host_evidence_ref = job.seed.evidence_ref;
+    delta.model_profile_fingerprint = provider->model_profile_fingerprint;
+    delta.execution_context_fingerprint = job.seed.execution_context_fingerprint;
+    delta.capture_layout_revision = provider->capture_layout_revision;
+    delta.layer_index = direction->layer_index;
+    delta.values = direction->values;
+    return common_flydelta_representation_diagnostics_from_captures(
+        *baseline, *overlay, delta, 4U * 1024U * 1024U, diagnostics, error);
+}
+
+bool daemon_flydelta_run_bootstrap_zoom_slice(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_bootstrap_zoom_state & resume,
+        common_flydelta_search_pipeline_result & output,
+        common_flydelta_bootstrap_zoom_state & next,
+        std::string & error) {
+    error.clear();
+    common_flydelta_experiment_fixture fixture;
+    if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
+    std::vector<common_flydelta_basis_direction> directions;
+    if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref, directions, error)) return false;
+
+    common_flydelta_bootstrap_zoom_config zoom_config;
+    std::vector<common_flydelta_bootstrap_zoom_candidate> candidates;
+    if (resume.phase == common_flydelta_bootstrap_zoom_phase::alpha_zoom) {
+        if (!common_flydelta_propose_bootstrap_alpha_zoom(
+                resume.anchor_layer, resume.selected_scale, zoom_config, candidates, error)) return false;
+    } else if (resume.phase == common_flydelta_bootstrap_zoom_phase::profile_zoom) {
+        if (!common_flydelta_propose_bootstrap_profile_zoom(
+                resume.local_layers, resume.anchor_layer, resume.selected_scale,
+                zoom_config, candidates, error)) return false;
+    } else {
+        // Sign control is the final deterministic BootstrapZoom slice.  The
+        // next orchestration decision, not this runner, decides whether a
+        // later rank-one adaptive-alpha slice is warranted.
+        common_flydelta_bootstrap_zoom_candidate candidate;
+        candidate.phase = common_flydelta_bootstrap_zoom_phase::sign_control;
+        candidate.layer_indices = {resume.anchor_layer};
+        candidate.layer_weights = {1.0f};
+        candidate.total_scale = resume.selected_scale;
+        candidate.opposite_sign_control = true;
+        candidates.push_back(std::move(candidate));
+    }
+    if (candidates.empty()) {
+        error = "FlyDelta BootstrapZoom produced no bounded candidates";
+        return false;
+    }
+    const size_t remaining = resume.extra_model_trials >= zoom_config.max_extra_model_trials
+        ? 0 : zoom_config.max_extra_model_trials - resume.extra_model_trials;
+    if (remaining == 0) {
+        error = "FlyDelta BootstrapZoom budget is exhausted";
+        return false;
+    }
+    if (candidates.size() > remaining) candidates.resize(remaining);
+
+    common_flydelta_arm_batch_request batch;
+    batch.batch_id = job.id + ":bootstrap-zoom:" + std::to_string(resume.next_candidate_index);
+    batch.wave_id = common_flydelta_bootstrap_zoom_phase_name(resume.phase);
+    common_flydelta_arm_request baseline;
+    baseline.job_id = job.id;
+    baseline.wave_id = batch.wave_id;
+    baseline.proposal_index = 0;
+    baseline.arm_id = batch.batch_id + ":baseline";
+    baseline.context_ref = job.seed.baseline_ref;
+    baseline.fixture_ref = fixture.id;
+    baseline.intervention_ref = job.seed.candidate_ref;
+    baseline.batch_compatibility_key = baseline.context_ref + "\n" + baseline.fixture_ref;
+    baseline.fresh_context = true;
+    baseline.request_capture = true;
+    baseline.request_teacher_forced_margin = true;
+    baseline.request_generation = true;
+    baseline.request_host_verification = true;
+    baseline.max_generated_tokens = 64;
+    for (const auto & direction : directions) baseline.layer_indices.push_back(
+        static_cast<uint32_t>(direction.layer_index));
+    baseline.coefficients.assign(baseline.layer_indices.size(), 0.0f);
+    if (!common_flydelta_arm_request_validate(baseline, error)) return false;
+    batch.arms.push_back(baseline);
+    for (size_t index = 0; index < candidates.size(); ++index) {
+        const auto & candidate = candidates[index];
+        common_flydelta_arm_request arm;
+        arm.job_id = job.id;
+        arm.wave_id = batch.wave_id;
+        arm.proposal_index = index + 1;
+        arm.arm_id = batch.batch_id + ":" + std::to_string(index);
+        arm.context_ref = job.seed.baseline_ref;
+        arm.fixture_ref = fixture.id;
+        arm.intervention_ref = job.seed.candidate_ref;
+        arm.batch_compatibility_key = baseline.batch_compatibility_key;
+        arm.apply_overlay = true;
+        arm.fresh_context = true;
+        arm.alpha = candidate.opposite_sign_control ? -candidate.total_scale : candidate.total_scale;
+        arm.layer_indices = candidate.layer_indices;
+        arm.coefficients = candidate.layer_weights;
+        arm.request_capture = true;
+        arm.request_teacher_forced_margin = true;
+        arm.request_generation = true;
+        arm.request_host_verification = true;
+        arm.max_generated_tokens = 64;
+        if (!common_flydelta_arm_request_validate(arm, error)) return false;
+        batch.arms.push_back(std::move(arm));
+    }
+    common_flydelta_arm_batch_result results;
+    if (!daemon_flydelta_execute_batch(provider, batch, results, error) ||
+            results.arms.size() != batch.arms.size()) {
+        if (error.empty()) error = "FlyDelta BootstrapZoom batch returned incomplete arms";
+        return false;
+    }
+
+    next = resume;
+    std::vector<common_flydelta_bootstrap_zoom_trial> new_trials;
+    common_flydelta_search_pipeline_direction_result direction_result;
+    direction_result.direction.kind = common_flydelta_direction_kind::raw_repair;
+    direction_result.direction.layer_index = directions.front().layer_index;
+    direction_result.direction.values = directions.front().values;
+    direction_result.direction.origin = "runtime_resource";
+    direction_result.direction.extraction_id = job.seed.candidate_ref;
+    direction_result.direction.source_samples = 1;
+    direction_result.direction.retained_samples = 1;
+    direction_result.direction.experimental_only = true;
+    const auto & baseline_result = results.arms.front();
+    for (size_t index = 0; index < candidates.size(); ++index) {
+        const auto & arm = batch.arms[index + 1];
+        const auto & arm_result = results.arms[index + 1];
+        common_flydelta_representation_diagnostics diagnostics;
+        if (!daemon_flydelta_diagnostics_for_arm(provider, job, baseline.arm_id, arm,
+                candidates[index].layer_indices.front(), diagnostics, error)) return false;
+        common_flydelta_bootstrap_zoom_trial trial;
+        trial.candidate = candidates[index];
+        trial.outcome = arm_result.host_outcome;
+        trial.host_evaluated = arm_result.host_evaluated;
+        trial.verifier_known = arm_result.verifier_known;
+        trial.margin_available = baseline_result.margin.available && arm_result.margin.available;
+        trial.margin_delta = trial.margin_available
+            ? arm_result.margin.normalized_delta() - baseline_result.margin.normalized_delta() : 0.0f;
+        trial.diagnostics_available = diagnostics.layer_index != 0;
+        trial.diagnostics = diagnostics;
+        if (!common_flydelta_bootstrap_zoom_trial_validate(trial, error)) return false;
+        new_trials.push_back(trial);
+
+        common_flydelta_intervention_region_trial region_trial;
+        region_trial.candidate.layer_indices = candidates[index].layer_indices;
+        region_trial.candidate.anchor_layer_index = candidates[index].layer_indices.front();
+        region_trial.candidate.total_scale = candidates[index].total_scale;
+        region_trial.candidate.per_layer_scale = candidates[index].total_scale /
+            std::sqrt(static_cast<float>(candidates[index].layer_indices.size()));
+        region_trial.requested_total_scale = candidates[index].total_scale;
+        region_trial.executed_total_scale = candidates[index].total_scale;
+        region_trial.outcome = arm_result.host_outcome;
+        region_trial.quality_delta = arm_result.quality - baseline_result.quality;
+        region_trial.margin = arm_result.margin;
+        region_trial.margin_comparison.available = trial.margin_available;
+        region_trial.margin_comparison.baseline = baseline_result.margin;
+        region_trial.margin_comparison.candidate = arm_result.margin;
+        region_trial.executed = arm_result.executed;
+        region_trial.verifier_known = arm_result.verifier_known;
+        region_trial.geometry_available = trial.diagnostics_available;
+        region_trial.geometry = diagnostics;
+        region_trial.safe_to_continue = trial.diagnostics_available &&
+            diagnostics.leakage <= 1.0f && diagnostics.shift_norm <= 1.0f;
+        region_trial.promising = trial.margin_available && trial.margin_delta > 0.0f;
+        region_trial.search_score = trial.margin_delta;
+        region_trial.evidence_ref = arm_result.generation_ref;
+        direction_result.region_trials.push_back(std::move(region_trial));
+    }
+    next.completed_trials.insert(next.completed_trials.end(), new_trials.begin(), new_trials.end());
+    next.extra_model_trials += new_trials.size();
+    next.next_candidate_index += new_trials.size();
+    if (!common_flydelta_select_bootstrap_zoom_trial(next.completed_trials, next.selection, error)) return false;
+    if (next.selection.selected) {
+        const auto & selected = next.completed_trials[next.selection.trial_index];
+        next.selected_scale = selected.candidate.total_scale;
+        next.best_margin_delta = selected.margin_delta;
+        next.best_search_score = next.selection.search_score;
+    }
+    if (resume.phase == common_flydelta_bootstrap_zoom_phase::alpha_zoom) {
+        next.phase = common_flydelta_bootstrap_zoom_phase::profile_zoom;
+    } else if (resume.phase == common_flydelta_bootstrap_zoom_phase::profile_zoom &&
+            zoom_config.include_opposite_sign_control) {
+        next.phase = common_flydelta_bootstrap_zoom_phase::sign_control;
+    } else {
+        next.phase = common_flydelta_bootstrap_zoom_phase::adaptive_alpha;
+    }
+    output = {};
+    output.directions.push_back(std::move(direction_result));
+    output.search_status = output.directions.front().region_trials.empty()
+        ? common_flydelta_search_status::no_useful_utility
+        : common_flydelta_search_status::candidate_available;
+    return true;
 }
 
 bool daemon_flydelta_run_search_pipeline(
@@ -457,6 +968,8 @@ bool daemon_flydelta_run_search_pipeline(
     if (!common_flydelta_search_pipeline_direction_validate(input, config, error)) return false;
 
     size_t arm_index = 0;
+    const auto capture_layers = input.available_layers;
+    std::string baseline_capture_arm_id;
     const auto make_arm = [provider, &job, &arm_index](
             const common_flydelta_experiment_fixture & current_fixture,
             const common_flydelta_layer_candidate * layer,
@@ -481,6 +994,10 @@ bool daemon_flydelta_run_search_pipeline(
         arm.request_teacher_forced_margin = true;
         arm.request_generation = true;
         arm.request_host_verification = true;
+        // Diagnostics are first-class search observations.  The production
+        // host captures the small requested layer set and keeps it only for
+        // this bounded comparison wave.
+        arm.request_capture = true;
         arm.max_generated_tokens = 64;
         if (layer != nullptr && apply_overlay) {
             arm.layer_indices = layer->layer_indices;
@@ -488,7 +1005,8 @@ bool daemon_flydelta_run_search_pipeline(
         }
         return common_flydelta_arm_request_validate(arm, runner_error);
     };
-    common_flydelta_search_pipeline_runner runner = [provider, &job, &make_arm](
+    common_flydelta_search_pipeline_runner runner = [provider, &job, &make_arm,
+            &capture_layers, &baseline_capture_arm_id](
             const common_flydelta_experiment_fixture & current_fixture,
             const common_flydelta_direction_candidate &,
             const common_flydelta_layer_candidate * layer,
@@ -501,6 +1019,12 @@ bool daemon_flydelta_run_search_pipeline(
         common_flydelta_arm_request arm;
         if (!make_arm(current_fixture, layer, scale, apply_overlay,
                 apply_overlay ? "region-scalar" : "baseline", 0, arm, runner_error)) return false;
+        if (!apply_overlay) {
+            // A baseline has no overlay layers of its own, but it must capture
+            // the same searchable layers as later arms for aligned geometry.
+            arm.layer_indices = capture_layers;
+            arm.coefficients.assign(capture_layers.size(), 0.0f);
+        }
         common_flydelta_arm_batch_request batch;
         batch.batch_id = job.id + ":runtime";
         batch.wave_id = arm.wave_id;
@@ -509,6 +1033,7 @@ bool daemon_flydelta_run_search_pipeline(
         if (!daemon_flydelta_execute_batch(provider, batch, batch_result, runner_error) ||
                 batch_result.arms.size() != 1) return false;
         const auto & arm_result = batch_result.arms.front();
+        if (!apply_overlay) baseline_capture_arm_id = arm.arm_id;
         trial.executed = arm_result.executed;
         trial.verifier_known = arm_result.verifier_known;
         trial.passed = arm_result.host_outcome == common_flydelta_counterfactual_outcome::helped;
@@ -518,14 +1043,46 @@ bool daemon_flydelta_run_search_pipeline(
         trial.evidence_ref = arm_result.generation_ref;
         margin = arm_result.margin;
         geometry = {};
-        geometry.available = arm_result.geometry_available;
-        geometry.cosine = arm_result.cosine;
-        geometry.progress = arm_result.progress;
-        geometry.leakage = arm_result.leakage;
-        geometry.shift_norm = arm_result.shift_norm;
+        if (apply_overlay && !baseline_capture_arm_id.empty() &&
+                !arm_result.capture_ref.empty()) {
+            std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_capture;
+            std::shared_ptr<const common_flydelta_hidden_state_capture> overlay_capture;
+            {
+                std::lock_guard<std::mutex> lock(provider->capture_mutex);
+                const auto baseline_it = provider->captures.find(baseline_capture_arm_id);
+                const auto overlay_it = provider->captures.find(arm.arm_id);
+                if (baseline_it != provider->captures.end()) baseline_capture = baseline_it->second;
+                if (overlay_it != provider->captures.end()) overlay_capture = overlay_it->second;
+            }
+            std::vector<common_flydelta_basis_direction> available;
+            if (baseline_capture && overlay_capture &&
+                    daemon_flydelta_parse_directions(*provider, arm.intervention_ref,
+                        available, runner_error)) {
+                const uint32_t diagnostic_layer = layer == nullptr || layer->layer_indices.empty()
+                    ? 0U : layer->layer_indices.front();
+                const auto direction = std::find_if(available.begin(), available.end(),
+                    [&](const auto & value) { return value.layer_index == static_cast<int32_t>(diagnostic_layer); });
+                if (direction != available.end()) {
+                    common_flydelta_behavior_delta delta;
+                    delta.id = arm.arm_id + ":diagnostic";
+                    delta.behavior_key = job.seed.behavior_key;
+                    delta.capture_manifest_id = arm.context_ref;
+                    delta.host_evidence_ref = job.seed.evidence_ref;
+                    delta.model_profile_fingerprint = provider->model_profile_fingerprint;
+                    delta.execution_context_fingerprint = job.seed.execution_context_fingerprint;
+                    delta.capture_layout_revision = provider->capture_layout_revision;
+                    delta.layer_index = direction->layer_index;
+                    delta.values = direction->values;
+                    if (!common_flydelta_representation_diagnostics_from_captures(
+                            *baseline_capture, *overlay_capture, delta,
+                            4U * 1024U * 1024U, geometry, runner_error)) return false;
+                }
+            }
+        }
         return arm_result.executed;
     };
-    const common_flydelta_search_pipeline_batch_runner batch_runner = [provider, &job, &make_arm](
+    const common_flydelta_search_pipeline_batch_runner batch_runner = [provider, &job, &make_arm,
+            &baseline_capture_arm_id](
             const common_flydelta_experiment_fixture & current_fixture,
             const common_flydelta_direction_candidate &,
             const std::vector<common_flydelta_intervention_region_candidate> & candidates,
@@ -578,13 +1135,50 @@ bool daemon_flydelta_run_search_pipeline(
             trials.push_back(std::move(trial));
             margins.push_back(arm.margin);
             common_flydelta_scale_geometry geometry;
-            geometry.available = arm.geometry_available;
-            geometry.cosine = arm.cosine;
-            geometry.progress = arm.progress;
-            geometry.leakage = arm.leakage;
-            geometry.shift_norm = arm.shift_norm;
+            if (!baseline_capture_arm_id.empty() && !arm.capture_ref.empty()) {
+                std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_capture;
+                std::shared_ptr<const common_flydelta_hidden_state_capture> overlay_capture;
+                {
+                    std::lock_guard<std::mutex> lock(provider->capture_mutex);
+                    const auto baseline_it = provider->captures.find(baseline_capture_arm_id);
+                    const auto overlay_it = provider->captures.find(arm.arm_id);
+                    if (baseline_it != provider->captures.end()) baseline_capture = baseline_it->second;
+                    if (overlay_it != provider->captures.end()) overlay_capture = overlay_it->second;
+                }
+                std::vector<common_flydelta_basis_direction> available;
+                if (baseline_capture && overlay_capture &&
+                        daemon_flydelta_parse_directions(*provider, arm.intervention_ref,
+                            available, runner_error)) {
+                    const auto direction = std::find_if(available.begin(), available.end(),
+                        [&](const auto & value) {
+                            return value.layer_index == static_cast<int32_t>(
+                                candidates[index].anchor_layer_index);
+                        });
+                    if (direction != available.end()) {
+                        common_flydelta_behavior_delta delta;
+                        delta.id = arm.arm_id + ":diagnostic";
+                        delta.behavior_key = job.seed.behavior_key;
+                        delta.capture_manifest_id = arm.context_ref;
+                        delta.host_evidence_ref = job.seed.evidence_ref;
+                        delta.model_profile_fingerprint = provider->model_profile_fingerprint;
+                        delta.execution_context_fingerprint = job.seed.execution_context_fingerprint;
+                        delta.capture_layout_revision = provider->capture_layout_revision;
+                        delta.layer_index = direction->layer_index;
+                        delta.values = direction->values;
+                        common_flydelta_representation_diagnostics diagnostics;
+                        if (!common_flydelta_representation_diagnostics_from_captures(
+                                *baseline_capture, *overlay_capture, delta,
+                                4U * 1024U * 1024U, diagnostics, runner_error)) return false;
+                        geometry.available = true;
+                        geometry.cosine = diagnostics.cosine;
+                        geometry.progress = diagnostics.progress;
+                        geometry.leakage = diagnostics.leakage;
+                        geometry.shift_norm = diagnostics.shift_norm;
+                    }
+                }
+            }
             geometries.push_back(std::move(geometry));
-            geometry_available.push_back(arm.geometry_available);
+            geometry_available.push_back(geometries.back().available);
         }
         return true;
     };
@@ -625,6 +1219,14 @@ make_daemon_flydelta_resource_binding_factory(
         provider->n_threads = options.n_threads;
         provider->model_n_embd = static_cast<size_t>(llama_model_n_embd(model));
         provider->model_n_layers = static_cast<size_t>(llama_model_n_layer(model));
+        {
+            auto lifecycle = make_agent_learning_lifecycle_store(
+                options.adaptation_flydelta_lifecycle_backend,
+                options.adaptation_flydelta_lifecycle_path, error);
+            if (!lifecycle) return false;
+            provider->lifecycle_store = std::shared_ptr<common_learning_lifecycle_store>(
+                std::move(lifecycle));
+        }
 
         binding.primitives.capture = true;
         binding.primitives.overlay = true;
@@ -661,11 +1263,225 @@ make_daemon_flydelta_resource_binding_factory(
             config.direction.capture_layout_revision = provider->capture_layout_revision;
             callbacks = {};
             const auto pipeline = config.pipeline;
+            callbacks.resolve_behavior_delta = [provider](const std::string & reference,
+                    common_flydelta_behavior_delta & delta,
+                    common_flydelta_intervention_credit & credit,
+                    std::string & resolver_error) {
+                return daemon_flydelta_parse_behavior_delta(
+                    *provider, reference, delta, credit, resolver_error);
+            };
             callbacks.run_search_pipeline = [provider, pipeline](
                     const common_flydelta_experiment_job & job,
                     common_flydelta_search_pipeline_result & result,
                     std::string & runner_error) {
                 return daemon_flydelta_run_search_pipeline(provider, job, pipeline, result, runner_error);
+            };
+            callbacks.run_search_pipeline_with_state = [provider, pipeline](
+                    const common_flydelta_experiment_job & job,
+                    const common_flydelta_bootstrap_zoom_state * resume,
+                    common_flydelta_search_pipeline_result & result,
+                    common_flydelta_bootstrap_zoom_state & next,
+                    std::string & runner_error) {
+                if (resume != nullptr) {
+                    return daemon_flydelta_run_bootstrap_zoom_slice(
+                        provider, job, *resume, result, next, runner_error);
+                }
+                if (!daemon_flydelta_run_search_pipeline(provider, job, pipeline, result, runner_error)) {
+                    return false;
+                }
+                std::vector<common_flydelta_basis_direction> directions;
+                if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref,
+                        directions, runner_error)) return false;
+                common_flydelta_search_continuation continuation;
+                if (!common_flydelta_select_search_continuation(result, continuation, runner_error)) {
+                    return false;
+                }
+                next = {};
+                next.behavior_key = job.seed.behavior_key;
+                next.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+                next.capture_layout_revision = provider->capture_layout_revision;
+                next.anchor_layer = continuation.region.anchor_layer_index == 0
+                    ? static_cast<uint32_t>(directions.front().layer_index)
+                    : continuation.region.anchor_layer_index;
+                next.selected_scale = continuation.region.total_scale > 0.0f
+                    ? continuation.region.total_scale : pipeline.scale.initial_scale;
+                next.best_search_score = continuation.search_score;
+                next.best_margin_delta = continuation.search_score;
+                next.local_layers = continuation.region.layer_indices;
+                if (next.local_layers.empty()) next.local_layers = {
+                    static_cast<uint32_t>(directions.front().layer_index)};
+                next.surface_origin = "bootstrap_rank1";
+                return common_flydelta_bootstrap_zoom_state_validate(next, runner_error);
+            };
+            // Reuse the append-only lifecycle journal already used by the
+            // adaptation subsystem.  The worker receives opaque refs only;
+            // model material stays in the daemon resource provider.
+            common_flydelta_bootstrap_zoom_lifecycle_context bootstrap_context;
+            bootstrap_context.namespace_id = provider->authority.namespace_id;
+            bootstrap_context.session_id = provider->authority.session_id;
+            bootstrap_context.source_id = "daemon-flydelta";
+            bootstrap_context.created_at = "daemon-runtime-v1";
+            if (!common_flydelta_configure_bootstrap_zoom_lifecycle_callbacks(
+                    *provider->lifecycle_store, bootstrap_context, callbacks, callback_error)) {
+                return false;
+            }
+            const auto lifecycle_persist_bootstrap_state = callbacks.persist_bootstrap_zoom_state;
+            callbacks.persist_bootstrap_zoom_state = [provider, lifecycle_persist_bootstrap_state](
+                    const common_flydelta_bootstrap_zoom_state & state,
+                    std::string & state_ref,
+                    std::string & state_error) {
+                if (!lifecycle_persist_bootstrap_state(state, state_ref, state_error)) return false;
+                std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
+                provider->bootstrap_state_by_continuation[
+                    daemon_flydelta_bootstrap_key(state)] = state_ref;
+                return true;
+            };
+            common_flydelta_lifecycle_event_context augmentation_context;
+            augmentation_context.source_id = "daemon-flydelta";
+            augmentation_context.scope.namespace_id = provider->authority.namespace_id;
+            augmentation_context.scope.session_id = provider->authority.session_id;
+            augmentation_context.created_at = "daemon-runtime-v1";
+            if (!common_flydelta_configure_representation_augmentation_lifecycle_callbacks(
+                    *provider->lifecycle_store, augmentation_context, callbacks, callback_error)) {
+                return false;
+            }
+            const auto resolve_bootstrap_state = callbacks.resolve_bootstrap_zoom_state;
+            callbacks.resolve_search_orchestration_state = [provider, resolve_bootstrap_state](
+                    const std::string & state_ref,
+                    common_flydelta_experiment_plan & plan,
+                    common_flydelta_utility_history & history,
+                    std::string & state_error) {
+                {
+                    std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
+                    const auto cached = provider->orchestration_states.find(state_ref);
+                    if (cached != provider->orchestration_states.end()) {
+                        plan = cached->second.first;
+                        history = cached->second.second;
+                        return true;
+                    }
+                }
+                if (state_ref.rfind("flydelta://state/bootstrap-zoom/", 0) == 0) {
+                    common_flydelta_bootstrap_zoom_state bootstrap;
+                    if (!resolve_bootstrap_state || !resolve_bootstrap_state(
+                            state_ref, bootstrap, state_error)) return false;
+                    plan = {};
+                    plan.continuation.region.layer_indices = bootstrap.local_layers;
+                    plan.continuation.region.anchor_layer_index = bootstrap.anchor_layer;
+                    plan.continuation.region.total_scale = bootstrap.selected_scale;
+                    plan.continuation.region.per_layer_scale = bootstrap.selected_scale /
+                        std::sqrt(static_cast<float>(std::max<size_t>(1, bootstrap.local_layers.size())));
+                    plan.continuation.search_score = bootstrap.best_search_score;
+                    plan.depth = common_flydelta_search_depth::bootstrap;
+                    plan.phase = common_flydelta_experiment_phase::bootstrap;
+                    plan.budget = common_flydelta_search_budget_for_depth(plan.depth);
+                    plan.required_compatible_directions = 1;
+                    history = {};
+                    return common_flydelta_search_budget_validate(plan.budget, state_error);
+                }
+                const auto records = provider->lifecycle_store->list(state_error);
+                if (!state_error.empty()) return false;
+                for (auto it = records.rbegin(); it != records.rend(); ++it) {
+                    if (it->kind != common_learning_lifecycle_kind::flydelta_experiment ||
+                            it->subject_id != state_ref) continue;
+                    if (!daemon_flydelta_orchestration_state_from_json(
+                            it->payload_json, plan, history, state_error)) return false;
+                    std::string bootstrap_ref;
+                    try {
+                        bootstrap_ref = json::parse(it->payload_json).value("bootstrap_state_ref", "");
+                    } catch (...) {
+                        state_error = "FlyDelta orchestration bootstrap reference is invalid";
+                        return false;
+                    }
+                    std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
+                    provider->orchestration_states[state_ref] = {plan, history};
+                    if (!bootstrap_ref.empty()) {
+                        provider->bootstrap_state_by_orchestration_ref[state_ref] = bootstrap_ref;
+                        provider->bootstrap_state_by_continuation[
+                            daemon_flydelta_continuation_key(plan)] = bootstrap_ref;
+                    }
+                    return true;
+                }
+                state_error = "FlyDelta orchestration state was not found";
+                return false;
+            };
+            callbacks.persist_search_orchestration_state = [provider](
+                    const common_flydelta_experiment_plan & plan,
+                    const common_flydelta_utility_history & history,
+                    std::string & state_ref,
+                    std::string & state_error) {
+                std::string bootstrap_ref;
+                {
+                    std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
+                    const auto it = provider->bootstrap_state_by_continuation.find(
+                        daemon_flydelta_continuation_key(plan));
+                    if (it != provider->bootstrap_state_by_continuation.end()) bootstrap_ref = it->second;
+                }
+                const auto payload = daemon_flydelta_orchestration_state_json(
+                    plan, history, bootstrap_ref).dump();
+                const auto digest = hash_sha256_hex(payload.data(), payload.size()).substr(0, 32);
+                state_ref = "flydelta://state/orchestration/" + digest;
+                common_learning_lifecycle_record record;
+                record.event_id = "flydelta://event/orchestration/" + digest;
+                record.subject_id = state_ref;
+                record.kind = common_learning_lifecycle_kind::flydelta_experiment;
+                record.status = common_learning_lifecycle_status::running;
+                record.idempotency_key = "flydelta/orchestration/" + digest;
+                record.source_id = "daemon-flydelta";
+                record.namespace_id = provider->authority.namespace_id;
+                record.session_id = provider->authority.session_id;
+                record.content_hash = "sha256:" + hash_sha256_hex(payload.data(), payload.size());
+                record.created_at = "daemon-runtime-v1";
+                record.payload_json = payload;
+                if (!provider->lifecycle_store->append(record, state_error)) return false;
+                std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
+                provider->orchestration_states[state_ref] = {plan, history};
+                if (!bootstrap_ref.empty()) {
+                    provider->bootstrap_state_by_orchestration_ref[state_ref] = bootstrap_ref;
+                }
+                return true;
+            };
+            const auto resolve_orchestration_state = callbacks.resolve_search_orchestration_state;
+            const auto persist_bootstrap_state = callbacks.persist_bootstrap_zoom_state;
+            callbacks.run_search_pipeline_with_search_state = [provider, resolve_bootstrap_state,
+                    resolve_orchestration_state, persist_bootstrap_state](const common_flydelta_experiment_job & job,
+                    const std::string & state_ref,
+                    common_flydelta_search_pipeline_result & result,
+                    std::string & next_state_ref,
+                    std::string & state_error) {
+                common_flydelta_experiment_plan plan;
+                common_flydelta_utility_history history;
+                if (!resolve_orchestration_state(state_ref, plan, history, state_error)) return false;
+                if (plan.phase != common_flydelta_experiment_phase::bootstrap) {
+                    state_error = "FlyDelta daemon post-Bootstrap phase is not yet bound to its typed arm runner";
+                    return false;
+                }
+                std::string bootstrap_ref = job.bootstrap_zoom_state_ref;
+                if (bootstrap_ref.empty()) {
+                    std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
+                    const auto it = provider->bootstrap_state_by_orchestration_ref.find(state_ref);
+                    if (it != provider->bootstrap_state_by_orchestration_ref.end()) bootstrap_ref = it->second;
+                }
+                if (bootstrap_ref.empty()) {
+                    state_error = "FlyDelta Bootstrap continuation requires a BootstrapZoom state ref";
+                    return false;
+                }
+                common_flydelta_bootstrap_zoom_state bootstrap;
+                if (!resolve_bootstrap_state(bootstrap_ref, bootstrap, state_error)) return false;
+                if (!daemon_flydelta_run_bootstrap_zoom_slice(
+                        provider, job, bootstrap, result, bootstrap, state_error)) return false;
+                std::string persisted_bootstrap_ref;
+                if (!persist_bootstrap_state || !persist_bootstrap_state(
+                        bootstrap, persisted_bootstrap_ref, state_error)) return false;
+                {
+                    std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
+                    provider->bootstrap_state_by_continuation[
+                        daemon_flydelta_continuation_key(plan)] = persisted_bootstrap_ref;
+                }
+                // The typed Bootstrap state is persisted by the evaluator's
+                // regular state callback.  Preserve the orchestration ref for
+                // the pure policy decision that follows this slice.
+                next_state_ref = state_ref;
+                return true;
             };
             callback_error.clear();
             return true;
