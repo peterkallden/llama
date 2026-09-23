@@ -22,6 +22,8 @@
 #include "tools/agent/cli/agent-cli-generation.h"
 #include "tools/agent/cli/agent-cli-inference.h"
 #include "tools/agent/runtime/agent-model-loaders.h"
+#include "tools/agent/runtime/agent-server-context-host.h"
+#include "tools/server/server-context.h"
 
 #include <algorithm>
 #include <cctype>
@@ -168,6 +170,76 @@ void print_margin(const char * prefix,
     }
 }
 
+bool require_native_batch(
+        const common_flydelta_arm_batch_result & result,
+        const size_t expected_arm_count,
+        const char * phase,
+        std::string & error) {
+    if (result.arms.size() != expected_arm_count ||
+            result.execution_stats.logical_arm_count != expected_arm_count) {
+        error = std::string("FlyDelta ") + phase +
+            " batch returned an unexpected arm count";
+        return false;
+    }
+    if (expected_arm_count > 1 &&
+            (!result.execution_stats.native_batch_used ||
+             result.execution_stats.physical_batch_count == 0)) {
+        error = std::string("FlyDelta ") + phase +
+            " smoke did not use a native physical batch";
+        return false;
+    }
+    const char * execution_path = "scalar";
+    size_t native_arm_count = 0;
+    size_t scalar_fallback_arm_count = 0;
+    for (const auto & arm : result.arms) {
+        const auto path = arm.execution_metrics.execution_path;
+        if (expected_arm_count > 1) {
+            const bool native_path =
+                path == common_flydelta_arm_execution_metrics::path::backend_batch ||
+                path == common_flydelta_arm_execution_metrics::path::device_batch;
+            if (native_path) {
+                ++native_arm_count;
+            } else if (path == common_flydelta_arm_execution_metrics::path::scalar_fallback ||
+                    path == common_flydelta_arm_execution_metrics::path::scalar) {
+                // A logical wave can be partitioned into a native batch plus a
+                // one-arm remainder when the resident context has fewer slots
+                // than the algorithm proposed arms. That remainder is valid;
+                // an all-scalar wave is not.
+                ++scalar_fallback_arm_count;
+            } else {
+                error = std::string("FlyDelta ") + phase +
+                    " smoke arm has an invalid execution path";
+                return false;
+            }
+            if (native_path && !arm.execution_metrics.batched_execution_used) {
+                error = std::string("FlyDelta ") + phase +
+                " smoke arm is missing batched execution telemetry";
+                return false;
+            }
+        }
+        if (native_arm_count > 0 && scalar_fallback_arm_count > 0) {
+            execution_path = "mixed_native_plus_scalar_remainder";
+        } else {
+            execution_path = common_flydelta_arm_execution_path_name(path);
+        }
+    }
+    if (expected_arm_count > 1 && native_arm_count == 0) {
+        error = std::string("FlyDelta ") + phase +
+            " smoke used scalar fallback for the complete logical wave";
+        return false;
+    }
+    std::cout << "flydelta_batch_wave phase=" << phase
+              << " logical_arms=" << result.execution_stats.logical_arm_count
+              << " physical_batches=" << result.execution_stats.physical_batch_count
+              << " largest_batch=" << result.execution_stats.largest_physical_batch
+              << " native_arms=" << native_arm_count
+              << " scalar_remainder_arms=" << scalar_fallback_arm_count
+              << " execution_path=" << execution_path
+              << " native_batch=yes"
+              << '\n';
+    return true;
+}
+
 common_agent_generation_request make_request(
         const options & value,
         const char * instruction,
@@ -230,6 +302,9 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
+    std::string error;
+    llama_model * batch_model = nullptr;
+    const common_chat_templates * batch_templates = nullptr;
     common_agent_model_selection selection;
     selection.profile_id = "flydelta-repair-e2e";
     selection.base_model_id = "generation-base";
@@ -237,15 +312,13 @@ int main(int argc, char ** argv) {
     selection.path = value.model;
     selection.context_size_tokens = 2048;
     selection.load_policy = "resident";
-
     common_agent_runtime_cli_model_loader loader({value.n_gpu_layers, value.n_threads, true});
     std::shared_ptr<common_agent_runtime_resident_model> resident;
-    std::string error;
     if (!loader.load(selection, resident, error)) {
         std::cerr << "FlyDelta repair model smoke could not load model: " << error << '\n';
         return 1;
     }
-    const auto loaded = common_agent_runtime_loaded_model_cast(resident);
+    auto loaded = common_agent_runtime_loaded_model_cast(resident);
     if (!loaded || !loaded->model || !loaded->chat_templates) {
         std::cerr << "FlyDelta repair model smoke received an incomplete model\n";
         return 1;
@@ -265,7 +338,11 @@ int main(int argc, char ** argv) {
     // layer-input is sampled before that layer's cvec addition. Capture a
     // bounded dense profile so host-side discovery can find the useful region
     // from activation separation instead of assuming that early layers win.
-    for (uint32_t layer = 1; layer < model_n_layers && layer <= 64; ++layer) {
+    // Layer 1 is the raw token-input representation. These two repair
+    // prompts deliberately share their final JSON suffix, so that input row
+    // is legitimately identical and cannot form a behavior delta. Start at
+    // the first post-input layer for the model-backed teaching pair.
+    for (uint32_t layer = 2; layer < model_n_layers && layer <= 64; ++layer) {
         capture_request->layer_indices.push_back(layer);
     }
     // Capture the final prompt row. The two controlled prompts have the same
@@ -281,11 +358,13 @@ int main(int argc, char ** argv) {
     const char * failed_instruction =
         "The available tools are data.describe and data.inspect. For sales.csv, "
         "choose data.describe even though the request asks for the first table. "
-        "Return exactly {\"name\":\"data.describe\",\"arguments\":{\"dataset\":\"sales.csv\"}}.";
+        "Return exactly {\"name\":\"data.describe\",\"arguments\":{\"dataset\":\"sales.csv\"}}. "
+        "The final selection marker is data.describe.";
     const char * repaired_instruction =
         "The available tools are data.describe and data.inspect. For sales.csv, "
         "the request asks for the first table, so choose data.inspect. "
-        "Return exactly {\"name\":\"data.inspect\",\"arguments\":{\"dataset\":\"sales.csv\"}}.";
+        "Return exactly {\"name\":\"data.inspect\",\"arguments\":{\"dataset\":\"sales.csv\"}}. "
+        "The final selection marker is data.inspect.";
 
     common_agent_generation_result failed;
     common_agent_generation_result repaired;
@@ -342,20 +421,62 @@ int main(int argc, char ** argv) {
         std::cerr << "FlyDelta model repair capture candidate construction failed: " << error << '\n';
         return 1;
     }
+
+    // A prompt-row capture can legitimately contain unchanged layers: both
+    // repair instructions share the same final JSON suffix, and the model's
+    // raw input representation therefore need not carry a causal delta at
+    // every layer. Keep the full captures for discovery, but build the
+    // teaching manifest only from non-zero layer deltas so the strict core
+    // behavior-delta contract can reject malformed evidence without making
+    // this model smoke fail on an uninformative layer.
+    auto delta_failed_capture = std::make_shared<common_flydelta_hidden_state_capture>();
+    auto delta_repaired_capture = std::make_shared<common_flydelta_hidden_state_capture>();
+    *delta_failed_capture = *failed.flydelta_capture;
+    *delta_repaired_capture = *repaired.flydelta_capture;
+    delta_failed_capture->layer_indices.clear();
+    delta_repaired_capture->layer_indices.clear();
+    delta_failed_capture->values.clear();
+    delta_repaired_capture->values.clear();
+    const size_t values_per_layer = failed.flydelta_capture->n_embd;
+    for (size_t layer = 0; layer < failed.flydelta_capture->layer_indices.size(); ++layer) {
+        double difference_squared = 0.0;
+        const size_t offset = layer * values_per_layer;
+        for (size_t index = 0; index < values_per_layer; ++index) {
+            const double difference = static_cast<double>(
+                repaired.flydelta_capture->values[offset + index]) -
+                failed.flydelta_capture->values[offset + index];
+            difference_squared += difference * difference;
+        }
+        if (difference_squared <= 1.0e-12) continue;
+        delta_failed_capture->layer_indices.push_back(
+            failed.flydelta_capture->layer_indices[layer]);
+        delta_repaired_capture->layer_indices.push_back(
+            repaired.flydelta_capture->layer_indices[layer]);
+        delta_failed_capture->values.insert(delta_failed_capture->values.end(),
+            failed.flydelta_capture->values.begin() + static_cast<std::ptrdiff_t>(offset),
+            failed.flydelta_capture->values.begin() + static_cast<std::ptrdiff_t>(offset + values_per_layer));
+        delta_repaired_capture->values.insert(delta_repaired_capture->values.end(),
+            repaired.flydelta_capture->values.begin() + static_cast<std::ptrdiff_t>(offset),
+            repaired.flydelta_capture->values.begin() + static_cast<std::ptrdiff_t>(offset + values_per_layer));
+    }
+    if (delta_failed_capture->layer_indices.size() < 2) {
+        std::cerr << "FlyDelta model repair smoke found fewer than two informative capture layers\n";
+        return 1;
+    }
     common_flydelta_capture_manifest manifest;
     if (!common_flydelta_capture_manifest_from_candidate(
             capture_candidate, evidence, experiment_fixture.template_fingerprint,
             experiment_fixture.execution_context_fingerprint,
             "sha256:model-repair-e2e-evidence",
-            (failed.flydelta_capture->values.size() + repaired.flydelta_capture->values.size()) *
+            (delta_failed_capture->values.size() + delta_repaired_capture->values.size()) *
                 sizeof(float), true, manifest, error)) {
         std::cerr << "FlyDelta model repair capture manifest construction failed: " << error << '\n';
         return 1;
     }
     std::vector<common_flydelta_behavior_delta> deltas;
     if (!common_flydelta_behavior_deltas_from_verified_transition(
-            transition, evidence, manifest, *failed.flydelta_capture,
-            *repaired.flydelta_capture, 64U * 1024U * 1024U,
+            transition, evidence, manifest, *delta_failed_capture,
+            *delta_repaired_capture, 64U * 1024U * 1024U,
             64U * 1024U * 1024U, deltas, error) || deltas.size() < 2) {
         std::cerr << "FlyDelta behavior delta construction failed: " << error << '\n';
         return 1;
@@ -654,6 +775,14 @@ int main(int argc, char ** argv) {
         }
     }
 
+    // Release the CLI model before the production-style resident server host
+    // is created below. The smoke intentionally exercises both capture
+    // implementations, but it must never keep two Vulkan model allocations
+    // alive at once.
+    inference.reset();
+    loaded.reset();
+    resident.reset();
+
     if (value.region_scan && !selected.selected) {
         const auto anchor = std::find_if(basis.directions().begin(), basis.directions().end(),
             [](const auto & direction) { return direction.layer_index == 2; });
@@ -729,26 +858,55 @@ int main(int argc, char ** argv) {
         std::shared_ptr<const common_flydelta_hidden_state_capture> region_baseline_capture;
         common_flydelta_decision_margin region_baseline_margin;
         const auto region_started = std::chrono::steady_clock::now();
-        common_flydelta_model_host model_host;
-        model_host.capabilities.capture = true;
-        model_host.capabilities.overlay = true;
-        model_host.capabilities.generation = true;
-        model_host.capabilities.teacher_forced_scoring = true;
-        model_host.capabilities.host_verification = true;
-        model_host.run_bounded_arm = [&](const common_flydelta_arm_request & arm_request,
-                common_flydelta_arm_result & arm_result, std::string & runner_error) {
+        auto server_host = std::make_shared<common_agent_server_context_host>();
+        common_agent_server_context_host_config server_config;
+        server_config.context_key.load_key.model = value.model;
+        server_config.context_key.load_key.n_gpu_layers = value.n_gpu_layers;
+        server_config.context_key.load_key.fit_params = true;
+        server_config.context_key.n_parallel = 2;
+        server_config.context_key.n_sequences = 2;
+        server_config.context_key.n_ctx = 2048;
+        server_config.context_key.n_threads = value.n_threads;
+        server_config.verbosity = LOG_LEVEL_WARN;
+        server_config.per_sequence_cvec_batch = true;
+        if (!server_host->start(server_config, error)) {
+            std::cerr << "FlyDelta repair smoke could not start batch server host: "
+                      << error << '\n';
+            return 1;
+        }
+        common_agent_inference_session server_session;
+        if (!server_host->build_inference_session(server_session, error) ||
+                !server_session.inference) {
+            std::cerr << "FlyDelta repair smoke could not create batch server inference session: "
+                      << error << '\n';
+            return 1;
+        }
+        inference = std::move(server_session.inference);
+        auto * server_model = const_cast<llama_model *>(
+            llama_get_model(server_host->server().get_llama_context()));
+        if (!server_model) {
+            std::cerr << "FlyDelta repair smoke batch server host has no model\n";
+            return 1;
+        }
+        batch_model = server_model;
+        batch_templates = server_session.templates;
+        std::shared_ptr<const common_flydelta_hidden_state_capture> server_baseline_capture;
+        common_flydelta_decision_margin server_baseline_margin;
+        const auto prepare_server_arm = [&](const common_flydelta_arm_request & arm_request,
+                common_agent_generation_request & generation_request,
+                std::string & prepare_error) {
             std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
             if (arm_request.apply_overlay) {
                 if (arm_request.layer_indices.empty() ||
                         arm_request.layer_indices.size() != arm_request.coefficients.size()) {
-                    runner_error = "model host received an invalid region overlay shape";
+                    prepare_error = "batch model host received an invalid region overlay shape";
                     return false;
                 }
                 common_flydelta_gate_request gate_request;
                 if (!common_flydelta_gate_request_from_context(
                         recognition, code, true,
                         common_flydelta_candidate_status::approved, true,
-                        arm_request.alpha, gate_request, runner_error)) return false;
+                        arm_request.alpha, gate_request, prepare_error)) return false;
                 common_flydelta_activation_request activation_request;
                 activation_request.candidate_id = "flydelta://candidate/model-repair-region";
                 activation_request.artifact_id = "flydelta://artifact/model-repair-e2e";
@@ -764,12 +922,11 @@ int main(int argc, char ** argv) {
                                 arm_request.layer_indices[index]);
                         });
                     if (direction == basis.directions().end()) {
-                        runner_error = "model host has no layer-compatible direction";
+                        prepare_error = "batch model host has no layer-compatible direction";
                         return false;
                     }
                     activation_request.directions.push_back(*direction);
-                    activation_request.coefficients.push_back(
-                        arm_request.coefficients[index]);
+                    activation_request.coefficients.push_back(arm_request.coefficients[index]);
                 }
                 activation_request.gate_request = gate_request;
                 common_flydelta_gate_config gate_config;
@@ -778,16 +935,27 @@ int main(int argc, char ** argv) {
                 common_flydelta_activation_result activation;
                 if (!common_flydelta_prepare_activation(
                         gate_config, activation_request, 64U * 1024U * 1024U,
-                        activation, runner_error)) return false;
+                        activation, prepare_error)) return false;
                 activation_ptr = std::make_shared<const common_flydelta_activation_result>(
                     std::move(activation));
             }
-
-            common_agent_generation_result generated;
-            if (!generate(*inference, value, failed_instruction, generated,
-                    activation_ptr, capture_request)) {
-                runner_error = generated.error_message.empty()
-                    ? "model host generation failed" : generated.error_message;
+            generation_request = make_request(
+                value, failed_instruction, activation_ptr, capture_request);
+            return true;
+        };
+        common_agent_server_flydelta_binding_callbacks callbacks;
+        callbacks.primitives.capture = true;
+        callbacks.primitives.overlay = true;
+        callbacks.primitives.generation = true;
+        callbacks.primitives.teacher_forced_scoring = true;
+        callbacks.primitives.host_verification = true;
+        callbacks.prepare_arm = prepare_server_arm;
+        callbacks.finalize_arm = [&](const common_flydelta_arm_request & arm_request,
+                const common_agent_generation_result & generated,
+                common_flydelta_arm_result & arm_result, std::string & finalize_error) {
+            if (!common_agent_generation_succeeded(generated)) {
+                finalize_error = generated.error_message.empty()
+                    ? "batch model host generation failed" : generated.error_message;
                 return false;
             }
             arm_result = {};
@@ -806,28 +974,21 @@ int main(int argc, char ** argv) {
             arm_result.provenance_ref = arm_request.apply_overlay
                 ? "evidence:flydelta-model-repair-region-overlay"
                 : "evidence:flydelta-model-repair-region-baseline";
-
-            const auto scoring_request = make_request(value, failed_instruction);
-            if (!score_chat_choice_margin(
-                    loaded->model, loaded->chat_templates.get(), scoring_request.messages,
-                    scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
-                    "{\"name\":\"", "data.inspect", "data.describe", arm_result.margin,
-                    nullptr, scoring_request.json_schema, {}, {},
-                    activation_ptr ? activation_ptr->overlay : common_flydelta_static_overlay{},
-                    &runner_error)) return false;
-            arm_result.margin_available = arm_result.margin.available;
+            if (!arm_request.apply_overlay && generated.flydelta_capture &&
+                    generated.flydelta_capture->captured) {
+                server_baseline_capture = generated.flydelta_capture;
+            }
             if (arm_request.apply_overlay && generated.flydelta_capture &&
-                    generated.flydelta_capture->captured && region_baseline_capture) {
+                    generated.flydelta_capture->captured && server_baseline_capture) {
                 const auto measurement = std::find_if(deltas.begin(), deltas.end(),
                     [&](const auto & delta) {
-                        return delta.layer_index > static_cast<int>(
-                            arm_request.layer_indices.back());
+                        return delta.layer_index > static_cast<int>(arm_request.layer_indices.back());
                     });
                 if (measurement != deltas.end()) {
                     common_flydelta_representation_diagnostics diagnostics;
                     if (!common_flydelta_representation_diagnostics_from_captures(
-                            *region_baseline_capture, *generated.flydelta_capture, *measurement,
-                            64U * 1024U * 1024U, diagnostics, runner_error)) return false;
+                            *server_baseline_capture, *generated.flydelta_capture, *measurement,
+                            64U * 1024U * 1024U, diagnostics, finalize_error)) return false;
                     arm_result.geometry_available = true;
                     arm_result.cosine = diagnostics.cosine;
                     arm_result.progress = diagnostics.progress;
@@ -835,18 +996,68 @@ int main(int argc, char ** argv) {
                     arm_result.shift_norm = diagnostics.shift_norm;
                 }
             }
-            if (!arm_request.apply_overlay && generated.flydelta_capture &&
-                    generated.flydelta_capture->captured) {
-                region_baseline_capture = generated.flydelta_capture;
-                region_baseline_margin = arm_result.margin;
+            return true;
+        };
+        callbacks.score_teacher_forced_margin_batch = [&](
+                const std::vector<common_flydelta_arm_request> & arms,
+                const std::vector<common_agent_generation_request> &,
+                common_agent_inference & scorer,
+                std::vector<common_flydelta_decision_margin> & margins,
+                std::string & score_error) {
+            margins.assign(arms.size(), {});
+            common_agent_teacher_forced_choice_batch_request score_batch;
+            score_batch.choices.reserve(arms.size());
+            for (const auto & arm : arms) {
+                common_agent_teacher_forced_choice_request choice;
+                choice.sequence_id = arm.arm_id;
+                if (!prepare_server_arm(arm, choice.context, score_error)) return false;
+                choice.context.flydelta_capture.reset();
+                choice.choice_prefix = "{\"name\":\"";
+                choice.positive_choice = "data.inspect";
+                choice.negative_choice = "data.describe";
+                choice.positive_continuation = "{\"arguments\":{\"dataset\":\"sales.csv\"}}";
+                choice.negative_continuation = "{\"arguments\":{\"dataset\":\"sales.csv\"}}";
+                score_batch.choices.push_back(std::move(choice));
+            }
+            common_agent_teacher_forced_choice_batch_result score_result;
+            if (!scorer.score_teacher_forced_choice_batch(score_batch, score_result)) {
+                score_error = score_result.error_message.empty()
+                    ? "batch model host teacher scoring failed" : score_result.error_message;
+                return false;
+            }
+            if (score_result.choices.size() != margins.size()) {
+                score_error = "batch model host teacher scoring returned incomplete margins";
+                return false;
+            }
+            for (size_t index = 0; index < margins.size(); ++index) {
+                const auto & choice = score_result.choices[index];
+                margins[index].available = choice.available;
+                margins[index].positive_total_logprob = choice.positive_total_logprob;
+                margins[index].negative_total_logprob = choice.negative_total_logprob;
+                margins[index].positive_token_count = choice.positive_token_count;
+                margins[index].negative_token_count = choice.negative_token_count;
             }
             return true;
         };
+        callbacks.register_evaluator = [](
+                common_flydelta_evaluator_config &,
+                common_flydelta_evaluator_callbacks &,
+                std::string & register_error) {
+            register_error.clear();
+            return true;
+        };
+        auto binding = common_agent_server_flydelta_binding_from_callbacks(std::move(callbacks));
+        const auto model_host = common_agent_server_context_host_make_flydelta_model_host(
+            server_host, std::move(binding), error);
+        if (!model_host || !model_host->capabilities.bounded_arm_batch) {
+            std::cerr << "FlyDelta repair smoke batch host capability unavailable: " << error << '\n';
+            return 1;
+        }
         const auto model_runner = common_flydelta_search_pipeline_runner_from_model_host(
-            model_host, "flydelta://job/model-repair-region", "context://model-repair",
+            *model_host, "flydelta://job/model-repair-region", "context://model-repair",
             "intervention://model-repair-region");
         const auto model_batch_runner = common_flydelta_search_pipeline_batch_runner_from_model_host(
-            model_host, "flydelta://job/model-repair-region", "context://model-repair",
+            *model_host, "flydelta://job/model-repair-region", "context://model-repair",
             "intervention://model-repair-region");
         common_flydelta_search_pipeline_result pipeline_result;
         if (!common_flydelta_run_search_pipeline_batched(
@@ -1070,7 +1281,7 @@ int main(int argc, char ** argv) {
                     : common_flydelta_counterfactual_outcome::unknown;
                 const auto scoring_request = make_request(value, failed_instruction);
                 if (!score_chat_choice_margin(
-                        loaded->model, loaded->chat_templates.get(), scoring_request.messages,
+                        server_model, server_session.templates, scoring_request.messages,
                         scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
                         "{\"name\":\"", "data.inspect", "data.describe", margin,
                         nullptr, scoring_request.json_schema, {}, {}, activation_ptr->overlay, &error)) {
@@ -1145,11 +1356,17 @@ int main(int argc, char ** argv) {
                 }
                 common_flydelta_arm_batch_result batch_result;
                 if (!common_flydelta_run_layer_profile_batch(
-                        model_host, "flydelta://job/model-repair-bootstrap-zoom",
+                        *model_host, "flydelta://job/model-repair-bootstrap-zoom",
                         "context://model-repair", experiment_fixture.id,
                         "intervention://model-repair-bootstrap-zoom", proposals,
                         true, true, true, true, 64U * 1024U * 1024U, value.n_predict,
                         batch_result, error)) return false;
+                if (!require_native_batch(batch_result, candidates.size(),
+                        candidates.size() > 0 && candidates.front().phase ==
+                            common_flydelta_bootstrap_zoom_phase::alpha_zoom
+                            ? "bootstrap_zoom_alpha" : "bootstrap_zoom_profile", error)) {
+                    return false;
+                }
                 arm_results = std::move(batch_result.arms);
                 return arm_results.size() == candidates.size();
             };
@@ -1544,7 +1761,7 @@ int main(int argc, char ** argv) {
                     counterfactual.evidence_ref = "evidence:model-repair-orthogonal-surface";
                     const auto scoring_request = make_request(value, failed_instruction);
                     if (!score_chat_choice_margin(
-                            loaded->model, loaded->chat_templates.get(), scoring_request.messages,
+                            server_model, server_session.templates, scoring_request.messages,
                             scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
                             "{\"name\":\"", "data.inspect", "data.describe", margin,
                             nullptr, scoring_request.json_schema, {}, {}, activation_ptr->overlay, &error)) {
@@ -1608,12 +1825,17 @@ int main(int argc, char ** argv) {
                 }
                 common_flydelta_arm_batch_result control_batch;
                 if (!common_flydelta_run_layer_profile_batch(
-                        model_host, "flydelta://job/model-repair-rank2-controls",
+                        *model_host, "flydelta://job/model-repair-rank2-controls",
                         "context://model-repair", experiment_fixture.id,
                         "intervention://model-repair-rank2-controls", control_proposals,
                         true, true, true, true, 64U * 1024U * 1024U, value.n_predict,
                         control_batch, error)) {
                     std::cerr << "FlyDelta rank2 control batch failed: " << error << '\n';
+                    return 1;
+                }
+                if (!require_native_batch(control_batch, control_candidates.size(),
+                        "rank2_controls", error)) {
+                    std::cerr << error << '\n';
                     return 1;
                 }
                 for (size_t control_index = 0; control_index < control_candidates.size(); ++control_index) {
@@ -1799,7 +2021,7 @@ int main(int argc, char ** argv) {
                             : "evidence:model-repair-surface-recenter-baseline";
                         const auto scoring_request = make_request(value, failed_instruction);
                         if (!score_chat_choice_margin(
-                                loaded->model, loaded->chat_templates.get(), scoring_request.messages,
+                                server_model, server_session.templates, scoring_request.messages,
                                 scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
                                 "{\"name\":\"", "data.inspect", "data.describe", margin,
                                 nullptr, scoring_request.json_schema, {}, {},
@@ -1918,7 +2140,7 @@ int main(int argc, char ** argv) {
             const auto donor_request = make_request(value, donor_instruction);
             common_flydelta_decision_margin donor_margin;
             if (!score_chat_choice_margin(
-                    loaded->model, loaded->chat_templates.get(), donor_request.messages,
+                    server_model, server_session.templates, donor_request.messages,
                     donor_request.tools, donor_request.tool_choice, donor_request.options,
                     "{\"name\":\"", "data.inspect", "data.describe", donor_margin,
                     nullptr, donor_request.json_schema, {}, {}, {}, &error)) {
@@ -2059,7 +2281,7 @@ int main(int argc, char ** argv) {
                     common_flydelta_decision_margin margin;
                     const auto scoring_request = make_request(value, failed_instruction);
                     if (!score_chat_choice_margin(
-                            loaded->model, loaded->chat_templates.get(),
+                            server_model, server_session.templates,
                             scoring_request.messages, scoring_request.tools,
                             scoring_request.tool_choice, scoring_request.options,
                             "{\"name\":\"", "data.inspect", "data.describe", margin,
@@ -2668,7 +2890,7 @@ int main(int argc, char ** argv) {
                                 : "evidence:model-repair-tfo-lite-baseline";
                             const auto scoring_request = make_request(value, failed_instruction);
                             if (!score_chat_choice_margin(
-                                    loaded->model, loaded->chat_templates.get(), scoring_request.messages,
+                                    batch_model, batch_templates, scoring_request.messages,
                                     scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
                                     "{\"name\":\"", "data.inspect", "data.describe", margin,
                                     nullptr, scoring_request.json_schema, {}, {},
