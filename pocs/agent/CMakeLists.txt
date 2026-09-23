@@ -2196,8 +2196,10 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-flydelta-representation-augmentation-smoke
     llama-agent-flydelta-procedure-teaching-smoke
     llama-agent-flydelta-concept-capture-smoke
+    llama-agent-flydelta-concept-smoke
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-cvec-batch-model-smoke
+    llama-agent-flydelta-runtime-smoke
     llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-flydelta-dataset-question-contract-smoke
     llama-agent-flydelta-repair-echo-replay-smoke
@@ -2264,7 +2266,8 @@ if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_TEST_BUILD_TARGETS
         llama-agent-data-manipulation-smoke
         llama-agent-flydelta-dataset-question-repair-contract-smoke
-        llama-agent-flydelta-dataset-question-repair-model-smoke)
+        llama-agent-flydelta-dataset-question-repair-model-smoke
+        llama-agent-flydelta-repair-model-smoke)
 endif()
 
 set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
@@ -2712,6 +2715,10 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-learning-observation
     test-agent-learning-domain-policy
     test-agent-learning-cause
+    test-agent-adaptation-evidence
+    test-agent-adaptation-evidence-routing
+    test-agent-synthetic-tool-cases
+    test-agent-auto-training-trigger
     test-agent-learning-case
     test-agent-learning-transaction
     test-agent-training-candidate
@@ -2728,6 +2735,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-evidence
     test-agent-flydelta-basis
     test-agent-flydelta-concept
+    test-agent-flydelta-teaching-material
     test-agent-flydelta-training
     test-agent-flydelta-training-corpus
     test-agent-flydelta-job
@@ -2743,10 +2751,26 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-sideband
     test-agent-flydelta-capture-manifest
     test-agent-flydelta-repair-deltas
+    test-agent-flydelta-sparse-cvec
+    test-agent-flydelta-representation-diagnostics
+    test-agent-flydelta-batch-benchmark
+    test-agent-flydelta-dose-controller
     test-agent-flydelta-evidence-depth
     test-agent-flydelta-aggregation
     test-agent-flydelta-direction-search
     test-agent-flydelta-candidate-lifecycle
+    test-agent-flydelta-runtime-observer
+    test-agent-flydelta-server-binding
+    test-agent-flydelta-layer-search
+    test-agent-flydelta-scale-search
+    test-agent-flydelta-alpha-response-search
+    test-agent-flydelta-intervention-region-search
+    test-agent-flydelta-whirlpool-search
+    test-agent-flydelta-whirlpool-ab
+    test-agent-flydelta-search-pipeline
+    test-agent-flydelta-coefficient-search
+    test-agent-flydelta-deep-search
+    test-agent-flydelta-artifact-lifecycle
     test-agent-flydelta-hidden-state-hook
     test-agent-flydelta-layer-discovery
     test-agent-flydelta-two-pass
@@ -2754,7 +2778,10 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-evaluator
     test-agent-flydelta-experiment-orchestration
     test-agent-flydelta-sideband-controller
+    test-agent-flydelta-representation-augmentation
+    test-agent-model-facing-tool-chain
     test-agent-learning-transaction-backends
+    test-agent-flydelta-teaching-material-cozo
     test-agent-clangd-protocol
     test-agent-native-crash
     test-agent-native-crash-smoke
