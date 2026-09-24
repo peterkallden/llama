@@ -297,7 +297,7 @@ integration with `feature/llama-agent` requires an explicit owner instruction.
 | Date | Commit | Sweep/result | Tests or smokes | Documentation decision |
 | --- | --- | --- | --- | --- |
 | 2026-09-24 | 71f3e6274 | Initial pre-canary status map; stage-canary remains PARTIAL | CTest contract evidence: six focused CTests covering pipeline, promotion, review-store, evaluator, daemon protocol and daemon JSONL protocol; no functional smoke was run in this documentation-only sweep | Added bootstrap and documented the durable stage-canary gap; no implementation change made in this documentation sweep |
-| 2026-09-24 | working tree (pre-commit) | Stage-canary atomic ordering and full model-free admin smoke implemented | CTest contract evidence: the same six focused CTests passed; model-free functional smoke passed with `flydelta_admin_trace` for queue, evaluation, summary, review and canary plus `flydelta_worker_trace` and durable replay | Reclassified review -> stage_canary as IMPLEMENTED; added the standalone smoke target and retained model-free/model-backed evidence separation |
+| 2026-09-24 | 9c8bb9a8a | Stage-canary atomic ordering and full model-free admin smoke implemented | CTest contract evidence: the same six focused CTests passed; model-free functional smoke passed with `flydelta_admin_trace` for queue, evaluation, summary, review and canary plus `flydelta_worker_trace` and durable replay | Reclassified review -> stage_canary as IMPLEMENTED; added the standalone smoke target and retained model-free/model-backed evidence separation |
 
 ## Natural dataset-question smoke
 
