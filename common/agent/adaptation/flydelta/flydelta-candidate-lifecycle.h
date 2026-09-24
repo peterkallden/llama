@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
+#include "agent/adaptation/flydelta/flydelta-promotion.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-decision-margin.h"
@@ -159,6 +160,50 @@ bool common_flydelta_append_search_lifecycle(
         const common_flydelta_search_observation & observation,
         const common_flydelta_search_decision & decision,
         const common_flydelta_candidate_lineage * lineage,
+        std::string & error);
+
+// Persists host-owned counterfactual truth at the same lifecycle boundary as
+// other FlyDelta results. This is evidence storage only: it does not create a
+// candidate, approve a sideband or alter promotion policy.
+bool common_flydelta_append_counterfactual_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_counterfactual_report & report,
+        std::string & error);
+
+// Reads the same append-only records back for host-owned qualification. The
+// caller still has to build a promotion summary and pass the existing
+// evaluation/approval gates; loading reports never promotes an artifact.
+bool common_flydelta_load_counterfactual_reports(
+        const common_learning_lifecycle_store & store,
+        const std::string & candidate_id,
+        std::vector<common_flydelta_counterfactual_report> & reports,
+        std::string & error);
+
+bool common_flydelta_append_evaluation_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_evaluation_report & report,
+        const std::vector<common_flydelta_evaluation_fixture_result> & fixtures,
+        std::string & error);
+
+bool common_flydelta_load_evaluation_report(
+        const common_learning_lifecycle_store & store,
+        const std::string & candidate_id,
+        common_flydelta_evaluation_report & report,
+        std::vector<common_flydelta_evaluation_fixture_result> * fixtures,
+        std::string & error);
+
+bool common_flydelta_append_promotion_summary_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_promotion_summary & summary,
+        std::string & error);
+
+bool common_flydelta_load_promotion_summary(
+        const common_learning_lifecycle_store & store,
+        const std::string & candidate_id,
+        common_flydelta_promotion_summary & summary,
         std::string & error);
 
 // Records runtime discovery of a host-qualified capture candidate. Discovery

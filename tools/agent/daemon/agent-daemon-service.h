@@ -62,6 +62,7 @@ enum class common_agent_daemon_command_type {
     read_resource,
     put_resource,
     enqueue_flydelta_job,
+    flydelta_admin,
     get_status,
     drain,
     shutdown,
@@ -165,6 +166,9 @@ struct common_agent_daemon_runtime {
         const std::string & path,
         common_agent_daemon_reload_result & result,
         std::string & error)> reload_config;
+    std::function<bool(
+        const common_flydelta_experiment_job & job,
+        std::string & error)> flydelta_job_enqueue;
 };
 
 // Registers the host-owned semantic prepare/finalize/verifier callbacks on
@@ -239,6 +243,24 @@ struct common_agent_daemon_scope_payload {
     agent_resource_read_authority authority;
 };
 
+struct common_agent_daemon_flydelta_admin_payload {
+    std::string operation;
+    std::string candidate_id;
+    std::string candidate_manifest_ref;
+    std::string suite_ref;
+    std::string evaluation_revision;
+    std::string verifier_revision;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string execution_context_fingerprint;
+    std::string actor_id;
+    std::string decision;
+    std::string reason;
+    bool explicit_host_approval = false;
+    common_flydelta_evaluation_limits limits;
+};
+
 struct common_agent_daemon_command {
     std::string request_id;
     common_agent_daemon_command_type type = common_agent_daemon_command_type::run_turn;
@@ -252,6 +274,7 @@ struct common_agent_daemon_command {
     // the typed envelope in the existing FlyDelta queue; model execution is
     // performed later by the registered FlyDelta worker lane.
     std::optional<common_flydelta_experiment_job> flydelta_job;
+    std::optional<common_agent_daemon_flydelta_admin_payload> flydelta_admin;
     std::optional<common_agent_daemon_scope_payload> scope;
     std::string reload_path;
 };
@@ -393,6 +416,7 @@ struct common_agent_daemon_command_outcome {
     common_agent_daemon_reload_result reload_result;
     std::optional<common_agent_turn_summary> turn_summary;
     std::string error;
+    std::string payload_json;
 };
 
 struct common_agent_daemon_command_execution {
@@ -495,6 +519,12 @@ private:
         std::string & error,
         std::string event,
         common_agent_daemon_event_type event_type) const;
+
+    bool execute_flydelta_admin(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error);
 
     bool succeed_lifecycle_result(
         const common_agent_daemon_command & command,

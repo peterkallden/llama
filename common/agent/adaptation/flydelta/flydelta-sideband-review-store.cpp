@@ -21,6 +21,8 @@ common_learning_lifecycle_status lifecycle_status(common_flydelta_review_action 
     switch (action) {
         case common_flydelta_review_action::admit_experimental: return common_learning_lifecycle_status::observed;
         case common_flydelta_review_action::promote_to_candidate: return common_learning_lifecycle_status::eligible;
+        case common_flydelta_review_action::approve_canary: return common_learning_lifecycle_status::eligible;
+        case common_flydelta_review_action::reject: return common_learning_lifecycle_status::rejected;
         case common_flydelta_review_action::stage_canary: return common_learning_lifecycle_status::canary;
         case common_flydelta_review_action::activate: return common_learning_lifecycle_status::active;
         case common_flydelta_review_action::retire: return common_learning_lifecycle_status::retired;
@@ -110,6 +112,8 @@ const char * common_flydelta_review_action_name(common_flydelta_review_action ac
     switch (action) {
         case common_flydelta_review_action::admit_experimental: return "admit_experimental";
         case common_flydelta_review_action::promote_to_candidate: return "promote_to_candidate";
+        case common_flydelta_review_action::approve_canary: return "approve_canary";
+        case common_flydelta_review_action::reject: return "reject";
         case common_flydelta_review_action::stage_canary: return "stage_canary";
         case common_flydelta_review_action::activate: return "activate";
         case common_flydelta_review_action::retire: return "retire";
@@ -130,6 +134,8 @@ bool parse_common_flydelta_review_action(
         const std::string & value, common_flydelta_review_action & action, std::string & error) {
     if (value == "admit_experimental") action = common_flydelta_review_action::admit_experimental;
     else if (value == "promote_to_candidate") action = common_flydelta_review_action::promote_to_candidate;
+    else if (value == "approve_canary") action = common_flydelta_review_action::approve_canary;
+    else if (value == "reject") action = common_flydelta_review_action::reject;
     else if (value == "stage_canary") action = common_flydelta_review_action::stage_canary;
     else if (value == "activate") action = common_flydelta_review_action::activate;
     else if (value == "retire") action = common_flydelta_review_action::retire;
@@ -147,17 +153,34 @@ bool common_flydelta_sideband_review_validate(
         return false;
     }
     if ((review.action == common_flydelta_review_action::stage_canary ||
+            review.action == common_flydelta_review_action::approve_canary ||
             review.action == common_flydelta_review_action::promote_to_candidate) &&
             !bounded(review.evaluation_revision)) {
         error = "FlyDelta sideband review requires an evaluation revision";
+        return false;
+    }
+    if ((review.action == common_flydelta_review_action::approve_canary ||
+            review.action == common_flydelta_review_action::reject) &&
+            !bounded(review.reason)) {
+        error = "FlyDelta review decision requires a reason";
+        return false;
+    }
+    if (review.action == common_flydelta_review_action::approve_canary &&
+            (!bounded(review.promotion_summary_ref) ||
+             !bounded(review.evaluation_report_ref))) {
+        error = "FlyDelta canary approval requires durable report references";
         return false;
     }
     if (review.action == common_flydelta_review_action::revoke && !bounded(review.reason)) {
         error = "FlyDelta sideband revoke review requires a reason";
         return false;
     }
-    if (review.action == common_flydelta_review_action::stage_canary) {
-        if (review.manifest.status != common_flydelta_sideband_status::candidate ||
+    if (review.action == common_flydelta_review_action::stage_canary ||
+            review.action == common_flydelta_review_action::approve_canary) {
+        const bool stage_manifest = review.action == common_flydelta_review_action::stage_canary;
+        if ((!stage_manifest && review.manifest.status != common_flydelta_sideband_status::candidate) ||
+                (stage_manifest && review.manifest.status != common_flydelta_sideband_status::candidate &&
+                 review.manifest.status != common_flydelta_sideband_status::canary) ||
                 !review.has_promotion_evidence ||
                 !common_flydelta_promotion_summary_validate(
                     review.promotion_summary, review.promotion_policy, error) ||
@@ -185,6 +208,8 @@ std::string common_flydelta_sideband_review_to_json(
         {"action", common_flydelta_review_action_name(review.action)},
         {"policy_revision", review.policy_revision},
         {"evaluation_revision", review.evaluation_revision},
+        {"promotion_summary_ref", review.promotion_summary_ref},
+        {"evaluation_report_ref", review.evaluation_report_ref},
         {"reason", review.reason},
         {"manifest", json::parse(common_flydelta_sideband_manifest_to_json(review.manifest))},
         {"has_promotion_evidence", review.has_promotion_evidence},
@@ -210,6 +235,8 @@ bool common_flydelta_sideband_review_from_json(
         review.actor_id = value.value("actor_id", "");
         review.policy_revision = value.value("policy_revision", "");
         review.evaluation_revision = value.value("evaluation_revision", "");
+        review.promotion_summary_ref = value.value("promotion_summary_ref", "");
+        review.evaluation_report_ref = value.value("evaluation_report_ref", "");
         review.reason = value.value("reason", "");
         if (!parse_common_flydelta_review_source(value.value("source", "operator"), review.source, error) ||
                 !parse_common_flydelta_review_action(value.value("action", ""), review.action, error) ||
@@ -258,10 +285,26 @@ bool common_flydelta_sideband_review_store::apply(
         case common_flydelta_review_action::promote_to_candidate:
             return registry.promote_experimental(review.manifest.id, review.evaluation_revision,
                 error, explicit_host_approval);
+        case common_flydelta_review_action::approve_canary:
+            // Approval is a durable decision record. It intentionally does
+            // not mutate the registry; stage_canary applies the existing
+            // controller only after this record exists.
+            error.clear();
+            return true;
+        case common_flydelta_review_action::reject:
+            error.clear();
+            return true;
         case common_flydelta_review_action::stage_canary:
             if (!explicit_host_approval) {
                 error = "FlyDelta canary staging requires explicit host approval";
                 return false;
+            }
+            if (const auto it = registry.list().find(review.manifest.id);
+                    it != registry.list().end() &&
+                    it->second.status == common_flydelta_sideband_status::canary &&
+                    it->second.evaluation_revision == review.evaluation_revision) {
+                error.clear();
+                return true;
             }
             return registry.stage_canary(review.manifest.id, review.evaluation_revision, error);
         case common_flydelta_review_action::activate:

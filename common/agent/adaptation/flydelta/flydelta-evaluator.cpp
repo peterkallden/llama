@@ -263,6 +263,30 @@ bool common_flydelta_evaluate_job(
             result.processed_references = result.counterfactual_reports.size();
             return true;
         }
+        case common_flydelta_experiment_job_kind::evaluation: {
+            if (!callbacks.run_evaluation) {
+                error = "FlyDelta evaluation requires a host-owned evaluation runner";
+                return false;
+            }
+            if (!callbacks.run_evaluation(
+                    job, result.evaluation_report,
+                    result.evaluation_fixture_results, error)) return false;
+            if (!common_flydelta_evaluation_report_validate(
+                    result.evaluation_report, error) ||
+                    result.evaluation_report.candidate_id != job.evaluation_candidate_id ||
+                    result.evaluation_fixture_results.empty()) {
+                if (error.empty()) error = "FlyDelta evaluation returned an invalid report";
+                return false;
+            }
+            for (const auto & fixture : result.evaluation_fixture_results) {
+                if (!common_flydelta_evaluation_fixture_result_validate(fixture, error) ||
+                        fixture.candidate_id != job.evaluation_candidate_id) return false;
+                result.counterfactual_reports.push_back(fixture.counterfactual);
+            }
+            result.has_evaluation_report = true;
+            result.processed_references = result.evaluation_fixture_results.size();
+            return true;
+        }
         case common_flydelta_experiment_job_kind::basis: {
             if (!callbacks.resolve_behavior_delta ||
                     !common_flydelta_basis_config_validate(config.basis, error)) {

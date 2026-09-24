@@ -1,8 +1,12 @@
 #include "agent/adaptation/flydelta/flydelta-promotion.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cmath>
 
 namespace {
+
+using json = nlohmann::ordered_json;
 
 bool nonempty_bounded(const std::string & value, size_t max_size = 512) {
     return !value.empty() && value.size() <= max_size;
@@ -13,6 +17,61 @@ bool unit(float value) {
 }
 
 } // namespace
+
+std::string common_flydelta_promotion_summary_to_json(
+        const common_flydelta_promotion_summary & summary) {
+    return json{
+        {"schema_version", summary.schema_version},
+        {"id", summary.id},
+        {"candidate_id", summary.candidate_id},
+        {"baseline_profile_id", summary.baseline_profile_id},
+        {"candidate_profile_id", summary.candidate_profile_id},
+        {"total_trials", summary.total_trials},
+        {"known_trials", summary.known_trials},
+        {"helped_trials", summary.helped_trials},
+        {"neutral_trials", summary.neutral_trials},
+        {"harmed_trials", summary.harmed_trials},
+        {"unknown_trials", summary.unknown_trials},
+        {"help_confidence", summary.help_confidence},
+        {"mean_quality_delta", summary.mean_quality_delta},
+        {"status", common_flydelta_candidate_status_name(summary.status)},
+    }.dump();
+}
+
+bool common_flydelta_promotion_summary_from_json(
+        const std::string & text,
+        common_flydelta_promotion_summary & summary,
+        std::string & error) {
+    error.clear();
+    try {
+        const auto value = json::parse(text);
+        summary = {};
+        summary.schema_version = value.value("schema_version", 0);
+        summary.id = value.value("id", "");
+        summary.candidate_id = value.value("candidate_id", "");
+        summary.baseline_profile_id = value.value("baseline_profile_id", "");
+        summary.candidate_profile_id = value.value("candidate_profile_id", "");
+        summary.total_trials = value.value("total_trials", 0U);
+        summary.known_trials = value.value("known_trials", 0U);
+        summary.helped_trials = value.value("helped_trials", 0U);
+        summary.neutral_trials = value.value("neutral_trials", 0U);
+        summary.harmed_trials = value.value("harmed_trials", 0U);
+        summary.unknown_trials = value.value("unknown_trials", 0U);
+        summary.help_confidence = value.value("help_confidence", 0.0f);
+        summary.mean_quality_delta = value.value("mean_quality_delta", 0.0f);
+        const auto status = value.value("status", "observed");
+        if (status == "observed") summary.status = common_flydelta_candidate_status::observed;
+        else if (status == "eligible") summary.status = common_flydelta_candidate_status::eligible;
+        else if (status == "approved") summary.status = common_flydelta_candidate_status::approved;
+        else if (status == "rejected") summary.status = common_flydelta_candidate_status::rejected;
+        else if (status == "revoked") summary.status = common_flydelta_candidate_status::revoked;
+        else { error = "unknown FlyDelta promotion summary status"; return false; }
+    } catch (const std::exception & exception) {
+        error = std::string("invalid FlyDelta promotion summary JSON: ") + exception.what();
+        return false;
+    }
+    return true;
+}
 
 bool common_flydelta_promotion_policy_validate(
         const common_flydelta_promotion_policy & policy,

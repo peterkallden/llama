@@ -6,6 +6,7 @@
 #include "../host/agent-host-config.h"
 #include "agent/agent-inbound-contract.h"
 #include "agent/adaptation/flydelta/flydelta-collection.h"
+#include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
 #include "log.h"
@@ -523,6 +524,13 @@ int main(int argc, char ** argv) {
     flydelta_worker_config.enabled = options.adaptation_flydelta_enabled;
     flydelta_worker_config.worker_count = options.adaptation_flydelta_worker_count;
     flydelta_worker_config.queue_root = options.adaptation_flydelta_queue_path;
+    runtime.flydelta_job_enqueue = [queue_root = flydelta_worker_config.queue_root,
+            queue_limits = flydelta_worker_config.queue_limits](
+            const common_flydelta_experiment_job & job,
+            std::string & enqueue_error) {
+        return common_flydelta_experiment_queue_enqueue(
+            queue_root, job, queue_limits, enqueue_error);
+    };
     if (!runtime.flydelta_model_adapter && runtime.flydelta_model_host) {
         std::string adapter_error;
         runtime.flydelta_model_adapter = common_flydelta_model_adapter_from_host(
@@ -553,6 +561,62 @@ int main(int argc, char ** argv) {
             runtime.flydelta_model_adapter->capabilities;
     }
     flydelta_worker_config.model_adapter = runtime.flydelta_model_adapter;
+    flydelta_worker_config.persist_completed_report =
+        [lifecycle_store = runtime.flydelta_review_lifecycle_store](
+            const common_flydelta_experiment_job & job,
+            const common_flydelta_experiment_worker_report & report,
+            std::string & persist_error) {
+            persist_error.clear();
+            if (!lifecycle_store) return true;
+
+            if (report.has_evaluation_report) {
+                common_flydelta_lifecycle_event_context context;
+                context.event_id = job.id + ":evaluation";
+                context.idempotency_key = context.event_id;
+                context.source_id = "daemon-flydelta-worker";
+                context.scope = job.seed.scope;
+                context.content_hash = report.evaluation_report.revision_id + ":" +
+                    report.evaluation_report.candidate_id;
+                context.created_at = job.id;
+                if (!common_flydelta_append_evaluation_lifecycle(
+                        *lifecycle_store, context, report.evaluation_report,
+                        report.evaluation_fixture_results, persist_error)) return false;
+
+                if (!report.counterfactual_reports.empty()) {
+                    common_flydelta_promotion_policy policy;
+                    common_flydelta_promotion_summary summary;
+                    const std::string summary_id = job.id + ":promotion-summary";
+                    if (!common_flydelta_promotion_summary_from_reports(
+                            summary_id, report.counterfactual_reports, policy,
+                            summary, persist_error)) return false;
+                    common_flydelta_lifecycle_event_context summary_context;
+                    summary_context.event_id = summary_id;
+                    summary_context.idempotency_key = summary_id;
+                    summary_context.source_id = "daemon-flydelta-worker";
+                    summary_context.scope = job.seed.scope;
+                    summary_context.content_hash = summary.candidate_id + ":" + summary.id;
+                    summary_context.created_at = job.id;
+                    if (!common_flydelta_append_promotion_summary_lifecycle(
+                            *lifecycle_store, summary_context, summary, persist_error)) return false;
+                }
+            }
+
+            for (const auto & counterfactual : report.counterfactual_reports) {
+                common_flydelta_lifecycle_event_context context;
+                context.event_id = job.id + ":counterfactual:" +
+                    counterfactual.experiment_id + ":" + counterfactual.fixture_id;
+                context.idempotency_key = context.event_id;
+                context.source_id = "daemon-flydelta-worker";
+                context.scope = job.seed.scope;
+                context.content_hash = counterfactual.experiment_id;
+                context.created_at = job.id;
+                if (!common_flydelta_append_counterfactual_lifecycle(
+                        *lifecycle_store, context, counterfactual, persist_error)) {
+                    return false;
+                }
+            }
+            return true;
+        };
     flydelta_worker_config.schedule_next_action =
         [queue_root = flydelta_worker_config.queue_root,
             queue_limits = flydelta_worker_config.queue_limits](

@@ -243,6 +243,54 @@ bool parse_agent_daemon_command_name(
         error.clear();
         return true;
     }
+    if (command_name == "flydelta.evaluate_candidate" ||
+            command_name == "flydelta.get_evaluation" ||
+            command_name == "flydelta.get_promotion_summary" ||
+            command_name == "flydelta.review_candidate" ||
+            command_name == "flydelta.stage_canary") {
+        command.type = common_agent_daemon_command_type::flydelta_admin;
+        common_agent_daemon_flydelta_admin_payload payload;
+        payload.operation = command_name;
+        payload.candidate_id = parsed.value("candidate_id", "");
+        payload.candidate_manifest_ref = parsed.value("candidate_manifest_ref", "");
+        payload.suite_ref = parsed.value("suite_ref", "");
+        payload.evaluation_revision = parsed.value("evaluation_revision", "");
+        payload.verifier_revision = parsed.value("verifier_revision", payload.evaluation_revision);
+        payload.model_profile_fingerprint = parsed.value("model_profile_fingerprint", "");
+        payload.tokenizer_fingerprint = parsed.value("tokenizer_fingerprint", "");
+        payload.template_fingerprint = parsed.value("template_fingerprint", "");
+        payload.execution_context_fingerprint = parsed.value("execution_context_fingerprint", "");
+        payload.actor_id = parsed.value("actor_id", "jsonl-admin");
+        payload.decision = parsed.value("decision", "");
+        payload.reason = parsed.value("reason", "");
+        payload.explicit_host_approval = parsed.value("explicit_host_approval", false);
+        if (parsed.contains("limits")) {
+            if (!parsed["limits"].is_object()) {
+                error = "FlyDelta admin limits must be an object";
+                return false;
+            }
+            const auto & limits = parsed["limits"];
+            payload.limits.max_fixtures = limits.value("max_fixtures", payload.limits.max_fixtures);
+            payload.limits.max_model_calls = limits.value("max_model_calls", payload.limits.max_model_calls);
+            payload.limits.max_retries = limits.value("max_retries", payload.limits.max_retries);
+            payload.limits.max_generated_tokens = limits.value("max_generated_tokens", payload.limits.max_generated_tokens);
+        }
+        if (payload.candidate_id.empty()) {
+            error = command_name + " requires candidate_id";
+            return false;
+        }
+        if (command_name == "flydelta.evaluate_candidate" &&
+                (payload.candidate_manifest_ref.empty() || payload.suite_ref.empty() ||
+                 payload.evaluation_revision.empty() || payload.model_profile_fingerprint.empty() ||
+                 payload.tokenizer_fingerprint.empty() || payload.template_fingerprint.empty() ||
+                 payload.execution_context_fingerprint.empty())) {
+            error = "flydelta.evaluate_candidate requires candidate manifest, suite, revision and model identity";
+            return false;
+        }
+        command.flydelta_admin = std::move(payload);
+        error.clear();
+        return true;
+    }
     if (command_name == "drain") {
         command.type = common_agent_daemon_command_type::drain;
         error.clear();
@@ -922,17 +970,22 @@ json make_agent_daemon_error_response(const std::string & error) {
 }
 
 json make_agent_daemon_command_response(const common_agent_daemon_command_result & result) {
+    json response;
     switch (result.response_kind) {
         case common_agent_daemon_response_kind::status:
-            return make_agent_daemon_status_response(result);
+            response = make_agent_daemon_status_response(result); break;
         case common_agent_daemon_response_kind::lifecycle:
-            return make_agent_daemon_lifecycle_response(result);
+            response = make_agent_daemon_lifecycle_response(result); break;
         case common_agent_daemon_response_kind::resource:
-            return make_agent_daemon_resource_response(result);
+            response = make_agent_daemon_resource_response(result); break;
         case common_agent_daemon_response_kind::listing:
-            return make_agent_daemon_listing_response(result);
+            response = make_agent_daemon_listing_response(result); break;
         case common_agent_daemon_response_kind::turn:
-            return make_agent_daemon_turn_response(result);
+            response = make_agent_daemon_turn_response(result); break;
     }
-    return make_agent_daemon_turn_response(result);
+    if (!result.payload_json.empty()) {
+        const auto payload = json::parse(result.payload_json, nullptr, false);
+        if (payload.is_object()) response["flydelta"] = payload;
+    }
+    return response;
 }

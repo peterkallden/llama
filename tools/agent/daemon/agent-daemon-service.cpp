@@ -2,8 +2,16 @@
 #include "agent-daemon-adapter.h"
 #include "../mcp/agent-mcp-server-tool-registry.h"
 #include "../runtime/agent-server-context-host.h"
+#include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
+#include "agent/adaptation/flydelta/flydelta-sideband-controller.h"
+#include "agent/adaptation/flydelta/flydelta-sideband-review-store.h"
+#include "hash/hash.h"
+
+#include <nlohmann/json.hpp>
 
 #include <set>
+
+using json = nlohmann::ordered_json;
 
 common_agent_daemon_config_store::common_agent_daemon_config_store(
         std::shared_ptr<const daemon_options> initial)
@@ -726,6 +734,268 @@ bool common_agent_daemon_service::request_cancel_active_turn(
         error);
 }
 
+bool common_agent_daemon_service::execute_flydelta_admin(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> &,
+        std::string & error) {
+    error.clear();
+    if (!command.flydelta_admin.has_value()) {
+        error = "FlyDelta admin command missing payload";
+        outcome.error = error;
+        return false;
+    }
+    const auto & request = *command.flydelta_admin;
+    if (!runtime.flydelta_review_lifecycle_store ||
+            !runtime.flydelta_sideband_review_store ||
+            !runtime.flydelta_sideband_registry) {
+        error = "FlyDelta review lifecycle is not configured";
+        outcome.error = error;
+        return false;
+    }
+    outcome.response_kind = common_agent_daemon_response_kind::lifecycle;
+    auto fail = [&](const std::string & message) {
+        error = message;
+        outcome.error = error;
+        outcome.ok = false;
+        outcome.event = "flydelta.admin.failed";
+        return false;
+    };
+    const auto manifest_it = runtime.flydelta_sideband_registry->list().find(request.candidate_id);
+    const auto require_manifest = [&]() -> const common_flydelta_sideband_manifest * {
+        if (manifest_it == runtime.flydelta_sideband_registry->list().end()) return nullptr;
+        return &manifest_it->second;
+    };
+    if (request.operation == "flydelta.evaluate_candidate") {
+        if (!runtime.flydelta_job_enqueue) return fail("FlyDelta queue is not configured");
+        const auto * candidate_manifest = require_manifest();
+        if (!candidate_manifest) return fail("FlyDelta candidate is not registered");
+        if (candidate_manifest->status != common_flydelta_sideband_status::candidate ||
+                request.candidate_manifest_ref != candidate_manifest->artifact_path) {
+            return fail("FlyDelta evaluation candidate manifest identity is incompatible");
+        }
+        if (candidate_manifest->compatibility.tokenizer_fingerprint !=
+                    request.tokenizer_fingerprint ||
+                candidate_manifest->compatibility.template_fingerprint !=
+                    request.template_fingerprint ||
+                (!candidate_manifest->applicability.verifier_revision.empty() &&
+                 candidate_manifest->applicability.verifier_revision != request.verifier_revision)) {
+            return fail("FlyDelta evaluation model or verifier identity is incompatible");
+        }
+        common_flydelta_experiment_job job;
+        job.id = "flydelta://evaluation/" + hash_sha256_hex(
+            (request.candidate_id + "\n" + request.suite_ref + "\n" +
+                request.evaluation_revision).data(),
+            request.candidate_id.size() + 1 + request.suite_ref.size() + 1 +
+                request.evaluation_revision.size()).substr(0, 32);
+        job.kind = common_flydelta_experiment_job_kind::evaluation;
+        job.seed.id = job.id;
+        job.seed.behavior_key = "flydelta/pre-canary-evaluation";
+        job.seed.source = common_adaptation_evidence_source::tool_repair;
+        job.seed.scope.namespace_id = "default-namespace";
+        job.seed.scope.session_id = "default-session";
+        job.seed.task_fingerprint = request.suite_ref;
+        job.seed.model_profile_fingerprint = request.model_profile_fingerprint;
+        job.seed.tokenizer_fingerprint = request.tokenizer_fingerprint;
+        job.seed.template_fingerprint = request.template_fingerprint;
+        job.seed.execution_context_fingerprint = request.execution_context_fingerprint;
+        job.seed.baseline_ref = "flydelta://evaluation/baseline/" + request.candidate_id;
+        job.seed.candidate_ref = request.candidate_manifest_ref;
+        job.seed.verifier_ref = request.verifier_revision;
+        job.seed.evidence_ref = candidate_manifest->artifact_hash;
+        job.evaluation_candidate_id = request.candidate_id;
+        job.evaluation_suite_ref = request.suite_ref;
+        job.evaluation_revision = request.evaluation_revision;
+        job.evaluation_limits = request.limits;
+        job.alpha_search.candidates = {1.0f};
+        job.alpha_search.max_candidates = 1;
+        job.code_revision = request.evaluation_revision;
+        if (!common_flydelta_experiment_job_validate(job, 128, error) ||
+                !runtime.flydelta_job_enqueue(job, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.evaluation.queued";
+        outcome.target_request_id = job.id;
+        outcome.payload_json = json{{"operation", request.operation}, {"job_id", job.id}}.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.get_evaluation") {
+        if (!require_manifest()) return fail("FlyDelta candidate is not registered");
+        common_flydelta_evaluation_report report;
+        std::vector<common_flydelta_evaluation_fixture_result> fixtures;
+        if (!common_flydelta_load_evaluation_report(
+                *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                report, &fixtures, error)) return fail(error);
+        json result = {
+            {"operation", request.operation},
+            {"report", json::parse(common_flydelta_evaluation_report_to_json(report))},
+            {"fixtures", json::array()},
+        };
+        for (const auto & fixture : fixtures) result["fixtures"].push_back(
+            json::parse(common_flydelta_evaluation_fixture_result_to_json(fixture)));
+        outcome.ok = true;
+        outcome.event = "flydelta.evaluation.loaded";
+        outcome.payload_json = result.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.get_promotion_summary") {
+        if (!require_manifest()) return fail("FlyDelta candidate is not registered");
+        common_flydelta_promotion_summary stored_summary;
+        std::string stored_error;
+        if (common_flydelta_load_promotion_summary(
+                *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                stored_summary, stored_error)) {
+            outcome.ok = true;
+            outcome.event = "flydelta.promotion_summary.loaded";
+            outcome.payload_json = json{
+                {"operation", request.operation},
+                {"summary", json::parse(
+                    common_flydelta_promotion_summary_to_json(stored_summary))},
+            }.dump();
+            return true;
+        }
+        if (!stored_error.empty() && stored_error !=
+                "FlyDelta promotion summary was not found") return fail(stored_error);
+        std::vector<common_flydelta_counterfactual_report> reports;
+        if (!common_flydelta_load_counterfactual_reports(
+                *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                reports, error) || reports.empty()) return fail(
+                    error.empty() ? "FlyDelta candidate has no counterfactual reports" : error);
+        common_flydelta_promotion_policy policy;
+        common_flydelta_promotion_summary summary;
+        if (!common_flydelta_promotion_summary_from_reports(
+                "flydelta://promotion/" + request.candidate_id,
+                reports, policy, summary, error)) return fail(error);
+        common_flydelta_lifecycle_event_context context;
+        context.event_id = summary.id;
+        context.idempotency_key = summary.id;
+        context.source_id = request.actor_id.empty() ? "jsonl-admin" : request.actor_id;
+        context.scope.namespace_id = "default-namespace";
+        context.scope.session_id = "default-session";
+        context.content_hash = summary.candidate_id;
+        context.created_at = summary.id;
+        if (!common_flydelta_append_promotion_summary_lifecycle(
+                *runtime.flydelta_review_lifecycle_store, context, summary, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.promotion_summary.loaded";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"summary", json::parse(common_flydelta_promotion_summary_to_json(summary))},
+        }.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.review_candidate") {
+        if (request.decision != "approve_canary" && request.decision != "reject") {
+            return fail("FlyDelta review decision must be approve_canary or reject");
+        }
+        const auto * manifest = require_manifest();
+        if (!manifest) return fail("FlyDelta candidate is not registered");
+        common_flydelta_sideband_review review;
+        const std::string decision_suffix = request.evaluation_revision.empty()
+            ? hash_sha256_hex(request.reason.data(), request.reason.size()).substr(0, 16)
+            : request.evaluation_revision;
+        review.event_id = "flydelta://review/" + request.candidate_id + ":" +
+            request.decision + ":" + decision_suffix;
+        review.actor_id = request.actor_id.empty() ? "jsonl-admin" : request.actor_id;
+        review.policy_revision = "flydelta-promotion-v1";
+        review.evaluation_revision = request.evaluation_revision;
+        review.reason = request.reason;
+        review.source = common_flydelta_review_source::operator_action;
+        review.action = request.decision == "approve_canary"
+            ? common_flydelta_review_action::approve_canary
+            : common_flydelta_review_action::reject;
+        review.manifest = *manifest;
+        if (review.action == common_flydelta_review_action::approve_canary) {
+            if (!common_flydelta_load_evaluation_report(
+                    *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                    review.evaluation, nullptr, error) ||
+                    !common_flydelta_load_promotion_summary(
+                        *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                        review.promotion_summary, error)) return fail(error);
+            review.has_promotion_evidence = true;
+            review.evaluation_revision = review.evaluation.revision_id;
+            review.promotion_policy = {};
+            review.promotion_summary_ref = review.promotion_summary.id;
+            review.evaluation_report_ref = "flydelta://evaluation/" + request.candidate_id + ":" +
+                review.evaluation.revision_id;
+        }
+        if (!runtime.flydelta_sideband_review_store->append(review, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.review.recorded";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"review", json::parse(common_flydelta_sideband_review_to_json(review))},
+        }.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.stage_canary") {
+        if (!request.explicit_host_approval) return fail(
+            "FlyDelta canary staging requires explicit host approval");
+        const auto * manifest = require_manifest();
+        if (!manifest) return fail("FlyDelta candidate is not registered");
+        common_flydelta_evaluation_report evaluation;
+        common_flydelta_promotion_summary summary;
+        if (!common_flydelta_load_evaluation_report(
+                *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                evaluation, nullptr, error) ||
+                !common_flydelta_load_promotion_summary(
+                    *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                    summary, error)) return fail(error);
+        std::string review_error;
+        bool approved = false;
+        const std::string evaluation_report_ref = "flydelta://evaluation/" +
+            request.candidate_id + ":" + evaluation.revision_id;
+        for (const auto & item : runtime.flydelta_sideband_review_store->list(review_error)) {
+            if (item.action == common_flydelta_review_action::approve_canary &&
+                    item.manifest.id == request.candidate_id &&
+                    item.evaluation_revision == evaluation.revision_id &&
+                    item.promotion_summary_ref == summary.id &&
+                    item.evaluation_report_ref == evaluation_report_ref) {
+                approved = true;
+                break;
+            }
+        }
+        if (!review_error.empty() || !approved) return fail(
+            review_error.empty() ? "FlyDelta canary requires a durable approve_canary review" : review_error);
+        bool already_canary = manifest->status == common_flydelta_sideband_status::canary;
+        if (!already_canary && manifest->status != common_flydelta_sideband_status::candidate) {
+            return fail("FlyDelta candidate is not stageable");
+        }
+        common_flydelta_promotion_policy policy;
+        if (!already_canary) {
+            common_flydelta_sideband_controller controller(*runtime.flydelta_sideband_registry);
+            if (!controller.promote_to_canary(
+                    *manifest, summary, evaluation, policy, true, error)) return fail(error);
+        }
+        common_flydelta_sideband_review review;
+        review.event_id = "flydelta://review/" + request.candidate_id + ":stage_canary:" +
+            evaluation.revision_id;
+        review.actor_id = request.actor_id.empty() ? "jsonl-admin" : request.actor_id;
+        review.policy_revision = "flydelta-promotion-v1";
+        review.evaluation_revision = evaluation.revision_id;
+        review.reason = request.reason.empty() ? "pre-canary evaluation passed" : request.reason;
+        review.source = common_flydelta_review_source::operator_action;
+        review.action = common_flydelta_review_action::stage_canary;
+        review.manifest = *manifest;
+        review.has_promotion_evidence = true;
+        review.promotion_policy = policy;
+        review.promotion_summary = summary;
+        review.evaluation = evaluation;
+        review.promotion_summary_ref = summary.id;
+        review.evaluation_report_ref = evaluation_report_ref;
+        if (!runtime.flydelta_sideband_review_store->append(review, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.canary.staged";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"candidate_id", request.candidate_id},
+            {"evaluation_revision", evaluation.revision_id},
+            {"status", "canary"},
+        }.dump();
+        return true;
+    }
+    return fail("unsupported FlyDelta admin operation");
+}
+
 bool common_agent_daemon_service::execute_outcome(
         const common_agent_daemon_command & command,
         common_agent_daemon_command_outcome & outcome,
@@ -740,6 +1010,8 @@ bool common_agent_daemon_service::execute_outcome(
         command_context);
 
     switch (command.type) {
+        case common_agent_daemon_command_type::flydelta_admin:
+            return execute_flydelta_admin(command, outcome, events, error);
         case common_agent_daemon_command_type::get_status:
             return populate_status_outcome(outcome, events, error);
 

@@ -337,3 +337,112 @@ bool common_flydelta_evaluation_report_from_json(
     }
     return common_flydelta_evaluation_report_validate(report, error);
 }
+
+const char * common_flydelta_evaluation_suite_kind_name(
+        common_flydelta_evaluation_suite_kind kind) {
+    switch (kind) {
+        case common_flydelta_evaluation_suite_kind::intended: return "intended";
+        case common_flydelta_evaluation_suite_kind::holdout: return "holdout";
+        case common_flydelta_evaluation_suite_kind::retention: return "retention";
+        case common_flydelta_evaluation_suite_kind::agent_regression: return "agent_regression";
+    }
+    return "intended";
+}
+
+bool common_flydelta_evaluation_suite_kind_from_name(
+        const std::string & value,
+        common_flydelta_evaluation_suite_kind & kind) {
+    if (value == "intended") kind = common_flydelta_evaluation_suite_kind::intended;
+    else if (value == "holdout") kind = common_flydelta_evaluation_suite_kind::holdout;
+    else if (value == "retention") kind = common_flydelta_evaluation_suite_kind::retention;
+    else if (value == "agent_regression") {
+        kind = common_flydelta_evaluation_suite_kind::agent_regression;
+    } else return false;
+    return true;
+}
+
+bool common_flydelta_evaluation_limits_validate(
+        const common_flydelta_evaluation_limits & limits,
+        std::string & error) {
+    error.clear();
+    if (limits.max_fixtures == 0 || limits.max_fixtures > 4096 ||
+            limits.max_model_calls == 0 || limits.max_model_calls > 16384 ||
+            limits.max_retries > 8 || limits.max_generated_tokens == 0 ||
+            limits.max_generated_tokens > 1U * 1024U * 1024U) {
+        error = "FlyDelta evaluation limits are invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_evaluation_fixture_result_validate(
+        const common_flydelta_evaluation_fixture_result & result,
+        std::string & error) {
+    error.clear();
+    if (result.schema_version != 1 || !nonempty_bounded(result.candidate_id) ||
+            !nonempty_bounded(result.fixture_ref) ||
+            !nonempty_bounded(result.verifier_revision) ||
+            result.report_ref.size() > 512 ||
+            !common_flydelta_counterfactual_report_validate(result.counterfactual, error) ||
+            result.counterfactual.candidate_id != result.candidate_id ||
+            result.counterfactual.fixture_id != result.fixture_ref ||
+            result.baseline_known != result.counterfactual.baseline.verifier_known ||
+            result.baseline_passed != result.counterfactual.baseline.passed ||
+            result.candidate_known != result.counterfactual.candidate.verifier_known ||
+            result.candidate_passed != result.counterfactual.candidate.passed ||
+            result.passed != (result.baseline_known && result.candidate_known &&
+                result.candidate_passed)) {
+        if (error.empty()) error = "FlyDelta evaluation fixture result is invalid";
+        return false;
+    }
+    return true;
+}
+
+std::string common_flydelta_evaluation_fixture_result_to_json(
+        const common_flydelta_evaluation_fixture_result & result) {
+    return json{
+        {"schema_version", result.schema_version},
+        {"candidate_id", result.candidate_id},
+        {"suite_kind", common_flydelta_evaluation_suite_kind_name(result.suite_kind)},
+        {"fixture_ref", result.fixture_ref},
+        {"verifier_revision", result.verifier_revision},
+        {"baseline_known", result.baseline_known},
+        {"baseline_passed", result.baseline_passed},
+        {"candidate_known", result.candidate_known},
+        {"candidate_passed", result.candidate_passed},
+        {"passed", result.passed},
+        {"report_ref", result.report_ref},
+        {"counterfactual", json::parse(
+            common_flydelta_counterfactual_report_to_json(result.counterfactual))},
+    }.dump();
+}
+
+bool common_flydelta_evaluation_fixture_result_from_json(
+        const std::string & text,
+        common_flydelta_evaluation_fixture_result & result,
+        std::string & error) {
+    error.clear();
+    try {
+        const auto value = json::parse(text);
+        result = {};
+        result.schema_version = value.value("schema_version", 0);
+        result.candidate_id = value.value("candidate_id", "");
+        if (!common_flydelta_evaluation_suite_kind_from_name(
+                value.value("suite_kind", ""), result.suite_kind) ||
+                !common_flydelta_counterfactual_report_from_json(
+                    value.value("counterfactual", json::object()).dump(),
+                    result.counterfactual, error)) return false;
+        result.fixture_ref = value.value("fixture_ref", "");
+        result.verifier_revision = value.value("verifier_revision", "");
+        result.baseline_known = value.value("baseline_known", false);
+        result.baseline_passed = value.value("baseline_passed", false);
+        result.candidate_known = value.value("candidate_known", false);
+        result.candidate_passed = value.value("candidate_passed", false);
+        result.passed = value.value("passed", false);
+        result.report_ref = value.value("report_ref", "");
+    } catch (const std::exception & exception) {
+        error = std::string("invalid FlyDelta evaluation fixture JSON: ") + exception.what();
+        return false;
+    }
+    return common_flydelta_evaluation_fixture_result_validate(result, error);
+}

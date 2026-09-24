@@ -55,6 +55,14 @@ struct common_flydelta_evaluator_callbacks {
             std::vector<common_flydelta_counterfactual_report> & reports,
             std::string & error)> run_counterfactual;
 
+    // Host-owned pre-canary evaluation. All prompt/context/artifact
+    // resolution remains behind this callback; the queue carries references.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            common_flydelta_evaluation_report & report,
+            std::vector<common_flydelta_evaluation_fixture_result> & fixtures,
+            std::string & error)> run_evaluation;
+
     // Host-owned donor capture for reference-only candidate IDs. The host
     // resolves evidence and runs fresh inference; only redacted manifests
     // cross back into the common evaluator.
@@ -174,6 +182,9 @@ struct common_flydelta_evaluator_callbacks {
 struct common_flydelta_evaluator_result {
     std::vector<common_flydelta_capture_manifest> capture_manifests;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
+    bool has_evaluation_report = false;
+    common_flydelta_evaluation_report evaluation_report;
+    std::vector<common_flydelta_evaluation_fixture_result> evaluation_fixture_results;
     std::vector<common_flydelta_basis_direction> basis_directions;
     std::vector<common_flydelta_direction_candidate> direction_candidates;
     std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;

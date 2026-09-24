@@ -25,6 +25,7 @@ const char * common_flydelta_experiment_job_kind_name(
         case common_flydelta_experiment_job_kind::donor_capture: return "donor_capture";
         case common_flydelta_experiment_job_kind::concept_capture: return "concept_capture";
         case common_flydelta_experiment_job_kind::concept_synthesis: return "concept_synthesis";
+        case common_flydelta_experiment_job_kind::evaluation: return "evaluation";
     }
     return "basis";
 }
@@ -40,6 +41,7 @@ bool common_flydelta_experiment_job_kind_from_name(
     else if (value == "donor_capture") kind = common_flydelta_experiment_job_kind::donor_capture;
     else if (value == "concept_capture") kind = common_flydelta_experiment_job_kind::concept_capture;
     else if (value == "concept_synthesis") kind = common_flydelta_experiment_job_kind::concept_synthesis;
+    else if (value == "evaluation") kind = common_flydelta_experiment_job_kind::evaluation;
     else return false;
     return true;
 }
@@ -56,6 +58,9 @@ bool common_flydelta_experiment_job_validate(
                 !bounded(job.representation_augmentation_state_ref)) ||
             (!job.teaching_material_group_ref.empty() &&
                 !bounded(job.teaching_material_group_ref)) ||
+            (!job.evaluation_candidate_id.empty() && !bounded(job.evaluation_candidate_id)) ||
+            (!job.evaluation_suite_ref.empty() && !bounded(job.evaluation_suite_ref)) ||
+            (!job.evaluation_revision.empty() && !bounded(job.evaluation_revision)) ||
             max_references == 0 || !common_flydelta_experiment_seed_validate(job.seed, error) ||
             !std::isfinite(job.learning_rate) || job.learning_rate <= 0.0f ||
             !std::isfinite(job.decay) || job.decay < 0.0f || job.decay > 1.0f) {
@@ -117,6 +122,15 @@ bool common_flydelta_experiment_job_validate(
         error = "FlyDelta concept material job requires teaching material";
         return false;
     }
+    if (job.kind == common_flydelta_experiment_job_kind::evaluation) {
+        if (!bounded(job.evaluation_candidate_id) || !bounded(job.evaluation_suite_ref) ||
+                !bounded(job.evaluation_revision) || !common_flydelta_evaluation_limits_validate(
+                    job.evaluation_limits, error) || job.seed.candidate_ref.empty() ||
+                job.seed.verifier_ref.empty()) {
+            if (error.empty()) error = "FlyDelta evaluation job requires candidate, suite and bounds";
+            return false;
+        }
+    }
     return true;
 }
 
@@ -156,6 +170,15 @@ std::string common_flydelta_experiment_job_to_json(
         {"search_state_ref", job.search_state_ref},
         {"representation_augmentation_state_ref", job.representation_augmentation_state_ref},
         {"teaching_material_group_ref", job.teaching_material_group_ref},
+        {"evaluation_candidate_id", job.evaluation_candidate_id},
+        {"evaluation_suite_ref", job.evaluation_suite_ref},
+        {"evaluation_revision", job.evaluation_revision},
+        {"evaluation_limits", {
+            {"max_fixtures", job.evaluation_limits.max_fixtures},
+            {"max_model_calls", job.evaluation_limits.max_model_calls},
+            {"max_retries", job.evaluation_limits.max_retries},
+            {"max_generated_tokens", job.evaluation_limits.max_generated_tokens},
+        }},
         {"alpha_search", {
             {"candidates", job.alpha_search.candidates},
             {"magnitude_penalty", job.alpha_search.magnitude_penalty},
@@ -216,6 +239,14 @@ bool common_flydelta_experiment_job_from_json(
         job.representation_augmentation_state_ref = value.value(
             "representation_augmentation_state_ref", "");
         job.teaching_material_group_ref = value.value("teaching_material_group_ref", "");
+        job.evaluation_candidate_id = value.value("evaluation_candidate_id", "");
+        job.evaluation_suite_ref = value.value("evaluation_suite_ref", "");
+        job.evaluation_revision = value.value("evaluation_revision", "");
+        const auto limits = value.value("evaluation_limits", json::object());
+        job.evaluation_limits.max_fixtures = limits.value("max_fixtures", 0U);
+        job.evaluation_limits.max_model_calls = limits.value("max_model_calls", 0U);
+        job.evaluation_limits.max_retries = limits.value("max_retries", 0U);
+        job.evaluation_limits.max_generated_tokens = limits.value("max_generated_tokens", 0U);
         const auto alpha = value.value("alpha_search", json::object());
         job.alpha_search.candidates = alpha.value("candidates", std::vector<float>{});
         job.alpha_search.magnitude_penalty = alpha.value("magnitude_penalty", 0.0f);

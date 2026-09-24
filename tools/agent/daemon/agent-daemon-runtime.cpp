@@ -19,6 +19,7 @@
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation-state-store.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
+#include "agent/adaptation/flydelta/flydelta-semantic-decision.h"
 #include "agent/adaptation/flydelta/flydelta-sideband-review-store.h"
 #include "hash/hash.h"
 #include "tools/server/server-context.h"
@@ -104,6 +105,12 @@ struct daemon_flydelta_resource_provider {
 bool daemon_flydelta_read_json(
         const daemon_flydelta_resource_provider & provider,
         const std::string & reference,
+        json & parsed,
+        std::string & error);
+bool daemon_flydelta_read_json_bounded(
+        const daemon_flydelta_resource_provider & provider,
+        const std::string & reference,
+        size_t max_bytes,
         json & parsed,
         std::string & error);
 
@@ -213,7 +220,8 @@ bool daemon_flydelta_parse_teaching_relation(
         daemon_flydelta_concept_relation_material & material,
         std::string & error) {
     json parsed;
-    if (!daemon_flydelta_read_json(provider, reference, parsed, error)) return false;
+    if (!daemon_flydelta_read_json_bounded(
+            provider, reference, 4U * 1024U * 1024U, parsed, error)) return false;
     const json value = parsed.contains("relation") && parsed["relation"].is_object()
         ? parsed["relation"] : parsed;
     try {
@@ -277,13 +285,23 @@ bool daemon_flydelta_read_json(
         const std::string & reference,
         json & parsed,
         std::string & error) {
+    return daemon_flydelta_read_json_bounded(
+        provider, reference, 1024U * 1024U, parsed, error);
+}
+
+bool daemon_flydelta_read_json_bounded(
+        const daemon_flydelta_resource_provider & provider,
+        const std::string & reference,
+        size_t max_bytes,
+        json & parsed,
+        std::string & error) {
     error.clear();
     if (provider.resources == nullptr || reference.empty() || reference.size() > 512) {
         error = "FlyDelta resource provider received an invalid reference";
         return false;
     }
     std::string text;
-    if (!provider.resources->read_text(reference, provider.authority, 1024U * 1024U, text, error)) {
+    if (!provider.resources->read_text(reference, provider.authority, max_bytes, text, error)) {
         return false;
     }
     try {
@@ -357,6 +375,51 @@ bool daemon_flydelta_parse_directions(
     }
     json parsed;
     if (!daemon_flydelta_read_json(provider, reference, parsed, error)) return false;
+    if (parsed.value("kind", "") == "flydelta") {
+        common_flydelta_artifact artifact;
+        if (!common_flydelta_artifact_from_json(
+                parsed.dump(), 1U << 20, 4U * 1024U * 1024U, artifact, error) ||
+                artifact.model_n_embd != provider.model_n_embd ||
+                artifact.model_n_layers != provider.model_n_layers) {
+            if (error.empty()) error = "FlyDelta artifact is incompatible with the resident model";
+            return false;
+        }
+        directions.clear();
+        directions.reserve(artifact.steering_basis.size());
+        std::set<uint32_t> layers;
+        for (const auto & source : artifact.steering_basis) {
+            common_flydelta_basis_direction direction;
+            direction.layer_index = source.layer_index;
+            direction.values = source.values;
+            if (direction.layer_index < 1 ||
+                    static_cast<size_t>(direction.layer_index) >= provider.model_n_layers ||
+                    direction.values.size() != provider.model_n_embd ||
+                    !layers.insert(static_cast<uint32_t>(direction.layer_index)).second) {
+                error = "FlyDelta artifact direction is incompatible with the resident model";
+                return false;
+            }
+            double squared = 0.0;
+            for (const float value : direction.values) {
+                if (!std::isfinite(value)) {
+                    error = "FlyDelta artifact direction contains a non-finite value";
+                    return false;
+                }
+                squared += static_cast<double>(value) * value;
+            }
+            if (!std::isfinite(squared) || squared <= 0.0) {
+                error = "FlyDelta artifact direction has zero norm";
+                return false;
+            }
+            const float inverse_norm = static_cast<float>(1.0 / std::sqrt(squared));
+            for (float & value : direction.values) value *= inverse_norm;
+            directions.push_back(std::move(direction));
+        }
+        if (directions.empty() || directions.size() > 64) {
+            error = "FlyDelta artifact has no bounded steering basis";
+            return false;
+        }
+        return true;
+    }
     if (!parsed.contains("directions") || !parsed["directions"].is_array() ||
             parsed["directions"].empty() || parsed["directions"].size() > 64) {
         error = "FlyDelta intervention requires a bounded directions array";
@@ -967,6 +1030,98 @@ bool daemon_flydelta_persist_concept_trajectory(
         error);
 }
 
+bool daemon_flydelta_verify_generation(
+        const json & fixture,
+        const std::string & generated,
+        bool & verifier_known,
+        bool & passed,
+        std::string & error) {
+    error.clear();
+    verifier_known = false;
+    passed = false;
+
+    const std::string mode = fixture.value("verification_mode", "");
+    if (mode == "normalized_call") {
+        if (!fixture.contains("expected_decision")) {
+            error = "FlyDelta normalized_call fixture requires expected_decision";
+            return false;
+        }
+        common_flydelta_semantic_decision expected;
+        common_flydelta_semantic_decision actual;
+        common_flydelta_semantic_decision_status expected_status;
+        common_flydelta_semantic_decision_status actual_status;
+        std::string decision_error;
+        const std::string expected_text = fixture.at("expected_decision").is_string()
+            ? fixture.at("expected_decision").get<std::string>()
+            : fixture.at("expected_decision").dump();
+        const bool expected_valid = common_flydelta_parse_semantic_decision(
+            expected_text, expected, expected_status, decision_error);
+        if (!expected_valid) {
+            error = "FlyDelta normalized_call fixture expected_decision is invalid: " +
+                decision_error;
+            return false;
+        }
+        decision_error.clear();
+        const bool actual_valid = common_flydelta_parse_semantic_decision(
+            generated, actual, actual_status, decision_error);
+        verifier_known = true;
+        passed = actual_valid && common_flydelta_semantic_decision_equal(expected, actual);
+        return true;
+    }
+
+    if (mode == "tool_only" && fixture.contains("expected_tool")) {
+        if (!fixture.at("expected_tool").is_string()) {
+            error = "FlyDelta tool_only fixture expected_tool must be a string";
+            return false;
+        }
+        const std::string expected_tool = fixture.at("expected_tool").get<std::string>();
+        common_flydelta_semantic_decision actual;
+        common_flydelta_semantic_decision_status status;
+        std::string decision_error;
+        const bool parsed = common_flydelta_parse_semantic_decision(
+            generated, actual, status, decision_error);
+        verifier_known = true;
+        if (parsed) {
+            const std::string expected_operation = expected_tool.rfind("data.", 0) == 0
+                ? expected_tool.substr(5) : expected_tool;
+            passed = actual.operation == expected_operation;
+        } else {
+            // Keep the existing tool-only fixture behavior for operations
+            // that are intentionally outside the semantic-decision IR.
+            passed = generated.find(expected_tool) != std::string::npos;
+        }
+        return true;
+    }
+
+    if (fixture.contains("expected_contains") || fixture.contains("expected_tool")) {
+        std::string expected;
+        if (fixture.contains("expected_tool")) {
+            if (!fixture.at("expected_tool").is_string()) {
+                error = "FlyDelta fixture expected_tool must be a string";
+                return false;
+            }
+            expected = fixture.at("expected_tool").get<std::string>();
+        } else if (!fixture.at("expected_contains").is_string()) {
+            error = "FlyDelta fixture expected_contains must be a string";
+            return false;
+        } else {
+            expected = fixture.at("expected_contains").get<std::string>();
+        }
+        verifier_known = true;
+        passed = !expected.empty() && generated.find(expected) != std::string::npos;
+    }
+    return true;
+}
+
+// A single arm has no baseline/candidate relation, so a semantic verifier
+// pass is represented as NEUTRAL in host_outcome. Search runners still need
+// the individual predicate for the existing counterfactual classifiers; keep
+// that translation local to the daemon instead of changing outcome semantics.
+bool daemon_flydelta_arm_semantic_passed(const common_flydelta_arm_result & result) {
+    return result.executed && result.host_evaluated && result.verifier_known &&
+        result.host_outcome == common_flydelta_counterfactual_outcome::neutral;
+}
+
 bool daemon_flydelta_finalize_arm(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const common_flydelta_arm_request & arm,
@@ -1003,29 +1158,26 @@ bool daemon_flydelta_finalize_arm(
     }
     json fixture;
     if (!daemon_flydelta_read_json(*provider, arm.fixture_ref, fixture, error)) return false;
-    if (arm.request_host_verification &&
-            (fixture.contains("expected_contains") || fixture.contains("expected_tool"))) {
-        std::string expected;
-        if (fixture.contains("expected_tool")) {
-            if (!fixture["expected_tool"].is_string()) {
-                error = "FlyDelta fixture expected_tool must be a string";
-                return false;
-            }
-            expected = fixture["expected_tool"].get<std::string>();
-        } else if (!fixture["expected_contains"].is_string()) {
-            error = "FlyDelta fixture expected_contains must be a string";
-            return false;
-        }
+    if (arm.request_host_verification) {
+        // The host attempted verification even when the fixture has no
+        // applicable verifier. Preserve that distinction so UNKNOWN is not
+        // mistaken for an unevaluated arm.
         result.host_evaluated = true;
-        result.verifier_known = true;
-        if (expected.empty()) expected = fixture["expected_contains"].get<std::string>();
-        // An individual arm has no paired baseline in this callback. A match
-        // is therefore retained as NEUTRAL experimental truth, never HELPED.
-        result.host_outcome = generation.content.find(expected) != std::string::npos
-            ? common_flydelta_counterfactual_outcome::neutral
-            : common_flydelta_counterfactual_outcome::harmed;
-        result.quality = result.host_outcome == common_flydelta_counterfactual_outcome::neutral
-            ? 1.0f : 0.0f;
+        bool verifier_known = false;
+        bool passed = false;
+        if (!daemon_flydelta_verify_generation(
+                fixture, generation.content, verifier_known, passed, error)) return false;
+        if (verifier_known) {
+            result.verifier_known = true;
+            // An individual arm has no paired baseline in this callback. A
+            // semantic pass is therefore NEUTRAL experimental truth here;
+            // common_flydelta_run_counterfactual() derives HELPED only from
+            // the baseline/candidate pair below.
+            result.host_outcome = passed
+                ? common_flydelta_counterfactual_outcome::neutral
+                : common_flydelta_counterfactual_outcome::harmed;
+            result.quality = passed ? 1.0f : 0.0f;
+        }
     }
     result.generation_ref = "flydelta://runtime/generation/" + arm.arm_id;
     return common_flydelta_arm_result_validate(result, error);
@@ -1821,7 +1973,7 @@ bool daemon_flydelta_run_search_pipeline(
         if (!apply_overlay) baseline_capture_arm_id = arm.arm_id;
         trial.executed = arm_result.executed;
         trial.verifier_known = arm_result.verifier_known;
-        trial.passed = arm_result.host_outcome == common_flydelta_counterfactual_outcome::helped;
+        trial.passed = daemon_flydelta_arm_semantic_passed(arm_result);
         trial.quality = arm_result.quality;
         trial.overlay_applied = apply_overlay;
         trial.intervention_count = arm.layer_indices.size();
@@ -1918,7 +2070,7 @@ bool daemon_flydelta_run_search_pipeline(
             common_flydelta_counterfactual_trial trial;
             trial.executed = arm.executed;
             trial.verifier_known = arm.verifier_known;
-            trial.passed = arm.host_outcome == common_flydelta_counterfactual_outcome::helped;
+            trial.passed = daemon_flydelta_arm_semantic_passed(arm);
             trial.quality = arm.quality;
             trial.overlay_applied = true;
             trial.intervention_count = batch.arms[index].layer_indices.size();
@@ -2172,7 +2324,7 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         common_flydelta_counterfactual_trial trial;
         trial.executed = arm.executed;
         trial.verifier_known = arm.verifier_known;
-        trial.passed = arm.host_outcome == common_flydelta_counterfactual_outcome::helped;
+        trial.passed = daemon_flydelta_arm_semantic_passed(arm);
         trial.quality = arm.quality;
         trial.overlay_applied = apply_overlay;
         trial.intervention_count = request.arms[index].layer_indices.size();
@@ -2301,7 +2453,7 @@ bool daemon_flydelta_run_rank1_alpha_arm(
     const auto & result = results.arms.front();
     trial.executed = result.executed;
     trial.verifier_known = result.verifier_known;
-    trial.passed = result.host_outcome == common_flydelta_counterfactual_outcome::helped;
+    trial.passed = daemon_flydelta_arm_semantic_passed(result);
     trial.quality = result.quality;
     trial.overlay_applied = apply_overlay;
     trial.intervention_count = apply_overlay ? 1 : 0;
@@ -3656,6 +3808,239 @@ bool daemon_flydelta_run_representation_augmentation(
     return false;
 }
 
+bool daemon_flydelta_run_counterfactual(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        std::vector<common_flydelta_counterfactual_report> & reports,
+        std::string & error) {
+    error.clear();
+    reports.clear();
+    common_flydelta_experiment_fixture fixture;
+    if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
+    if (job.seed.baseline_ref.empty() || job.seed.candidate_ref.empty() ||
+            job.alpha_search.candidates.empty()) {
+        error = "FlyDelta counterfactual requires baseline, candidate and alpha references";
+        return false;
+    }
+
+    std::vector<common_flydelta_basis_direction> directions;
+    if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref,
+            directions, error) || directions.empty()) return false;
+    // Counterfactual jobs are the existing rank-one refinement contract. A
+    // multi-direction candidate must go through its existing search phase;
+    // silently selecting one direction here would change experiment meaning.
+    if (directions.size() != 1) {
+        error = "FlyDelta counterfactual requires one direction; use search_pipeline for a basis";
+        return false;
+    }
+    const uint32_t layer = static_cast<uint32_t>(directions.front().layer_index);
+
+    for (const float alpha : job.alpha_search.candidates) {
+        const std::string alpha_id = job.seed.candidate_ref + ":alpha:" +
+            std::to_string(alpha);
+        const common_flydelta_counterfactual_runner runner =
+            [provider, &job, layer, alpha](
+                    const common_flydelta_experiment_fixture &,
+                    bool apply_overlay,
+                    common_flydelta_counterfactual_trial & trial,
+                    std::string & runner_error) {
+                common_flydelta_arm_batch_request batch;
+                batch.batch_id = job.id + ":counterfactual:" + std::to_string(alpha);
+                batch.wave_id = "counterfactual";
+                common_flydelta_arm_request arm;
+                arm.job_id = job.id;
+                arm.wave_id = batch.wave_id;
+                arm.proposal_index = apply_overlay ? 1 : 0;
+                arm.arm_id = batch.batch_id + (apply_overlay ? ":candidate" : ":baseline");
+                arm.context_ref = job.seed.baseline_ref;
+                arm.fixture_ref = job.seed.verifier_ref;
+                arm.intervention_ref = job.seed.candidate_ref;
+                arm.batch_compatibility_key = arm.context_ref + "\n" + arm.fixture_ref;
+                arm.layer_indices = {layer};
+                arm.coefficients = {1.0f};
+                arm.alpha = apply_overlay ? alpha : 0.0f;
+                arm.apply_overlay = apply_overlay;
+                arm.fresh_context = true;
+                arm.request_generation = true;
+                arm.request_host_verification = true;
+                arm.max_capture_bytes = 4U * 1024U * 1024U;
+                const size_t runtime_token_limit = provider->n_predict > 0
+                    ? static_cast<size_t>(provider->n_predict) : 256U;
+                arm.max_generated_tokens = job.kind ==
+                        common_flydelta_experiment_job_kind::evaluation
+                    ? std::min(runtime_token_limit, job.evaluation_limits.max_generated_tokens)
+                    : runtime_token_limit;
+                if (!common_flydelta_arm_request_validate(arm, runner_error)) return false;
+                batch.arms.push_back(std::move(arm));
+                common_flydelta_arm_batch_result executed;
+                if (!daemon_flydelta_execute_batch(provider, batch, executed, runner_error) ||
+                        executed.arms.size() != 1) return false;
+                const auto & arm_result = executed.arms.front();
+                trial = {};
+                trial.executed = arm_result.executed;
+                trial.verifier_known = arm_result.verifier_known;
+                // finalize_arm deliberately reports a single semantic pass as
+                // NEUTRAL. At this layer that pass is the trial predicate;
+                // common_flydelta_classify_counterfactual() then derives the
+                // relational HELPED outcome from baseline versus candidate.
+                trial.passed = daemon_flydelta_arm_semantic_passed(arm_result);
+                trial.quality = trial.passed ? 1.0f : 0.0f;
+                trial.overlay_applied = apply_overlay;
+                trial.intervention_count = apply_overlay ? 1 : 0;
+                trial.evidence_ref = arm_result.generation_ref;
+                return common_flydelta_counterfactual_trial_validate(trial, runner_error);
+            };
+        common_flydelta_counterfactual_report report;
+        const std::string report_candidate_id = job.evaluation_candidate_id.empty()
+            ? alpha_id : job.evaluation_candidate_id;
+        if (!common_flydelta_run_counterfactual(
+                job.id, report_candidate_id, job.seed.baseline_ref,
+                report_candidate_id, fixture, runner, report, error)) return false;
+        reports.push_back(std::move(report));
+    }
+    return !reports.empty();
+}
+
+bool daemon_flydelta_run_evaluation(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        common_flydelta_evaluation_report & report,
+        std::vector<common_flydelta_evaluation_fixture_result> & fixture_results,
+        std::string & error) {
+    error.clear();
+    report = {};
+    fixture_results.clear();
+    if (!common_flydelta_evaluation_limits_validate(job.evaluation_limits, error)) return false;
+    json candidate_artifact;
+    if (!daemon_flydelta_read_json_bounded(
+            *provider, job.seed.candidate_ref, 4U * 1024U * 1024U,
+            candidate_artifact, error) || candidate_artifact.value("kind", "") != "flydelta") {
+        error = "FlyDelta evaluation candidate reference must resolve to a flydelta artifact";
+        return false;
+    }
+    common_flydelta_artifact artifact;
+    if (!common_flydelta_artifact_from_json(
+            candidate_artifact.dump(), 1U << 20, 4U * 1024U * 1024U,
+            artifact, error) || artifact.id != job.evaluation_candidate_id ||
+            (!job.seed.evidence_ref.empty() && artifact.content_hash != job.seed.evidence_ref)) {
+        if (error.empty()) error = "FlyDelta evaluation candidate artifact identity is incompatible";
+        return false;
+    }
+    json suite;
+    if (!daemon_flydelta_read_json(*provider, job.evaluation_suite_ref, suite, error)) return false;
+    if (suite.value("kind", "") != "flydelta_evaluation_suite" ||
+            suite.value("revision", "") != job.evaluation_revision ||
+            !suite.contains("fixtures") || !suite["fixtures"].is_array() ||
+            suite["fixtures"].empty() ||
+            suite["fixtures"].size() > job.evaluation_limits.max_fixtures) {
+        error = "FlyDelta evaluation suite is missing a matching revision or bounded fixtures";
+        return false;
+    }
+    report.schema_version = 1;
+    report.revision_id = job.evaluation_revision;
+    report.candidate_id = job.evaluation_candidate_id;
+    report.baseline_profile_id = job.seed.model_profile_fingerprint + ":baseline";
+    report.candidate_profile_id = job.evaluation_candidate_id;
+    report.test_suite_revision = job.evaluation_revision;
+    report.intended_behavior_passed = true;
+    report.retention_passed = true;
+    report.agent_regression_passed = true;
+    std::set<common_flydelta_evaluation_suite_kind> seen_kinds;
+    size_t model_calls = 0;
+    std::set<std::string> seen_fixture_refs;
+    for (const auto & item : suite["fixtures"]) {
+        if (!item.is_object()) {
+            error = "FlyDelta evaluation suite contains a malformed fixture entry";
+            return false;
+        }
+        common_flydelta_evaluation_suite_kind suite_kind;
+        if (!common_flydelta_evaluation_suite_kind_from_name(
+                item.value("suite_kind", ""), suite_kind)) {
+            error = "FlyDelta evaluation fixture has an unknown suite kind";
+            return false;
+        }
+        const std::string fixture_ref = item.value("fixture_ref", "");
+        const std::string context_ref = item.value("context_ref", "");
+        if (fixture_ref.empty() || context_ref.empty()) {
+            error = "FlyDelta evaluation fixture requires fixture_ref and context_ref";
+            return false;
+        }
+        if (!seen_fixture_refs.insert(fixture_ref).second) {
+            error = "FlyDelta evaluation suite contains a duplicate fixture reference";
+            return false;
+        }
+        auto fixture_job = job;
+        fixture_job.id = job.id + ":fixture:" + std::to_string(fixture_results.size());
+        fixture_job.seed.id = fixture_job.id;
+        fixture_job.seed.baseline_ref = context_ref;
+        fixture_job.seed.verifier_ref = fixture_ref;
+        fixture_job.alpha_search.candidates = {1.0f};
+        fixture_job.alpha_search.max_candidates = 1;
+        std::vector<common_flydelta_counterfactual_report> reports;
+        bool completed = false;
+        std::string last_error;
+        for (size_t attempt = 0; attempt <= job.evaluation_limits.max_retries; ++attempt) {
+            if (model_calls + 2 > job.evaluation_limits.max_model_calls) {
+                error = "FlyDelta evaluation model-call limit exhausted";
+                return false;
+            }
+            reports.clear();
+            std::string attempt_error;
+            if (daemon_flydelta_run_counterfactual(
+                    provider, fixture_job, reports, attempt_error) &&
+                    reports.size() == 1) {
+                completed = true;
+                model_calls += 2;
+                break;
+            }
+            model_calls += 2;
+            last_error = attempt_error;
+        }
+        if (!completed) {
+            error = last_error.empty()
+                ? "FlyDelta evaluation fixture returned no report" : last_error;
+            return false;
+        }
+        const auto & counterfactual = reports.front();
+        common_flydelta_evaluation_fixture_result fixture_result;
+        fixture_result.candidate_id = job.evaluation_candidate_id;
+        fixture_result.suite_kind = suite_kind;
+        fixture_result.fixture_ref = fixture_ref;
+        fixture_result.verifier_revision = job.evaluation_revision;
+        fixture_result.baseline_known = counterfactual.baseline.verifier_known;
+        fixture_result.baseline_passed = counterfactual.baseline.passed;
+        fixture_result.candidate_known = counterfactual.candidate.verifier_known;
+        fixture_result.candidate_passed = counterfactual.candidate.passed;
+        fixture_result.passed = fixture_result.baseline_known &&
+            fixture_result.candidate_known && fixture_result.candidate_passed;
+        fixture_result.report_ref = job.id + ":fixture:" + std::to_string(fixture_results.size());
+        fixture_result.counterfactual = counterfactual;
+        if (!common_flydelta_evaluation_fixture_result_validate(fixture_result, error)) return false;
+        seen_kinds.insert(suite_kind);
+        ++report.evaluated_turns;
+        report.baseline_successes += fixture_result.baseline_passed ? 1 : 0;
+        report.candidate_successes += fixture_result.candidate_passed ? 1 : 0;
+        ++report.candidate_interventions;
+        if (fixture_result.baseline_passed && !fixture_result.candidate_passed) ++report.false_interventions;
+        if (suite_kind == common_flydelta_evaluation_suite_kind::intended ||
+                suite_kind == common_flydelta_evaluation_suite_kind::holdout) {
+            report.intended_behavior_passed = report.intended_behavior_passed && fixture_result.passed;
+        } else if (suite_kind == common_flydelta_evaluation_suite_kind::retention) {
+            report.retention_passed = report.retention_passed && fixture_result.passed;
+        } else {
+            report.agent_regression_passed = report.agent_regression_passed && fixture_result.passed;
+        }
+        fixture_results.push_back(std::move(fixture_result));
+    }
+    if (seen_kinds.size() != 4) {
+        error = "FlyDelta evaluation suite must contain intended, holdout, retention and agent_regression";
+        return false;
+    }
+    report.status = report.intended_behavior_passed && report.retention_passed &&
+        report.agent_regression_passed ? "passed" : "failed";
+    return common_flydelta_evaluation_report_validate(report, error);
+}
+
 std::function<bool(
         const std::shared_ptr<common_agent_server_context_host> &,
         common_agent_server_flydelta_binding &,
@@ -3721,6 +4106,17 @@ make_daemon_flydelta_resource_binding_factory(
             return daemon_flydelta_score_teacher_forced_margin_batch(
                 provider, arms, contexts, scorer, margins, callback_error);
         };
+        // Reuse the existing counterfactual contract and batch host. This is
+        // the host-owned comparison seam: individual arm finalization remains
+        // NEUTRAL/HARMED, while the paired callback derives HELPED from the
+        // baseline/candidate relation.
+        binding.run_counterfactual = [provider](
+                const common_flydelta_experiment_job & job,
+                std::vector<common_flydelta_counterfactual_report> & reports,
+                std::string & callback_error) {
+            return daemon_flydelta_run_counterfactual(
+                provider, job, reports, callback_error);
+        };
         binding.register_evaluator = [provider](common_flydelta_evaluator_config & config,
                 common_flydelta_evaluator_callbacks & callbacks, std::string & callback_error) {
             config = {};
@@ -3737,6 +4133,14 @@ make_daemon_flydelta_resource_binding_factory(
             config.direction.execution_context_fingerprint = "runtime-resource-v0";
             config.direction.capture_layout_revision = provider->capture_layout_revision;
             callbacks = {};
+            callbacks.run_evaluation = [provider](
+                    const common_flydelta_experiment_job & job,
+                    common_flydelta_evaluation_report & report,
+                    std::vector<common_flydelta_evaluation_fixture_result> & fixtures,
+                    std::string & callback_error) {
+                return daemon_flydelta_run_evaluation(
+                    provider, job, report, fixtures, callback_error);
+            };
             const auto pipeline = config.pipeline;
             callbacks.resolve_behavior_delta = [provider](const std::string & reference,
                     common_flydelta_behavior_delta & delta,

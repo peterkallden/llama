@@ -53,6 +53,13 @@ bool common_flydelta_promotion_summary_from_reports(
         common_flydelta_promotion_summary & summary,
         std::string & error);
 
+std::string common_flydelta_promotion_summary_to_json(
+        const common_flydelta_promotion_summary & summary);
+bool common_flydelta_promotion_summary_from_json(
+        const std::string & text,
+        common_flydelta_promotion_summary & summary,
+        std::string & error);
+
 // Moves a candidate through the host-owned promotion boundary. All evidence
 // and evaluation gates are checked before registry mutation. Success admits
 // the artifact and stages it as canary; activation remains a separate call.

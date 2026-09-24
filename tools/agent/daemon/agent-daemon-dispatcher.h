@@ -34,6 +34,12 @@ struct common_agent_daemon_flydelta_worker_config {
             const common_flydelta_experiment_job &,
             const common_flydelta_experiment_worker_report &,
             std::string &)> schedule_next_action;
+    // Durable host boundary for completed worker results. This records the
+    // evaluator's existing reports; it does not make promotion decisions.
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            const common_flydelta_experiment_worker_report &,
+            std::string &)> persist_completed_report;
     std::chrono::milliseconds poll_interval{250};
 };
 

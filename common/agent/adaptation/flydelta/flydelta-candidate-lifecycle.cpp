@@ -301,6 +301,216 @@ bool common_flydelta_append_search_lifecycle(
     return store.append(record, error);
 }
 
+bool common_flydelta_append_counterfactual_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_counterfactual_report & report,
+        std::string & error) {
+    error.clear();
+    if (!lifecycle_context_valid(context, error) ||
+            !common_flydelta_counterfactual_report_validate(report, error)) {
+        return false;
+    }
+
+    using json = nlohmann::ordered_json;
+    const auto report_json = json::parse(
+        common_flydelta_counterfactual_report_to_json(report));
+    const json payload = {
+        {"record_type", "counterfactual_report"},
+        {"report", report_json},
+    };
+
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = report.candidate_id;
+    record.kind = common_learning_lifecycle_kind::flydelta_result;
+    record.status = report.outcome == common_flydelta_counterfactual_outcome::harmed
+        ? common_learning_lifecycle_status::rejected
+        : common_learning_lifecycle_status::observed;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
+bool common_flydelta_load_counterfactual_reports(
+        const common_learning_lifecycle_store & store,
+        const std::string & candidate_id,
+        std::vector<common_flydelta_counterfactual_report> & reports,
+        std::string & error) {
+    error.clear();
+    reports.clear();
+    if (!nonempty_bounded(candidate_id)) {
+        error = "FlyDelta counterfactual report lookup requires a candidate id";
+        return false;
+    }
+
+    using json = nlohmann::ordered_json;
+    for (const auto & record : store.list(error)) {
+        if (!error.empty()) return false;
+        if (record.kind != common_learning_lifecycle_kind::flydelta_result) continue;
+        const auto payload = json::parse(record.payload_json, nullptr, false);
+        if (!payload.is_object() || payload.value("record_type", "") !=
+                "counterfactual_report") continue;
+        common_flydelta_counterfactual_report report;
+        const auto report_value = payload.value("report", json::object());
+        if (!common_flydelta_counterfactual_report_from_json(
+                report_value.dump(), report, error)) return false;
+        if (report.candidate_id == candidate_id) reports.push_back(std::move(report));
+    }
+    return true;
+}
+
+bool common_flydelta_append_evaluation_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_evaluation_report & report,
+        const std::vector<common_flydelta_evaluation_fixture_result> & fixtures,
+        std::string & error) {
+    using json = nlohmann::ordered_json;
+    error.clear();
+    if (!lifecycle_context_valid(context, error) ||
+            !common_flydelta_evaluation_report_validate(report, error) ||
+            fixtures.empty()) return false;
+    json payload = {
+        {"record_type", "evaluation_report"},
+        {"report", json::parse(common_flydelta_evaluation_report_to_json(report))},
+        {"fixtures", json::array()},
+    };
+    for (const auto & fixture : fixtures) {
+        if (!common_flydelta_evaluation_fixture_result_validate(fixture, error) ||
+                fixture.candidate_id != report.candidate_id) return false;
+        payload["fixtures"].push_back(json::parse(
+            common_flydelta_evaluation_fixture_result_to_json(fixture)));
+    }
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = report.candidate_id;
+    record.kind = common_learning_lifecycle_kind::flydelta_result;
+    record.status = report.status == "passed"
+        ? common_learning_lifecycle_status::eligible
+        : common_learning_lifecycle_status::failed;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
+bool common_flydelta_load_evaluation_report(
+        const common_learning_lifecycle_store & store,
+        const std::string & candidate_id,
+        common_flydelta_evaluation_report & report,
+        std::vector<common_flydelta_evaluation_fixture_result> * fixtures,
+        std::string & error) {
+    error.clear();
+    report = {};
+    if (fixtures) fixtures->clear();
+    if (!nonempty_bounded(candidate_id)) {
+        error = "FlyDelta evaluation lookup requires a candidate id";
+        return false;
+    }
+    using json = nlohmann::ordered_json;
+    for (const auto & record : store.list(error)) {
+        if (!error.empty()) return false;
+        if (record.kind != common_learning_lifecycle_kind::flydelta_result) continue;
+        const auto payload = json::parse(record.payload_json, nullptr, false);
+        if (!payload.is_object() || payload.value("record_type", "") !=
+                "evaluation_report") continue;
+        common_flydelta_evaluation_report candidate;
+        if (!common_flydelta_evaluation_report_from_json(
+                payload.value("report", json::object()).dump(), candidate, error)) return false;
+        if (candidate.candidate_id != candidate_id) continue;
+        report = std::move(candidate);
+        if (fixtures && payload.value("fixtures", json::array()).is_array()) {
+            for (const auto & item : payload["fixtures"]) {
+                common_flydelta_evaluation_fixture_result fixture;
+                if (!common_flydelta_evaluation_fixture_result_from_json(
+                        item.dump(), fixture, error)) return false;
+                fixtures->push_back(std::move(fixture));
+            }
+        }
+    }
+    if (report.candidate_id.empty()) {
+        error = "FlyDelta evaluation report was not found";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_append_promotion_summary_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_promotion_summary & summary,
+        std::string & error) {
+    using json = nlohmann::ordered_json;
+    error.clear();
+    common_flydelta_promotion_policy policy;
+    if (!lifecycle_context_valid(context, error) ||
+            !common_flydelta_promotion_summary_validate(summary, policy, error)) return false;
+    const json payload = {
+        {"record_type", "promotion_summary"},
+        {"summary", json::parse(common_flydelta_promotion_summary_to_json(summary))},
+    };
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = summary.candidate_id;
+    record.kind = common_learning_lifecycle_kind::flydelta_result;
+    record.status = summary.status == common_flydelta_candidate_status::eligible
+        ? common_learning_lifecycle_status::eligible
+        : common_learning_lifecycle_status::observed;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
+bool common_flydelta_load_promotion_summary(
+        const common_learning_lifecycle_store & store,
+        const std::string & candidate_id,
+        common_flydelta_promotion_summary & summary,
+        std::string & error) {
+    error.clear();
+    summary = {};
+    if (!nonempty_bounded(candidate_id)) {
+        error = "FlyDelta promotion summary lookup requires a candidate id";
+        return false;
+    }
+    using json = nlohmann::ordered_json;
+    for (const auto & record : store.list(error)) {
+        if (!error.empty()) return false;
+        if (record.kind != common_learning_lifecycle_kind::flydelta_result) continue;
+        const auto payload = json::parse(record.payload_json, nullptr, false);
+        if (!payload.is_object() || payload.value("record_type", "") !=
+                "promotion_summary") continue;
+        common_flydelta_promotion_summary candidate;
+        if (!common_flydelta_promotion_summary_from_json(
+                payload.value("summary", json::object()).dump(), candidate, error)) return false;
+        if (candidate.candidate_id == candidate_id) summary = std::move(candidate);
+    }
+    if (summary.candidate_id.empty()) {
+        error = "FlyDelta promotion summary was not found";
+        return false;
+    }
+    common_flydelta_promotion_policy policy;
+    if (!common_flydelta_promotion_summary_validate(summary, policy, error)) return false;
+    return true;
+}
+
 bool common_flydelta_append_capture_candidate_lifecycle(
         common_learning_lifecycle_store & store,
         const common_flydelta_lifecycle_event_context & context,

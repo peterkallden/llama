@@ -108,6 +108,9 @@ struct common_flydelta_experiment_worker_result {
     std::vector<std::string> concept_trajectory_refs;
     std::string graft_direction_ref;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
+    bool has_evaluation_report = false;
+    common_flydelta_evaluation_report evaluation_report;
+    std::vector<common_flydelta_evaluation_fixture_result> evaluation_fixture_results;
     std::vector<common_flydelta_direction_candidate> direction_candidates;
     std::vector<common_flydelta_basis_direction> basis_directions;
     std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;
@@ -152,6 +155,11 @@ struct common_flydelta_experiment_worker_report {
     std::vector<common_flydelta_capture_manifest> capture_manifests;
     std::vector<common_flydelta_concept_candidate> concept_candidates;
     std::vector<std::string> concept_trajectory_refs;
+    // Preserve the evaluator's host-owned counterfactual reports at the
+    // worker boundary. These are the durable promotion/evaluation inputs;
+    // dropping them here would leave only the derived trace and make a real
+    // HELPED result unavailable to the host lifecycle.
+    std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;
     bool has_experiment_plan = false;

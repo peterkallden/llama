@@ -14,6 +14,8 @@ enum class common_flydelta_review_source {
 enum class common_flydelta_review_action {
     admit_experimental,
     promote_to_candidate,
+    approve_canary,
+    reject,
     stage_canary,
     activate,
     retire,
@@ -27,15 +29,17 @@ bool parse_common_flydelta_review_source(
 bool parse_common_flydelta_review_action(
         const std::string & value, common_flydelta_review_action & action, std::string & error);
 
-// This is an operator/host decision envelope, not model output. The manifest
-// and evaluation are carried by value so replay does not depend on a mutable
-// in-memory registry or a live model process.
+// This is an operator/host decision envelope, not model output. The report
+// references identify the durable inputs; the embedded snapshots keep replay
+// independent of a mutable in-memory registry or a live model process.
 struct common_flydelta_sideband_review {
     int schema_version = 1;
     std::string event_id;
     std::string actor_id;
     std::string policy_revision;
     std::string evaluation_revision;
+    std::string promotion_summary_ref;
+    std::string evaluation_report_ref;
     std::string reason;
     common_flydelta_review_source source = common_flydelta_review_source::operator_action;
     common_flydelta_review_action action = common_flydelta_review_action::admit_experimental;

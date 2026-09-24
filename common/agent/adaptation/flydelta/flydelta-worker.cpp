@@ -24,6 +24,7 @@ const char * phase_name(const common_flydelta_experiment_job_kind kind) {
         case common_flydelta_experiment_job_kind::donor_capture: return "donor_capture";
         case common_flydelta_experiment_job_kind::concept_capture: return "concept_capture";
         case common_flydelta_experiment_job_kind::concept_synthesis: return "concept_synthesis";
+        case common_flydelta_experiment_job_kind::evaluation: return "evaluation";
     }
     return "unknown";
 }
@@ -268,9 +269,23 @@ bool validate_result(
     }
     for (const auto & counterfactual : result.counterfactual_reports) {
         if (!common_flydelta_counterfactual_report_validate(counterfactual, error)) return false;
-        if (counterfactual.experiment_id != claimed.job.id) {
+        const bool belongs_to_evaluation = claimed.job.kind ==
+            common_flydelta_experiment_job_kind::evaluation &&
+            counterfactual.experiment_id.rfind(claimed.job.id + ":fixture:", 0) == 0;
+        if (counterfactual.experiment_id != claimed.job.id && !belongs_to_evaluation) {
             error = "FlyDelta worker result belongs to another experiment job";
             return false;
+        }
+    }
+    if (result.has_evaluation_report) {
+        if (!common_flydelta_evaluation_report_validate(result.evaluation_report, error) ||
+                result.evaluation_report.candidate_id != claimed.job.evaluation_candidate_id) {
+            if (error.empty()) error = "FlyDelta evaluation report identity is invalid";
+            return false;
+        }
+        for (const auto & fixture : result.evaluation_fixture_results) {
+            if (!common_flydelta_evaluation_fixture_result_validate(fixture, error) ||
+                    fixture.candidate_id != claimed.job.evaluation_candidate_id) return false;
         }
     }
     for (const auto & direction : result.direction_candidates) {
@@ -293,6 +308,11 @@ bool validate_result(
             result.counterfactual_reports.empty()) {
         error = "FlyDelta counterfactual worker result requires a report";
             return false;
+    }
+    if (claimed.job.kind == common_flydelta_experiment_job_kind::evaluation &&
+            (!result.has_evaluation_report || result.evaluation_fixture_results.empty())) {
+        error = "FlyDelta evaluation worker result requires a report and fixture results";
+        return false;
     }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::search_pipeline) {
         if (result.search_pipeline_results.empty()) {
@@ -398,10 +418,15 @@ bool common_flydelta_experiment_worker_run_once(
         result.counterfactual_reports.size() + result.direction_candidates.size() +
         result.concept_candidates.size() +
         result.concept_trajectory_refs.size() +
-        result.search_pipeline_results.size();
+        result.search_pipeline_results.size() +
+        result.evaluation_fixture_results.size();
     report.capture_manifests = std::move(result.capture_manifests);
     report.concept_candidates = std::move(result.concept_candidates);
     report.concept_trajectory_refs = std::move(result.concept_trajectory_refs);
+    report.counterfactual_reports = std::move(result.counterfactual_reports);
+    report.has_evaluation_report = result.has_evaluation_report;
+    report.evaluation_report = std::move(result.evaluation_report);
+    report.evaluation_fixture_results = std::move(result.evaluation_fixture_results);
     report.evidence_depth = result.evidence_depth;
     report.search_budget = result.search_budget;
     report.has_experiment_plan = result.has_experiment_plan;
@@ -526,6 +551,9 @@ bool common_flydelta_worker_result_from_evaluator(
     target.concept_trajectory_refs = source.concept_trajectory_refs;
     target.graft_direction_ref = source.graft_direction_ref;
     target.counterfactual_reports = source.counterfactual_reports;
+    target.has_evaluation_report = source.has_evaluation_report;
+    target.evaluation_report = source.evaluation_report;
+    target.evaluation_fixture_results = source.evaluation_fixture_results;
     target.direction_candidates = source.direction_candidates;
     target.basis_directions = source.basis_directions;
     target.search_pipeline_results = source.search_pipeline_results;
