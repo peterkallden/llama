@@ -307,7 +307,9 @@ void test_server_task_params_from_prepared_generation() {
     assert(params.stream);
     assert(!params.cache_prompt);
     assert(params.n_keep == 9);
-    assert(params.n_cache_reuse == 17);
+    // An active FlyDelta overlay invalidates prompt/KV reuse until the
+    // backend supports per-sequence overlay parameters.
+    assert(params.n_cache_reuse == 0);
     assert(params.n_predict == 77);
     assert(params.t_max_prompt_ms == 111);
     assert(params.t_max_predict_ms == 222);
