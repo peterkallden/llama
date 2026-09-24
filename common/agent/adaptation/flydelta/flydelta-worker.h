@@ -160,6 +160,9 @@ struct common_flydelta_experiment_worker_report {
     // dropping them here would leave only the derived trace and make a real
     // HELPED result unavailable to the host lifecycle.
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
+    bool has_evaluation_report = false;
+    common_flydelta_evaluation_report evaluation_report;
+    std::vector<common_flydelta_evaluation_fixture_result> evaluation_fixture_results;
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;
     bool has_experiment_plan = false;

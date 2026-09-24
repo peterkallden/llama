@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
+#include "agent/adaptation/flydelta/flydelta-contracts.h"
 
 #include <cstddef>
 #include <string>

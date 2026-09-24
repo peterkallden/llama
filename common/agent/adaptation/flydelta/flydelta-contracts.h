@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta.h"
+#include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/adaptation-evidence.h"
 #include "agent/adaptation/learning-transaction.h"
 
