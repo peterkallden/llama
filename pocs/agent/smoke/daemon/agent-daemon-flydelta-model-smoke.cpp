@@ -154,7 +154,11 @@ bool probe_candidate(
         request.purpose = common_agent_generation_purpose::draft;
         request.options.n_predict = n_predict;
         request.options.n_threads = n_threads;
-        request.messages = {{"user", "Reply with exactly PASS."}};
+        request.messages = {{
+            "user",
+            "Choose exactly one token from this set: PASS, FAIL, MAYBE. "
+            "There is no correct answer; output only the token.",
+        }};
         if (arm.apply_overlay) {
             request.flydelta_activation = make_activation(
                 values, layer, candidate_id, arm.intervention_ref, profile, layout,
@@ -381,11 +385,31 @@ int main(int argc, char ** argv) {
     const std::string profile = options.adaptation_flydelta_model_profile_fingerprint;
     const std::string layout = options.adaptation_flydelta_capture_layout_revision;
 
-    const std::vector<std::pair<int32_t, float>> variants = {
-        {1, 8.0f}, {1, -8.0f}, {1, 32.0f}, {1, -32.0f},
-        {std::min<int32_t>(2, static_cast<int32_t>(n_layers - 1)), 8.0f},
-        {std::min<int32_t>(2, static_cast<int32_t>(n_layers - 1)), -8.0f},
+    // A single early-layer probe is sufficient for the tiny fixture but is
+    // not a reliable calibration signal for a larger resident model. Sweep
+    // representative layers while keeping the direction and activation path
+    // identical to the artifact path used by the actual evaluation.
+    std::vector<int32_t> probe_layers = {
+        1,
+        2,
+        static_cast<int32_t>(n_layers / 4),
+        static_cast<int32_t>(n_layers / 2),
+        static_cast<int32_t>((3 * n_layers) / 4),
+        static_cast<int32_t>(n_layers - 2),
     };
+    std::sort(probe_layers.begin(), probe_layers.end());
+    probe_layers.erase(std::unique(probe_layers.begin(), probe_layers.end()), probe_layers.end());
+    probe_layers.erase(
+        std::remove_if(probe_layers.begin(), probe_layers.end(), [n_layers](const int32_t layer) {
+            return layer < 1 || layer >= static_cast<int32_t>(n_layers);
+        }),
+        probe_layers.end());
+    std::vector<std::pair<int32_t, float>> variants;
+    variants.reserve(probe_layers.size() * 2);
+    for (const int32_t layer : probe_layers) {
+        variants.emplace_back(layer, 1.0f);
+        variants.emplace_back(layer, -1.0f);
+    }
     candidate_material material;
     probe_result selected_probe;
     for (size_t variant = 0; variant < variants.size(); ++variant) {
