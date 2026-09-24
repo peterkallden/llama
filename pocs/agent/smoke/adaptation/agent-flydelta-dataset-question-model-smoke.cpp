@@ -69,6 +69,15 @@ std::string preview(const common_agent_generation_result & result) {
 
 std::string selected_tool(const common_agent_generation_result & result) {
     if (!common_agent_generation_succeeded(result)) return {};
+    if (result.chat_params) {
+        common_chat_parser_params parser_params(*result.chat_params);
+        parser_params.parse_tool_calls = true;
+        if (!result.chat_params->parser.empty()) {
+            parser_params.parser.load(result.chat_params->parser);
+        }
+        const auto assistant = common_chat_parse(result.content, false, parser_params);
+        if (!assistant.tool_calls.empty()) return assistant.tool_calls.front().name;
+    }
     const auto parsed = suite_json::parse(result.content, nullptr, false);
     if (parsed.is_object() && parsed.contains("name") && parsed["name"].is_string()) return parsed["name"].get<std::string>();
     return {};
@@ -98,20 +107,6 @@ int main(int argc, char ** argv) {
     common_tool_catalog catalog;
     common_tool_bootstrap_result bootstrap;
     if (!catalog.bootstrap("analysis", bootstrap, error)) { std::cerr << error << '\n'; return 1; }
-    std::string contract = "Available read-only tools:\n";
-    for (const auto & scenario : suite["scenarios"]) {
-        const auto name = scenario.value("expected_tool", "");
-        const auto * definition = catalog.find_definition(name);
-        if (!definition) { std::cerr << "unknown expected tool: " << name << '\n'; return 1; }
-        std::string compact_error;
-        const auto description = common_render_compact_tool_description(
-            definition->name, definition->description,
-            common_tool_model_input_schema(*definition),
-            common_tool_model_result_schema(*definition), compact_error);
-        if (!compact_error.empty()) { std::cerr << compact_error << '\n'; return 1; }
-        if (contract.find("\n- " + name + "\n") == std::string::npos) contract += "- " + description + "\n";
-    }
-
     common_agent_model_selection selection;
     selection.profile_id = "flydelta-dataset-question-suite";
     selection.base_model_id = "generation-base";
@@ -125,6 +120,33 @@ int main(int argc, char ** argv) {
     const auto loaded = common_agent_runtime_loaded_model_cast(resident);
     if (!loaded || !loaded->model || !loaded->chat_templates) return 1;
     auto inference = make_llama_cli_agent_inference(loaded->model, loaded->chat_templates.get());
+
+    std::vector<common_chat_tool> chat_tools;
+    chat_tools.reserve(suite["scenarios"].size());
+    for (const auto & scenario : suite["scenarios"]) {
+        const auto name = scenario.value("expected_tool", "");
+        const auto * definition = catalog.find_definition(name);
+        if (!definition) {
+            std::cerr << "unknown expected tool: " << name << '\n';
+            return 1;
+        }
+        std::string compact_error;
+        const auto description = common_render_compact_tool_description(
+            definition->name, definition->description,
+            common_tool_model_input_schema(*definition),
+            common_tool_model_result_schema(*definition), compact_error);
+        if (!compact_error.empty()) {
+            std::cerr << compact_error << '\n';
+            return 1;
+        }
+        if (std::none_of(chat_tools.begin(), chat_tools.end(), [&](const auto & tool) {
+                return tool.name == definition->name;
+            })) {
+            chat_tools.push_back({definition->name, description,
+                common_tool_model_input_schema(*definition),
+                common_tool_model_result_schema(*definition)});
+        }
+    }
 
     auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
     capture->enabled = true;
@@ -142,10 +164,13 @@ int main(int argc, char ** argv) {
         request.purpose = common_agent_generation_purpose::tool_followup;
         request.options.n_predict = value.n_predict;
         request.options.n_threads = value.n_threads;
+        request.options.generation_trace = true;
+        request.tools = chat_tools;
+        request.tool_choice = COMMON_CHAT_TOOL_CHOICE_REQUIRED;
         request.messages = {
             {"system", "You are a host-controlled dataset tool selector. Select exactly one most-specific read-only tool. "
                         "Use the canonical dataset reference " + suite.value("dataset", "dataset://local/sales") + ". "
-                        "Return only one JSON object with name and arguments, with no markdown or explanation.\n" + contract},
+                        "Return exactly one native tool call with its arguments, with no markdown or explanation."},
             {"user", scenario.value("question", "")},
         };
         request.flydelta_capture = capture;
