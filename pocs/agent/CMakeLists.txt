@@ -2077,6 +2077,11 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS llama-agent-cli llama-agent-mcp-stdio-server llama-agent-daemon llama-agent-adaptation-worker llama-agent-adaptation-admin llama-agent-web RUNTIME)
+    # The adaptation executables link this shared host-side store.  Keep the
+    # library in the package as well; otherwise the installed daemon and
+    # adaptation tools retain an unresolved runtime dependency.
+    install(TARGETS llama-agent-adaptation-storage
+        LIBRARY DESTINATION lib)
     install(PROGRAMS ../../scripts/agent-adaptation-qlora-trainer.py DESTINATION bin)
     # The external QLoRA helper invokes this converter from the installed
     # package. Keep the helper, converter, and dependency manifests available
