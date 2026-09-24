@@ -467,14 +467,14 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime)
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/mtmd)
-            target_link_libraries(${TEST_NAME} PRIVATE server-context)
+            target_link_libraries(${TEST_NAME} PRIVATE server-context vendor::hash)
             target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-generation.cpp)
         endif()
         if (TEST_NAME STREQUAL "test-agent-flydelta-server-binding")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime)
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
-            target_link_libraries(${TEST_NAME} PRIVATE server-context)
+            target_link_libraries(${TEST_NAME} PRIVATE server-context vendor::hash)
             target_sources(${TEST_NAME} PRIVATE
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-context-host.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-generation.cpp

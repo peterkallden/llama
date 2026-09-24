@@ -1,5 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 
+#include <limits>
+
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
 int main() {
@@ -38,7 +40,7 @@ int main() {
     capture.values = {1.0f, -1.0f, 0.25f, 0.5f};
     CHECK(common_flydelta_hidden_state_capture_validate(capture, 4096, error));
 
-    capture.values[0] = 0.0f / 0.0f;
+    capture.values[0] = std::numeric_limits<float>::quiet_NaN();
     CHECK(!common_flydelta_hidden_state_capture_validate(capture, 4096, error));
 
     capture = {};

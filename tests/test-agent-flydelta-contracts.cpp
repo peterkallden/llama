@@ -1,5 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-contracts.h"
 
+#include <limits>
+
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
 static common_learning_transaction transaction(
@@ -59,7 +61,7 @@ int main() {
     overlay.il_end = 2;
     overlay.data.assign(8, 0.25f);
     CHECK(common_flydelta_static_overlay_validate(overlay, 4, 3, 1024, error));
-    overlay.data[0] = 0.0f / 0.0f;
+    overlay.data[0] = std::numeric_limits<float>::quiet_NaN();
     CHECK(!common_flydelta_static_overlay_validate(overlay, 4, 3, 1024, error));
     overlay.data[0] = 0.25f;
     overlay.scale = 2.0f;

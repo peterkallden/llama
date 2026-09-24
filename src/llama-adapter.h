@@ -78,7 +78,7 @@ struct llama_adapter_cvec_batch {
     llama_adapter_cvec_batch(llama_adapter_cvec_batch &&) = delete;
     llama_adapter_cvec_batch & operator=(llama_adapter_cvec_batch &&) = delete;
 
-    bool apply(
+    LLAMA_API bool apply(
             const llama_model & model,
             const std::vector<llama_seq_id> & seq_ids,
             const std::vector<const float *> & data,
@@ -89,7 +89,7 @@ struct llama_adapter_cvec_batch {
 
     // Sparse counterpart for device-aware backends. Each row contains only
     // the layers listed in layer_indices, in sorted layer-major order.
-    bool apply_sparse(
+    LLAMA_API bool apply_sparse(
             const llama_model & model,
             const std::vector<llama_seq_id> & seq_ids,
             const std::vector<const float *> & data,
@@ -97,7 +97,7 @@ struct llama_adapter_cvec_batch {
             int32_t n_embd,
             const std::vector<uint32_t> & layer_indices);
 
-    void clear();
+    LLAMA_API void clear();
 
     bool enabled() const { return active; }
 
@@ -108,7 +108,7 @@ struct llama_adapter_cvec_batch {
     const llama_adapter_cvec_batch_ref & ref() const { return batch_ref; }
 
 private:
-    static ggml_tensor * apply_callback(
+    static LLAMA_API ggml_tensor * apply_callback(
             ggml_context * ctx,
             ggml_tensor * cur,
             int il,
