@@ -19,6 +19,7 @@
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation-state-store.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
+#include "agent/adaptation/flydelta/flydelta-sideband-review-store.h"
 #include "hash/hash.h"
 #include "tools/server/server-context.h"
 #include "llama.h"
@@ -3662,8 +3663,9 @@ std::function<bool(
 make_daemon_flydelta_resource_binding_factory(
         const daemon_options & options,
         agent_resource_store * resources,
-        std::shared_ptr<common_flydelta_teaching_material_runtime> teaching_material_runtime) {
-    return [options, resources, teaching_material_runtime](
+        std::shared_ptr<common_flydelta_teaching_material_runtime> teaching_material_runtime,
+        std::shared_ptr<common_learning_lifecycle_store> lifecycle_store) {
+    return [options, resources, teaching_material_runtime, lifecycle_store](
             const std::shared_ptr<common_agent_server_context_host> & host,
             common_agent_server_flydelta_binding & binding, std::string & error) {
         error.clear();
@@ -3691,7 +3693,8 @@ make_daemon_flydelta_resource_binding_factory(
         provider->n_threads = options.n_threads;
         provider->model_n_embd = static_cast<size_t>(llama_model_n_embd(model));
         provider->model_n_layers = static_cast<size_t>(llama_model_n_layer(model));
-        {
+        provider->lifecycle_store = lifecycle_store;
+        if (!provider->lifecycle_store) {
             auto lifecycle = make_agent_learning_lifecycle_store(
                 options.adaptation_flydelta_lifecycle_backend,
                 options.adaptation_flydelta_lifecycle_path, error);
@@ -4364,6 +4367,47 @@ bool configure_daemon_flydelta_teaching_material(
     return true;
 }
 
+bool configure_daemon_flydelta_review_store(
+        const daemon_options & options,
+        common_agent_daemon_runtime & runtime,
+        std::string & error) {
+    error.clear();
+    if (!options.adaptation_flydelta_enabled) return true;
+    if (runtime.flydelta_sideband_review_store ||
+            runtime.flydelta_sideband_registry ||
+            runtime.flydelta_review_lifecycle_store) {
+        error = "FlyDelta review store is already registered";
+        return false;
+    }
+
+    // Reuse the lifecycle backend selected for FlyDelta. The review journal
+    // is an additional typed record in that append-only store, not a second
+    // persistence system. The same journal is passed to the resource provider
+    // below so replay and bounded worker state share one durable history.
+    auto lifecycle = make_agent_learning_lifecycle_store(
+        options.adaptation_flydelta_lifecycle_backend,
+        options.adaptation_flydelta_lifecycle_path,
+        error);
+    if (!lifecycle) return false;
+    runtime.flydelta_review_lifecycle_store =
+        std::shared_ptr<common_learning_lifecycle_store>(std::move(lifecycle));
+    runtime.flydelta_sideband_registry =
+        std::make_shared<common_flydelta_sideband_registry>();
+    runtime.flydelta_sideband_review_store =
+        std::make_shared<common_flydelta_sideband_review_store>(
+            *runtime.flydelta_review_lifecycle_store);
+
+    if (!runtime.flydelta_sideband_review_store->replay(
+            *runtime.flydelta_sideband_registry, error)) {
+        runtime.flydelta_sideband_review_store.reset();
+        runtime.flydelta_sideband_registry.reset();
+        runtime.flydelta_review_lifecycle_store.reset();
+        return false;
+    }
+    runtime.flydelta_sideband_reviews_replayed = true;
+    return true;
+}
+
 bool configure_daemon_flydelta_server_binding(
         const daemon_options & options,
         common_agent_daemon_runtime & runtime,
@@ -4780,6 +4824,10 @@ bool initialize_agent_daemon_environment(
         error = "FlyDelta teaching-material runtime initialization failed: " + error;
         return false;
     }
+    if (!configure_daemon_flydelta_review_store(options, runtime, error)) {
+        error = "FlyDelta review-store initialization failed: " + error;
+        return false;
+    }
     if (options.adaptation_flydelta_enabled &&
             !runtime.flydelta_server_binding_factory &&
             !runtime.flydelta_server_binding_callbacks.has_value()) {
@@ -4789,7 +4837,8 @@ bool initialize_agent_daemon_environment(
         runtime.flydelta_server_binding_factory =
             make_daemon_flydelta_resource_binding_factory(
                 options, runtime.resource_store.get(),
-                runtime.flydelta_teaching_material_runtime);
+                runtime.flydelta_teaching_material_runtime,
+                runtime.flydelta_review_lifecycle_store);
     }
     if (!configure_daemon_flydelta_server_binding(options, runtime, error)) {
         error = "FlyDelta server binding initialization failed: " + error;

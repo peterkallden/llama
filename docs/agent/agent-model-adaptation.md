@@ -1101,6 +1101,15 @@ or host-process interfaces: they do not expose lifecycle mutation or approval
 as model-facing tools, and the FlyDelta review store replays only explicit,
 audited decisions through the existing registry gates.
 
+When the FlyDelta daemon lane is enabled, daemon startup binds this same
+lifecycle backend to the FlyDelta review store and replays its explicit review
+events into the host-owned sideband registry before the resident model binding
+and worker lane start. This is a restore step, not automatic promotion: model
+output cannot create a review event, and replay does not grant learning credit
+to `NEUTRAL` or `UNKNOWN` observations. Daemon status reports both review-store
+binding and replay completion so an operator can distinguish restored review
+state from an available model evaluator.
+
 JSONL remains useful as an explicit portable export/debug representation. It is
 not a competing normal persistence backend. The backend factory must fail
 clearly when a requested backend is not compiled in; `auto` may select Cozo or

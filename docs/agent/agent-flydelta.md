@@ -135,6 +135,26 @@ the in-memory behavior used by tests and ephemeral hosts. Concept capture is
 therefore demand-driven, not an unconditional model operation at process
 startup.
 
+When FlyDelta is enabled, daemon startup also opens the configured FlyDelta
+lifecycle backend, constructs the existing sideband review store and registry,
+and replays the append-only review decisions before the resident model binding
+and worker lane are started. The review store is not a second persistence
+system: it uses the same lifecycle journal as the daemon's FlyDelta resource
+provider. Replay restores only explicit host/operator decisions; it does not
+turn `NEUTRAL` or `UNKNOWN` into learning credit and it never lets model output
+activate a sideband. Daemon status exposes whether the review store was bound
+and whether replay completed.
+
+These are separate startup facts:
+
+```text
+review journal/registry replayed -> lifecycle decisions are restored
+model-host binding registered    -> model-facing FlyDelta work is available
+```
+
+Review replay does not manufacture an evaluator callback, and a model binding
+does not approve or activate a sideband.
+
 The complete host configuration is illustrated by
 `docs/examples/agent-host-config-flydelta-full.json`. It is JSON configuration,
 not JSONL: JSONL is used by selected portable ledgers and daemon request

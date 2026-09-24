@@ -594,6 +594,11 @@ bool common_agent_daemon_service::populate_status_outcome(
     outcome.status.state = state_value;
     outcome.status.live = state_value != common_agent_daemon_state::stopped;
     outcome.status.readiness = readiness();
+    outcome.status.flydelta_review_store_configured =
+        runtime.flydelta_sideband_review_store != nullptr &&
+        runtime.flydelta_sideband_registry != nullptr;
+    outcome.status.flydelta_sideband_reviews_replayed =
+        runtime.flydelta_sideband_reviews_replayed;
     outcome.status.ready = state_value == common_agent_daemon_state::ready &&
         outcome.status.readiness.health != "failed";
     if (runtime.host) {

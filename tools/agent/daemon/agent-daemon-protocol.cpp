@@ -520,6 +520,9 @@ void append_agent_daemon_status_snapshot(
     response["flydelta_model_adapter_configured"] = status.flydelta_model_adapter_configured;
     response["flydelta_model_adapter_search_supported"] =
         status.flydelta_model_adapter_search_supported;
+    response["flydelta_review_store_configured"] = status.flydelta_review_store_configured;
+    response["flydelta_sideband_reviews_replayed"] =
+        status.flydelta_sideband_reviews_replayed;
     response["flydelta_model_capabilities"] = {
         {"capture", status.flydelta_model_capabilities.capture},
         {"overlay", status.flydelta_model_capabilities.overlay},

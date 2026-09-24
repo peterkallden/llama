@@ -27,6 +27,9 @@
 
 class common_agent_inference_capacity_gate;
 class common_agent_server_context_host;
+class common_learning_lifecycle_store;
+class common_flydelta_sideband_review_store;
+class common_flydelta_sideband_registry;
 struct common_flydelta_evaluator_config;
 struct common_flydelta_evaluator_callbacks;
 
@@ -132,6 +135,17 @@ struct common_agent_daemon_runtime {
     // existing factory when no explicit factory was supplied.
     std::optional<common_agent_server_flydelta_binding_callbacks>
         flydelta_server_binding_callbacks;
+    // The daemon owns the lifecycle journal used by the FlyDelta review store
+    // and keeps the replayed registry alive for the lifetime of the runtime.
+    // Review replay happens before model binding and worker startup; it never
+    // changes search policy or lets model output approve a sideband.
+    std::shared_ptr<common_learning_lifecycle_store>
+        flydelta_review_lifecycle_store;
+    std::shared_ptr<common_flydelta_sideband_review_store>
+        flydelta_sideband_review_store;
+    std::shared_ptr<common_flydelta_sideband_registry>
+        flydelta_sideband_registry;
+    bool flydelta_sideband_reviews_replayed = false;
     std::optional<common_agent_runtime_model_resident_handle> flydelta_model_handle;
     common_flydelta_model_capabilities flydelta_model_capabilities;
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
@@ -290,6 +304,8 @@ struct common_agent_daemon_status {
     size_t flydelta_workers_running = 0;
     bool flydelta_model_adapter_configured = false;
     bool flydelta_model_adapter_search_supported = false;
+    bool flydelta_review_store_configured = false;
+    bool flydelta_sideband_reviews_replayed = false;
     common_flydelta_model_capabilities flydelta_model_capabilities;
     bool accepting_commands = false;
     bool shutdown_requested = false;
