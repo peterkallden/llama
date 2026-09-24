@@ -818,6 +818,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-resource
         llama-agent-data
         llama-agent-diagnostics
+        llama-agent-adaptation-storage
     )
     if(TARGET llama-agent-sandbox)
         list(APPEND AGENT_PACKAGE_LIBRARY_TARGETS llama-agent-sandbox)
@@ -2077,11 +2078,6 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS llama-agent-cli llama-agent-mcp-stdio-server llama-agent-daemon llama-agent-adaptation-worker llama-agent-adaptation-admin llama-agent-web RUNTIME)
-    # The adaptation executables link this shared host-side store.  Keep the
-    # library in the package as well; otherwise the installed daemon and
-    # adaptation tools retain an unresolved runtime dependency.
-    install(TARGETS llama-agent-adaptation-storage
-        LIBRARY DESTINATION lib)
     install(PROGRAMS ../../scripts/agent-adaptation-qlora-trainer.py DESTINATION bin)
     # The external QLoRA helper invokes this converter from the installed
     # package. Keep the helper, converter, and dependency manifests available
@@ -2205,6 +2201,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-cvec-batch-model-smoke
     llama-agent-flydelta-runtime-smoke
+    llama-agent-flydelta-repair-model-smoke
     llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-flydelta-dataset-question-contract-smoke
     llama-agent-flydelta-repair-echo-replay-smoke
@@ -2271,8 +2268,7 @@ if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_TEST_BUILD_TARGETS
         llama-agent-data-manipulation-smoke
         llama-agent-flydelta-dataset-question-repair-contract-smoke
-        llama-agent-flydelta-dataset-question-repair-model-smoke
-        llama-agent-flydelta-repair-model-smoke)
+        llama-agent-flydelta-dataset-question-repair-model-smoke)
 endif()
 
 set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
@@ -2281,6 +2277,9 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-flydelta-tool-repair-smoke
     llama-agent-flydelta-procedure-teaching-smoke
     llama-agent-flydelta-model-ab-smoke
+    llama-agent-flydelta-cvec-batch-model-smoke
+    llama-agent-flydelta-runtime-smoke
+    llama-agent-flydelta-repair-model-smoke
     llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-flydelta-dataset-question-repair-model-smoke
     llama-agent-resident-smoke
