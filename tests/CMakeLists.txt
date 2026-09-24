@@ -406,6 +406,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-activation.cpp
         test-agent-flydelta-sparse-cvec.cpp
         test-agent-flydelta-sideband.cpp
+        test-agent-flydelta-sideband-review-store.cpp
         test-agent-flydelta-capture-manifest.cpp
         test-agent-flydelta-repair-deltas.cpp
         test-agent-flydelta-representation-diagnostics.cpp

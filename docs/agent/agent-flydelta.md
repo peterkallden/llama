@@ -1898,19 +1898,21 @@ An identical retry is idempotent; a different artifact cannot replace an
 existing path. Registry admission has the same retry rule for an identical
 manifest: an identical `id` and metadata is a successful no-op, while changed
 metadata for an existing `id` is rejected. The store does not decide lifecycle
-status, evaluate a candidate, or activate a sideband. TTL, scope ownership,
-revocation and a persistent registry/journal still belong in the next
-lifecycle integration sweep.
+status, evaluate a candidate, or activate a sideband.
 
 The sideband manifest now carries an explicit `namespace_id`, `project_id`,
 optional `expires_at_epoch_ms` and revocation reason. Its in-memory registry
 enforces the lifecycle transitions `candidate -> canary -> active -> retired`
 and supports explicit `revoke(reason)`. Expired entries cannot enter canary or
 be resolved; revoked entries cannot be resolved. Manifest JSON includes these
-fields so a later persistent registry can reuse the same contract. The current
-registry is still process-local: persistence of registry transitions, durable
-scope ownership and a recovery-safe revocation journal are intentionally not
-implemented yet.
+fields so the review journal can reuse the same contract. The
+`common_flydelta_sideband_review_store` records operator or host-automation
+decisions in the existing adaptation lifecycle backend and can replay them into
+the registry after a restart. The `llama-agent-adaptation-admin` utility
+exposes FlyDelta review listing and explicit review application; application
+still requires an approval flag and the normal HELPED/evaluation gates. The
+daemon startup binding to automatically replay this store is a separate runtime
+composition step; no model-facing path can invoke it.
 
 ### Model profile and residency: resolve immutable metadata
 

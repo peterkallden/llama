@@ -91,6 +91,13 @@ bool common_flydelta_sideband_manifest_validate(
         error = "FlyDelta sideband manifest identity or layout is invalid";
         return false;
     }
+    const bool has_behavior = !manifest.applicability.behavior_key.empty();
+    const bool has_scope = !manifest.applicability.scope_fingerprint.empty();
+    const bool has_verifier = !manifest.applicability.verifier_revision.empty();
+    if ((has_behavior || has_scope || has_verifier) && !(has_behavior && has_scope && has_verifier)) {
+        error = "FlyDelta sideband applicability identity is incomplete";
+        return false;
+    }
     if (manifest.status == common_flydelta_sideband_status::revoked &&
             !bounded(manifest.revocation_reason)) {
         error = "revoked FlyDelta sideband requires a reason";
@@ -132,6 +139,11 @@ std::string common_flydelta_sideband_manifest_to_json(
             {"architecture", manifest.compatibility.architecture},
             {"inference_layout_revision", manifest.compatibility.inference_layout_revision},
         }},
+        {"applicability", {
+            {"behavior_key", manifest.applicability.behavior_key},
+            {"scope_fingerprint", manifest.applicability.scope_fingerprint},
+            {"verifier_revision", manifest.applicability.verifier_revision},
+        }},
         {"model_n_embd", manifest.model_n_embd},
         {"model_n_layers", manifest.model_n_layers},
         {"il_start", manifest.il_start},
@@ -169,6 +181,10 @@ bool common_flydelta_sideband_manifest_from_json(
         manifest.compatibility.template_fingerprint = compatibility.value("template_fingerprint", "");
         manifest.compatibility.architecture = compatibility.value("architecture", "");
         manifest.compatibility.inference_layout_revision = compatibility.value("inference_layout_revision", "");
+        const auto applicability = value.value("applicability", json::object());
+        manifest.applicability.behavior_key = applicability.value("behavior_key", "");
+        manifest.applicability.scope_fingerprint = applicability.value("scope_fingerprint", "");
+        manifest.applicability.verifier_revision = applicability.value("verifier_revision", "");
         manifest.model_n_embd = value.value("model_n_embd", 0U);
         manifest.model_n_layers = value.value("model_n_layers", 0U);
         manifest.il_start = value.value("il_start", 0);
@@ -230,7 +246,12 @@ bool common_flydelta_sideband_registry::admit_experimental(
 }
 
 bool common_flydelta_sideband_registry::promote_experimental(
-        const std::string & id, const std::string & evaluation_revision, std::string & error) {
+        const std::string & id, const std::string & evaluation_revision, std::string & error,
+        bool explicit_host_approval) {
+    if (!explicit_host_approval) {
+        error = "experimental FlyDelta promotion requires explicit host approval";
+        return false;
+    }
     const auto it = manifests.find(id);
     if (it == manifests.end()) { error = "FlyDelta sideband is unavailable: " + id; return false; }
     if (it->second.status != common_flydelta_sideband_status::experimental) {
@@ -320,6 +341,20 @@ bool common_flydelta_sideband_registry::resolve(
         common_flydelta_sideband_manifest & manifest,
         double & profile_scale,
         std::string & error) const {
+    return resolve(profile, sideband_id, expected, {}, model_n_embd, model_n_layers,
+        manifest, profile_scale, error);
+}
+
+bool common_flydelta_sideband_registry::resolve(
+        const common_agent_model_profile & profile,
+        const std::string & sideband_id,
+        const common_flydelta_compatibility & expected,
+        const common_flydelta_applicability & expected_applicability,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        common_flydelta_sideband_manifest & manifest,
+        double & profile_scale,
+        std::string & error) const {
     error.clear();
     if (!common_agent_validate_model_profile(profile, error)) return false;
     const auto configured = std::find_if(profile.sidebands.begin(), profile.sidebands.end(),
@@ -352,6 +387,20 @@ bool common_flydelta_sideband_registry::resolve(
             "architecture", error) ||
             !same(it->second.compatibility.inference_layout_revision,
             expected.inference_layout_revision, "inference layout", error)) return false;
+    const bool manifest_has_applicability = !it->second.applicability.behavior_key.empty() ||
+        !it->second.applicability.scope_fingerprint.empty() ||
+        !it->second.applicability.verifier_revision.empty();
+    const bool expected_has_applicability = !expected_applicability.behavior_key.empty() ||
+        !expected_applicability.scope_fingerprint.empty() ||
+        !expected_applicability.verifier_revision.empty();
+    if (manifest_has_applicability != expected_has_applicability ||
+            (manifest_has_applicability &&
+             (it->second.applicability.behavior_key != expected_applicability.behavior_key ||
+              it->second.applicability.scope_fingerprint != expected_applicability.scope_fingerprint ||
+              it->second.applicability.verifier_revision != expected_applicability.verifier_revision))) {
+        error = "FlyDelta sideband applicability is incompatible or missing";
+        return false;
+    }
     manifest = it->second;
     profile_scale = configured->scale;
     return true;

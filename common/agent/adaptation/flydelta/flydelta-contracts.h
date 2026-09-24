@@ -10,6 +10,13 @@
 
 enum class common_flydelta_candidate_status { observed, eligible, approved, rejected, revoked };
 
+struct common_flydelta_applicability {
+    // These fields are host-classified identity, not inferred by FlyDelta.
+    std::string behavior_key;
+    std::string scope_fingerprint;
+    std::string verifier_revision;
+};
+
 const char * common_flydelta_candidate_status_name(common_flydelta_candidate_status status);
 
 // A capture manifest references bounded, already verified evidence. It does

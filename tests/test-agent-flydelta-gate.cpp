@@ -58,5 +58,6 @@ int main() {
         true, 0.1f, request, error));
     CHECK(common_flydelta_gate_decide(config, request, decision, error));
     CHECK(decision.apply && decision.reason == "approved_familiar_context");
+
     return 0;
 }

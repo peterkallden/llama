@@ -146,10 +146,8 @@ bool common_flydelta_promote_verified_sideband(
         return false;
     }
     if (!common_flydelta_evaluation_report_validate(evaluation, error) ||
-            evaluation.status != "passed" ||
-            !evaluation.intended_behavior_passed ||
-            !evaluation.retention_passed ||
-            !evaluation.agent_regression_passed) {
+            evaluation.status != "passed" || !evaluation.intended_behavior_passed ||
+            !evaluation.retention_passed || !evaluation.agent_regression_passed) {
         if (error.empty()) error = "FlyDelta promotion requires a passed evaluation";
         return false;
     }

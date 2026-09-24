@@ -86,6 +86,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-evaluator.cpp adaptation/flydelta/flydelta-evaluator.h
     adaptation/flydelta/flydelta-model-adapter.cpp adaptation/flydelta/flydelta-model-adapter.h
     adaptation/flydelta/flydelta-sideband-controller.cpp adaptation/flydelta/flydelta-sideband-controller.h
+    adaptation/flydelta/flydelta-sideband-review-store.cpp adaptation/flydelta/flydelta-sideband-review-store.h
     adaptation/flydelta/flydelta-evidence.cpp adaptation/flydelta/flydelta-evidence.h
     adaptation/flydelta/flydelta-basis.cpp adaptation/flydelta/flydelta-basis.h
     adaptation/flydelta/flydelta-training.cpp adaptation/flydelta/flydelta-training.h

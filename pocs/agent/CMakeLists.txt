@@ -2753,6 +2753,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-overlay
     test-agent-flydelta-activation
     test-agent-flydelta-sideband
+    test-agent-flydelta-sideband-review-store
     test-agent-flydelta-capture-manifest
     test-agent-flydelta-repair-deltas
     test-agent-flydelta-sparse-cvec

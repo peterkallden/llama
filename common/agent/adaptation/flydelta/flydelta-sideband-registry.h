@@ -35,6 +35,7 @@ struct common_flydelta_sideband_manifest {
     uint64_t expires_at_epoch_ms = 0;
     std::string revocation_reason;
     common_flydelta_compatibility compatibility;
+    common_flydelta_applicability applicability;
     size_t model_n_embd = 0;
     size_t model_n_layers = 0;
     int32_t il_start = 1;
@@ -67,7 +68,7 @@ public:
     // Explicitly graduates an offline-search revision into the normal
     // candidate lifecycle. Canary evaluation is still required afterwards.
     bool promote_experimental(const std::string & id, const std::string & evaluation_revision,
-            std::string & error);
+            std::string & error, bool explicit_host_approval = false);
     bool stage_canary(const std::string & id, const std::string & evaluation_revision,
             std::string & error);
     bool activate(const std::string & id, std::string & error);
@@ -80,6 +81,19 @@ public:
             const common_agent_model_profile & profile,
             const std::string & sideband_id,
             const common_flydelta_compatibility & expected,
+            size_t model_n_embd,
+            size_t model_n_layers,
+            common_flydelta_sideband_manifest & manifest,
+            double & profile_scale,
+            std::string & error) const;
+
+    // Callers should use this overload when host-owned behavior/scope/verifier
+    // identity is available in addition to model compatibility.
+    bool resolve(
+            const common_agent_model_profile & profile,
+            const std::string & sideband_id,
+            const common_flydelta_compatibility & expected,
+            const common_flydelta_applicability & expected_applicability,
             size_t model_n_embd,
             size_t model_n_layers,
             common_flydelta_sideband_manifest & manifest,

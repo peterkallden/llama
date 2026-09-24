@@ -276,7 +276,8 @@ bool common_flydelta_evaluation_report_validate(
         return false;
     }
     const bool passed = report.intended_behavior_passed && report.retention_passed && report.agent_regression_passed;
-    if ((report.status == "passed") != passed || (report.status != "passed" && report.status != "failed")) {
+    if ((report.status == "passed") != passed ||
+            (report.status != "passed" && report.status != "failed")) {
         error = "FlyDelta evaluation status does not match gates";
         return false;
     }

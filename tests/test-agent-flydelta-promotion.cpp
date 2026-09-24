@@ -105,5 +105,6 @@ int main() {
     CHECK(!registry.list().at(manifest.id).evaluation_revision.empty());
     CHECK(registry.activate(manifest.id, error));
     CHECK(registry.list().at(manifest.id).status == common_flydelta_sideband_status::active);
+
     return 0;
 }

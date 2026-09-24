@@ -1095,9 +1095,11 @@ status semantics.
 The host-side journal can be inspected or fed an already curated envelope with
 the separate `llama-agent-adaptation-admin` utility. It supports `--list` and
 `--append FILE` over the same `--backend`/`--path` selection as the adaptation
-storage factory. This is deliberately an operator interface: it does not
-expose lifecycle mutation or approval as model-facing tools, and it does not
-activate an adapter as a side effect of appending a record.
+storage factory. It also supports the FlyDelta-specific `--flydelta-list` and
+`--flydelta-apply FILE --approve` entrypoints. These are deliberately operator
+or host-process interfaces: they do not expose lifecycle mutation or approval
+as model-facing tools, and the FlyDelta review store replays only explicit,
+audited decisions through the existing registry gates.
 
 JSONL remains useful as an explicit portable export/debug representation. It is
 not a competing normal persistence backend. The backend factory must fail

@@ -16,6 +16,9 @@ static common_flydelta_sideband_manifest manifest() {
     value.compatibility.template_fingerprint = "sha256:template";
     value.compatibility.architecture = "qwen2";
     value.compatibility.inference_layout_revision = "layout:cvec-v1";
+    value.applicability.behavior_key = "tool_use/diagnostics/missing-argument";
+    value.applicability.scope_fingerprint = "scope:tool-repair";
+    value.applicability.verifier_revision = "verifier:tool-contract-v1";
     value.model_n_embd = 4;
     value.model_n_layers = 3;
     value.il_end = 2;
@@ -41,7 +44,8 @@ int main() {
     CHECK(common_flydelta_sideband_manifest_from_json(
         common_flydelta_sideband_manifest_to_json(sideband), parsed, error));
     CHECK(parsed.id == sideband.id && parsed.namespace_id == "local" &&
-        parsed.project_id == "default");
+        parsed.project_id == "default" &&
+        parsed.applicability.behavior_key == sideband.applicability.behavior_key);
     common_flydelta_sideband_registry registry;
     CHECK(registry.admit(sideband, error));
     CHECK(registry.admit(sideband, error));
@@ -56,12 +60,19 @@ int main() {
     common_flydelta_compatibility expected = sideband.compatibility;
     common_flydelta_sideband_manifest resolved;
     double scale = 0.0;
-    CHECK(registry.resolve(profile(), sideband.id, expected, 4, 3, resolved, scale, error));
+    CHECK(registry.resolve(profile(), sideband.id, expected, sideband.applicability,
+        4, 3, resolved, scale, error));
     CHECK(resolved.id == sideband.id && scale == 0.5 &&
             common_flydelta_sideband_status_name(resolved.status) == std::string("active"));
+    auto wrong_applicability = sideband.applicability;
+    wrong_applicability.behavior_key = "tool_use/other-behavior";
+    CHECK(!registry.resolve(profile(), sideband.id, expected, wrong_applicability,
+        4, 3, resolved, scale, error));
+    CHECK(error.find("applicability") != std::string::npos);
 
     expected.base_model_id = "qwen2.5-1.5b-instruct.gguf";
-    CHECK(!registry.resolve(profile(), sideband.id, expected, 4, 3, resolved, scale, error));
+    CHECK(!registry.resolve(profile(), sideband.id, expected, sideband.applicability,
+        4, 3, resolved, scale, error));
     CHECK(error.find("base model") != std::string::npos);
 
     auto expired = manifest();
@@ -91,7 +102,8 @@ int main() {
     CHECK(error.find("not active") != std::string::npos);
     CHECK(!registry.stage_canary(experimental.id, "eval:experiment", error));
     CHECK(error.find("candidate") != std::string::npos);
-    CHECK(registry.promote_experimental(experimental.id, "eval:experiment-v1", error));
+    CHECK(!registry.promote_experimental(experimental.id, "eval:experiment-v1", error));
+    CHECK(registry.promote_experimental(experimental.id, "eval:experiment-v1", error, true));
     CHECK(!registry.list().at(experimental.id).evaluation_passed);
     CHECK(registry.stage_canary(experimental.id, "eval:canary-v1", error));
     CHECK(registry.activate(experimental.id, error));
