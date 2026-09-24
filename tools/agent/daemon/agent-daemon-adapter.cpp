@@ -258,8 +258,8 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         }
     }
 
-    if (options.model.empty()) {
-        std::fprintf(stderr, "--model is required\n");
+    if (options.model.empty() && options.model_catalog.profiles.empty()) {
+        std::fprintf(stderr, "--model or a configured model catalog profile is required\n");
         return false;
     }
     if (options.http_enabled) {
@@ -390,7 +390,7 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
 
 void print_agent_daemon_usage(const char * argv0) {
     std::fprintf(stderr,
-        "usage: %s [--config PATH] --model MODEL [--model-profile ID] [--default-mode chat|agent] [--thinking-mode auto|reflective|deliberate|research]\n"
+        "usage: %s [--config PATH] [--model MODEL] [--model-profile ID] [--default-mode chat|agent] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--max-reflection-rounds N] [--max-plan-revisions N] [--max-research-iterations N]\n"
         "         [--embedding-model MODEL] [--backend auto|in-memory|cozo] [--memory-db PATH]\n"
         "         [--plan-backend auto|in-memory|cozo] [--plan-db PATH] [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F]\n"

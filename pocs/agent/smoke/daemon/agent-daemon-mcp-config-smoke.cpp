@@ -152,6 +152,56 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    const auto catalog_config_path = config_root / "catalog-only-config.json";
+    {
+        std::ofstream out(catalog_config_path);
+        out << json{
+            {"model", {{"profile", "agent-default"}}},
+            {"models", {
+                {"schema_version", 1},
+                {"directory", "."},
+                {"bases", {{"fixture", {
+                    {"kind", "generation"},
+                    {"backend", "server-context"},
+                    {"path", "fake.gguf"},
+                    {"load", "resident"},
+                }}}},
+                {"profiles", {{"agent-default", {
+                    {"base", "fixture"},
+                    {"context_size", 128},
+                    {"n_parallel", 1},
+                    {"n_sequences", 1},
+                    {"load", "resident"},
+                }}}},
+                {"routing", {{"default_profile", "agent-default"}}},
+                {"limits", {
+                    {"max_loaded_generation_models", 1},
+                    {"model_eviction", "lru"},
+                }},
+            }},
+            {"runtime", {
+                {"n_threads", 1},
+                {"n_gpu_layers", 0},
+            }},
+        }.dump(2);
+    }
+    daemon_options catalog_options;
+    std::string catalog_config_path_string = catalog_config_path.string();
+    std::vector<char> catalog_config_path_buffer(
+        catalog_config_path_string.begin(), catalog_config_path_string.end());
+    catalog_config_path_buffer.push_back('\0');
+    char catalog_program[] = "llama-agent-daemon";
+    char catalog_config_flag[] = "--config";
+    char * catalog_parse_argv[] = {
+        catalog_program, catalog_config_flag, catalog_config_path_buffer.data(),
+    };
+    if (!parse_agent_daemon_args(3, catalog_parse_argv, catalog_options) ||
+            catalog_options.model_profile != "agent-default" ||
+            catalog_options.model_catalog.profiles.empty()) {
+        std::fprintf(stderr, "catalog-only daemon config parse failed\n");
+        return 1;
+    }
+
     daemon_options cli_options;
     char cli_program[] = "llama-agent-daemon";
     char model_flag[] = "--model";

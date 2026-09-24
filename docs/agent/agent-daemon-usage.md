@@ -333,7 +333,9 @@ generation model:
 }
 ```
 
-`model.path` is the generation model used for chat and agent turns.
+`model.path` is the legacy generation model used for chat and agent turns
+when no named model catalog profile is configured. With `models.profiles`,
+`model.profile` selects the generation model instead.
 `model.embedding_model`, when present, is used for embedding-backed search
 instead of the generation model. When it is omitted, the implementation uses
 `model.path` for embeddings as well. Omitting it is therefore valid and keeps
@@ -711,6 +713,37 @@ It emits `flydelta_admin_trace` for each admin operation and a
 uses a model-free host callback; it proves daemon/queue/worker/lifecycle and
 review wiring, not model quality. Run a separate model smoke for model-host,
 batch, generation and host-verification evidence.
+
+For the Intel Vulkan model-host smoke, use
+[`agent-host-config-flydelta-intel-smoke.json`](../examples/agent-host-config-flydelta-intel-smoke.json)
+as the starting configuration. It uses one resident generation profile,
+single-slot inference/batching, tracing, and `n_gpu_layers=99`. The model
+catalog directory is resolved from the daemon working directory; place the
+configured GGUF under `models/` or change the catalog path before starting.
+The device selection is process-level rather than JSON configuration:
+
+```bash
+sudo -E env GGML_VK_VISIBLE_DEVICES=0 \
+  ./build-agent-vulkan-cozo/bin/llama-agent-daemon \
+  --config docs/examples/agent-host-config-flydelta-intel-smoke.json
+```
+
+For the checked-in tiny model fixture in this checkout, the runnable variant
+is [`agent-host-config-flydelta-intel-tiny.json`](../examples/agent-host-config-flydelta-intel-tiny.json):
+
+```bash
+env GGML_VK_VISIBLE_DEVICES=0 \
+  ./build-agent-vulkan-cozo/bin/llama-agent-daemon \
+  --config docs/examples/agent-host-config-flydelta-intel-tiny.json
+```
+
+The tiny fixture is only startup/wiring evidence; it is not model-quality or
+promotion evidence for a production model.
+
+This startup path resolves the resident profile and registers the existing
+daemon FlyDelta model binding. If semantic host callbacks are not available,
+the lane remains configured-but-idle; configuration alone must not invent a
+model evaluator or grant promotion evidence.
 
 Verification uses three distinct evidence levels. CTests are contract tests:
 they validate schemas, validators, state transitions and invariants, but do
