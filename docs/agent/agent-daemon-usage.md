@@ -723,7 +723,7 @@ configured GGUF under `models/` or change the catalog path before starting.
 The device selection is process-level rather than JSON configuration:
 
 ```bash
-sudo -E env GGML_VK_VISIBLE_DEVICES=0 \
+GGML_VK_VISIBLE_DEVICES=0 \
   ./build-agent-vulkan-cozo/bin/llama-agent-daemon \
   --config docs/examples/agent-host-config-flydelta-intel-smoke.json
 ```
@@ -732,13 +732,32 @@ For the checked-in tiny model fixture in this checkout, the runnable variant
 is [`agent-host-config-flydelta-intel-tiny.json`](../examples/agent-host-config-flydelta-intel-tiny.json):
 
 ```bash
-env GGML_VK_VISIBLE_DEVICES=0 \
+GGML_VK_VISIBLE_DEVICES=0 \
   ./build-agent-vulkan-cozo/bin/llama-agent-daemon \
   --config docs/examples/agent-host-config-flydelta-intel-tiny.json
 ```
 
 The tiny fixture is only startup/wiring evidence; it is not model-quality or
 promotion evidence for a production model.
+
+The complete model-backed pre-canary admin smoke is a separate functional
+target. It performs a real unit-direction probe, persists the candidate
+artifact through the resource store, evaluates eight bounded fixtures on the
+resident model, emits the admin and worker traces, stages the candidate as a
+canary and replays that decision from the lifecycle journal:
+
+```bash
+GGML_VK_VISIBLE_DEVICES=0 \
+  ./build-agent-vulkan-cozo/bin/llama-agent-daemon-flydelta-model-smoke \
+  docs/examples/agent-host-config-flydelta-intel-tiny.json
+```
+
+Its model-backed evidence is specific to the supplied tiny fixture. The
+model-free admin smoke remains the wiring regression; neither smoke implies
+automatic activation of a sideband.
+
+When these commands run from Codex, the sandbox execution itself must be
+elevated to access the Intel Vulkan device; `sudo` is not part of the command.
 
 This startup path resolves the resident profile and registers the existing
 daemon FlyDelta model binding. If semantic host callbacks are not available,

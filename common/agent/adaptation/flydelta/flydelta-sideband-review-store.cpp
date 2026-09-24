@@ -1,5 +1,6 @@
 #include "agent/adaptation/flydelta/flydelta-sideband-review-store.h"
 
+#include <algorithm>
 #include <chrono>
 #include <nlohmann/json.hpp>
 #include <utility>
@@ -51,6 +52,20 @@ void policy_from_json(const json & value, common_flydelta_promotion_policy & pol
     policy.min_help_confidence = value.value("min_help_confidence", policy.min_help_confidence);
     policy.max_unknown_ratio = value.value("max_unknown_ratio", policy.max_unknown_ratio);
     policy.max_trials = value.value("max_trials", policy.max_trials);
+}
+
+int replay_order(common_flydelta_review_action action) {
+    switch (action) {
+        case common_flydelta_review_action::admit_experimental: return 0;
+        case common_flydelta_review_action::promote_to_candidate: return 1;
+        case common_flydelta_review_action::approve_canary: return 2;
+        case common_flydelta_review_action::stage_canary: return 3;
+        case common_flydelta_review_action::activate: return 4;
+        case common_flydelta_review_action::retire: return 5;
+        case common_flydelta_review_action::revoke: return 6;
+        case common_flydelta_review_action::reject: return 7;
+    }
+    return 8;
 }
 
 json summary_json(const common_flydelta_promotion_summary & summary) {
@@ -365,7 +380,15 @@ std::vector<common_flydelta_sideband_review> common_flydelta_sideband_review_sto
 bool common_flydelta_sideband_review_store::replay(
         common_flydelta_sideband_registry & registry, std::string & error) const {
     error.clear();
-    for (const auto & review : list(error)) {
+    auto reviews = list(error);
+    std::stable_sort(reviews.begin(), reviews.end(), [](const auto & left, const auto & right) {
+        const int left_order = replay_order(left.action);
+        const int right_order = replay_order(right.action);
+        return left_order != right_order
+            ? left_order < right_order
+            : left.event_id < right.event_id;
+    });
+    for (const auto & review : reviews) {
         if (!error.empty() || !apply(registry, review, true, error)) return false;
     }
     return true;

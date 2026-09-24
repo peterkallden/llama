@@ -1506,6 +1506,22 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Functional FlyDelta admin path with the resident model host. This remains a
+# smoke executable, not a contract CTest: it proves model execution,
+# reference-backed fixtures, worker persistence, review and canary staging.
+set(TARGET llama-agent-daemon-flydelta-model-smoke)
+add_executable(${TARGET}
+    smoke/daemon/agent-daemon-flydelta-model-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+    ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-daemon-jsonl-protocol-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-jsonl-protocol-smoke.cpp
