@@ -10,10 +10,23 @@ orthogonal escape, Shallow/Deep controls, TFO-lite, representation
 augmentation and the host-material concept capture/synthesis path. The
 separate teacher-score batch, post-Bootstrap state resolvers, next-action
 scheduler and lifecycle persistence are part of the same production seam.
-Automatic learning credit, promotion and sideband activation remain disabled.**
+Automatic learning credit, automatic promotion and automatic sideband
+activation remain disabled; explicit host review and lifecycle operations are
+separate, durable gates.**
 FlyDelta is not enabled by default and is not a replacement for
 the current model-adaptation path. It must not be activated until it has
 passed explicit evaluation and promotion gates.
+
+New sessions should follow the [FlyDelta session bootstrap](agent-flydelta-session-bootstrap.md).
+This document is the authoritative architecture/status source for the current
+repository; status claims below require production caller, persistence and
+consumer evidence.
+
+Development is performed on the currently selected work branch. Related
+verified sweeps may be checkpointed with a local commit after the
+documentation gate. Synchronization with the integration branch
+`feature/llama-agent` is a separate owner-directed operation and is not implied
+by a local FlyDelta commit.
 
 FlyDelta is a proposed, small, host-controlled associative sideband for a
 frozen language model. It records only host-certified experience and can
@@ -244,6 +257,47 @@ only when its production callback and durable resolver are registered. The
 presence of a common algorithm or model-free smoke callback is not sufficient.
 Scalar fallback remains a backend policy; when the production batch host is
 enabled, FlyDelta logical waves must use it.
+
+## Current pre-canary status map
+
+The current branch has the following verified chain. `IMPLEMENTED` means the
+link is registered, invoked, persisted and consumed; it does not mean that
+promotion or activation happens automatically.
+
+| Link | Status | Entry point and durable consumer | Evidence |
+| --- | --- | --- | --- |
+| candidate -> counterfactual reports | IMPLEMENTED | `daemon_flydelta_run_counterfactual()` and the evaluator's counterfactual job path; worker reports are persisted as lifecycle records | CTest contract: `test-agent-flydelta-pipeline`; functional evidence requires traced model-free or model-backed smoke, depending on the path |
+| reports -> PromotionSummary | IMPLEMENTED | `common_flydelta_promotion_summary_from_reports()`; daemon worker persists and admin lookup reloads or derives it | `test-agent-flydelta-promotion`, `test-agent-flydelta-pipeline` |
+| EvaluationRunner -> EvaluationReport | IMPLEMENTED | `daemon_flydelta_run_evaluation()` registered through `run_evaluation`; each fixture reuses the existing bounded batch/counterfactual path | CTest contract: `test-agent-flydelta-evaluator`; functional model-host evidence requires traced model smoke |
+| EvaluationReport persistence/load | IMPLEMENTED | evaluation lifecycle record plus `common_flydelta_load_evaluation_report()` | evaluator and candidate-lifecycle contract tests |
+| PromotionSummary persistence/load | IMPLEMENTED | promotion-summary lifecycle record plus `common_flydelta_load_promotion_summary()` | promotion and lifecycle tests |
+| review JSONL/admin operation | IMPLEMENTED | JSONL protocol parses `flydelta.evaluate_candidate`, `get_evaluation`, `get_promotion_summary` and `review_candidate`; review data uses the configured lifecycle backend | CTest contracts: daemon protocol/review-store; functional admin-path evidence requires a traced model-free daemon smoke |
+| review -> stage_canary | IMPLEMENTED | `flydelta.stage_canary` checks durable approval and sends the complete stage review through `apply_and_append`; registry state advances only after the review journal append succeeds | Contract CTests cover review-store ordering; model-free functional smoke `llama-agent-daemon-flydelta-admin-smoke` traces admin dispatch, worker persistence, review, canary and journal replay |
+
+The generic `common_learning_evaluate_candidate` path documented in
+`agent-model-adaptation.md` belongs to the separate adapter lifecycle. It is
+not the production FlyDelta pre-canary runner and must not be used as proof
+for this table.
+
+## Documentation maintenance gate
+
+At the end of every related development sweep, compare the changed code with
+this status map, the daemon usage guide and the referenced examples. Update
+any changed entrypoint, caller, persistence record, consumer, test command or
+limitation before closing the sweep. Record the verification date, commit and
+tests in the maintenance log below. Classify each result as CTest contract
+evidence, model-free functional smoke evidence or model-backed functional
+smoke evidence, and retain the corresponding traces. If the code changed but
+the status did not, record why the existing evidence remains valid. After several related sweeps
+have passed this gate, create a local commit on the current work branch;
+integration with `feature/llama-agent` requires an explicit owner instruction.
+
+### Maintenance log
+
+| Date | Commit | Sweep/result | Tests or smokes | Documentation decision |
+| --- | --- | --- | --- | --- |
+| 2026-09-24 | 71f3e6274 | Initial pre-canary status map; stage-canary remains PARTIAL | CTest contract evidence: six focused CTests covering pipeline, promotion, review-store, evaluator, daemon protocol and daemon JSONL protocol; no functional smoke was run in this documentation-only sweep | Added bootstrap and documented the durable stage-canary gap; no implementation change made in this documentation sweep |
+| 2026-09-24 | working tree (pre-commit) | Stage-canary atomic ordering and full model-free admin smoke implemented | CTest contract evidence: the same six focused CTests passed; model-free functional smoke passed with `flydelta_admin_trace` for queue, evaluation, summary, review and canary plus `flydelta_worker_trace` and durable replay | Reclassified review -> stage_canary as IMPLEMENTED; added the standalone smoke target and retained model-free/model-backed evidence separation |
 
 ## Natural dataset-question smoke
 

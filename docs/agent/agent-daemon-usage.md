@@ -657,6 +657,70 @@ The config file is loaded first and explicit flags are the appropriate place
 for a one-run override. Secrets should remain in environment variables, not
 in flags or checked-in JSON.
 
+## FlyDelta pre-canary administration
+
+When FlyDelta is enabled and the daemon has a registered candidate, the JSONL
+admin protocol exposes the bounded pre-canary sequence below. These commands
+are host/operator operations; model output cannot call them or bypass their
+review and compatibility checks.
+
+```text
+flydelta.evaluate_candidate
+  -> worker runs bounded intended/holdout/retention/agent-regression fixtures
+  -> durable EvaluationReport and PromotionSummary
+  -> flydelta.get_evaluation / flydelta.get_promotion_summary
+  -> flydelta.review_candidate(decision=approve_canary|reject)
+  -> flydelta.stage_canary(explicit_host_approval=true)
+```
+
+The evaluation request carries candidate manifest, suite, evaluation revision,
+model/tokenizer/template identity and bounded model-call limits. The queue
+contains references; the daemon resolves the artifact, suite and model-facing
+fixtures through the existing resource and batch-host seams. A fixture result
+is host-verified and the candidate is considered passed only when the required
+baseline/candidate verifier state is known and the candidate behavior passes.
+Teacher-forced margin or geometry cannot create `HELPED` evidence.
+
+The evaluation report and promotion summary are separate gates. An evaluation
+report records suite behavior; a promotion summary aggregates trusted
+counterfactual reports. `approve_canary` is a durable review record and does
+not itself mutate the registry. `stage_canary` requires that review plus
+explicit host approval and stops at `canary`; it does not activate the
+sideband.
+
+The lifecycle backend may be Cozo, SQLite, JSONL or the configured in-memory
+test store. The review operation is transported over JSONL, but review and
+evaluation persistence is not a second hard-coded JSONL system. Review replay
+restores explicit host decisions at daemon startup.
+
+The stage-canary handler uses the review-store `apply_and_append` seam. It
+applies the registry transition to a copy, appends the durable stage review,
+and only then commits the live registry. A failed journal append therefore
+cannot expose an unjournaled canary.
+
+The model-free functional admin smoke is built as
+`llama-agent-daemon-flydelta-admin-smoke` and can be run explicitly with:
+
+```bash
+GGML_VK_VISIBLE_DEVICES=0 \
+  ./build-agent-vulkan-cozo/bin/llama-agent-daemon-flydelta-admin-smoke
+```
+
+It emits `flydelta_admin_trace` for each admin operation and a
+`flydelta_worker_trace` for the persisted evaluation worker result. The smoke
+uses a model-free host callback; it proves daemon/queue/worker/lifecycle and
+review wiring, not model quality. Run a separate model smoke for model-host,
+batch, generation and host-verification evidence.
+
+Verification uses three distinct evidence levels. CTests are contract tests:
+they validate schemas, validators, state transitions and invariants, but do
+not prove a functional daemon or model path. Functional smokes must emit a
+trace of the request/job, worker, host callback, durable result and lifecycle
+consumer. A model-free smoke proves daemon and FlyDelta wiring without proving
+model behavior; a model smoke proves the model-host/batch/generation and host
+verification path for the supplied model and configuration. A smoke's exit
+code without its trace is insufficient evidence for production wiring.
+
 ## JSONL commands
 
 The copyable request sequence is in

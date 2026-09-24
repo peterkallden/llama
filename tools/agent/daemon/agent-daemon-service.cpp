@@ -3,7 +3,6 @@
 #include "../mcp/agent-mcp-server-tool-registry.h"
 #include "../runtime/agent-server-context-host.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
-#include "agent/adaptation/flydelta/flydelta-sideband-controller.h"
 #include "agent/adaptation/flydelta/flydelta-sideband-review-store.h"
 #include "hash/hash.h"
 
@@ -956,16 +955,11 @@ bool common_agent_daemon_service::execute_flydelta_admin(
         }
         if (!review_error.empty() || !approved) return fail(
             review_error.empty() ? "FlyDelta canary requires a durable approve_canary review" : review_error);
-        bool already_canary = manifest->status == common_flydelta_sideband_status::canary;
+        const bool already_canary = manifest->status == common_flydelta_sideband_status::canary;
         if (!already_canary && manifest->status != common_flydelta_sideband_status::candidate) {
             return fail("FlyDelta candidate is not stageable");
         }
         common_flydelta_promotion_policy policy;
-        if (!already_canary) {
-            common_flydelta_sideband_controller controller(*runtime.flydelta_sideband_registry);
-            if (!controller.promote_to_canary(
-                    *manifest, summary, evaluation, policy, true, error)) return fail(error);
-        }
         common_flydelta_sideband_review review;
         review.event_id = "flydelta://review/" + request.candidate_id + ":stage_canary:" +
             evaluation.revision_id;
@@ -982,7 +976,12 @@ bool common_agent_daemon_service::execute_flydelta_admin(
         review.evaluation = evaluation;
         review.promotion_summary_ref = summary.id;
         review.evaluation_report_ref = evaluation_report_ref;
-        if (!runtime.flydelta_sideband_review_store->append(review, error)) return fail(error);
+        // Apply and persist as one durable boundary. The review store applies
+        // to a registry copy before appending; the live registry advances only
+        // after the journal write succeeds. This prevents a failed append from
+        // exposing an unjournaled canary.
+        if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                *runtime.flydelta_sideband_registry, review, true, error)) return fail(error);
         outcome.ok = true;
         outcome.event = "flydelta.canary.staged";
         outcome.payload_json = json{

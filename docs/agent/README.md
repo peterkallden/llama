@@ -174,7 +174,9 @@ remote MCP providers, status/readiness, and Docker usage.
   model-free evidence, basis and activation-gate contracts are implemented,
   but it is not active model adaptation; its seams, bounds and staged
   evaluation are documented in
-  [FlyDelta sideband learning](agent-flydelta.md).
+  [FlyDelta sideband learning](agent-flydelta.md). New development sessions
+  should begin with the [FlyDelta session bootstrap](agent-flydelta-session-bootstrap.md),
+  which also defines the end-of-sweep documentation gate.
 - **Model residency and multi-model scheduling (in progress)** — named
   generation profiles, shared resident model handles, per-session contexts,
   profile pinning, eviction and backend-neutral inference admission. See

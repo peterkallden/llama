@@ -1490,6 +1490,22 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Functional FlyDelta admin path. This is intentionally a smoke executable,
+# not a contract CTest: it exercises queue/worker/lifecycle/review wiring and
+# emits the trace that proves the end-to-end path.
+set(TARGET llama-agent-daemon-flydelta-admin-smoke)
+add_executable(${TARGET}
+    smoke/daemon/agent-daemon-flydelta-admin-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+    ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-daemon-jsonl-protocol-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-jsonl-protocol-smoke.cpp

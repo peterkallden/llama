@@ -1704,6 +1704,12 @@ prompt.
 
 ### Sweep 6 — evaluation, replay, and canary promotion (report/gate slice in place)
 
+Scope note: this section describes the generic adapter/model-adaptation
+lifecycle. It is not the current FlyDelta pre-canary status source. FlyDelta
+uses its own `common_flydelta_evaluation_report`, bounded experiment job and
+daemon `run_evaluation` binding; that chain is maintained in
+[FlyDelta sideband learning](agent-flydelta.md).
+
 Deliverables:
 
 - Add held-out behavior cases, replay/retention cases, existing agent contract
@@ -1722,11 +1728,12 @@ Tests and exit gate:
 - evaluation metadata binds to corpus, base, adapter, and test revisions;
 - rollback returns to baseline without changing the base model.
 
-The report schema, three-gate invariant, canary staging, and manual activation
-boundary are now implemented. `common_learning_evaluate_candidate` is the
-host-owned evaluator seam: it runs the same immutable fixture against baseline
-and candidate, checks comparable turn counts, records both intervention
-counts, and produces the report consumed by `stage_canary`. The fixture binds
+The generic report schema, three-gate invariant, canary staging, and manual
+activation boundary are implemented as a contract slice.
+`common_learning_evaluate_candidate` is the generic host-owned evaluator seam:
+it runs the same immutable fixture against baseline and candidate, checks
+comparable turn counts, records both intervention counts, and produces the
+report consumed by the generic adapter lifecycle. The fixture binds
 corpus revision/bundle, base training fingerprint, and test-suite revision;
 the host should additionally freeze tool/resource/profile-limit snapshots in
 that suite revision. A real evaluator still has to connect held-out,
