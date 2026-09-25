@@ -3,7 +3,15 @@ set -euo pipefail
 
 agent_smoke_repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 agent_smoke_build_dir() { printf '%s\n' "${LLAMA_AGENT_BUILD_DIR:-build-agent-packaging}"; }
-agent_smoke_model() { printf '%s\n' "${LLAMA_AGENT_MODEL:-${HOME}/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf}"; }
+agent_smoke_model() {
+    local model="${LLAMA_AGENT_MODEL:-models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf}"
+    if [[ "$model" = /* ]]; then printf '%s\n' "$model"; else printf '%s/%s\n' "$(agent_smoke_repo_root)" "$model"; fi
+}
+agent_smoke_build_path() {
+    local build_dir
+    build_dir=$(agent_smoke_build_dir)
+    if [[ "$build_dir" = /* ]]; then printf '%s\n' "$build_dir"; else printf '%s/%s\n' "$(agent_smoke_repo_root)" "$build_dir"; fi
+}
 agent_smoke_binary() {
     local build_dir="$1"
     local binary_name="$2"
@@ -30,5 +38,5 @@ agent_smoke_run_logged() {
     if [[ $status -ne 0 ]]; then echo "model smoke failed: exit=${status}; log=${log_path}" >&2; return "$status"; fi
 }
 agent_smoke_build_if_requested() {
-    if [[ "${LLAMA_AGENT_BUILD:-0}" == 1 ]]; then cmake --build "$(agent_smoke_build_dir)" --target llama-agent --parallel "${LLAMA_AGENT_BUILD_JOBS:-1}"; fi
+    if [[ "${LLAMA_AGENT_BUILD:-0}" == 1 ]]; then cmake --build "$(agent_smoke_build_path)" --target llama-agent --parallel "${LLAMA_AGENT_BUILD_JOBS:-1}"; fi
 }

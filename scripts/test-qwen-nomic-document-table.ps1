@@ -1,9 +1,9 @@
 [CmdletBinding()]
 param(
-    [string]$BuildDir = "C:\llama-builds\agent-resource-tools-msvc-debug-cuda12b",
+    [string]$BuildDir = "build-agent-resource-tools-msvc-debug",
     [string]$Configuration = "Release",
-    [string]$ChatModel = "C:\Users\kalld\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
-    [string]$EmbeddingModel = "C:\Users\kalld\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
+    [string]$ChatModel = "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string]$EmbeddingModel = "models\nomic-embed-text-v1.5.Q4_K_M.gguf",
     [string]$WorkSubdir = "work\qwen-nomic-document-table",
     [ValidateSet("reflective", "deliberate", "research")]
     [string]$ThinkingMode = "research",
@@ -23,25 +23,13 @@ function Assert-PathExists {
     if (-not (Test-Path -LiteralPath $Path)) { throw "$Label not found: $Path" }
 }
 
-function Quote-Argument {
-    param([string]$Value)
-    $Value = $Value -replace '[\r\n]+', ' '
-    if ($Value -notmatch '[\s"]') { return $Value }
-    $escaped = $Value -replace '(\\*)"', '$1$1\"'
-    $escaped = $escaped -replace '(\\+)$', '$1$1'
-    return '"' + $escaped + '"'
-}
-
 function Invoke-LoggedCommand {
     param([string]$Name, [string]$LogPath, [string]$FilePath, [string[]]$ArgumentList)
     $stdoutPath = "$LogPath.stdout"
     $stderrPath = "$LogPath.stderr"
     Remove-Item -LiteralPath $stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue
     New-Item -ItemType File -Force -Path $stdoutPath,$stderrPath | Out-Null
-    $arguments = ($ArgumentList | ForEach-Object { Quote-Argument $_ }) -join ' '
-    $toolPath = 'C:\tools;C:\tools\LLVM\bin;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin;C:\Users\kalld\Documents\Codex\llama-dyn\work\cozo-release\win;C:\Windows\System32;C:\Windows;C:\Program Files\Git\cmd;C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin'
-    $command = ('"{0}" {1} 1> "{2}" 2> "{3}"' -f $FilePath, $arguments, $stdoutPath, $stderrPath)
-    & cmd.exe /d /c ('set "Path=" & set PATH={0} & {1}' -f $toolPath, $command)
+    & $FilePath @ArgumentList 1> $stdoutPath 2> $stderrPath
     $exitCode = $LASTEXITCODE
     $lines = @(Get-Content -LiteralPath $stdoutPath) + @(Get-Content -LiteralPath $stderrPath)
     [System.IO.File]::WriteAllText($LogPath, ($lines -join [Environment]::NewLine))

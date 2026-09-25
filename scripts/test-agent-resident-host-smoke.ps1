@@ -2,7 +2,7 @@
 param(
     [string]$BuildDir = "build-plan",
     [string]$Configuration = "Release",
-    [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string]$ChatModel = "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [string]$FirstPrompt = "Reply with OK only.",
     [string]$SecondPrompt = "Reply with DONE only.",
     [int]$FirstNPredict = 32,
@@ -27,7 +27,6 @@ function Assert-PathExists {
 
 function Resolve-CMake {
     $candidates = @(
-        "C:\Users\kalld\AppData\Roaming\Python\Python312\Scripts\cmake.exe",
         "cmake"
     )
 

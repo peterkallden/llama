@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$BuildDir = "build-plan",
-    [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string]$ChatModel = "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [switch]$Build
 )
 

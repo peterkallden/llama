@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$BuildDir = "build-plan-cozo-ssl",
-    [string]$ChatModel = "C:\Users\kalld\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string]$ChatModel = "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [string]$Fixture = "tests\data\agent-resource-synthesis.txt",
     [string]$WorkSubdir = "work\qwen-resource-synthesis",
     [ValidateRange(1, 64)]

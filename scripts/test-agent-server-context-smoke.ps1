@@ -2,8 +2,8 @@
 param(
     [string]$BuildDir = "build-plan-cozo-ssl",
     [string]$Configuration = "Release",
-    [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
-    [string]$EmbeddingModel = "$HOME\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
+    [string]$ChatModel = "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string]$EmbeddingModel = "models\nomic-embed-text-v1.5.Q4_K_M.gguf",
     [string]$WorkSubdir = "work\agent-runtime-driver-server-context-smoke",
     [string]$Prompt = "Say OK after making a tiny plan.",
     [switch]$Build
@@ -25,7 +25,6 @@ function Assert-PathExists {
 
 function Resolve-CMake {
     $candidates = @(
-        "C:\Users\kalld\AppData\Roaming\Python\Python312\Scripts\cmake.exe",
         "cmake"
     )
 

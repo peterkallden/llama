@@ -2,8 +2,8 @@
 param(
     [string]$BuildDir = "build-plan-cozo-ssl",
     [string]$Configuration = "Release",
-    [string]$ChatModel = "C:\Users\kalld\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
-    [string]$EmbeddingModel = "C:\Users\kalld\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
+    [string]$ChatModel = "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string]$EmbeddingModel = "models\nomic-embed-text-v1.5.Q4_K_M.gguf",
     [string]$OrdersCsv = "",
     [string]$CustomersCsv = "",
     [ValidateSet("reflective", "deliberate")]
@@ -20,17 +20,6 @@ function Assert-PathExists {
     if (-not (Test-Path -LiteralPath $Path)) { throw "$Label not found: $Path" }
 }
 
-function Quote-Argument {
-    param([string]$Value)
-    # cmd.exe treats literal newlines in a /c command as command separators.
-    # Normalize multi-line prompts before constructing the redirected command.
-    $Value = $Value -replace '[\r\n]+', ' '
-    if ($Value -notmatch '[\s"]') { return $Value }
-    $escaped = $Value -replace '(\\*)"', '$1$1\"'
-    $escaped = $escaped -replace '(\\+)$', '$1$1'
-    return '"' + $escaped + '"'
-}
-
 function Invoke-LoggedCommand {
     param([string]$Name, [string]$LogPath, [string]$FilePath, [string[]]$ArgumentList)
     $stdoutPath = "$LogPath.stdout"
@@ -38,10 +27,7 @@ function Invoke-LoggedCommand {
     if (Test-Path -LiteralPath $stdoutPath) { Remove-Item -LiteralPath $stdoutPath -Force }
     if (Test-Path -LiteralPath $stderrPath) { Remove-Item -LiteralPath $stderrPath -Force }
     New-Item -ItemType File -Force -Path $stdoutPath,$stderrPath | Out-Null
-    $arguments = ($ArgumentList | ForEach-Object { Quote-Argument $_ }) -join ' '
-    $toolPath = 'E:\progs\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Program Files\Git\cmd;C:\Program Files\nodejs;C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin;C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin'
-    $command = ('"{0}" {1} 1> "{2}" 2> "{3}"' -f $FilePath, $arguments, $stdoutPath, $stderrPath)
-    & cmd.exe /d /c ('set "Path=" & set PATH={0} & {1}' -f $toolPath, $command)
+    & $FilePath @ArgumentList 1> $stdoutPath 2> $stderrPath
     $exitCode = $LASTEXITCODE
     $lines = @()
     if (Test-Path -LiteralPath $stdoutPath) { $lines += Get-Content -LiteralPath $stdoutPath }

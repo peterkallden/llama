@@ -2,7 +2,7 @@
 param(
     [string]$BuildDir = "build-plan-resident-cozo-debug-3",
     [string]$Configuration = "Release",
-    [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string]$ChatModel = "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [int]$Port = 18090
 )
 

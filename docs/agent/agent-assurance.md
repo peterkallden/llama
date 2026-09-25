@@ -1094,8 +1094,9 @@ previous result when the branch or test configuration changes.
   inappropriate extra `web_search` step. This is a model/planning behavior
   issue exposed by the smoke, not a document parser or CTest contract failure.
 - The data and document-table runs used `--agent-trace`; the document-table
-  run also used `--generation-trace`. Their retained logs are under `/tmp`
-  and should be used for follow-up model/planner diagnostics.
+  run also used `--generation-trace`. Their retained logs are under the
+  configured smoke work directory and should be used for follow-up
+  model/planner diagnostics.
 - The model-backed results are reported separately from deterministic CTest:
   basic chat, resource synthesis, resident server-context reuse, and daemon
   lifecycle passed; data research and document-table planning failed at the

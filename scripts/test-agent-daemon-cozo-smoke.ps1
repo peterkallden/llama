@@ -2,7 +2,7 @@
 param(
     [string]$BuildDir = "build-plan-resident-cozo-debug",
     [string]$Configuration = "Release",
-    [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string]$ChatModel = "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [string]$CozoBin = "",
     [switch]$Build
 )

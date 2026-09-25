@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$BuildDir = "build-plan-cozo-ssl",
-    [string]$ChatModel = "C:\Users\kalld\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
-    [string]$EmbeddingModel = "C:\Users\kalld\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
+    [string]$ChatModel = "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string]$EmbeddingModel = "models\nomic-embed-text-v1.5.Q4_K_M.gguf",
     [string]$WorkSubdir = "work\qwen-nomic-manual-test",
     [string]$LearningPrompt = "When debugging agent regressions, explain the reusable procedure you followed and keep the final answer brief.",
     [ValidateSet("reflective", "deliberate")]
@@ -77,7 +77,6 @@ function Invoke-LoggedCommand {
 
 function Resolve-CMake {
     $candidates = @(
-        "C:\Users\kalld\AppData\Roaming\Python\Python312\Scripts\cmake.exe",
         "cmake"
     )
 

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "model": {
     "backend": "server-context",
-    "path": "C:/Users/kalld/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
+    "path": "models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
   },
   "runtime": {
     "default_mode": "agent",

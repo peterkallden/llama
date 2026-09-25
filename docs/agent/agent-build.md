@@ -72,8 +72,10 @@ Install or make available:
 Start from a Visual Studio Developer PowerShell or an equivalent environment
 that exposes MSVC, the Windows SDK, the linker, and CMake. The repository also
 contains [scripts/agent-build-env.ps1](../../scripts/agent-build-env.ps1), which
-adds the local CMake and LLVM tools without modifying the user or system PATH
-permanently.
+discovers CMake and LLVM from `PATH` without modifying the user or system PATH
+permanently. Set `LLAMA_AGENT_CMAKE_BIN` or `LLAMA_AGENT_LLVM_BIN` when a tool
+must be supplied explicitly; each variable accepts either a tool directory or
+the command path.
 
 On Windows, keep `Path` and `PATH` normalized to one environment variable
 before invoking MSBuild. Duplicate case variants can cause MSBuild to fail

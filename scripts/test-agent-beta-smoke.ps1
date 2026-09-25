@@ -50,7 +50,7 @@ foreach ($name in $smokes) {
 }
 
 if ($IncludeDaemon) {
-    $model = Join-Path $HOME "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
+    $model = Join-Path $repoRoot "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
     if (-not (Test-Path -LiteralPath $model)) {
         throw "-IncludeDaemon requires the default chat model: $model"
     }

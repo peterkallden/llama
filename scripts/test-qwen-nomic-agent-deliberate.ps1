@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$BuildDir = "build-plan-cozo-ssl",
-    [string]$ChatModel = "C:\Users\kalld\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
-    [string]$EmbeddingModel = "C:\Users\kalld\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
+    [string]$ChatModel = "models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string]$EmbeddingModel = "models\nomic-embed-text-v1.5.Q4_K_M.gguf",
     [string]$WorkSubdir = "work\qwen-nomic-deliberate-test",
     [string]$AgentPrompt = "Make a short plan, inspect the available context, and then reply OK only.",
     [switch]$Build,

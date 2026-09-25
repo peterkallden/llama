@@ -1,4 +1,4 @@
-# Configure the local toolchain used by agent builds and smokes.
+# Configure the toolchain used by agent builds and smokes.
 #
 # Usage from PowerShell:
 #   . .\scripts\agent-build-env.ps1
@@ -11,20 +11,31 @@
 # The environment changes are limited to the current PowerShell process. The
 # script does not modify the user or system PATH permanently.
 
-$cmakeCandidates = @(
-    'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin',
-    'C:\Users\kalld\AppData\Roaming\Python\Python312\Scripts'
-)
-$cmakeBin = $cmakeCandidates | Where-Object {
-    Test-Path -LiteralPath (Join-Path $_ 'cmake.exe')
-} | Select-Object -First 1
-$llvmCandidates = @(
-    'C:\tools\LLVM\bin',
-    'E:\progs\bin'
-)
-$llvmBin = $llvmCandidates | Where-Object {
-    Test-Path -LiteralPath (Join-Path $_ 'clang.exe')
-} | Select-Object -First 1
+function Resolve-AgentToolDirectory {
+    param(
+        [string]$Override,
+        [string]$Executable
+    )
+
+    if ($Override) {
+        if (Test-Path -LiteralPath $Override -PathType Container) {
+            $candidate = Join-Path $Override $Executable
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return (Resolve-Path -LiteralPath $Override).Path
+            }
+            throw "$Executable was not found under LLAMA_AGENT tool directory: $Override"
+        }
+
+        $command = Get-Command $Override -ErrorAction Stop
+        return Split-Path -Parent $command.Source
+    }
+
+    $command = Get-Command $Executable -ErrorAction Stop
+    return Split-Path -Parent $command.Source
+}
+
+$cmakeBin = Resolve-AgentToolDirectory -Override $env:LLAMA_AGENT_CMAKE_BIN -Executable 'cmake.exe'
+$llvmBin = Resolve-AgentToolDirectory -Override $env:LLAMA_AGENT_LLVM_BIN -Executable 'clang.exe'
 
 foreach ($requiredPath in @($cmakeBin, $llvmBin)) {
     if (-not (Test-Path -LiteralPath $requiredPath -PathType Container)) {
@@ -69,8 +80,7 @@ function Invoke-AgentBuild {
     }) -join ' '
 
     # cmd.exe lets us replace both case variants before MSBuild inherits the
-    # environment.  This avoids the duplicate Path/PATH dictionary key seen
-    # by MSBuild in the Codex Windows process.
+    # environment.
     $cleanPath = $env:Path
     & cmd.exe /d /c ('set "Path=" & set "PATH=" & set "Path={0}" & "{1}" {2}' -f $cleanPath, $cmakePath, $argumentString)
     return $LASTEXITCODE
