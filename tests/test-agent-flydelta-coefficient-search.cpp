@@ -2,8 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
-#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
+#define CHECK(condition) do { \
+    if (!(condition)) { \
+        std::fprintf(stderr, "CHECK failed at %s:%d\\n", __FILE__, __LINE__); \
+        return __LINE__; \
+    } \
+} while (false)
 
 static common_flydelta_direction_candidate direction(int layer, float first, float second) {
     common_flydelta_direction_candidate value;
@@ -201,6 +207,107 @@ int main() {
     CHECK(largest_coefficient_batch <= batch_config.max_batch_arms);
     CHECK(batch_trials_result.size() == 4);
     CHECK(batch_selection.selected);
+
+    common_flydelta_coefficient_search_config staged_config = batch_config;
+    size_t staged_diagnostic_batch_calls = 0;
+    size_t staged_full_batch_calls = 0;
+    size_t staged_full_arm_count = 0;
+    const common_flydelta_coefficient_search_runner staged_diagnostic_runner =
+        [](const auto &, const auto &, const auto &, bool apply,
+                auto & trial, auto & margin, auto &, auto & geometry_available, std::string &) {
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = false;
+            trial.passed = false;
+            trial.quality = 0.0f;
+            margin = {};
+            geometry_available = false;
+            if (!apply) return true;
+            return true;
+        };
+    const common_flydelta_coefficient_search_batch_runner staged_diagnostic_batch_runner =
+        [&](const auto &, const auto &, const auto & coefficients,
+                auto & batch_counterfactuals, auto & batch_margins,
+                auto & batch_geometries, auto & batch_geometry_available, std::string &) {
+            ++staged_diagnostic_batch_calls;
+            batch_counterfactuals.clear();
+            batch_margins.clear();
+            batch_geometries.clear();
+            batch_geometry_available.clear();
+            for (const auto & values : coefficients) {
+                common_flydelta_counterfactual_trial trial;
+                trial.executed = true;
+                trial.verifier_known = false;
+                trial.passed = false;
+                trial.quality = 0.0f;
+                common_flydelta_decision_margin margin;
+                margin.available = true;
+                margin.positive_total_logprob = values[0];
+                margin.negative_total_logprob = 0.0f;
+                margin.positive_token_count = 1;
+                margin.negative_token_count = 1;
+                batch_counterfactuals.push_back(std::move(trial));
+                batch_margins.push_back(std::move(margin));
+                batch_geometries.emplace_back();
+                batch_geometry_available.push_back(false);
+            }
+            return true;
+        };
+    const common_flydelta_coefficient_search_runner staged_full_runner =
+        [](const auto &, const auto &, const auto &, bool apply,
+                auto & trial, auto & margin, auto &, auto & geometry_available, std::string &) {
+            (void) apply;
+            trial = {};
+            trial.executed = true;
+            trial.verifier_known = true;
+            trial.evidence_ref = "evidence://coefficient-staged-baseline";
+            trial.passed = false;
+            trial.quality = 0.0f;
+            margin = {};
+            geometry_available = false;
+            return true;
+        };
+    const common_flydelta_coefficient_search_batch_runner staged_full_batch_runner =
+        [&](const auto &, const auto &, const auto & coefficients,
+                auto & batch_counterfactuals, auto & batch_margins,
+                auto & batch_geometries, auto & batch_geometry_available, std::string &) {
+            ++staged_full_batch_calls;
+            staged_full_arm_count += coefficients.size();
+            batch_counterfactuals.clear();
+            batch_margins.clear();
+            batch_geometries.clear();
+            batch_geometry_available.clear();
+            for (const auto & values : coefficients) {
+                common_flydelta_counterfactual_trial trial;
+                trial.executed = true;
+                trial.verifier_known = true;
+                trial.evidence_ref = "evidence://coefficient-staged-full";
+                trial.passed = true;
+                trial.quality = values[0] > 0.0f ? 1.0f : 0.5f;
+                batch_counterfactuals.push_back(std::move(trial));
+                batch_margins.emplace_back();
+                batch_geometries.emplace_back();
+                batch_geometry_available.push_back(false);
+            }
+            return true;
+        };
+    std::vector<common_flydelta_coefficient_trial> staged_trials;
+    common_flydelta_coefficient_selection staged_selection;
+    const bool staged_ok = common_flydelta_run_low_rank_coefficient_search_batched_staged(
+        fixture(), basis, staged_config,
+        staged_diagnostic_runner, staged_diagnostic_batch_runner,
+        staged_full_runner, staged_full_batch_runner, 2,
+        staged_trials, staged_selection, error);
+    if (!staged_ok) {
+        std::fprintf(stderr, "staged search failed: %s\\n", error.c_str());
+    }
+    CHECK(staged_ok);
+    CHECK(staged_diagnostic_batch_calls > 0);
+    CHECK(staged_full_batch_calls == 1 && staged_full_arm_count == 2);
+    CHECK(staged_trials.size() > staged_full_arm_count);
+    CHECK(staged_selection.selected);
+    CHECK(staged_trials.back().mutation_kind == "full_generation_top_arm");
+    CHECK(staged_trials.back().verifier_known);
 
     common_learning_in_memory_lifecycle_store lifecycle;
     common_flydelta_lifecycle_event_context lifecycle_context;

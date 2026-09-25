@@ -2002,6 +2002,7 @@ bool daemon_flydelta_run_search_pipeline(
             const bool apply_overlay,
             const std::string & wave_id,
             const size_t proposal_index,
+            const bool full_execution,
             common_flydelta_arm_request & arm,
             std::string & runner_error) {
         arm = {};
@@ -2017,13 +2018,13 @@ bool daemon_flydelta_run_search_pipeline(
         arm.fresh_context = true;
         arm.alpha = apply_overlay ? scale : 0.0f;
         arm.request_teacher_forced_margin = true;
-        arm.request_generation = true;
-        arm.request_host_verification = true;
+        arm.request_generation = full_execution;
+        arm.request_host_verification = full_execution;
         // Diagnostics are first-class search observations.  The production
         // host captures the small requested layer set and keeps it only for
         // this bounded comparison wave.
         arm.request_capture = true;
-        arm.max_generated_tokens = 64;
+        arm.max_generated_tokens = full_execution ? 64 : 0;
         if (layer != nullptr && apply_overlay) {
             arm.layer_indices = layer->layer_indices;
             arm.coefficients.assign(layer->layer_indices.size(), 1.0f);
@@ -2043,7 +2044,8 @@ bool daemon_flydelta_run_search_pipeline(
             std::string & runner_error) {
         common_flydelta_arm_request arm;
         if (!make_arm(current_fixture, layer, scale, apply_overlay,
-                apply_overlay ? "region-scalar" : "baseline", 0, arm, runner_error)) return false;
+                apply_overlay ? "region-diagnostic" : "baseline-diagnostic", 0, false,
+                arm, runner_error)) return false;
         if (!apply_overlay) {
             // A baseline has no overlay layers of its own, but it must capture
             // the same searchable layers as later arms for aligned geometry.
@@ -2132,7 +2134,7 @@ bool daemon_flydelta_run_search_pipeline(
             layer.total_scale = candidates[index].total_scale;
             common_flydelta_arm_request arm;
             if (!make_arm(current_fixture, &layer, candidates[index].total_scale, true,
-                    batch.wave_id, index, arm, runner_error)) return false;
+                    batch.wave_id, index, false, arm, runner_error)) return false;
             batch.arms.push_back(std::move(arm));
         }
         common_flydelta_arm_batch_result batch_result;
@@ -2213,8 +2215,134 @@ bool daemon_flydelta_run_search_pipeline(
         }
         return true;
     };
-    return common_flydelta_run_search_pipeline_batched(
-        fixture, config, {input}, runner, batch_runner, result, error);
+    if (!common_flydelta_run_search_pipeline_batched(
+            fixture, config, {input}, runner, batch_runner, result, error)) return false;
+
+    // Whirlpool/region search ranks compact diagnostic observations first.
+    // Only the bounded frontier is re-run with generation and host
+    // verification; the search algorithm and its candidate ordering remain
+    // unchanged.
+    struct frontier_arm {
+        size_t direction_index = 0;
+        size_t trial_index = 0;
+    };
+    std::vector<frontier_arm> frontier;
+    for (size_t direction_index = 0; direction_index < result.directions.size(); ++direction_index) {
+        const auto & direction = result.directions[direction_index];
+        for (size_t trial_index = 0; trial_index < direction.region_trials.size(); ++trial_index) {
+            if (direction.region_trials[trial_index].executed) {
+                frontier.push_back({direction_index, trial_index});
+            }
+        }
+    }
+    std::stable_sort(frontier.begin(), frontier.end(), [&](const frontier_arm & left,
+            const frontier_arm & right) {
+        const auto & left_trial = result.directions[left.direction_index].region_trials[left.trial_index];
+        const auto & right_trial = result.directions[right.direction_index].region_trials[right.trial_index];
+        if (left_trial.search_score != right_trial.search_score) {
+            return left_trial.search_score > right_trial.search_score;
+        }
+        if (left_trial.candidate.layer_indices.size() != right_trial.candidate.layer_indices.size()) {
+            return left_trial.candidate.layer_indices.size() < right_trial.candidate.layer_indices.size();
+        }
+        return left_trial.candidate.total_scale < right_trial.candidate.total_scale;
+    });
+    constexpr size_t full_generation_top_k = 3;
+    if (frontier.size() > full_generation_top_k) frontier.resize(full_generation_top_k);
+    if (frontier.empty()) {
+        result.search_status = common_flydelta_search_status::no_useful_utility;
+        return true;
+    }
+
+    common_flydelta_arm_batch_request full_batch;
+    full_batch.batch_id = job.id + ":region-full-generation";
+    full_batch.wave_id = "whirlpool-region-full-generation";
+    common_flydelta_arm_request baseline;
+    if (!make_arm(fixture, nullptr, 0.0f, false, full_batch.wave_id, 0, true,
+            baseline, error)) return false;
+    baseline.layer_indices = capture_layers;
+    baseline.coefficients.assign(capture_layers.size(), 0.0f);
+    if (!common_flydelta_arm_request_validate(baseline, error)) return false;
+    full_batch.arms.push_back(baseline);
+    for (size_t index = 0; index < frontier.size(); ++index) {
+        const auto & selected = result.directions[frontier[index].direction_index].region_trials[
+            frontier[index].trial_index];
+        common_flydelta_layer_candidate layer;
+        layer.layer_indices = selected.candidate.layer_indices;
+        layer.total_scale = selected.candidate.total_scale;
+        common_flydelta_arm_request arm;
+        if (!make_arm(fixture, &layer, selected.candidate.total_scale, true,
+                full_batch.wave_id, index + 1, true, arm, error)) return false;
+        full_batch.arms.push_back(std::move(arm));
+    }
+    common_flydelta_arm_batch_result full_result;
+    if (!daemon_flydelta_execute_batch(provider, full_batch, full_result, error) ||
+            full_result.arms.size() != full_batch.arms.size()) {
+        if (error.empty()) error = "FlyDelta region full-generation batch returned incomplete arms";
+        return false;
+    }
+    const auto & baseline_arm = full_result.arms.front();
+    common_flydelta_counterfactual_trial baseline_trial;
+    baseline_trial.executed = baseline_arm.executed;
+    baseline_trial.passed = daemon_flydelta_arm_semantic_passed(baseline_arm);
+    baseline_trial.quality = baseline_arm.quality;
+    baseline_trial.verifier_known = baseline_arm.verifier_known;
+    baseline_trial.evidence_ref = baseline_arm.generation_ref;
+    if (!common_flydelta_counterfactual_trial_validate(baseline_trial, error)) return false;
+    for (size_t index = 0; index < frontier.size(); ++index) {
+        const auto location = frontier[index];
+        auto & trial = result.directions[location.direction_index].region_trials[location.trial_index];
+        const auto & arm = full_result.arms[index + 1];
+        common_flydelta_counterfactual_trial candidate_trial;
+        candidate_trial.executed = arm.executed;
+        candidate_trial.passed = daemon_flydelta_arm_semantic_passed(arm);
+        candidate_trial.quality = arm.quality;
+        candidate_trial.verifier_known = arm.verifier_known;
+        candidate_trial.evidence_ref = arm.generation_ref;
+        if (!common_flydelta_counterfactual_trial_validate(candidate_trial, error)) return false;
+        trial.outcome = common_flydelta_classify_counterfactual(baseline_trial, candidate_trial);
+        trial.quality_delta = candidate_trial.quality - baseline_trial.quality;
+        trial.margin = arm.margin;
+        trial.margin_comparison.available = baseline_arm.margin.available && arm.margin.available;
+        trial.margin_comparison.baseline = baseline_arm.margin;
+        trial.margin_comparison.candidate = arm.margin;
+        trial.executed = candidate_trial.executed;
+        trial.verifier_known = baseline_trial.verifier_known && candidate_trial.verifier_known;
+        trial.evidence_ref = candidate_trial.evidence_ref;
+    }
+    result.selection = {};
+    for (size_t direction_index = 0; direction_index < result.directions.size(); ++direction_index) {
+        auto & direction = result.directions[direction_index];
+        direction.region_selection = {};
+        for (size_t trial_index = 0; trial_index < direction.region_trials.size(); ++trial_index) {
+            const auto & trial = direction.region_trials[trial_index];
+            if (trial.outcome != common_flydelta_counterfactual_outcome::helped ||
+                    !trial.executed || !trial.verifier_known) continue;
+            if (!direction.region_selection.selected ||
+                    trial.quality_delta > direction.region_selection.score) {
+                direction.region_selection = {true, trial_index, trial.quality_delta};
+            }
+            const bool better = !result.selection.selected ||
+                trial.quality_delta > result.selection.score ||
+                (trial.quality_delta == result.selection.score &&
+                 trial.candidate.layer_indices.size() <
+                    result.directions[result.selection.direction_index].region_trials[
+                        result.selection.region_trial_index].candidate.layer_indices.size());
+            if (better) {
+                result.selection.selected = true;
+                result.selection.intervention_region = true;
+                result.selection.direction_index = direction_index;
+                result.selection.region_trial_index = trial_index;
+                result.selection.layer_result_index = 0;
+                result.selection.scale = trial.candidate.total_scale;
+                result.selection.score = trial.quality_delta;
+            }
+        }
+    }
+    result.search_status = result.selection.selected
+        ? common_flydelta_search_status::candidate_available
+        : common_flydelta_search_status::no_useful_utility;
+    return true;
 }
 
 bool daemon_flydelta_register_composed_directions(
@@ -3059,8 +3187,12 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         basis = deep_result.basis;
         trials = deep_result.coefficient_trials;
         selection = deep_result.coefficient_selection;
-    } else if (!common_flydelta_run_low_rank_coefficient_search_batched(
-            fixture, basis, coefficient_config, run_full, run_full_batch,
+    } else if (!common_flydelta_run_low_rank_coefficient_search_batched_staged(
+            fixture, basis, coefficient_config,
+            run_diagnostic, run_diagnostic_batch,
+            run_full, run_full_batch,
+            plan.budget.full_generation_top_k == 0
+                ? 3 : std::min<size_t>(3, plan.budget.full_generation_top_k),
             trials, selection, error)) {
         return false;
     }

@@ -176,6 +176,24 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
         common_flydelta_coefficient_selection & selection,
         std::string & error);
 
+// Executes the unchanged coefficient proposal/ranking algorithm in two
+// execution phases: all proposals use diagnostics first, then only the
+// diagnostic frontier top-K uses generation and host verification. The
+// returned trial list retains both evidence depths; selection is based only
+// on the full-generation trials.
+bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_low_rank_basis & basis,
+        const common_flydelta_coefficient_search_config & config,
+        const common_flydelta_coefficient_search_runner & diagnostic_runner,
+        const common_flydelta_coefficient_search_batch_runner & diagnostic_batch_runner,
+        const common_flydelta_coefficient_search_runner & full_generation_runner,
+        const common_flydelta_coefficient_search_batch_runner & full_generation_batch_runner,
+        size_t full_generation_top_k,
+        std::vector<common_flydelta_coefficient_trial> & trials,
+        common_flydelta_coefficient_selection & selection,
+        std::string & error);
+
 // Records all executed coefficient arms as experimental lifecycle entries.
 // The helper is deliberately reference-only: it never updates DeltaMemory,
 // changes the active registry or turns a diagnostic margin into HELPED.

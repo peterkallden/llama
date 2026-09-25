@@ -171,13 +171,16 @@ At the end of each grouped development sweep, before calling the sweep done:
    `docs/agent/agent-flydelta.md` and the daemon guide.
 2. Update status labels, entrypoints, configs, fixtures, commands and known
    limitations when the implementation changed.
-3. Re-check that every documented production link is actually registered,
+3. For execution optimizations, record the execution class for every affected
+   phase separately: diagnostic, full-generation or fallback. Do not close a
+   broader optimization area from one corrected phase alone.
+4. Re-check that every documented production link is actually registered,
    invoked, persisted and consumed.
-4. Run relevant CTests for contracts, then the functional model-free and/or
+5. Run relevant CTests for contracts, then the functional model-free and/or
    model-backed smokes. Inspect their traces, not only their exit codes.
-5. Record the verification date, commit, test category and traces in the FlyDelta maintenance
+6. Record the verification date, commit, test category and traces in the FlyDelta maintenance
    log. If no documentation change is needed, record that review and why.
-6. When the grouped sweeps are ready to checkpoint, create one local commit on
+7. When the grouped sweeps are ready to checkpoint, create one local commit on
    the current work branch. Keep branch synchronization as a separate,
    explicitly requested operation.
 

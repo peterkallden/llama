@@ -263,6 +263,23 @@ presence of a common algorithm or model-free smoke callback is not sufficient.
 Scalar fallback remains a backend policy; when the production batch host is
 enabled, FlyDelta logical waves must use it.
 
+### Execution optimization boundary
+
+The production phase chain is wired end to end and now uses a uniform
+diagnostics-first execution boundary. This is an execution/wiring optimization;
+it does not change the search algorithms or their promotion semantics.
+
+| Phase | Current execution class | Status | Remaining verification or work |
+| --- | --- | --- | --- |
+| Deep | Diagnostic arms use `full_execution=false` with prompt evaluation, capture and teacher-forced scoring; only selected top-K arms use fresh full generation and host verification | IMPLEMENTED | Traced runtime evidence covers the diagnostic/full-generation callback split |
+| Whirlpool/region search | All probes use prompt evaluation, capture and teacher-forced scoring first; only the bounded top-K diagnostic frontier is re-run with generation and host verification | IMPLEMENTED | The daemon batch host records diagnostic probes separately from the full-generation frontier |
+| Shallow/TFO-lite | Coordinate and TFO-lite populations use diagnostics first; only the bounded top-K frontier uses fresh full generation and host verification | IMPLEMENTED | The staged coefficient seam preserves proposal order and host-only HELPED selection |
+
+The execution class is now explicit for every affected phase. Diagnostic
+results remain search and safety evidence; only the full-generation frontier
+can produce host-verified counterfactual outcomes for selection, lifecycle or
+promotion decisions.
+
 ## Current pre-canary status map
 
 The current branch has the following verified chain. `IMPLEMENTED` means the
@@ -319,6 +336,8 @@ journal remains the durable evidence boundary.
 | 2026-09-25 | this local commit | Long-running build polling made a portable workflow rule | Documentation-only review; no additional runtime test required | Added a needs-based one-shot poll routine with a short progress check, dynamic completion estimate plus measured margin, stale-poll replacement, serial follow-up validation and no local environment paths in repository documentation |
 | 2026-09-25 | this local commit | Evaluation and diagnostic-arm runtime wiring corrected without changing search policy | Serial FlyDelta contract CTests passed; model-free and model-backed functional smokes passed with tracing; model-backed evaluation persisted 8/8 known/helped trials and worker trace | Evaluation references now resolve through the immutable job scope; diagnostic arms use prompt-only server evaluation (`n_predict=0`) without sampling; smoke timeout and callback failure reporting remain portable |
 | 2026-09-25 | this local commit | Qwen server-context runtime and cvec batch paths rechecked serially after device-selection correction | Qwen Instruct runtime smoke passed with three activation arms; native two-slot cvec batch and one-slot scalar fallback both passed with tracing; broader repair smoke passed separately; daemon Qwen probe loaded and generated but correctly stopped when no candidate-only verifier token was found | Recorded runtime/batch wiring as functional evidence only; kept the Qwen differential/model-quality limitation explicit and documented device selection as an invocation concern rather than a project-local setting |
+| 2026-09-25 | d8a6fc42b | Deep diagnostics-first execution boundary corrected; broader optimization remains partial | Code review identifies separate diagnostic/full-generation Deep callbacks; a fresh focused runtime smoke proving `n_predict=0` diagnostics and top-K full generation is still outstanding; Whirlpool/region and Shallow/TFO remain full-execution paths | Recorded Deep as implemented, kept Whirlpool/region and Shallow/TFO explicitly open, and prevented the Deep result from closing the whole execution-optimization area |
+| 2026-09-25 | this local commit | Diagnostics-first execution boundary completed across Deep, Whirlpool/region and Shallow/TFO-lite without changing search policy | Staged coefficient contract and focused FlyDelta CTests passed serially; model-free admin smoke passed with admin/worker traces; Qwen server-context runtime and repair smokes passed serially with tracing; repair trace covered native batch, scalar remainder and backend-batch paths | Added separate diagnostic/full-generation callback classes, bounded top-K full-generation continuation and host-only selection; evidence is recorded as production wiring/execution evidence, not learned model-quality evidence |
 
 ## Natural dataset-question smoke
 
@@ -1252,18 +1271,17 @@ in one resident-server model batch without changing Whirlpool, AdaptiveAlpha,
 Shallow/Deep or TFO; hosts without the opt-in capability retain the scalar
 fallback.
 
-The common batch seam is now consumed by the bounded Whirlpool region probes
-and by rank-N coordinate/TFO coefficient populations. The baseline remains a
+The common batch seam is consumed by the bounded Whirlpool region probes and
+by rank-N coordinate/TFO coefficient populations. The baseline remains a
 scalar reference; safety backoffs are submitted as a separate bounded batch,
-and TFO iterations remain sequential CPU control-plane steps. Deep separates
-its two execution classes: the diagnostic coefficient wave requests prompt
-evaluation, capture and teacher-forced margin/geometry only, while the
-pruned top-K frontier explicitly requests full generation and host
-verification. Shallow/TFO retain their existing full-execution runner until a
-phase-specific sufficiency proof permits a narrower diagnostic wave. The
-scalar public entry points remain compatibility wrappers over the same
-contracts, so batching changes execution shape but not proposal order, dose
-decisions, utility gates or lifecycle semantics.
+and TFO iterations remain sequential CPU control-plane steps. Every affected
+phase has separate diagnostic and full-generation execution classes: the
+diagnostic wave requests prompt evaluation, capture and teacher-forced
+margin/geometry only, while the pruned top-K frontier explicitly requests full
+generation and host verification. The scalar public entry points remain
+compatibility wrappers over the same contracts, so batching changes execution
+shape but not proposal order, dose decisions, utility gates or lifecycle
+semantics.
 
 Rank-N coefficient search also accepts an explicit `max_batch_arms` wave limit.
 Production callers should copy the registered model-host capacity into this
@@ -1819,8 +1837,9 @@ host repair + verification
 It stores total positive/negative logprob and token counts, and reports both
 the total and length-normalized margin. It also builds a small orthonormal
 per-layer basis with bounded Gram–Schmidt and proposes a no-op plus a bounded
-positive/negative coordinate stencil. The callback may use the margin to pick
-which proposals deserve full generation. The helper itself still derives
+positive/negative coordinate stencil. The staged helper executes all
+proposals diagnostically and then re-runs only the bounded top-K frontier in
+the full-generation callback. The helper itself still derives
 `HELPED` only from the host-verified baseline/candidate result; margin,
 geometry and coefficient size cannot create evidence or promotion.
 
@@ -3418,7 +3437,7 @@ through the existing experimental lifecycle helper, including UNKNOWN and
 NEUTRAL results with lineage. No arm is admitted to active state merely
 because its margin or geometry improved.
 
-The two-phase deep-search helper uses separate callbacks for these phases:
+The two-phase search helpers use separate callbacks for these phases:
 
 ```text
 diagnostic callback
