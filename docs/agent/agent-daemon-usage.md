@@ -741,10 +741,12 @@ The tiny fixture is only startup/wiring evidence; it is not model-quality or
 promotion evidence for a production model.
 
 The complete model-backed pre-canary admin smoke is a separate functional
-target. It performs a real unit-direction probe, persists the candidate
+wiring test. Its purpose is to verify that the production daemon seams are
+connected: it performs a real unit-direction probe, persists the candidate
 artifact through the resource store, evaluates eight bounded fixtures on the
 resident model, emits the admin and worker traces, stages the candidate as a
-canary and replays that decision from the lifecycle journal:
+canary and replays that decision from the lifecycle journal. It is not a model
+quality or learned-repair test:
 
 ```bash
 GGML_VK_VISIBLE_DEVICES=0 \
@@ -752,9 +754,10 @@ GGML_VK_VISIBLE_DEVICES=0 \
   docs/examples/agent-host-config-flydelta-intel-tiny.json
 ```
 
-Its model-backed evidence is specific to the supplied tiny fixture. The
-model-free admin smoke remains the wiring regression; neither smoke implies
-automatic activation of a sideband.
+Its model-backed evidence is specific to the supplied tiny fixture and covers
+production wiring, not learned behavior. The model-free admin smoke is the
+model-free wiring regression; neither smoke implies model quality or automatic
+activation of a sideband.
 
 The larger Intel profile uses the resident
 `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` from the configured `models/` catalog.
@@ -768,15 +771,16 @@ GGML_VK_VISIBLE_DEVICES=0 \
   /path/to/llama/docs/examples/agent-host-config-flydelta-intel-smoke.json
 ```
 
-This profile successfully provides real-model Intel Vulkan generation and the
+This profile successfully provides real-model Intel Vulkan generation wiring and the
 separate `llama-agent-flydelta-model-ab-smoke` provides host-verified capture,
 cvec activation and five neutral A/B arms. The daemon pre-canary admin smoke
 must not be treated as passed for this profile yet: its production-gated
 candidate probe tries twelve representative layer/sign variants and stops if
 none produces a candidate-only verifier token. The observed Qwen 1.5B result
 was identical baseline/candidate output for all twelve variants, so no
-candidate was seeded, evaluated or staged. This is a model-backed differential
-evidence gap, not evidence that Intel Vulkan or resident model loading failed.
+candidate was seeded, evaluated or staged. This is a model-backed
+differential/learning evidence gap, not a wiring failure and not evidence that
+Intel Vulkan or resident model loading failed.
 
 When these commands run from Codex, the sandbox execution itself must be
 elevated to access the Intel Vulkan device; `sudo` is not part of the command.
@@ -790,10 +794,13 @@ Verification uses three distinct evidence levels. CTests are contract tests:
 they validate schemas, validators, state transitions and invariants, but do
 not prove a functional daemon or model path. Functional smokes must emit a
 trace of the request/job, worker, host callback, durable result and lifecycle
-consumer. A model-free smoke proves daemon and FlyDelta wiring without proving
-model behavior; a model smoke proves the model-host/batch/generation and host
-verification path for the supplied model and configuration. A smoke's exit
-code without its trace is insufficient evidence for production wiring.
+consumer. Their primary claim is production wiring: a model-free smoke proves
+daemon and FlyDelta wiring without proving model behavior; a model smoke proves
+the model-host/batch/generation and host-verification wiring for the supplied
+model and configuration. Neither smoke proves learned model quality unless a
+separate natural-task, host-verified counterfactual supplies that evidence. A
+smoke's exit code without its trace is insufficient evidence for production
+wiring.
 
 ## JSONL commands
 
