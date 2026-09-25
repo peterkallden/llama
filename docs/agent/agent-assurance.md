@@ -316,7 +316,7 @@ they are not a replacement for those maturity labels.
   checked-in document representation and Qwen/Nomic document-table helper
   were added.
 - Focused build: passed; `llama-agent-cli-run-mcp-smoke` and `llama-agent-cli`
-  built in the E: Debug tree with MSVC and the E: sccache cache.
+  built in a Windows/MSVC Debug tree with a persistent sccache cache.
 - CTest result: passed (`2/2`, `0` failed, `0` not-run):
   `llama-agent-cli-run-mcp-ctest` and
   `llama-agent-cli-document-table-ctest`.
@@ -335,8 +335,8 @@ passes.
 
 - Branch: `kallden/agent-resource-tools`
 - Commit: `03ccea89b` (code); this assurance update is a separate local commit
-- Build: clean Windows/MSVC Debug tree with Cozo enabled,
-  `E:\llama-builds\agent-resource-tools-msvc-debug-clean`, serial build after
+- Build: clean Windows/MSVC Debug tree with Cozo enabled in a configured build
+  directory, serial build after
   the known MSVC PDB-lock retry
 - Focused build: passed; Cozo data-store target and dataset/tool smoke targets
   built successfully
@@ -356,7 +356,7 @@ passes.
 
 - Branch: `kallden/agent-resource-tools`
 - Commit: `52cb88a53`
-- Build: Windows/MSVC Debug, Cozo-enabled, `E:\llama-builds\agent-resource-tools-msvc-debug-fast`, four build threads
+- Build: Windows/MSVC Debug, Cozo-enabled, configured build directory, four build threads
 - Build result: passed (`112/112` build steps)
 - CTest result: passed (`47/47` tests in `-L agent`, `0` failed, `0` not-run)
 - Model-free resource smoke result: passed for the focused contract, backend,
@@ -398,7 +398,7 @@ after this checkpoint.
 | Branch | `kallden/agent-selection-learning` |
 | Commit | `4813c990a` |
 | Platform | Windows / MSVC |
-| Build configuration | Debug, Cozo enabled, Visual Studio Build Tools, build artifacts on `E:\llama-builds\agent-selection-learning-msvc-debug-17` |
+| Build configuration | Debug, Cozo enabled, Visual Studio Build Tools, build artifacts in the configured build directory |
 | Focused build | `llama-agent-inference-smoke` and `llama-agent-daemon` rebuilt successfully with two build workers |
 | Model-free CTest | `llama-agent-inference-ctest`: `1/1 passed`, `0 failed`, `0 not-run` |
 | Focused smoke | `llama-agent-inference-smoke runtime-server-context-host-invalid-model-paths`: passed |
@@ -420,7 +420,7 @@ rejects empty or missing model paths before entering model loading.
 | Branch | `kallden/agent-resource-tools` |
 | Commit | `64a18e549` |
 | Platform | Windows / MSVC |
-| Build configuration | Debug, Cozo enabled, Visual Studio 17 2022, build artifacts on `E:\llama-builds\agent-resource-tools-msvc-debug-fast` |
+| Build configuration | Debug, Cozo enabled, Visual Studio 17 2022, build artifacts in the configured build directory |
 | Agent CTest | `37/37 passed`, `0 failed`, `0 not-run` |
 | Focused resource/tool/runtime smokes | `9/9 passed`, `0 failed`, `0 not-run` |
 | Initial regression during verification | `test-tool-catalog` failed because its profile-count assertion was stale (`8` instead of the current `9`) |
@@ -462,7 +462,7 @@ normalization, and the registered tool bridge.
 | Branch | `kallden/agent-resource-tools` |
 | Commit | `a4d28383c` (unique operation identity per resource read); `811d110ee` (operation-scoped resource processor binding); `9936db1dd` (bounded binary CLI resource upload); CLI PDF resource-read smoke `06f65c7b7`; CLI assembly `d3143098c`; resource_read integration `69915617d`; language metadata `06a56d51d`; cache foundation `59f5902a9`; Cozo persistence `75b0283a5` |
 | Platform | Windows / MSVC |
-| Build configuration | Debug, Cozo enabled, artifacts on `E:\llama-builds\agent-resource-tools-msvc-debug-fast` |
+| Build configuration | Debug, Cozo enabled, artifacts in the configured build directory |
 | Focused model-free CTest | `3/3 passed`, `0 failed`, `0 not-run` for the Cozo-enabled cache/language slice |
 | Resource-read processing CTest | `1/1 passed`, `0 failed`, `0 not-run`; PDF text was materialized through the host provider and reused from cache |
 | CLI assembly/provider CTests | `2/2 passed`, `0 failed`, `0 not-run`; native provider and CLI selection retain the host processing service, and CLI selection materializes a PDF text read |
@@ -511,7 +511,7 @@ sandbox execution class.
 | Branch | `kallden/agent-selection-learning` |
 | Commit | `334fd987a041` |
 | Platform | Windows / MSVC |
-| Build configuration | Debug, Cozo enabled, Visual Studio 17 2022, build artifacts on `E:\llama-builds\agent-selection-learning-msvc-debug-13` |
+| Build configuration | Debug, Cozo enabled, Visual Studio 17 2022, build artifacts in the configured build directory |
 | Agent CTest | `32/32 passed`, `0 failed`, `0 not-run` |
 | Model-free agent smokes | `15/15 passed`, `0 failed`, `0 not-run` |
 | Kubernetes sandbox CTest | `1/1 passed` (contract smoke only; live backend path not enabled) |
@@ -534,7 +534,7 @@ model-free counts; a skipped sandbox test is not reported as a backend pass.
 | Branch | `kallden/agent-selection-learning` |
 | Commit | `18d8e5bb8` |
 | Platform | Windows / MSVC |
-| Build configuration | Debug, Cozo enabled, Visual Studio 17 2022, build artifacts on `E:\llama-builds\agent-selection-learning-msvc-debug-13` |
+| Build configuration | Debug, Cozo enabled, Visual Studio 17 2022, build artifacts in the configured build directory |
 | Memory contract change | Memory ID references use bounded strings: `minLength: 1`, `maxLength: 256`; catalog tests cover get/update/forget/link/compact schemas |
 | Agent CTest | `24/24 passed`, `0 failed`, `0 not-run` |
 | Kubernetes sandbox CTest | `1/1 passed` |
@@ -560,7 +560,7 @@ daemon issue is resolved.
 |---|---|
 | Branch | `kallden/agent-selection-learning` |
 | Platform | Windows / MSVC |
-| Build configuration | Debug, serial MSVC build, artifacts on `E:\llama-builds\agent-selection-learning-msvc-debug-cont1` |
+| Build configuration | Debug, serial MSVC build, artifacts in the configured build directory |
 | Full agent CTest after continuation and checkpoint changes | `26/26 passed`, `0 failed`, `0 not-run` |
 | Continuation CTest | `1/1 passed` |
 | Daemon protocol CTests | `2/2 passed` |
@@ -574,7 +574,7 @@ daemon issue is resolved.
 | Branch | `kallden/agent-selection-learning` |
 | Commit | `2b14b5bbb` |
 | Platform | Windows / MSVC |
-| Build configuration | Release, Visual Studio 17 2022, two build threads, artifacts on `E:\llama-builds\agent-selection-learning-msvc-release-e2e` |
+| Build configuration | Release, Visual Studio 17 2022, two build threads, artifacts in the configured build directory |
 | Focused CTest | `4/4 passed`, `0 failed`, `0 not-run` |
 | Tests | continuation, daemon protocol, resource store, resource range chunker |
 | Qwen resource synthesis | `passed`, four fixed resource chunks, two inference threads |
@@ -585,7 +585,7 @@ daemon issue is resolved.
 ### Chunk synthesis gating verification - 2026-08-07
 
 The deliberate runtime smoke was verified on Windows/MSVC Debug using the
-fresh E: build tree. Complete chunk observations allow final synthesis;
+fresh configured build tree. Complete chunk observations allow final synthesis;
 incomplete observations defer synthesis, and conflicting observations block
 the synthesis step while preserving the plan evidence. The corresponding
 `llama-agent-deliberate-runtime-ctest` entry is now registered in the agent
@@ -599,7 +599,7 @@ existing Visual Studio build tree requires a clean regeneration.
 | Branch | `kallden/agent-selection-learning` |
 | Commit | `b43f61e14` |
 | Platform | Windows / MSVC |
-| Build configuration | Release, Visual Studio 17 2022, `llama-agent-build-pack`, two build threads, artifacts on `E:\llama-builds\agent-selection-learning-msvc-release-e2e` |
+| Build configuration | Release, Visual Studio 17 2022, `llama-agent-build-pack`, two build threads, artifacts in the configured build directory |
 | Agent CTest | `30/30 passed`, `0 failed`, `0 not-run` |
 | Test selection | `ctest -C Release -L agent --output-on-failure --parallel 2` |
 | Sandbox Docker | Not-run by request; Docker backend was not running |
@@ -613,7 +613,7 @@ existing Visual Studio build tree requires a clean regeneration.
 | Branch | `kallden/agent-selection-learning` |
 | Commit | `8b1cb0747` |
 | Platform | Windows / MSVC |
-| Build configuration | Release, Visual Studio 17 2022, `llama-agent-build-pack`, two build threads, artifacts on `E:\llama-builds\agent-selection-learning-msvc-release-e2e` |
+| Build configuration | Release, Visual Studio 17 2022, `llama-agent-build-pack`, two build threads, artifacts in the configured build directory |
 | Agent CTest | `31/31 passed`, `0 failed`, `0 not-run` |
 | Test selection | `ctest -C Release -L agent --output-on-failure --timeout 900` |
 | Covered additions | Context-pressure continuation, bounded text continuation, truncation guards, planner/reflection/memory JSON regeneration |
@@ -625,7 +625,7 @@ The Qwen/Nomic helper was also exercised against the same Release artifact.
 The Nomic-backed memory add/search phase passed and returned the expected
 `note-1` result. The first static Qwen chat phase did not produce output or
 progress on this Windows run and was stopped after the process remained alive
-without CPU activity; the retry used an external E: work directory and an
+without CPU activity; the retry used an external work directory and an
 explicit `NUL` stdin, but showed the same behavior. Consequently, the
 model-backed chat phases are recorded as not-run/blocked rather than as a
 passing end-to-end result. This does not change the deterministic 31/31 CTest
@@ -693,7 +693,7 @@ the full agent label remains the final assurance gate for this checkpoint.
 ### Continuation control and checkpoint transport
 
 The bounded continuation slice checkpoint (`kallden/agent-selection-learning`)
-was verified on Windows/MSVC Debug using the E: build tree. The continuation
+was verified on Windows/MSVC Debug using the configured build tree. The continuation
 smoke passed cancellation and deadline cases that stop after the completed
 slice and before the next inference request. The daemon protocol and JSONL
 protocol smokes also passed checkpoint serialization/parsing, including
@@ -1055,7 +1055,7 @@ previous result when the branch or test configuration changes.
   on `assert`, because `RelWithDebInfo` defines `NDEBUG`.
 - Model-backed check: the Qwen+Nomic data smoke passed through dataset
   selection, join, aggregate/statistics execution and final reflection. The
-  retained log is `/tmp/llama-agent-qwen-nomic-data.oaHd61/data-research.log`.
+  retained log is available under the smoke work directory.
 - This is a focused seam checkpoint, not a replacement for the complete agent
   assurance run. The older 2026-08-17 model-backed failures below remain as
   historical evidence of the source-step binding problem that this branch
@@ -1072,8 +1072,8 @@ previous result when the branch or test configuration changes.
     `pocs/agent/smoke/`: **37/37 passed**.
   - Kubernetes sandbox backend: **1/1 passed**.
   - Docker/Podman sandbox backend: **0/1 passed**. Docker was unavailable;
-    the Podman retry was blocked by the Codex environment's read-only
-    `/run/user/1000/libpod` path. This is an environment limitation, not an
+    the Podman retry was blocked by the execution environment's read-only
+    runtime socket path. This is an environment limitation, not an
     agent assertion failure.
   - Unique agent CTest total: **58/59 passed**, **1 failed**, with the one
     failure isolated to the Docker/Podman backend. The root command

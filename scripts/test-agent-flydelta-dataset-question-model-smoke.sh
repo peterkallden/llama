@@ -5,15 +5,40 @@ source "$(dirname "$0")/agent-model-smoke-common.sh"
 
 repo_root=$(agent_smoke_repo_root)
 build_dir=$(agent_smoke_build_dir)
-model=$(agent_smoke_model)
-suite="${LLAMA_AGENT_DATASET_QUESTION_SUITE:-${repo_root}/docs/examples/agent-flydelta-dataset-question-suite.json}"
+model_override=
+suite_override=
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --model)
+            [[ $# -ge 2 ]] || { echo "--model requires a path" >&2; exit 2; }
+            model_override="$2"
+            shift 2
+            ;;
+        --suite)
+            [[ $# -ge 2 ]] || { echo "--suite requires a path" >&2; exit 2; }
+            suite_override="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "usage: $0 [--model PATH] [--suite PATH]"
+            exit 0
+            ;;
+        *)
+            echo "unknown argument: $1" >&2
+            echo "usage: $0 [--model PATH] [--suite PATH]" >&2
+            exit 2
+            ;;
+    esac
+done
+
+model="${model_override:-$(agent_smoke_model)}"
+suite="${suite_override:-${LLAMA_AGENT_DATASET_QUESTION_SUITE:-${repo_root}/docs/examples/agent-flydelta-dataset-question-suite.json}}"
+if [[ "$model" != /* ]]; then model="${repo_root}/${model}"; fi
+if [[ "$suite" != /* ]]; then suite="${repo_root}/${suite}"; fi
 work_dir=$(agent_smoke_prepare_workdir flydelta-dataset-question-model)
 
-if [[ "$build_dir" = /* ]]; then
-    smoke_bin="${build_dir}/bin/llama-agent-flydelta-dataset-question-model-smoke"
-else
-    smoke_bin="${repo_root}/${build_dir}/bin/llama-agent-flydelta-dataset-question-model-smoke"
-fi
+smoke_bin=$(agent_smoke_binary "$build_dir" llama-agent-flydelta-dataset-question-model-smoke)
 
 agent_smoke_require_file "$model" "chat model"
 agent_smoke_require_file "$suite" "FlyDelta dataset question suite"

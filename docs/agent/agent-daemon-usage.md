@@ -537,7 +537,7 @@ The equivalent minimal shape is:
 
 ```powershell
 & .\build-agent-inbound-debug\bin\Debug\llama-agent-daemon.exe `
-    --model C:\Users\kalld\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf `
+    --model C:\path\to\chat-model.gguf `
     --default-mode chat `
     --n-predict 64 `
     --n-gpu-layers 0 `
@@ -704,8 +704,7 @@ The model-free functional admin smoke is built as
 `llama-agent-daemon-flydelta-admin-smoke` and can be run explicitly with:
 
 ```bash
-GGML_VK_VISIBLE_DEVICES=0 \
-  ./build-agent-vulkan-cozo/bin/llama-agent-daemon-flydelta-admin-smoke
+./build-agent-vulkan-cozo/bin/llama-agent-daemon-flydelta-admin-smoke
 ```
 
 It emits `flydelta_admin_trace` for each admin operation and a
@@ -714,7 +713,7 @@ uses a model-free host callback; it proves daemon/queue/worker/lifecycle and
 review wiring, not model quality. Run a separate model smoke for model-host,
 batch, generation and host-verification evidence.
 
-For the Intel Vulkan model-host smoke, use
+For the Vulkan model-host smoke, use
 [`agent-host-config-flydelta-intel-smoke.json`](../examples/agent-host-config-flydelta-intel-smoke.json)
 as the starting configuration. It uses one resident generation profile,
 single-slot inference/batching, tracing, and `n_gpu_layers=99`. The model
@@ -723,8 +722,7 @@ configured GGUF under `models/` or change the catalog path before starting.
 The device selection is process-level rather than JSON configuration:
 
 ```bash
-GGML_VK_VISIBLE_DEVICES=0 \
-  ./build-agent-vulkan-cozo/bin/llama-agent-daemon \
+./build-agent-vulkan-cozo/bin/llama-agent-daemon \
   --config docs/examples/agent-host-config-flydelta-intel-smoke.json
 ```
 
@@ -732,8 +730,7 @@ For the checked-in tiny model fixture in this checkout, the runnable variant
 is [`agent-host-config-flydelta-intel-tiny.json`](../examples/agent-host-config-flydelta-intel-tiny.json):
 
 ```bash
-GGML_VK_VISIBLE_DEVICES=0 \
-  ./build-agent-vulkan-cozo/bin/llama-agent-daemon \
+./build-agent-vulkan-cozo/bin/llama-agent-daemon \
   --config docs/examples/agent-host-config-flydelta-intel-tiny.json
 ```
 
@@ -749,8 +746,7 @@ canary and replays that decision from the lifecycle journal. It is not a model
 quality or learned-repair test:
 
 ```bash
-GGML_VK_VISIBLE_DEVICES=0 \
-  ./build-agent-vulkan-cozo/bin/llama-agent-daemon-flydelta-model-smoke \
+./build-agent-vulkan-cozo/bin/llama-agent-daemon-flydelta-model-smoke \
   docs/examples/agent-host-config-flydelta-intel-tiny.json
 ```
 
@@ -759,19 +755,17 @@ production wiring, not learned behavior. The model-free admin smoke is the
 model-free wiring regression; neither smoke implies model quality or automatic
 activation of a sideband.
 
-The larger Intel profile uses the resident
-`Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` from the configured `models/` catalog.
-Run it from the catalog root (in this checkout, `/home/prbm`) so the relative
-`models/` directory resolves to `/home/prbm/models`:
+The larger Vulkan profile uses the resident model from the configured `models/`
+catalog. Run it from the catalog root so the relative `models/` directory
+resolves correctly. If the local Vulkan runtime requires explicit device
+selection, set `GGML_VK_VISIBLE_DEVICES` in the invoking environment:
 
 ```bash
-cd /home/prbm
-GGML_VK_VISIBLE_DEVICES=0 \
   /path/to/llama/build-agent-vulkan-cozo/bin/llama-agent-daemon-flydelta-model-smoke \
   /path/to/llama/docs/examples/agent-host-config-flydelta-intel-smoke.json
 ```
 
-This profile successfully provides real-model Intel Vulkan generation wiring and the
+This profile successfully provides real-model Vulkan generation wiring and the
 separate `llama-agent-flydelta-model-ab-smoke` provides host-verified capture,
 cvec activation and five neutral A/B arms. The daemon pre-canary admin smoke
 must not be treated as passed for this profile yet: its production-gated
@@ -780,10 +774,7 @@ none produces a candidate-only verifier token. The observed Qwen 1.5B result
 was identical baseline/candidate output for all twelve variants, so no
 candidate was seeded, evaluated or staged. This is a model-backed
 differential/learning evidence gap, not a wiring failure and not evidence that
-Intel Vulkan or resident model loading failed.
-
-When these commands run from Codex, the sandbox execution itself must be
-elevated to access the Intel Vulkan device; `sudo` is not part of the command.
+Vulkan or resident model loading failed.
 
 This startup path resolves the resident profile and registers the existing
 daemon FlyDelta model binding. If semantic host callbacks are not available,
@@ -1015,7 +1006,7 @@ The focused beta smoke can be run with:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-agent-daemon-beta-smoke.ps1 `
-    -ChatModel C:\Users\you\models\model.gguf
+    -ChatModel C:\path\to\chat-model.gguf
 ```
 
 It covers MCP/config policy projection, restricted versus admin TCP callers,
@@ -1053,7 +1044,7 @@ and maps it to the configured native policy. Use an OpenSSL-enabled build.
 $env:LLAMA_AGENT_MCP_TOKEN = "replace-with-a-local-secret"
 
 & .\build-agent-inbound-debug\bin\Debug\llama-agent-daemon.exe `
-    --model C:\Users\kalld\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf `
+    --model C:\path\to\chat-model.gguf `
     --tool-profile minimal `
     --worker-count 2 `
     --http-listen 127.0.0.1 `
@@ -1222,60 +1213,6 @@ Official client references:
 The VS Code extension API is not required for this integration. MCP is the
 stable boundary; an IDE-specific extension can be added later for UI,
 approval and task/polling conveniences.
-
-### Codex integration
-
-Codex can use llama-agent as an MCP server in the same two roles:
-
-1. Codex uses llama-agent tools and resources.
-2. Codex delegates a bounded task to llama-agent through inbound MCP.
-
-For a local stdio connection, add a server entry to the Codex MCP
-configuration:
-
-```toml
-[mcp_servers.llama_agent]
-command = "C:\\path\\to\\llama-agent-mcp-stdio-server.exe"
-args = [
-  "--tool-profile",
-  "research",
-  "--repository-root",
-  "C:\\path\\to\\repository"
-]
-startup_timeout_sec = 30
-```
-
-The exact Codex configuration location depends on the Codex surface in use;
-the CLI uses its own `config.toml` MCP section and does not consume
-`.vscode/mcp.json` automatically. Keep executable paths and secrets local.
-
-For delegation, start the daemon with the inbound agent configuration above
-and connect Codex to:
-
-```text
-http://127.0.0.1:8080/mcp
-```
-
-Codex then discovers `delegate_task`, `summarize` and `review_plan` through
-`tools/list`. A delegated request can select a mode and pass resource refs:
-
-```json
-{
-  "name": "delegate_task",
-  "arguments": {
-    "task": "Review the current runtime design and list unresolved scheduler gaps.",
-    "thinking_mode": "deliberate",
-    "resource_refs": ["resource://project/runtime-notes"],
-    "max_plan_revisions": 2
-  }
-}
-```
-
-This is a delegation boundary, not a second Codex runtime. The receiving
-llama-agent owns the thinking policy, tool allowlist, scope, plan, events and
-result. Until MCP Tasks and polling are implemented, Codex must treat the
-request as a bounded synchronous call and handle timeout or incomplete-result
-responses explicitly.
 
 ## Integration checklist
 

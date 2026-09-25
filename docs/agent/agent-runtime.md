@@ -3019,7 +3019,7 @@ across concurrent session lanes.
 
 The local MuPDF E2E smoke has now exercised the complete bounded path with the
 repository PDF fixture: resource store, binary workspace staging, local
-`common_subproc`, `E:\tools\mutool.exe`, PNG artifact collection, and derived
+`common_subproc`, a configured `mutool` executable, PNG artifact collection, and derived
 resource persistence. The renderer path is selected at runtime; MuPDF remains
 an external executable and is not a build or link-time dependency.
 
@@ -3193,13 +3193,13 @@ The active execution-policy fields are representation-independent:
       "docx.text": {
         "execution": "local_preferred",
         "backend": "auto",
-        "executable": "E:\\tools\\pandoc-3.10.1\\pandoc.exe",
+        "executable": "C:\\path\\to\\pandoc.exe",
         "expected_version": "pandoc 3.10.1"
       },
       "odt.text": {
         "execution": "local_preferred",
         "backend": "auto",
-        "executable": "E:\\tools\\pandoc-3.10.1\\pandoc.exe",
+        "executable": "C:\\path\\to\\pandoc.exe",
         "expected_version": "pandoc 3.10.1"
       },
       "html.text": {
@@ -3445,9 +3445,9 @@ Chunk entries in the compact projection retain the parent URI, position,
 `status=completed`, and source observation ID. They are still bounded working
 evidence; the original resource and plan observations remain authoritative.
 
-One Windows-specific detail is now explicit in the build path as well. The local Cozo artifact used by this branch is currently a release-built MSVC library under `work/cozo-release`. When a Debug build enables Cozo-backed memory, plan, and resource support, the build now detects that release Cozo input and switches the current MSVC build tree to release-compatible CRT / iterator settings for that configuration. The scope is intentionally narrow: keep the resident agent, daemon, and MCP-host-facing targets buildable on this machine without requiring a separate locally-built debug Cozo package first.
+One Windows-specific detail is now explicit in the build path as well. The Cozo artifact used by this branch is a release-built MSVC library under `work/cozo-release`. When a Debug build enables Cozo-backed memory, plan, and resource support, the build now detects that release Cozo input and switches the current MSVC build tree to release-compatible CRT / iterator settings for that configuration. The scope is intentionally narrow: keep the resident agent, daemon, and MCP-host-facing targets buildable on the configured host without requiring a separate locally-built debug Cozo package first.
 
-That compatibility slice was re-verified on July 16, 2026 with a narrow serial build in `build-plan-resident-cozo-debug-3`. Instead of treating the whole workspace tree as the verification unit, the current practical bar on this laptop is the agent chain that actually exercises the resident/daemon/MCP path. The following targets built successfully after the Cozo/MSVC compatibility fix:
+That compatibility slice was re-verified on July 16, 2026 with a narrow serial build in `build-plan-resident-cozo-debug-3`. Instead of treating the whole workspace tree as the verification unit, the current practical bar is the agent chain that actually exercises the resident/daemon/MCP path. The following targets built successfully after the Cozo/MSVC compatibility fix:
 
 - `llama-agent.exe`
 - `llama-agent-daemon.exe`
@@ -3990,8 +3990,8 @@ One concrete "full current functionality" foreground run looks like this on Wind
   "schema_version": 1,
   "model": {
     "backend": "server-context",
-    "path": "C:\\Users\\kalld\\models\\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
-    "embedding_model": "C:\\Users\\kalld\\models\\nomic-embed-text-v1.5.Q4_K_M.gguf"
+    "path": "C:\\path\\to\\chat-model.gguf",
+    "embedding_model": "C:\\path\\to\\embedding-model.gguf"
   },
   "runtime": {
     "default_mode": "agent",
@@ -4024,7 +4024,7 @@ One concrete "full current functionality" foreground run looks like this on Wind
   },
   "tools": {
     "profile": "minimal",
-    "repository_root": "C:\\Users\\kalld\\Documents\\Codex\\llama-dyn",
+    "repository_root": "C:\\path\\to\\repository",
     "providers": [
       {
         "type": "mcp",
@@ -5267,7 +5267,7 @@ The foreground daemon `agent` path is now part of the smoke baseline as well. On
 
 ### Running Agent Tests
 
-The current branch now supports a more targeted serial workflow for agent-heavy verification on this laptop.
+The current branch now supports a more targeted serial workflow for agent-heavy verification.
 
 The model-backed Qwen/Nomic helper `scripts/test-qwen-nomic-agent.ps1` accepts
 `-ThinkingMode reflective|deliberate` for the agent turn. The dedicated
@@ -5277,18 +5277,18 @@ model-backed checks; the deterministic CTest and model-free smoke baseline
 remains the authoritative regression gate.
 
 The helper accepts absolute `-BuildDir` and `-WorkSubdir` values, so model-backed
-checks can use external E: build and work trees without creating a second build
+checks can use external build and work trees without creating a second build
 convention. The daemon integration harness follows the same rule. Its JSONL reader consumes
 `message_type=event` deliveries, including `turn.accepted`, until the terminal
 command response arrives; an accepted event is not treated as the completed
 turn result. This is required by the asynchronous daemon mailbox/event-stream
 contract and keeps the test harness aligned with queue ownership.
 
-For a local Release Qwen/Nomic run, use for example:
+For a Release Qwen/Nomic run, use for example:
 
 ```powershell
 pwsh -File scripts/test-qwen-nomic-agent.ps1 `
-  -BuildDir E:\llama-builds\agent-selection-learning-msvc-release-e2e `
+  -BuildDir build-agent-selection-learning-msvc-release-e2e `
   -WorkSubdir work\qwen-nomic-release-e2e -Threads 2
 ```
 
@@ -5390,7 +5390,7 @@ For a local focused run:
 
 ```powershell
 pwsh -File scripts/test-qwen-nomic-document-table.ps1 `
-  -BuildDir E:\llama-builds\agent-resource-tools-msvc-debug-regen-20260812 `
+  -BuildDir build-agent-resource-tools-msvc-debug-regen `
   -WorkSubdir work\qwen-nomic-document-table-e2e
 ```
 

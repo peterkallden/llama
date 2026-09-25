@@ -159,7 +159,7 @@ On Windows, use PowerShell from the repository root:
 
 ```powershell
 .\scripts\agent-build.ps1 `
-  -BuildDir E:\llama-builds\agent-tool-profiles-debug `
+  -BuildDir build-agent-tool-profiles-debug `
   -Configuration Debug `
   -Target llama-agent-cli, llama-agent-daemon `
   -Parallel 2
@@ -404,8 +404,8 @@ share the same model environment and return `77` when a required model is not
 available:
 
 ```bash
-export LLAMA_AGENT_MODEL=/home/prbm/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf
-export LLAMA_AGENT_EMBEDDING_MODEL=/home/prbm/models/nomic-embed-text-v1.5.Q4_K_M.gguf
+export LLAMA_AGENT_MODEL=/path/to/chat-model.gguf
+export LLAMA_AGENT_EMBEDDING_MODEL=/path/to/embedding-model.gguf
 scripts/test-qwen-nomic-agent.sh
 scripts/test-qwen-resource-synthesis.sh
 scripts/test-agent-server-context-smoke.sh

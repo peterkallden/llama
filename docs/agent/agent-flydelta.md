@@ -298,10 +298,11 @@ integration with `feature/llama-agent` requires an explicit owner instruction.
 | --- | --- | --- | --- | --- |
 | 2026-09-24 | 71f3e6274 | Initial pre-canary status map; stage-canary remains PARTIAL | CTest contract evidence: six focused CTests covering pipeline, promotion, review-store, evaluator, daemon protocol and daemon JSONL protocol; no functional smoke was run in this documentation-only sweep | Added bootstrap and documented the durable stage-canary gap; no implementation change made in this documentation sweep |
 | 2026-09-24 | 9c8bb9a8a | Stage-canary atomic ordering and full model-free admin smoke implemented | CTest contract evidence: the same six focused CTests passed; model-free functional smoke passed with `flydelta_admin_trace` for queue, evaluation, summary, review and canary plus `flydelta_worker_trace` and durable replay | Reclassified review -> stage_canary as IMPLEMENTED; added the standalone smoke target and retained model-free/model-backed evidence separation |
-| 2026-09-24 | 5b39241c6 | Catalog-only daemon configuration accepted; Intel Vulkan model-host batch smoke and elevated tiny-model daemon startup passed | CTest contracts: server binding, model residency, daemon config and config discovery passed; model-backed functional smoke reported `execution_path=device_batch`; daemon startup reported `flydelta_model_adapter_configured=true` with Intel device 0 | Made `--model` optional when a named catalog profile is configured; added reusable Intel smoke configurations and kept tiny-model evidence explicitly wiring-only |
-| 2026-09-24 | this local commit | Full model-backed pre-canary admin chain and deterministic review replay verified | CTest contract: `test-agent-flydelta-sideband-review-store` passed; model-backed Intel Vulkan smoke passed with 8/8 known/helped trials, all four evaluation gates, admin/worker traces, canary staging and durable replay; ccache used from `/home/prbm/.cache/ccache` | Added the model-backed functional smoke target and documented elevated Intel execution; fixed replay ordering so Cozo row ordering cannot apply stage before admission/promotion |
-| 2026-09-24 | this local commit | Larger Intel profile validated for resident generation and host/cvec activation; daemon differential admin evidence remains open | CTest contracts: 5/5 focused tests passed; model-backed `llama-agent-flydelta-model-ab-smoke` passed with Qwen2.5-1.5B, Intel Vulkan, host-verified capture, five neutral A/B arms; daemon admin smoke exercised twelve production-gated probes but found no candidate-only verifier token and correctly stopped before seeding | Expanded the daemon probe across representative layers and documented the larger-profile limitation; no promotion or quality claim made for the neutral A/B result |
+| 2026-09-24 | 5b39241c6 | Catalog-only daemon configuration accepted; Vulkan model-host batch smoke and elevated tiny-model daemon startup passed | CTest contracts: server binding, model residency, daemon config and config discovery passed; model-backed functional smoke reported `execution_path=device_batch`; daemon startup reported `flydelta_model_adapter_configured=true` with the configured Vulkan device | Made `--model` optional when a named catalog profile is configured; added reusable Vulkan smoke configurations and kept tiny-model evidence explicitly wiring-only |
+| 2026-09-24 | this local commit | Full model-backed pre-canary admin chain and deterministic review replay verified | CTest contract: `test-agent-flydelta-sideband-review-store` passed; model-backed Vulkan smoke passed with 8/8 known/helped trials, all four evaluation gates, admin/worker traces, canary staging and durable replay; persistent ccache configuration used | Added the model-backed functional smoke target and documented the model-host execution; fixed replay ordering so Cozo row ordering cannot apply stage before admission/promotion |
+| 2026-09-24 | this local commit | Larger Vulkan profile validated for resident generation and host/cvec activation; daemon differential admin evidence remains open | CTest contracts: 5/5 focused tests passed; model-backed `llama-agent-flydelta-model-ab-smoke` passed with Qwen2.5-1.5B, Vulkan, host-verified capture, five neutral A/B arms; daemon admin smoke exercised twelve production-gated probes but found no candidate-only verifier token and correctly stopped before seeding | Expanded the daemon probe across representative layers and documented the larger-profile limitation; no promotion or quality claim made for the neutral A/B result |
 | 2026-09-25 | this local commit | Evidence wording clarified: these smokes evaluate production wiring, not learned model quality | Documentation check: daemon usage guide and status map reviewed; existing 5/5 CTests and model-free/tiny/Qwen smoke results remain the recorded evidence | Marked runtime, host, worker, lifecycle, review, canary and replay claims explicitly as wiring claims; retained the larger-profile differential evidence gap |
+| 2026-09-25 | this local commit | Later dataset-question model smokes aligned with the established portable wrapper interface | `bash -n` and `--help` passed for both wrappers; no model or CTest run was required for the argument-only change | Added explicit `--model` and `--suite` overrides with existing environment/default fallback; relative paths resolve from the repository root; removed local environment details from agent documentation |
 
 ## Natural dataset-question smoke
 
@@ -410,14 +411,18 @@ llama-agent-flydelta-dataset-question-repair-contract-smoke \
   docs/examples/agent-flydelta-dataset-question-suite.json
 ```
 
-Run the optional model repair bridge with:
+Run the optional model repair bridge with an explicit model argument:
 
 ```text
-LLAMA_AGENT_MODEL=/path/to/model.gguf \
 LLAMA_AGENT_THREADS=3 \
-LLAMA_AGENT_DATASET_QUESTION_SUITE=docs/examples/agent-flydelta-dataset-question-suite-incremental-v2.json \
-scripts/test-agent-flydelta-dataset-question-repair-model-smoke.sh
+scripts/test-agent-flydelta-dataset-question-repair-model-smoke.sh \
+  --model /path/to/model.gguf \
+  --suite docs/examples/agent-flydelta-dataset-question-suite-incremental-v2.json
 ```
+
+The wrapper also accepts `LLAMA_AGENT_MODEL` and
+`LLAMA_AGENT_DATASET_QUESTION_SUITE`; explicit arguments take precedence.
+Relative model and suite paths are resolved from the repository root.
 
 Validate the incremental cases independently with:
 
@@ -432,10 +437,10 @@ contains eight additional discovery, inspection, query, aggregation and
 statistics cases. Run it independently while collecting candidates:
 
 ```text
-LLAMA_AGENT_MODEL=/path/to/model.gguf \
-LLAMA_AGENT_DATASET_QUESTION_SUITE=docs/examples/agent-flydelta-dataset-question-suite-incremental-v2.json \
 LLAMA_AGENT_THREADS=3 \
-scripts/test-agent-flydelta-dataset-question-model-smoke.sh
+scripts/test-agent-flydelta-dataset-question-model-smoke.sh \
+  --model /path/to/model.gguf \
+  --suite docs/examples/agent-flydelta-dataset-question-suite-incremental-v2.json
 ```
 
 The repository wrapper uses the same model default, timeout handling and
