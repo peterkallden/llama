@@ -8,6 +8,7 @@
 #include "agent/adaptation/flydelta/flydelta-collection.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "hash/hash.h"
 
 #include "log.h"
 
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <ctime>
 
 namespace {
 
@@ -531,6 +533,84 @@ int main(int argc, char ** argv) {
         return common_flydelta_experiment_queue_enqueue(
             queue_root, job, queue_limits, enqueue_error);
     };
+    runtime.flydelta_capture_job_enqueue = [queue_root = flydelta_worker_config.queue_root,
+            queue_limits = flydelta_worker_config.queue_limits,
+            resource_store = runtime.resource_store.get()](
+            const common_flydelta_capture_candidate & candidate,
+            std::string & enqueue_error) {
+        enqueue_error.clear();
+        if (resource_store == nullptr ||
+                !common_flydelta_capture_candidate_validate(candidate, enqueue_error)) {
+            if (enqueue_error.empty()) {
+                enqueue_error = "FlyDelta capture candidate resource store is unavailable";
+            }
+            return false;
+        }
+
+        // Broad runtime discovery intentionally remains pending until a host
+        // supplies typed baseline/candidate/verifier references. Persisting
+        // the candidate first keeps that pending state durable without
+        // manufacturing a donor job that could not resolve its fixture.
+        agent_resource_put_request request;
+        request.name = "flydelta-capture-candidate-" +
+            hash_sha256_hex(candidate.id.data(), candidate.id.size()).substr(0, 24) + ".json";
+        request.description = "Durable reference-only FlyDelta capture candidate";
+        request.mime_type = "application/json";
+        request.text = common_flydelta_capture_candidate_to_json(candidate);
+        request.scope = common_runtime_resource_scope::session;
+        request.namespace_id = candidate.scope.namespace_id;
+        request.project_id = candidate.scope.project_id;
+        request.session_id = candidate.scope.session_id;
+        request.turn_id = candidate.scope.turn_id;
+        request.source_provider = "flydelta";
+        request.source_tool = "capture-candidate";
+        request.created_at = std::time(nullptr);
+        request.metadata.purpose = "flydelta_capture_candidate";
+        request.metadata.content_summary =
+            "Reference-only candidate pending host-verified donor capture.";
+        request.metadata.processing_cache_key = candidate.id;
+        agent_resource_descriptor descriptor;
+        if (!resource_store->put_text(request, descriptor, enqueue_error) ||
+                descriptor.uri.empty()) {
+            if (enqueue_error.empty()) {
+                enqueue_error = "FlyDelta capture candidate resource has no URI";
+            }
+            return false;
+        }
+
+        // The automatic source observer does not own execution semantics. A
+        // donor job is therefore created only after the explicit relation
+        // path has populated all three host-owned refs.
+        if (candidate.baseline_ref.empty() || candidate.candidate_ref.empty() ||
+                candidate.verifier_ref.empty()) return true;
+
+        common_flydelta_experiment_job job;
+        job.id = "flydelta://job/donor-capture/" +
+            hash_sha256_hex(candidate.id.data(), candidate.id.size()).substr(0, 24);
+        job.kind = common_flydelta_experiment_job_kind::donor_capture;
+        job.seed.id = job.id;
+        job.seed.behavior_key = candidate.behavior_key.empty()
+            ? "flydelta/capture" : candidate.behavior_key;
+        job.seed.source = candidate.source;
+        job.seed.scope = candidate.scope;
+        job.seed.split = common_flydelta_training_split::train;
+        job.seed.task_fingerprint = candidate.task_fingerprint.empty()
+            ? candidate.transaction_id : candidate.task_fingerprint;
+        job.seed.model_profile_fingerprint = candidate.model_profile_fingerprint;
+        job.seed.tokenizer_fingerprint = "flydelta-capture-tokenizer-v1";
+        job.seed.template_fingerprint = "flydelta-capture-template-v1";
+        job.seed.execution_context_fingerprint = "flydelta-server-context-v1";
+        job.seed.baseline_ref = candidate.baseline_ref;
+        job.seed.candidate_ref = candidate.candidate_ref;
+        job.seed.verifier_ref = candidate.verifier_ref;
+        job.seed.evidence_ref = candidate.evidence_refs.front();
+        job.seed.transaction_ids = {candidate.transaction_id};
+        job.capture_candidate_ids = {descriptor.uri};
+        job.code_revision = "flydelta-donor-capture-v1";
+        if (!common_flydelta_experiment_job_validate(job, 128, enqueue_error)) return false;
+        return common_flydelta_experiment_queue_enqueue(
+            queue_root, job, queue_limits, enqueue_error);
+    };
     if (!runtime.flydelta_model_adapter && runtime.flydelta_model_host) {
         std::string adapter_error;
         runtime.flydelta_model_adapter = common_flydelta_model_adapter_from_host(
@@ -568,6 +648,19 @@ int main(int argc, char ** argv) {
             std::string & persist_error) {
             persist_error.clear();
             if (!lifecycle_store) return true;
+
+            if (!report.trace_json.empty()) {
+                common_flydelta_lifecycle_event_context trace_context;
+                trace_context.event_id = job.id + ":trace";
+                trace_context.idempotency_key = trace_context.event_id;
+                trace_context.source_id = "daemon-flydelta-worker";
+                trace_context.scope = job.seed.scope;
+                trace_context.content_hash = job.id + ":trace";
+                trace_context.created_at = job.id;
+                if (!common_flydelta_append_worker_trace_lifecycle(
+                        *lifecycle_store, trace_context, job.id,
+                        report.trace_json, persist_error)) return false;
+            }
 
             if (report.has_evaluation_report) {
                 common_flydelta_lifecycle_event_context context;

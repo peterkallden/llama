@@ -33,6 +33,14 @@ int main() {
     CHECK(common_flydelta_capture_candidate_from_transition(
         transition, transition_evidence, "sha256:model", "l_out:v1", generated, error));
     CHECK(generated.transaction_id == transition.candidate_transaction_id);
+    CHECK(generated.scope.namespace_id == transition.scope.namespace_id);
+    CHECK(generated.scope.project_id == transition.scope.project_id);
+    CHECK(generated.baseline_ref == transition_evidence.baseline_ref);
+    CHECK(generated.candidate_ref == transition_evidence.candidate_ref);
+    CHECK(generated.verifier_ref == transition_evidence.verifier_ref);
+    const auto generated_json = common_flydelta_capture_candidate_to_json(generated);
+    CHECK(generated_json.find("\"scope\"") != std::string::npos);
+    CHECK(generated_json.find("execution:repaired") != std::string::npos);
 
     common_flydelta_capture_candidate candidate;
     candidate.id = "flydelta://capture-candidate/tool_repair/transaction-1";

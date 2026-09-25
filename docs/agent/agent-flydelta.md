@@ -102,6 +102,12 @@ remain non-ready until a host supplies an explicit relation and verifier. The
 collector is bounded, idempotent and best-effort; it cannot make the active
 turn fail. A host may provide `flydelta_capture_job_enqueue` to place a
 reference-only `donor_capture` job on the existing FlyDelta experiment queue.
+The standard daemon now persists the candidate as a session-scoped resource
+before enqueueing. Broad source discovery remains pending until the host-owned
+baseline, candidate and verifier references are present; the explicit verified
+relation path supplies those fields and the candidate scope. This prevents a
+syntactically valid queue item from reaching donor capture without a resolvable
+fixture or from reading another session's resource.
 The common worker then invokes a host callback for fresh capture/inference and
 returns only redacted, identity-checked capture manifests. Queue pressure or
 temporary worker unavailability remains pending host work rather than a turn
@@ -292,6 +298,12 @@ the status did not, record why the existing evidence remains valid. After severa
 have passed this gate, create a local commit on the current work branch;
 integration with `feature/llama-agent` requires an explicit owner instruction.
 
+Completed worker traces are appended to the same lifecycle journal before a
+follow-up `next_action` is scheduled. A completed queue item therefore cannot
+advance the orchestration cursor while its trace/evaluation evidence is still
+only in memory; the queue remains the scheduling record and the lifecycle
+journal remains the durable evidence boundary.
+
 ### Maintenance log
 
 | Date | Commit | Sweep/result | Tests or smokes | Documentation decision |
@@ -303,6 +315,8 @@ integration with `feature/llama-agent` requires an explicit owner instruction.
 | 2026-09-24 | this local commit | Larger Vulkan profile validated for resident generation and host/cvec activation; daemon differential admin evidence remains open | CTest contracts: 5/5 focused tests passed; model-backed `llama-agent-flydelta-model-ab-smoke` passed with Qwen2.5-1.5B, Vulkan, host-verified capture, five neutral A/B arms; daemon admin smoke exercised twelve production-gated probes but found no candidate-only verifier token and correctly stopped before seeding | Expanded the daemon probe across representative layers and documented the larger-profile limitation; no promotion or quality claim made for the neutral A/B result |
 | 2026-09-25 | this local commit | Evidence wording clarified: these smokes evaluate production wiring, not learned model quality | Documentation check: daemon usage guide and status map reviewed; existing 5/5 CTests and model-free/tiny/Qwen smoke results remain the recorded evidence | Marked runtime, host, worker, lifecycle, review, canary and replay claims explicitly as wiring claims; retained the larger-profile differential evidence gap |
 | 2026-09-25 | this local commit | Later dataset-question model smokes aligned with the established portable wrapper interface | `bash -n` and `--help` passed for both wrappers; no model or CTest run was required for the argument-only change | Added explicit `--model` and `--suite` overrides with existing environment/default fallback; relative paths resolve from the repository root; removed local environment details from agent documentation |
+| 2026-09-25 | this local commit | Clean-architecture correction for runtime capture handoff and worker evidence durability | Serial CTests passed for capture manifest, runtime observer, job, queue, worker, candidate lifecycle, server binding, daemon readiness and JSONL protocol; the runtime CTest remained explicitly skipped; model-free admin smoke passed with `flydelta_admin_trace` and `flydelta_worker_trace` through evaluation, promotion summary, review, canary and replay | Added typed capture scope/refs, durable candidate resource materialization, job-scoped donor authority, lifecycle trace persistence, next-action gating and a needs-based recurring architecture gate; direct scope/trace assertions were added in existing contract tests |
+| 2026-09-25 | this local commit | Long-running build polling made a portable workflow rule | Documentation-only review; no additional runtime test required | Added a needs-based one-shot poll routine with a short progress check, dynamic completion estimate plus measured margin, stale-poll replacement, serial follow-up validation and no local environment paths in repository documentation |
 
 ## Natural dataset-question smoke
 

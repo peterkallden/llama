@@ -102,6 +102,39 @@ struct daemon_flydelta_resource_provider {
             common_flydelta_utility_history &, std::string &)> resolve_search_orchestration_state;
 };
 
+// Resource authority is execution-scoped, not a property of the resident
+// model. Worker callbacks receive the immutable job scope and use this
+// lightweight provider view so concurrent jobs cannot overwrite one another's
+// authority while sharing the same host and resource store.
+std::shared_ptr<daemon_flydelta_resource_provider>
+daemon_flydelta_provider_for_scope(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & source,
+        const common_agent_scope & scope) {
+    auto scoped = std::make_shared<daemon_flydelta_resource_provider>();
+    scoped->host = source->host;
+    scoped->resources = source->resources;
+    scoped->authority.namespace_id = scope.namespace_id.empty()
+        ? source->authority.namespace_id : scope.namespace_id;
+    scoped->authority.project_id = scope.project_id;
+    scoped->authority.session_id = scope.session_id.empty()
+        ? source->authority.session_id : scope.session_id;
+    scoped->authority.turn_id = scope.turn_id;
+    scoped->authority.now = source->authority.now;
+    scoped->model_profile_fingerprint = source->model_profile_fingerprint;
+    scoped->capture_layout_revision = source->capture_layout_revision;
+    scoped->teaching_material_runtime = source->teaching_material_runtime;
+    scoped->n_predict = source->n_predict;
+    scoped->n_threads = source->n_threads;
+    scoped->model_n_embd = source->model_n_embd;
+    scoped->model_n_layers = source->model_n_layers;
+    scoped->lifecycle_store = source->lifecycle_store;
+    scoped->resolve_bootstrap_zoom_state = source->resolve_bootstrap_zoom_state;
+    scoped->resolve_representation_augmentation_state =
+        source->resolve_representation_augmentation_state;
+    scoped->resolve_search_orchestration_state = source->resolve_search_orchestration_state;
+    return scoped;
+}
+
 bool daemon_flydelta_read_json(
         const daemon_flydelta_resource_provider & provider,
         const std::string & reference,
@@ -3363,9 +3396,10 @@ bool daemon_flydelta_run_donor_capture(
         std::string & error) {
     error.clear();
     manifests.clear();
+    const auto scoped_provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     for (const auto & reference : job.capture_candidate_ids) {
         json value;
-        if (!daemon_flydelta_read_json(*provider, reference, value, error)) return false;
+        if (!daemon_flydelta_read_json(*scoped_provider, reference, value, error)) return false;
         common_flydelta_capture_candidate candidate;
         try {
             candidate.schema_version = value.value("schema_version", 0);
@@ -3378,21 +3412,33 @@ bool daemon_flydelta_run_donor_capture(
                 return false;
             }
             candidate.source = *source;
+            const auto scope = value.value("scope", json::object());
+            candidate.scope.namespace_id = scope.value("namespace_id", "");
+            candidate.scope.project_id = scope.value("project_id", "");
+            candidate.scope.session_id = scope.value("session_id", "");
+            candidate.scope.turn_id = scope.value("turn_id", "");
             candidate.behavior_key = value.value("behavior_key", job.seed.behavior_key);
+            candidate.task_fingerprint = value.value("task_fingerprint", job.seed.task_fingerprint);
+            candidate.baseline_ref = value.value("baseline_ref", "");
+            candidate.candidate_ref = value.value("candidate_ref", "");
+            candidate.verifier_ref = value.value("verifier_ref", "");
             candidate.evidence_refs = value.value("evidence_refs", std::vector<std::string>{});
             candidate.model_profile_fingerprint = value.value(
-                "model_profile_fingerprint", provider->model_profile_fingerprint);
+                "model_profile_fingerprint", scoped_provider->model_profile_fingerprint);
             candidate.capture_layout_revision = value.value(
-                "capture_layout_revision", provider->capture_layout_revision);
+                "capture_layout_revision", scoped_provider->capture_layout_revision);
             candidate.candidate_ready = value.value("candidate_ready", true);
         } catch (const std::exception & exception) {
             error = std::string("FlyDelta donor capture candidate is malformed: ") + exception.what();
             return false;
         }
         if (!common_flydelta_capture_candidate_validate(candidate, error)) return false;
-        const std::string baseline_ref = value.value("baseline_ref", "");
-        const std::string candidate_ref = value.value("candidate_ref", "");
-        const std::string fixture_ref = value.value("fixture_ref", job.seed.verifier_ref);
+        const std::string baseline_ref = candidate.baseline_ref.empty()
+            ? job.seed.baseline_ref : candidate.baseline_ref;
+        const std::string candidate_ref = candidate.candidate_ref.empty()
+            ? job.seed.candidate_ref : candidate.candidate_ref;
+        const std::string fixture_ref = candidate.verifier_ref.empty()
+            ? job.seed.verifier_ref : candidate.verifier_ref;
         if (baseline_ref.empty() || candidate_ref.empty() || fixture_ref.empty()) {
             error = "FlyDelta donor capture candidate must provide baseline_ref, candidate_ref and fixture_ref";
             return false;
@@ -3418,7 +3464,7 @@ bool daemon_flydelta_run_donor_capture(
             batch.arms.push_back(std::move(arm));
         }
         common_flydelta_arm_batch_result result;
-        if (!daemon_flydelta_execute_batch(provider, batch, result, error) ||
+        if (!daemon_flydelta_execute_batch(scoped_provider, batch, result, error) ||
                 result.arms.size() != batch.arms.size() ||
                 result.arms[0].capture_ref.empty() || result.arms[1].capture_ref.empty()) {
             if (error.empty()) error = "FlyDelta donor capture did not return both manifests";
@@ -3432,7 +3478,7 @@ bool daemon_flydelta_run_donor_capture(
             ? job.seed.behavior_key : candidate.behavior_key;
         manifest.model_profile_fingerprint = candidate.model_profile_fingerprint;
         manifest.template_fingerprint = job.seed.template_fingerprint.empty()
-            ? provider->model_profile_fingerprint + ":template"
+            ? scoped_provider->model_profile_fingerprint + ":template"
             : job.seed.template_fingerprint;
         manifest.execution_context_fingerprint = job.seed.execution_context_fingerprint;
         manifest.positive_execution_ref = candidate_ref;
@@ -3449,16 +3495,16 @@ bool daemon_flydelta_run_donor_capture(
         std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_capture;
         std::shared_ptr<const common_flydelta_hidden_state_capture> candidate_capture;
         if (!daemon_flydelta_capture_from_reference(
-                provider, result.arms[0].capture_ref, baseline_capture, error) ||
+                scoped_provider, result.arms[0].capture_ref, baseline_capture, error) ||
                 !daemon_flydelta_capture_from_reference(
-                provider, result.arms[1].capture_ref, candidate_capture, error)) return false;
+                scoped_provider, result.arms[1].capture_ref, candidate_capture, error)) return false;
         manifest.captured_bytes = (baseline_capture->values.size() +
             candidate_capture->values.size()) * sizeof(float);
         if (!common_flydelta_capture_manifest_validate(
                 manifest, 4U * 1024U * 1024U, error)) return false;
         std::string manifest_ref;
         if (!daemon_flydelta_put_json_resource(
-                provider, "flydelta-donor-manifest-" +
+                scoped_provider, "flydelta-donor-manifest-" +
                     hash_sha256_hex(manifest.id.data(), manifest.id.size()).substr(0, 24) + ".json",
                 "flydelta_donor_capture_manifest", candidate.id,
                 common_flydelta_capture_manifest_to_json(manifest), manifest_ref, error)) return false;
@@ -4067,8 +4113,10 @@ make_daemon_flydelta_resource_binding_factory(
         auto provider = std::make_shared<daemon_flydelta_resource_provider>();
         provider->host = host;
         provider->resources = resources;
-        provider->authority.namespace_id = "default-namespace";
-        provider->authority.session_id = "default-session";
+        // The provider starts with the portable resource-contract defaults.
+        // Worker callbacks replace this view with job.seed.scope before
+        // resolving job-owned resources.
+        provider->authority = {};
         provider->model_profile_fingerprint = options.adaptation_flydelta_model_profile_fingerprint.empty()
             ? "model:" + std::filesystem::path(options.model).filename().string()
             : options.adaptation_flydelta_model_profile_fingerprint;
@@ -4752,8 +4800,6 @@ bool configure_daemon_flydelta_teaching_material(
     const auto configured_observer = runtime.flydelta_teaching_material_observer;
     agent_resource_store * resource_store = runtime.resource_store.get();
     agent_resource_read_authority authority;
-    authority.namespace_id = "default-namespace";
-    authority.session_id = "default-session";
     runtime.flydelta_teaching_material_observer = [
             material_runtime, configured_observer, resource_store, authority](
             const common_flydelta_teaching_relation & relation,

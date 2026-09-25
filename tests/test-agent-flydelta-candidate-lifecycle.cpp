@@ -153,5 +153,19 @@ int main() {
     records = lifecycle.list(error);
     CHECK(error.empty() && records.size() == 2);
     CHECK(records.back().payload_json.find("experiment_champion_selection") != std::string::npos);
+
+    context.event_id = "event:trace-1";
+    context.idempotency_key = "flydelta:trace-1";
+    context.source_id = "worker:trace-1";
+    context.content_hash = "sha256:trace-1";
+    CHECK(common_flydelta_append_worker_trace_lifecycle(
+        lifecycle, context, "flydelta://job/trace-1",
+        R"({"kind":"flydelta_trace","job_id":"flydelta://job/trace-1"})",
+        error));
+    records = lifecycle.list(error);
+    CHECK(error.empty() && records.size() == 3);
+    CHECK(records.back().kind == common_learning_lifecycle_kind::flydelta_experiment);
+    CHECK(records.back().status == common_learning_lifecycle_status::succeeded);
+    CHECK(records.back().payload_json.find("flydelta_trace") != std::string::npos);
     return 0;
 }

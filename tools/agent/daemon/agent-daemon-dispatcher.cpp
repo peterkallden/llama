@@ -707,21 +707,26 @@ void common_agent_daemon_dispatcher::flydelta_worker_loop() {
             flydelta_config.queue_root, flydelta_config.queue_limits,
             flydelta_config.callback, report, error);
 
+        bool report_persisted = true;
         if (error.empty() && report.state == common_flydelta_experiment_queue_state::succeeded &&
                 flydelta_config.persist_completed_report) {
             std::string persist_error;
-            if (!flydelta_config.persist_completed_report(
-                    report.completed_job, report, persist_error)) {
+            if (!(report_persisted = flydelta_config.persist_completed_report(
+                    report.completed_job, report, persist_error))) {
                 // The bounded slice itself remains completed. The persistence
                 // hook is kept separate so a store outage cannot rewrite the
                 // evaluator outcome, while the missing durable result is
-                // still visible in the daemon log.
+                // still visible in the daemon log. Do not advance the
+                // orchestration cursor until that evidence boundary is
+                // durable; the completed queue item remains retryable by the
+                // host's persistence/reconciliation path.
                 std::fprintf(stderr, "FlyDelta result persistence failed: %s\n",
                     persist_error.c_str());
             }
         }
 
-        if (error.empty() && report.state == common_flydelta_experiment_queue_state::succeeded &&
+        if (error.empty() && report_persisted &&
+                report.state == common_flydelta_experiment_queue_state::succeeded &&
                 report.has_next_action &&
                 report.next_action != common_flydelta_next_action::stop &&
                 report.next_action != common_flydelta_next_action::retain &&

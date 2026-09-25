@@ -2,6 +2,7 @@
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
 
 #include <algorithm>
+#include <nlohmann/json.hpp>
 #include <utility>
 
 namespace {
@@ -24,6 +25,10 @@ bool common_flydelta_capture_candidate_validate(
             !bounded(candidate.transaction_id) || !candidate.candidate_ready ||
             candidate.evidence_refs.empty() || candidate.evidence_refs.size() > 16 ||
             (!candidate.behavior_key.empty() && !bounded(candidate.behavior_key)) ||
+            (!candidate.task_fingerprint.empty() && !bounded(candidate.task_fingerprint)) ||
+            (!candidate.baseline_ref.empty() && !bounded(candidate.baseline_ref)) ||
+            (!candidate.candidate_ref.empty() && !bounded(candidate.candidate_ref)) ||
+            (!candidate.verifier_ref.empty() && !bounded(candidate.verifier_ref)) ||
             !bounded(candidate.model_profile_fingerprint) ||
             !bounded(candidate.capture_layout_revision)) {
         error = "FlyDelta capture candidate is incomplete or outside bounds";
@@ -36,6 +41,33 @@ bool common_flydelta_capture_candidate_validate(
         }
     }
     return true;
+}
+
+std::string common_flydelta_capture_candidate_to_json(
+        const common_flydelta_capture_candidate & candidate) {
+    using json = nlohmann::ordered_json;
+    return json{
+        {"kind", "flydelta_capture_candidate"},
+        {"schema_version", candidate.schema_version},
+        {"id", candidate.id},
+        {"transaction_id", candidate.transaction_id},
+        {"source", common_adaptation_evidence_source_name(candidate.source)},
+        {"scope", {
+            {"namespace_id", candidate.scope.namespace_id},
+            {"project_id", candidate.scope.project_id},
+            {"session_id", candidate.scope.session_id},
+            {"turn_id", candidate.scope.turn_id},
+        }},
+        {"behavior_key", candidate.behavior_key},
+        {"task_fingerprint", candidate.task_fingerprint},
+        {"baseline_ref", candidate.baseline_ref},
+        {"candidate_ref", candidate.candidate_ref},
+        {"verifier_ref", candidate.verifier_ref},
+        {"evidence_refs", candidate.evidence_refs},
+        {"model_profile_fingerprint", candidate.model_profile_fingerprint},
+        {"capture_layout_revision", candidate.capture_layout_revision},
+        {"candidate_ready", candidate.candidate_ready},
+    }.dump();
 }
 
 bool common_flydelta_capture_candidate_from_transition(
@@ -68,7 +100,12 @@ bool common_flydelta_capture_candidate_from_transition(
     candidate.id = transition.id + "/capture-candidate";
     candidate.transaction_id = transition.candidate_transaction_id;
     candidate.source = transition.source;
+    candidate.scope = transition.scope;
     candidate.behavior_key = transition.behavior_key;
+    candidate.task_fingerprint = transition.task_fingerprint;
+    candidate.baseline_ref = evidence.baseline_ref;
+    candidate.candidate_ref = evidence.candidate_ref;
+    candidate.verifier_ref = evidence.verifier_ref;
     candidate.evidence_refs = {
         evidence.id, transition.baseline_transaction_id,
         transition.candidate_transaction_id, evidence.verifier_ref,
@@ -144,7 +181,9 @@ bool common_flydelta_capture_candidate_collector::observe(
     if (!match.behavior_key.empty()) candidate.id += "/" + match.behavior_key;
     candidate.transaction_id = transaction.id;
     candidate.source = match.source;
+    candidate.scope = transaction.observation.scope;
     candidate.behavior_key = match.behavior_key;
+    candidate.task_fingerprint = transaction.observation.content_hash;
     candidate.evidence_refs = match.evidence_refs;
     candidate.model_profile_fingerprint = model_profile_fingerprint;
     candidate.capture_layout_revision = capture_layout_revision;
@@ -186,7 +225,21 @@ bool common_flydelta_capture_candidate_collector::observe_verified_relation(
     };
     match.evidence_refs.insert(match.evidence_refs.end(),
         evidence.transaction_ids.begin(), evidence.transaction_ids.end());
-    return observe(match, transaction, error);
+    if (!observe(match, transaction, error)) return false;
+    auto candidate = std::find_if(queue.rbegin(), queue.rend(), [&](const auto & value) {
+        return value.transaction_id == transaction.id && value.source == relation.source &&
+            value.behavior_key == relation.behavior_key;
+    });
+    if (candidate == queue.rend()) {
+        error = "FlyDelta verified relation did not produce a capture candidate";
+        return false;
+    }
+    candidate->scope = relation.scope;
+    candidate->task_fingerprint = relation.task_fingerprint;
+    candidate->baseline_ref = relation.baseline_ref;
+    candidate->candidate_ref = relation.candidate_ref;
+    candidate->verifier_ref = relation.verifier_ref;
+    return common_flydelta_capture_candidate_validate(*candidate, error);
 }
 
 std::function<bool(

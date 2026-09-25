@@ -19,7 +19,12 @@ struct common_flydelta_capture_candidate {
     std::string id;
     std::string transaction_id;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    common_agent_scope scope;
     std::string behavior_key;
+    std::string task_fingerprint;
+    std::string baseline_ref;
+    std::string candidate_ref;
+    std::string verifier_ref;
     std::vector<std::string> evidence_refs;
     std::string model_profile_fingerprint;
     std::string capture_layout_revision;
@@ -29,6 +34,9 @@ struct common_flydelta_capture_candidate {
 bool common_flydelta_capture_candidate_validate(
         const common_flydelta_capture_candidate & candidate,
         std::string & error);
+
+std::string common_flydelta_capture_candidate_to_json(
+        const common_flydelta_capture_candidate & candidate);
 
 // Creates the reference-only capture candidate for a host-certified
 // baseline/repaired transition. The host still supplies the evidence and

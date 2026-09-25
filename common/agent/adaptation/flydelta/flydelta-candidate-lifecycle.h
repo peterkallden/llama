@@ -216,6 +216,16 @@ bool common_flydelta_append_capture_candidate_lifecycle(
         const common_learning_transaction & transaction,
         std::string & error);
 
+// Persists the bounded worker trace in the same append-only lifecycle journal
+// as evaluation and promotion results. The queue remains a scheduling record;
+// this is the durable evidence boundary for the completed slice.
+bool common_flydelta_append_worker_trace_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const std::string & job_id,
+        const std::string & trace_json,
+        std::string & error);
+
 bool common_flydelta_append_champion_lifecycle(
         common_learning_lifecycle_store & store,
         const common_flydelta_lifecycle_event_context & context,

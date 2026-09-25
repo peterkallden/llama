@@ -533,7 +533,17 @@ bool common_flydelta_append_capture_candidate_lifecycle(
         {"candidate_id", candidate.id},
         {"transaction_id", candidate.transaction_id},
         {"source", common_adaptation_evidence_source_name(candidate.source)},
+        {"scope", {
+            {"namespace_id", candidate.scope.namespace_id},
+            {"project_id", candidate.scope.project_id},
+            {"session_id", candidate.scope.session_id},
+            {"turn_id", candidate.scope.turn_id},
+        }},
         {"behavior_key", candidate.behavior_key},
+        {"task_fingerprint", candidate.task_fingerprint},
+        {"baseline_ref", candidate.baseline_ref},
+        {"candidate_ref", candidate.candidate_ref},
+        {"verifier_ref", candidate.verifier_ref},
         {"evidence_refs", candidate.evidence_refs},
         {"model_profile_fingerprint", candidate.model_profile_fingerprint},
         {"capture_layout_revision", candidate.capture_layout_revision},
@@ -552,6 +562,34 @@ bool common_flydelta_append_capture_candidate_lifecycle(
     record.content_hash = context.content_hash;
     record.created_at = context.created_at;
     record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
+bool common_flydelta_append_worker_trace_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const std::string & job_id,
+        const std::string & trace_json,
+        std::string & error) {
+    error.clear();
+    if (!lifecycle_context_valid(context, error) || job_id.empty() || job_id.size() > 512 ||
+            trace_json.empty() || trace_json.size() > 4U * 1024U * 1024U) {
+        if (error.empty()) error = "FlyDelta worker trace lifecycle payload is invalid";
+        return false;
+    }
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = job_id;
+    record.kind = common_learning_lifecycle_kind::flydelta_experiment;
+    record.status = common_learning_lifecycle_status::succeeded;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = trace_json;
     return store.append(record, error);
 }
 

@@ -36,6 +36,28 @@ or integrate into `feature/llama-agent` as part of normal sweep completion.
 The project owner decides when the integration branch becomes the active work
 target.
 
+## Long-running build and poll routine
+
+When a build is likely to take more than a few minutes, do not busy-wait in
+the foreground. Start it with the project-approved elevated build environment
+and writable cache configuration, wait briefly, then inspect actual progress
+and estimate the remaining time. If completion is still several minutes away,
+schedule one one-shot poll for the estimated completion time plus a small
+measured margin. A fixed delay such as twenty minutes is not the default; it is
+only appropriate when the measured estimate supports it. Re-check progress
+when the estimate changes and replace the poll rather than leaving a stale
+one. The poll must
+carry the next concrete actions: inspect the final build result, run the
+relevant tests serially, inspect tracing, perform the correction pass and
+continue toward the local commit.
+
+Keep this routine portable: repository documentation must not contain a local
+home directory, machine-specific hardware, or a hard-coded cache path. The
+environment supplies those values. Compilation may use the configured build
+thread count; GPU/CPU functional tests remain serial and must use the full
+agent/server-context flow. Do not create duplicate polls when one is already
+active; update or reuse the existing one.
+
 ## Read before proposing changes
 
 Read these files in order:
@@ -163,3 +185,28 @@ At the end of each grouped development sweep, before calling the sweep done:
 Do this once at the end of a related sweep, not after every micro-edit. Never
 leave a documentation claim stronger than the evidence produced by the
 sweep.
+
+## Recurring clean-architecture gate
+
+Do a separate clean-architecture pass when an area is being tied together,
+when several seams have crossed from contract work into production wiring, or
+when a feature is approaching an evidence-level checkpoint. Do not run this
+after every contiguous sweep by default. Before starting the pass, record a
+short decision: `defer` when the work is still local and the chain has not
+changed, or `run` when ownership, scope, persistence, concurrency or lifecycle
+boundaries may have shifted.
+
+When it is `run`, re-trace the completed area as:
+
+```text
+contract -> implementation -> registration -> invocation
+         -> durable persistence -> consumer/lifecycle decision
+```
+
+Check specifically for duplicate orchestration, authority derived from model
+output, fixed local-environment assumptions, queue state standing in for
+durable evidence, and a next action that can advance after persistence has
+failed. Correct findings in the existing seam, update the status map and
+maintenance log, then perform the normal CTest/model-free/model-smoke gate.
+The next pass is needs-based again; it is not automatically required for the
+next micro-sweep.
