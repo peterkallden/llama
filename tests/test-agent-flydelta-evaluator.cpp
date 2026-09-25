@@ -617,6 +617,10 @@ int main() {
     request_contract.coefficients = {1.0f, -0.25f};
     request_contract.alpha = 0.1f;
     CHECK(common_flydelta_arm_request_validate(request_contract, error));
+    request_contract.request_host_verification = true;
+    CHECK(!common_flydelta_arm_request_validate(request_contract, error));
+    request_contract.request_generation = true;
+    CHECK(common_flydelta_arm_request_validate(request_contract, error));
     request_contract.coefficients.pop_back();
     CHECK(!common_flydelta_arm_request_validate(request_contract, error));
     common_flydelta_arm_result result_contract;

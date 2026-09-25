@@ -48,6 +48,7 @@ struct common_flydelta_trace_arm {
     float search_score = 0.0f;
     bool promising = false;
     bool safe_to_continue = false;
+    std::string execution_class;
     bool host_evaluated = false;
     bool verifier_known = false;
     bool candidate_passed = false;

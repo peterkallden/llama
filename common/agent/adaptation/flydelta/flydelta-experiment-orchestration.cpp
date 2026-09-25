@@ -926,7 +926,9 @@ bool common_flydelta_select_search_continuation(
         for (size_t trial_index = 0; trial_index < direction.region_trials.size(); ++trial_index) {
             const auto & trial = direction.region_trials[trial_index];
             if (!common_flydelta_intervention_region_trial_validate(trial, error)) return false;
-            if (!trial.executed || !trial.safe_to_continue || !trial.promising ||
+            if (!trial.executed ||
+                    trial.outcome == common_flydelta_counterfactual_outcome::harmed ||
+                    !trial.safe_to_continue || !trial.promising ||
                     !finite(trial.search_score)) continue;
             const bool helped = trial.outcome == common_flydelta_counterfactual_outcome::helped &&
                 trial.verifier_known;

@@ -793,11 +793,14 @@ wiring for the supplied model and configuration, not equality of model output
 or learned quality between the two execution paths.
 
 The production execution optimization is diagnostics-first across Deep,
-Whirlpool/region and Shallow/TFO-lite. Probe and coefficient populations use
-prompt evaluation, capture and teacher-forced scoring first; only a bounded
-top-K frontier is re-run with generation and host verification. This changes
-execution shape only. Search policy, proposal order, utility gates and
-promotion semantics remain unchanged.
+Whirlpool/region, Shallow/TFO-lite, BootstrapZoom and Orthogonal controls.
+Probe and coefficient populations use prompt evaluation, capture and
+teacher-forced scoring first; only a bounded top-K frontier is re-run with
+generation and host verification. AdaptiveAlpha remains sequential, but now
+uses diagnostic capture/margin/geometry first and repeats only geometrically
+safe probes with generation and verification. This changes execution shape
+only; search policy, proposal order, dose gates, utility gates and promotion
+semantics remain unchanged.
 
 Verification uses three distinct evidence levels. CTests are contract tests:
 they validate schemas, validators, state transitions and invariants, but do

@@ -274,11 +274,21 @@ it does not change the search algorithms or their promotion semantics.
 | Deep | Diagnostic arms use `full_execution=false` with prompt evaluation, capture and teacher-forced scoring; only selected top-K arms use fresh full generation and host verification | IMPLEMENTED | Traced runtime evidence covers the diagnostic/full-generation callback split |
 | Whirlpool/region search | All probes use prompt evaluation, capture and teacher-forced scoring first; only the bounded top-K diagnostic frontier is re-run with generation and host verification | IMPLEMENTED | The daemon batch host records diagnostic probes separately from the full-generation frontier |
 | Shallow/TFO-lite | Coordinate and TFO-lite populations use diagnostics first; only the bounded top-K frontier uses fresh full generation and host verification | IMPLEMENTED | The staged coefficient seam preserves proposal order and host-only HELPED selection |
+| BootstrapZoom | Candidate waves use one diagnostic batch; only baseline and a bounded top-K frontier are re-run with generation and host verification | IMPLEMENTED | Full HARMED results clear continuation eligibility; frontier trace evidence remains required |
+| Orthogonal controls | Control waves use one diagnostic batch; only baseline and a bounded top-K frontier are re-run with generation and host verification | IMPLEMENTED | The existing control construction and ranking remain unchanged |
+| AdaptiveAlpha | Sequential adaptive probes run a diagnostic capture/margin gate first; only geometrically safe probes repeat with generation and host verification | IMPLEMENTED | The adaptive order, dose policy and outcome-dependent decisions remain unchanged |
 
-The execution class is now explicit for every affected phase. Diagnostic
-results remain search and safety evidence; only the full-generation frontier
-can produce host-verified counterfactual outcomes for selection, lifecycle or
-promotion decisions.
+The execution class is explicit for staged phases. Diagnostic results remain
+search and safety evidence; only the full-generation frontier can produce
+host-verified counterfactual outcomes for selection, lifecycle or promotion
+decisions. AdaptiveAlpha remains deliberately sequential: diagnostics can stop
+an unsafe probe before generation, while safe probes retain the existing full
+counterfactual decision path.
+
+BootstrapZoom and Orthogonal currently bound the full-generation frontier to
+two candidate arms per wave, in addition to a fresh full baseline. The bound
+is an execution budget; it does not change candidate construction, ranking
+order or Whirlpool continuation semantics.
 
 ## Current pre-canary status map
 
@@ -337,7 +347,7 @@ journal remains the durable evidence boundary.
 | 2026-09-25 | this local commit | Evaluation and diagnostic-arm runtime wiring corrected without changing search policy | Serial FlyDelta contract CTests passed; model-free and model-backed functional smokes passed with tracing; model-backed evaluation persisted 8/8 known/helped trials and worker trace | Evaluation references now resolve through the immutable job scope; diagnostic arms use prompt-only server evaluation (`n_predict=0`) without sampling; smoke timeout and callback failure reporting remain portable |
 | 2026-09-25 | this local commit | Qwen server-context runtime and cvec batch paths rechecked serially after device-selection correction | Qwen Instruct runtime smoke passed with three activation arms; native two-slot cvec batch and one-slot scalar fallback both passed with tracing; broader repair smoke passed separately; daemon Qwen probe loaded and generated but correctly stopped when no candidate-only verifier token was found | Recorded runtime/batch wiring as functional evidence only; kept the Qwen differential/model-quality limitation explicit and documented device selection as an invocation concern rather than a project-local setting |
 | 2026-09-25 | d8a6fc42b | Deep diagnostics-first execution boundary corrected; broader optimization remains partial | Code review identifies separate diagnostic/full-generation Deep callbacks; a fresh focused runtime smoke proving `n_predict=0` diagnostics and top-K full generation is still outstanding; Whirlpool/region and Shallow/TFO remain full-execution paths | Recorded Deep as implemented, kept Whirlpool/region and Shallow/TFO explicitly open, and prevented the Deep result from closing the whole execution-optimization area |
-| 2026-09-25 | this local commit | Diagnostics-first execution boundary completed across Deep, Whirlpool/region and Shallow/TFO-lite without changing search policy | Staged coefficient contract and focused FlyDelta CTests passed serially; model-free admin smoke passed with admin/worker traces; Qwen server-context runtime and repair smokes passed serially with tracing; repair trace covered native batch, scalar remainder and backend-batch paths | Added separate diagnostic/full-generation callback classes, bounded top-K full-generation continuation and host-only selection; evidence is recorded as production wiring/execution evidence, not learned model-quality evidence |
+| 2026-09-25 | this local commit | Diagnostics-first execution boundary completed across Deep, Whirlpool/region, Shallow/TFO-lite, BootstrapZoom, Orthogonal and AdaptiveAlpha without changing search policy | 13 focused FlyDelta CTests passed serially; model-free admin smoke passed with admin/worker traces; Qwen server-context runtime and repair smokes passed serially with tracing; repair trace covered native batch, scalar remainder and backend-batch paths | Added separate diagnostic/full-generation callback classes, bounded top-K full-generation continuation, AdaptiveAlpha diagnostic safety gating and host-only selection; evidence is recorded as production wiring/execution evidence, not learned model-quality evidence |
 
 ## Natural dataset-question smoke
 

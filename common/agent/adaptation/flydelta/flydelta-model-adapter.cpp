@@ -78,6 +78,10 @@ bool common_flydelta_arm_request_validate(
         error = "FlyDelta overlay arm must request a fresh context";
         return false;
     }
+    if (request.request_host_verification && !request.request_generation) {
+        error = "FlyDelta host verification requires generation";
+        return false;
+    }
     return true;
 }
 
@@ -140,6 +144,10 @@ bool common_flydelta_arm_result_validate(
     }
     if (result.execution_metrics.fallback_reason.size() > 512) {
         error = "FlyDelta arm execution fallback reason is too long";
+        return false;
+    }
+    if (result.execution_metrics.execution_class.size() > 32) {
+        error = "FlyDelta arm execution class is too long";
         return false;
     }
     const auto execution_path = result.execution_metrics.execution_path;
@@ -551,15 +559,16 @@ common_flydelta_model_capabilities common_flydelta_model_capabilities_from_primi
     result.representation_augmentation = false;
     result.concept_synthesis = false;
     result.concept_capture = false;
+    const bool full_arm = primitives.generation && primitives.host_verification;
     result.bootstrap_zoom = has_bounded_arm && primitives.capture &&
-        primitives.overlay && primitives.generation && has_search_runner;
+        primitives.overlay && full_arm && has_search_runner;
     result.adaptive_alpha = result.bootstrap_zoom;
     result.teacher_forced_margin = has_bounded_arm && primitives.overlay &&
         primitives.generation && primitives.teacher_forced_scoring;
     result.orthogonal_search = has_bounded_arm && primitives.capture &&
-        primitives.overlay && has_stateful_search;
+        primitives.overlay && full_arm && has_stateful_search;
     result.representation_augmentation = has_bounded_arm && primitives.capture &&
-        primitives.overlay && has_stateful_search;
+        primitives.overlay && full_arm && has_stateful_search;
     return result;
 }
 

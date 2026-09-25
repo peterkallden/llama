@@ -382,9 +382,16 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
             arm_result.margin_normalized = margins[index].normalized_delta();
         }
         arm_result.execution_metrics.available = true;
-        arm_result.execution_metrics.model_ms = generation_ms;
-        arm_result.execution_metrics.generation_ms = generation_ms;
+        arm_result.execution_metrics.request_generation = request.arms[index].request_generation;
+        arm_result.execution_metrics.request_host_verification =
+            request.arms[index].request_host_verification;
+        arm_result.execution_metrics.model_ms = request.arms[index].request_generation
+            ? generation_ms : 0.0f;
+        arm_result.execution_metrics.generation_ms = request.arms[index].request_generation
+            ? generation_ms : 0.0f;
         arm_result.execution_metrics.teacher_forced_ms = teacher_forced_ms;
+        arm_result.execution_metrics.execution_class =
+            request.arms[index].request_generation ? "full" : "diagnostic";
         arm_result.execution_metrics.batched_execution_used =
             request.arms.size() > 1 && native_batch;
         const bool device_batch = generation_results[index].flydelta_device_batch;

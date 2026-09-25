@@ -1864,10 +1864,49 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
         if (!common_flydelta_arm_request_validate(arm, error)) return false;
         batch.arms.push_back(std::move(arm));
     }
-    common_flydelta_arm_batch_result results;
-    if (!daemon_flydelta_execute_batch(provider, batch, results, error) ||
-            results.arms.size() != batch.arms.size()) {
-        if (error.empty()) error = "FlyDelta BootstrapZoom batch returned incomplete arms";
+    common_flydelta_arm_batch_request diagnostic_batch = batch;
+    for (auto & arm : diagnostic_batch.arms) {
+        arm.request_generation = false;
+        arm.request_host_verification = false;
+        arm.max_generated_tokens = 0;
+    }
+    common_flydelta_arm_batch_result diagnostic_results;
+    if (!daemon_flydelta_execute_batch(provider, diagnostic_batch, diagnostic_results, error) ||
+            diagnostic_results.arms.size() != diagnostic_batch.arms.size()) {
+        if (error.empty()) error = "FlyDelta BootstrapZoom diagnostic batch returned incomplete arms";
+        return false;
+    }
+
+    // Diagnostics preserve the existing candidate order and ranking signal.
+    // Only the bounded diagnostic frontier is re-run with generation and
+    // host verification; this is an execution optimization, not a policy
+    // or candidate-generation change.
+    std::vector<size_t> frontier_indices;
+    frontier_indices.reserve(candidates.size());
+    for (size_t index = 0; index < candidates.size(); ++index) {
+        frontier_indices.push_back(index);
+    }
+    std::stable_sort(frontier_indices.begin(), frontier_indices.end(),
+        [&](const size_t left, const size_t right) {
+            const auto & lhs = diagnostic_results.arms[left + 1];
+            const auto & rhs = diagnostic_results.arms[right + 1];
+            const float lhs_score = lhs.margin_available ? lhs.margin.normalized_delta() : 0.0f;
+            const float rhs_score = rhs.margin_available ? rhs.margin.normalized_delta() : 0.0f;
+            return lhs_score > rhs_score;
+        });
+    constexpr size_t full_generation_top_k = 2;
+    if (frontier_indices.size() > full_generation_top_k) {
+        frontier_indices.resize(full_generation_top_k);
+    }
+    common_flydelta_arm_batch_request full_batch;
+    full_batch.batch_id = batch.batch_id + ":frontier";
+    full_batch.wave_id = batch.wave_id;
+    full_batch.arms.push_back(batch.arms.front());
+    for (const size_t index : frontier_indices) full_batch.arms.push_back(batch.arms[index + 1]);
+    common_flydelta_arm_batch_result full_results;
+    if (!daemon_flydelta_execute_batch(provider, full_batch, full_results, error) ||
+            full_results.arms.size() != full_batch.arms.size()) {
+        if (error.empty()) error = "FlyDelta BootstrapZoom frontier batch returned incomplete arms";
         return false;
     }
 
@@ -1882,21 +1921,27 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
     direction_result.direction.source_samples = 1;
     direction_result.direction.retained_samples = 1;
     direction_result.direction.experimental_only = true;
-    const auto & baseline_result = results.arms.front();
+    const auto & baseline_result = full_results.arms.front();
     for (size_t index = 0; index < candidates.size(); ++index) {
-        const auto & arm = batch.arms[index + 1];
-        const auto & arm_result = results.arms[index + 1];
+        const auto & arm = diagnostic_batch.arms[index + 1];
+        const auto frontier = std::find(frontier_indices.begin(), frontier_indices.end(), index);
+        const bool full_execution = frontier != frontier_indices.end();
+        const auto & arm_result = full_execution
+            ? full_results.arms[1 + static_cast<size_t>(frontier - frontier_indices.begin())]
+            : diagnostic_results.arms[index + 1];
         common_flydelta_representation_diagnostics diagnostics;
-        if (!daemon_flydelta_diagnostics_for_arm(provider, job, baseline.arm_id, arm,
+        if (!daemon_flydelta_diagnostics_for_arm(provider, job, diagnostic_batch.arms.front().arm_id, arm,
                 candidates[index].layer_indices.front(), diagnostics, error)) return false;
         common_flydelta_bootstrap_zoom_trial trial;
         trial.candidate = candidates[index];
         trial.outcome = arm_result.host_outcome;
-        trial.host_evaluated = arm_result.host_evaluated;
-        trial.verifier_known = arm_result.verifier_known;
-        trial.margin_available = baseline_result.margin.available && arm_result.margin.available;
+        trial.host_evaluated = full_execution && arm_result.host_evaluated;
+        trial.verifier_known = full_execution && arm_result.verifier_known;
+        trial.margin_available = arm_result.margin.available;
         trial.margin_delta = trial.margin_available
-            ? arm_result.margin.normalized_delta() - baseline_result.margin.normalized_delta() : 0.0f;
+            ? (full_execution
+                ? arm_result.margin.normalized_delta() - baseline_result.margin.normalized_delta()
+                : arm_result.margin.normalized_delta()) : 0.0f;
         trial.diagnostics_available = diagnostics.layer_index != 0;
         trial.diagnostics = diagnostics;
         if (!common_flydelta_bootstrap_zoom_trial_validate(trial, error)) return false;
@@ -1910,21 +1955,25 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
             std::sqrt(static_cast<float>(candidates[index].layer_indices.size()));
         region_trial.requested_total_scale = candidates[index].total_scale;
         region_trial.executed_total_scale = candidates[index].total_scale;
-        region_trial.outcome = arm_result.host_outcome;
-        region_trial.quality_delta = arm_result.quality - baseline_result.quality;
+        region_trial.outcome = full_execution
+            ? arm_result.host_outcome : common_flydelta_counterfactual_outcome::unknown;
+        region_trial.quality_delta = full_execution
+            ? arm_result.quality - baseline_result.quality : 0.0f;
         region_trial.margin = arm_result.margin;
         region_trial.margin_comparison.available = trial.margin_available;
         region_trial.margin_comparison.baseline = baseline_result.margin;
         region_trial.margin_comparison.candidate = arm_result.margin;
         region_trial.executed = arm_result.executed;
-        region_trial.verifier_known = arm_result.verifier_known;
+        region_trial.verifier_known = full_execution && arm_result.verifier_known;
         region_trial.geometry_available = trial.diagnostics_available;
         region_trial.geometry = diagnostics;
-        region_trial.safe_to_continue = trial.diagnostics_available &&
+        region_trial.safe_to_continue = arm_result.host_outcome !=
+            common_flydelta_counterfactual_outcome::harmed &&
+            trial.diagnostics_available &&
             diagnostics.leakage <= 1.0f && diagnostics.shift_norm <= 1.0f;
         region_trial.promising = trial.margin_available && trial.margin_delta > 0.0f;
         region_trial.search_score = trial.margin_delta;
-        region_trial.evidence_ref = arm_result.generation_ref;
+        region_trial.evidence_ref = full_execution ? arm_result.generation_ref : arm_result.capture_ref;
         direction_result.region_trials.push_back(std::move(region_trial));
     }
     next.completed_trials.insert(next.completed_trials.end(), new_trials.begin(), new_trials.end());
@@ -2619,6 +2668,7 @@ bool daemon_flydelta_run_rank1_alpha_arm(
         const float scale,
         const bool apply_overlay,
         const size_t proposal_index,
+        const bool full_execution,
         common_flydelta_counterfactual_trial & trial,
         common_flydelta_decision_margin & margin,
         common_flydelta_representation_diagnostics & geometry,
@@ -2654,10 +2704,10 @@ bool daemon_flydelta_run_rank1_alpha_arm(
     arm.fresh_context = true;
     arm.request_capture = true;
     arm.request_teacher_forced_margin = true;
-    arm.request_generation = true;
-    arm.request_host_verification = true;
+    arm.request_generation = full_execution;
+    arm.request_host_verification = full_execution;
     arm.max_capture_bytes = 4U * 1024U * 1024U;
-    arm.max_generated_tokens = 64;
+    arm.max_generated_tokens = full_execution ? 64 : 0;
     if (!common_flydelta_arm_request_validate(arm, error)) return false;
     batch.arms.push_back(arm);
     common_flydelta_arm_batch_result results;
@@ -2673,7 +2723,7 @@ bool daemon_flydelta_run_rank1_alpha_arm(
     trial.quality = result.quality;
     trial.overlay_applied = apply_overlay;
     trial.intervention_count = apply_overlay ? 1 : 0;
-    trial.evidence_ref = result.generation_ref;
+    trial.evidence_ref = full_execution ? result.generation_ref : result.capture_ref;
     margin = result.margin;
     arm_id = arm.arm_id;
     return common_flydelta_counterfactual_trial_validate(trial, error) &&
@@ -2709,15 +2759,16 @@ bool daemon_flydelta_run_adaptive_alpha_slice(
     std::string baseline_arm_id;
     size_t proposal_index = resume.next_candidate_index;
     const auto runner = [provider, &job, &fixture, layer = resume.anchor_layer,
-            &baseline_arm_id, &proposal_index](const common_flydelta_experiment_fixture &,
+            &baseline_arm_id, &proposal_index, config](const common_flydelta_experiment_fixture &,
             const float scale, const bool apply_overlay,
             common_flydelta_counterfactual_trial & trial,
             common_flydelta_decision_margin & margin,
             common_flydelta_representation_diagnostics & geometry,
             bool & geometry_available, std::string & runner_error) mutable {
         std::string arm_id;
+        const size_t arm_proposal = proposal_index++;
         if (!daemon_flydelta_run_rank1_alpha_arm(provider, job, fixture, layer, scale,
-                apply_overlay, proposal_index++, trial, margin, geometry,
+                apply_overlay, arm_proposal, !apply_overlay, trial, margin, geometry,
                 geometry_available, arm_id, runner_error)) return false;
         if (!apply_overlay) {
             baseline_arm_id = std::move(arm_id);
@@ -2731,6 +2782,17 @@ bool daemon_flydelta_run_adaptive_alpha_slice(
         diagnostic_arm.arm_id = arm_id;
         diagnostic_arm.context_ref = job.seed.baseline_ref;
         diagnostic_arm.intervention_ref = job.seed.candidate_ref;
+        if (!daemon_flydelta_diagnostics_for_arm(provider, job, baseline_arm_id,
+                diagnostic_arm, layer, geometry, runner_error)) return false;
+        geometry_available = geometry.layer_index != 0;
+        const bool safe_geometry = !geometry_available ||
+            (geometry.cosine >= config.min_cosine &&
+             geometry.leakage <= config.max_leakage &&
+             geometry.shift_norm <= config.max_shift_norm);
+        if (!safe_geometry) return true;
+        if (!daemon_flydelta_run_rank1_alpha_arm(provider, job, fixture, layer, scale,
+                true, arm_proposal, true, trial, margin, geometry,
+                geometry_available, arm_id, runner_error)) return false;
         if (!daemon_flydelta_diagnostics_for_arm(provider, job, baseline_arm_id,
                 diagnostic_arm, layer, geometry, runner_error)) return false;
         geometry_available = geometry.layer_index != 0;
@@ -2779,7 +2841,9 @@ bool daemon_flydelta_run_adaptive_alpha_slice(
         region_trial.verifier_known = alpha_trial.counterfactual.verifier_known;
         region_trial.geometry_available = alpha_trial.geometry_available;
         region_trial.geometry = alpha_trial.geometry;
-        region_trial.safe_to_continue = alpha_trial.safe_to_continue;
+        region_trial.safe_to_continue = alpha_trial.outcome !=
+            common_flydelta_counterfactual_outcome::harmed &&
+            alpha_trial.safe_to_continue;
         region_trial.promising = alpha_trial.safe_to_continue &&
             alpha_trial.utility > config.utility_epsilon;
         region_trial.search_score = alpha_trial.utility;
@@ -2917,10 +2981,10 @@ bool daemon_flydelta_run_orthogonal_slice(
         arm.fresh_context = true;
         arm.request_capture = true;
         arm.request_teacher_forced_margin = true;
-        arm.request_generation = true;
-        arm.request_host_verification = true;
+        arm.request_generation = false;
+        arm.request_host_verification = false;
         arm.max_capture_bytes = 4U * 1024U * 1024U;
-        arm.max_generated_tokens = 64;
+        arm.max_generated_tokens = 0;
         const std::string identity = job.id + "\n" + batch.wave_id + "\n" + control.label;
         arm.arm_id = "flydelta://runtime/" + job.id + "/orthogonal/" +
             hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
@@ -2928,13 +2992,47 @@ bool daemon_flydelta_run_orthogonal_slice(
         candidates.push_back(std::move(candidate));
         batch.arms.push_back(std::move(arm));
     }
-    common_flydelta_arm_batch_result executed;
-    if (!daemon_flydelta_execute_batch(provider, batch, executed, error) ||
-            executed.arms.size() != batch.arms.size()) {
-        if (error.empty()) error = "FlyDelta orthogonal control batch returned incomplete arms";
+    common_flydelta_arm_batch_result diagnostic_results;
+    if (!daemon_flydelta_execute_batch(provider, batch, diagnostic_results, error) ||
+            diagnostic_results.arms.size() != batch.arms.size()) {
+        if (error.empty()) error = "FlyDelta orthogonal diagnostic batch returned incomplete arms";
         return false;
     }
-    const auto & baseline_result = executed.arms.front();
+
+    std::vector<size_t> frontier_indices;
+    for (size_t index = 0; index < candidates.size(); ++index) frontier_indices.push_back(index);
+    std::stable_sort(frontier_indices.begin(), frontier_indices.end(),
+        [&](const size_t left, const size_t right) {
+            const auto & lhs = diagnostic_results.arms[left + 1];
+            const auto & rhs = diagnostic_results.arms[right + 1];
+            const float lhs_score = lhs.margin_available ? lhs.margin.normalized_delta() : 0.0f;
+            const float rhs_score = rhs.margin_available ? rhs.margin.normalized_delta() : 0.0f;
+            return lhs_score > rhs_score;
+        });
+    constexpr size_t full_generation_top_k = 2;
+    if (frontier_indices.size() > full_generation_top_k) frontier_indices.resize(full_generation_top_k);
+    common_flydelta_arm_batch_request full_batch;
+    full_batch.batch_id = batch.batch_id + ":frontier";
+    full_batch.wave_id = batch.wave_id;
+    auto full_baseline = batch.arms.front();
+    full_baseline.request_generation = true;
+    full_baseline.request_host_verification = true;
+    full_baseline.max_generated_tokens = 64;
+    full_batch.arms.push_back(std::move(full_baseline));
+    for (const size_t index : frontier_indices) {
+        auto arm = batch.arms[index + 1];
+        arm.request_generation = true;
+        arm.request_host_verification = true;
+        arm.max_generated_tokens = 64;
+        full_batch.arms.push_back(std::move(arm));
+    }
+    common_flydelta_arm_batch_result full_results;
+    if (!daemon_flydelta_execute_batch(provider, full_batch, full_results, error) ||
+            full_results.arms.size() != full_batch.arms.size()) {
+        if (error.empty()) error = "FlyDelta orthogonal frontier batch returned incomplete arms";
+        return false;
+    }
+    const auto & baseline_result = full_results.arms.front();
     if (!baseline_result.executed || baseline_result.arm_id != baseline.arm_id) {
         error = "FlyDelta orthogonal baseline arm is invalid";
         return false;
@@ -2964,19 +3062,26 @@ bool daemon_flydelta_run_orthogonal_slice(
     direction_result.direction.retained_samples = orthogonal.source_arm_count;
     direction_result.direction.experimental_only = true;
     for (size_t index = 0; index < candidates.size(); ++index) {
-        const auto & arm = executed.arms[index + 1];
+        const auto frontier = std::find(frontier_indices.begin(), frontier_indices.end(), index);
+        const bool full_execution = frontier != frontier_indices.end();
+        const auto & arm = full_execution
+            ? full_results.arms[1 + static_cast<size_t>(frontier - frontier_indices.begin())]
+            : diagnostic_results.arms[index + 1];
         if (!arm.executed || arm.arm_id != batch.arms[index + 1].arm_id) {
             error = "FlyDelta orthogonal control arm is invalid";
             return false;
         }
         common_flydelta_bootstrap_zoom_trial trial;
         trial.candidate = candidates[index];
-        trial.outcome = arm.host_outcome;
-        trial.host_evaluated = arm.host_evaluated;
-        trial.verifier_known = arm.verifier_known;
-        trial.margin_available = arm.margin.available && baseline_result.margin.available;
+        trial.outcome = full_execution
+            ? arm.host_outcome : common_flydelta_counterfactual_outcome::unknown;
+        trial.host_evaluated = full_execution && arm.host_evaluated;
+        trial.verifier_known = full_execution && arm.verifier_known;
+        trial.margin_available = arm.margin.available;
         trial.margin_delta = trial.margin_available
-            ? arm.margin.normalized_delta() - baseline_result.margin.normalized_delta() : 0.0f;
+            ? (full_execution
+                ? arm.margin.normalized_delta() - baseline_result.margin.normalized_delta()
+                : arm.margin.normalized_delta()) : 0.0f;
         if (!daemon_flydelta_diagnostics_for_arm(provider, job, baseline.arm_id,
                 batch.arms[index + 1], trial.candidate.layer_indices.front(),
                 trial.diagnostics, error)) return false;
@@ -2993,13 +3098,16 @@ bool daemon_flydelta_run_orthogonal_slice(
         region_trial.requested_total_scale = trial.candidate.total_scale;
         region_trial.executed_total_scale = trial.candidate.total_scale;
         region_trial.outcome = trial.outcome;
-        region_trial.quality_delta = arm.quality - baseline_result.quality;
+        region_trial.quality_delta = full_execution
+            ? arm.quality - baseline_result.quality : 0.0f;
         region_trial.margin = arm.margin;
         region_trial.executed = arm.executed;
-        region_trial.verifier_known = arm.verifier_known;
+        region_trial.verifier_known = full_execution && arm.verifier_known;
         region_trial.geometry_available = trial.diagnostics_available;
         region_trial.geometry = trial.diagnostics;
-        region_trial.safe_to_continue = trial.diagnostics_available &&
+        region_trial.safe_to_continue = arm.host_outcome !=
+            common_flydelta_counterfactual_outcome::harmed &&
+            trial.diagnostics_available &&
             trial.diagnostics.cosine >= config.minimum_cosine &&
             trial.diagnostics.progress > 0.0f &&
             trial.diagnostics.leakage <= config.maximum_leakage &&
@@ -3007,7 +3115,7 @@ bool daemon_flydelta_run_orthogonal_slice(
         region_trial.promising = region_trial.safe_to_continue &&
             trial.margin_available && trial.margin_delta > 0.0f;
         region_trial.search_score = trial.margin_available ? trial.margin_delta : 0.0f;
-        region_trial.evidence_ref = arm.generation_ref;
+        region_trial.evidence_ref = full_execution ? arm.generation_ref : arm.capture_ref;
         if (!common_flydelta_intervention_region_trial_validate(region_trial, error)) return false;
         direction_result.region_trials.push_back(std::move(region_trial));
     }
@@ -4032,6 +4140,9 @@ bool daemon_flydelta_run_representation_augmentation(
                 selected_trial.geometry_available = frontier_geometry_available.front();
                 selected_trial.geometry = frontier_geometry.front();
                 selected_trial.evidence_ref = frontier_trials.front().evidence_ref;
+                selected_trial.safe_to_continue = selected_trial.outcome !=
+                    common_flydelta_counterfactual_outcome::harmed &&
+                    selected_trial.safe_to_continue;
                 selected_trial.margin_comparison.candidate = frontier_margins.front();
                 selected_trial.search_score = selected_trial.margin_comparison.available
                     ? selected_trial.margin_comparison.normalized_delta() : selected_trial.search_score;

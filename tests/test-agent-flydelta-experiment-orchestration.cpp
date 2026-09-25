@@ -32,6 +32,14 @@ int main() {
     CHECK(common_flydelta_select_search_continuation(pipeline, continuation, error));
     CHECK(continuation.region.anchor_layer_index == 25 && continuation.host_helped);
 
+    // A stale diagnostic safety flag must never allow a fully verified
+    // HARMED arm to become a continuation.
+    auto harmed = arm(27, 9.0f);
+    harmed.outcome = common_flydelta_counterfactual_outcome::harmed;
+    pipeline.directions.front().region_trials.push_back(harmed);
+    CHECK(common_flydelta_select_search_continuation(pipeline, continuation, error));
+    CHECK(continuation.region.anchor_layer_index == 25);
+
     common_flydelta_evidence_depth_result depth;
     depth.compatible_samples = 1;
     depth.effective_rank = 1;

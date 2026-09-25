@@ -52,6 +52,8 @@ struct common_flydelta_arm_request {
 struct common_flydelta_arm_execution_metrics {
     int schema_version = 1;
     bool available = false;
+    bool request_generation = false;
+    bool request_host_verification = false;
     float model_ms = 0.0f;
     float teacher_forced_ms = 0.0f;
     float generation_ms = 0.0f;
@@ -70,6 +72,7 @@ struct common_flydelta_arm_execution_metrics {
         device_batch,
     } execution_path = path::unknown;
     std::string fallback_reason;
+    std::string execution_class;
 };
 
 const char * common_flydelta_arm_execution_path_name(

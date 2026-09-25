@@ -78,7 +78,9 @@ void append_region_arm(const common_flydelta_intervention_region_trial & trial,
     arm.search_score = trial.search_score;
     arm.promising = trial.promising;
     arm.safe_to_continue = trial.safe_to_continue;
-    arm.host_evaluated = trial.executed;
+    arm.execution_class = trial.verifier_known ? "full" :
+        trial.executed ? "diagnostic" : "not_executed";
+    arm.host_evaluated = trial.verifier_known;
     arm.verifier_known = trial.verifier_known;
     arm.host_outcome = trial.outcome;
     arm.candidate_passed = trial.outcome == common_flydelta_counterfactual_outcome::helped;
@@ -211,6 +213,7 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
         {"leakage", arm.leakage}, {"shift_norm", arm.shift_norm},
         {"search_score", arm.search_score}, {"promising", arm.promising},
         {"safe_to_continue", arm.safe_to_continue},
+        {"execution_class", arm.execution_class},
         {"host_evaluated", arm.host_evaluated},
         {"verifier_known", arm.verifier_known},
         {"candidate_passed", arm.candidate_passed},
