@@ -98,6 +98,28 @@ Every new helper should answer three questions in its header or documentation:
    projection?
 
 This is deliberately not a single universal validator. Small helpers at the
+
+### FlyDelta daemon host split
+
+FlyDelta uses the existing daemon, resident server-context host, resource
+store and lifecycle journal. Its host integration is split by the boundary it
+owns, rather than by the callback that first reaches it:
+
+| Responsibility | Home | Boundary |
+| --- | --- | --- |
+| Arm preparation, batch execution, teacher-forced scoring, capture, generation and verification | `tools/agent/runtime/agent-flydelta-server-host.cpp` | Resident server-context model host |
+| Scoped resource resolution, capture and trajectory materialization, teaching material, composed directions and augmentation material | `tools/agent/adaptation/agent-flydelta-resource-adapter.cpp` | Resource authority and durable refs |
+| Search/evaluation/concept/augmentation workflow callbacks and binding factory | `tools/agent/daemon/agent-daemon-flydelta.cpp` | Daemon lifecycle and worker registration |
+
+`agent-daemon-flydelta-internal.h` is a private host-context contract for
+these three implementation files. It is not a common FlyDelta contract and
+does not introduce another queue, evaluator, registry or runtime path. The
+generic `agent-daemon-runtime.cpp` only invokes the thin FlyDelta
+configuration facade.
+
+This is a structural ownership split only: algorithm policy, callback
+signatures, resource formats, diagnostic/full execution, HARMED safety and
+promotion semantics remain unchanged.
 correct level are preferable to a central utility that accumulates CLI,
 daemon, provider and persistence policy.
 
