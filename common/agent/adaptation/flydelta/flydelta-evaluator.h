@@ -86,6 +86,13 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_direction_candidate & candidate,
             std::string & direction_ref,
             std::string & error)> persist_experimental_direction;
+    // Scope-aware graft seam for queued jobs. The legacy callback remains a
+    // compatibility fallback for hosts whose direction registry is global.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const common_flydelta_direction_candidate & candidate,
+            std::string & direction_ref,
+            std::string & error)> persist_experimental_direction_for_job;
     // Answers whether the reference-only teaching-material group is ready.
     // The host owns the material store; a false answer is a normal retain
     // path, not an evaluator failure.

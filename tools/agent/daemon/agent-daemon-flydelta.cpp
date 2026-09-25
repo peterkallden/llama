@@ -569,6 +569,7 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
     }
 
     next = resume;
+    next.state_ref.clear();
     std::vector<common_flydelta_bootstrap_zoom_trial> new_trials;
     common_flydelta_search_pipeline_direction_result direction_result;
     direction_result.direction.kind = common_flydelta_direction_kind::raw_repair;
@@ -637,7 +638,23 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
     next.completed_trials.insert(next.completed_trials.end(), new_trials.begin(), new_trials.end());
     next.extra_model_trials += new_trials.size();
     next.next_candidate_index += new_trials.size();
-    if (!common_flydelta_select_bootstrap_zoom_trial(next.completed_trials, next.selection, error)) return false;
+    // A diagnostics-first slice may legitimately reject every newly probed
+    // arm. Preserve the safety gate, but report that bounded branch as
+    // no-useful-utility rather than turning it into a worker failure. This is
+    // the same terminal semantics used by the ordinary search pipeline.
+    bool has_safe_trial = false;
+    for (const auto & trial : next.completed_trials) {
+        if (trial.outcome == common_flydelta_counterfactual_outcome::harmed) continue;
+        const bool geometry_safe = !trial.diagnostics_available ||
+            (trial.diagnostics.cosine >= 0.3f && trial.diagnostics.progress > 0.0f &&
+             trial.diagnostics.leakage <= 1.0f && trial.diagnostics.shift_norm <= 1.0f);
+        if (geometry_safe) {
+            has_safe_trial = true;
+            break;
+        }
+    }
+    if (has_safe_trial && !common_flydelta_select_bootstrap_zoom_trial(
+            next.completed_trials, next.selection, error)) return false;
     if (next.selection.selected) {
         const auto & selected = next.completed_trials[next.selection.trial_index];
         next.selected_scale = selected.candidate.total_scale;
@@ -1126,6 +1143,7 @@ bool daemon_flydelta_run_adaptive_alpha_slice(
             fixture, config, runner, trials, selection, error)) return false;
 
     next = resume;
+    next.state_ref.clear();
     next.phase = common_flydelta_bootstrap_zoom_phase::adaptive_alpha;
     next.refinement_kind = common_flydelta_bootstrap_refinement_kind::adaptive_alpha;
     next.alpha_response_available = true;
@@ -1209,6 +1227,7 @@ bool daemon_flydelta_run_orthogonal_slice(
         output = {};
         output.search_status = common_flydelta_search_status::no_useful_utility;
         next = resume;
+        next.state_ref.clear();
         return true;
     }
     std::vector<common_flydelta_basis_direction> available;
@@ -1471,6 +1490,7 @@ bool daemon_flydelta_run_orthogonal_slice(
     output.selection.region_trial_index = selection.trial_index;
     output.selection.score = selection.search_score;
     next = resume;
+    next.state_ref.clear();
     next.parent_surface_revision = resume.surface_revision;
     next.surface_revision = resume.surface_revision + 1;
     next.search_rank = 2;
@@ -2430,11 +2450,19 @@ make_daemon_flydelta_resource_binding_factory(
                 std::move(lifecycle));
         }
 
+        binding.teaching_material_runtime = teaching_material_runtime;
         binding.primitives.capture = true;
         binding.primitives.overlay = true;
         binding.primitives.generation = true;
         binding.primitives.teacher_forced_scoring = true;
         binding.primitives.host_verification = true;
+        binding.run_concept_capture = [provider](
+                const common_flydelta_experiment_job & job,
+                std::vector<std::string> & trajectory_refs,
+                std::string & callback_error) {
+            return daemon_flydelta_run_concept_capture(
+                provider, job, trajectory_refs, callback_error);
+        };
         binding.prepare_arm = [provider](const auto & arm, auto & request, std::string & callback_error) {
             return daemon_flydelta_prepare_arm(provider, arm, request, callback_error);
         };
@@ -2512,6 +2540,29 @@ make_daemon_flydelta_resource_binding_factory(
                     provider, source_ref, {std::move(direction)},
                     "flydelta:concept-graft", direction_ref, persist_error);
             };
+            callbacks.persist_experimental_direction_for_job = [provider](
+                    const common_flydelta_experiment_job & job,
+                    const common_flydelta_direction_candidate & candidate,
+                    std::string & direction_ref,
+                    std::string & persist_error) {
+                const auto scoped_provider = daemon_flydelta_provider_for_scope(
+                    provider, job.seed.scope);
+                if (!scoped_provider) {
+                    persist_error = "FlyDelta concept graft requires a scoped provider";
+                    return false;
+                }
+                if (!common_flydelta_direction_candidate_validate(
+                        candidate, scoped_provider->model_n_embd, persist_error)) return false;
+                common_flydelta_basis_direction direction;
+                direction.layer_index = candidate.layer_index;
+                direction.values = candidate.values;
+                const std::string source_ref = candidate.extraction_id.empty()
+                    ? "flydelta://concept-graft/anonymous"
+                    : candidate.extraction_id;
+                return daemon_flydelta_register_composed_directions(
+                    scoped_provider, source_ref, {std::move(direction)},
+                    "flydelta:concept-graft", direction_ref, persist_error);
+            };
             callbacks.run_concept_capture = [provider](
                     const common_flydelta_experiment_job & job,
                     std::vector<std::string> & trajectory_refs,
@@ -2554,15 +2605,22 @@ make_daemon_flydelta_resource_binding_factory(
                     common_flydelta_search_pipeline_result & result,
                     common_flydelta_bootstrap_zoom_state & next,
                     std::string & runner_error) {
+                const auto scoped_provider = daemon_flydelta_provider_for_scope(
+                    provider, job.seed.scope);
+                if (!scoped_provider) {
+                    runner_error = "FlyDelta search runner could not create a scoped provider";
+                    return false;
+                }
                 if (resume != nullptr) {
                     return daemon_flydelta_run_bootstrap_zoom_slice(
-                        provider, job, *resume, result, next, runner_error);
+                        scoped_provider, job, *resume, result, next, runner_error);
                 }
-                if (!daemon_flydelta_run_search_pipeline(provider, job, pipeline, result, runner_error)) {
+                if (!daemon_flydelta_run_search_pipeline(
+                        scoped_provider, job, pipeline, result, runner_error)) {
                     return false;
                 }
                 std::vector<common_flydelta_basis_direction> directions;
-                if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref,
+                if (!daemon_flydelta_parse_directions(*scoped_provider, job.seed.candidate_ref,
                         directions, runner_error)) return false;
                 common_flydelta_search_continuation continuation;
                 if (!common_flydelta_select_search_continuation(result, continuation, runner_error)) {
@@ -2571,7 +2629,7 @@ make_daemon_flydelta_resource_binding_factory(
                 next = {};
                 next.behavior_key = job.seed.behavior_key;
                 next.model_profile_fingerprint = job.seed.model_profile_fingerprint;
-                next.capture_layout_revision = provider->capture_layout_revision;
+                next.capture_layout_revision = scoped_provider->capture_layout_revision;
                 next.anchor_layer = continuation.region.anchor_layer_index == 0
                     ? static_cast<uint32_t>(directions.front().layer_index)
                     : continuation.region.anchor_layer_index;
@@ -2981,14 +3039,19 @@ bool configure_daemon_flydelta_teaching_material(
     // not depend on an in-process relation map.
     const auto configured_observer = runtime.flydelta_teaching_material_observer;
     agent_resource_store * resource_store = runtime.resource_store.get();
-    agent_resource_read_authority authority;
     runtime.flydelta_teaching_material_observer = [
-            material_runtime, configured_observer, resource_store, authority](
+            material_runtime, configured_observer, resource_store](
             const common_flydelta_teaching_relation & relation,
-            std::string & observer_error) mutable {
+            std::string & observer_error) {
         if (configured_observer && !configured_observer(relation, observer_error)) {
             return false;
         }
+        agent_resource_read_authority authority;
+        authority.namespace_id = relation.scope.namespace_id;
+        authority.project_id = relation.scope.project_id;
+        authority.session_id = relation.scope.session_id;
+        authority.turn_id = relation.scope.turn_id;
+        authority.now = std::time(nullptr);
         common_flydelta_teaching_relation persisted_relation;
         if (!daemon_flydelta_persist_teaching_relation(
                 resource_store, authority, relation, persisted_relation, observer_error)) {

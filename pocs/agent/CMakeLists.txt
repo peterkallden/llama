@@ -1042,6 +1042,23 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Optional real-model concept capture/synthesis smoke. It uses the same
+# resident daemon/server-context binding as production: a localized search
+# slice creates the anchor, concept capture creates matched trajectories, and
+# synthesis grafts its experimental direction back into ordinary search.
+set(TARGET llama-agent-flydelta-concept-synthesis-model-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-concept-synthesis-model-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Optional real-model FlyDelta A/B smoke. It is CTest-compatible but skips
 # when LLAMA_AGENT_MODEL is not supplied, like the existing model smokes.
 set(TARGET llama-agent-flydelta-model-ab-smoke)
@@ -2236,6 +2253,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-flydelta-procedure-teaching-smoke
     llama-agent-flydelta-concept-capture-smoke
     llama-agent-flydelta-concept-smoke
+    llama-agent-flydelta-concept-synthesis-model-smoke
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-cvec-batch-model-smoke
     llama-agent-flydelta-runtime-smoke
@@ -2314,6 +2332,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-model-adaptation-smoke
     llama-agent-flydelta-tool-repair-smoke
     llama-agent-flydelta-procedure-teaching-smoke
+    llama-agent-flydelta-concept-synthesis-model-smoke
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-cvec-batch-model-smoke
     llama-agent-flydelta-runtime-smoke
@@ -2439,6 +2458,12 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-flydelta-concept-capture-smoke>)
     set_property(TEST llama-agent-flydelta-concept-capture-ctest PROPERTY LABELS agent-adaptation)
     set_tests_properties(llama-agent-flydelta-concept-capture-ctest PROPERTIES TIMEOUT 60)
+
+    add_test(NAME llama-agent-flydelta-concept-synthesis-model-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-concept-synthesis-model-smoke>)
+    set_property(TEST llama-agent-flydelta-concept-synthesis-model-ctest PROPERTY LABELS agent-adaptation)
+    set_tests_properties(llama-agent-flydelta-concept-synthesis-model-ctest PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 1200)
 
     add_test(NAME llama-agent-flydelta-model-ab-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-model-ab-smoke>)

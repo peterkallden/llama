@@ -309,13 +309,20 @@ bool common_flydelta_evaluate_job(
             result.search_state_ref = job.search_state_ref;
             result.representation_augmentation_state_ref =
                 job.representation_augmentation_state_ref;
-            if (!callbacks.persist_experimental_direction) {
+            if (!callbacks.persist_experimental_direction_for_job &&
+                    !callbacks.persist_experimental_direction) {
                 error = "FlyDelta concept synthesis requires an experimental direction persistence callback for graft";
                 return false;
             }
-            if (result.direction_candidates.empty() ||
-                    !callbacks.persist_experimental_direction(
-                        result.direction_candidates.front(), result.graft_direction_ref, error) ||
+            const bool persisted = !result.direction_candidates.empty() &&
+                (callbacks.persist_experimental_direction_for_job
+                    ? callbacks.persist_experimental_direction_for_job(
+                        job, result.direction_candidates.front(),
+                        result.graft_direction_ref, error)
+                    : callbacks.persist_experimental_direction(
+                        result.direction_candidates.front(),
+                        result.graft_direction_ref, error));
+            if (!persisted ||
                     result.graft_direction_ref.empty() || result.graft_direction_ref.size() > 512) {
                 if (error.empty()) {
                     error = "FlyDelta concept synthesis did not return a bounded graft direction reference";

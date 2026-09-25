@@ -243,6 +243,10 @@ bool daemon_flydelta_read_json_bounded(
     }
     std::string text;
     if (!provider.resources->read_text(reference, provider.authority, max_bytes, text, error)) {
+        error = "FlyDelta resource read failed reference=" + reference +
+            " scope=" + provider.authority.namespace_id + "/" +
+            provider.authority.project_id + "/" + provider.authority.session_id +
+            ": " + error;
         return false;
     }
     try {

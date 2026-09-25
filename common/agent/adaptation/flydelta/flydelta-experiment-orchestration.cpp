@@ -635,7 +635,11 @@ bool common_flydelta_bootstrap_zoom_trial_validate(
         const common_flydelta_bootstrap_zoom_trial & trial,
         std::string & error) {
     error.clear();
-    if (!valid_zoom_candidate(trial.candidate, error) || !trial.host_evaluated ||
+    // Diagnostics-first trials intentionally omit full generation and host
+    // verification. They are valid when the host supplied bounded geometry;
+    // only the frontier trials require host_evaluated=true.
+    if (!valid_zoom_candidate(trial.candidate, error) ||
+            (!trial.host_evaluated && !trial.diagnostics_available) ||
             (trial.verifier_known && !trial.host_evaluated) ||
             !finite(trial.margin_delta) ||
             (trial.diagnostics_available &&

@@ -349,6 +349,7 @@ journal remains the durable evidence boundary.
 | 2026-09-25 | d8a6fc42b | Deep diagnostics-first execution boundary corrected; broader optimization remains partial | Code review identifies separate diagnostic/full-generation Deep callbacks; a fresh focused runtime smoke proving `n_predict=0` diagnostics and top-K full generation is still outstanding; Whirlpool/region and Shallow/TFO remain full-execution paths | Recorded Deep as implemented, kept Whirlpool/region and Shallow/TFO explicitly open, and prevented the Deep result from closing the whole execution-optimization area |
 | 2026-09-25 | this local commit | Diagnostics-first execution boundary completed across Deep, Whirlpool/region, Shallow/TFO-lite, BootstrapZoom, Orthogonal and AdaptiveAlpha without changing search policy | 13 focused FlyDelta CTests passed serially; model-free admin smoke passed with admin/worker traces; Qwen server-context runtime and repair smokes passed serially with tracing; repair trace covered native batch, scalar remainder and backend-batch paths | Added separate diagnostic/full-generation callback classes, bounded top-K full-generation continuation, AdaptiveAlpha diagnostic safety gating and host-only selection; evidence is recorded as production wiring/execution evidence, not learned model-quality evidence |
 | 2026-09-25 | this local commit | Daemon FlyDelta host integration split across runtime execution, adaptation materialization and daemon workflows | 7 focused CTests passed serially; model-free admin smoke and Qwen server-context runtime smoke passed with tracing; Qwen repair smoke completed serially with tracing | Moved implementation ownership only; preserved common algorithms, public contracts, queue/lifecycle authority, diagnostic/full boundary and promotion semantics |
+| 2026-09-26 | this local commit | Production concept-synthesis model smoke implemented and verified end-to-end; diagnostics-only graft rejection and continuation-state identity corrected | 17 focused FlyDelta CTests passed serially; model-free admin smoke passed with admin/worker tracing; Qwen Instruct server-context smoke passed with Whirlpool/Bootstrap, 2 relations × 3 capture arms, three synthesis candidates and grafted search | Added the portable model smoke and CTest entry; documented wiring-only evidence, four agent workers/two FlyDelta workers, serialized inference, no learning/promotion, safe `no_useful_utility` stop and fresh continuation refs |
 
 ## Natural dataset-question smoke
 
@@ -2463,6 +2464,40 @@ the model does not produce enough host-verified conditioned pairs. An
 unresolved model smoke is diagnostic and carries no learning credit; it is not
 allowed to fabricate concept evidence. This gives the smoke useful model
 coverage without creating a private model path unavailable to production.
+
+The production wiring is additionally covered by the separate
+`llama-agent-flydelta-concept-synthesis-model-smoke`. This smoke is deliberately
+not folded into the repair smoke: it starts with an ordinary resident
+`search_pipeline` slice, requires its persisted Bootstrap/continuation state
+as the localized `WHERE` anchor, then runs the real daemon/server-context
+concept capture and synthesis callbacks. Two host-approved relations produce
+three fresh model arms each (baseline, conditioned and control), so the model
+phase contains six capture arms in one bounded batch. Synthesis emits an
+experimental direction reference and the smoke schedules a normal grafted
+search job with that reference as `WHAT`. The output reports the production
+Whirlpool/Bootstrap trace, capture-arm count, trajectory count, synthesized
+candidate metadata and graft handoff. It never grants learning credit,
+promotion or activation. Run it with an explicit model and tracing enabled:
+
+```bash
+GGML_VK_VISIBLE_DEVICES=<device-index> \
+LLAMA_AGENT_RESIDENT_TRACE=1 LLAMA_AGENT_TRACE=1 \
+build-agent/bin/llama-agent-flydelta-concept-synthesis-model-smoke \
+  --model /path/to/model.gguf --threads 4
+```
+
+The executable keeps model inference serialized (`inference_max_active=1`),
+uses the resident server-context host and reports the configured four general
+agent workers and two FlyDelta workers. The CTest entry skips when no model is
+supplied and has a longer timeout because it covers the complete capture →
+synthesis → grafted-search chain.
+
+The grafted BootstrapZoom slice may safely retain no arm: when diagnostics
+reject every bounded probe, the worker records `no_useful_utility` and stops
+the branch without fabricating a candidate, learning credit or promotion.
+Every persisted BootstrapZoom/AdaptiveAlpha/orthogonal continuation revision
+also receives a new opaque state reference; the previous reference remains
+the parent link and is never reused as the lifecycle idempotency key.
 
 When a registered concept-synthesis callback emits a candidate, the evaluator
 persists one immutable experimental direction reference through the same
