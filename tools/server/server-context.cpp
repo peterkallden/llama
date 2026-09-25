@@ -4250,6 +4250,18 @@ private:
                     return;
                 }
 
+                // n_predict=0 is the server's prompt-evaluation-only mode.
+                // Finish after the prompt so diagnostic FlyDelta arms can
+                // capture and return without sampling a throwaway token.
+                if (!slot.has_budget()) {
+                    slot.stop = STOP_TYPE_LIMIT;
+                    slot.has_next_token = false;
+                    send_final_response(slot);
+                    slot.release();
+                    slot.i_batch = -1;
+                    return;
+                }
+
                 GGML_ASSERT(slot.task->need_sampling());
 
                 // prompt evaluated for next-token prediction

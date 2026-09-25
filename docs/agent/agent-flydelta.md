@@ -317,6 +317,7 @@ journal remains the durable evidence boundary.
 | 2026-09-25 | this local commit | Later dataset-question model smokes aligned with the established portable wrapper interface | `bash -n` and `--help` passed for both wrappers; no model or CTest run was required for the argument-only change | Added explicit `--model` and `--suite` overrides with existing environment/default fallback; relative paths resolve from the repository root; removed local environment details from agent documentation |
 | 2026-09-25 | this local commit | Clean-architecture correction for runtime capture handoff and worker evidence durability | Serial CTests passed for capture manifest, runtime observer, job, queue, worker, candidate lifecycle, server binding, daemon readiness and JSONL protocol; the runtime CTest remained explicitly skipped; model-free admin smoke passed with `flydelta_admin_trace` and `flydelta_worker_trace` through evaluation, promotion summary, review, canary and replay | Added typed capture scope/refs, durable candidate resource materialization, job-scoped donor authority, lifecycle trace persistence, next-action gating and a needs-based recurring architecture gate; direct scope/trace assertions were added in existing contract tests |
 | 2026-09-25 | this local commit | Long-running build polling made a portable workflow rule | Documentation-only review; no additional runtime test required | Added a needs-based one-shot poll routine with a short progress check, dynamic completion estimate plus measured margin, stale-poll replacement, serial follow-up validation and no local environment paths in repository documentation |
+| 2026-09-25 | this local commit | Evaluation and diagnostic-arm runtime wiring corrected without changing search policy | Serial FlyDelta contract CTests passed; model-free and model-backed functional smokes passed with tracing; model-backed evaluation persisted 8/8 known/helped trials and worker trace | Evaluation references now resolve through the immutable job scope; diagnostic arms use prompt-only server evaluation (`n_predict=0`) without sampling; smoke timeout and callback failure reporting remain portable |
 
 ## Natural dataset-question smoke
 
@@ -643,6 +644,15 @@ is the only place that may assign a semantic host outcome. The factory is a
 composition helper, not a default semantic implementation; missing callbacks
 must remain a startup/configuration failure or an idle lane, never a fabricated
 `HELPED` result.
+
+Worker evaluation resolves candidate, suite, fixture and context references
+through a provider view derived from the immutable `job.seed.scope`. The
+resident host is shared, but its default resource authority is not used for a
+queued job; this keeps concurrent worker jobs from crossing namespace or
+session boundaries. Diagnostic arms with `request_generation=false` still
+evaluate their prompt and may capture hidden state, but are sent to the
+server-context host with `n_predict=0` so they do not sample a throwaway token.
+Full-generation arms must opt into decoding explicitly.
 
 The existing runtime also exposes the lower-level pieces needed by that host
 binding: the inference object accepts immutable FlyDelta activations and
@@ -1508,11 +1518,14 @@ surface utility is observed, the state is retained for later compatible
 samples instead of spending a deeper search budget.
 
 The worker now carries an explicit reference-only continuation between the
-adaptive `WHERE` phase and evidence-driven `WHAT` work. Whirlpool may retain
-the safest/highest-scoring `UNKNOWN` region arm; that is a search decision,
-not a learning verdict. The host then resolves compatible samples for the
-same behavior identity and selected layer, assesses evidence depth, and uses
-the resulting plan:
+adaptive `WHERE` phase and evidence-driven `WHAT` work. In the current
+Whirlpool result contract, only a host-known `HELPED` arm can become the
+selected continuation; `UNKNOWN` and `NEUTRAL` can guide later probes but are
+not returned as a selected arm. Promoting a safe-promising unknown arm into a
+continuation would require an explicit contract decision, because it would
+change the existing selection semantics. The host then resolves compatible
+samples for the same behavior identity and selected layer, assesses evidence
+depth, and uses the resulting plan:
 
 ```text
 Whirlpool / region result

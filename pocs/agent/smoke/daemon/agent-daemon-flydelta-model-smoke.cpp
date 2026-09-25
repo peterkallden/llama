@@ -32,6 +32,7 @@ namespace {
 
 constexpr const char * kDefaultConfig =
     "docs/examples/agent-host-config-flydelta-intel-tiny.json";
+constexpr auto kEvaluationWaitTimeout = std::chrono::seconds(60);
 constexpr const char * kTokenizerFingerprint = "daemon:tokenizer-unspecified-v1";
 constexpr const char * kTemplateFingerprint = "daemon:template-unspecified-v1";
 constexpr const char * kExecutionContextFingerprint = "daemon:server-context-v1";
@@ -309,7 +310,8 @@ bool wait_for_report(
         common_flydelta_evaluation_report & report,
         std::vector<common_flydelta_evaluation_fixture_result> & fixtures,
         std::string & error) {
-    for (size_t attempt = 0; attempt < 600; ++attempt) {
+    const auto deadline = std::chrono::steady_clock::now() + kEvaluationWaitTimeout;
+    while (std::chrono::steady_clock::now() < deadline) {
         if (common_flydelta_load_evaluation_report(
                 lifecycle, candidate_id, report, &fixtures, error)) return true;
         error.clear();
@@ -533,6 +535,18 @@ int main(int argc, char ** argv) {
     worker_config.worker_count = 1;
     worker_config.queue_root = options.adaptation_flydelta_queue_path;
     worker_config.model_adapter = runtime.flydelta_model_adapter;
+    const auto worker_callback = runtime.flydelta_model_adapter->worker_callback;
+    worker_config.callback = [worker_callback](
+            const common_flydelta_experiment_job & job,
+            common_flydelta_experiment_worker_result & worker_result,
+            std::string & callback_error) {
+        const bool succeeded = worker_callback(job, worker_result, callback_error);
+        if (!succeeded) {
+            std::fprintf(stderr, "model-backed FlyDelta worker callback failed for %s: %s\n",
+                job.id.c_str(), callback_error.c_str());
+        }
+        return succeeded;
+    };
     worker_config.poll_interval = std::chrono::milliseconds(5);
     worker_config.persist_completed_report = [lifecycle = runtime.flydelta_review_lifecycle_store, trace_state] (
             const common_flydelta_experiment_job & job,

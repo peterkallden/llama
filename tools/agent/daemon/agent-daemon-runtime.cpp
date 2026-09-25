@@ -605,6 +605,13 @@ bool daemon_flydelta_prepare_arm(
         request.options.n_predict = std::min(
             request.options.n_predict, static_cast<int>(arm.max_generated_tokens));
     }
+    // Diagnostic arms still evaluate the prompt and may capture hidden state,
+    // but they must not decode a token.  The arm contract already separates
+    // diagnostic work from full generation; carry that distinction into the
+    // resident server request instead of letting the context defaults decode.
+    if (!arm.request_generation) {
+        request.options.n_predict = 0;
+    }
     if (arm.apply_overlay) {
         std::vector<common_flydelta_basis_direction> available;
         if (!daemon_flydelta_parse_directions(*provider, arm.intervention_ref, available, error)) {
@@ -3956,10 +3963,11 @@ bool daemon_flydelta_run_evaluation(
     error.clear();
     report = {};
     fixture_results.clear();
+    const auto scoped_provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     if (!common_flydelta_evaluation_limits_validate(job.evaluation_limits, error)) return false;
     json candidate_artifact;
     if (!daemon_flydelta_read_json_bounded(
-            *provider, job.seed.candidate_ref, 4U * 1024U * 1024U,
+            *scoped_provider, job.seed.candidate_ref, 4U * 1024U * 1024U,
             candidate_artifact, error) || candidate_artifact.value("kind", "") != "flydelta") {
         error = "FlyDelta evaluation candidate reference must resolve to a flydelta artifact";
         return false;
@@ -3973,7 +3981,7 @@ bool daemon_flydelta_run_evaluation(
         return false;
     }
     json suite;
-    if (!daemon_flydelta_read_json(*provider, job.evaluation_suite_ref, suite, error)) return false;
+    if (!daemon_flydelta_read_json(*scoped_provider, job.evaluation_suite_ref, suite, error)) return false;
     if (suite.value("kind", "") != "flydelta_evaluation_suite" ||
             suite.value("revision", "") != job.evaluation_revision ||
             !suite.contains("fixtures") || !suite["fixtures"].is_array() ||
@@ -4033,7 +4041,7 @@ bool daemon_flydelta_run_evaluation(
             reports.clear();
             std::string attempt_error;
             if (daemon_flydelta_run_counterfactual(
-                    provider, fixture_job, reports, attempt_error) &&
+                    scoped_provider, fixture_job, reports, attempt_error) &&
                     reports.size() == 1) {
                 completed = true;
                 model_calls += 2;
