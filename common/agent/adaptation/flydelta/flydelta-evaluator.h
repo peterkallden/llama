@@ -129,10 +129,23 @@ struct common_flydelta_evaluator_callbacks {
             const std::string & state_ref,
             common_flydelta_bootstrap_zoom_state & state,
             std::string & error)> resolve_bootstrap_zoom_state;
+    // Job-aware variants preserve the immutable queue scope across resume
+    // and persistence. The legacy callbacks remain valid for embedders whose
+    // lifecycle store intentionally owns a broader host scope.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const std::string & state_ref,
+            common_flydelta_bootstrap_zoom_state & state,
+            std::string & error)> resolve_bootstrap_zoom_state_for_job;
     std::function<bool(
             const common_flydelta_bootstrap_zoom_state & state,
             std::string & state_ref,
             std::string & error)> persist_bootstrap_zoom_state;
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const common_flydelta_bootstrap_zoom_state & state,
+            std::string & state_ref,
+            std::string & error)> persist_bootstrap_zoom_state_for_job;
 
     // Typed continuation seam for the representation-augmentation escape.
     // The queue carries only opaque state refs; older jobs may use
@@ -144,9 +157,19 @@ struct common_flydelta_evaluator_callbacks {
             common_flydelta_representation_augmentation_state & state,
             std::string & error)> resolve_representation_augmentation_state;
     std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const std::string & state_ref,
+            common_flydelta_representation_augmentation_state & state,
+            std::string & error)> resolve_representation_augmentation_state_for_job;
+    std::function<bool(
             const common_flydelta_representation_augmentation_state & state,
             std::string & state_ref,
             std::string & error)> persist_representation_augmentation_state;
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const common_flydelta_representation_augmentation_state & state,
+            std::string & state_ref,
+            std::string & error)> persist_representation_augmentation_state_for_job;
     std::function<bool(
             const common_flydelta_experiment_job & job,
             const common_flydelta_representation_augmentation_state * resume_state,
@@ -173,10 +196,22 @@ struct common_flydelta_evaluator_callbacks {
             common_flydelta_utility_history & history,
             std::string & error)> resolve_search_orchestration_state;
     std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const std::string & state_ref,
+            common_flydelta_experiment_plan & plan,
+            common_flydelta_utility_history & history,
+            std::string & error)> resolve_search_orchestration_state_for_job;
+    std::function<bool(
             const common_flydelta_experiment_plan & plan,
             const common_flydelta_utility_history & history,
             std::string & state_ref,
             std::string & error)> persist_search_orchestration_state;
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const common_flydelta_experiment_plan & plan,
+            const common_flydelta_utility_history & history,
+            std::string & state_ref,
+            std::string & error)> persist_search_orchestration_state_for_job;
 };
 
 struct common_flydelta_evaluator_result {

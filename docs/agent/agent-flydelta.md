@@ -654,6 +654,27 @@ evaluate their prompt and may capture hidden state, but are sent to the
 server-context host with `n_predict=0` so they do not sample a throwaway token.
 Full-generation arms must opt into decoding explicitly.
 
+The current phase/authority map is:
+
+```text
+queued job
+  -> runner provider view(job.seed.scope)
+  -> resident server-context host (shared execution owner)
+  -> scoped resource reads/writes and capture lifetime
+  -> common search/orchestration policy
+  -> opaque lifecycle/state references for resume
+```
+
+Concept capture/synthesis, initial search, BootstrapZoom, AdaptiveAlpha,
+orthogonal search, post-Bootstrap controls, representation augmentation and
+counterfactual execution all create that job-scoped provider view before
+resolving job-owned material. The append-only lifecycle journal remains a
+host-owned shared store. Job-aware state callbacks filter reads and writes by
+the queued job's namespace, project and session; legacy opaque callbacks remain
+compatibility interfaces and must not be used for scoped resume. This keeps
+durable lifecycle authority host-owned without allowing one job scope to
+resolve another job's state reference.
+
 The existing runtime also exposes the lower-level pieces needed by that host
 binding: the inference object accepts immutable FlyDelta activations and
 capture requests, and the server-context backend supports isolated
@@ -1233,11 +1254,15 @@ fallback.
 The common batch seam is now consumed by the bounded Whirlpool region probes
 and by rank-N coordinate/TFO coefficient populations. The baseline remains a
 scalar reference; safety backoffs are submitted as a separate bounded batch,
-and TFO iterations remain sequential CPU control-plane steps. Deep uses the
-same arrangement for its diagnostic controls and pruned top-K full-generation
-arms. The scalar public entry points remain compatibility wrappers over the
-same contracts, so batching changes execution shape but not proposal order,
-dose decisions, utility gates or lifecycle semantics.
+and TFO iterations remain sequential CPU control-plane steps. Deep separates
+its two execution classes: the diagnostic coefficient wave requests prompt
+evaluation, capture and teacher-forced margin/geometry only, while the
+pruned top-K frontier explicitly requests full generation and host
+verification. Shallow/TFO retain their existing full-execution runner until a
+phase-specific sufficiency proof permits a narrower diagnostic wave. The
+scalar public entry points remain compatibility wrappers over the same
+contracts, so batching changes execution shape but not proposal order, dose
+decisions, utility gates or lifecycle semantics.
 
 Rank-N coefficient search also accepts an explicit `max_batch_arms` wave limit.
 Production callers should copy the registered model-host capacity into this
@@ -1518,14 +1543,15 @@ surface utility is observed, the state is retained for later compatible
 samples instead of spending a deeper search budget.
 
 The worker now carries an explicit reference-only continuation between the
-adaptive `WHERE` phase and evidence-driven `WHAT` work. In the current
-Whirlpool result contract, only a host-known `HELPED` arm can become the
-selected continuation; `UNKNOWN` and `NEUTRAL` can guide later probes but are
-not returned as a selected arm. Promoting a safe-promising unknown arm into a
-continuation would require an explicit contract decision, because it would
-change the existing selection semantics. The host then resolves compatible
-samples for the same behavior identity and selected layer, assesses evidence
-depth, and uses the resulting plan:
+adaptive `WHERE` phase and evidence-driven `WHAT` work. There are two related
+selection contracts here and they must not be conflated: the local Whirlpool
+or region selector gives learning credit only to a host-known `HELPED` arm,
+while the orchestration layer may return a safe, promising `UNKNOWN` or
+`NEUTRAL` arm as a reference-only search continuation when no helped arm is
+available. Such a continuation does not grant learning credit, promotion or
+activation. The host then resolves compatible samples for the same behavior
+identity and selected layer, assesses evidence depth, and uses the resulting
+plan:
 
 ```text
 Whirlpool / region result

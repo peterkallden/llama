@@ -10,6 +10,14 @@ bool bounded(const std::string & value, size_t maximum = 512) {
     return !value.empty() && value.size() <= maximum;
 }
 
+bool lifecycle_record_matches_scope(
+        const common_learning_lifecycle_record & record,
+        const common_agent_scope & scope) {
+    return record.namespace_id == scope.namespace_id &&
+        record.project_id == scope.project_id &&
+        record.session_id == scope.session_id;
+}
+
 std::string hash_text(const std::string & value) {
     return "sha256:" + hash_sha256_hex(value.data(), value.size());
 }
@@ -56,6 +64,36 @@ bool common_flydelta_configure_representation_augmentation_lifecycle_callbacks(
         resolve_error = "FlyDelta representation augmentation state was not found";
         return false;
     };
+    callbacks.resolve_representation_augmentation_state_for_job = [&store](
+            const common_flydelta_experiment_job & job,
+            const std::string & state_ref,
+            common_flydelta_representation_augmentation_state & state,
+            std::string & resolve_error) {
+        if (state_ref.rfind("flydelta://state/representation-augmentation/", 0) != 0 ||
+                state_ref.size() > 512) {
+            resolve_error = "FlyDelta representation augmentation state reference is invalid";
+            return false;
+        }
+        const auto records = store.list(resolve_error);
+        if (!resolve_error.empty()) return false;
+        for (auto it = records.rbegin(); it != records.rend(); ++it) {
+            if (it->kind != common_learning_lifecycle_kind::flydelta_experiment ||
+                    it->subject_id != state_ref ||
+                    !lifecycle_record_matches_scope(*it, job.seed.scope)) continue;
+            if (!common_flydelta_representation_augmentation_state_from_json(
+                        it->payload_json, state,
+                        common_flydelta_representation_augmentation_config{}, resolve_error)) {
+                return false;
+            }
+            if (state.state_ref != state_ref) {
+                resolve_error = "FlyDelta representation augmentation state ref does not match";
+                return false;
+            }
+            return true;
+        }
+        resolve_error = "FlyDelta representation augmentation state was not found in job scope";
+        return false;
+    };
     callbacks.persist_representation_augmentation_state = [&store, context](
             const common_flydelta_representation_augmentation_state & input,
             std::string & state_ref,
@@ -92,6 +130,21 @@ bool common_flydelta_configure_representation_augmentation_lifecycle_callbacks(
         if (!store.append(record, persist_error)) return false;
         state_ref = state.state_ref;
         return true;
+    };
+    callbacks.persist_representation_augmentation_state_for_job = [&store, context](
+            const common_flydelta_experiment_job & job,
+            const common_flydelta_representation_augmentation_state & state,
+            std::string & state_ref,
+            std::string & persist_error) {
+        common_flydelta_lifecycle_event_context scoped_context;
+        scoped_context.source_id = context.source_id;
+        scoped_context.scope = job.seed.scope;
+        scoped_context.created_at = context.created_at;
+        common_flydelta_evaluator_callbacks scoped_callbacks;
+        if (!common_flydelta_configure_representation_augmentation_lifecycle_callbacks(
+                    store, scoped_context, scoped_callbacks, persist_error)) return false;
+        return scoped_callbacks.persist_representation_augmentation_state(
+            state, state_ref, persist_error);
     };
     return true;
 }

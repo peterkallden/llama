@@ -14,6 +14,120 @@ bool valid_reference_count(size_t count, size_t max_references) {
     return count != 0 && count <= max_references;
 }
 
+bool resolve_bootstrap_zoom_state_for_job(
+        const common_flydelta_evaluator_callbacks & callbacks,
+        const common_flydelta_experiment_job & job,
+        const std::string & state_ref,
+        common_flydelta_bootstrap_zoom_state & state,
+        std::string & error) {
+    if (callbacks.resolve_bootstrap_zoom_state_for_job) {
+        return callbacks.resolve_bootstrap_zoom_state_for_job(job, state_ref, state, error);
+    }
+    return callbacks.resolve_bootstrap_zoom_state &&
+        callbacks.resolve_bootstrap_zoom_state(state_ref, state, error);
+}
+
+bool persist_bootstrap_zoom_state_for_job(
+        const common_flydelta_evaluator_callbacks & callbacks,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_bootstrap_zoom_state & state,
+        std::string & state_ref,
+        std::string & error) {
+    if (callbacks.persist_bootstrap_zoom_state_for_job) {
+        return callbacks.persist_bootstrap_zoom_state_for_job(job, state, state_ref, error);
+    }
+    return callbacks.persist_bootstrap_zoom_state &&
+        callbacks.persist_bootstrap_zoom_state(state, state_ref, error);
+}
+
+bool resolve_representation_augmentation_state_for_job(
+        const common_flydelta_evaluator_callbacks & callbacks,
+        const common_flydelta_experiment_job & job,
+        const std::string & state_ref,
+        common_flydelta_representation_augmentation_state & state,
+        std::string & error) {
+    if (callbacks.resolve_representation_augmentation_state_for_job) {
+        return callbacks.resolve_representation_augmentation_state_for_job(
+            job, state_ref, state, error);
+    }
+    return callbacks.resolve_representation_augmentation_state &&
+        callbacks.resolve_representation_augmentation_state(state_ref, state, error);
+}
+
+bool persist_representation_augmentation_state_for_job(
+        const common_flydelta_evaluator_callbacks & callbacks,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_representation_augmentation_state & state,
+        std::string & state_ref,
+        std::string & error) {
+    if (callbacks.persist_representation_augmentation_state_for_job) {
+        return callbacks.persist_representation_augmentation_state_for_job(
+            job, state, state_ref, error);
+    }
+    return callbacks.persist_representation_augmentation_state &&
+        callbacks.persist_representation_augmentation_state(state, state_ref, error);
+}
+
+bool resolve_search_orchestration_state_for_job(
+        const common_flydelta_evaluator_callbacks & callbacks,
+        const common_flydelta_experiment_job & job,
+        const std::string & state_ref,
+        common_flydelta_experiment_plan & plan,
+        common_flydelta_utility_history & history,
+        std::string & error) {
+    if (callbacks.resolve_search_orchestration_state_for_job) {
+        return callbacks.resolve_search_orchestration_state_for_job(
+            job, state_ref, plan, history, error);
+    }
+    return callbacks.resolve_search_orchestration_state &&
+        callbacks.resolve_search_orchestration_state(state_ref, plan, history, error);
+}
+
+bool persist_search_orchestration_state_for_job(
+        const common_flydelta_evaluator_callbacks & callbacks,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_experiment_plan & plan,
+        const common_flydelta_utility_history & history,
+        std::string & state_ref,
+        std::string & error) {
+    if (callbacks.persist_search_orchestration_state_for_job) {
+        return callbacks.persist_search_orchestration_state_for_job(
+            job, plan, history, state_ref, error);
+    }
+    return callbacks.persist_search_orchestration_state &&
+        callbacks.persist_search_orchestration_state(plan, history, state_ref, error);
+}
+
+bool has_bootstrap_resolver(const common_flydelta_evaluator_callbacks & callbacks) {
+    return static_cast<bool>(callbacks.resolve_bootstrap_zoom_state_for_job) ||
+        static_cast<bool>(callbacks.resolve_bootstrap_zoom_state);
+}
+
+bool has_bootstrap_persister(const common_flydelta_evaluator_callbacks & callbacks) {
+    return static_cast<bool>(callbacks.persist_bootstrap_zoom_state_for_job) ||
+        static_cast<bool>(callbacks.persist_bootstrap_zoom_state);
+}
+
+bool has_representation_resolver(const common_flydelta_evaluator_callbacks & callbacks) {
+    return static_cast<bool>(callbacks.resolve_representation_augmentation_state_for_job) ||
+        static_cast<bool>(callbacks.resolve_representation_augmentation_state);
+}
+
+bool has_representation_persister(const common_flydelta_evaluator_callbacks & callbacks) {
+    return static_cast<bool>(callbacks.persist_representation_augmentation_state_for_job) ||
+        static_cast<bool>(callbacks.persist_representation_augmentation_state);
+}
+
+bool has_orchestration_resolver(const common_flydelta_evaluator_callbacks & callbacks) {
+    return static_cast<bool>(callbacks.resolve_search_orchestration_state_for_job) ||
+        static_cast<bool>(callbacks.resolve_search_orchestration_state);
+}
+
+bool has_orchestration_persister(const common_flydelta_evaluator_callbacks & callbacks) {
+    return static_cast<bool>(callbacks.persist_search_orchestration_state_for_job) ||
+        static_cast<bool>(callbacks.persist_search_orchestration_state);
+}
+
 bool validate_search_pipeline_result(
         const common_flydelta_search_pipeline_result & result,
         const common_flydelta_search_pipeline_config & config,
@@ -140,8 +254,7 @@ bool common_flydelta_evaluate_job(
     if (config.max_references == 0 ||
             !common_flydelta_experiment_job_validate(
                 job, config.max_references, error)) return false;
-    if (static_cast<bool>(callbacks.resolve_search_orchestration_state) !=
-            static_cast<bool>(callbacks.persist_search_orchestration_state)) {
+    if (has_orchestration_resolver(callbacks) != has_orchestration_persister(callbacks)) {
         error = "FlyDelta orchestration state callbacks must be supplied together";
         return false;
     }
@@ -358,8 +471,8 @@ bool common_flydelta_evaluate_job(
                 is_representation_augmentation_state_ref(augmentation_state_ref);
             if (has_representation_augmentation_state) {
                 if (!callbacks.run_representation_augmentation_with_state ||
-                        !callbacks.resolve_representation_augmentation_state ||
-                        !callbacks.persist_representation_augmentation_state ||
+                        !has_representation_resolver(callbacks) ||
+                        !has_representation_persister(callbacks) ||
                         !common_flydelta_representation_augmentation_config_validate(
                             config.representation_augmentation, error)) {
                     if (error.empty()) {
@@ -368,8 +481,8 @@ bool common_flydelta_evaluate_job(
                     return false;
                 }
                 common_flydelta_representation_augmentation_state resume_state;
-                if (!callbacks.resolve_representation_augmentation_state(
-                        augmentation_state_ref, resume_state, error) ||
+                if (!resolve_representation_augmentation_state_for_job(
+                        callbacks, job, augmentation_state_ref, resume_state, error) ||
                         !common_flydelta_representation_augmentation_state_validate(
                             resume_state, config.representation_augmentation, error)) {
                     if (error.empty()) error = "FlyDelta augmentation resume state is invalid";
@@ -383,8 +496,9 @@ bool common_flydelta_evaluate_job(
                             next_state, config.representation_augmentation, error) ||
                         !validate_search_pipeline_result(
                             pipeline_result, config.pipeline, error)) return false;
-                if (!callbacks.persist_representation_augmentation_state(
-                        next_state, result.representation_augmentation_state_ref, error) ||
+                if (!persist_representation_augmentation_state_for_job(
+                        callbacks, job, next_state,
+                        result.representation_augmentation_state_ref, error) ||
                         result.representation_augmentation_state_ref.empty() ||
                         result.representation_augmentation_state_ref.size() > 512) return false;
                 next_state.state_ref = result.representation_augmentation_state_ref;
@@ -481,9 +595,10 @@ bool common_flydelta_evaluate_job(
                 common_flydelta_bootstrap_zoom_state resume_state;
                 const common_flydelta_bootstrap_zoom_state * resume = nullptr;
                 if (!job.bootstrap_zoom_state_ref.empty()) {
-                    if (!callbacks.resolve_bootstrap_zoom_state ||
-                            !callbacks.resolve_bootstrap_zoom_state(
-                                job.bootstrap_zoom_state_ref, resume_state, error) ||
+                    if (!has_bootstrap_resolver(callbacks) ||
+                            !resolve_bootstrap_zoom_state_for_job(
+                                callbacks, job, job.bootstrap_zoom_state_ref,
+                                resume_state, error) ||
                             !common_flydelta_bootstrap_zoom_state_validate(resume_state, error)) {
                         if (error.empty()) error = "FlyDelta BootstrapZoom resume state is invalid";
                         return false;
@@ -497,14 +612,15 @@ bool common_flydelta_evaluate_job(
                         !validate_search_pipeline_result(pipeline_result, config.pipeline, error)) {
                     return false;
                 }
-                if (!callbacks.persist_bootstrap_zoom_state) {
+                if (!has_bootstrap_persister(callbacks)) {
                     error = "FlyDelta state-aware search requires a state persister";
                     return false;
                 }
                 result.has_bootstrap_zoom_state = true;
                 result.bootstrap_zoom_state = std::move(next_state);
-                if (!callbacks.persist_bootstrap_zoom_state(
-                        result.bootstrap_zoom_state, result.bootstrap_zoom_state_ref, error) ||
+                if (!persist_bootstrap_zoom_state_for_job(
+                        callbacks, job, result.bootstrap_zoom_state,
+                        result.bootstrap_zoom_state_ref, error) ||
                         result.bootstrap_zoom_state_ref.empty() ||
                         result.bootstrap_zoom_state_ref.size() > 512) return false;
                 result.bootstrap_zoom_state.state_ref = result.bootstrap_zoom_state_ref;
@@ -526,14 +642,14 @@ bool common_flydelta_evaluate_job(
             }
             const bool has_resume_state = !job.search_state_ref.empty() ||
                 !job.bootstrap_zoom_state_ref.empty();
-            if (has_resume_state && callbacks.resolve_search_orchestration_state &&
+            if (has_resume_state && has_orchestration_resolver(callbacks) &&
                     !result.search_continuations.empty()) {
                 common_flydelta_experiment_plan current_plan;
                 common_flydelta_utility_history history;
                 const std::string & orchestration_ref = !job.search_state_ref.empty()
                     ? job.search_state_ref : job.bootstrap_zoom_state_ref;
-                if (!callbacks.resolve_search_orchestration_state(
-                        orchestration_ref, current_plan, history, error)) {
+                if (!resolve_search_orchestration_state_for_job(
+                        callbacks, job, orchestration_ref, current_plan, history, error)) {
                     if (error.empty()) error =
                         "FlyDelta orchestration state resolver returned no state";
                     return false;
@@ -546,9 +662,9 @@ bool common_flydelta_evaluate_job(
                         current_plan, config.utility_gate, observations, history,
                         orchestration, error)) return false;
                 std::string next_orchestration_ref;
-                if (!callbacks.persist_search_orchestration_state(
-                        orchestration.plan, orchestration.utility.history,
-                        next_orchestration_ref, error) ||
+                if (!persist_search_orchestration_state_for_job(
+                        callbacks, job, orchestration.plan,
+                        orchestration.utility.history, next_orchestration_ref, error) ||
                         next_orchestration_ref.empty() || next_orchestration_ref.size() > 512) {
                     if (error.empty()) error =
                         "FlyDelta orchestration state persister returned an invalid reference";
@@ -582,8 +698,8 @@ bool common_flydelta_evaluate_job(
                     result.bootstrap_zoom_state.extra_model_trials = 0;
                     result.bootstrap_zoom_state.next_candidate_index = 0;
                     result.bootstrap_zoom_state.state_ref.clear();
-                    if (!callbacks.persist_bootstrap_zoom_state(
-                            result.bootstrap_zoom_state,
+                    if (!persist_bootstrap_zoom_state_for_job(
+                            callbacks, job, result.bootstrap_zoom_state,
                             result.bootstrap_zoom_state_ref, error) ||
                             result.bootstrap_zoom_state_ref.empty() ||
                             result.bootstrap_zoom_state_ref.size() > 512) {

@@ -95,12 +95,32 @@ struct daemon_flydelta_resource_provider {
             const std::string &, common_flydelta_bootstrap_zoom_state &,
             std::string &)> resolve_bootstrap_zoom_state;
     std::function<bool(
+            const common_flydelta_experiment_job &, const std::string &,
+            common_flydelta_bootstrap_zoom_state &, std::string &)>
+        resolve_bootstrap_zoom_state_for_job;
+    std::function<bool(
             const std::string &, common_flydelta_representation_augmentation_state &,
             std::string &)> resolve_representation_augmentation_state;
     std::function<bool(
+            const common_flydelta_experiment_job &, const std::string &,
+            common_flydelta_representation_augmentation_state &, std::string &)>
+        resolve_representation_augmentation_state_for_job;
+    std::function<bool(
             const std::string &, common_flydelta_experiment_plan &,
             common_flydelta_utility_history &, std::string &)> resolve_search_orchestration_state;
+    std::function<bool(
+            const common_flydelta_experiment_job &, const std::string &,
+            common_flydelta_experiment_plan &, common_flydelta_utility_history &,
+        std::string &)> resolve_search_orchestration_state_for_job;
 };
+
+bool daemon_flydelta_lifecycle_record_matches_scope(
+        const common_learning_lifecycle_record & record,
+        const common_agent_scope & scope) {
+    return record.namespace_id == scope.namespace_id &&
+        record.project_id == scope.project_id &&
+        record.session_id == scope.session_id;
+}
 
 // Resource authority is execution-scoped, not a property of the resident
 // model. Worker callbacks receive the immutable job scope and use this
@@ -110,6 +130,7 @@ std::shared_ptr<daemon_flydelta_resource_provider>
 daemon_flydelta_provider_for_scope(
         const std::shared_ptr<daemon_flydelta_resource_provider> & source,
         const common_agent_scope & scope) {
+    if (!source) return {};
     auto scoped = std::make_shared<daemon_flydelta_resource_provider>();
     scoped->host = source->host;
     scoped->resources = source->resources;
@@ -129,9 +150,15 @@ daemon_flydelta_provider_for_scope(
     scoped->model_n_layers = source->model_n_layers;
     scoped->lifecycle_store = source->lifecycle_store;
     scoped->resolve_bootstrap_zoom_state = source->resolve_bootstrap_zoom_state;
+    scoped->resolve_bootstrap_zoom_state_for_job =
+        source->resolve_bootstrap_zoom_state_for_job;
     scoped->resolve_representation_augmentation_state =
         source->resolve_representation_augmentation_state;
+    scoped->resolve_representation_augmentation_state_for_job =
+        source->resolve_representation_augmentation_state_for_job;
     scoped->resolve_search_orchestration_state = source->resolve_search_orchestration_state;
+    scoped->resolve_search_orchestration_state_for_job =
+        source->resolve_search_orchestration_state_for_job;
     return scoped;
 }
 
@@ -909,9 +936,13 @@ bool daemon_flydelta_resolve_concept_target(
     common_flydelta_representation_augmentation_state augmentation;
     bool has_augmentation = false;
     if (!job.representation_augmentation_state_ref.empty()) {
-        if (!provider->resolve_representation_augmentation_state ||
-                !provider->resolve_representation_augmentation_state(
-                    job.representation_augmentation_state_ref, augmentation, error)) {
+        const bool resolved = provider->resolve_representation_augmentation_state_for_job
+            ? provider->resolve_representation_augmentation_state_for_job(
+                job, job.representation_augmentation_state_ref, augmentation, error)
+            : provider->resolve_representation_augmentation_state &&
+                provider->resolve_representation_augmentation_state(
+                    job.representation_augmentation_state_ref, augmentation, error);
+        if (!resolved) {
             if (error.empty()) error = "FlyDelta concept target augmentation state is unavailable";
             return false;
         }
@@ -923,12 +954,18 @@ bool daemon_flydelta_resolve_concept_target(
     }
 
     const auto apply_orchestration = [&](const std::string & reference) {
-        if (reference.empty() || !provider->resolve_search_orchestration_state) return false;
+        if (reference.empty() ||
+                (!provider->resolve_search_orchestration_state_for_job &&
+                 !provider->resolve_search_orchestration_state)) return false;
         common_flydelta_experiment_plan plan;
         common_flydelta_utility_history history;
         std::string resolve_error;
-        if (!provider->resolve_search_orchestration_state(
-                reference, plan, history, resolve_error)) return false;
+        const bool resolved = provider->resolve_search_orchestration_state_for_job
+            ? provider->resolve_search_orchestration_state_for_job(
+                job, reference, plan, history, resolve_error)
+            : provider->resolve_search_orchestration_state(
+                reference, plan, history, resolve_error);
+        if (!resolved) return false;
         target.layer_index = static_cast<int32_t>(
             plan.continuation.region.anchor_layer_index);
         target.local_layers = plan.continuation.region.layer_indices;
@@ -936,10 +973,16 @@ bool daemon_flydelta_resolve_concept_target(
         return target.layer_index > 0;
     };
     const auto apply_bootstrap = [&](const std::string & reference) {
-        if (reference.empty() || !provider->resolve_bootstrap_zoom_state) return false;
+        if (reference.empty() ||
+                (!provider->resolve_bootstrap_zoom_state_for_job &&
+                 !provider->resolve_bootstrap_zoom_state)) return false;
         common_flydelta_bootstrap_zoom_state state;
         std::string resolve_error;
-        if (!provider->resolve_bootstrap_zoom_state(reference, state, resolve_error)) return false;
+        const bool resolved = provider->resolve_bootstrap_zoom_state_for_job
+            ? provider->resolve_bootstrap_zoom_state_for_job(
+                job, reference, state, resolve_error)
+            : provider->resolve_bootstrap_zoom_state(reference, state, resolve_error);
+        if (!resolved) return false;
         target.layer_index = static_cast<int32_t>(state.anchor_layer);
         target.local_layers = state.local_layers;
         target.parent_surface_ref = reference;
@@ -1249,12 +1292,13 @@ bool daemon_flydelta_execute_batch(
 }
 
 bool daemon_flydelta_run_concept_capture(
-        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
         std::vector<std::string> & trajectory_refs,
         std::string & error) {
     error.clear();
     trajectory_refs.clear();
+    provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     if (!provider || !provider->teaching_material_runtime ||
             job.teaching_material_group_ref.empty()) {
         error = "MODEL_ADAPTER_CAPABILITY_UNAVAILABLE: FlyDelta teaching material runtime is not bound";
@@ -1401,12 +1445,13 @@ bool daemon_flydelta_run_concept_capture(
 }
 
 bool daemon_flydelta_run_concept_synthesis(
-        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
         std::vector<common_flydelta_concept_candidate> & candidates,
         std::string & error) {
     error.clear();
     candidates.clear();
+    provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     if (!provider || !provider->teaching_material_runtime ||
             job.teaching_material_group_ref.empty()) {
         error = "MODEL_ADAPTER_CAPABILITY_UNAVAILABLE: FlyDelta teaching material runtime is not bound";
@@ -1726,13 +1771,14 @@ bool daemon_flydelta_diagnostics_for_arm(
 }
 
 bool daemon_flydelta_run_bootstrap_zoom_slice(
-        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
         const common_flydelta_bootstrap_zoom_state & resume,
         common_flydelta_search_pipeline_result & output,
         common_flydelta_bootstrap_zoom_state & next,
         std::string & error) {
     error.clear();
+    provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     common_flydelta_experiment_fixture fixture;
     if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
     std::vector<common_flydelta_basis_direction> directions;
@@ -1908,11 +1954,13 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
 }
 
 bool daemon_flydelta_run_search_pipeline(
-        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
         const common_flydelta_search_pipeline_config & config,
         common_flydelta_search_pipeline_result & result,
         std::string & error) {
+    error.clear();
+    provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     common_flydelta_experiment_fixture fixture;
     fixture.id = job.seed.verifier_ref;
     fixture.task_fingerprint = job.seed.task_fingerprint;
@@ -2505,13 +2553,14 @@ bool daemon_flydelta_run_rank1_alpha_arm(
 }
 
 bool daemon_flydelta_run_adaptive_alpha_slice(
-        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
         const common_flydelta_bootstrap_zoom_state & resume,
         common_flydelta_search_pipeline_result & output,
         common_flydelta_bootstrap_zoom_state & next,
         std::string & error) {
     error.clear();
+    provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     common_flydelta_experiment_fixture fixture;
     if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
     std::vector<common_flydelta_basis_direction> directions;
@@ -2624,13 +2673,14 @@ bool daemon_flydelta_run_adaptive_alpha_slice(
 // derives the profile-space residual from persisted BootstrapZoom trials; the
 // daemon owns only the fresh baseline/control wave that validates it.
 bool daemon_flydelta_run_orthogonal_slice(
-        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
         const common_flydelta_bootstrap_zoom_state & resume,
         common_flydelta_search_pipeline_result & output,
         common_flydelta_bootstrap_zoom_state & next,
         std::string & error) {
     error.clear();
+    provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     common_flydelta_experiment_fixture fixture;
     if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
     common_flydelta_orthogonal_search_config config;
@@ -2873,12 +2923,13 @@ bool daemon_flydelta_run_orthogonal_slice(
 }
 
 bool daemon_flydelta_run_post_bootstrap_slice(
-        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
         const common_flydelta_experiment_plan & plan,
         common_flydelta_search_pipeline_result & output,
         std::string & error) {
     error.clear();
+    provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     common_flydelta_experiment_fixture fixture;
     if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
     const int32_t layer_index = static_cast<int32_t>(plan.continuation.region.anchor_layer_index);
@@ -2898,7 +2949,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     coefficient_config.strategy = plan.run_tfo_lite
         ? common_flydelta_coefficient_search_strategy::tfo_lite
         : common_flydelta_coefficient_search_strategy::coordinate;
-    const auto run_single = [provider, &job, &fixture](
+    const auto run_mode = [provider, &job, &fixture](
             const common_flydelta_experiment_fixture &,
             const common_flydelta_low_rank_basis & current_basis,
             const std::vector<float> & coefficients,
@@ -2906,31 +2957,83 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             common_flydelta_counterfactual_trial & trial,
             common_flydelta_decision_margin & margin,
             common_flydelta_representation_diagnostics & geometry,
-            bool & has_geometry, std::string & runner_error) {
+            bool & has_geometry, std::string & runner_error,
+            const bool full_execution) {
         std::vector<common_flydelta_counterfactual_trial> trials;
         std::vector<common_flydelta_decision_margin> margins;
         std::vector<common_flydelta_representation_diagnostics> geometries;
         std::vector<bool> geometry_flags;
         if (!daemon_flydelta_run_coefficient_arm_batch(
                 provider, job, fixture, current_basis, {coefficients}, apply_overlay,
-                trials, margins, geometries, geometry_flags, runner_error)) return false;
+                trials, margins, geometries, geometry_flags, runner_error,
+                full_execution, full_execution ? "deep-full-single" : "deep-diagnostic-single")) {
+            return false;
+        }
         trial = std::move(trials.front());
         margin = std::move(margins.front());
         geometry = std::move(geometries.front());
         has_geometry = geometry_flags.front();
         return true;
     };
-    const auto run_batch = [provider, &job, &fixture] (
+    const auto run_batch_mode = [provider, &job, &fixture] (
             const common_flydelta_experiment_fixture &,
             const common_flydelta_low_rank_basis & current_basis,
             const std::vector<std::vector<float>> & coefficients,
             std::vector<common_flydelta_counterfactual_trial> & trials,
             std::vector<common_flydelta_decision_margin> & margins,
             std::vector<common_flydelta_representation_diagnostics> & geometries,
-            std::vector<bool> & geometry_flags, std::string & runner_error) {
+            std::vector<bool> & geometry_flags, std::string & runner_error,
+            const bool full_execution) {
         return daemon_flydelta_run_coefficient_arm_batch(
             provider, job, fixture, current_basis, coefficients, true,
-            trials, margins, geometries, geometry_flags, runner_error);
+            trials, margins, geometries, geometry_flags, runner_error,
+            full_execution, full_execution ? "deep-full-batch" : "deep-diagnostic-batch");
+    };
+    const auto run_diagnostic = [run_mode](
+            const common_flydelta_experiment_fixture & current_fixture,
+            const common_flydelta_low_rank_basis & current_basis,
+            const std::vector<float> & coefficients,
+            const bool apply_overlay,
+            common_flydelta_counterfactual_trial & trial,
+            common_flydelta_decision_margin & margin,
+            common_flydelta_representation_diagnostics & geometry,
+            bool & has_geometry, std::string & runner_error) {
+        return run_mode(current_fixture, current_basis, coefficients, apply_overlay,
+            trial, margin, geometry, has_geometry, runner_error, false);
+    };
+    const auto run_diagnostic_batch = [run_batch_mode](
+            const common_flydelta_experiment_fixture & current_fixture,
+            const common_flydelta_low_rank_basis & current_basis,
+            const std::vector<std::vector<float>> & coefficients,
+            std::vector<common_flydelta_counterfactual_trial> & trials,
+            std::vector<common_flydelta_decision_margin> & margins,
+            std::vector<common_flydelta_representation_diagnostics> & geometries,
+            std::vector<bool> & geometry_flags, std::string & runner_error) {
+        return run_batch_mode(current_fixture, current_basis, coefficients, trials,
+            margins, geometries, geometry_flags, runner_error, false);
+    };
+    const auto run_full = [run_mode](
+            const common_flydelta_experiment_fixture & current_fixture,
+            const common_flydelta_low_rank_basis & current_basis,
+            const std::vector<float> & coefficients,
+            const bool apply_overlay,
+            common_flydelta_counterfactual_trial & trial,
+            common_flydelta_decision_margin & margin,
+            common_flydelta_representation_diagnostics & geometry,
+            bool & has_geometry, std::string & runner_error) {
+        return run_mode(current_fixture, current_basis, coefficients, apply_overlay,
+            trial, margin, geometry, has_geometry, runner_error, true);
+    };
+    const auto run_full_batch = [run_batch_mode](
+            const common_flydelta_experiment_fixture & current_fixture,
+            const common_flydelta_low_rank_basis & current_basis,
+            const std::vector<std::vector<float>> & coefficients,
+            std::vector<common_flydelta_counterfactual_trial> & trials,
+            std::vector<common_flydelta_decision_margin> & margins,
+            std::vector<common_flydelta_representation_diagnostics> & geometries,
+            std::vector<bool> & geometry_flags, std::string & runner_error) {
+        return run_batch_mode(current_fixture, current_basis, coefficients, trials,
+            margins, geometries, geometry_flags, runner_error, true);
     };
     std::vector<common_flydelta_coefficient_trial> trials;
     common_flydelta_coefficient_selection selection;
@@ -2951,13 +3054,13 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         }
         common_flydelta_deep_search_result deep_result;
         if (!common_flydelta_run_deep_search_batched(
-                fixture, deep_config, deep_directions, run_single, run_batch,
-                run_single, run_batch, deep_result, error)) return false;
+                fixture, deep_config, deep_directions, run_diagnostic, run_diagnostic_batch,
+                run_full, run_full_batch, deep_result, error)) return false;
         basis = deep_result.basis;
         trials = deep_result.coefficient_trials;
         selection = deep_result.coefficient_selection;
     } else if (!common_flydelta_run_low_rank_coefficient_search_batched(
-            fixture, basis, coefficient_config, run_single, run_batch,
+            fixture, basis, coefficient_config, run_full, run_full_batch,
             trials, selection, error)) {
         return false;
     }
@@ -3521,7 +3624,7 @@ bool daemon_flydelta_run_donor_capture(
 }
 
 bool daemon_flydelta_run_representation_augmentation(
-        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
         const common_flydelta_search_pipeline_config & pipeline_config,
         const common_flydelta_representation_augmentation_state * resume,
@@ -3529,6 +3632,7 @@ bool daemon_flydelta_run_representation_augmentation(
         common_flydelta_representation_augmentation_state & next,
         std::string & error) {
     error.clear();
+    provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     if (resume == nullptr) {
         error = "FlyDelta representation augmentation requires a resumed typed state";
         return false;
@@ -3862,12 +3966,13 @@ bool daemon_flydelta_run_representation_augmentation(
 }
 
 bool daemon_flydelta_run_counterfactual(
-        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
         std::vector<common_flydelta_counterfactual_report> & reports,
         std::string & error) {
     error.clear();
     reports.clear();
+    provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     common_flydelta_experiment_fixture fixture;
     if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
     if (job.seed.baseline_ref.empty() || job.seed.candidate_ref.empty() ||
@@ -4312,12 +4417,30 @@ make_daemon_flydelta_resource_binding_factory(
                 return false;
             }
             provider->resolve_bootstrap_zoom_state = callbacks.resolve_bootstrap_zoom_state;
+            provider->resolve_bootstrap_zoom_state_for_job =
+                callbacks.resolve_bootstrap_zoom_state_for_job;
             const auto lifecycle_persist_bootstrap_state = callbacks.persist_bootstrap_zoom_state;
+            const auto lifecycle_persist_bootstrap_state_for_job =
+                callbacks.persist_bootstrap_zoom_state_for_job;
             callbacks.persist_bootstrap_zoom_state = [provider, lifecycle_persist_bootstrap_state](
                     const common_flydelta_bootstrap_zoom_state & state,
                     std::string & state_ref,
                     std::string & state_error) {
                 if (!lifecycle_persist_bootstrap_state(state, state_ref, state_error)) return false;
+                std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
+                provider->bootstrap_state_by_continuation[
+                    daemon_flydelta_bootstrap_key(state)] = state_ref;
+                return true;
+            };
+            callbacks.persist_bootstrap_zoom_state_for_job = [
+                    provider, lifecycle_persist_bootstrap_state_for_job] (
+                    const common_flydelta_experiment_job & job,
+                    const common_flydelta_bootstrap_zoom_state & state,
+                    std::string & state_ref,
+                    std::string & state_error) {
+                if (!lifecycle_persist_bootstrap_state_for_job ||
+                        !lifecycle_persist_bootstrap_state_for_job(
+                            job, state, state_ref, state_error)) return false;
                 std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
                 provider->bootstrap_state_by_continuation[
                     daemon_flydelta_bootstrap_key(state)] = state_ref;
@@ -4334,6 +4457,8 @@ make_daemon_flydelta_resource_binding_factory(
             }
             provider->resolve_representation_augmentation_state =
                 callbacks.resolve_representation_augmentation_state;
+            provider->resolve_representation_augmentation_state_for_job =
+                callbacks.resolve_representation_augmentation_state_for_job;
             const auto resolve_bootstrap_state = callbacks.resolve_bootstrap_zoom_state;
             callbacks.resolve_search_orchestration_state = [provider, resolve_bootstrap_state](
                     const std::string & state_ref,
@@ -4429,19 +4554,113 @@ make_daemon_flydelta_resource_binding_factory(
                 }
                 return true;
             };
+            callbacks.resolve_search_orchestration_state_for_job = [provider](
+                    const common_flydelta_experiment_job & job,
+                    const std::string & state_ref,
+                    common_flydelta_experiment_plan & plan,
+                    common_flydelta_utility_history & history,
+                    std::string & state_error) {
+                if (state_ref.rfind("flydelta://state/bootstrap-zoom/", 0) == 0) {
+                    common_flydelta_bootstrap_zoom_state bootstrap;
+                    if (!provider->resolve_bootstrap_zoom_state_for_job ||
+                            !provider->resolve_bootstrap_zoom_state_for_job(
+                                job, state_ref, bootstrap, state_error)) return false;
+                    plan = {};
+                    plan.continuation.region.layer_indices = bootstrap.local_layers;
+                    plan.continuation.region.anchor_layer_index = bootstrap.anchor_layer;
+                    plan.continuation.region.total_scale = bootstrap.selected_scale;
+                    plan.continuation.region.per_layer_scale = bootstrap.selected_scale /
+                        std::sqrt(static_cast<float>(std::max<size_t>(1, bootstrap.local_layers.size())));
+                    plan.continuation.search_score = bootstrap.best_search_score;
+                    plan.depth = common_flydelta_search_depth::bootstrap;
+                    plan.phase = common_flydelta_experiment_phase::bootstrap;
+                    plan.budget = common_flydelta_search_budget_for_depth(plan.depth);
+                    plan.required_compatible_directions = 1;
+                    history = {};
+                    return common_flydelta_search_budget_validate(plan.budget, state_error);
+                }
+                const auto records = provider->lifecycle_store->list(state_error);
+                if (!state_error.empty()) return false;
+                for (auto it = records.rbegin(); it != records.rend(); ++it) {
+                    if (it->kind != common_learning_lifecycle_kind::flydelta_experiment ||
+                            it->subject_id != state_ref ||
+                            !daemon_flydelta_lifecycle_record_matches_scope(
+                                *it, job.seed.scope)) continue;
+                    if (!daemon_flydelta_orchestration_state_from_json(
+                            it->payload_json, plan, history, state_error)) return false;
+                    std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
+                    provider->orchestration_states[state_ref] = {plan, history};
+                    return true;
+                }
+                state_error = "FlyDelta orchestration state was not found in job scope";
+                return false;
+            };
+            callbacks.persist_search_orchestration_state_for_job = [provider](
+                    const common_flydelta_experiment_job & job,
+                    const common_flydelta_experiment_plan & plan,
+                    const common_flydelta_utility_history & history,
+                    std::string & state_ref,
+                    std::string & state_error) {
+                const auto scoped_provider = daemon_flydelta_provider_for_scope(
+                    provider, job.seed.scope);
+                if (!scoped_provider) {
+                    state_error = "FlyDelta orchestration persistence has no scoped provider";
+                    return false;
+                }
+                std::string bootstrap_ref;
+                {
+                    std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
+                    const auto it = provider->bootstrap_state_by_continuation.find(
+                        daemon_flydelta_continuation_key(plan));
+                    if (it != provider->bootstrap_state_by_continuation.end()) bootstrap_ref = it->second;
+                }
+                const auto payload = daemon_flydelta_orchestration_state_json(
+                    plan, history, bootstrap_ref).dump();
+                const auto digest = hash_sha256_hex(payload.data(), payload.size()).substr(0, 32);
+                state_ref = "flydelta://state/orchestration/" + digest;
+                common_learning_lifecycle_record record;
+                record.event_id = "flydelta://event/orchestration/" + digest;
+                record.subject_id = state_ref;
+                record.kind = common_learning_lifecycle_kind::flydelta_experiment;
+                record.status = common_learning_lifecycle_status::running;
+                record.idempotency_key = "flydelta/orchestration/" + digest;
+                record.source_id = "daemon-flydelta";
+                record.namespace_id = scoped_provider->authority.namespace_id;
+                record.project_id = scoped_provider->authority.project_id;
+                record.session_id = scoped_provider->authority.session_id;
+                record.content_hash = "sha256:" + hash_sha256_hex(payload.data(), payload.size());
+                record.created_at = "daemon-runtime-v1";
+                record.payload_json = payload;
+                if (!scoped_provider->lifecycle_store->append(record, state_error)) return false;
+                std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
+                provider->orchestration_states[state_ref] = {plan, history};
+                if (!bootstrap_ref.empty()) {
+                    provider->bootstrap_state_by_orchestration_ref[state_ref] = bootstrap_ref;
+                }
+                return true;
+            };
             provider->resolve_search_orchestration_state =
                 callbacks.resolve_search_orchestration_state;
-            const auto resolve_orchestration_state = callbacks.resolve_search_orchestration_state;
-            const auto persist_bootstrap_state = callbacks.persist_bootstrap_zoom_state;
-            callbacks.run_search_pipeline_with_search_state = [provider, resolve_bootstrap_state,
-                    resolve_orchestration_state, persist_bootstrap_state](const common_flydelta_experiment_job & job,
+            provider->resolve_search_orchestration_state_for_job =
+                callbacks.resolve_search_orchestration_state_for_job;
+            const auto resolve_bootstrap_state_for_job =
+                callbacks.resolve_bootstrap_zoom_state_for_job;
+            const auto resolve_orchestration_state_for_job =
+                callbacks.resolve_search_orchestration_state_for_job;
+            const auto persist_bootstrap_state_for_job =
+                callbacks.persist_bootstrap_zoom_state_for_job;
+            callbacks.run_search_pipeline_with_search_state = [provider,
+                    resolve_bootstrap_state_for_job, resolve_orchestration_state_for_job,
+                    persist_bootstrap_state_for_job](const common_flydelta_experiment_job & job,
                     const std::string & state_ref,
                     common_flydelta_search_pipeline_result & result,
                     std::string & next_state_ref,
                     std::string & state_error) {
                 common_flydelta_experiment_plan plan;
                 common_flydelta_utility_history history;
-                if (!resolve_orchestration_state(state_ref, plan, history, state_error)) return false;
+                if (!resolve_orchestration_state_for_job ||
+                        !resolve_orchestration_state_for_job(
+                            job, state_ref, plan, history, state_error)) return false;
                 if (plan.phase != common_flydelta_experiment_phase::bootstrap) {
                     if (plan.phase == common_flydelta_experiment_phase::shallow_controls ||
                             plan.phase == common_flydelta_experiment_phase::deep_controls) {
@@ -4464,7 +4683,9 @@ make_daemon_flydelta_resource_binding_factory(
                     return false;
                 }
                 common_flydelta_bootstrap_zoom_state bootstrap;
-                if (!resolve_bootstrap_state(bootstrap_ref, bootstrap, state_error)) return false;
+                if (!resolve_bootstrap_state_for_job ||
+                        !resolve_bootstrap_state_for_job(
+                            job, bootstrap_ref, bootstrap, state_error)) return false;
                 if (plan.run_orthogonal_search) {
                     if (!daemon_flydelta_run_orthogonal_slice(
                             provider, job, bootstrap, result, bootstrap, state_error)) return false;
@@ -4476,8 +4697,8 @@ make_daemon_flydelta_resource_binding_factory(
                     return false;
                 }
                 std::string persisted_bootstrap_ref;
-                if (!persist_bootstrap_state || !persist_bootstrap_state(
-                        bootstrap, persisted_bootstrap_ref, state_error)) return false;
+                if (!persist_bootstrap_state_for_job || !persist_bootstrap_state_for_job(
+                        job, bootstrap, persisted_bootstrap_ref, state_error)) return false;
                 {
                     std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
                     provider->bootstrap_state_by_continuation[
