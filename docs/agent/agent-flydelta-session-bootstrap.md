@@ -25,16 +25,15 @@ lifecycle transitions. The base GGUF is never edited.
 ## Branch and commit discipline
 
 Work on the currently selected development branch. This workstream targets
-the active workspace branch; do not switch to or synchronize with
-`feature/llama-agent` unless the project owner explicitly requests that
-integration step. Preserve unrelated dirty files and artifacts.
+the active workspace branch; do not switch to or synchronize with another
+branch unless the project owner explicitly requests that integration step.
+Preserve unrelated dirty files and artifacts.
 
 Group related changes into several coherent sweeps. After the grouped sweeps
 have passed their relevant verification and the documentation gate below,
 create a local commit on the current work branch. Do not push, merge, rebase
-or integrate into `feature/llama-agent` as part of normal sweep completion.
-The project owner decides when the integration branch becomes the active work
-target.
+or integrate into another branch as part of normal sweep completion. The
+project owner decides when a different branch becomes the active work target.
 
 ## Long-running build and poll routine
 

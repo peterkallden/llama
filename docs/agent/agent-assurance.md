@@ -13,7 +13,7 @@ when the corresponding verification record contains evidence for it.
 ## Milestone
 
 - Milestone: Agent runtime beta
-- Integration branch: `feature/llama-agent`
+- Integration branch: owner-selected; this portable record does not prescribe one
 - Baseline: `origin/master`
 - Scope: reflective, deliberate, research, tools, sessions, scheduling,
   resources, memory, plans, daemon, JSONL, and MCP hosts

@@ -24,9 +24,8 @@ consumer evidence.
 
 Development is performed on the currently selected work branch. Related
 verified sweeps may be checkpointed with a local commit after the
-documentation gate. Synchronization with the integration branch
-`feature/llama-agent` is a separate owner-directed operation and is not implied
-by a local FlyDelta commit.
+documentation gate. Synchronization with an integration branch is a separate
+owner-directed operation and is not implied by a local FlyDelta commit.
 
 FlyDelta is a proposed, small, host-controlled associative sideband for a
 frozen language model. It records only host-certified experience and can
@@ -277,7 +276,7 @@ promotion or activation happens automatically.
 | EvaluationRunner -> EvaluationReport | IMPLEMENTED | `daemon_flydelta_run_evaluation()` registered through `run_evaluation`; each fixture reuses the existing bounded batch/counterfactual path | CTest contract: `test-agent-flydelta-evaluator`; functional model-host evidence requires traced model smoke |
 | EvaluationReport persistence/load | IMPLEMENTED | evaluation lifecycle record plus `common_flydelta_load_evaluation_report()` | evaluator and candidate-lifecycle contract tests |
 | PromotionSummary persistence/load | IMPLEMENTED | promotion-summary lifecycle record plus `common_flydelta_load_promotion_summary()` | promotion and lifecycle tests |
-| review JSONL/admin operation | IMPLEMENTED | JSONL protocol parses `flydelta.evaluate_candidate`, `get_evaluation`, `get_promotion_summary` and `review_candidate`; review data uses the configured lifecycle backend | These tests evaluate production wiring: CTest covers daemon protocol/review-store; model-free smoke covers wiring; the tiny model-backed admin smoke covers resident-model execution wiring, host-verification wiring and the full admin chain; the larger Qwen 1.5B profile has separate host/cvec wiring evidence but no candidate differential token |
+| review JSONL/admin operation | IMPLEMENTED | JSONL protocol parses `flydelta.evaluate_candidate`, `get_evaluation`, `get_promotion_summary` and `review_candidate`; review data uses the configured lifecycle backend | These tests evaluate production wiring: CTest covers daemon protocol/review-store; model-free smoke covers wiring; the tiny model-backed admin smoke covers resident-model execution wiring, host-verification wiring and the full admin chain; the larger Qwen 1.5B profile has separate server-context runtime and cvec batch wiring evidence but no candidate differential token |
 | review -> stage_canary | IMPLEMENTED | `flydelta.stage_canary` checks durable approval and sends the complete stage review through `apply_and_append`; registry state advances only after the review journal append succeeds; replay orders review actions by lifecycle dependency rather than backend row order | These tests evaluate production lifecycle wiring: model-free and tiny model-backed admin smokes trace dispatch, worker persistence, review, canary and durable replay; the larger Qwen 1.5B admin smoke stops before staging when its production-gated probe has no candidate-only verifier token |
 
 The generic `common_learning_evaluate_candidate` path documented in
@@ -294,9 +293,10 @@ limitation before closing the sweep. Record the verification date, commit and
 tests in the maintenance log below. Classify each result as CTest contract
 evidence, model-free functional smoke evidence or model-backed functional
 smoke evidence, and retain the corresponding traces. If the code changed but
-the status did not, record why the existing evidence remains valid. After several related sweeps
-have passed this gate, create a local commit on the current work branch;
-integration with `feature/llama-agent` requires an explicit owner instruction.
+the status did not, record why the existing evidence remains valid. After
+several related sweeps have passed this gate, create a local commit on the
+current work branch; synchronization with another branch requires an explicit
+owner instruction.
 
 Completed worker traces are appended to the same lifecycle journal before a
 follow-up `next_action` is scheduled. A completed queue item therefore cannot
@@ -318,6 +318,7 @@ journal remains the durable evidence boundary.
 | 2026-09-25 | this local commit | Clean-architecture correction for runtime capture handoff and worker evidence durability | Serial CTests passed for capture manifest, runtime observer, job, queue, worker, candidate lifecycle, server binding, daemon readiness and JSONL protocol; the runtime CTest remained explicitly skipped; model-free admin smoke passed with `flydelta_admin_trace` and `flydelta_worker_trace` through evaluation, promotion summary, review, canary and replay | Added typed capture scope/refs, durable candidate resource materialization, job-scoped donor authority, lifecycle trace persistence, next-action gating and a needs-based recurring architecture gate; direct scope/trace assertions were added in existing contract tests |
 | 2026-09-25 | this local commit | Long-running build polling made a portable workflow rule | Documentation-only review; no additional runtime test required | Added a needs-based one-shot poll routine with a short progress check, dynamic completion estimate plus measured margin, stale-poll replacement, serial follow-up validation and no local environment paths in repository documentation |
 | 2026-09-25 | this local commit | Evaluation and diagnostic-arm runtime wiring corrected without changing search policy | Serial FlyDelta contract CTests passed; model-free and model-backed functional smokes passed with tracing; model-backed evaluation persisted 8/8 known/helped trials and worker trace | Evaluation references now resolve through the immutable job scope; diagnostic arms use prompt-only server evaluation (`n_predict=0`) without sampling; smoke timeout and callback failure reporting remain portable |
+| 2026-09-25 | this local commit | Qwen server-context runtime and cvec batch paths rechecked serially after device-selection correction | Qwen Instruct runtime smoke passed with three activation arms; native two-slot cvec batch and one-slot scalar fallback both passed with tracing; broader repair smoke passed separately; daemon Qwen probe loaded and generated but correctly stopped when no candidate-only verifier token was found | Recorded runtime/batch wiring as functional evidence only; kept the Qwen differential/model-quality limitation explicit and documented device selection as an invocation concern rather than a project-local setting |
 
 ## Natural dataset-question smoke
 

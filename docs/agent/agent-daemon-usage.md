@@ -719,9 +719,13 @@ as the starting configuration. It uses one resident generation profile,
 single-slot inference/batching, tracing, and `n_gpu_layers=99`. The model
 catalog directory is resolved from the daemon working directory; place the
 configured GGUF under `models/` or change the catalog path before starting.
-The device selection is process-level rather than JSON configuration:
+The device selection is process-level rather than JSON configuration. On a
+host with multiple Vulkan devices, set `GPU_DEVICE_INDEX` to the device index
+selected by that host and pass it through `GGML_VK_VISIBLE_DEVICES`; do not
+encode a machine-specific device choice in the JSON catalog:
 
 ```bash
+export GGML_VK_VISIBLE_DEVICES="${GPU_DEVICE_INDEX}"
 ./build-agent-vulkan-cozo/bin/llama-agent-daemon \
   --config docs/examples/agent-host-config-flydelta-intel-smoke.json
 ```
@@ -780,6 +784,13 @@ This startup path resolves the resident profile and registers the existing
 daemon FlyDelta model binding. If semantic host callbacks are not available,
 the lane remains configured-but-idle; configuration alone must not invent a
 model evaluator or grant promotion evidence.
+
+The Qwen server-context runtime smoke and the cvec batch smoke are separate
+functional wiring checks. The runtime smoke exercises multiple activation arms;
+the batch smoke is run once with compatible native batching and once with the
+scalar fallback. A passing result proves execution and host-verification
+wiring for the supplied model and configuration, not equality of model output
+or learned quality between the two execution paths.
 
 Verification uses three distinct evidence levels. CTests are contract tests:
 they validate schemas, validators, state transitions and invariants, but do
