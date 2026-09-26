@@ -3708,6 +3708,50 @@ and portable. The lifecycle journal is separate from the learning transaction
 ledger; a JSONL lifecycle path must not be the same file as the transaction
 JSONL path.
 
+### 4N. Revisionsbar kandidataktivering och rollback
+
+FlyDelta sideband-artefakter är immutabla revisioner. En kandidat kan därför
+testas med riktig agent/server-context-körning utan att den aktiva runtime-
+konfigurationen ändras. Oracle verifierar baseline, candidate och controls;
+den befintliga parvisa counterfactual-klassificeringen producerar därefter
+`HELPED`, `HARMED`, `NEUTRAL` eller `UNKNOWN`. `HELPED` gör kandidaten
+eligible för fortsatt lifecycle-hantering, men aktiverar den inte automatiskt.
+
+En modellprofil kan använda en logisk `binding_key` i stället för att peka på
+en fysisk sideband-revision:
+
+```text
+model profile + FlyDelta scope
+        ↓
+durable activation binding
+        ↓
+immutable sideband revision
+        ↓
+existing registry compatibility/applicability checks
+```
+
+Binding-händelser lagras som typade poster i den befintliga append-only
+lifecycle-journalen. Registryt bygger en in-memory-projektion genom replay;
+ingen separat activation-store införs. En aktivering kräver canary-gate,
+host approval, kompatibilitet och ett Oracle-/evaluation-resultat. Den tidigare
+revisionen förblir tillgänglig och dess artifact ändras inte.
+
+Rollback är en ny binding-händelse med samma profil- och scope-nyckel som
+pekar på den tidigare giltiga revisionen. Den gör ingen ny syntes och skriver
+inte om någon artifact. Journalens `expected_current_revision_id` används som
+compare-and-swap-skydd mot samtidig ändring. Detta ger följande säkra flöde:
+
+```text
+experimental candidate
+        → real counterfactual evaluation
+        → canary
+        → explicit activation of revision B
+        → optional rollback to revision A
+```
+
+Direkta fysiska `sideband_id`-profiler är bakåtkompatibla. Binding-profiler
+används för revisioner som ska kunna bytas och återställas utan profiländring.
+
 ### Adaptive rank-one alpha response search
 
 `flydelta-alpha-response-search` is the bounded HOW-MUCH primitive used for a
@@ -3762,9 +3806,10 @@ internal loss is not enough.
    model-derived features. The first two are cheaper and safer.
 2. Initial domain: coding repair or structured tool behavior. Tool contracts
    remain host-enforced even if a sideband improves model choices.
-3. Registry shape: a sideband-specific registry now, or a deliberately planned
-   generic overlay registry later.
+3. Registry shape: the current implementation remains sideband-specific; a
+   generic overlay registry is outside this change.
 4. Exact redaction, scope, TTL and revocation semantics for capture manifests.
 
-Until these are decided, documentation, model-free experiments and strict
-non-activation are the correct next steps—not an automatic learning loop.
+The binding path is intentionally still host-gated: documentation, model-free
+contract tests and explicit model-backed evaluation remain required before a
+candidate can be activated. There is no automatic learning or activation loop.

@@ -760,6 +760,21 @@ bool common_agent_daemon_service::execute_flydelta_admin(
         outcome.event = "flydelta.admin.failed";
         return false;
     };
+    if (request.operation == "flydelta.get_binding") {
+        if (request.binding_key.empty()) return fail("FlyDelta binding_key is required");
+        common_flydelta_activation_binding binding;
+        if (!runtime.flydelta_sideband_registry->binding(
+                request.binding_key, binding, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.binding.loaded";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"binding_key", binding.binding_key},
+            {"selected_revision_id", binding.selected_revision_id},
+            {"previous_revision_id", binding.previous_revision_id},
+        }.dump();
+        return true;
+    }
     const auto manifest_it = runtime.flydelta_sideband_registry->list().find(request.candidate_id);
     const auto require_manifest = [&]() -> const common_flydelta_sideband_manifest * {
         if (manifest_it == runtime.flydelta_sideband_registry->list().end()) return nullptr;
@@ -989,6 +1004,86 @@ bool common_agent_daemon_service::execute_flydelta_admin(
             {"candidate_id", request.candidate_id},
             {"evaluation_revision", evaluation.revision_id},
             {"status", "canary"},
+        }.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.activate_candidate") {
+        if (!request.explicit_host_approval) return fail(
+            "FlyDelta activation requires explicit host approval");
+        if (request.binding_key.empty()) return fail(
+            "FlyDelta activation requires binding_key");
+        const auto * manifest = require_manifest();
+        if (!manifest) return fail("FlyDelta candidate is not registered");
+        if (manifest->status != common_flydelta_sideband_status::canary) {
+            return fail("FlyDelta candidate must be in canary before activation");
+        }
+        common_flydelta_sideband_review review;
+        review.event_id = "flydelta://review/" + request.candidate_id + ":activate:" +
+            request.binding_key;
+        review.actor_id = request.actor_id.empty() ? "jsonl-admin" : request.actor_id;
+        review.policy_revision = "flydelta-activation-v1";
+        review.evaluation_revision = manifest->evaluation_revision;
+        review.reason = request.reason.empty() ? "explicit sideband activation" : request.reason;
+        review.source = common_flydelta_review_source::operator_action;
+        review.action = common_flydelta_review_action::activate;
+        review.manifest = *manifest;
+        review.binding_key = request.binding_key;
+        review.expected_current_revision_id = request.expected_current_revision_id;
+        if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                *runtime.flydelta_sideband_registry, review, true, error)) return fail(error);
+        common_flydelta_activation_binding binding;
+        if (!runtime.flydelta_sideband_registry->binding(
+                request.binding_key, binding, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.binding.activated";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"binding_key", binding.binding_key},
+            {"selected_revision_id", binding.selected_revision_id},
+            {"previous_revision_id", binding.previous_revision_id},
+        }.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.rollback_candidate") {
+        if (!request.explicit_host_approval) return fail(
+            "FlyDelta rollback requires explicit host approval");
+        if (request.binding_key.empty()) return fail(
+            "FlyDelta rollback requires binding_key");
+        const auto * manifest = require_manifest();
+        if (!manifest) return fail("FlyDelta rollback revision is not registered");
+        if (manifest->status != common_flydelta_sideband_status::active) {
+            return fail("FlyDelta rollback revision must remain active");
+        }
+        common_flydelta_activation_binding current;
+        if (!runtime.flydelta_sideband_registry->binding(
+                request.binding_key, current, error)) return fail(error);
+        if (current.previous_revision_id.empty() ||
+                request.candidate_id != current.previous_revision_id) {
+            return fail("FlyDelta rollback target is not the previous selected revision");
+        }
+        common_flydelta_sideband_review review;
+        review.event_id = "flydelta://review/" + request.binding_key + ":rollback:" +
+            request.candidate_id;
+        review.actor_id = request.actor_id.empty() ? "jsonl-admin" : request.actor_id;
+        review.policy_revision = "flydelta-activation-v1";
+        review.reason = request.reason.empty() ? "explicit sideband rollback" : request.reason;
+        review.source = common_flydelta_review_source::operator_action;
+        review.action = common_flydelta_review_action::rollback;
+        review.manifest = *manifest;
+        review.binding_key = request.binding_key;
+        review.expected_current_revision_id = current.selected_revision_id;
+        if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                *runtime.flydelta_sideband_registry, review, true, error)) return fail(error);
+        common_flydelta_activation_binding binding;
+        if (!runtime.flydelta_sideband_registry->binding(
+                request.binding_key, binding, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.binding.rolled_back";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"binding_key", binding.binding_key},
+            {"selected_revision_id", binding.selected_revision_id},
+            {"previous_revision_id", binding.previous_revision_id},
         }.dump();
         return true;
     }

@@ -13,6 +13,9 @@ namespace {
 bool bounded(const std::string & value, size_t max = 512) {
     return !value.empty() && value.size() <= max;
 }
+bool optional_bounded(const std::string & value, size_t max = 512) {
+    return value.empty() || value.size() <= max;
+}
 bool hash_like(const std::string & value) {
     return value.size() >= 8 && value.size() <= 256 && value.find(':') != std::string::npos;
 }
@@ -75,6 +78,12 @@ bool common_flydelta_sideband_manifest_validate(
     if (manifest.schema_version != 1 || !bounded(manifest.id) ||
             !bounded(manifest.artifact_path) || !hash_like(manifest.artifact_hash) ||
             !bounded(manifest.namespace_id) || !bounded(manifest.project_id) ||
+            !optional_bounded(manifest.parent_revision_id) ||
+            !optional_bounded(manifest.binding_key) ||
+            !optional_bounded(manifest.oracle_ref) ||
+            !optional_bounded(manifest.oracle_revision) ||
+            !optional_bounded(manifest.policy_revision) ||
+            !optional_bounded(manifest.fixture_set_revision) ||
             (manifest.compatibility.base_model_id.empty() &&
              manifest.compatibility.base_model_fingerprint.empty()) ||
             (!manifest.compatibility.base_model_id.empty() &&
@@ -129,6 +138,16 @@ std::string common_flydelta_sideband_manifest_to_json(
             {"namespace_id", manifest.namespace_id},
             {"project_id", manifest.project_id},
         }},
+        {"lineage", {
+            {"parent_revision_id", manifest.parent_revision_id},
+            {"binding_key", manifest.binding_key},
+        }},
+        {"provenance", {
+            {"oracle_ref", manifest.oracle_ref},
+            {"oracle_revision", manifest.oracle_revision},
+            {"policy_revision", manifest.policy_revision},
+            {"fixture_set_revision", manifest.fixture_set_revision},
+        }},
         {"expires_at_epoch_ms", manifest.expires_at_epoch_ms},
         {"revocation_reason", manifest.revocation_reason},
         {"compatibility", {
@@ -172,6 +191,14 @@ bool common_flydelta_sideband_manifest_from_json(
         const auto scope = value.value("scope", json::object());
         manifest.namespace_id = scope.value("namespace_id", "");
         manifest.project_id = scope.value("project_id", "");
+        const auto lineage = value.value("lineage", json::object());
+        manifest.parent_revision_id = lineage.value("parent_revision_id", "");
+        manifest.binding_key = lineage.value("binding_key", "");
+        const auto provenance = value.value("provenance", json::object());
+        manifest.oracle_ref = provenance.value("oracle_ref", "");
+        manifest.oracle_revision = provenance.value("oracle_revision", "");
+        manifest.policy_revision = provenance.value("policy_revision", "");
+        manifest.fixture_set_revision = provenance.value("fixture_set_revision", "");
         manifest.expires_at_epoch_ms = value.value("expires_at_epoch_ms", 0ULL);
         manifest.revocation_reason = value.value("revocation_reason", "");
         const auto compatibility = value.value("compatibility", json::object());
@@ -304,6 +331,52 @@ bool common_flydelta_sideband_registry::activate(const std::string & id, std::st
     return true;
 }
 
+bool common_flydelta_sideband_registry::bind_revision(
+        const std::string & binding_key,
+        const std::string & revision_id,
+        const std::string & expected_current_revision_id,
+        std::string & error) {
+    if (!bounded(binding_key) || !bounded(revision_id)) {
+        error = "FlyDelta activation binding identity is invalid";
+        return false;
+    }
+    const auto revision = manifests.find(revision_id);
+    if (revision == manifests.end()) {
+        error = "FlyDelta activation binding revision is unavailable: " + revision_id;
+        return false;
+    }
+    if (revision->second.status != common_flydelta_sideband_status::active) {
+        error = "FlyDelta activation binding requires an active revision";
+        return false;
+    }
+    if (revision->second.expires_at_epoch_ms != 0 &&
+            revision->second.expires_at_epoch_ms <= current_epoch_ms()) {
+        error = "FlyDelta activation binding revision has expired";
+        return false;
+    }
+    const auto current = active_bindings.find(binding_key);
+    if (!expected_current_revision_id.empty() &&
+            (current == active_bindings.end() ||
+             current->second.selected_revision_id != expected_current_revision_id)) {
+        error = "FlyDelta activation binding changed concurrently";
+        return false;
+    }
+    if (current != active_bindings.end() &&
+            current->second.selected_revision_id == revision_id) {
+        error.clear();
+        return true;
+    }
+    common_flydelta_activation_binding next;
+    next.binding_key = binding_key;
+    next.selected_revision_id = revision_id;
+    if (current != active_bindings.end()) {
+        next.previous_revision_id = current->second.selected_revision_id;
+    }
+    active_bindings[binding_key] = std::move(next);
+    error.clear();
+    return true;
+}
+
 bool common_flydelta_sideband_registry::retire(const std::string & id, std::string & error) {
     const auto it = manifests.find(id);
     if (it == manifests.end()) { error = "FlyDelta sideband is unavailable: " + id; return false; }
@@ -345,6 +418,51 @@ bool common_flydelta_sideband_registry::resolve(
         manifest, profile_scale, error);
 }
 
+bool common_flydelta_sideband_registry::resolve_bound(
+        const common_agent_model_profile & profile,
+        const std::string & binding_key,
+        const common_flydelta_compatibility & expected,
+        const common_flydelta_applicability & expected_applicability,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        common_flydelta_sideband_manifest & manifest,
+        double & profile_scale,
+        std::string & error) const {
+    error.clear();
+    if (!bounded(binding_key)) {
+        error = "FlyDelta activation binding key is invalid";
+        return false;
+    }
+    const auto configured = std::find_if(profile.sidebands.begin(), profile.sidebands.end(),
+        [&](const auto & sideband) { return sideband.binding_key == binding_key; });
+    if (configured == profile.sidebands.end()) {
+        error = "FlyDelta activation binding is not configured in model profile: " + binding_key;
+        return false;
+    }
+    const auto selected = active_bindings.find(binding_key);
+    if (selected == active_bindings.end()) {
+        error = "FlyDelta activation binding has no selected revision: " + binding_key;
+        return false;
+    }
+    return resolve(profile, selected->second.selected_revision_id, expected,
+        expected_applicability, model_n_embd, model_n_layers, manifest,
+        profile_scale, error);
+}
+
+bool common_flydelta_sideband_registry::binding(
+        const std::string & binding_key,
+        common_flydelta_activation_binding & result,
+        std::string & error) const {
+    error.clear();
+    const auto it = active_bindings.find(binding_key);
+    if (it == active_bindings.end()) {
+        error = "FlyDelta activation binding is unavailable: " + binding_key;
+        return false;
+    }
+    result = it->second;
+    return true;
+}
+
 bool common_flydelta_sideband_registry::resolve(
         const common_agent_model_profile & profile,
         const std::string & sideband_id,
@@ -358,7 +476,13 @@ bool common_flydelta_sideband_registry::resolve(
     error.clear();
     if (!common_agent_validate_model_profile(profile, error)) return false;
     const auto configured = std::find_if(profile.sidebands.begin(), profile.sidebands.end(),
-        [&](const auto & sideband) { return sideband.sideband_id == sideband_id; });
+        [&](const auto & sideband) {
+            if (sideband.sideband_id == sideband_id) return true;
+            if (sideband.binding_key.empty()) return false;
+            const auto binding = active_bindings.find(sideband.binding_key);
+            return binding != active_bindings.end() &&
+                binding->second.selected_revision_id == sideband_id;
+        });
     if (configured == profile.sidebands.end()) {
         error = "FlyDelta sideband is not configured in model profile: " + sideband_id;
         return false;

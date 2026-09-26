@@ -19,6 +19,12 @@ static common_flydelta_sideband_manifest manifest() {
     value.applicability.behavior_key = "tool_use/diagnostics/missing-argument";
     value.applicability.scope_fingerprint = "scope:tool-repair";
     value.applicability.verifier_revision = "verifier:tool-contract-v1";
+    value.parent_revision_id = "flydelta://sideband/tool-repair-v0";
+    value.binding_key = "flydelta://binding/tool-repair";
+    value.oracle_ref = "flydelta://oracle/tool-contract";
+    value.oracle_revision = "oracle:v1";
+    value.policy_revision = "policy:v1";
+    value.fixture_set_revision = "fixtures:v1";
     value.model_n_embd = 4;
     value.model_n_layers = 3;
     value.il_end = 2;
@@ -45,7 +51,10 @@ int main() {
         common_flydelta_sideband_manifest_to_json(sideband), parsed, error));
     CHECK(parsed.id == sideband.id && parsed.namespace_id == "local" &&
         parsed.project_id == "default" &&
-        parsed.applicability.behavior_key == sideband.applicability.behavior_key);
+        parsed.applicability.behavior_key == sideband.applicability.behavior_key &&
+        parsed.parent_revision_id == sideband.parent_revision_id &&
+        parsed.binding_key == sideband.binding_key &&
+        parsed.oracle_revision == sideband.oracle_revision);
     common_flydelta_sideband_registry registry;
     CHECK(registry.admit(sideband, error));
     CHECK(registry.admit(sideband, error));
@@ -64,6 +73,35 @@ int main() {
         4, 3, resolved, scale, error));
     CHECK(resolved.id == sideband.id && scale == 0.5 &&
             common_flydelta_sideband_status_name(resolved.status) == std::string("active"));
+
+    auto revision_b = manifest();
+    revision_b.id = "flydelta://sideband/tool-repair-v2";
+    revision_b.artifact_path = "sidebands/tool-repair-v2.json";
+    revision_b.artifact_hash = "sha256:artifact-v2";
+    CHECK(registry.admit(revision_b, error));
+    CHECK(registry.stage_canary(revision_b.id, "eval:tool-repair-v2", error));
+    CHECK(registry.activate(revision_b.id, error));
+
+    common_agent_model_profile bound_profile = profile();
+    bound_profile.sidebands.clear();
+    bound_profile.sidebands.push_back({"", 0.5, "flydelta://binding/tool-repair"});
+    CHECK(registry.bind_revision("flydelta://binding/tool-repair", sideband.id, "", error));
+    common_flydelta_activation_binding binding;
+    CHECK(registry.binding("flydelta://binding/tool-repair", binding, error));
+    CHECK(binding.selected_revision_id == sideband.id && binding.previous_revision_id.empty());
+    CHECK(registry.resolve_bound(bound_profile, "flydelta://binding/tool-repair",
+        sideband.compatibility, sideband.applicability, 4, 3, resolved, scale, error));
+    CHECK(resolved.id == sideband.id && scale == 0.5);
+    CHECK(registry.bind_revision("flydelta://binding/tool-repair", revision_b.id,
+        sideband.id, error));
+    CHECK(registry.binding("flydelta://binding/tool-repair", binding, error));
+    CHECK(binding.selected_revision_id == revision_b.id &&
+        binding.previous_revision_id == sideband.id);
+    CHECK(registry.bind_revision("flydelta://binding/tool-repair", sideband.id,
+        revision_b.id, error));
+    CHECK(registry.resolve_bound(bound_profile, "flydelta://binding/tool-repair",
+        sideband.compatibility, sideband.applicability, 4, 3, resolved, scale, error));
+    CHECK(resolved.id == sideband.id);
     auto wrong_applicability = sideband.applicability;
     wrong_applicability.behavior_key = "tool_use/other-behavior";
     CHECK(!registry.resolve(profile(), sideband.id, expected, wrong_applicability,

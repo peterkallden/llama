@@ -19,6 +19,9 @@ struct common_agent_adapter_overlay {
 struct common_agent_flydelta_sideband_overlay {
     std::string sideband_id;
     double scale = 1.0;
+    // Optional logical selection slot. When set, the host resolves the
+    // physical revision through the durable FlyDelta activation binding.
+    std::string binding_key;
 };
 
 struct common_agent_model_profile {

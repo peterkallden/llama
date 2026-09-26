@@ -42,6 +42,24 @@ struct common_flydelta_sideband_manifest {
     int32_t il_end = 0;
     std::string evaluation_revision;
     bool evaluation_passed = false;
+    // Optional immutable lineage/provenance metadata. Kept at the end of the
+    // aggregate to preserve source compatibility for older manifest literals.
+    std::string parent_revision_id;
+    std::string binding_key;
+    std::string oracle_ref;
+    std::string oracle_revision;
+    std::string policy_revision;
+    std::string fixture_set_revision;
+};
+
+// The registry owns the replayed projection of a logical runtime selection.
+// The binding is mutable history; the sideband manifest and artifact remain
+// immutable revisions.
+struct common_flydelta_activation_binding {
+    int schema_version = 1;
+    std::string binding_key;
+    std::string selected_revision_id;
+    std::string previous_revision_id;
 };
 
 bool common_flydelta_sideband_manifest_validate(
@@ -72,6 +90,11 @@ public:
     bool stage_canary(const std::string & id, const std::string & evaluation_revision,
             std::string & error);
     bool activate(const std::string & id, std::string & error);
+    bool bind_revision(
+            const std::string & binding_key,
+            const std::string & revision_id,
+            const std::string & expected_current_revision_id,
+            std::string & error);
     bool retire(const std::string & id, std::string & error);
     bool revoke(const std::string & id, const std::string & reason, std::string & error);
 
@@ -100,8 +123,32 @@ public:
             double & profile_scale,
             std::string & error) const;
 
+    // Resolve the physical revision selected by a logical profile binding.
+    // The profile must contain an overlay with this binding_key. Legacy
+    // direct sideband-id resolution remains available through the overloads
+    // above.
+    bool resolve_bound(
+            const common_agent_model_profile & profile,
+            const std::string & binding_key,
+            const common_flydelta_compatibility & expected,
+            const common_flydelta_applicability & expected_applicability,
+            size_t model_n_embd,
+            size_t model_n_layers,
+            common_flydelta_sideband_manifest & manifest,
+            double & profile_scale,
+            std::string & error) const;
+
+    bool binding(
+            const std::string & binding_key,
+            common_flydelta_activation_binding & result,
+            std::string & error) const;
+
     const std::map<std::string, common_flydelta_sideband_manifest> & list() const { return manifests; }
+    const std::map<std::string, common_flydelta_activation_binding> & bindings() const {
+        return active_bindings;
+    }
 
 private:
     std::map<std::string, common_flydelta_sideband_manifest> manifests;
+    std::map<std::string, common_flydelta_activation_binding> active_bindings;
 };

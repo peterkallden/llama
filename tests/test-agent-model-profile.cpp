@@ -29,6 +29,18 @@ int main() {
     assert(parsed.n_parallel == 2);
     assert(parsed.n_sequences == 3);
 
+    value.sidebands.push_back({"", 0.5, "flydelta://binding/tool-repair"});
+    assert(common_agent_validate_model_profile(value, error));
+    const auto bound_text = common_agent_model_profile_to_json(value);
+    common_agent_model_profile bound_parsed;
+    assert(common_agent_model_profile_from_json(bound_text, bound_parsed, error));
+    assert(bound_parsed.sidebands.back().binding_key == "flydelta://binding/tool-repair");
+    assert(bound_parsed.sidebands.back().sideband_id.empty());
+
+    value.sidebands.push_back({"", 0.5, "flydelta://binding/tool-repair"});
+    assert(!common_agent_validate_model_profile(value, error));
+    assert(error.find("binding") != std::string::npos);
+
     value.adapters.push_back({"adapter-v1", 1.0});
     assert(!common_agent_validate_model_profile(value, error));
     assert(error.find("repeats") != std::string::npos);

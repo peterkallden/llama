@@ -247,7 +247,10 @@ bool parse_agent_daemon_command_name(
             command_name == "flydelta.get_evaluation" ||
             command_name == "flydelta.get_promotion_summary" ||
             command_name == "flydelta.review_candidate" ||
-            command_name == "flydelta.stage_canary") {
+            command_name == "flydelta.stage_canary" ||
+            command_name == "flydelta.activate_candidate" ||
+            command_name == "flydelta.rollback_candidate" ||
+            command_name == "flydelta.get_binding") {
         command.type = common_agent_daemon_command_type::flydelta_admin;
         common_agent_daemon_flydelta_admin_payload payload;
         payload.operation = command_name;
@@ -263,6 +266,9 @@ bool parse_agent_daemon_command_name(
         payload.actor_id = parsed.value("actor_id", "jsonl-admin");
         payload.decision = parsed.value("decision", "");
         payload.reason = parsed.value("reason", "");
+        payload.binding_key = parsed.value("binding_key", "");
+        payload.expected_current_revision_id = parsed.value(
+            "expected_current_revision_id", "");
         payload.explicit_host_approval = parsed.value("explicit_host_approval", false);
         if (parsed.contains("limits")) {
             if (!parsed["limits"].is_object()) {
@@ -275,8 +281,12 @@ bool parse_agent_daemon_command_name(
             payload.limits.max_retries = limits.value("max_retries", payload.limits.max_retries);
             payload.limits.max_generated_tokens = limits.value("max_generated_tokens", payload.limits.max_generated_tokens);
         }
-        if (payload.candidate_id.empty()) {
+        if (payload.candidate_id.empty() && command_name != "flydelta.get_binding") {
             error = command_name + " requires candidate_id";
+            return false;
+        }
+        if (command_name == "flydelta.get_binding" && payload.binding_key.empty()) {
+            error = "flydelta.get_binding requires binding_key";
             return false;
         }
         if (command_name == "flydelta.evaluate_candidate" &&

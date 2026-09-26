@@ -257,6 +257,8 @@ struct common_agent_daemon_flydelta_admin_payload {
     std::string actor_id;
     std::string decision;
     std::string reason;
+    std::string binding_key;
+    std::string expected_current_revision_id;
     bool explicit_host_approval = false;
     common_flydelta_evaluation_limits limits;
 };

@@ -18,6 +18,7 @@ enum class common_flydelta_review_action {
     reject,
     stage_canary,
     activate,
+    rollback,
     retire,
     revoke,
 };
@@ -48,6 +49,10 @@ struct common_flydelta_sideband_review {
     common_flydelta_promotion_policy promotion_policy;
     common_flydelta_promotion_summary promotion_summary;
     common_flydelta_evaluation_report evaluation;
+    // Optional activation-binding fields are appended to preserve older
+    // positional review literals.
+    std::string binding_key;
+    std::string expected_current_revision_id;
 };
 
 bool common_flydelta_sideband_review_validate(

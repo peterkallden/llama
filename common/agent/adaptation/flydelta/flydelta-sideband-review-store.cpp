@@ -26,6 +26,7 @@ common_learning_lifecycle_status lifecycle_status(common_flydelta_review_action 
         case common_flydelta_review_action::reject: return common_learning_lifecycle_status::rejected;
         case common_flydelta_review_action::stage_canary: return common_learning_lifecycle_status::canary;
         case common_flydelta_review_action::activate: return common_learning_lifecycle_status::active;
+        case common_flydelta_review_action::rollback: return common_learning_lifecycle_status::active;
         case common_flydelta_review_action::retire: return common_learning_lifecycle_status::retired;
         case common_flydelta_review_action::revoke: return common_learning_lifecycle_status::revoked;
     }
@@ -61,9 +62,10 @@ int replay_order(common_flydelta_review_action action) {
         case common_flydelta_review_action::approve_canary: return 2;
         case common_flydelta_review_action::stage_canary: return 3;
         case common_flydelta_review_action::activate: return 4;
-        case common_flydelta_review_action::retire: return 5;
-        case common_flydelta_review_action::revoke: return 6;
-        case common_flydelta_review_action::reject: return 7;
+        case common_flydelta_review_action::rollback: return 5;
+        case common_flydelta_review_action::retire: return 6;
+        case common_flydelta_review_action::revoke: return 7;
+        case common_flydelta_review_action::reject: return 8;
     }
     return 8;
 }
@@ -131,6 +133,7 @@ const char * common_flydelta_review_action_name(common_flydelta_review_action ac
         case common_flydelta_review_action::reject: return "reject";
         case common_flydelta_review_action::stage_canary: return "stage_canary";
         case common_flydelta_review_action::activate: return "activate";
+        case common_flydelta_review_action::rollback: return "rollback";
         case common_flydelta_review_action::retire: return "retire";
         case common_flydelta_review_action::revoke: return "revoke";
     }
@@ -153,6 +156,7 @@ bool parse_common_flydelta_review_action(
     else if (value == "reject") action = common_flydelta_review_action::reject;
     else if (value == "stage_canary") action = common_flydelta_review_action::stage_canary;
     else if (value == "activate") action = common_flydelta_review_action::activate;
+    else if (value == "rollback") action = common_flydelta_review_action::rollback;
     else if (value == "retire") action = common_flydelta_review_action::retire;
     else if (value == "revoke") action = common_flydelta_review_action::revoke;
     else { error = "unknown FlyDelta review action"; return false; }
@@ -190,6 +194,32 @@ bool common_flydelta_sideband_review_validate(
         error = "FlyDelta sideband revoke review requires a reason";
         return false;
     }
+    if (review.action == common_flydelta_review_action::activate ||
+            review.action == common_flydelta_review_action::rollback) {
+        if (!bounded(review.manifest.id) ||
+                (!review.binding_key.empty() && !bounded(review.binding_key)) ||
+                (review.action == common_flydelta_review_action::rollback &&
+                 (review.manifest.status != common_flydelta_sideband_status::active ||
+                  !bounded(review.binding_key)))) {
+            error = "FlyDelta activation binding review is incomplete";
+            return false;
+        }
+        if (!review.manifest.binding_key.empty() &&
+                review.manifest.binding_key != review.binding_key) {
+            error = "FlyDelta activation binding does not match revision provenance";
+            return false;
+        }
+        if (!review.expected_current_revision_id.empty() &&
+                review.binding_key.empty()) {
+            error = "FlyDelta activation binding expected revision lacks a binding key";
+            return false;
+        }
+        if (!review.expected_current_revision_id.empty() &&
+                !bounded(review.expected_current_revision_id)) {
+            error = "FlyDelta activation binding expected revision is invalid";
+            return false;
+        }
+    }
     if (review.action == common_flydelta_review_action::stage_canary ||
             review.action == common_flydelta_review_action::approve_canary) {
         const bool stage_manifest = review.action == common_flydelta_review_action::stage_canary;
@@ -225,6 +255,8 @@ std::string common_flydelta_sideband_review_to_json(
         {"evaluation_revision", review.evaluation_revision},
         {"promotion_summary_ref", review.promotion_summary_ref},
         {"evaluation_report_ref", review.evaluation_report_ref},
+        {"binding_key", review.binding_key},
+        {"expected_current_revision_id", review.expected_current_revision_id},
         {"reason", review.reason},
         {"manifest", json::parse(common_flydelta_sideband_manifest_to_json(review.manifest))},
         {"has_promotion_evidence", review.has_promotion_evidence},
@@ -252,6 +284,8 @@ bool common_flydelta_sideband_review_from_json(
         review.evaluation_revision = value.value("evaluation_revision", "");
         review.promotion_summary_ref = value.value("promotion_summary_ref", "");
         review.evaluation_report_ref = value.value("evaluation_report_ref", "");
+        review.binding_key = value.value("binding_key", "");
+        review.expected_current_revision_id = value.value("expected_current_revision_id", "");
         review.reason = value.value("reason", "");
         if (!parse_common_flydelta_review_source(value.value("source", "operator"), review.source, error) ||
                 !parse_common_flydelta_review_action(value.value("action", ""), review.action, error) ||
@@ -327,7 +361,18 @@ bool common_flydelta_sideband_review_store::apply(
                 error = "FlyDelta activation requires explicit host approval";
                 return false;
             }
-            return registry.activate(review.manifest.id, error);
+            if (!registry.activate(review.manifest.id, error)) return false;
+            return review.binding_key.empty() || registry.bind_revision(
+                review.binding_key, review.manifest.id,
+                review.expected_current_revision_id, error);
+        case common_flydelta_review_action::rollback:
+            if (!explicit_host_approval) {
+                error = "FlyDelta rollback requires explicit host approval";
+                return false;
+            }
+            return registry.bind_revision(
+                review.binding_key, review.manifest.id,
+                review.expected_current_revision_id, error);
         case common_flydelta_review_action::retire:
             return registry.retire(review.manifest.id, error);
         case common_flydelta_review_action::revoke:
@@ -380,15 +425,47 @@ std::vector<common_flydelta_sideband_review> common_flydelta_sideband_review_sto
 bool common_flydelta_sideband_review_store::replay(
         common_flydelta_sideband_registry & registry, std::string & error) const {
     error.clear();
-    auto reviews = list(error);
-    std::stable_sort(reviews.begin(), reviews.end(), [](const auto & left, const auto & right) {
+    const auto reviews = list(error);
+    if (!error.empty()) return false;
+    auto is_binding_event = [](const common_flydelta_sideband_review & review) {
+        return review.action == common_flydelta_review_action::rollback ||
+            (review.action == common_flydelta_review_action::activate &&
+             !review.binding_key.empty());
+    };
+    std::vector<common_flydelta_sideband_review> preparation;
+    std::vector<common_flydelta_sideband_review> bindings;
+    std::vector<common_flydelta_sideband_review> retirement;
+    for (const auto & review : reviews) {
+        if (is_binding_event(review)) {
+            bindings.push_back(review);
+        } else if (review.action == common_flydelta_review_action::retire ||
+                review.action == common_flydelta_review_action::revoke ||
+                review.action == common_flydelta_review_action::reject) {
+            retirement.push_back(review);
+        } else {
+            preparation.push_back(review);
+        }
+    }
+    auto order_reviews = [](auto & ordered) {
+        std::stable_sort(ordered.begin(), ordered.end(), [](const auto & left, const auto & right) {
         const int left_order = replay_order(left.action);
         const int right_order = replay_order(right.action);
         return left_order != right_order
             ? left_order < right_order
             : left.event_id < right.event_id;
-    });
-    for (const auto & review : reviews) {
+        });
+    };
+    order_reviews(preparation);
+    order_reviews(retirement);
+    for (const auto & review : preparation) {
+        if (!apply(registry, review, true, error)) return false;
+    }
+    // Binding events retain append order. A binding is a selection history,
+    // so sorting these records by event id could replay A -> B as B -> A.
+    for (const auto & review : bindings) {
+        if (!apply(registry, review, true, error)) return false;
+    }
+    for (const auto & review : retirement) {
         if (!error.empty() || !apply(registry, review, true, error)) return false;
     }
     return true;

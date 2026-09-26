@@ -79,8 +79,11 @@ bool parse_profile(const std::string & id, const json & value,
         common_agent_flydelta_sideband_overlay sideband;
         if (item.is_string()) {
             sideband.sideband_id = item.get<std::string>();
-        } else if (item.is_object() && item.contains("sideband_id") && item.at("sideband_id").is_string()) {
-            sideband.sideband_id = item.at("sideband_id").get<std::string>();
+        } else if (item.is_object() &&
+                ((item.contains("sideband_id") && item.at("sideband_id").is_string()) ||
+                 (item.contains("binding_key") && item.at("binding_key").is_string()))) {
+            sideband.sideband_id = item.value("sideband_id", "");
+            sideband.binding_key = item.value("binding_key", "");
             sideband.scale = item.value("scale", 1.0);
         } else {
             error = "model profile FlyDelta sideband is invalid: " + id;
@@ -113,10 +116,17 @@ bool parse_profile(const std::string & id, const json & value,
     }
     ids.clear();
     for (const auto & sideband : profile.sidebands) {
-        if (!bounded(sideband.sideband_id) || !std::isfinite(sideband.scale) ||
+        if ((!sideband.sideband_id.empty() && !bounded(sideband.sideband_id)) ||
+                (!sideband.binding_key.empty() && !bounded(sideband.binding_key)) ||
+                (sideband.sideband_id.empty() && sideband.binding_key.empty()) ||
+                !std::isfinite(sideband.scale) ||
                 sideband.scale <= 0.0 || sideband.scale > 4.0 ||
-                !ids.insert(sideband.sideband_id).second) {
+                (!sideband.sideband_id.empty() && !ids.insert(sideband.sideband_id).second)) {
             error = "model profile FlyDelta sideband is invalid or repeated: " + id;
+            return false;
+        }
+        if (!sideband.binding_key.empty() && !ids.insert("binding:" + sideband.binding_key).second) {
+            error = "model profile FlyDelta binding is invalid or repeated: " + id;
             return false;
         }
     }
@@ -196,7 +206,8 @@ std::string common_agent_model_catalog_to_json(
         }
         json sidebands = json::array();
         for (const auto & sideband : entry.second.sidebands) {
-            sidebands.push_back({{"sideband_id", sideband.sideband_id}, {"scale", sideband.scale}});
+            sidebands.push_back({{"sideband_id", sideband.sideband_id},
+                {"binding_key", sideband.binding_key}, {"scale", sideband.scale}});
         }
         profiles[entry.first] = {
             {"base", entry.second.base_model_id},

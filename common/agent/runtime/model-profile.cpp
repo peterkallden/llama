@@ -73,14 +73,22 @@ bool common_agent_validate_model_profile(
         return false;
     }
     std::unordered_set<std::string> sideband_ids;
+    std::unordered_set<std::string> sideband_bindings;
     for (const auto & sideband : profile.sidebands) {
-        if (!bounded(sideband.sideband_id) || !std::isfinite(sideband.scale) ||
+        if ((!sideband.sideband_id.empty() && !bounded(sideband.sideband_id)) ||
+                (!sideband.binding_key.empty() && !bounded(sideband.binding_key)) ||
+                (sideband.sideband_id.empty() && sideband.binding_key.empty()) ||
+                !std::isfinite(sideband.scale) ||
                 sideband.scale <= 0.0 || sideband.scale > 4.0) {
             error = "model profile FlyDelta sideband is invalid";
             return false;
         }
-        if (!sideband_ids.insert(sideband.sideband_id).second) {
+        if (!sideband.sideband_id.empty() && !sideband_ids.insert(sideband.sideband_id).second) {
             error = "model profile repeats a FlyDelta sideband";
+            return false;
+        }
+        if (!sideband.binding_key.empty() && !sideband_bindings.insert(sideband.binding_key).second) {
+            error = "model profile repeats a FlyDelta binding";
             return false;
         }
     }
@@ -101,7 +109,8 @@ std::string common_agent_model_profile_cache_key(
         key << adapter.adapter_id << ':' << adapter.scale << '\n';
     }
     for (const auto & sideband : profile.sidebands) {
-        key << "flydelta:" << sideband.sideband_id << ':' << sideband.scale << '\n';
+        key << "flydelta:" << sideband.sideband_id << ':' << sideband.binding_key << ':' <<
+            sideband.scale << '\n';
     }
     return key.str();
 }
@@ -114,7 +123,8 @@ std::string common_agent_model_profile_to_json(
     }
     json sidebands = json::array();
     for (const auto & sideband : profile.sidebands) {
-        sidebands.push_back({{"sideband_id", sideband.sideband_id}, {"scale", sideband.scale}});
+        sidebands.push_back({{"sideband_id", sideband.sideband_id},
+            {"binding_key", sideband.binding_key}, {"scale", sideband.scale}});
     }
     return json{
         {"schema_version", profile.schema_version},
@@ -178,14 +188,18 @@ bool common_agent_model_profile_from_json(
             return false;
         }
         for (const auto & item : sidebands) {
-            if (!item.is_object() || !item.contains("sideband_id") ||
-                    !item.at("sideband_id").is_string() || !item.contains("scale") ||
+            if (!item.is_object() ||
+                    (item.contains("sideband_id") && !item.at("sideband_id").is_string()) ||
+                    (item.contains("binding_key") && !item.at("binding_key").is_string()) ||
+                    (!item.contains("sideband_id") && !item.contains("binding_key")) ||
+                    !item.contains("scale") ||
                     !item.at("scale").is_number()) {
                 error = "model profile FlyDelta sideband JSON is invalid";
                 return false;
             }
             common_agent_flydelta_sideband_overlay sideband;
-            sideband.sideband_id = item.at("sideband_id").get<std::string>();
+            sideband.sideband_id = item.value("sideband_id", "");
+            sideband.binding_key = item.value("binding_key", "");
             sideband.scale = item.at("scale").get<double>();
             profile.sidebands.push_back(std::move(sideband));
         }
