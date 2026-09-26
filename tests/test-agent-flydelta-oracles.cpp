@@ -19,7 +19,7 @@ common_flydelta_oracle_request aggregate_request(bool applicable = true) {
     request.applicable = applicable;
     request.expected_decision_available = applicable;
     request.expected_decision.operation = "aggregate";
-    request.expected_decision.dataset = "sales.csv";
+    request.expected_decision.dataset = "dataset://local/sales";
     request.expected_decision.group_by = {"region"};
     request.expected_decision.aggregate_function = "sum";
     request.expected_decision.aggregate_field = "amount";
@@ -34,20 +34,20 @@ int main() {
     common_flydelta_oracle_result result;
     CHECK(common_flydelta_dataset_operation_oracle(
         request,
-        R"({"name":"data.aggregate","arguments":{"dataset":"sales.csv","group_by":["region"],"measure":"amount"}})",
+        R"({"name":"data.aggregate","arguments":{"dataset":"dataset://local/sales","group_by":["region"],"measure":"amount"}})",
         result, error));
     CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::satisfied);
     CHECK(result.oracle_revision == "v1");
     CHECK(common_flydelta_dataset_operation_oracle(
         request,
-        R"({"name":"data.describe","arguments":{"dataset":"sales.csv","column":"amount"}})",
+        R"({"name":"statistics.describe","arguments":{"dataset":"dataset://local/sales","column":"amount"}})",
         result, error));
     CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::violated);
     // A valid but different dataset operation is still a deterministic
     // violation when it belongs to the semantic-decision IR.
     CHECK(common_flydelta_dataset_operation_oracle(
         request,
-        R"({"operation":"filter","dataset":"sales.csv","predicate":"region == north"})",
+        R"({"operation":"filter","dataset":"dataset://local/sales","predicate":"region == north"})",
         result, error));
     CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::violated);
     CHECK(common_flydelta_dataset_operation_oracle(
@@ -101,9 +101,9 @@ int main() {
         if (probe.kind == common_flydelta_oracle_probe_kind::control) {
             observed = "control output";
         } else if (candidate) {
-            observed = R"({"operation":"aggregate","dataset":"sales.csv","group_by":["region"],"measure":"amount"})";
+            observed = R"({"operation":"aggregate","dataset":"dataset://local/sales","group_by":["region"],"measure":"amount"})";
         } else {
-            observed = R"({"operation":"filter","dataset":"sales.csv","predicate":"region == north"})";
+            observed = R"({"operation":"filter","dataset":"dataset://local/sales","predicate":"region == north"})";
         }
         return true;
     };

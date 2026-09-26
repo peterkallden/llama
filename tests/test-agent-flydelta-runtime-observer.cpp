@@ -15,9 +15,9 @@ static common_learning_transaction transaction() {
     value.observation.source_turn_id = "turn-1";
     value.observation.source_plan_id = "plan-1";
     value.observation.signals.push_back({common_learning_signal_type::tool_failure,
-        "plan-1", "step-1", "data.describe", "failure-1", "wrong tool"});
+        "plan-1", "step-1", "statistics.describe", "failure-1", "wrong tool"});
     value.observation.signals.push_back({common_learning_signal_type::successful_recovery,
-        "plan-1", "step-1", "data.inspect", "recovery-1", "repaired tool"});
+        "plan-1", "step-1", "dataset.inspect", "recovery-1", "repaired tool"});
     value.observation.evidence_ids = {"failure-1", "recovery-1"};
     value.observation.cause = common_learning_cause::model_behavior;
     value.observation.verification = common_learning_verification::host_verified;

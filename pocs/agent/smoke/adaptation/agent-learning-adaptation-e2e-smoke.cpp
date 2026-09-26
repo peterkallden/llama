@@ -20,7 +20,7 @@ common_learning_transaction make_transaction(const std::string & id) {
     value.observation.source_plan_id = "plan:smoke";
     value.observation.signals.push_back({
         common_learning_signal_type::successful_recovery,
-        "plan:smoke", "step:recover", "data.inspect", "evidence:smoke",
+        "plan:smoke", "step:recover", "dataset.inspect", "evidence:smoke",
         "host verified the repaired action"});
     value.observation.evidence_ids = {"evidence:smoke"};
     value.observation.cause = common_learning_cause::model_behavior;
@@ -38,7 +38,7 @@ common_training_candidate make_candidate(const std::string & transaction_id) {
     value.cause = common_learning_cause::model_behavior;
     value.hypothesis = "The model needs to prefer the verified data inspection action.";
     value.approved_prompt = "Inspect the selected dataset and report its columns.";
-    value.approved_target = "Use data.inspect on the selected dataset before answering.";
+    value.approved_target = "Use dataset.inspect on the selected dataset before answering.";
     value.observed_occurrences = 3;
     value.verified_recoveries = 2;
     value.confidence = 0.95f;

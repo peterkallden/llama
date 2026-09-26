@@ -400,7 +400,7 @@ cat > "$output" <<EOF
       "max_evidence":32,
       "backend":"cozo",
       "transaction_path":"$cozo_root/adaptation.cozo",
-      "stable_model_facing_tools":["data.inspect","data.query","data.filter","data.aggregate","data.transform"],
+      "stable_model_facing_tools":["dataset.inspect","data.query","data.filter","data.aggregate","data.transform"],
       "domains":{"planning":true,"tool_use":true,"research":true,"procedure_learning":true,"families":{"data":true,"research":true,"planning":true}},
       "flydelta": {
         "enabled":$enable_flydelta,

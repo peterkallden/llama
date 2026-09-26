@@ -23,7 +23,7 @@
       "backend": "jsonl",
       "transaction_path": "var/agent/learning.jsonl",
       "stable_model_facing_tools": [
-        "data.inspect"
+        "dataset.inspect"
       ],
       "domains": {
         "planning": true,

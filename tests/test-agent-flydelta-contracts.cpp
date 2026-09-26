@@ -18,7 +18,7 @@ static common_learning_transaction transaction(
     value.observation.source_turn_id = id + ":turn";
     value.observation.source_plan_id = id + ":plan";
     value.observation.signals.push_back({signal_type, value.observation.source_plan_id,
-        "step", "data.inspect", id + ":evidence", "verified", "diagnostics", "native"});
+        "step", "dataset.inspect", id + ":evidence", "verified", "diagnostics", "native"});
     value.observation.evidence_ids = {id + ":evidence"};
     value.observation.cause = cause;
     value.observation.verification = common_learning_verification::host_verified;

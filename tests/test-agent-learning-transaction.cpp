@@ -23,9 +23,9 @@ static common_agent_result failure_result() {
     common_agent_result value;
     value.error = "tool failed";
     value.failures.push_back({"tool.invalid_arguments", common_agent_failure_class::validation,
-        "tool_execution", "data.inspect", "step-1", "evidence-1", false,
+        "tool_execution", "dataset.inspect", "step-1", "evidence-1", false,
         "tool failed", "{}"});
-    value.learning_signals.push_back({common_learning_signal_type::tool_failure, "plan-1", "step-1", "data.inspect", "evidence-1", "tool failed"});
+    value.learning_signals.push_back({common_learning_signal_type::tool_failure, "plan-1", "step-1", "dataset.inspect", "evidence-1", "tool failed"});
     value.learning_signals.front().tool_family = "diagnostics";
     value.learning_signals.front().provider_kind = "openapi";
     return value;
@@ -138,7 +138,7 @@ int main() {
     common_learning_transaction_observer routed(routed_store, routed_config);
     auto recovered = failure_result();
     recovered.learning_signals.push_back({common_learning_signal_type::successful_recovery,
-        "plan-1", "step-1", "data.inspect", "evidence-1", "recovered"});
+        "plan-1", "step-1", "dataset.inspect", "evidence-1", "recovered"});
     CHECK(routed.observe(req, pl, recovered, error));
     CHECK(source_matches.size() == 1);
     CHECK(source_matches.front().source == common_adaptation_evidence_source::tool_repair);

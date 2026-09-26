@@ -356,6 +356,7 @@ journal remains the durable evidence boundary.
 | 2026-09-26 | this local sweep | Concurrent worker/admin access to the in-memory lifecycle journal corrected; the timing-dependent model-free admin-smoke hang is closed | Rebuilt all FlyDelta/lifecycle test binaries with three compile workers; 53/53 focused lifecycle/FlyDelta tests passed serially; model-free admin smoke passed five consecutive serial runs with admin/worker tracing and durable replay | Added locking around the existing in-memory lifecycle records and an explicit four-writer concurrency contract test. No store, algorithm, search-policy, learning-credit or promotion-semantics change; this remains wiring/reliability evidence |
 | 2026-09-26 | this local sweep | Research hypothesis routing and the missing proposed-to-host-grounding transition implemented on existing seams | Six focused FlyDelta/teaching CTests passed serially; model-free admin tracing, concept capture/synthesis/augmentation passed; Qwen Instruct server-context runtime and repair E2E passed with no promotion | Added strict structured research-envelope admission, default daemon batch-provider wiring, reusable host contrast-provider adapter and proposed-hypothesis grounding in runtime assembly. No new store, algorithm, Oracle policy, learning-credit or promotion change |
 | 2026-09-26 | this local sweep | Model-facing tool verification aligned with the shared runtime normalization boundary | 15 focused FlyDelta CTests passed serially; model-free Oracle smoke and Oracle CTest passed; Qwen Instruct repair E2E passed with host-verified baseline/candidate calls, `repair_transition_outcome=helped`, Whirlpool centre discovery and augmentation controls | The repair and Oracle fixtures now apply runtime defaults, registry normalization and schema validation before executing normalized arguments. FlyDelta algorithms, Oracle verdict policy, learning credit and promotion semantics are unchanged; evidence remains wiring/host-verification evidence, not model-quality or promotion evidence |
+| 2026-09-26 | this local sweep | Legacy inspection-tool aliases removed and model-facing arm scoring corrected to the catalog contract | 63 focused CTests passed serially; model-free Oracle, tool-repair, concept and learning smokes passed with tracing; Qwen Instruct repair E2E passed on Intel GPU 0 with three model threads: baseline `statistics.describe`, repaired `dataset.inspect`, four region trials, Whirlpool centre 22/radius 1, all FlyDelta arms `UNKNOWN`, no selected overlay, augmentation retained | Removed legacy inspection/description compatibility references from scoped tests, fixtures, configs, scripts and documentation. Teacher-forced scoring now uses `dataset.inspect`, `statistics.describe` and `dataset://local/sales`; production FlyDelta algorithms, Oracle policy, learning credit and promotion semantics were not changed. Evidence is wiring and host-verification evidence, not a model-quality or promotion claim |
 
 ## Natural dataset-question smoke
 
@@ -2553,7 +2554,7 @@ unchanged by synthesis or grafting.
 Teacher-forced margin scoring in the model smoke is behavior-specific as well:
 the positive continuation is the family target and the negative continuation
 is the fixture's nearest declared alternative. It must not use one global
-tool pair such as `data.inspect` versus `data.describe` for every concept
+tool pair such as `dataset.inspect` versus `statistics.describe` for every concept
 family. The margin remains search evidence only. Canonical/semantic host
 verification is a separate gate, so a model response that selects the right
 tool but emits a non-canonical or semantically incomplete call remains
@@ -3051,8 +3052,8 @@ The host-level repair path is covered by
 the complete control flow:
 
 ```text
-wrong data.describe
-  -> host-verified repair to data.inspect
+wrong statistics.describe
+  -> host-verified repair to dataset.inspect
   -> aligned contrast set
   -> baseline/candidate counterfactual = HELPED
   -> eligible promotion summary
@@ -3144,8 +3145,8 @@ The optional `llama-agent-flydelta-repair-model-smoke` goes one step further
 and exercises the complete model-backed bridge:
 
 ```text
-host-controlled failed selection (data.describe)
-  -> host-controlled repaired selection (data.inspect)
+host-controlled failed selection (statistics.describe)
+  -> host-controlled repaired selection (dataset.inspect)
   -> aligned hidden-state capture pair
   -> candidate-minus-baseline behavior delta
   -> host-approved basis direction
@@ -3512,7 +3513,7 @@ cross the model's tool-choice boundary without a host-verified `HELPED` result.
 The corrected pre-discovery local Qwen region run then exercised the composed pipeline with
 28 overlay trials plus a baseline (29 model calls, about 337 seconds with
 three threads). All singleton scales on layers 1--4 remained `UNKNOWN` and
-the model continued to emit `data.describe`; no candidate was selected. The
+the model continued to emit `statistics.describe`; no candidate was selected. The
 downstream measurements were no longer zero: singleton alignment stayed
 roughly between `0.407` and `0.499`, while progress increased with scale. The
 adjacent layer-pair arms reduced alignment and were not promising at the

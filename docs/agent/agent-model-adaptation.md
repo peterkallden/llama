@@ -1130,7 +1130,7 @@ activation. It is disabled by default:
       "max_evidence": 16,
       "backend": "jsonl",
       "transaction_path": "var/agent/learning.jsonl",
-      "stable_model_facing_tools": ["data.inspect"],
+      "stable_model_facing_tools": ["dataset.inspect"],
       "domains": {
         "planning": true,
         "tool_use": false,

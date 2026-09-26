@@ -195,9 +195,7 @@ bool verify_model_tool_contract(
         std::string & error) {
     error.clear();
     verdict = {};
-    const std::string canonical_expected_tool = expected_tool == "data.inspect"
-        ? kExpectedTool
-        : expected_tool == "data.describe" ? kAlternativeTool : expected_tool;
+    const std::string & canonical_expected_tool = expected_tool;
     common_flydelta_oracle_request request;
     request.oracle_ref = "flydelta://oracle/host-tool-contract";
     request.oracle_revision = "v1";
@@ -880,7 +878,7 @@ int main(int argc, char ** argv) {
                     capture_request);
                 host_tool_verdict host_verdict;
                 if (!verify_model_tool_contract(
-                        result, "data.inspect", expected_tool_arguments, host,
+                        result, kExpectedTool, expected_tool_arguments, host,
                         host_verdict, runner_error)) return false;
                 trial = {};
                 trial.executed = executed;
@@ -1170,7 +1168,7 @@ int main(int argc, char ** argv) {
             arm_result.host_evaluated = true;
             host_tool_verdict candidate_verdict;
             if (!verify_model_tool_contract(
-                    generated, "data.inspect", expected_tool_arguments, host,
+                    generated, kExpectedTool, expected_tool_arguments, host,
                     candidate_verdict, finalize_error)) return false;
             if (!arm_request.apply_overlay) server_baseline_verdict = candidate_verdict;
             arm_result.verifier_known = candidate_verdict.known;
@@ -1221,10 +1219,12 @@ int main(int argc, char ** argv) {
                 if (!prepare_server_arm(arm, choice.context, score_error)) return false;
                 choice.context.flydelta_capture.reset();
                 choice.choice_prefix = "{\"name\":\"";
-                choice.positive_choice = "data.inspect";
-                choice.negative_choice = "data.describe";
-                choice.positive_continuation = "{\"arguments\":{\"dataset\":\"sales.csv\"}}";
-                choice.negative_continuation = "{\"arguments\":{\"dataset\":\"sales.csv\"}}";
+                choice.positive_choice = kExpectedTool;
+                choice.negative_choice = kAlternativeTool;
+                choice.positive_continuation =
+                    std::string("{\"arguments\":{\"dataset\":\"") +
+                    kDatasetReference + "\"}}";
+                choice.negative_continuation = choice.positive_continuation;
                 score_batch.choices.push_back(std::move(choice));
             }
             common_agent_teacher_forced_choice_batch_result score_result;
@@ -1486,7 +1486,7 @@ int main(int argc, char ** argv) {
                     activation_ptr, capture_request);
                 host_tool_verdict zoom_verdict;
                 if (!verify_model_tool_contract(
-                        result, "data.inspect", expected_tool_arguments, host,
+                        result, kExpectedTool, expected_tool_arguments, host,
                         zoom_verdict, error)) return false;
                 outcome = executed
                     ? classify_host_verdicts(server_baseline_verdict, zoom_verdict)
@@ -1495,7 +1495,7 @@ int main(int argc, char ** argv) {
                 if (!score_chat_choice_margin(
                         server_model, server_session.templates, scoring_request.messages,
                         scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
-                        "{\"name\":\"", "data.inspect", "data.describe", margin,
+                        "{\"name\":\"", kExpectedTool, kAlternativeTool, margin,
                         nullptr, scoring_request.json_schema, {}, {}, activation_ptr->overlay, &error)) {
                     return false;
                 }
@@ -1965,7 +1965,7 @@ int main(int argc, char ** argv) {
                         generated, activation_ptr, capture_request);
                     host_tool_verdict candidate_verdict;
                     if (!verify_model_tool_contract(
-                            generated, "data.inspect", expected_tool_arguments, host,
+                            generated, kExpectedTool, expected_tool_arguments, host,
                             candidate_verdict, error)) return false;
                     counterfactual = {};
                     counterfactual.executed = executed;
@@ -1979,7 +1979,7 @@ int main(int argc, char ** argv) {
                     if (!score_chat_choice_margin(
                             server_model, server_session.templates, scoring_request.messages,
                             scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
-                            "{\"name\":\"", "data.inspect", "data.describe", margin,
+                            "{\"name\":\"", kExpectedTool, kAlternativeTool, margin,
                             nullptr, scoring_request.json_schema, {}, {}, activation_ptr->overlay, &error)) {
                         return false;
                     }
@@ -2227,7 +2227,7 @@ int main(int argc, char ** argv) {
                             generated, activation_ptr, capture_request);
                         host_tool_verdict candidate_verdict;
                         if (!verify_model_tool_contract(
-                                generated, "data.inspect", expected_tool_arguments, host,
+                                generated, kExpectedTool, expected_tool_arguments, host,
                                 candidate_verdict, runner_error)) return false;
                         counterfactual = {};
                         counterfactual.executed = executed;
@@ -2243,7 +2243,7 @@ int main(int argc, char ** argv) {
                         if (!score_chat_choice_margin(
                                 server_model, server_session.templates, scoring_request.messages,
                                 scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
-                                "{\"name\":\"", "data.inspect", "data.describe", margin,
+                                "{\"name\":\"", kExpectedTool, kAlternativeTool, margin,
                                 nullptr, scoring_request.json_schema, {}, {},
                                 activation_ptr ? activation_ptr->overlay : common_flydelta_static_overlay{},
                                 &runner_error)) return false;
@@ -2327,7 +2327,7 @@ int main(int argc, char ** argv) {
                 {}, capture_request);
             host_tool_verdict donor_verdict;
             if (!verify_model_tool_contract(
-                    donor, "data.inspect", expected_tool_arguments, host,
+                    donor, kExpectedTool, expected_tool_arguments, host,
                     donor_verdict, error)) return 1;
             const bool donor_verified = donor_executed && donor_verdict.known && donor_verdict.passed &&
                 donor.flydelta_capture && donor.flydelta_capture->captured &&
@@ -2369,7 +2369,7 @@ int main(int argc, char ** argv) {
             if (!score_chat_choice_margin(
                     server_model, server_session.templates, donor_request.messages,
                     donor_request.tools, donor_request.tool_choice, donor_request.options,
-                    "{\"name\":\"", "data.inspect", "data.describe", donor_margin,
+                    "{\"name\":\"", kExpectedTool, kAlternativeTool, donor_margin,
                     nullptr, donor_request.json_schema, {}, {}, {}, &error)) {
                 // Margin is optional for a host-certified donor. Keep the
                 // donor usable, but make the missing diagnostic visible.
@@ -2511,7 +2511,7 @@ int main(int argc, char ** argv) {
                             server_model, server_session.templates,
                             scoring_request.messages, scoring_request.tools,
                             scoring_request.tool_choice, scoring_request.options,
-                            "{\"name\":\"", "data.inspect", "data.describe", margin,
+                            "{\"name\":\"", kExpectedTool, kAlternativeTool, margin,
                             nullptr, scoring_request.json_schema, {}, {},
                             activation_ptr->overlay, &error)) {
                         std::cerr << "FlyDelta augmentation control margin failed: " << error << '\n';
@@ -2522,7 +2522,7 @@ int main(int argc, char ** argv) {
                     best_control_margin = std::max(best_control_margin, margin_delta);
                     host_tool_verdict control_verdict;
                     if (!verify_model_tool_contract(
-                            generated, "data.inspect", expected_tool_arguments, host,
+                            generated, kExpectedTool, expected_tool_arguments, host,
                             control_verdict, error)) return 1;
                     const auto control_outcome = classify_host_verdicts(
                         server_baseline_verdict, control_verdict);
@@ -2840,7 +2840,7 @@ int main(int argc, char ** argv) {
                             activation_ptr, capture_request);
                         host_tool_verdict candidate_verdict;
                         if (!verify_model_tool_contract(
-                                result, "data.inspect", expected_tool_arguments, host,
+                                result, kExpectedTool, expected_tool_arguments, host,
                                 candidate_verdict, runner_error)) return false;
                         trial = {};
                         trial.executed = executed;
@@ -2971,7 +2971,7 @@ int main(int argc, char ** argv) {
                                 activation_ptr, capture_request);
                             host_tool_verdict candidate_verdict;
                             if (!verify_model_tool_contract(
-                                    result, "data.inspect", expected_tool_arguments, host,
+                                    result, kExpectedTool, expected_tool_arguments, host,
                                     candidate_verdict, runner_error)) return false;
                             trial = {};
                             trial.executed = executed;
@@ -3120,7 +3120,7 @@ int main(int argc, char ** argv) {
                                 activation_ptr, capture_request);
                             host_tool_verdict candidate_verdict;
                             if (!verify_model_tool_contract(
-                                    result, "data.inspect", expected_tool_arguments, host,
+                                    result, kExpectedTool, expected_tool_arguments, host,
                                     candidate_verdict, runner_error)) return false;
                             trial = {};
                             trial.executed = executed;
@@ -3137,7 +3137,7 @@ int main(int argc, char ** argv) {
                             if (!score_chat_choice_margin(
                                     batch_model, batch_templates, scoring_request.messages,
                                     scoring_request.tools, scoring_request.tool_choice, scoring_request.options,
-                                    "{\"name\":\"", "data.inspect", "data.describe", margin,
+                                    "{\"name\":\"", kExpectedTool, kAlternativeTool, margin,
                                     nullptr, scoring_request.json_schema, {}, {},
                                     apply_overlay && activation_ptr ? activation_ptr->overlay
                                         : common_flydelta_static_overlay{}, &runner_error)) {

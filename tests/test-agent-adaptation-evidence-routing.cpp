@@ -23,9 +23,9 @@ int main() {
     common_plan_state plan;
     common_agent_result result;
     result.learning_signals.push_back({common_learning_signal_type::tool_failure,
-        "plan", "step", "data.inspect", "evidence:failed", "failed"});
+        "plan", "step", "dataset.inspect", "evidence:failed", "failed"});
     result.learning_signals.push_back({common_learning_signal_type::successful_recovery,
-        "plan", "step", "data.inspect", "evidence:repaired", "repaired"});
+        "plan", "step", "dataset.inspect", "evidence:repaired", "repaired"});
     result.learning_signals.push_back({common_learning_signal_type::reflection_hint,
         "plan", "", "", "evidence:reflection", "alternative"});
     result.reflected = true;

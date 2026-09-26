@@ -123,7 +123,7 @@ struct bootstrap_case {
     common_tool_execution_result canonical_execution;
     // The actual failed tool is the negative side of this fixture's
     // behavior-specific teacher-forced choice pair. It is deliberately not
-    // a global data.inspect/data.describe assumption.
+    // a global dataset.inspect/statistics.describe assumption.
     std::string failed_tool;
     std::string failed_continuation;
 };

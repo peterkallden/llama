@@ -87,17 +87,17 @@ std::string generation_preview(const common_agent_generation_result & result) {
 const char * canonical_conditioned_call(const concept_family & family, size_t index) {
     if (std::string(family.key) == "grouped-aggregation") {
         return index == 0
-            ? "{\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"sales.csv\",\"group_by\":[\"region\"],\"measure\":\"amount\"}}"
-            : "{\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"sales.csv\",\"group_by\":[\"region\"],\"measure\":\"sales_amount\"}}";
+            ? "{\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"group_by\":[\"region\"],\"measure\":\"amount\"}}"
+            : "{\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"group_by\":[\"region\"],\"measure\":\"sales_amount\"}}";
     }
     if (std::string(family.key) == "validated-filter") {
         return index == 0
-            ? "{\"name\":\"data.filter\",\"arguments\":{\"dataset\":\"sales.csv\",\"predicate\":\"status == failed\"}}"
-            : "{\"name\":\"data.filter\",\"arguments\":{\"dataset\":\"sales.csv\",\"predicate\":\"region == North\"}}";
+            ? "{\"name\":\"data.filter\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"predicate\":\"status == failed\"}}"
+            : "{\"name\":\"data.filter\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"predicate\":\"region == North\"}}";
     }
     return index == 0
-        ? "{\"name\":\"data.query\",\"arguments\":{\"dataset\":\"sales.csv\",\"order_by\":\"amount DESC\",\"limit\":5}}"
-        : "{\"name\":\"data.query\",\"arguments\":{\"dataset\":\"sales.csv\",\"order_by\":\"duration DESC\",\"limit\":5}}";
+        ? "{\"name\":\"data.query\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"order_by\":\"amount DESC\",\"limit\":5}}"
+        : "{\"name\":\"data.query\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"order_by\":\"duration DESC\",\"limit\":5}}";
 }
 
 constexpr concept_family k_families[] = {
@@ -114,29 +114,29 @@ constexpr concept_family k_families[] = {
 
 constexpr concept_evaluation_fixture k_evaluation_fixtures[] = {
     {"grouped-seen", "grouped-aggregation", "seen",
-        "Calculate total amount grouped by region.", "data.aggregate", "data.describe"},
+        "Calculate total amount grouped by region.", "data.aggregate", "statistics.describe"},
     {"grouped-holdout", "grouped-aggregation", "holdout",
-        "Count failed requests for each service.", "data.aggregate", "data.describe"},
+        "Count failed requests for each service.", "data.aggregate", "statistics.describe"},
     {"grouped-transfer", "grouped-aggregation", "transfer",
-        "Average duration per endpoint.", "data.aggregate", "data.describe"},
+        "Average duration per endpoint.", "data.aggregate", "statistics.describe"},
     {"grouped-contrast", "grouped-aggregation", "contrastive",
-        "Describe the status column.", "data.describe", "data.aggregate"},
+        "Describe the status column.", "statistics.describe", "data.aggregate"},
     {"filter-seen", "validated-filter", "seen",
-        "Return rows where status is failed.", "data.filter", "data.describe"},
+        "Return rows where status is failed.", "data.filter", "statistics.describe"},
     {"filter-holdout", "validated-filter", "holdout",
-        "Keep records from the North region.", "data.filter", "data.describe"},
+        "Keep records from the North region.", "data.filter", "statistics.describe"},
     {"filter-transfer", "validated-filter", "transfer",
-        "Return services with latency above 100 ms.", "data.filter", "data.describe"},
+        "Return services with latency above 100 ms.", "data.filter", "statistics.describe"},
     {"filter-contrast", "validated-filter", "contrastive",
         "How many rows have status failed?", "data.aggregate", "data.filter"},
     {"query-seen", "ordered-query", "seen",
-        "Return the largest orders ordered by amount.", "data.query", "data.describe"},
+        "Return the largest orders ordered by amount.", "data.query", "statistics.describe"},
     {"query-holdout", "ordered-query", "holdout",
-        "Sort failures by timestamp.", "data.query", "data.describe"},
+        "Sort failures by timestamp.", "data.query", "statistics.describe"},
     {"query-transfer", "ordered-query", "transfer",
-        "List the five longest requests.", "data.query", "data.describe"},
+        "List the five longest requests.", "data.query", "statistics.describe"},
     {"query-contrast", "ordered-query", "contrastive",
-        "Describe the status column.", "data.describe", "data.query"},
+        "Describe the status column.", "statistics.describe", "data.query"},
 };
 
 const concept_family * find_concept_family(const std::string & key) {
@@ -586,7 +586,7 @@ bool run_offline() {
 const char * detected_tool(const common_agent_generation_result & result) {
     if (!common_agent_generation_succeeded(result)) return "generation_failure";
     constexpr const char * tools[] = {
-        "data.aggregate", "data.filter", "data.query", "data.describe", "data.inspect"};
+        "data.aggregate", "data.filter", "data.query", "statistics.describe", "dataset.inspect"};
     for (const char * tool : tools) {
         if (result.content.find(std::string("\"name\":\"") + tool) != std::string::npos ||
                 result.content.find(std::string("\"name\": \"") + tool) != std::string::npos) {
@@ -635,7 +635,7 @@ common_agent_generation_request request(
     result.options.n_threads = value.n_threads;
     result.messages = {
         {"system", "You route dataset requests. Available tools are data.aggregate, data.filter, "
-            "data.query, data.describe, and data.inspect. Return exactly one JSON tool object "
+            "data.query, statistics.describe, and dataset.inspect. Return exactly one JSON tool object "
             "with a name field and no markdown."},
         {"user", instruction},
     };

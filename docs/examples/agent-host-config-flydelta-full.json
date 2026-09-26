@@ -55,7 +55,7 @@
       "backend": "cozo",
       "transaction_path": "var/agent/adaptation.cozo",
       "stable_model_facing_tools": [
-        "data.inspect",
+        "dataset.inspect",
         "data.query",
         "data.filter",
         "data.aggregate",

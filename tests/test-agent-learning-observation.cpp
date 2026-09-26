@@ -12,7 +12,7 @@ static common_learning_observation base_observation() {
     observation.source_turn_id = "turn-a";
     observation.source_plan_id = "plan-a";
     observation.signals.push_back({common_learning_signal_type::tool_failure, "plan-a", "step-a",
-        "data.inspect", "tool:step-a:failure", "invalid binding"});
+        "dataset.inspect", "tool:step-a:failure", "invalid binding"});
     observation.evidence_ids = {"tool:step-a:failure"};
     observation.cause = common_learning_cause::model_behavior;
     observation.verification = common_learning_verification::host_verified;

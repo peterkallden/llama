@@ -10,7 +10,7 @@ int main() {
     value.scope.session_id = "session-1";
     value.scope.turn_id = "turn-1";
     value.evidence_ids = {"evidence-1"};
-    value.schema_fingerprint = "tool-schema:data.inspect:v1";
+    value.schema_fingerprint = "tool-schema:dataset.inspect:v1";
     value.input = "Inspect the attached table.";
     value.rejected_action = "invalid binding";
     value.preferred_action = "valid binding";

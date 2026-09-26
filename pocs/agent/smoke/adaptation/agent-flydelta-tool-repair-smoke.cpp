@@ -82,16 +82,16 @@ int main() {
         "learning://transaction/wrong-tool",
         "turn:wrong-tool",
         common_learning_signal_type::tool_failure,
-        "data.describe",
+        "statistics.describe",
         "evidence:wrong-tool",
         "host rejected the wrong inspection tool for the selected dataset");
     const auto repaired = transaction(
         "learning://transaction/repaired-tool",
         "turn:repaired-tool",
         common_learning_signal_type::successful_recovery,
-        "data.inspect",
+        "dataset.inspect",
         "evidence:repaired-tool",
-        "host verified data.inspect for the selected dataset");
+        "host verified dataset.inspect for the selected dataset");
     CHECK(common_learning_transaction_validate(failed, 16, error));
     CHECK(common_learning_transaction_validate(repaired, 16, error));
 
@@ -117,8 +117,9 @@ int main() {
         "profile:qwen-small+flydelta",
         fixture(),
         [](const auto &, bool apply_overlay, auto & trial, auto &) {
-            // Deterministic host fixture: the baseline emits data.describe,
-            // while the candidate overlay selects the verified data.inspect.
+            // Deterministic host fixture: the baseline emits
+            // statistics.describe, while the candidate overlay selects the
+            // verified dataset.inspect.
             trial = {};
             trial.executed = true;
             trial.verifier_known = true;
@@ -225,10 +226,10 @@ int main() {
     CHECK(coefficients.size() == 1 && coefficients[0] > 0.5f);
 
     const auto choose_tool = [](float correction) {
-        return correction > 0.05f ? std::string("data.inspect") : std::string("data.describe");
+        return correction > 0.05f ? std::string("dataset.inspect") : std::string("statistics.describe");
     };
-    CHECK(choose_tool(before[0]) == "data.describe");
-    CHECK(choose_tool(coefficients[0]) == "data.inspect");
+    CHECK(choose_tool(before[0]) == "statistics.describe");
+    CHECK(choose_tool(coefficients[0]) == "dataset.inspect");
 
     common_flydelta_gate_config gate_config;
     gate_config.enabled = true;
@@ -263,11 +264,11 @@ int main() {
         gate_config, activation_request, 64 * 1024, activation, error));
     CHECK(!activation.gate.apply && !activation.overlay.enabled);
 
-    std::cout << "wrong_tool_before_learning=data.describe\n"
-              << "repaired_tool=data.inspect\n"
+    std::cout << "wrong_tool_before_learning=statistics.describe\n"
+              << "repaired_tool=dataset.inspect\n"
               << "contrastive_outcome=helped\n"
               << "promotion=eligible_then_host_approved\n"
-              << "learned_tool=data.inspect\n"
+              << "learned_tool=dataset.inspect\n"
               << "activation=applied_for_familiar_context\n"
               << "novel_context=no_op\n";
     return 0;

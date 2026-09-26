@@ -17,7 +17,7 @@ static void check(bool condition, const char * expression, int line) {
 
 int main() {
     common_tool_definition definition;
-    definition.name = "data.inspect";
+    definition.name = "dataset.inspect";
     definition.description = "Inspect a selected dataset.";
     definition.input_schema_json = R"({
         "type":"object",
@@ -39,7 +39,7 @@ int main() {
     }
     CHECK(cases.size() == 5);
     CHECK(cases.front().model_input_schema_json == definition.input_schema_json);
-    CHECK(cases.front().model_facing_contract.find("data.inspect") != std::string::npos);
+    CHECK(cases.front().model_facing_contract.find("dataset.inspect") != std::string::npos);
     CHECK(cases.front().model_facing_contract.find("dataset:string") != std::string::npos);
     CHECK(cases.front().model_facing_prompt.find("Repair the invalid tool call") != std::string::npos);
 

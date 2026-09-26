@@ -160,7 +160,7 @@ $config = [ordered]@{
         adaptation = [ordered]@{
             capture = $adaptationEnabled; collection_allowed = $adaptationEnabled; max_evidence = 32
             backend = 'cozo'; transaction_path = "$CozoRoot/adaptation.cozo"
-            stable_model_facing_tools = @('data.inspect', 'data.query', 'data.filter', 'data.aggregate', 'data.transform')
+            stable_model_facing_tools = @('dataset.inspect', 'data.query', 'data.filter', 'data.aggregate', 'data.transform')
             domains = [ordered]@{
                 planning = $true; tool_use = $true; research = $true; procedure_learning = $true
                 families = [ordered]@{ data = $true; research = $true; planning = $true }
