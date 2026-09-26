@@ -671,9 +671,13 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
     }
     output = {};
     output.directions.push_back(std::move(direction_result));
-    output.search_status = output.directions.front().region_trials.empty()
-        ? common_flydelta_search_status::no_useful_utility
-        : common_flydelta_search_status::candidate_available;
+    // A diagnostics batch may contain trials without producing a safe,
+    // promising selection. Preserve the terminal no-useful-utility status so
+    // the continuation seam can stop the branch safely instead of treating
+    // the absence of a selected arm as a callback failure.
+    output.search_status = output.selection.selected
+        ? common_flydelta_search_status::candidate_available
+        : common_flydelta_search_status::no_useful_utility;
     return true;
 }
 
