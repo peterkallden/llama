@@ -168,9 +168,7 @@ bool daemon_flydelta_verify_generation(
             return false;
         }
         common_flydelta_semantic_decision expected;
-        common_flydelta_semantic_decision actual;
         common_flydelta_semantic_decision_status expected_status;
-        common_flydelta_semantic_decision_status actual_status;
         std::string decision_error;
         const std::string expected_text = fixture.at("expected_decision").is_string()
             ? fixture.at("expected_decision").get<std::string>()
@@ -182,11 +180,25 @@ bool daemon_flydelta_verify_generation(
                 decision_error;
             return false;
         }
-        decision_error.clear();
-        const bool actual_valid = common_flydelta_parse_semantic_decision(
-            generated, actual, actual_status, decision_error);
-        verifier_known = true;
-        passed = actual_valid && common_flydelta_semantic_decision_equal(expected, actual);
+        common_flydelta_oracle_request oracle_request;
+        oracle_request.oracle_ref = fixture.value(
+            "oracle_ref", "flydelta://oracle/dataset-operation");
+        oracle_request.oracle_revision = fixture.value("oracle_revision", "v1");
+        oracle_request.policy_revision = fixture.value("oracle_policy_revision", "v1");
+        oracle_request.phase = common_flydelta_oracle_phase::concept;
+        oracle_request.semantic_kind = fixture.value("semantic_kind", "dataset_operation");
+        oracle_request.verifier_ref = fixture.value("verifier_ref", "");
+        oracle_request.expected_decision_available = true;
+        oracle_request.expected_decision = expected;
+        common_flydelta_oracle_result oracle_result;
+        if (!common_flydelta_dataset_operation_oracle(
+                oracle_request, generated, oracle_result, decision_error)) {
+            error = "FlyDelta normalized_call fixture could not select its oracle: " +
+                decision_error;
+            return false;
+        }
+        verifier_known = oracle_result.known;
+        passed = oracle_result.verdict == common_flydelta_oracle_verdict::satisfied;
         return true;
     }
 

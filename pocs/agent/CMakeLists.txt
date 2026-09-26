@@ -1014,6 +1014,19 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Model-free host-supported Oracle smoke. It uses the native dataset registry
+# and the shared Oracle suite; no model output is treated as learning credit.
+set(TARGET llama-agent-flydelta-oracle-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-oracle-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Model-free host contract smoke for the procedure/blueprint teaching seam.
 # It validates host admission and explicit contrast provenance; model-backed
 # concept extraction remains covered by the existing concept smoke.
@@ -2253,6 +2266,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-flydelta-procedure-teaching-smoke
     llama-agent-flydelta-concept-capture-smoke
     llama-agent-flydelta-concept-smoke
+    llama-agent-flydelta-oracle-smoke
     llama-agent-flydelta-concept-synthesis-model-smoke
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-cvec-batch-model-smoke
@@ -2449,6 +2463,10 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-flydelta-concept-smoke>)
     set_property(TEST llama-agent-flydelta-concept-ctest PROPERTY LABELS agent-adaptation)
     set_tests_properties(llama-agent-flydelta-concept-ctest PROPERTIES TIMEOUT 60)
+
+    add_test(NAME llama-agent-flydelta-oracle-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-oracle-smoke>)
+    set_property(TEST llama-agent-flydelta-oracle-ctest PROPERTY LABELS agent-adaptation)
 
     add_test(NAME llama-agent-flydelta-procedure-teaching-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-procedure-teaching-smoke>)

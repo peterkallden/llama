@@ -24,6 +24,7 @@
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-semantic-decision.h"
+#include "agent/adaptation/flydelta/oracles/flydelta-dataset-operation-oracle.h"
 #include "agent/adaptation/flydelta/flydelta-sideband-review-store.h"
 #include "hash/hash.h"
 #include "tools/server/server-context.h"

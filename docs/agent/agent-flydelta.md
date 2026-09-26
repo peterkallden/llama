@@ -352,6 +352,7 @@ journal remains the durable evidence boundary.
 | 2026-09-26 | this local commit | Production concept-synthesis model smoke implemented and verified end-to-end; diagnostics-only graft rejection and continuation-state identity corrected | 17 focused FlyDelta CTests passed serially; model-free admin smoke passed with admin/worker tracing; Qwen Instruct server-context smoke passed with Whirlpool/Bootstrap, 2 relations × 3 capture arms, three synthesis candidates and grafted search | Added the portable model smoke and CTest entry; documented wiring-only evidence, four agent workers/two FlyDelta workers, serialized inference, no learning/promotion, safe `no_useful_utility` stop and fresh continuation refs |
 | 2026-09-26 | this local commit | Concept accumulation and semantic teaching admission implemented on the existing durable seams | 7 focused CTests passed serially; updated model-free concept-capture smoke passed with reference-only candidate index evidence; model-free admin smoke passed with admin/worker tracing | Added a thin lifecycle-backed candidate index, separate one-relation admission from multi-relation synthesis eligibility, exact `(teaching_key, behavior_key)` family transport and scope/provenance checks; no parallel store, algorithm or promotion-policy change |
 | 2026-09-26 | this local commit | Safe terminal handling corrected for production BootstrapZoom slices after the concept-synthesis E2E exposed diagnostics without a selected arm being reported as callback failure | 8 focused FlyDelta CTests passed serially; model-free concept-capture and admin smokes passed with tracing; Qwen Instruct server-context E2E passed with 2 relations × 3 capture arms, three synthesis candidates and grafted search ending in `no_useful_utility` | Preserved the existing terminal-search contract: diagnostic trials without a safe promising selection now stop successfully; no algorithm, ranking, learning-credit or promotion semantics changed. This is wiring evidence, not model-quality evidence |
+| 2026-09-26 | this local sweep | Oracle V0 and shared bounded proposer implemented on the existing FlyDelta seams | `test-agent-flydelta-oracles` and `llama-agent-flydelta-oracle-ctest` passed serially; host smoke used the native dataset registry to normalize and execute a grouped aggregation; Qwen Instruct agent/server-context dataset suite completed 12/12 scenarios (9 matched, 3 repair observations); Qwen FlyDelta concept smoke passed with 2 relations × 3 capture arms, 3 candidates and safe grafted-search termination; no learning credit or promotion | Added generic deterministic/host-supported/model-supported evaluator contracts, versioned provenance, probe-suite metrics and a reusable bounded A* proposer. `normalized_call` server verification now uses the dataset semantic oracle. A* is a support component only; existing FlyDelta search algorithms and promotion policy are unchanged |
 
 ## Natural dataset-question smoke
 
@@ -2680,6 +2681,54 @@ retained as durable teaching material, while the existing material-group policy
 capture and synthesis. No new FlyDelta job or material store is introduced by
 this layer: `concept_capture`, `concept_synthesis`, grafting and ordinary
 FlyDelta search remain the existing bounded pipeline.
+
+### FlyDelta Oracle layer and bounded proposer
+
+Oracle V0 separates semantic truth from representation geometry and lifecycle
+authority. The shared contract has three evaluator strengths:
+
+```text
+deterministic
+    exact host-independent semantic normalization and comparison
+host_supported
+    native registry/host execution and structural verification
+model_supported
+    model-assisted judgement behind an explicit host callback
+```
+
+All three return the same versioned result shape: `satisfied`, `violated`,
+`not_applicable` or `unknown`, together with oracle revision, policy revision,
+confidence, evidence reference and reason. The evaluator chain tries the
+cheapest available authority first and only falls through when the previous
+authority cannot establish a known result. An `unknown` result does not grant
+learning credit, promotion or activation.
+
+The first concrete family is `dataset_operation`. It reuses the existing
+`SemanticDecision` IR and accepts both canonical semantic decisions and
+model-shaped dataset tool calls. `normalized_call` fixtures in the resident
+server-context host now use this oracle, so concept grounding and runtime
+verification share one semantic definition. The host-supported smoke goes one
+step further: it passes a canonical aggregate call through the existing native
+tool registry and executes it against the host fixture. The smoke reports
+host-supported verification only; it is not model-quality evidence.
+
+The shared probe suite supports target, paraphrase, transfer, control and
+competing probes and computes baseline/candidate success, intervention gain,
+false-intervention rate, control retention and transfer gain. These metrics are
+diagnostic input to later synthesis/search decisions; they do not replace the
+existing counterfactual `HELPED` classifier. The suite runner is an explicit
+agent/server-context callback, so the Oracle layer does not create a direct
+single-turn model path.
+
+A bounded generic A* proposer lives beside the shared Oracle contracts. It
+operates only on opaque state fingerprints, successor costs, heuristic values,
+and explicit expansion/goal callbacks. That makes it reusable for deterministic
+case construction, host-supported valid-combination search and later
+model-supported probe proposal. Its expansion and path bounds are mandatory,
+so it is a cheap proposer rather than a replacement for FlyDelta's layer,
+scale, Whirlpool or evidence-depth algorithms. The current sweep establishes
+this reusable support seam; ordinary FlyDelta search and promotion semantics
+remain unchanged until a later, separately verified integration uses it.
 
 Concept accumulation uses a thin reference-only candidate index backed by the
 existing learning lifecycle journal. It stores canonical statement refs,
