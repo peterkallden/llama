@@ -22,6 +22,11 @@ bool bounded_items(const std::vector<std::string> & values) {
         [](const std::string & value) { return bounded(value); });
 }
 
+bool same_scope(const common_agent_scope & left, const common_agent_scope & right) {
+    return left.namespace_id == right.namespace_id &&
+        left.project_id == right.project_id && left.session_id == right.session_id;
+}
+
 json scope_to_json(const common_agent_scope & scope) {
     return {
         {"namespace_id", scope.namespace_id},
@@ -141,6 +146,7 @@ bool common_agent_concept_hypothesis_validate(
     error.clear();
     if (hypothesis.schema_version != 1 || !bounded(hypothesis.id) ||
             !bounded(hypothesis.concept_key) || !bounded(hypothesis.statement) ||
+            (!hypothesis.canonical_statement_ref.empty() && !bounded(hypothesis.canonical_statement_ref)) ||
             hypothesis.scope.namespace_id.empty() || hypothesis.scope.session_id.empty() ||
             !bounded_items(hypothesis.preconditions) ||
             !bounded_items(hypothesis.invariants) ||
@@ -184,6 +190,7 @@ std::string common_agent_concept_hypothesis_to_json(
         {"id", hypothesis.id},
         {"concept_key", hypothesis.concept_key},
         {"statement", hypothesis.statement},
+        {"canonical_statement_ref", hypothesis.canonical_statement_ref},
         {"semantic_kind", common_agent_concept_semantic_kind_name(hypothesis.semantic_kind)},
         {"source_kind", common_agent_concept_source_kind_name(hypothesis.source_kind)},
         {"status", common_agent_concept_hypothesis_status_name(hypothesis.status)},
@@ -215,6 +222,7 @@ bool common_agent_concept_hypothesis_from_json(
         hypothesis.id = value.value("id", "");
         hypothesis.concept_key = value.value("concept_key", "");
         hypothesis.statement = value.value("statement", "");
+        hypothesis.canonical_statement_ref = value.value("canonical_statement_ref", "");
         if (!parse_kind(value.value("semantic_kind", ""), hypothesis.semantic_kind) ||
                 !parse_source(value.value("source_kind", ""), hypothesis.source_kind) ||
                 !parse_status(value.value("status", ""), hypothesis.status) ||
@@ -450,6 +458,8 @@ bool common_agent_validate_concept_teaching_relations(
         if (!common_flydelta_teaching_relation_validate(relation, error) ||
                 relation.teaching_key != hypothesis.concept_key ||
                 relation.behavior_key != grounding.behavior_key ||
+                !same_scope(relation.scope, hypothesis.scope) ||
+                !same_scope(relation.scope, grounding.scope) ||
                 relation.evidence_ref != grounding.id ||
                 relation.verifier_ref != grounding.verifier_ref ||
                 relation.contrast_ref.empty()) {
@@ -465,6 +475,31 @@ bool common_agent_validate_concept_teaching_relations(
         }
         contrast_refs.push_back(relation.contrast_ref);
         task_fingerprints.push_back(relation.task_fingerprint);
+    }
+    return true;
+}
+
+bool common_agent_validate_concept_teaching_relation(
+        const common_agent_concept_hypothesis & hypothesis,
+        const common_agent_concept_grounding & grounding,
+        const common_flydelta_teaching_relation & relation,
+        std::string & error) {
+    error.clear();
+    if (!common_agent_concept_hypothesis_validate(hypothesis, error) ||
+            hypothesis.status != common_agent_concept_hypothesis_status::grounded ||
+            !common_agent_concept_grounding_validate(grounding, error) ||
+            hypothesis.id != grounding.hypothesis_ref ||
+            !common_flydelta_teaching_relation_validate(relation, error) ||
+            relation.teaching_key != hypothesis.concept_key ||
+            relation.behavior_key != grounding.behavior_key ||
+            !same_scope(relation.scope, hypothesis.scope) ||
+            !same_scope(relation.scope, grounding.scope) ||
+            relation.evidence_ref != grounding.id ||
+            relation.verifier_ref != grounding.verifier_ref ||
+            relation.status != common_flydelta_teaching_relation_status::resolved ||
+            !relation.host_approved || relation.contrast_ref.empty()) {
+        if (error.empty()) error = "semantic concept relation is not individually admitted";
+        return false;
     }
     return true;
 }

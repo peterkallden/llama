@@ -350,6 +350,7 @@ journal remains the durable evidence boundary.
 | 2026-09-25 | this local commit | Diagnostics-first execution boundary completed across Deep, Whirlpool/region, Shallow/TFO-lite, BootstrapZoom, Orthogonal and AdaptiveAlpha without changing search policy | 13 focused FlyDelta CTests passed serially; model-free admin smoke passed with admin/worker traces; Qwen server-context runtime and repair smokes passed serially with tracing; repair trace covered native batch, scalar remainder and backend-batch paths | Added separate diagnostic/full-generation callback classes, bounded top-K full-generation continuation, AdaptiveAlpha diagnostic safety gating and host-only selection; evidence is recorded as production wiring/execution evidence, not learned model-quality evidence |
 | 2026-09-25 | this local commit | Daemon FlyDelta host integration split across runtime execution, adaptation materialization and daemon workflows | 7 focused CTests passed serially; model-free admin smoke and Qwen server-context runtime smoke passed with tracing; Qwen repair smoke completed serially with tracing | Moved implementation ownership only; preserved common algorithms, public contracts, queue/lifecycle authority, diagnostic/full boundary and promotion semantics |
 | 2026-09-26 | this local commit | Production concept-synthesis model smoke implemented and verified end-to-end; diagnostics-only graft rejection and continuation-state identity corrected | 17 focused FlyDelta CTests passed serially; model-free admin smoke passed with admin/worker tracing; Qwen Instruct server-context smoke passed with Whirlpool/Bootstrap, 2 relations × 3 capture arms, three synthesis candidates and grafted search | Added the portable model smoke and CTest entry; documented wiring-only evidence, four agent workers/two FlyDelta workers, serialized inference, no learning/promotion, safe `no_useful_utility` stop and fresh continuation refs |
+| 2026-09-26 | this local commit | Concept accumulation and semantic teaching admission implemented on the existing durable seams | 7 focused CTests passed serially; updated model-free concept-capture smoke passed with reference-only candidate index evidence; model-free admin smoke passed with admin/worker tracing | Added a thin lifecycle-backed candidate index, separate one-relation admission from multi-relation synthesis eligibility, exact `(teaching_key, behavior_key)` family transport and scope/provenance checks; no parallel store, algorithm or promotion-policy change |
 
 ## Natural dataset-question smoke
 
@@ -1101,6 +1102,16 @@ The daemon scheduler uses the same reference-only collection boundary for a
 returned `next_action`: it carries forward the claimed search-pipeline job,
 updates opaque state references and enqueues at most one idempotent follow-up
 job. It never evaluates that job recursively inside the worker slice.
+
+Before that follow-up is collected, the production daemon associates a
+search-pipeline job with the unique compatible teaching-material family for
+its `(teaching_key, behavior_key)` when a semantic family key is present, or
+for its `behavior_key` for legacy jobs. The association compares the material
+runtime compatibility identity and fails closed on ambiguity; it only
+transports the opaque `teaching_material_group_ref`. This is the family
+binding that allows a terminal augmentation slice to schedule concept capture
+or synthesis without putting family policy in the generic runtime. Existing
+jobs with an explicit group reference are preserved.
 
 For resumable rank-one BootstrapZoom/AdaptiveAlpha work, the queue transports
 only `bootstrap_zoom_state_ref`. For later rank-one plateau, orthogonal-search or
@@ -2642,17 +2653,18 @@ invariants, counterexamples and source references. Facts remain eligible for
 the knowledge/memory path; only a host-grounded procedure, decision rule or
 concept may proceed toward FlyDelta teaching material.
 
-The host then creates a grounded verifier/fixture family and checks a set of
-minimal contrasts:
+The host then creates a grounded verifier/fixture family and checks minimal
+contrasts. One verified contrast is enough to create and persist one
+`TeachingRelation`; the material group remains incomplete until its configured
+independent-relation threshold is reached:
 
 ```text
 ConceptHypothesis
     -> host grounding
     -> baseline / conditioned / control fixtures
     -> semantic verification
-    -> independent verified contrasts
-    -> existing TeachingRelation
-    -> existing TeachingMaterialStore
+    -> 0..N independent verified TeachingRelations
+    -> existing TeachingMaterialStore admission
     -> concept_capture
     -> ConceptSynthesis
 ```
@@ -2661,11 +2673,22 @@ The model may propose a hypothesis or fixture variation, but it cannot certify
 its own meaning. The host owns semantic normalization, verifier admission,
 independence and provenance. The semantic preparation provider therefore
 returns either no hypothesis/material (a normal outcome) or already verified
-relations; it must never manufacture learning credit. At least two compatible
-and independent contrasts are required before material is eligible for the
-existing capture path. No new FlyDelta job or material store is introduced by
+relations; it must never manufacture learning credit. A single relation may be
+retained as durable teaching material, while the existing material-group policy
+(normally two compatible and independent relations) controls eligibility for
+capture and synthesis. No new FlyDelta job or material store is introduced by
 this layer: `concept_capture`, `concept_synthesis`, grafting and ordinary
 FlyDelta search remain the existing bounded pipeline.
+
+Concept accumulation uses a thin reference-only candidate index backed by the
+existing learning lifecycle journal. It stores canonical statement refs,
+supporting/disconfirming evidence refs, relation refs and grounding/novelty
+state; it does not copy turns, research text, trajectories or activations.
+Support is counted from independent evidence/relation keys, not repeated
+mentions. Research and reflection may create hypotheses, but do not strengthen
+the candidate until a new host-verified contrast is observed. Conflicts are
+retained as disconfirming evidence and block synthesis until the host resolves
+the applicability boundary.
 
 The model-facing decision boundary uses the same generic seam. A bounded
 `decision_pair` contains two host-selected alternatives plus tokenizer and

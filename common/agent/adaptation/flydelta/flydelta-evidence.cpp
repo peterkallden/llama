@@ -231,6 +231,7 @@ bool common_flydelta_experiment_seed_validate(
     error.clear();
     common_adaptation_evidence evidence;
     evidence.id = seed.evidence_ref;
+    evidence.teaching_key = seed.teaching_key;
     evidence.source = seed.source;
     evidence.scope = seed.scope;
     evidence.behavior_key = seed.behavior_key;
@@ -275,6 +276,7 @@ bool common_flydelta_experiment_seed_from_evidence(
     }
     seed = {};
     seed.id = evidence.id + "/flydelta";
+    seed.teaching_key = evidence.teaching_key;
     seed.behavior_key = behavior_key;
     seed.source = evidence.source;
     seed.scope = evidence.scope;

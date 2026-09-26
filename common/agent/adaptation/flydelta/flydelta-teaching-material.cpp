@@ -208,6 +208,70 @@ bool common_flydelta_teaching_material_runtime::inspect_group(
     return true;
 }
 
+bool common_flydelta_teaching_material_runtime::resolve_group_for_behavior(
+        const std::string & behavior_key,
+        common_flydelta_teaching_material_group & group,
+        bool & available,
+        std::string & error) const {
+    error.clear();
+    group = {};
+    available = false;
+    if (!bounded(behavior_key)) {
+        error = "FlyDelta teaching-material family behavior key is invalid";
+        return false;
+    }
+    const std::string compatibility_key =
+        common_flydelta_teaching_material_compatibility_key(identity_);
+    if (compatibility_key.empty()) {
+        error = "FlyDelta teaching-material compatibility identity is invalid";
+        return false;
+    }
+    const common_flydelta_teaching_material_group * match = nullptr;
+    for (const auto & candidate : store_.groups()) {
+        if (!candidate.relation_set_ready ||
+                candidate.behavior_key != behavior_key ||
+                candidate.compatibility_key != compatibility_key) continue;
+        if (match != nullptr) {
+            error = "FlyDelta teaching-material family is ambiguous for behavior key";
+            return false;
+        }
+        match = &candidate;
+    }
+    if (match == nullptr) return true;
+    group = *match;
+    available = true;
+    return true;
+}
+
+bool common_flydelta_teaching_material_runtime::resolve_group_for_family(
+        const std::string & teaching_key,
+        const std::string & behavior_key,
+        common_flydelta_teaching_material_group & group,
+        bool & available,
+        std::string & error) const {
+    error.clear();
+    group = {};
+    available = false;
+    if (!bounded(teaching_key) || !bounded(behavior_key)) {
+        error = "FlyDelta teaching-material family identity is invalid";
+        return false;
+    }
+    const std::string compatibility_key =
+        common_flydelta_teaching_material_compatibility_key(identity_);
+    if (compatibility_key.empty()) {
+        error = "FlyDelta teaching-material compatibility identity is invalid";
+        return false;
+    }
+    const auto it = std::find_if(store_.groups().begin(), store_.groups().end(), [&](const auto & candidate) {
+        return candidate.relation_set_ready && candidate.teaching_key == teaching_key &&
+            candidate.behavior_key == behavior_key && candidate.compatibility_key == compatibility_key;
+    });
+    if (it == store_.groups().end()) return true;
+    group = *it;
+    available = true;
+    return true;
+}
+
 bool common_flydelta_teaching_material_runtime::observe_trajectory(
         const std::string & group_ref,
         const std::string & trajectory_ref,

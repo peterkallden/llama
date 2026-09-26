@@ -724,6 +724,26 @@ int main(int argc, char ** argv) {
                 report.graft_direction_ref,
                 collection_result, schedule_error);
         };
+    flydelta_worker_config.bind_teaching_material_group =
+        [material_runtime = runtime.flydelta_teaching_material_runtime](
+            common_flydelta_experiment_job & parent_job,
+            std::string & binding_error) {
+            binding_error.clear();
+            if (parent_job.kind != common_flydelta_experiment_job_kind::search_pipeline ||
+                    !parent_job.teaching_material_group_ref.empty() ||
+                    !material_runtime) return true;
+            common_flydelta_teaching_material_group group;
+            bool available = false;
+            const bool resolved = parent_job.seed.teaching_key.empty()
+                ? material_runtime->resolve_group_for_behavior(
+                    parent_job.seed.behavior_key, group, available, binding_error)
+                : material_runtime->resolve_group_for_family(
+                    parent_job.seed.teaching_key, parent_job.seed.behavior_key,
+                    group, available, binding_error);
+            if (!resolved) return false;
+            if (available) parent_job.teaching_material_group_ref = group.group_ref;
+            return true;
+        };
     common_agent_daemon_dispatcher dispatcher(
         std::move(runtime), options.queue_capacity, options.worker_count,
         std::move(flydelta_worker_config));

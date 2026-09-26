@@ -159,6 +159,7 @@ bool common_adaptation_evidence_from_turn(
     if (evidence.scope.namespace_id.empty() || evidence.scope.session_id.empty()) {
         evidence.scope = common_agent_scope_from_request(request);
     }
+    evidence.teaching_key = relation.teaching_key;
     evidence.behavior_key = relation.behavior_key;
     evidence.task_fingerprint = relation.task_fingerprint;
     evidence.baseline_ref = relation.baseline_ref;

@@ -119,6 +119,20 @@ public:
             bool & relation_set_ready,
             bool & trajectory_material_ready,
             std::string & error) const;
+    // Resolve the one compatible teaching-material family for a production
+    // search job. Ambiguous families fail closed rather than cross-wiring
+    // concept material between behaviors.
+    bool resolve_group_for_behavior(
+        const std::string & behavior_key,
+        common_flydelta_teaching_material_group & group,
+        bool & available,
+        std::string & error) const;
+    bool resolve_group_for_family(
+            const std::string & teaching_key,
+            const std::string & behavior_key,
+            common_flydelta_teaching_material_group & group,
+            bool & available,
+            std::string & error) const;
     bool observe_trajectory(
             const std::string & group_ref,
             const std::string & trajectory_ref,

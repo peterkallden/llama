@@ -732,8 +732,14 @@ void common_agent_daemon_dispatcher::flydelta_worker_loop() {
                 report.next_action != common_flydelta_next_action::retain &&
                 flydelta_config.schedule_next_action) {
             std::string schedule_error;
-            if (!flydelta_config.schedule_next_action(
-                    report.completed_job, report, schedule_error)) {
+            common_flydelta_experiment_job scheduled_parent = report.completed_job;
+            if (flydelta_config.bind_teaching_material_group &&
+                    !flydelta_config.bind_teaching_material_group(
+                        scheduled_parent, schedule_error)) {
+                std::fprintf(stderr, "FlyDelta teaching-material binding failed: %s\n",
+                    schedule_error.c_str());
+            } else if (!flydelta_config.schedule_next_action(
+                    scheduled_parent, report, schedule_error)) {
                 // The current bounded slice remains successfully completed.
                 // Scheduling is a host concern and is reported separately so
                 // a transient queue/resource issue cannot rewrite FlyDelta

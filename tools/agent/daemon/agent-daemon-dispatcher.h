@@ -34,6 +34,11 @@ struct common_agent_daemon_flydelta_worker_config {
             const common_flydelta_experiment_job &,
             const common_flydelta_experiment_worker_report &,
             std::string &)> schedule_next_action;
+    // Host-owned family association for the next queued slice. This only
+    // carries an opaque teaching-material group reference onto search jobs.
+    std::function<bool(
+            common_flydelta_experiment_job &,
+            std::string &)> bind_teaching_material_group;
     // Durable host boundary for completed worker results. This records the
     // evaluator's existing reports; it does not make promotion decisions.
     std::function<bool(

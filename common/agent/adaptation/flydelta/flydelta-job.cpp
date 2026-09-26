@@ -142,6 +142,7 @@ std::string common_flydelta_experiment_job_to_json(
         {"kind", common_flydelta_experiment_job_kind_name(job.kind)},
         {"seed", {
             {"id", job.seed.id},
+            {"teaching_key", job.seed.teaching_key},
             {"behavior_key", job.seed.behavior_key},
             {"source", common_adaptation_evidence_source_name(job.seed.source)},
             {"split", common_flydelta_training_split_name(job.seed.split)},
@@ -206,6 +207,7 @@ bool common_flydelta_experiment_job_from_json(
         }
         const auto seed = value.value("seed", json::object());
         job.seed.id = seed.value("id", "");
+        job.seed.teaching_key = seed.value("teaching_key", "");
         job.seed.behavior_key = seed.value("behavior_key", "");
         const auto source = common_adaptation_evidence_source_from_name(
             seed.value("source", ""));

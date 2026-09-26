@@ -2,6 +2,7 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "agent/adaptation/flydelta/flydelta-teaching-material.h"
 #include "agent/adaptation/flydelta/flydelta-worker.h"
+#include "agent/adaptation/concept-candidate-index.h"
 
 #include <filesystem>
 #include <iostream>
@@ -21,6 +22,7 @@ common_flydelta_teaching_relation relation(const std::string & id) {
     value.source = common_adaptation_evidence_source::procedure_blueprint;
     value.behavior_key = "tool_choice/dataset/grouped_sum";
     value.scope.namespace_id = "local";
+    value.scope.project_id = "flydelta-smoke";
     value.scope.session_id = "concept-capture-smoke";
     value.task_fingerprint = "task:" + id;
     value.baseline_ref = "execution:" + id + "/baseline";
@@ -34,6 +36,24 @@ common_flydelta_teaching_relation relation(const std::string & id) {
     value.control_origin = common_flydelta_teaching_origin::host_counterfactual;
     value.confidence = 1.0f;
     value.host_approved = true;
+    return value;
+}
+
+common_agent_concept_hypothesis concept_hypothesis() {
+    common_agent_concept_hypothesis value;
+    value.id = "hypothesis:concept-capture-smoke";
+    value.concept_key = "dataset.grouped_sum.v1";
+    value.statement = "Group totals by the requested dimension.";
+    value.canonical_statement_ref = "statement://dataset/grouped-sum/v1";
+    value.source_kind = common_agent_concept_source_kind::user_taught_concept;
+    value.status = common_agent_concept_hypothesis_status::grounded;
+    value.scope.namespace_id = "local";
+    value.scope.project_id = "flydelta-smoke";
+    value.scope.session_id = "concept-capture-smoke";
+    value.source_refs = {"turn://concept-capture-smoke"};
+    value.confidence = 1.0f;
+    value.host_grounded = true;
+    value.reusable = true;
     return value;
 }
 
@@ -109,6 +129,31 @@ int main() {
     if (!material_store.observe(relation("relation:one"), material_identity, error) ||
             !material_store.observe(relation("relation:two"), material_identity, error)) {
         return fail("teaching relations were not persisted: " + error);
+    }
+
+    common_learning_in_memory_lifecycle_store lifecycle;
+    common_agent_concept_candidate_index candidate_index(&lifecycle);
+    common_learning_transaction concept_transaction;
+    concept_transaction.id = "learning://concept-capture";
+    concept_transaction.created_at = "2026-09-26T00:00:00Z";
+    if (!candidate_index.observe_hypothesis(
+            concept_hypothesis(), concept_transaction, error) ||
+            !candidate_index.observe_relation(
+                concept_hypothesis(), relation("relation:one"), concept_transaction, error)) {
+        return fail("first concept relation was not retained: " + error);
+    }
+    common_agent_concept_candidate candidate_state;
+    if (!candidate_index.resolve(
+            "dataset.grouped_sum.v1", concept_hypothesis().scope, candidate_state, error) ||
+            candidate_state.synthesis_eligible || candidate_state.relation_refs.size() != 1) {
+        return fail("first relation incorrectly became synthesis eligible: " + error);
+    }
+    if (!candidate_index.observe_relation(
+            concept_hypothesis(), relation("relation:two"), concept_transaction, error) ||
+            !candidate_index.resolve(
+                "dataset.grouped_sum.v1", concept_hypothesis().scope, candidate_state, error) ||
+            !candidate_state.synthesis_eligible || candidate_state.independent_support_keys.size() != 2) {
+        return fail("independent concept relations did not unlock synthesis eligibility: " + error);
     }
 
     common_flydelta_teaching_material_group group;
@@ -245,6 +290,7 @@ int main() {
               << " synthesis_handoff=yes"
               << " graft_to_search=yes"
               << " candidate_count=" << synthesis_report.concept_candidates.size()
+              << " candidate_index=reference_only"
               << " learning_credit=none"
               << " promotion=false\n";
     return 0;

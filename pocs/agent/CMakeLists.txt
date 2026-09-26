@@ -2788,6 +2788,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-auto-training-trigger
     test-agent-learning-case
     test-agent-learning-transaction
+    test-agent-concept-candidate-index
     test-agent-training-candidate
     test-agent-learning-corpus
     test-agent-learning-trainer

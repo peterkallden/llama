@@ -325,6 +325,7 @@ bool common_agent_teaching_relation_to_evidence_relation(
     relation.id = teaching_relation.id;
     relation.source = teaching_relation.source;
     relation.scope = teaching_relation.scope;
+    relation.teaching_key = teaching_relation.teaching_key;
     relation.behavior_key = teaching_relation.behavior_key;
     relation.task_fingerprint = teaching_relation.task_fingerprint;
     relation.baseline_ref = teaching_relation.baseline_ref;

@@ -58,6 +58,9 @@ struct common_agent_concept_hypothesis {
     std::string id;
     std::string concept_key;
     std::string statement;
+    // Optional host-normalized reference. The candidate index stores this
+    // reference, never a second copy of the source statement.
+    std::string canonical_statement_ref;
     common_agent_concept_semantic_kind semantic_kind =
         common_agent_concept_semantic_kind::concept;
     common_agent_concept_source_kind source_kind =
@@ -190,6 +193,15 @@ bool common_agent_validate_concept_teaching_relations(
         const std::vector<common_flydelta_teaching_relation> & relations,
         std::string & error);
 
+// One verified contrast is a valid TeachingRelation. The grounding's
+// minimum_contrasts is an admission threshold for material/synthesis, not a
+// prerequisite for storing the first relation.
+bool common_agent_validate_concept_teaching_relation(
+        const common_agent_concept_hypothesis & hypothesis,
+        const common_agent_concept_grounding & grounding,
+        const common_flydelta_teaching_relation & relation,
+        std::string & error);
+
 // Optional host providers. They may return no hypothesis or no contrasts as a
 // normal outcome. They must not manufacture host verification or learning
 // credit; the grounding provider returns only already verified relations.
@@ -199,6 +211,14 @@ using common_agent_concept_hypothesis_provider = std::function<bool(
         const common_agent_result & result,
         const common_learning_transaction & transaction,
         std::optional<common_agent_concept_hypothesis> & hypothesis,
+        std::string & error)>;
+
+using common_agent_concept_hypothesis_batch_provider = std::function<bool(
+        const common_agent_request & request,
+        const common_plan_state & plan,
+        const common_agent_result & result,
+        const common_learning_transaction & transaction,
+        std::vector<common_agent_concept_hypothesis> & hypotheses,
         std::string & error)>;
 
 using common_agent_concept_grounding_provider = std::function<bool(

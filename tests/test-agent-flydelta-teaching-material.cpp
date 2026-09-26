@@ -110,6 +110,16 @@ int main() {
         material_runtime->store().groups().front().group_ref,
         relation_ready, trajectory_ready, error));
     CHECK(relation_ready && !trajectory_ready);
+    common_flydelta_teaching_material_group family_group;
+    bool family_available = false;
+    CHECK(material_runtime->resolve_group_for_family(
+        "dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error));
+    CHECK(family_available && family_group.group_ref == material_runtime->store().groups().front().group_ref);
+    CHECK(material_runtime->resolve_group_for_family(
+        "dataset.missing", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error));
+    CHECK(!family_available);
 
     common_flydelta_representation_augmentation_action action;
     CHECK(common_flydelta_select_concept_synthesis_escape(false, true, action, error));

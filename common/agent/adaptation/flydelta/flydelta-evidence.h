@@ -97,6 +97,9 @@ bool common_flydelta_intervention_credit_from_report(
 struct common_flydelta_experiment_seed {
     int schema_version = 1;
     std::string id;
+    // Optional semantic family identity. Older seeds remain valid when it is
+    // absent; concept-backed jobs use it for exact material binding.
+    std::string teaching_key;
     std::string behavior_key;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     common_agent_scope scope;

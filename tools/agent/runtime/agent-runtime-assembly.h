@@ -11,6 +11,7 @@
 #include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
 #include "agent/adaptation/flydelta/flydelta-runtime-observer.h"
 #include "agent/adaptation/semantic-teaching.h"
+#include "agent/adaptation/concept-candidate-index.h"
 #include "../adaptation/agent-learning-transaction-store.h"
 #include "agent/runtime/agent-inference-contracts.h"
 
@@ -87,7 +88,9 @@ struct common_agent_runtime_config {
     common_agent_user_correction_teaching_request_provider user_correction_teaching_request_provider;
     common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
     common_agent_concept_hypothesis_provider semantic_concept_hypothesis_provider;
+    common_agent_concept_hypothesis_batch_provider semantic_concept_hypothesis_batch_provider;
     common_agent_concept_grounding_provider semantic_concept_grounding_provider;
+    std::shared_ptr<common_agent_concept_candidate_index> concept_candidate_index;
     common_agent_flydelta_teaching_material_observer flydelta_teaching_material_observer;
     // Optional shared host-owned material index. When present and no explicit
     // observer is supplied, the runtime assembly observes resolved relations
@@ -122,7 +125,9 @@ struct common_agent_runtime_build_config {
     common_agent_user_correction_teaching_request_provider user_correction_teaching_request_provider;
     common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
     common_agent_concept_hypothesis_provider semantic_concept_hypothesis_provider;
+    common_agent_concept_hypothesis_batch_provider semantic_concept_hypothesis_batch_provider;
     common_agent_concept_grounding_provider semantic_concept_grounding_provider;
+    std::shared_ptr<common_agent_concept_candidate_index> concept_candidate_index;
     common_agent_flydelta_teaching_material_observer flydelta_teaching_material_observer;
     std::shared_ptr<common_flydelta_teaching_material_runtime> flydelta_teaching_material_runtime;
 };
@@ -154,6 +159,7 @@ struct common_agent_runtime_assembly {
     std::unique_ptr<common_memory_post_turn_learner> memory_learner;
     std::unique_ptr<common_learning_transaction_store> adaptation_store;
     std::unique_ptr<common_learning_lifecycle_store> flydelta_lifecycle_store;
+    std::unique_ptr<common_agent_concept_candidate_index> concept_candidate_index;
     std::unique_ptr<common_learning_transaction_observer> adaptation_observer;
     std::unique_ptr<common_flydelta_capture_candidate_collector> flydelta_capture_collector;
     std::unique_ptr<common_flydelta_runtime_candidate_observer> flydelta_runtime_candidate_observer;

@@ -130,6 +130,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/flydelta-teaching-material.cpp adaptation/flydelta/flydelta-teaching-material.h
     adaptation/flydelta/flydelta-concept-capture.cpp adaptation/flydelta/flydelta-concept-capture.h
     adaptation/semantic-teaching.cpp adaptation/semantic-teaching.h
+    adaptation/concept-candidate-index.cpp adaptation/concept-candidate-index.h
     thinking/reflection-json.cpp thinking/reflection-json.h
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
     tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h
