@@ -48,6 +48,7 @@ common_flydelta_sideband_manifest make_manifest() {
     manifest.compatibility.inference_layout_revision = "layout:admin-smoke-v1";
     manifest.model_n_embd = 4;
     manifest.model_n_layers = 3;
+    manifest.il_start = 1;
     manifest.il_end = 2;
     return manifest;
 }

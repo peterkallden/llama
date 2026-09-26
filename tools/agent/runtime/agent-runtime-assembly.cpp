@@ -37,6 +37,7 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.user_taught_concept_relation_provider = std::move(build_config.user_taught_concept_relation_provider);
     config.semantic_concept_hypothesis_provider = std::move(build_config.semantic_concept_hypothesis_provider);
     config.semantic_concept_hypothesis_batch_provider = std::move(build_config.semantic_concept_hypothesis_batch_provider);
+    config.semantic_concept_contrast_provider = std::move(build_config.semantic_concept_contrast_provider);
     config.semantic_concept_grounding_provider = std::move(build_config.semantic_concept_grounding_provider);
     config.concept_candidate_index = std::move(build_config.concept_candidate_index);
     config.flydelta_teaching_material_observer = std::move(build_config.flydelta_teaching_material_observer);
@@ -318,20 +319,34 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                                 if (!common_agent_concept_hypothesis_validate(hypothesis, error)) return false;
                                 if (concept_candidate_index &&
                                         !concept_candidate_index->observe_hypothesis(hypothesis, transaction, error)) return false;
-                                if (hypothesis.status != common_agent_concept_hypothesis_status::grounded ||
-                                        !hypothesis.host_grounded || !hypothesis.reusable) continue;
+                                const bool already_grounded =
+                                    hypothesis.status == common_agent_concept_hypothesis_status::grounded &&
+                                    hypothesis.host_grounded && hypothesis.reusable;
+                                // Proposed hypotheses are inputs to the host
+                                // grounding seam. The runtime never promotes
+                                // them by itself; it only uses a host-approved
+                                // relation for the validation path below.
+                                if (!already_grounded &&
+                                        hypothesis.status != common_agent_concept_hypothesis_status::proposed) continue;
                                 std::vector<common_flydelta_teaching_relation> relations;
                                 common_agent_concept_grounding grounding;
                                 if (!grounding_provider(request, plan, result, transaction,
                                         hypothesis, grounding, relations, error)) return false;
+                                if (relations.empty()) continue;
+                                auto admitted_hypothesis = hypothesis;
+                                if (!already_grounded) {
+                                    admitted_hypothesis.status = common_agent_concept_hypothesis_status::grounded;
+                                    admitted_hypothesis.host_grounded = true;
+                                    admitted_hypothesis.reusable = true;
+                                }
                                 for (const auto & relation : relations) {
                                     if (!common_agent_validate_concept_teaching_relation(
-                                            hypothesis, grounding, relation, error)) return false;
+                                            admitted_hypothesis, grounding, relation, error)) return false;
                                     if (teaching_material_observer &&
                                             !teaching_material_observer(relation, error)) return false;
                                     if (concept_candidate_index &&
                                             !concept_candidate_index->observe_relation(
-                                                hypothesis, relation, transaction, error)) return false;
+                                                admitted_hypothesis, relation, transaction, error)) return false;
                                     common_adaptation_evidence_relation evidence_relation;
                                     if (!common_agent_teaching_relation_to_evidence_relation(
                                             relation, transaction, evidence_relation, error)) return false;

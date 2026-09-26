@@ -11,6 +11,7 @@
 #include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
 #include "agent/adaptation/flydelta/flydelta-runtime-observer.h"
 #include "agent/adaptation/semantic-teaching.h"
+#include "agent/adaptation/concept-input-routing.h"
 #include "agent/adaptation/concept-candidate-index.h"
 #include "../adaptation/agent-learning-transaction-store.h"
 #include "agent/runtime/agent-inference-contracts.h"
@@ -89,6 +90,7 @@ struct common_agent_runtime_config {
     common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
     common_agent_concept_hypothesis_provider semantic_concept_hypothesis_provider;
     common_agent_concept_hypothesis_batch_provider semantic_concept_hypothesis_batch_provider;
+    common_agent_concept_contrast_provider semantic_concept_contrast_provider;
     common_agent_concept_grounding_provider semantic_concept_grounding_provider;
     std::shared_ptr<common_agent_concept_candidate_index> concept_candidate_index;
     common_agent_flydelta_teaching_material_observer flydelta_teaching_material_observer;
@@ -126,6 +128,7 @@ struct common_agent_runtime_build_config {
     common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
     common_agent_concept_hypothesis_provider semantic_concept_hypothesis_provider;
     common_agent_concept_hypothesis_batch_provider semantic_concept_hypothesis_batch_provider;
+    common_agent_concept_contrast_provider semantic_concept_contrast_provider;
     common_agent_concept_grounding_provider semantic_concept_grounding_provider;
     std::shared_ptr<common_agent_concept_candidate_index> concept_candidate_index;
     common_agent_flydelta_teaching_material_observer flydelta_teaching_material_observer;

@@ -354,6 +354,7 @@ journal remains the durable evidence boundary.
 | 2026-09-26 | this local commit | Safe terminal handling corrected for production BootstrapZoom slices after the concept-synthesis E2E exposed diagnostics without a selected arm being reported as callback failure | 8 focused FlyDelta CTests passed serially; model-free concept-capture and admin smokes passed with tracing; Qwen Instruct server-context E2E passed with 2 relations × 3 capture arms, three synthesis candidates and grafted search ending in `no_useful_utility` | Preserved the existing terminal-search contract: diagnostic trials without a safe promising selection now stop successfully; no algorithm, ranking, learning-credit or promotion semantics changed. This is wiring evidence, not model-quality evidence |
 | 2026-09-26 | this local sweep | Oracle V0 and shared bounded proposer implemented on the existing FlyDelta seams | `test-agent-flydelta-oracles` and `llama-agent-flydelta-oracle-ctest` passed serially; host smoke used the native dataset registry to normalize and execute a grouped aggregation; Qwen Instruct agent/server-context dataset suite completed 12/12 scenarios (9 matched, 3 repair observations); Qwen FlyDelta concept smoke passed with 2 relations × 3 capture arms, 3 candidates and safe grafted-search termination; no learning credit or promotion | Added generic deterministic/host-supported/model-supported evaluator contracts, versioned provenance, probe-suite metrics and a reusable bounded A* proposer. `normalized_call` server verification now uses the dataset semantic oracle. A* is a support component only; existing FlyDelta search algorithms and promotion policy are unchanged |
 | 2026-09-26 | this local sweep | Concurrent worker/admin access to the in-memory lifecycle journal corrected; the timing-dependent model-free admin-smoke hang is closed | Rebuilt all FlyDelta/lifecycle test binaries with three compile workers; 53/53 focused lifecycle/FlyDelta tests passed serially; model-free admin smoke passed five consecutive serial runs with admin/worker tracing and durable replay | Added locking around the existing in-memory lifecycle records and an explicit four-writer concurrency contract test. No store, algorithm, search-policy, learning-credit or promotion-semantics change; this remains wiring/reliability evidence |
+| 2026-09-26 | this local sweep | Research hypothesis routing and the missing proposed-to-host-grounding transition implemented on existing seams | Six focused FlyDelta/teaching CTests passed serially; model-free admin tracing, concept capture/synthesis/augmentation passed; Qwen Instruct server-context runtime and repair E2E passed with no promotion | Added strict structured research-envelope admission, default daemon batch-provider wiring, reusable host contrast-provider adapter and proposed-hypothesis grounding in runtime assembly. No new store, algorithm, Oracle policy, learning-credit or promotion change |
 
 ## Natural dataset-question smoke
 
@@ -2682,6 +2683,60 @@ retained as durable teaching material, while the existing material-group policy
 capture and synthesis. No new FlyDelta job or material store is introduced by
 this layer: `concept_capture`, `concept_synthesis`, grafting and ordinary
 FlyDelta search remain the existing bounded pipeline.
+
+#### V0 research/user-concept input routing
+
+The first automatic input route reuses the completed research result and the
+existing explicit `user_taught_concept_relation_provider`; it does not add
+another research, evidence or candidate store. Research extraction is
+fail-closed: only directly observed, supporting research evidence whose
+statement is an explicit structured `concept_hypothesis` JSON envelope is
+admitted. Free-form research prose, model-inferred evidence, reflection and
+unresolved research remain outside FlyDelta grounding.
+
+The portable envelope is intentionally small and source-reference based:
+
+```json
+{
+  "kind": "concept_hypothesis",
+  "concept_key": "dataset.grouped_sum",
+  "statement": "Use grouped aggregation when totals are requested per region.",
+  "semantic_kind": "decision_rule",
+  "preconditions": ["the request asks for totals per group"]
+}
+```
+
+The daemon installs the existing batch-provider seam for this route when no
+custom hypothesis provider is supplied. It records the resulting hypothesis
+in the existing candidate index as `proposed`; it never marks it grounded.
+Explicit user-taught relations continue through their existing authoritative
+provider and are not recreated by this route.
+
+For a host-supported dataset/tool flow, the host supplies the existing
+`semantic_concept_contrast_provider`. The shared adapter uses that callback to
+obtain already verified baseline/conditioned/control contrasts, checks
+verifier, changed-dimension and independent-key consistency, and converts them
+through the existing `common_agent_concept_contrast_to_teaching_relation`
+bridge. The runtime may now pass a `proposed` hypothesis to this host seam;
+only a returned host-approved relation creates a local grounded copy for
+admission. This closes the missing `proposed -> host grounding` transition
+without changing FlyDelta algorithms, Oracle verdicts, learning-credit rules
+or promotion policy.
+
+The ownership remains:
+
+```text
+research result / explicit user relation
+        -> existing transaction boundary
+        -> existing candidate index (refs only)
+        -> host contrast provider / existing Oracle seam
+        -> TeachingRelation
+        -> existing material, capture and ConceptSynthesis path
+```
+
+No new model call, Q-learning path or A* search integration is introduced by
+V0. A* remains the existing bounded support component for a later host-owned
+valid-combination proposer.
 
 ### FlyDelta Oracle layer and bounded proposer
 

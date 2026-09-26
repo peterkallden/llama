@@ -12,6 +12,7 @@
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-teaching-material.h"
 #include "agent/adaptation/semantic-teaching.h"
+#include "agent/adaptation/concept-input-routing.h"
 
 #include "memory/memory-store.h"
 #include "agent/data-store.h"
@@ -117,6 +118,10 @@ struct common_agent_daemon_runtime {
         user_taught_concept_relation_provider;
     common_agent_concept_hypothesis_provider
         semantic_concept_hypothesis_provider;
+    common_agent_concept_hypothesis_batch_provider
+        semantic_concept_hypothesis_batch_provider;
+    common_agent_concept_contrast_provider
+        semantic_concept_contrast_provider;
     common_agent_concept_grounding_provider
         semantic_concept_grounding_provider;
     common_agent_flydelta_teaching_material_observer

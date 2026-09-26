@@ -377,6 +377,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-learning-case.cpp
         test-agent-learning-transaction.cpp
         test-agent-concept-candidate-index.cpp
+        test-agent-concept-input-routing.cpp
         test-agent-training-candidate.cpp
         test-agent-auto-training-trigger.cpp
         test-agent-learning-corpus.cpp

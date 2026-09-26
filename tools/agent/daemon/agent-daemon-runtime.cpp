@@ -245,8 +245,23 @@ common_agent_runtime_config make_daemon_runtime_config(
         runtime.user_taught_concept_relation_provider;
     config.semantic_concept_hypothesis_provider =
         runtime.semantic_concept_hypothesis_provider;
+    config.semantic_concept_hypothesis_batch_provider =
+        runtime.semantic_concept_hypothesis_batch_provider;
+    if (!config.semantic_concept_hypothesis_batch_provider &&
+            !runtime.semantic_concept_hypothesis_provider) {
+        config.semantic_concept_hypothesis_batch_provider =
+            common_agent_make_research_concept_hypothesis_batch_provider();
+    }
+    config.semantic_concept_contrast_provider =
+        runtime.semantic_concept_contrast_provider;
     config.semantic_concept_grounding_provider =
         runtime.semantic_concept_grounding_provider;
+    if (!config.semantic_concept_grounding_provider &&
+            config.semantic_concept_contrast_provider) {
+        config.semantic_concept_grounding_provider =
+            common_agent_make_concept_grounding_provider(
+                config.semantic_concept_contrast_provider);
+    }
     agent_daemon_flydelta_internal::configure_daemon_flydelta_runtime_config(
         options, runtime, config);
     return config;
