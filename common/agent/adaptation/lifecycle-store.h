@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -90,6 +91,7 @@ public:
     std::vector<common_learning_lifecycle_record> list(std::string & error) const override;
 
 private:
+    mutable std::mutex mutex_;
     std::vector<common_learning_lifecycle_record> records;
 };
 

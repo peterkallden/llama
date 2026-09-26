@@ -183,13 +183,12 @@ bool common_learning_lifecycle_from_json(
 bool common_learning_in_memory_lifecycle_store::append(
         const common_learning_lifecycle_record & record, std::string & error) {
     if (!common_learning_lifecycle_validate(record, 4 * 1024 * 1024, error)) return false;
-    bool contains = false;
-    if (!contains_idempotency(record.idempotency_key, contains, error)) return false;
-    if (contains) {
-        const auto match = std::find_if(records.begin(), records.end(), [&](const auto & item) {
-            return item.idempotency_key == record.idempotency_key;
-        });
-        if (match != records.end() && !same_record(*match, record)) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto match = std::find_if(records.begin(), records.end(), [&](const auto & item) {
+        return item.idempotency_key == record.idempotency_key;
+    });
+    if (match != records.end()) {
+        if (!same_record(*match, record)) {
             error = "lifecycle idempotency key conflicts with existing record";
             return false;
         }
@@ -202,6 +201,7 @@ bool common_learning_in_memory_lifecycle_store::append(
 bool common_learning_in_memory_lifecycle_store::contains_idempotency(
         const std::string & key, bool & contains, std::string & error) const {
     error.clear();
+    std::lock_guard<std::mutex> lock(mutex_);
     contains = std::any_of(records.begin(), records.end(), [&](const auto & item) {
         return item.idempotency_key == key;
     });
@@ -211,6 +211,7 @@ bool common_learning_in_memory_lifecycle_store::contains_idempotency(
 std::vector<common_learning_lifecycle_record> common_learning_in_memory_lifecycle_store::list(
         std::string & error) const {
     error.clear();
+    std::lock_guard<std::mutex> lock(mutex_);
     return records;
 }
 

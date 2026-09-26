@@ -2,6 +2,8 @@
 
 #include <cassert>
 #include <filesystem>
+#include <thread>
+#include <vector>
 
 static common_learning_lifecycle_record record(
         const std::string & event_id,
@@ -58,6 +60,27 @@ int main() {
     invalid.payload_json = "[]";
     assert(!memory.append(invalid, error));
     assert(error.find("JSON object") != std::string::npos);
+
+    common_learning_in_memory_lifecycle_store concurrent;
+    constexpr size_t thread_count = 4;
+    constexpr size_t records_per_thread = 32;
+    std::vector<std::thread> writers;
+    writers.reserve(thread_count);
+    for (size_t thread = 0; thread < thread_count; ++thread) {
+        writers.emplace_back([&concurrent, thread]() {
+            for (size_t index = 0; index < records_per_thread; ++index) {
+                std::string append_error;
+                const auto value = record(
+                    "concurrent-event-" + std::to_string(thread) + "-" + std::to_string(index),
+                    "observed",
+                    "concurrent-idempotency-" + std::to_string(thread) + "-" + std::to_string(index));
+                assert(concurrent.append(value, append_error));
+            }
+        });
+    }
+    for (auto & writer : writers) writer.join();
+    const auto concurrent_values = concurrent.list(error);
+    assert(error.empty() && concurrent_values.size() == thread_count * records_per_thread);
 
     const auto path = std::filesystem::temp_directory_path() / "llama-agent-learning-lifecycle-test.jsonl";
     std::error_code ignored;
