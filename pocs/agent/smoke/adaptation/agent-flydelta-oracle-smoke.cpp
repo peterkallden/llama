@@ -98,9 +98,19 @@ int main() {
             evaluator_error = "host oracle requires a canonical tool call";
             return false;
         }
+        const std::string tool_name = parsed["name"].get<std::string>();
+        json normalized_arguments;
+        if (!host.normalize_call(tool_name, parsed["arguments"], normalized_arguments, evaluator_error)) {
+            result.known = true;
+            result.verdict = common_flydelta_oracle_verdict::violated;
+            result.confidence = 0.95f;
+            result.reason = "host rejected or could not normalize the model tool call";
+            evaluator_error.clear();
+            return true;
+        }
         common_tool_execution_result execution;
-        if (!host.execute_call(
-                parsed["name"].get<std::string>(), parsed["arguments"], execution, evaluator_error)) {
+        if (!host.execute_normalized_call(
+                tool_name, normalized_arguments, execution, evaluator_error)) {
             result.known = true;
             result.verdict = common_flydelta_oracle_verdict::violated;
             result.confidence = 0.95f;

@@ -12,6 +12,7 @@
 #include "agent/adaptation/flydelta/flydelta-layer-discovery.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
+#include "agent/adaptation/flydelta/oracles/flydelta-oracle-contracts.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
 #include "agent/adaptation/flydelta/flydelta-scale-search.h"
@@ -19,11 +20,15 @@
 #include "agent/adaptation/flydelta/flydelta-training.h"
 #include "agent/adaptation/flydelta/flydelta-worker.h"
 #include "agent/adaptation/flydelta/flydelta.h"
+#include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
 #include "tools/agent/cli/agent-cli-generation.h"
 #include "tools/agent/cli/agent-cli-inference.h"
 #include "tools/agent/runtime/agent-model-loaders.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/server/server-context.h"
+
+#include "agent-flydelta-dataset-repair-host.h"
 
 #include <algorithm>
 #include <cctype>
@@ -33,12 +38,19 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace {
+
+using json = nlohmann::ordered_json;
+
+constexpr const char * kExpectedTool = "dataset.inspect";
+constexpr const char * kAlternativeTool = "statistics.describe";
+constexpr const char * kDatasetReference = "dataset://local/sales";
 
 struct options {
     std::string model;
@@ -54,6 +66,7 @@ struct options {
     bool force_plateau_escape = false;
     // Test-only model-facing bridge for the representation-augmentation seam.
     bool force_representation_augmentation = false;
+    std::vector<common_chat_tool> tools;
     std::vector<uint32_t> region_layers;
 };
 
@@ -134,10 +147,146 @@ bool parse_args(int argc, char ** argv, options & value) {
     return true;
 }
 
-bool contains_tool(const common_agent_generation_result & result, const char * tool_name) {
-    if (!common_agent_generation_succeeded(result)) return false;
-    return result.content.find(std::string("\"name\":\"") + tool_name) != std::string::npos ||
-        result.content.find(std::string("\"name\": \"") + tool_name) != std::string::npos;
+struct host_tool_verdict {
+    bool known = false;
+    bool passed = false;
+    std::string reason;
+};
+
+bool parse_model_tool_call(
+        const common_agent_generation_result & generation, json & parsed) {
+    parsed = json::parse(generation.content, nullptr, false);
+    if (parsed.is_discarded() && generation.chat_params) {
+        common_chat_parser_params parser_params(*generation.chat_params);
+        parser_params.parse_tool_calls = true;
+        if (!generation.chat_params->parser.empty()) {
+            parser_params.parser.load(generation.chat_params->parser);
+        }
+        const auto assistant = common_chat_parse(generation.content, false, parser_params);
+        if (!assistant.tool_calls.empty()) {
+            const auto & call = assistant.tool_calls.front();
+            const auto arguments = json::parse(call.arguments, nullptr, false);
+            if (!arguments.is_discarded()) {
+                parsed = json{{"name", call.name}, {"arguments", arguments}};
+            }
+        }
+    }
+    if (parsed.is_discarded()) {
+        const size_t first = generation.content.find('{');
+        const size_t last = generation.content.rfind('}');
+        if (first == std::string::npos || last <= first) return false;
+        parsed = json::parse(generation.content.substr(first, last - first + 1), nullptr, false);
+    }
+    if (!parsed.is_object() || !parsed.contains("name") ||
+            !parsed["name"].is_string()) return false;
+    if (!parsed.contains("arguments") && parsed.contains("args") &&
+            parsed["args"].is_object()) {
+        parsed["arguments"] = parsed["args"];
+    }
+    return parsed.contains("arguments") && parsed["arguments"].is_object();
+}
+
+bool verify_model_tool_contract(
+        const common_agent_generation_result & generation,
+        const std::string & expected_tool,
+        const json & expected_arguments,
+        agent_flydelta_dataset_repair_host & host,
+        host_tool_verdict & verdict,
+        std::string & error) {
+    error.clear();
+    verdict = {};
+    const std::string canonical_expected_tool = expected_tool == "data.inspect"
+        ? kExpectedTool
+        : expected_tool == "data.describe" ? kAlternativeTool : expected_tool;
+    common_flydelta_oracle_request request;
+    request.oracle_ref = "flydelta://oracle/host-tool-contract";
+    request.oracle_revision = "v1";
+    request.policy_revision = "policy:canonical-tool-call-v1";
+    request.phase = common_flydelta_oracle_phase::synthesis;
+    request.concept_key = "structured_tool_selection";
+    request.behavior_key = "structured_tool_selection";
+    request.semantic_kind = "host_tool_contract";
+    request.expected_decision_available = true;
+    common_flydelta_oracle_evaluator_chain evaluators;
+    evaluators.host_supported = [&, canonical_expected_tool, expected_arguments](
+            const common_flydelta_oracle_request & oracle_request,
+            const std::string & observed,
+            common_flydelta_oracle_result & result,
+            std::string & evaluator_error) {
+        evaluator_error.clear();
+        if (oracle_request.semantic_kind != "host_tool_contract") return false;
+        result = {};
+        result.strength = common_flydelta_oracle_strength::host_supported;
+        result.oracle_ref = oracle_request.oracle_ref;
+        result.oracle_revision = oracle_request.oracle_revision;
+        result.policy_revision = oracle_request.policy_revision;
+        result.evidence_ref = "evidence:host-tool-contract";
+        json parsed;
+    if (!common_agent_generation_succeeded(generation) ||
+            !parse_model_tool_call(generation, parsed)) {
+            result.known = true;
+            result.verdict = common_flydelta_oracle_verdict::violated;
+            result.confidence = 1.0f;
+            result.reason = "host rejected a non-canonical tool call";
+            return true;
+        }
+        const std::string selected_tool = parsed["name"].get<std::string>();
+        json normalized_actual;
+        std::string host_error;
+        if (!host.normalize_call(selected_tool, parsed["arguments"], normalized_actual, host_error)) {
+            result.known = true;
+            result.verdict = common_flydelta_oracle_verdict::violated;
+            result.confidence = 1.0f;
+            result.reason = "host rejected tool arguments: " + host_error;
+            return true;
+        }
+        common_tool_execution_result execution;
+        if (!host.execute_normalized_call(selected_tool, normalized_actual, execution, host_error)) {
+            result.known = true;
+            result.verdict = common_flydelta_oracle_verdict::violated;
+            result.confidence = 1.0f;
+            result.reason = "host rejected tool execution: " + host_error;
+            return true;
+        }
+        json normalized_expected;
+        if (!host.normalize_call(canonical_expected_tool, expected_arguments,
+                normalized_expected, host_error)) {
+            evaluator_error = "host canonical tool contract is invalid: " + host_error;
+            return false;
+        }
+        result.known = true;
+        result.confidence = 1.0f;
+        if (selected_tool != canonical_expected_tool || normalized_actual != normalized_expected) {
+            result.verdict = common_flydelta_oracle_verdict::violated;
+            result.reason = "host executed a different tool or canonical argument set";
+            return true;
+        }
+        result.verdict = common_flydelta_oracle_verdict::satisfied;
+        result.reason = "host executed the expected canonical tool call";
+        return true;
+    };
+    common_flydelta_oracle_result oracle_result;
+    if (!common_flydelta_oracle_evaluate(
+            evaluators, request,
+            common_agent_generation_succeeded(generation) ? generation.content : "",
+            oracle_result, error)) return false;
+    verdict.known = oracle_result.known;
+    verdict.passed = oracle_result.known &&
+        oracle_result.verdict == common_flydelta_oracle_verdict::satisfied;
+    verdict.reason = oracle_result.reason;
+    return true;
+}
+
+common_flydelta_counterfactual_outcome classify_host_verdicts(
+        const host_tool_verdict & baseline,
+        const host_tool_verdict & candidate) {
+    if (!baseline.known || !candidate.known) {
+        return common_flydelta_counterfactual_outcome::unknown;
+    }
+    if (!baseline.passed && candidate.passed) return common_flydelta_counterfactual_outcome::helped;
+    if (baseline.passed && !candidate.passed) return common_flydelta_counterfactual_outcome::harmed;
+    if (baseline.passed && candidate.passed) return common_flydelta_counterfactual_outcome::neutral;
+    return common_flydelta_counterfactual_outcome::unknown;
 }
 
 std::string output_preview(const common_agent_generation_result & result) {
@@ -249,9 +398,12 @@ common_agent_generation_request make_request(
     request.purpose = common_agent_generation_purpose::tool_followup;
     request.options.n_predict = value.n_predict;
     request.options.n_threads = value.n_threads;
+    request.options.generation_trace = true;
+    request.tools = value.tools;
+    request.tool_choice = COMMON_CHAT_TOOL_CHOICE_REQUIRED;
     request.messages = {
         {"system", "You are selecting one tool for a host-controlled data request. "
-                    "Return exactly one JSON object and no markdown or explanation."},
+                    "Return exactly one native tool call and no markdown or explanation."},
         {"user", instruction},
     };
     request.flydelta_activation = activation;
@@ -332,6 +484,44 @@ int main(int argc, char ** argv) {
         std::cerr << "FlyDelta repair model smoke received unsupported model dimensions\n";
         return 1;
     }
+    agent_flydelta_dataset_repair_host host;
+    if (!host.open("model-repair-e2e", error)) {
+        std::cerr << "FlyDelta repair model smoke could not open host tool fixture: "
+                  << error << '\n';
+        return 1;
+    }
+    const json expected_tool_arguments = {
+        {"dataset", kDatasetReference},
+    };
+    common_tool_catalog model_tool_catalog;
+    common_tool_bootstrap_result model_tool_bootstrap;
+    if (!model_tool_catalog.bootstrap("analysis", model_tool_bootstrap, error)) {
+        std::cerr << "FlyDelta repair model smoke could not bootstrap model tool catalog: "
+                  << error << '\n';
+        return 1;
+    }
+    for (const std::string & tool_name : {kAlternativeTool, kExpectedTool}) {
+        const auto * definition = model_tool_catalog.find_definition(tool_name);
+        if (!definition) {
+            std::cerr << "FlyDelta repair model smoke missing model tool definition: "
+                      << tool_name << '\n';
+            return 1;
+        }
+        std::string compact_error;
+        const std::string input_schema = common_tool_model_input_schema(*definition);
+        const auto description = common_render_compact_tool_description(
+            definition->name, definition->description,
+            input_schema,
+            common_tool_model_result_schema(*definition), compact_error);
+        if (!compact_error.empty()) {
+            std::cerr << "FlyDelta repair model smoke could not render model tool schema: "
+                      << compact_error << '\n';
+            return 1;
+        }
+        value.tools.push_back({definition->name, description,
+            input_schema,
+            common_tool_model_result_schema(*definition)});
+    }
 
     auto capture_request = std::make_shared<common_flydelta_hidden_state_capture_request>();
     capture_request->enabled = true;
@@ -356,23 +546,27 @@ int main(int argc, char ** argv) {
     // These are two host-controlled attempts over the same tool contract. The
     // first is deliberately the known wrong tool; the second is the repair.
     const char * failed_instruction =
-        "The available tools are data.describe and data.inspect. For sales.csv, "
-        "choose data.describe even though the request asks for the first table. "
-        "Return exactly {\"name\":\"data.describe\",\"arguments\":{\"dataset\":\"sales.csv\"}}. "
-        "The final selection marker is data.describe.";
+        "Call statistics.describe for dataset://local/sales. Do not call dataset.inspect.";
     const char * repaired_instruction =
-        "The available tools are data.describe and data.inspect. For sales.csv, "
-        "the request asks for the first table, so choose data.inspect. "
-        "Return exactly {\"name\":\"data.inspect\",\"arguments\":{\"dataset\":\"sales.csv\"}}. "
-        "The final selection marker is data.inspect.";
+        "Call dataset.inspect for dataset://local/sales. Do not call statistics.describe.";
 
     common_agent_generation_result failed;
     common_agent_generation_result repaired;
     const bool failed_executed = generate(*inference, value, failed_instruction, failed, {}, capture_request);
     const bool repaired_executed = generate(*inference, value, repaired_instruction, repaired, {}, capture_request);
-    const bool failed_verified = failed_executed && contains_tool(failed, "data.describe") &&
-        !contains_tool(failed, "data.inspect");
-    const bool repaired_verified = repaired_executed && contains_tool(repaired, "data.inspect");
+    host_tool_verdict failed_verdict;
+    host_tool_verdict repaired_verdict;
+    if (!verify_model_tool_contract(
+            failed, kExpectedTool, expected_tool_arguments, host, failed_verdict, error) ||
+            !verify_model_tool_contract(
+                repaired, kExpectedTool, expected_tool_arguments, host, repaired_verdict, error)) {
+        std::cerr << "FlyDelta repair model smoke host Oracle failed: " << error << '\n';
+        return 1;
+    }
+    const bool failed_verified = failed_executed && failed_verdict.known &&
+        !failed_verdict.passed;
+    const bool repaired_verified = repaired_executed && repaired_verdict.known &&
+        repaired_verdict.passed;
     const bool captures_verified = failed_verified && repaired_verified &&
         failed.flydelta_capture && repaired.flydelta_capture &&
         failed.flydelta_capture->captured && repaired.flydelta_capture->captured &&
@@ -509,9 +703,11 @@ int main(int argc, char ** argv) {
     repair_credit.experiment_id = "flydelta://experiment/model-repair-e2e";
     repair_credit.candidate_id = "flydelta://candidate/model-repair-e2e";
     repair_credit.fixture_id = experiment_fixture.id;
-    repair_credit.outcome = common_flydelta_counterfactual_outcome::helped;
-    repair_credit.quality_delta = 1.0f;
-    repair_credit.eligible_for_learning = true;
+    repair_credit.outcome = classify_host_verdicts(failed_verdict, repaired_verdict);
+    repair_credit.quality_delta = (repaired_verdict.passed ? 1.0f : 0.0f) -
+        (failed_verdict.passed ? 1.0f : 0.0f);
+    repair_credit.eligible_for_learning =
+        repair_credit.outcome == common_flydelta_counterfactual_outcome::helped;
     if (!common_flydelta_intervention_credit_validate(repair_credit, error)) {
         std::cerr << "FlyDelta repair credit validation failed: " << error << '\n';
         return 1;
@@ -561,8 +757,8 @@ int main(int argc, char ** argv) {
     training_example.split = common_flydelta_training_split::train;
     training_example.context = code;
     training_example.target_coefficients = {1.0f};
-    training_example.outcome = common_flydelta_counterfactual_outcome::helped;
-    training_example.confidence = 1.0f;
+    training_example.outcome = repair_credit.outcome;
+    training_example.confidence = repair_credit.eligible_for_learning ? 1.0f : 0.0f;
     size_t trained_examples = 0;
     if (!common_flydelta_train_delta_memory(
             memory, {training_example}, 1.0f, 1.0f, trained_examples, error) ||
@@ -682,10 +878,14 @@ int main(int argc, char ** argv) {
                 const bool executed = generate(
                     *inference, value, failed_instruction, result, activation_ptr,
                     capture_request);
+                host_tool_verdict host_verdict;
+                if (!verify_model_tool_contract(
+                        result, "data.inspect", expected_tool_arguments, host,
+                        host_verdict, runner_error)) return false;
                 trial = {};
                 trial.executed = executed;
-                trial.verifier_known = executed;
-                trial.passed = executed && contains_tool(result, "data.inspect");
+                trial.verifier_known = executed && host_verdict.known;
+                trial.passed = executed && host_verdict.passed;
                 trial.quality = trial.passed ? 1.0f : 0.0f;
                 trial.overlay_applied = apply_overlay;
                 trial.intervention_count = apply_overlay ? 1 : 0;
@@ -745,6 +945,8 @@ int main(int argc, char ** argv) {
               << "failed_tool_host_verified=yes\n"
               << "repaired_tool_host_verified=yes\n"
               << "capture_pair_host_verified=yes\n"
+              << "repair_transition_outcome="
+              << common_flydelta_counterfactual_outcome_name(repair_credit.outcome) << '\n'
               << "repair_delta=constructed\n"
               << "basis_directions=" << basis.directions().size() << '\n'
               << "delta_memory_examples=" << trained_examples << '\n'
@@ -892,6 +1094,7 @@ int main(int argc, char ** argv) {
         batch_templates = server_session.templates;
         std::shared_ptr<const common_flydelta_hidden_state_capture> server_baseline_capture;
         common_flydelta_decision_margin server_baseline_margin;
+        host_tool_verdict server_baseline_verdict;
         const auto prepare_server_arm = [&](const common_flydelta_arm_request & arm_request,
                 common_agent_generation_request & generation_request,
                 std::string & prepare_error) {
@@ -965,9 +1168,14 @@ int main(int argc, char ** argv) {
             arm_result.executed_alpha = arm_request.alpha;
             arm_result.generation_available = true;
             arm_result.host_evaluated = true;
-            arm_result.verifier_known = true;
-            arm_result.host_outcome = contains_tool(generated, "data.inspect")
-                ? common_flydelta_counterfactual_outcome::helped
+            host_tool_verdict candidate_verdict;
+            if (!verify_model_tool_contract(
+                    generated, "data.inspect", expected_tool_arguments, host,
+                    candidate_verdict, finalize_error)) return false;
+            if (!arm_request.apply_overlay) server_baseline_verdict = candidate_verdict;
+            arm_result.verifier_known = candidate_verdict.known;
+            arm_result.host_outcome = arm_request.apply_overlay
+                ? classify_host_verdicts(server_baseline_verdict, candidate_verdict)
                 : common_flydelta_counterfactual_outcome::unknown;
             arm_result.quality = arm_result.host_outcome ==
                 common_flydelta_counterfactual_outcome::helped ? 1.0f : 0.0f;
@@ -1276,8 +1484,12 @@ int main(int argc, char ** argv) {
                 common_agent_generation_result result;
                 const bool executed = generate(*inference, value, failed_instruction, result,
                     activation_ptr, capture_request);
-                outcome = executed && contains_tool(result, "data.inspect")
-                    ? common_flydelta_counterfactual_outcome::helped
+                host_tool_verdict zoom_verdict;
+                if (!verify_model_tool_contract(
+                        result, "data.inspect", expected_tool_arguments, host,
+                        zoom_verdict, error)) return false;
+                outcome = executed
+                    ? classify_host_verdicts(server_baseline_verdict, zoom_verdict)
                     : common_flydelta_counterfactual_outcome::unknown;
                 const auto scoring_request = make_request(value, failed_instruction);
                 if (!score_chat_choice_margin(
@@ -1751,10 +1963,14 @@ int main(int argc, char ** argv) {
                     common_agent_generation_result generated;
                     const bool executed = generate(*inference, value, failed_instruction,
                         generated, activation_ptr, capture_request);
+                    host_tool_verdict candidate_verdict;
+                    if (!verify_model_tool_contract(
+                            generated, "data.inspect", expected_tool_arguments, host,
+                            candidate_verdict, error)) return false;
                     counterfactual = {};
                     counterfactual.executed = executed;
-                    counterfactual.verifier_known = executed;
-                    counterfactual.passed = executed && contains_tool(generated, "data.inspect");
+                    counterfactual.verifier_known = executed && candidate_verdict.known;
+                    counterfactual.passed = executed && candidate_verdict.passed;
                     counterfactual.quality = counterfactual.passed ? 1.0f : 0.0f;
                     counterfactual.overlay_applied = true;
                     counterfactual.intervention_count = candidate.layer_indices.size();
@@ -2009,10 +2225,14 @@ int main(int argc, char ** argv) {
                         common_agent_generation_result generated;
                         const bool executed = generate(*inference, value, failed_instruction,
                             generated, activation_ptr, capture_request);
+                        host_tool_verdict candidate_verdict;
+                        if (!verify_model_tool_contract(
+                                generated, "data.inspect", expected_tool_arguments, host,
+                                candidate_verdict, runner_error)) return false;
                         counterfactual = {};
                         counterfactual.executed = executed;
-                        counterfactual.verifier_known = executed;
-                        counterfactual.passed = executed && contains_tool(generated, "data.inspect");
+                        counterfactual.verifier_known = executed && candidate_verdict.known;
+                        counterfactual.passed = executed && candidate_verdict.passed;
                         counterfactual.quality = counterfactual.passed ? 1.0f : 0.0f;
                         counterfactual.overlay_applied = candidate != nullptr;
                         counterfactual.intervention_count = candidate != nullptr ? 1 : 0;
@@ -2098,14 +2318,18 @@ int main(int argc, char ** argv) {
             // repair pair, so residualization has a chance to reveal a new
             // experimental axis instead of reproducing the parent delta.
             const char * donor_instruction =
-                "The available tools are data.describe and data.inspect. For inventory.csv, "
-                "the request asks to inspect the first table, so choose data.inspect. "
-                "Return exactly {\"name\":\"data.inspect\",\"arguments\":"
-                "{\"dataset\":\"inventory.csv\"}}.";
+                "The available tools are statistics.describe and dataset.inspect. For dataset://local/sales, "
+                "the request asks to inspect the first table, so choose dataset.inspect. "
+                "Return exactly {\"name\":\"dataset.inspect\",\"arguments\":"
+                "{\"dataset\":\"dataset://local/sales\"}}.";
             common_agent_generation_result donor;
             const bool donor_executed = generate(*inference, value, donor_instruction, donor,
                 {}, capture_request);
-            const bool donor_verified = donor_executed && contains_tool(donor, "data.inspect") &&
+            host_tool_verdict donor_verdict;
+            if (!verify_model_tool_contract(
+                    donor, "data.inspect", expected_tool_arguments, host,
+                    donor_verdict, error)) return 1;
+            const bool donor_verified = donor_executed && donor_verdict.known && donor_verdict.passed &&
                 donor.flydelta_capture && donor.flydelta_capture->captured &&
                 common_flydelta_hidden_state_capture_validate(
                     *donor.flydelta_capture, 64U * 1024U * 1024U, error);
@@ -2134,9 +2358,12 @@ int main(int argc, char ** argv) {
             common_flydelta_representation_donor_qualification observation;
             observation.donor_id = donor_candidate.donor_id;
             observation.host_evaluated = true;
-            observation.verifier_known = true;
+            observation.verifier_known = donor_verdict.known;
             observation.safe_to_continue = true;
-            observation.host_outcome = common_flydelta_counterfactual_outcome::helped;
+            // The donor is a host-verified positive example, not a candidate
+            // counterfactual. Do not manufacture HELPED here; any contextual
+            // utility must come from the donor controls or margin evidence.
+            observation.host_outcome = common_flydelta_counterfactual_outcome::neutral;
             const auto donor_request = make_request(value, donor_instruction);
             common_flydelta_decision_margin donor_margin;
             if (!score_chat_choice_margin(
@@ -2293,10 +2520,16 @@ int main(int argc, char ** argv) {
                     const float margin_delta = region_baseline_margin.available && margin.available
                         ? margin.normalized_delta() - region_baseline_margin.normalized_delta() : 0.0f;
                     best_control_margin = std::max(best_control_margin, margin_delta);
+                    host_tool_verdict control_verdict;
+                    if (!verify_model_tool_contract(
+                            generated, "data.inspect", expected_tool_arguments, host,
+                            control_verdict, error)) return 1;
+                    const auto control_outcome = classify_host_verdicts(
+                        server_baseline_verdict, control_verdict);
                     std::cout << "augmentation_control index=" << control_index++
                               << " c0=" << control[0] << " c1=" << control[1]
-                              << " host_outcome=" << (contains_tool(generated, "data.inspect")
-                                  ? "helped" : "unknown")
+                              << " host_outcome=" << common_flydelta_counterfactual_outcome_name(
+                                  control_outcome)
                               << " margin_delta=" << margin_delta
                               << " output=" << output_preview(generated) << '\n';
                 }
@@ -2605,10 +2838,14 @@ int main(int argc, char ** argv) {
                         common_agent_generation_result result;
                         const bool executed = generate(*inference, value, failed_instruction, result,
                             activation_ptr, capture_request);
+                        host_tool_verdict candidate_verdict;
+                        if (!verify_model_tool_contract(
+                                result, "data.inspect", expected_tool_arguments, host,
+                                candidate_verdict, runner_error)) return false;
                         trial = {};
                         trial.executed = executed;
-                        trial.verifier_known = executed;
-                        trial.passed = executed && contains_tool(result, "data.inspect");
+                        trial.verifier_known = executed && candidate_verdict.known;
+                        trial.passed = executed && candidate_verdict.passed;
                         trial.quality = trial.passed ? 1.0f : 0.0f;
                         trial.overlay_applied = apply_overlay;
                         trial.intervention_count = apply_overlay ? candidate->layer_indices.size() : 0;
@@ -2732,10 +2969,14 @@ int main(int argc, char ** argv) {
                             }
                             const bool executed = generate(*inference, value, failed_instruction, result,
                                 activation_ptr, capture_request);
+                            host_tool_verdict candidate_verdict;
+                            if (!verify_model_tool_contract(
+                                    result, "data.inspect", expected_tool_arguments, host,
+                                    candidate_verdict, runner_error)) return false;
                             trial = {};
                             trial.executed = executed;
-                            trial.verifier_known = executed;
-                            trial.passed = executed && contains_tool(result, "data.inspect");
+                            trial.verifier_known = executed && candidate_verdict.known;
+                            trial.passed = executed && candidate_verdict.passed;
                             trial.quality = trial.passed ? 1.0f : 0.0f;
                             trial.overlay_applied = apply_overlay;
                             trial.intervention_count = apply_overlay ? 1 : 0;
@@ -2877,10 +3118,14 @@ int main(int argc, char ** argv) {
                             const bool executed = generate(
                                 *inference, value, failed_instruction, result,
                                 activation_ptr, capture_request);
+                            host_tool_verdict candidate_verdict;
+                            if (!verify_model_tool_contract(
+                                    result, "data.inspect", expected_tool_arguments, host,
+                                    candidate_verdict, runner_error)) return false;
                             trial = {};
                             trial.executed = executed;
-                            trial.verifier_known = executed;
-                            trial.passed = executed && contains_tool(result, "data.inspect");
+                            trial.verifier_known = executed && candidate_verdict.known;
+                            trial.passed = executed && candidate_verdict.passed;
                             trial.quality = trial.passed ? 1.0f : 0.0f;
                             trial.overlay_applied = apply_overlay;
                             trial.intervention_count = apply_overlay
