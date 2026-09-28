@@ -916,6 +916,23 @@ projection and text parser live in `common/agent/tool-family-index.*` and are
 tested by `test-tool-family-index`; the no-tools generation rule is covered by
 `test-agent-prepared-generation`.
 
+On a first automatic turn, the host keeps the ordering explicit:
+
+```text
+authorized resource inventory
+  -> tool-family preflight
+  -> automatic plan resumption
+  -> automatic blueprint reservation/selection
+  -> resource chunk planning
+  -> family-filtered planner and execution
+```
+
+An automatic blueprint may reserve a task identity only at its own stage. A
+reservation must not be exposed earlier as a caller-owned active plan, because
+that would suppress family routing. An explicit caller tool requirement is
+preserved through every stage; a `NO_TOOLS` preflight result then fails rather
+than silently downgrading the turn to chat or an answer-only fallback.
+
 ### Singleton-tool fast path
 
 Family routing has a deliberately narrow fast path for the common case where

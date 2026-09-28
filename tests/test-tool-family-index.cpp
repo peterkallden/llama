@@ -73,6 +73,9 @@ int main() {
     assert(!selection.needs_tools && selection.family_ids.empty());
     assert(common_parse_tool_family_selection_text("TOOLS: dataset, data", families, selection, error));
     assert(selection.needs_tools && selection.family_ids.size() == 2);
+    assert(common_parse_tool_family_selection_text("TOOLS: data, data, dataset", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids.size() == 2 &&
+        selection.family_ids[0] == "data" && selection.family_ids[1] == "dataset");
     assert(common_parse_tool_family_selection_text(
         "TOOLS: data:QueryAndTransformDatasets, statistics:DescribeAndComputeSummaries",
         families, selection, error));

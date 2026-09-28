@@ -27,11 +27,14 @@ bool select_model_tool_families(
         common_agent_runtime_driver_execution & execution,
         const common_agent_request & request,
         std::string & error) {
+    const bool caller_requires_tool_execution = execution.require_tool_execution;
     execution.model_tools.clear();
     const auto & generation_config = execution.runtime_config.generation_config;
     execution.family_chat_routed = false;
     execution.family_chat_result = {};
-    execution.require_tool_execution = false;
+    // Family preflight may strengthen this invariant after selecting a
+    // family, but must never discard an explicit caller requirement.
+    execution.require_tool_execution = caller_requires_tool_execution;
     if (!generation_config.enable_tool_family_routing ||
             execution.tooling.tools.empty() ||
             !execution.current_plan_id.empty()) {
@@ -100,6 +103,10 @@ bool select_model_tool_families(
         return false;
     }
     if (!selection.needs_tools) {
+        if (execution.require_tool_execution) {
+            error = "tool family selection declined tools for a tool-required request";
+            return false;
+        }
         common_agent_runtime_tooling chat_tooling = execution.tooling;
         chat_tooling.tools.clear();
         common_agent_generation_options chat_options;
@@ -589,6 +596,7 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         {},
         inputs.execution_control,
     };
+    execution.require_tool_execution = inputs.require_tool_execution;
     execution.flydelta_activation = inputs.flydelta_activation;
     return execution;
 }
@@ -683,18 +691,6 @@ bool run_agent_runtime_driver(
         execution.pre_turn_trace,
     };
 
-    if (!maybe_auto_select_plan(orchestration_context, error)) {
-        return false;
-    }
-
-    if (!maybe_auto_select_blueprint(orchestration_context, error)) {
-        return false;
-    }
-
-    if (!prepare_resource_chunk_observations(execution, error)) {
-        return false;
-    }
-
     const std::string original_prompt = execution.orchestration_config.prompt;
     common_agent_result aggregate;
     size_t continuation_count = 0;
@@ -707,6 +703,13 @@ bool run_agent_runtime_driver(
         error = result.error.empty() ? "agent runtime execution stopped" : result.error;
         return false;
     };
+
+    // Family preflight is a host-owned decision about the original request.
+    // It must precede an automatic plan: an auto-created plan otherwise
+    // makes current_plan_id non-empty and suppresses this gate, allowing a
+    // malformed planner fallback to degrade a tool-required task to answer
+    // only. Explicit caller-owned plans still preserve the existing skip in
+    // select_model_tool_families().
     prepare_available_resources(execution);
     const common_agent_request initial_request = make_agent_runtime_driver_request(execution);
     if (execution.execution_control.should_stop()) {
@@ -723,6 +726,19 @@ bool run_agent_runtime_driver(
         error.clear();
         return true;
     }
+
+    if (!maybe_auto_select_plan(orchestration_context, error)) {
+        return false;
+    }
+
+    if (!maybe_auto_select_blueprint(orchestration_context, error)) {
+        return false;
+    }
+
+    if (!prepare_resource_chunk_observations(execution, error)) {
+        return false;
+    }
+
     while (true) {
         if (execution.execution_control.should_stop()) return stop_for_execution_control();
         const auto & model_tools = execution.model_tools.empty()

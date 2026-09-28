@@ -113,7 +113,14 @@ bool prepare_agent_cli_args(args & options, std::string & error) {
     }
     const bool blueprint_selection_enabled = options.agent_runtime &&
         !options.agent_blueprint.empty() && options.agent_blueprint != "off";
-    if (bootstrap_enabled && blueprint_selection_enabled && options.plan_id.empty()) {
+    const bool explicit_blueprint_requested = blueprint_selection_enabled &&
+        options.agent_blueprint != "auto";
+    // An explicit blueprint needs a stable task identity before bootstrap can
+    // instantiate it.  An automatic blueprint must not reserve plan_id here:
+    // that value is otherwise indistinguishable from a caller-owned active
+    // plan and suppresses the runtime's family preflight.  Runtime reserves
+    // its identity only after that preflight and automatic plan selection.
+    if (bootstrap_enabled && explicit_blueprint_requested && options.plan_id.empty()) {
         options.plan_id = "agent-blueprint:" + options.memory_session + ":" +
             (options.memory_turn.empty() ? std::string("turn") : options.memory_turn);
     }

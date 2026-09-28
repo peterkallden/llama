@@ -190,9 +190,13 @@ bool common_parse_tool_family_selection_text(
             error = "tool family selection returned unknown family: " + id;
             return false;
         }
+        // This is a compact-model, one-line classifier rather than a
+        // structured contract.  A repeated already-authorized family carries
+        // no additional authority, so canonicalize it instead of failing the
+        // whole tool-required turn.  Unknown ids still fail above and the
+        // JSON selection contract remains strictly unique.
         if (std::find(selection.family_ids.begin(), selection.family_ids.end(), id) != selection.family_ids.end()) {
-            error = "tool family selection contains duplicate family: " + id;
-            return false;
+            continue;
         }
         selection.family_ids.push_back(id);
     }

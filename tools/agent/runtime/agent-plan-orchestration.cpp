@@ -18,6 +18,11 @@ std::string make_bootstrap_prefix(const common_agent_scope & scope) {
         (scope.project_id.empty() ? "session:" + scope.session_id : "project:" + scope.project_id) + ":";
 }
 
+std::string make_automatic_blueprint_plan_id(const common_agent_scope & scope) {
+    return "agent-blueprint:" + scope.session_id + ":" +
+        (scope.turn_id.empty() ? std::string("turn") : scope.turn_id);
+}
+
 common_agent_request make_orchestration_selection_request(
         const common_agent_orchestration_config & config,
         const common_agent_scope & scope) {
@@ -216,12 +221,23 @@ bool maybe_auto_select_blueprint(
         return true;
     }
 
-    // The first automatic turn may not have a task plan yet.  Blueprint
-    // selection is deferred until the normal agent path has created one;
-    // missing lifecycle state is not a user-turn failure.
-    if (context.current_plan_id.empty() || context.scope.session_id.empty()) {
+    if (context.scope.session_id.empty()) {
         error.clear();
         return true;
+    }
+    if (context.installed_blueprint_candidates.empty()) {
+        error.clear();
+        return true;
+    }
+
+    // Family preflight and automatic plan resumption are host decisions about
+    // the original request.  Only after both have had a chance to run may an
+    // automatic blueprint reserve the task identity it needs for
+    // instantiation.  This keeps a reservation distinct from a caller-owned
+    // active plan and preserves family routing, required-tool propagation and
+    // subsequent resource chunk planning on the first automatic turn.
+    if (context.current_plan_id.empty()) {
+        context.current_plan_id = make_automatic_blueprint_plan_id(context.scope);
     }
 
     auto selector = make_llama_cli_blueprint_selector(context.inference, context.generation_config);

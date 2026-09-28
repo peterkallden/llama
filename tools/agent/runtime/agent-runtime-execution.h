@@ -70,6 +70,9 @@ struct common_agent_runtime_driver_inputs {
     std::function<common_agent_research_stop_reason()> research_stop_reason;
     std::optional<common_memory_candidate> explicit_memory_candidate;
     bool explicit_memory_confirmed = false;
+    // Explicit caller requirement; family preflight may strengthen but never
+    // weaken it when producing the runtime request.
+    bool require_tool_execution = false;
     common_agent_runtime_execution_control execution_control;
     // Optional host-prepared activation for callers that construct the
     // generic driver input path directly instead of using session-host.

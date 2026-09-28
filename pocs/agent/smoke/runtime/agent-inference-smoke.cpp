@@ -1232,6 +1232,7 @@ static void test_runtime_execution_builder() {
         fallback_reason,
         tooling,
     };
+    inputs.require_tool_execution = true;
     inputs.flydelta_activation = activation;
 
     const auto execution = make_agent_runtime_driver_execution(inputs, inference);
@@ -1244,6 +1245,7 @@ static void test_runtime_execution_builder() {
     assert(execution.policy.max_iterations == 2);
     assert(execution.policy.max_reflection_rounds == 1);
     assert(execution.policy.max_tool_rounds == 3);
+    assert(execution.require_tool_execution);
     assert(execution.policy.allow_policy_gated_tool_proposals);
     assert(execution.policy.memory_learn == "post-turn");
     assert(execution.policy.memory_learn_show_candidate);
@@ -1263,6 +1265,8 @@ static void test_runtime_execution_builder() {
     assert(execution.flydelta_activation == activation);
     assert(!execution.tooling.profile_tools_active);
     assert(execution.tooling.tool_view == nullptr);
+    const auto request = make_agent_runtime_driver_request(execution);
+    assert(request.require_tool_execution);
 }
 
 static void test_chat_runtime_driver_smoke() {
@@ -1350,10 +1354,17 @@ static void test_tool_family_singleton_fast_path() {
 
     args options = make_test_args();
     options.prompt = "What time is it?";
-    options.agent_plan = "off";
-    options.agent_blueprint = "off";
+    options.agent_runtime = true;
     options.memory_learn = "off";
     options.max_tool_rounds = 1;
+    assert(prepare_agent_cli_args(options, error));
+    assert(error.empty());
+    // Automatic blueprint selection may need a plan identity later, but it
+    // must not pre-populate the caller-facing plan id and thereby suppress
+    // family routing before the host has seen the original request.
+    assert(options.agent_plan == "auto");
+    assert(options.agent_blueprint == "auto");
+    assert(options.plan_id.empty());
 
     common_agent_scope scope;
     scope.namespace_id = "tenant-a";
@@ -1423,6 +1434,57 @@ static void test_tool_family_singleton_fast_path() {
     assert(inference.seen[2].messages.size() == 3);
     assert(inference.seen[2].messages[2].role == "tool");
     assert(inference.seen[2].messages[2].tool_name == "time_now");
+}
+
+static void test_tool_family_preserves_explicit_tool_requirement() {
+    fake_agent_inference inference;
+    inference.queued = {make_success("NO_TOOLS")};
+    const std::vector<common_chat_tool> tools = {
+        {"time_now", "Return the current UTC time.", R"({"type":"object","additionalProperties":false})"},
+    };
+    common_memory_in_memory_store memories;
+    common_plan_in_memory_store plans;
+    std::string error;
+    assert(memories.open("", error));
+    assert(plans.open("", error));
+
+    args options = make_test_args();
+    options.prompt = "What time is it?";
+    options.agent_plan = "auto";
+    options.agent_blueprint = "off";
+    options.memory_learn = "off";
+    auto runtime_config = make_agent_runtime_config(options);
+    runtime_config.generation_config.enable_tool_family_routing = true;
+    const std::vector<common_blueprint_candidate> blueprints;
+    const std::vector<common_memory_hit> hits;
+    common_agent_scope scope;
+    scope.session_id = "session-required";
+    scope.turn_id = "turn-required";
+    std::string current_plan_id;
+    const auto tooling = make_runtime_tooling(tools);
+    common_agent_runtime_driver_execution execution{
+        memories,
+        plans,
+        inference,
+        make_agent_runtime_policy(options),
+        runtime_config,
+        make_test_agent_orchestration_config(options),
+        current_plan_id,
+        scope,
+        blueprints,
+        std::nullopt,
+        hits,
+        common_memory_scope::session,
+        true,
+        tooling,
+    };
+    execution.require_tool_execution = true;
+
+    common_agent_result result;
+    assert(!run_agent_runtime_driver(execution, result, error));
+    assert(error == "tool family selection declined tools for a tool-required request");
+    assert(inference.seen.size() == 1);
+    assert(inference.seen.front().purpose == common_agent_generation_purpose::tool_family_selection);
 }
 
 static void test_chat_runtime_rejects_truncated_output() {
@@ -2327,6 +2389,7 @@ static bool run_named_test(const std::string & name) {
     } else if (name == "chat-runtime-driver-smoke") {
         test_chat_runtime_driver_smoke();
         test_tool_family_singleton_fast_path();
+        test_tool_family_preserves_explicit_tool_requirement();
         test_chat_runtime_rejects_truncated_output();
         test_chat_runtime_continues_text_at_message_boundary();
         test_truncated_tool_call_is_not_dispatched();
