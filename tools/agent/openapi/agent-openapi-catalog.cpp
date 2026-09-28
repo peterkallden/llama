@@ -29,6 +29,62 @@ std::string make_operation_id(const std::string & method, const std::string & pa
     return result;
 }
 
+std::string canonical_parameter_name(const std::string & value) {
+    std::string result;
+    result.reserve(value.size());
+    for (const char character : value) {
+        if (std::isalnum(static_cast<unsigned char>(character))) {
+            result.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(character))));
+        }
+    }
+    return result;
+}
+
+const std::string * find_query_parameter(
+        const std::vector<std::string> & parameters,
+        std::initializer_list<const char *> names) {
+    for (const auto & parameter : parameters) {
+        const auto canonical = canonical_parameter_name(parameter);
+        for (const char * name : names) {
+            if (canonical == name) return &parameter;
+        }
+    }
+    return nullptr;
+}
+
+agent_openapi_paging_contract classify_paging_contract(
+        const std::vector<std::string> & query_parameters) {
+    agent_openapi_paging_contract paging;
+    if (const auto * parameter = find_query_parameter(
+            query_parameters, {"perpage", "pagesize", "limit", "maxresults"})) {
+        paging.page_size_parameter = *parameter;
+    }
+    if (const auto * parameter = find_query_parameter(
+            query_parameters, {"page", "pagenumber"})) {
+        paging.page_parameter = *parameter;
+    }
+    if (const auto * parameter = find_query_parameter(query_parameters, {"offset", "skip"})) {
+        paging.page_parameter = *parameter;
+    }
+    if (const auto * parameter = find_query_parameter(
+            query_parameters, {"cursor", "pagecursor", "nextcursor", "pageafter"})) {
+        paging.cursor_parameter = *parameter;
+    }
+    if (const auto * parameter = find_query_parameter(
+            query_parameters, {"select", "fields", "fieldmask", "projection"})) {
+        paging.projection_parameter = *parameter;
+    }
+
+    if (!paging.cursor_parameter.empty()) paging.kind = agent_openapi_paging_kind::cursor;
+    else if (!paging.page_parameter.empty() &&
+            (canonical_parameter_name(paging.page_parameter) == "offset" ||
+             canonical_parameter_name(paging.page_parameter) == "skip")) {
+        paging.kind = agent_openapi_paging_kind::offset;
+    } else if (!paging.page_parameter.empty()) paging.kind = agent_openapi_paging_kind::page_number;
+    else if (!paging.page_size_parameter.empty()) paging.kind = agent_openapi_paging_kind::bounded_collection;
+    return paging;
+}
+
 bool policy_allows(
         const agent_openapi_operation & operation,
         const agent_host_openapi_provider_config & config,
@@ -399,6 +455,17 @@ std::string agent_openapi_access_name(agent_openapi_access access) {
     return "write";
 }
 
+const char * agent_openapi_paging_kind_name(agent_openapi_paging_kind kind) {
+    switch (kind) {
+        case agent_openapi_paging_kind::none: return "none";
+        case agent_openapi_paging_kind::bounded_collection: return "bounded_collection";
+        case agent_openapi_paging_kind::page_number: return "page_number";
+        case agent_openapi_paging_kind::offset: return "offset";
+        case agent_openapi_paging_kind::cursor: return "cursor";
+    }
+    return "none";
+}
+
 bool build_agent_openapi_catalog(
         const nlohmann::json & document,
         const agent_host_openapi_provider_config & config,
@@ -478,10 +545,12 @@ bool build_agent_openapi_catalog(
                     !operation_result_schema(document, value, error, operation.result_schema_json)) {
                 return false;
             }
+            operation.paging = classify_paging_contract(operation.query_parameters);
 
             const auto policy_it = config.operations.find(operation.operation_id);
             const auto * override_policy = policy_it == config.operations.end() ? nullptr : &policy_it->second;
             if (!policy_allows(operation, config, override_policy)) continue;
+            if (override_policy != nullptr) operation.host_required_parameters = override_policy->required_parameters;
             if (override_policy != nullptr && !override_policy->access.empty()) {
                 if (override_policy->access == "read") {
                     operation.access = agent_openapi_access::read;

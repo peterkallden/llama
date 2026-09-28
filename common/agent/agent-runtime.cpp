@@ -1240,7 +1240,16 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             if (!execution.ok) {
                 if (tool_step_id == "request") { append_event(result, request, {common_agent_event_type::tool_rejected, execution.safe_summary, {}, plan.id}); result.error = "registered request tool failed: " + execution.safe_summary; return result; }
                 const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
-                const auto failure = structured_tool_failure(tool_call->name, tool_step_id, failure_observation_id, execution);
+                auto failure = structured_tool_failure(tool_call->name, tool_step_id, failure_observation_id, execution);
+                if (failure.retryable) {
+                    std::string repair_error = failure.safe_summary;
+                    if (!execution.raw_diagnostic.empty()) {
+                        if (!repair_error.empty()) repair_error += " ";
+                        repair_error += execution.raw_diagnostic;
+                    }
+                    const auto repair = tools->make_repair_context(*tool_call, repair_error);
+                    failure.repair_context_json = tool_repair_context_json(repair);
+                }
                 result.failures.push_back(failure);
                 common_plan_operation observed;
                 observed.kind = common_plan_operation_kind::record_observation;

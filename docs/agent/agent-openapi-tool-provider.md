@@ -98,6 +98,40 @@ It makes one bounded `GET /works` request with `search=machine learning`,
 not a top-level array, so the current provider keeps it as a bounded JSON
 resource rather than guessing that it is a tabular dataset.
 
+### Paging is contract-derived
+
+The host classifies collection operations from the parameters declared by the
+OpenAPI contract. It recognizes bounded page sizes, page numbers, offsets and
+cursors, and records the exact parameter names together with an optional
+projection parameter. For example, the checked-in OpenAlex `listWorks`
+operation is classified as a cursor-paged collection with `per_page`, `cursor`
+and `select`.
+
+That metadata is projected into the generated model-facing tool description:
+the model is told to bound each request, use a continuation cursor only when
+the response supplies one, and request only the fields needed for the task.
+The host still owns the endpoint, arguments validation, result-size limit and
+execution. Classification does not invent a cursor, silently issue follow-up
+requests, or turn an oversized result into a successful answer. Automatic
+pagination remains a future provider/runtime operation. A host may additionally
+set `limits.default_page_size` and `limits.max_page_size` for a provider. When
+both are positive, the HTTP executor supplies the declared page-size parameter
+when the model omits it and clamps an oversized supplied value. This is a
+single-request safety bound, not automatic pagination or cursor following.
+For APIs with large item schemas, an operation policy may additionally set
+`default_projection`; the host supplies it only when the operation declares a
+projection parameter and the model did not provide one. This keeps projection
+defaults operation-specific and avoids inventing fields for unrelated APIs.
+An operation policy may also set `required_parameters` for parameters that are
+semantically required by the host-approved use of an otherwise broader API.
+These remain host-use policy rather than additions to the OpenAPI schema's
+`required` list or to the model-facing schema. That preserves the common
+validator's repairable execution seam. The host checks them immediately before
+HTTP execution and, if one is missing, returns a retryable required-parameter
+result with repair context so the existing planner or reflection path can
+revise the tool step. The host does not invent a search term or silently
+execute an unscoped collection request.
+
 The optional model-backed smoke uses the same host/provider path and forces
 the model to use `openalex.listWorks` rather than the generic web tools:
 
@@ -148,7 +182,8 @@ Its standalone OpenAPI contract is
           "exposure": "auto",
           "operations": {
             "searchSales": {
-              "access": "read"
+              "access": "read",
+              "required_parameters": ["query"]
             }
           }
         },

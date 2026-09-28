@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <vector>
 
 int main() {
     const nlohmann::json document = {
@@ -62,6 +63,10 @@ int main() {
                             {"schema", {{"type", "string"}}}},
                         {{"$ref", "#/components/parameters/search"}},
                         {{"$ref", "#/components/parameters/perPage"}},
+                        {{"name", "cursor"}, {"in", "query"},
+                            {"schema", {{"type", "string"}}}},
+                        {{"name", "select"}, {"in", "query"},
+                            {"schema", {{"type", "string"}}}},
                     }},
                     {"responses", {{"200", {{"content", {{"application/json", {{"schema", {{"type", "array"}, {"items", {{"type", "object"}}}}}}}}}}}}}}},
                 {"post", {
@@ -83,6 +88,7 @@ int main() {
     config.prefix = "sales";
     config.access = "read_only";
     config.exposure = "auto";
+    config.operations["listSales"].required_parameters = {"search"};
     agent_openapi_catalog catalog;
     std::string error;
     if (!build_agent_openapi_catalog(document, config, catalog, error) ||
@@ -96,7 +102,13 @@ int main() {
             std::find(catalog.operations[0].query_parameters.begin(),
                 catalog.operations[0].query_parameters.end(), "per-page") ==
                 catalog.operations[0].query_parameters.end() ||
+            catalog.operations[0].paging.kind != agent_openapi_paging_kind::cursor ||
+            catalog.operations[0].paging.page_size_parameter != "per-page" ||
+            catalog.operations[0].paging.cursor_parameter != "cursor" ||
+            catalog.operations[0].paging.projection_parameter != "select" ||
             catalog.operations[0].input_schema_json.find("x-agent-autowire-fields") == std::string::npos ||
+            catalog.operations[0].host_required_parameters != std::vector<std::string>{"search"} ||
+            catalog.operations[0].input_schema_json.find("\"required\"") != std::string::npos ||
             catalog.operations[0].result_schema_json.find("\"type\":\"array\"") == std::string::npos ||
             !catalog.operations[0].auth_required ||
             catalog.operations[0].security_schemes.size() != 1 ||
@@ -153,6 +165,7 @@ int main() {
     assert(get_sale != catalog.operations.end());
     assert(std::find(get_sale->path_parameters.begin(), get_sale->path_parameters.end(), "id") !=
         get_sale->path_parameters.end());
+    assert(get_sale->paging.kind == agent_openapi_paging_kind::none);
 
     agent_openapi_result_projection projection;
     assert(classify_agent_openapi_result_json(

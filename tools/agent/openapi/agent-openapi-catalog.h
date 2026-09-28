@@ -13,6 +13,25 @@ enum class agent_openapi_access {
     destructive,
 };
 
+// Contract-derived navigation metadata. This only describes parameters
+// declared by the OpenAPI operation; it does not invent paging semantics or
+// issue follow-up requests on the model's behalf.
+enum class agent_openapi_paging_kind {
+    none,
+    bounded_collection,
+    page_number,
+    offset,
+    cursor,
+};
+
+struct agent_openapi_paging_contract {
+    agent_openapi_paging_kind kind = agent_openapi_paging_kind::none;
+    std::string page_size_parameter;
+    std::string page_parameter;
+    std::string cursor_parameter;
+    std::string projection_parameter;
+};
+
 struct agent_openapi_security_scheme {
     std::string name;
     std::string type;
@@ -32,6 +51,12 @@ struct agent_openapi_operation {
     std::string input_schema_json = R"({"type":"object"})";
     std::vector<std::string> path_parameters;
     std::vector<std::string> query_parameters;
+    // Host-use policy, separate from the OpenAPI schema's required list.
+    // These parameters are described to the model and checked immediately
+    // before execution so the common contract validator can still surface a
+    // repairable host failure.
+    std::vector<std::string> host_required_parameters;
+    agent_openapi_paging_contract paging;
     agent_openapi_access access = agent_openapi_access::write;
     bool read_only = false;
     bool requires_confirmation = false;
@@ -87,6 +112,8 @@ struct agent_openapi_catalog {
     std::vector<agent_openapi_relation> relations;
     std::vector<agent_openapi_security_scheme> security_schemes;
 };
+
+const char * agent_openapi_paging_kind_name(agent_openapi_paging_kind kind);
 
 // Parse an OpenAPI 3 document and apply the host-owned exposure policy. Local
 // component references for parameters, schemas, request bodies, responses and

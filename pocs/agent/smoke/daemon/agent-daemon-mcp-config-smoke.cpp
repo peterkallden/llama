@@ -113,7 +113,10 @@ int main(int argc, char ** argv) {
                             {"access", "read_only"},
                             {"exposure", "auto"},
                             {"operations", {
-                                {"searchSales", {{"access", "read"}}},
+                                {"searchSales", {
+                                    {"access", "read"},
+                                    {"required_parameters", json::array({"query"})},
+                                }},
                             }},
                         }},
                         {"auth", {
@@ -258,6 +261,8 @@ int main(int argc, char ** argv) {
             loaded_config.openapi_providers.front().access != "read_only" ||
             loaded_config.openapi_providers.front().exposure != "auto" ||
             loaded_config.openapi_providers.front().operations.size() != 1 ||
+            loaded_config.openapi_providers.front().operations.at("searchSales").required_parameters !=
+                std::vector<std::string>{"query"} ||
             loaded_config.openapi_providers.front().auth.scheme != "bearerAuth" ||
             loaded_config.openapi_providers.front().auth.token_env != "SALES_API_TOKEN") {
         std::fprintf(stderr, "host config OpenAPI provider contract failed\n");
@@ -396,6 +401,8 @@ int main(int argc, char ** argv) {
             roundtrip["tools"]["providers"].size() != 3 ||
             roundtrip["tools"]["providers"][2]["type"] != "openapi" ||
             roundtrip["tools"]["providers"][2]["policy"]["access"] != "read_only" ||
+            roundtrip["tools"]["providers"][2]["policy"]["operations"]["searchSales"]["required_parameters"] !=
+                json::array({"query"}) ||
             roundtrip["tools"]["providers"][2]["auth"]["scheme"] != "bearerAuth" ||
             roundtrip["tools"]["providers"][2]["auth"]["token_env"] != "SALES_API_TOKEN") {
         std::fprintf(stderr, "host config OpenAPI roundtrip mismatch\n");

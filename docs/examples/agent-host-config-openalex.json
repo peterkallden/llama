@@ -11,7 +11,7 @@
         "description": "Search and retrieve scholarly works from the public OpenAlex API"
       }
     },
-    "providers": [
+      "providers": [
       {
         "type": "openapi",
         "id": "openalex",
@@ -22,7 +22,13 @@
         "prefix": "openalex",
         "policy": {
           "access": "read_only",
-          "exposure": "auto"
+          "exposure": "auto",
+          "operations": {
+            "listWorks": {
+              "default_projection": "id,display_name",
+              "required_parameters": ["search"]
+            }
+          }
         },
         "auth": {
           "type": "none"
@@ -30,7 +36,9 @@
         "limits": {
           "connect_timeout_ms": 5000,
           "request_timeout_ms": 30000,
-          "max_result_bytes": 1048576
+          "max_result_bytes": 1048576,
+          "default_page_size": 1,
+          "max_page_size": 1
         }
       }
     ]

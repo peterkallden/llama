@@ -18,12 +18,36 @@ void set_environment_variable(const char * name, const char * value) {
 #endif
 }
 
+agent_openapi_catalog make_get_sale_catalog(const agent_host_openapi_provider_config & config) {
+    agent_openapi_catalog catalog;
+    catalog.provider_id = "sales-api";
+    catalog.base_url = config.base_url;
+    catalog.prefix = "sales";
+    agent_openapi_operation get_sale;
+    get_sale.operation_id = "getSale";
+    get_sale.method = "get";
+    get_sale.path = "/sales/{id}";
+    get_sale.summary = "Get sale";
+    get_sale.description = "Get sale";
+    get_sale.input_schema_json = R"({"type":"object"})";
+    get_sale.path_parameters = {"id"};
+    get_sale.query_parameters = {"limit"};
+    get_sale.paging.kind = agent_openapi_paging_kind::bounded_collection;
+    get_sale.paging.page_size_parameter = "limit";
+    get_sale.access = agent_openapi_access::read;
+    get_sale.read_only = true;
+    catalog.operations.push_back(std::move(get_sale));
+    return catalog;
+}
+
 } // namespace
 
 int main() {
     httplib::Server server;
-    server.Get("/sales/42", [](const httplib::Request & request, httplib::Response & response) {
-        assert(request.get_param_value("limit") == "10");
+    int sale_requests = 0;
+    server.Get("/sales/42", [&sale_requests](const httplib::Request & request, httplib::Response & response) {
+        ++sale_requests;
+        assert(request.get_param_value("limit") == (sale_requests == 1 ? "5" : "10"));
         response.set_content(R"({"id":42,"total":7})", "application/json");
     });
     server.Get("/basic", [](const httplib::Request & request, httplib::Response & response) {
@@ -58,13 +82,11 @@ int main() {
     config.connect_timeout_ms = 1000;
     config.request_timeout_ms = 2000;
     config.max_result_bytes = 1024;
+    config.default_page_size = 5;
+    config.max_page_size = 10;
     config.allow_private_network = true;
-    agent_openapi_catalog catalog;
-    catalog.provider_id = config.id;
-    catalog.prefix = "sales";
-    catalog.operations.push_back({
-        "getSale", "get", "/sales/{id}", "Get sale", "Get sale", R"({"type":"object"})",
-        {"id"}, {"limit"}, agent_openapi_access::read, true, false});
+    config.operations["getSale"].required_parameters = {"id"};
+    agent_openapi_catalog catalog = make_get_sale_catalog(config);
 
     int observed_status = 0;
     std::string observed_mime;
@@ -81,18 +103,23 @@ int main() {
     std::string error;
     auto view = provider.resolve_tools(context, error);
     assert(view != nullptr);
-    const auto result = view->call({"http-1", "sales.getSale", R"({"id":"42","limit":"10"})"}, error);
+    const auto missing_required = view->call(
+        {"http-required", "sales.getSale", R"({"limit":1})"}, error);
+    assert(!missing_required.ok);
+    assert(missing_required.failure_code == "openapi.required_parameter_missing");
+    assert(missing_required.retryable);
+    assert(missing_required.raw_diagnostic.find("required operation parameter is missing: getSale.id") != std::string::npos);
+    const auto result = view->call({"http-1", "sales.getSale", R"({"id":"42"})"}, error);
     assert(result.ok);
     assert(result.content_json.find("\"total\":7") != std::string::npos);
     assert(observed_status == 200);
     assert(observed_mime == "application/json");
+    const auto capped_result = view->call({"http-1-capped", "sales.getSale", R"({"id":"42","limit":99})"}, error);
+    assert(capped_result.ok);
 
     config.allow_private_network = false;
     agent_openapi_tool_provider private_denied_provider(
-        agent_openapi_catalog{
-            "sales-api", config.base_url, "sales", {
-                {"getSale", "get", "/sales/{id}", "Get sale", "Get sale", R"({"type":"object"})",
-                    {"id"}, {"limit"}, agent_openapi_access::read, true, false}}},
+        make_get_sale_catalog(config),
         make_agent_openapi_http_executor(config));
     auto private_denied_view = private_denied_provider.resolve_tools(context, error);
     assert(private_denied_view != nullptr);
@@ -101,10 +128,7 @@ int main() {
     assert(!private_denied.ok);
 
     context.allow_network = false;
-    agent_openapi_tool_provider denied_provider(std::move(agent_openapi_catalog{
-        "sales-api", config.base_url, "sales", {
-            {"getSale", "get", "/sales/{id}", "Get sale", "Get sale", R"({"type":"object"})",
-                {"id"}, {"limit"}, agent_openapi_access::read, true, false}}}),
+    agent_openapi_tool_provider denied_provider(make_get_sale_catalog(config),
         make_agent_openapi_http_executor(config));
     auto denied_view = denied_provider.resolve_tools(context, error);
     assert(denied_view != nullptr);

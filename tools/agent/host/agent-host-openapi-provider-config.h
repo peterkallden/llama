@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <map>
 #include <string>
+#include <vector>
 
 #include "agent-host-provider-auth-config.h"
 
@@ -13,6 +14,8 @@
 struct agent_host_openapi_operation_policy {
     bool enabled = true;
     std::string access;
+    std::string default_projection;
+    std::vector<std::string> required_parameters;
 };
 
 struct agent_host_openapi_provider_config {
@@ -39,4 +42,8 @@ struct agent_host_openapi_provider_config {
     uint32_t connect_timeout_ms = 5000;
     uint32_t request_timeout_ms = 30000;
     size_t max_result_bytes = 1024 * 1024;
+    // Zero disables host pagination defaults. When configured, these values
+    // apply only to a contract-classified collection page-size parameter.
+    uint32_t default_page_size = 0;
+    uint32_t max_page_size = 0;
 };

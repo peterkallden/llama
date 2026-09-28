@@ -14,6 +14,7 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <limits>
 
 namespace {
 struct url_parts { std::string scheme, host, base_path; int port = 0; };
@@ -98,6 +99,58 @@ std::string join_path(const std::string & base, const std::string & path) {
     if (base.empty()) return path.empty() ? "/" : path;
     if (path.empty()) return base;
     return base.back() == '/' && path.front() == '/' ? base + path.substr(1) : base + path;
+}
+
+bool normalize_collection_page_size(
+        const agent_host_openapi_provider_config & config,
+        const agent_openapi_operation & operation,
+        nlohmann::json & arguments,
+        std::string & error) {
+    if (config.default_page_size == 0 || operation.paging.page_size_parameter.empty()) return true;
+    const auto & parameter = operation.paging.page_size_parameter;
+    uint64_t requested = config.default_page_size;
+    if (const auto it = arguments.find(parameter); it != arguments.end()) {
+        if (it->is_number_unsigned()) requested = it->get<uint64_t>();
+        else if (it->is_number_integer() && it->get<int64_t>() > 0) requested = static_cast<uint64_t>(it->get<int64_t>());
+        else if (it->is_string()) {
+            try { requested = std::stoull(it->get<std::string>()); }
+            catch (...) { error = "OpenAPI page size must be a positive integer: " + parameter; return false; }
+        } else { error = "OpenAPI page size must be a positive integer: " + parameter; return false; }
+        if (requested == 0) { error = "OpenAPI page size must be a positive integer: " + parameter; return false; }
+    }
+    arguments[parameter] = std::min<uint64_t>(requested, config.max_page_size);
+    return true;
+}
+
+bool validate_required_operation_parameters(
+        const agent_host_openapi_provider_config & config,
+        const agent_openapi_operation & operation,
+        const nlohmann::json & arguments,
+        std::string & error) {
+    const auto policy = config.operations.find(operation.operation_id);
+    if (policy == config.operations.end()) return true;
+    for (const auto & parameter : policy->second.required_parameters) {
+        const auto it = arguments.find(parameter);
+        if (it == arguments.end() || it->is_null() ||
+                (it->is_string() && it->get<std::string>().empty())) {
+            error = "OpenAPI required operation parameter is missing: " +
+                operation.operation_id + "." + parameter;
+            return false;
+        }
+    }
+    return true;
+}
+
+void normalize_collection_projection(
+        const agent_host_openapi_provider_config & config,
+        const agent_openapi_operation & operation,
+        nlohmann::json & arguments) {
+    if (operation.paging.projection_parameter.empty() ||
+            arguments.contains(operation.paging.projection_parameter)) return;
+    const auto policy = config.operations.find(operation.operation_id);
+    if (policy != config.operations.end() && !policy->second.default_projection.empty()) {
+        arguments[operation.paging.projection_parameter] = policy->second.default_projection;
+    }
 }
 
 template<typename Client>
@@ -272,8 +325,18 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             error = "OpenAPI request targets a private or local network address";
             return false;
         }
-        const auto arguments = nlohmann::json::parse(arguments_json, nullptr, false);
+        auto arguments = nlohmann::json::parse(arguments_json, nullptr, false);
         if (!arguments.is_object()) { error = "OpenAPI tool arguments must be a JSON object"; return false; }
+        if (!validate_required_operation_parameters(config, operation, arguments, error)) {
+            result.failure_code = "openapi.required_parameter_missing";
+            result.failure_class = common_tool_failure_class::validation;
+            result.retryable = true;
+            result.safe_summary = "A host-required OpenAPI argument is missing; repair the tool arguments before retrying.";
+            result.raw_diagnostic = error;
+            return true;
+        }
+        if (!normalize_collection_page_size(config, operation, arguments, error)) return false;
+        normalize_collection_projection(config, operation, arguments);
         const auto * security_scheme = selected_security_scheme(operation, config, error);
         if (operation.auth_required && security_scheme == nullptr) return false;
         std::string path = operation.path;

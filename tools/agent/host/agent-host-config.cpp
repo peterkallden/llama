@@ -277,6 +277,13 @@ bool read_openapi_provider(
                 agent_host_openapi_operation_policy operation;
                 read_optional(it.value(), "enabled", operation.enabled);
                 read_optional(it.value(), "access", operation.access);
+                read_optional(it.value(), "default_projection", operation.default_projection);
+                if (it.value().contains("required_parameters") &&
+                        !read_string_array(it.value()["required_parameters"],
+                            operation.required_parameters,
+                            "OpenAPI operation policy required_parameters", error)) {
+                    return false;
+                }
                 provider.operations.emplace(it.key(), std::move(operation));
             }
         }
@@ -307,6 +314,8 @@ bool read_openapi_provider(
         read_optional(value["limits"], "connect_timeout_ms", provider.connect_timeout_ms);
         read_optional(value["limits"], "request_timeout_ms", provider.request_timeout_ms);
         read_optional(value["limits"], "max_result_bytes", provider.max_result_bytes);
+        read_optional(value["limits"], "default_page_size", provider.default_page_size);
+        read_optional(value["limits"], "max_page_size", provider.max_page_size);
     }
     error.clear();
     return true;
@@ -1098,6 +1107,8 @@ nlohmann::ordered_json agent_host_config_to_json(
             operations[operation.first] = {
                 {"enabled", operation.second.enabled},
                 {"access", operation.second.access},
+                {"default_projection", operation.second.default_projection},
+                {"required_parameters", operation.second.required_parameters},
             };
         }
         providers.push_back({
@@ -1132,6 +1143,8 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"connect_timeout_ms", provider.connect_timeout_ms},
                 {"request_timeout_ms", provider.request_timeout_ms},
                 {"max_result_bytes", provider.max_result_bytes},
+                {"default_page_size", provider.default_page_size},
+                {"max_page_size", provider.max_page_size},
             }},
         });
     }
@@ -1876,6 +1889,11 @@ bool validate_agent_host_config(
         }
         if (provider.connect_timeout_ms == 0 || provider.request_timeout_ms == 0 || provider.max_result_bytes == 0) {
             error = "OpenAPI provider limits must be greater than zero";
+            return false;
+        }
+        if ((provider.default_page_size == 0) != (provider.max_page_size == 0) ||
+                (provider.default_page_size != 0 && provider.default_page_size > provider.max_page_size)) {
+            error = "OpenAPI pagination limits must set a positive default_page_size no greater than max_page_size";
             return false;
         }
         for (const auto & operation : provider.operations) {
