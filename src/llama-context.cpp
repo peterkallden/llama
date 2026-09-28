@@ -974,7 +974,9 @@ float * llama_context::get_embeddings_nextn_ith(int32_t i) {
 float * llama_context::get_embeddings_layer_inp(uint32_t lid) {
     output_reorder();
 
-    GGML_ASSERT(lid < embd_layer_inp.size() && embd_layer_inp[lid].has_data());
+    if (lid >= embd_layer_inp.size() || !embd_layer_inp[lid].has_data()) {
+        return nullptr;
+    }
 
     return embd_layer_inp[lid].data;
 }
@@ -2208,7 +2210,11 @@ void llama_context::extract_layer_inputs(const llm_graph_result * res, size_t to
         }
         ggml_tensor * t = res->get_layer_inp((int) il);
         if (!t) {
-            GGML_ABORT("layer input tensor not found");
+            // The graph may not expose this optional diagnostic seam for the
+            // selected architecture. Leave the output empty so callers get a
+            // controlled capture failure instead of a process assertion.
+            embd_layer_inp[il] = {nullptr, 0};
+            continue;
         }
 
         const size_t nbytes = ggml_nbytes(t);
