@@ -179,6 +179,30 @@ does not create FlyDelta evidence. `HELPED` is still reserved for a later
 host-verified behavioral outcome; capture deltas, teacher margins and patch
 application are diagnostic signals only.
 
+## Repair algorithm contrast evidence
+
+`llama-agent-flydelta-repair-echo-replay-ctest` is the deterministic
+algorithm contrast test. It replays durable repair observations but uses
+controlled hidden-state spread so it can test the common FlyDelta algorithms
+without making a claim about a particular model. For each behavior family it
+compares a robust repair direction with a same-budget raw-repair control:
+
+```text
+target direction + localized layer + host HELPED
+    -> Whirlpool/region selection may select it
+
+control direction + plausible geometry + no host pass
+    -> must not be selected
+```
+
+The same test also runs the bounded rank-two Deep/TFO path and requires that
+its selected coefficient arm comes from the full-generation, host-verified
+`HELPED` frontier. Margin and representation geometry may rank diagnostic
+arms, but neither can make the control direction selected or create learning
+credit. This is algorithm/contract evidence only; the causal patch smoke and
+a live model repair smoke remain necessary to establish model-specific
+counterfactual behavior.
+
 The first matrix compares self-replacement, exact repair-state replacement,
 scaled exact deltas, the existing FlyDelta direction and a norm-matched
 control at the same layer-input/generation-boundary site. It does not enable

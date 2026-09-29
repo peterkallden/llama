@@ -336,7 +336,7 @@ int main(int argc, char ** argv) {
 
         common_flydelta_search_pipeline_config pipeline_config;
         pipeline_config.dimension = kDimension;
-        pipeline_config.max_directions = 1;
+        pipeline_config.max_directions = 2;
         pipeline_config.scale.initial_scale = 0.04f;
         pipeline_config.scale.growth_factor = 2.0f;
         pipeline_config.scale.max_scale = 0.16f;
@@ -348,15 +348,30 @@ int main(int argc, char ** argv) {
         pipeline_config.region_max_neighborhoods = 2;
         pipeline_config.region_max_trials = 8;
         pipeline_config.region_max_stalled_scales = 2;
-        common_flydelta_search_pipeline_direction pipeline_direction;
-        pipeline_direction.direction = candidates.front();
-        pipeline_direction.available_layers = {22, 24, 25};
-        pipeline_direction.layer_anchors = {25};
+        // Run the ordinary WHERE/HOW-MUCH pipeline against an explicit
+        // contrast.  The target direction represents the host-certified
+        // repair delta; the raw direction is a same-budget control.  The
+        // runner deliberately gives the control a plausible diagnostic
+        // geometry, but never a host-verifier pass.  This proves that the
+        // search selects semantic evidence rather than geometry alone.
+        const auto target_it = std::find_if(candidates.begin(), candidates.end(),
+            [](const common_flydelta_direction_candidate & candidate) {
+                return candidate.kind == common_flydelta_direction_kind::normalized_trimmed_mean;
+            });
+        CHECK(target_it != candidates.end());
+        common_flydelta_search_pipeline_direction target_direction;
+        target_direction.direction = *target_it;
+        target_direction.available_layers = {22, 24, 25};
+        target_direction.layer_anchors = {25};
+        common_flydelta_search_pipeline_direction control_direction = target_direction;
+        control_direction.direction = candidates.front();
+        CHECK(control_direction.direction.kind == common_flydelta_direction_kind::raw_repair);
         common_flydelta_search_pipeline_result pipeline_result;
         CHECK(common_flydelta_run_search_pipeline(
-            experiment_fixture, pipeline_config, {pipeline_direction},
+            experiment_fixture, pipeline_config, {target_direction, control_direction},
             [&](const common_flydelta_experiment_fixture & current_fixture,
-                    const common_flydelta_direction_candidate &, const common_flydelta_layer_candidate * layer,
+                    const common_flydelta_direction_candidate & direction,
+                    const common_flydelta_layer_candidate * layer,
                     float scale, bool apply_overlay, common_flydelta_counterfactual_trial & trial,
                     common_flydelta_decision_margin & margin, common_flydelta_scale_geometry & geometry,
                     std::string & runner_error) {
@@ -368,10 +383,12 @@ int main(int argc, char ** argv) {
                 trial.overlay_applied = apply_overlay;
                 trial.intervention_count = layer == nullptr ? 0 : layer->layer_indices.size();
                 trial.evidence_ref = current_fixture.id + (apply_overlay ? ":candidate" : ":baseline");
-                const bool target = layer != nullptr && std::find(layer->layer_indices.begin(),
+                const bool target_layer = layer != nullptr && std::find(layer->layer_indices.begin(),
                     layer->layer_indices.end(), static_cast<uint32_t>(kLayer)) != layer->layer_indices.end();
-                const float effect = apply_overlay && target ? scale * 3.0f : 0.0f;
-                trial.passed = apply_overlay && effect >= 0.10f;
+                const bool target_direction =
+                    direction.kind == common_flydelta_direction_kind::normalized_trimmed_mean;
+                const float effect = apply_overlay && target_direction && target_layer ? scale * 3.0f : 0.0f;
+                trial.passed = apply_overlay && target_direction && effect >= 0.10f;
                 trial.quality = trial.passed ? std::min(1.0f, effect) : 0.0f;
                 margin.available = true;
                 margin.positive_total_logprob = -0.40f + effect;
@@ -380,15 +397,27 @@ int main(int argc, char ** argv) {
                 margin.negative_token_count = 1;
                 if (apply_overlay) {
                     geometry.available = true;
-                    geometry.cosine = target ? 0.70f : 0.40f;
-                    geometry.progress = target ? effect : 0.01f;
-                    geometry.leakage = target ? 0.10f : 0.35f;
+                    geometry.cosine = target_layer ? 0.70f : 0.40f;
+                    geometry.progress = target_layer ? std::max(effect, 0.08f) : 0.01f;
+                    geometry.leakage = target_layer ? 0.10f : 0.35f;
                     geometry.shift_norm = scale;
                 }
                 return common_flydelta_decision_margin_validate(margin, runner_error);
             }, pipeline_result, error));
-        total_search_trials += pipeline_result.directions.front().region_trials.size();
-        if (!pipeline_result.directions.front().whirlpool_trace.rounds.empty()) ++whirlpool_groups;
+        CHECK(pipeline_result.directions.size() == 2);
+        CHECK(pipeline_result.selection.selected);
+        CHECK(pipeline_result.selection.direction_index == 0);
+        const auto & target_pipeline = pipeline_result.directions[0];
+        const auto & control_pipeline = pipeline_result.directions[1];
+        CHECK(target_pipeline.region_selection.selected);
+        CHECK(!control_pipeline.region_selection.selected);
+        CHECK(std::none_of(control_pipeline.region_trials.begin(), control_pipeline.region_trials.end(),
+            [](const common_flydelta_intervention_region_trial & trial) {
+                return trial.outcome == common_flydelta_counterfactual_outcome::helped;
+            }));
+        CHECK(target_pipeline.whirlpool_trace.final_centre == static_cast<uint32_t>(kLayer));
+        total_search_trials += target_pipeline.region_trials.size() + control_pipeline.region_trials.size();
+        if (!target_pipeline.whirlpool_trace.rounds.empty()) ++whirlpool_groups;
 
         common_flydelta_deep_search_config deep_config;
         deep_config.max_rank = 2;
@@ -408,6 +437,10 @@ int main(int argc, char ** argv) {
             experiment_fixture, deep_config, deep_directions,
             coefficient_runner, coefficient_runner, deep_result, error));
         CHECK(deep_result.basis.vectors.size() == 2 && !deep_result.coefficient_trials.empty());
+        CHECK(deep_result.coefficient_selection.selected);
+        CHECK(deep_result.coefficient_selection.trial_index < deep_result.coefficient_trials.size());
+        CHECK(deep_result.coefficient_trials[deep_result.coefficient_selection.trial_index].outcome ==
+            common_flydelta_counterfactual_outcome::helped);
         ++forced_deep_groups;
         ++tfo_groups;
         std::cout << "flydelta_spread_group behavior_key=" << behavior_key
