@@ -198,10 +198,52 @@ model-facing JSON schema describe the same contract: each proposed step is a
 registered tool with an ordinary JSON `args` object, and no reasoning or final
 step is model-owned. Before a planner candidate is accepted, host-known
 required argument names are checked against that model-facing schema; a missing
-field is a planner-candidate rejection and bounded regeneration, not an
-execution attempt with an incomplete call. When tool execution is optional,
-the bounded reasoning form remains available. Host-owned step IDs, dependency
-edges and final synthesis remain outside the model-facing contract.
+field is a planner-candidate rejection and enters the dedicated planner
+argument-repair form below, not an execution attempt with an incomplete call.
+When tool execution is optional, the bounded reasoning form remains available.
+Host-owned step IDs, dependency edges and final synthesis remain outside the
+model-facing contract.
+
+### Planner argument repair before execution
+
+This is distinct from the reflection repair of a failed executed step. It is
+used only when the planner has already selected a registered tool and the host
+can identify a required argument that is absent from that candidate. The
+existing planner step and tool identity remain host-owned; the bounded repair
+generation receives only this model-facing shape:
+
+```json
+{
+  "args": {
+    "search": "machine learning"
+  }
+}
+```
+
+The runtime builds the `args` schema from the selected tool's registered
+model-facing schema and promotes the identified missing property to
+`required` when that property is declared there. The repair prompt includes
+the selected operation, its compact contract, the existing arguments, the
+original user request and the host validation error. The model may provide
+semantic values that are present in that context, but the host does not invent
+or infer a missing value on the model's behalf.
+
+On acceptance, the host merges the returned patch into the rejected step's
+existing arguments, normalizes it through the existing planner argument
+contract, replaces only that step's `args`, and runs the ordinary planner
+validation again. The response cannot select another tool, add a step, replace
+the plan, or carry arbitrary top-level fields. The repair consumes the existing
+single bounded planner regeneration; it is not a second scheduler or an
+unbounded retry loop. The planner generation budget is configurable
+independently from ordinary response generation; when it is omitted, the
+established planner fallback budget remains in effect. If the repair is invalid
+or still incomplete, required tool execution fails closed before dispatch.
+
+This path intentionally reuses the provider's model-facing projection. For
+OpenAPI, host-required operation parameters therefore appear in the same
+dynamic schema that ordinary planning sees; native and MCP tools use their
+registered model input schema in the same way. Execution still uses the
+canonical provider validation and input contract after planning.
 
 Provider result schemas follow the same projection boundary. An OpenAPI
 response schema is available to the compact planner contract as a

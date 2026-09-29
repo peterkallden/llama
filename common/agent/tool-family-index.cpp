@@ -108,6 +108,82 @@ std::string common_tool_family_selection_schema() {
     return R"({"type":"object","additionalProperties":false,"required":["needs_tools","families"],"properties":{"needs_tools":{"type":"boolean"},"families":{"type":"array","maxItems":8,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":64}},"reason":{"type":"string","maxLength":256}}})";
 }
 
+std::string common_tool_family_required_selection_schema(
+        const std::vector<common_tool_family_index> & families) {
+    json schema = {
+        {"type", "object"},
+        {"additionalProperties", false},
+        {"required", json::array({"families"})},
+        {"properties", {
+            {"families", {
+                {"type", "array"},
+                {"minItems", 1},
+                {"maxItems", 8},
+                {"uniqueItems", true},
+                {"items", {
+                    {"type", "string"},
+                    {"minLength", 1},
+                    {"maxLength", 64},
+                }},
+            }},
+        }},
+    };
+    json family_enum = json::array();
+    for (const auto & family : families) {
+        if (!family.id.empty()) family_enum.push_back(family.id);
+    }
+    schema["properties"]["families"]["items"]["enum"] = std::move(family_enum);
+    return schema.dump();
+}
+
+bool common_parse_tool_family_required_selection(
+        const std::string & json_text,
+        const std::vector<common_tool_family_index> & families,
+        common_tool_family_selection & selection,
+        std::string & error) {
+    selection = {};
+    const auto value = json::parse(json_text, nullptr, false);
+    if (value.is_discarded() || !value.is_object()) {
+        error = "required tool family selection must be a JSON object";
+        return false;
+    }
+    if (value.size() != 1 || !value.contains("families") ||
+            !value["families"].is_array()) {
+        error = "required tool family selection must contain only families:string[]";
+        return false;
+    }
+    if (value["families"].empty()) {
+        error = "required tool family selection must include at least one family";
+        return false;
+    }
+    if (value["families"].size() > 8) {
+        error = "required tool family selection contains too many families";
+        return false;
+    }
+    std::set<std::string> available;
+    for (const auto & family : families) available.insert(family.id);
+    std::set<std::string> seen;
+    for (const auto & item : value["families"]) {
+        if (!item.is_string() || item.get<std::string>().empty()) {
+            error = "required tool family selection families must contain non-empty strings";
+            return false;
+        }
+        const std::string id = item.get<std::string>();
+        if (!available.count(id)) {
+            error = "required tool family selection returned unknown family: " + id;
+            return false;
+        }
+        if (!seen.insert(id).second) {
+            error = "required tool family selection families must be unique";
+            return false;
+        }
+        selection.family_ids.push_back(id);
+    }
+    selection.needs_tools = true;
+    error.clear();
+    return true;
+}
+
 bool common_parse_tool_family_selection(
         const std::string & json_text,
         common_tool_family_selection & selection,

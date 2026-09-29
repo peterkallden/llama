@@ -418,8 +418,12 @@ Family selection is a preflight over the host-approved tool view:
 ```text
 request
   -> compact family selection
-      NO_TOOLS -> ordinary conversation
-      TOOLS: ... -> selected tools -> plan or narrow singleton fast path
+      ordinary request:
+        NO_TOOLS -> ordinary conversation
+        TOOLS: ... -> selected tools -> plan or narrow singleton fast path
+      required request:
+        {"families":[...]} -> selected tools -> plan or narrow singleton fast path
+        (NO_TOOLS/needs_tools:false is invalid)
 ```
 
 Selecting a family means that the request needs external evidence. The host

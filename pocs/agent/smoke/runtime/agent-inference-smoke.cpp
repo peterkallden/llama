@@ -579,11 +579,12 @@ static void test_planner_rejects_missing_model_tool_arguments() {
     fake_agent_inference inference;
     inference.queued = {
         make_success(R"({"goal":"Search works","steps":[{"tool":"openalex.listWorks","args":{},"mode":"tool"}]})"),
-        make_success(R"({"goal":"Search works","steps":[{"tool":"openalex.listWorks","args":{"search":"machine learning"},"mode":"tool"}]})"),
+        make_success(R"({"args":{"search":"machine learning"}})"),
     };
 
     const auto options = make_test_args();
     common_agent_request request = make_request();
+    request.prompt = "Search OpenAlex for machine learning works.";
     request.require_tool_execution = true;
     const std::vector<common_chat_tool> tools = {
         {"openalex.listWorks", "List OpenAlex works.",
@@ -597,9 +598,45 @@ static void test_planner_rejects_missing_model_tool_arguments() {
     assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
     assert(proposal.operations[0].step->tool_call->arguments_json == R"({"search":"machine learning"})");
     assert(inference.seen.size() == 2);
+    assert(inference.seen[1].json_schema.find("\"required\":[\"args\"]") != std::string::npos);
+    assert(inference.seen[1].json_schema.find("\"search\"") != std::string::npos);
+    const auto & planner_system = inference.seen[1].messages[0].content;
     const auto & repair = inference.seen[1].messages[1].content;
+    assert(planner_system.find("openalex.listWorks") != std::string::npos);
+    assert(planner_system.find("search:string") != std::string::npos);
     assert(repair.find("planner tool arguments missing required field: openalex.listWorks.search") != std::string::npos);
     assert(repair.find("args matching that tool's registered model-facing schema") != std::string::npos);
+    assert(repair.find("Search OpenAlex for machine learning works.") != std::string::npos);
+}
+
+static void test_planner_repairs_missing_arguments_after_structural_regeneration() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success("{\"goal\":\"broken\",\"steps\":[", 256, common_agent_generation_stop_reason::limit),
+        make_success(R"({"goal":"Search works","steps":[{"tool":"openalex.listWorks","args":{},"mode":"tool"}]})"),
+        make_success(R"({"args":{"search":"machine learning"}})"),
+    };
+
+    const auto options = make_test_args();
+    common_agent_request request = make_request();
+    request.prompt = "Search OpenAlex for machine learning works.";
+    request.require_tool_execution = true;
+    const std::vector<common_chat_tool> tools = {
+        {"openalex.listWorks", "List OpenAlex works.",
+            R"({"type":"object","additionalProperties":false,"required":["search"],"properties":{"search":{"type":"string"}}})"},
+    };
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    assert(error.empty());
+    assert(proposal.operations.size() == 2);
+    assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
+    assert(proposal.operations[0].step->tool_call->arguments_json == R"({"search":"machine learning"})");
+    assert(inference.seen.size() == 3);
+    assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
+    assert(inference.seen[2].json_schema.find("\"required\":[\"args\"]") != std::string::npos);
+    assert(inference.seen[2].json_schema.find("\"search\"") != std::string::npos);
+    assert(inference.seen[2].messages[0].content.find("already selected tool") != std::string::npos);
 }
 
 static void test_planner_repairs_invalid_resource_binding() {
@@ -1492,7 +1529,10 @@ static void test_tool_family_singleton_fast_path() {
 
 static void test_tool_family_preserves_explicit_tool_requirement() {
     fake_agent_inference inference;
-    inference.queued = {make_success("NO_TOOLS")};
+    // Required mode has its own family-selection contract.  A legacy
+    // NO_TOOLS response must not route to ordinary chat; the bounded repair
+    // is also rejected here so the test proves the fail-closed seam.
+    inference.queued = {make_success("NO_TOOLS"), make_success("NO_TOOLS")};
     const std::vector<common_chat_tool> tools = {
         {"time_now", "Return the current UTC time.", R"({"type":"object","additionalProperties":false})"},
     };
@@ -1536,9 +1576,11 @@ static void test_tool_family_preserves_explicit_tool_requirement() {
 
     common_agent_result result;
     assert(!run_agent_runtime_driver(execution, result, error));
-    assert(error == "tool family selection declined tools for a tool-required request");
-    assert(inference.seen.size() == 1);
+    assert(error == "tool family selection failed: required tool family selection must be a JSON object");
+    assert(inference.seen.size() == 2);
     assert(inference.seen.front().purpose == common_agent_generation_purpose::tool_family_selection);
+    assert(inference.seen.front().json_schema.find("\"minItems\":1") != std::string::npos);
+    assert(inference.seen.back().json_schema.find("\"needs_tools\"") == std::string::npos);
 }
 
 static void test_chat_runtime_rejects_truncated_output() {
@@ -2418,6 +2460,8 @@ static bool run_named_test(const std::string & name) {
         test_planner_repairs_final_only_plan_without_binding_noise();
     } else if (name == "planner-missing-tool-arguments") {
         test_planner_rejects_missing_model_tool_arguments();
+    } else if (name == "planner-missing-tool-arguments-after-regeneration") {
+        test_planner_repairs_missing_arguments_after_structural_regeneration();
     } else if (name == "planner-resource-binding-repair") {
         test_planner_repairs_invalid_resource_binding();
     } else if (name == "planner-host-dataset-inventory") {
@@ -2500,6 +2544,7 @@ int main(int argc, char ** argv) {
         "planner-regeneration",
         "planner-final-only-repair",
         "planner-missing-tool-arguments",
+        "planner-missing-tool-arguments-after-regeneration",
         "planner-resource-binding-repair",
         "planner-host-dataset-inventory",
         "planner-compact-dataset-handles",

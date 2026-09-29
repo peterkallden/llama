@@ -1134,6 +1134,22 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Dedicated causal residual-patch smoke. It uses the resident server-context
+# path and compares exact replacement, scaled repair delta, existing direction
+# material and a norm-matched random control. It never grants learning credit.
+set(TARGET llama-agent-flydelta-causal-patch-model-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-causal-patch-model-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Optional natural-language dataset question smoke. It uses the same compact
 # model-facing contract as the host, captures bounded hidden states, and
 # reports mismatches as repair observations. It never promotes a mismatch to
@@ -1155,6 +1171,20 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-flydelta-dataset-question-contract-smoke)
 add_executable(${TARGET}
     smoke/adaptation/agent-flydelta-dataset-question-contract-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+# Always-runnable contract smoke for teacher-forced contrast validity. It
+# prevents identical positive/negative continuations from becoming a silent
+# zero-margin diagnostic.
+set(TARGET llama-agent-flydelta-teacher-forced-contrast-contract-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-flydelta-teacher-forced-contrast-contract-smoke.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -2272,8 +2302,10 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-flydelta-cvec-batch-model-smoke
     llama-agent-flydelta-runtime-smoke
     llama-agent-flydelta-repair-model-smoke
+    llama-agent-flydelta-causal-patch-model-smoke
     llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-flydelta-dataset-question-contract-smoke
+    llama-agent-flydelta-teacher-forced-contrast-contract-smoke
     llama-agent-flydelta-repair-echo-replay-smoke
     llama-agent-resident-smoke
     llama-agent-model-residency-smoke
@@ -2507,10 +2539,20 @@ if (BUILD_TESTING)
     set_tests_properties(llama-agent-flydelta-repair-model-ctest PROPERTIES
         SKIP_RETURN_CODE 77 TIMEOUT 420)
 
+    add_test(NAME llama-agent-flydelta-causal-patch-model-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-causal-patch-model-smoke>)
+    set_property(TEST llama-agent-flydelta-causal-patch-model-ctest PROPERTY LABELS agent-adaptation)
+    set_tests_properties(llama-agent-flydelta-causal-patch-model-ctest PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 900)
+
     add_test(NAME llama-agent-flydelta-dataset-question-contract-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-contract-smoke>
             ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json)
     set_property(TEST llama-agent-flydelta-dataset-question-contract-ctest PROPERTY LABELS agent-adaptation)
+
+    add_test(NAME llama-agent-flydelta-teacher-forced-contrast-contract-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-teacher-forced-contrast-contract-smoke>)
+    set_property(TEST llama-agent-flydelta-teacher-forced-contrast-contract-ctest PROPERTY LABELS agent-adaptation)
 
     add_test(NAME llama-agent-flydelta-repair-echo-replay-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-repair-echo-replay-smoke>

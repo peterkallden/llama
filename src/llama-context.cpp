@@ -2217,7 +2217,13 @@ void llama_context::extract_layer_inputs(const llm_graph_result * res, size_t to
             continue;
         }
         if (!embd_layer_inp[il].has_data()) {
-            GGML_ABORT("output layer input buffer not allocated");
+            // Layer-input capture is an optional diagnostic seam. Some model
+            // graphs do not expose the requested input buffer; report an
+            // empty capture to the caller instead of aborting the whole
+            // server-context request. The agent/FlyDelta seam will then
+            // fail closed with a capture error.
+            embd_layer_inp[il] = {nullptr, 0};
+            continue;
         }
         ggml_tensor * t = res->get_layer_inp((int) il);
         if (!t) {

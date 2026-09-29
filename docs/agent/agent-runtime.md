@@ -851,7 +851,7 @@ tool families:
 
 The agent always uses the automatic two-stage tool-intent flow, not only a future extension. The host first exposes only the family
 names and descriptions, then renders exact tool names and compact contracts
-for selected families. The first decision uses a bounded plain-text contract:
+for selected families. Ordinary requests use a bounded plain-text contract:
 
 ```text
 NO_TOOLS
@@ -862,6 +862,15 @@ or:
 ```text
 TOOLS: dataset, data
 ```
+
+When `require_tool_execution` is true, the preflight uses a separate required
+contract. The model must return one JSON object with a non-empty `families`
+array containing one or more ids from the displayed, host-filtered family
+index. Required preflight has no `NO_TOOLS` or `needs_tools:false` branch. A
+malformed or empty required selection is repaired once and then fails closed;
+it is never routed to ordinary answer-only chat. This contract selects
+families, not concrete tools or arguments. Exact model-facing tool schemas are
+still rendered only after the host validates the family selection.
 
 The host may replace a built-in family description through the main JSON
 configuration under `tools.families`. The family id is the namespace before
@@ -886,8 +895,8 @@ manager keeps the host-owned tooling snapshot immutable during a session, so
 changing `tools.families` through `reload_config` is restart-required rather
 than a partial hot update.
 
-This deliberately avoids asking a small model to satisfy the full JSON tool
-grammar before the host knows whether tools are needed. `NO_TOOLS` routes the
+For ordinary requests this deliberately avoids asking a small model to satisfy
+the full JSON tool grammar before the host knows whether tools are needed. `NO_TOOLS` routes the
 turn directly to ordinary conversation with an empty tool list. This remains
 valid when attachments are present if the turn is unrelated to them;
 attachments make resource and dataset families available, but do not make
@@ -930,8 +939,11 @@ authorized resource inventory
 An automatic blueprint may reserve a task identity only at its own stage. A
 reservation must not be exposed earlier as a caller-owned active plan, because
 that would suppress family routing. An explicit caller tool requirement is
-preserved through every stage; a `NO_TOOLS` preflight result then fails rather
-than silently downgrading the turn to chat or an answer-only fallback.
+preserved through every stage. In required mode, family selection itself is
+mandatory: the host does not choose an arbitrary family on the model's behalf
+and does not widen the tool view. A `NO_TOOLS` or `needs_tools:false` result is
+invalid and fails rather than silently downgrading the turn to chat or an
+answer-only fallback.
 
 ### Singleton-tool fast path
 

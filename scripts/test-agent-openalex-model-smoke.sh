@@ -89,6 +89,9 @@ args=(
     --context-size "${LLAMA_AGENT_CONTEXT_SIZE:-4096}"
     --threads "${LLAMA_AGENT_THREADS:-4}" -ngl "${LLAMA_AGENT_GPU_LAYERS:-0}"
 )
+if [[ -n "${LLAMA_AGENT_PLANNER_N_PREDICT:-}" ]]; then
+    args+=(--planner-n-predict "$LLAMA_AGENT_PLANNER_N_PREDICT")
+fi
 if [[ -n "$embedding_model" ]]; then
     args+=(--embedding-model "$embedding_model")
 fi

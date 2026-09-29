@@ -44,14 +44,21 @@ bool select_model_tool_families(
     const auto families = common_generate_tool_family_index(
         execution.tooling.tools, execution.tooling.family_descriptions);
     const std::string family_view = common_render_tool_family_index(families, 2048);
+    const bool required_family_selection = caller_requires_tool_execution;
     common_chat_msg system{
         "system",
-        "Decide whether the user request needs external tools. Reply with exactly one line: "
-        "NO_TOOLS for ordinary conversation, or TOOLS: family_id[, family_id...] when tools "
-        "are needed. Current-turn attachments are optional inputs: choose the resource or "
-        "dataset family when the request concerns an attached file, but keep NO_TOOLS for "
-        "unrelated conversation. Do not explain, use JSON, or invent family ids. Available "
-        "families:\n" + family_view,
+        required_family_selection
+            ? "Tool execution is required for this request. Choose one or more tool families "
+              "from the available host-authorized family ids. Return exactly one JSON object "
+              "with a non-empty families array. Do not return NO_TOOLS, needs_tools:false, "
+              "tool names, arguments, explanations, or invented family ids. Available "
+              "families:\n" + family_view
+            : "Decide whether the user request needs external tools. Reply with exactly one line: "
+              "NO_TOOLS for ordinary conversation, or TOOLS: family_id[, family_id...] when tools "
+              "are needed. Current-turn attachments are optional inputs: choose the resource or "
+              "dataset family when the request concerns an attached file, but keep NO_TOOLS for "
+              "unrelated conversation. Do not explain, use JSON, or invent family ids. Available "
+              "families:\n" + family_view,
     };
     common_chat_msg user{"user", request.prompt + common_agent_render_input_resource_context(
         request.input_resources, 2048, request.available_resources)};
@@ -74,7 +81,11 @@ bool select_model_tool_families(
                 options,
                 json_schema));
     };
-    auto generation = generate_selection(":tool-family-selection", {system, user});
+    const std::string required_schema = required_family_selection
+        ? common_tool_family_required_selection_schema(families)
+        : std::string{};
+    auto generation = generate_selection(
+        ":tool-family-selection", {system, user}, required_schema);
     if (!common_agent_generation_succeeded(generation)) {
         error = "tool family selection failed: " + generation.error_message;
         if (generation.error_message.empty()) error += " model did not return a completed selection";
@@ -82,7 +93,12 @@ bool select_model_tool_families(
     }
 
     common_tool_family_selection selection;
-    if (!common_parse_tool_family_selection_text(generation.content, families, selection, error)) {
+    const bool parsed = required_family_selection
+        ? common_parse_tool_family_required_selection(
+            generation.content, families, selection, error)
+        : common_parse_tool_family_selection_text(
+            generation.content, families, selection, error);
+    if (!parsed) {
         const std::string original_selection_error = error;
         // Keep the parser strict: a malformed first classifier response must
         // never grant a family that it did not name exactly.  Small models do
@@ -92,15 +108,27 @@ bool select_model_tool_families(
         // authorization grammar itself.
         common_chat_msg repair{
             "system",
-            "Your previous tool-family selection was invalid. Return the required JSON object only. "
-            "Families may contain only ids from the available list; do not include tool arguments, "
-            "resource ids, explanations, or any other text.",
+            required_family_selection
+                ? "Tool execution is required. Your previous family selection was invalid. "
+                  "Return only a JSON object with a non-empty families array containing one or "
+                  "more ids from the available list. Do not return NO_TOOLS, needs_tools:false, "
+                  "tool arguments, resource ids, explanations, or any other text."
+                : "Your previous tool-family selection was invalid. Return the required JSON object only. "
+                  "Families may contain only ids from the available list; do not include tool arguments, "
+                  "resource ids, explanations, or any other text.",
         };
         const auto repaired = generate_selection(
             ":tool-family-selection-repair", {system, repair, user},
-            common_tool_family_selection_schema());
-        if (common_agent_generation_succeeded(repaired) &&
-                common_parse_tool_family_selection(repaired.content, selection, error)) {
+            required_family_selection
+                ? common_tool_family_required_selection_schema(families)
+                : common_tool_family_selection_schema());
+        const bool repaired_ok = common_agent_generation_succeeded(repaired) &&
+            (required_family_selection
+                ? common_parse_tool_family_required_selection(
+                    repaired.content, families, selection, error)
+                : common_parse_tool_family_selection(
+                    repaired.content, selection, error));
+        if (repaired_ok) {
             // Repaired selection is subject to the same policy filtering as
             // the original response.
         } else {
@@ -115,7 +143,8 @@ bool select_model_tool_families(
                 families.begin(), families.end(), [](const common_tool_family_index & family) {
                     return family.id == "resource";
                 });
-            if (empty_tools_selection && request.input_resources.size() == 1 && has_resource_family) {
+            if (!required_family_selection && empty_tools_selection &&
+                    request.input_resources.size() == 1 && has_resource_family) {
                 selection.needs_tools = true;
                 selection.family_ids = {"resource"};
                 error.clear();

@@ -163,6 +163,37 @@ existing atomic review-store seam, and
 `llama-agent-daemon-flydelta-admin-smoke` covers the model-free admin sequence
 through traced queue, worker, persistence, review and canary replay.
 
+## Causal residual-patch smoke boundary
+
+The causal residual-patch smoke is an experiment, not a second production
+planner or lifecycle path. It uses the existing server-context inference and
+the production CLI planner so family/tool contracts, bounded planner
+regeneration and model-facing schemas remain the same. A smoke-local observer
+records those generation attempts and applies a request-scoped patch only for
+the experiment.
+
+The counterfactual gate is strict: the baseline must be a host-rejected tool
+or argument choice and a later bounded regeneration must be host-valid. If
+that pair is not observed, the smoke returns `fixture_not_counterfactual` and
+does not create FlyDelta evidence. `HELPED` is still reserved for a later
+host-verified behavioral outcome; capture deltas, teacher margins and patch
+application are diagnostic signals only.
+
+The first matrix compares self-replacement, exact repair-state replacement,
+scaled exact deltas, the existing FlyDelta direction and a norm-matched
+control at the same layer-input/generation-boundary site. It does not enable
+TFO, synthesis, promotion or lifecycle changes. Model runs use the supplied
+runtime configuration; portable scripts and documentation must not contain
+machine-specific paths or hardware assumptions.
+
+Model support is fail-closed. FlyDelta capture and residual patching are only
+meaningful for model graphs that expose the requested layer-input seam. An
+unsupported graph (for example GPT-2 in the current backend) must return a
+controlled capture/patch failure; it must not be added to the architecture
+allowlist merely to make the causal smoke run. The generic context layer treats
+the layer-input buffer as optional, so a missing buffer becomes an empty
+capture and the agent seam reports the failure without aborting the process.
+
 ## End-of-sweep documentation gate
 
 At the end of each grouped development sweep, before calling the sweep done:

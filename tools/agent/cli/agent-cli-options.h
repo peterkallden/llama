@@ -45,6 +45,7 @@ struct args {
     size_t memory_token_budget = 768;
     size_t max_tool_rounds = 16;
     int n_predict = 256;
+    int planner_n_predict = 0;
     int n_threads = 2;
     // Leave enough room for the compact plan, verified observations and a
     // bounded reflection JSON response in the default CLI/daemon path.

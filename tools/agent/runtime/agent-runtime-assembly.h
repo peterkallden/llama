@@ -42,6 +42,9 @@ using common_agent_flydelta_teaching_material_observer = std::function<bool(
 
 struct common_agent_generation_config {
     int n_predict = 0;
+    // Optional planner-specific generation budget. Zero preserves the
+    // established planner fallback budget.
+    int planner_n_predict = 0;
     int n_threads = 2;
     bool generation_trace = false;
     // Emit planner candidate diagnostics through the existing agent trace.

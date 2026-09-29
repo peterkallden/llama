@@ -302,11 +302,22 @@ std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
     return names.empty() ? "none" : names;
 }
 
+struct planner_argument_repair_target {
+    size_t step_index = 0;
+    std::string step_id;
+    std::string tool_name;
+    std::string base_arguments_json = "{}";
+    std::string missing_argument;
+    std::string candidate_plan_json;
+};
+
 bool validate_planner_tool_arguments(
         const std::vector<common_plan_operation> & operations,
         const std::vector<common_chat_tool> & tools,
+        struct planner_argument_repair_target * repair_target,
         std::string & error) {
-    for (const auto & operation : operations) {
+    for (size_t operation_index = 0; operation_index < operations.size(); ++operation_index) {
+        const auto & operation = operations[operation_index];
         if (!operation.step || !operation.step->tool_call) continue;
         const auto & call = *operation.step->tool_call;
         const auto tool = std::find_if(tools.begin(), tools.end(),
@@ -321,10 +332,106 @@ bool validate_planner_tool_arguments(
                 if (!field.is_string() || !arguments.is_object() || arguments.contains(field.get<std::string>())) continue;
                 error = "planner tool arguments missing required field: " + call.name + "." +
                     field.get<std::string>();
+                if (repair_target != nullptr) {
+                    repair_target->step_index = operation_index;
+                    repair_target->step_id = operation.step->id;
+                    repair_target->tool_name = call.name;
+                    repair_target->base_arguments_json = call.arguments_json;
+                    repair_target->missing_argument = field.get<std::string>();
+                }
                 return false;
             }
         }
     }
+    error.clear();
+    return true;
+}
+
+std::string planner_argument_repair_schema(
+        const planner_argument_repair_target & target,
+        const std::vector<common_chat_tool> & tools) {
+    using json = nlohmann::ordered_json;
+    json args_schema = {
+        {"type", "object"},
+        {"additionalProperties", false},
+    };
+    for (const auto & tool : tools) {
+        if (tool.name != target.tool_name || tool.parameters.empty()) continue;
+        const auto parsed = json::parse(tool.parameters, nullptr, false);
+        if (parsed.is_object() && parsed.value("type", std::string()) == "object") {
+            args_schema = parsed;
+        }
+        break;
+    }
+    if (!target.missing_argument.empty() && args_schema.is_object()) {
+        auto & required = args_schema["required"];
+        if (!required.is_array()) required = json::array();
+        const bool already_required = std::find(
+            required.begin(), required.end(), target.missing_argument) != required.end();
+        if (!already_required && args_schema.value("properties", json::object()).contains(target.missing_argument)) {
+            required.push_back(target.missing_argument);
+        }
+    }
+    return json{
+        {"type", "object"},
+        {"additionalProperties", false},
+        {"required", json::array({"args"})},
+        {"properties", {{"args", std::move(args_schema)}}},
+    }.dump();
+}
+
+bool apply_planner_argument_repair(
+        const planner_argument_repair_target & target,
+        const std::string & repair_json,
+        std::string & repaired_plan_json,
+        std::string & error) {
+    using json = nlohmann::ordered_json;
+    const auto response = json::parse(repair_json, nullptr, false);
+    if (!response.is_object() || response.size() != 1 ||
+            !response.contains("args") || !response["args"].is_object()) {
+        error = "planner argument repair must contain only args:object";
+        return false;
+    }
+    std::string merged_arguments;
+    if (!common_plan_merge_tool_arguments_json(
+            target.base_arguments_json, response["args"].dump(), merged_arguments, error)) {
+        return false;
+    }
+    std::string normalized_arguments;
+    if (!common_plan_normalize_tool_arguments_json(
+            target.tool_name, merged_arguments, normalized_arguments, error)) {
+        return false;
+    }
+    auto plan = json::parse(target.candidate_plan_json, nullptr, false);
+    if (!plan.is_object() || !plan.contains("steps") || !plan["steps"].is_array()) {
+        error = "planner argument repair could not reopen the rejected plan";
+        return false;
+    }
+    size_t step_index = target.step_index;
+    if (!target.step_id.empty()) {
+        for (size_t index = 0; index < plan["steps"].size(); ++index) {
+            if (plan["steps"][index].is_object() &&
+                    plan["steps"][index].value("id", std::string()) == target.step_id) {
+                step_index = index;
+                break;
+            }
+        }
+    }
+    if (step_index >= plan["steps"].size() || !plan["steps"][step_index].is_object()) {
+        error = "planner argument repair could not locate the rejected step";
+        return false;
+    }
+    auto & step = plan["steps"][step_index];
+    if (step.value("tool", std::string()) != target.tool_name) {
+        error = "planner argument repair attempted to change the selected tool";
+        return false;
+    }
+    step["args"] = json::parse(normalized_arguments, nullptr, false);
+    if (step["args"].is_discarded()) {
+        error = "planner argument repair produced invalid normalized arguments";
+        return false;
+    }
+    repaired_plan_json = plan.dump();
     error.clear();
     return true;
 }
@@ -905,7 +1012,61 @@ public:
         std::vector<std::string> planner_attempt_errors;
         size_t planner_attempt = 0;
         bool parsed = false;
+        std::optional<planner_argument_repair_target> pending_argument_repair;
+        bool argument_repair_attempted = false;
+        const int planner_n_predict = generation_config.planner_n_predict > 0
+            ? generation_config.planner_n_predict
+            : std::max(generation_config.n_predict, 512);
         auto generate_plan = [&](bool regeneration) {
+            if (regeneration && pending_argument_repair.has_value() &&
+                    !argument_repair_attempted) {
+                argument_repair_attempted = true;
+                const auto & target = *pending_argument_repair;
+                std::string selected_contract;
+                for (const auto & tool : tool_definitions) {
+                    if (tool.name == target.tool_name) {
+                        selected_contract = render_planner_tool_contracts({tool});
+                        break;
+                    }
+                }
+                common_chat_msg repair_system{
+                    "system",
+                    "Return only one JSON object with an args object for the already selected tool. "
+                    "Do not choose a different tool, add a plan step, or return a complete plan. "
+                    "The host will merge these args into the existing step and validate them. "
+                    "Use only values explicitly present in the user request or already present in "
+                    "the existing args; the host will not invent semantic values. Selected tool: " +
+                    target.tool_name + ". Required field: " + target.missing_argument + ". "
+                    "Return args matching that tool's registered model-facing schema. "
+                    "Tool contract:" + selected_contract,
+                };
+                common_chat_msg repair_user{
+                    "user",
+                    "[Original user request]\n" + request.prompt +
+                    "\n[Existing selected step]\ntool: " + target.tool_name +
+                    "\nargs: " + target.base_arguments_json +
+                    "\n[Host validation error]\n" + parse_error +
+                    "\nReturn only {\"args\":{...}} with the missing required argument repaired.",
+                };
+                auto repaired = inference.generate_result(make_agent_cli_generation_request(
+                    request,
+                    common_agent_generation_purpose::planner,
+                    {repair_system, repair_user},
+                    make_agent_cli_generation_options(generation_config, std::min(planner_n_predict, 256)),
+                    planner_argument_repair_schema(target, tool_definitions)));
+                if (common_agent_generation_succeeded(repaired)) {
+                    std::string repaired_plan;
+                    std::string repair_error;
+                    if (apply_planner_argument_repair(
+                            target, repaired.content, repaired_plan, repair_error)) {
+                        repaired.content = std::move(repaired_plan);
+                    } else {
+                        repaired.content = target.candidate_plan_json;
+                        repaired.error_message = repair_error;
+                    }
+                }
+                return repaired;
+            }
             common_chat_msg attempt = user;
             if (regeneration) {
                 attempt.content +=
@@ -923,7 +1084,7 @@ public:
                 request,
                 common_agent_generation_purpose::planner,
                 {system, attempt},
-                make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 512)),
+                make_agent_cli_generation_options(generation_config, planner_n_predict),
                 common_plan_model_facing_json_schema(allowed_tools, request.require_tool_execution)));
         };
         auto generation_result = common_agent_bounded_structured_regeneration(
@@ -960,7 +1121,14 @@ public:
                     }
                 }
                 if (parsed) {
-                    parsed = validate_planner_tool_arguments(candidate_operations, tool_definitions, parse_error);
+                    planner_argument_repair_target detected_repair;
+                    parsed = validate_planner_tool_arguments(
+                        candidate_operations, tool_definitions, &detected_repair, parse_error);
+                    if (!parsed && !detected_repair.tool_name.empty() &&
+                            !argument_repair_attempted) {
+                        detected_repair.candidate_plan_json = normalized_candidate;
+                        pending_argument_repair = std::move(detected_repair);
+                    }
                 }
                 if (generation_config.agent_trace) {
                     trace_planner_candidate(candidate, attempt, parsed, parse_error);
@@ -971,6 +1139,17 @@ public:
                     proposal.operations = std::move(candidate_operations);
                 }
                 return parsed;
+            },
+            2,
+            [&](const size_t regeneration_index) {
+                // The first retry may repair any rejected planner object.
+                // A second retry is reserved for the staged case where that
+                // retry produced a parseable tool step with a missing required
+                // argument. Other planner failures retain the old one-retry
+                // budget, and a failed argument repair remains terminal.
+                return regeneration_index == 0 ||
+                    (regeneration_index == 1 && pending_argument_repair.has_value() &&
+                        !argument_repair_attempted);
             });
         proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (parsed) {

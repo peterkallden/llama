@@ -35,6 +35,17 @@ std::vector<common_chat_tool> common_filter_tools_by_families(
 
 std::string common_tool_family_selection_schema();
 
+// Required-mode family selection has no NO_TOOLS branch: the model must
+// choose one or more ids from the host-filtered family index.
+std::string common_tool_family_required_selection_schema(
+    const std::vector<common_tool_family_index> & families);
+
+bool common_parse_tool_family_required_selection(
+    const std::string & json_text,
+    const std::vector<common_tool_family_index> & families,
+    common_tool_family_selection & selection,
+    std::string & error);
+
 bool common_parse_tool_family_selection(
     const std::string & json_text,
     common_tool_family_selection & selection,

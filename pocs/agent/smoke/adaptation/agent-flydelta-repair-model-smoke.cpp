@@ -1222,9 +1222,13 @@ int main(int argc, char ** argv) {
                 choice.positive_choice = kExpectedTool;
                 choice.negative_choice = kAlternativeTool;
                 choice.positive_continuation =
-                    std::string("{\"arguments\":{\"dataset\":\"") +
+                    std::string(kExpectedTool) +
+                    "\",\"arguments\":{\"dataset\":\"" +
                     kDatasetReference + "\"}}";
-                choice.negative_continuation = choice.positive_continuation;
+                choice.negative_continuation =
+                    std::string(kAlternativeTool) +
+                    "\",\"arguments\":{\"dataset\":\"" +
+                    kDatasetReference + "\"}}";
                 score_batch.choices.push_back(std::move(choice));
             }
             common_agent_teacher_forced_choice_batch_result score_result;
