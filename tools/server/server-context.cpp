@@ -302,6 +302,9 @@ struct server_slot {
     // The active request-scoped control vector. It stays attached to the
     // slot while its prompt/KV state is reusable.
     server_task_cvec_ptr cvec;
+    server_task_residual_patch_ptr residual_patch;
+    llama_residual_patch_ref residual_patch_ref;
+    bool residual_patch_applied = false;
     bool cvec_batch_enabled = false;
     server_task_capture_request_ptr capture_request;
     server_task_capture_result capture_result;
@@ -444,10 +447,12 @@ struct server_slot {
             other_slot.cvec_batch_enabled &&
             server_task_cvec_batch_compatible(cvec, other_slot.cvec);
 
+        const bool residual_patch_compatible = !residual_patch && !other_slot.residual_patch;
         return task->type == other_slot.task->type
             && inp_embd.size() == other_slot.inp_embd.size()
             && are_lora_equal(lora, other_slot.lora)
-            && (cvec_equal || cvec_batch_compatible);
+            && (cvec_equal || cvec_batch_compatible)
+            && residual_patch_compatible;
     }
 
     // returns -1 if the generation is limitless
@@ -1865,6 +1870,39 @@ private:
             }
         }
 
+        if (task.params.residual_patch) {
+            std::string patch_error;
+            if (!server_task_residual_patch_validate(
+                    *task.params.residual_patch,
+                    llama_model_n_embd_inp(model_tgt), llama_model_n_layer(model_tgt),
+                    64 * 1024 * 1024, patch_error)) {
+                send_error(task, "invalid residual patch: " + patch_error, ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (ctx_dft) {
+                send_error(task, "residual patch does not support speculative decoding", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (task.params.residual_patch->absolute_position >= task.n_tokens()) {
+                send_error(task, "residual patch position is outside this prompt", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (task.params.residual_patch->sequence_id >= 0 &&
+                    task.params.residual_patch->sequence_id != slot.id) {
+                send_error(task, "residual patch sequence identity does not match its server slot", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (slot.prompt.n_tokens() > 0) {
+                SLT_TRC(slot, "%s", "clearing cache for residual patch request\n");
+                slot.prompt_clear();
+            }
+            slot.residual_patch = task.params.residual_patch;
+            slot.residual_patch_applied = false;
+        } else {
+            slot.residual_patch.reset();
+            slot.residual_patch_applied = false;
+        }
+
         // llama_set_adapter_cvec() is context-wide, so a slot may retain its
         // prompt/KV state only while the cvec identity is unchanged.
         if (!server_task_cvec_equal(slot.cvec, task.params.cvec)) {
@@ -2232,6 +2270,7 @@ private:
             : request.token_index;
 
         const int32_t n_prompt = slot.task->n_tokens();
+        result.prompt_token_count = n_prompt;
         const size_t n_embd = static_cast<size_t>(llama_model_n_embd(model_tgt));
         if (result.token_index < 0 || result.token_index >= n_prompt) {
             result.failure_reason = "prompt token index is out of range";
@@ -2244,6 +2283,7 @@ private:
         }
 
         result.n_embd = static_cast<uint32_t>(n_embd);
+        result.token_id = slot.task->tokens[result.token_index];
         result.values.reserve(result.layer_indices.size() * n_embd);
         for (const uint32_t layer : result.layer_indices) {
             const float * values = llama_get_embeddings_layer_inp(slot.ctx_tgt, layer);
@@ -2389,6 +2429,10 @@ private:
     }
 
     void send_final_response(server_slot & slot) {
+        if (slot.residual_patch && !slot.residual_patch_applied) {
+            send_error(slot, "residual patch did not match an executed batch row", ERROR_TYPE_INVALID_REQUEST);
+            return;
+        }
         auto res = std::make_unique<server_task_result_cmpl_final>();
 
         res->id      = slot.task->id;
@@ -2448,6 +2492,15 @@ private:
 
         res->generation_params = slot.task->params; // copy the parameters
         res->capture = std::move(slot.capture_result);
+        if (slot.residual_patch) {
+            const auto & patch = *slot.residual_patch;
+            res->residual_patch_observation.attempted = true;
+            res->residual_patch_observation.applied = slot.residual_patch_applied;
+            res->residual_patch_observation.layer = patch.layer;
+            res->residual_patch_observation.absolute_position = patch.absolute_position;
+            res->residual_patch_observation.sequence_id = slot.id;
+            res->residual_patch_observation.site = patch.site;
+        }
         res->flydelta_device_batch = cvec_batch_active && cvec_batch_device.device_resident();
 
         queue_results.send(std::move(res));
@@ -3162,6 +3215,7 @@ private:
 
     void update_slots() {
         clear_cvec_batch_binding();
+        llama_set_residual_patch(ctx_tgt, nullptr);
 
 #ifdef DEBUG_TIMINGS
         static int64_t t_prev = 0;
@@ -3244,6 +3298,22 @@ private:
                 SRV_ERR("failed to apply request control vector for slot %d\n", slot_batched->id);
                 abort_all_slots("failed to apply request control vector");
                 return;
+            }
+
+            if (slot_batched->residual_patch) {
+                const auto & patch = *slot_batched->residual_patch;
+                slot_batched->residual_patch_ref = {
+                    patch.operation == server_task_residual_patch_operation::replace
+                        ? llama_residual_patch_operation::replace
+                        : llama_residual_patch_operation::add,
+                    patch.layer,
+                    patch.absolute_position,
+                    slot_batched->id,
+                    patch.values.data(),
+                    patch.values.size(),
+                    &slot_batched->residual_patch_applied,
+                };
+                llama_set_residual_patch(ctx_tgt, &slot_batched->residual_patch_ref);
             }
 
             if (cvec_batch_enabled) {
@@ -4289,6 +4359,12 @@ private:
 
             slot.i_batch = -1;
 
+            completion_token_output result;
+            result.tok          = id;
+            result.text_to_send = common_token_to_piece(
+                slot.ctx_tgt, result.tok, accept_special_token(slot, result.tok));
+            result.prob         = 1.0f; // TODO: set it here instead of doing inside populate_token_probs
+
             common_sampler_accept(slot.smpl.get(), id, true);
 
             // here we have synchronized the llama_context (due to the sampling above), so we can do time measurement
@@ -4304,11 +4380,6 @@ private:
 
             slot.stats.update_gen_last();
 
-            completion_token_output result;
-            result.tok          = id;
-            result.text_to_send = common_token_to_piece(slot.ctx_tgt, result.tok, accept_special_token(slot, result.tok));
-            result.prob         = 1.0f; // TODO: set it here instead of doing inside populate_token_probs
-
             if (slot.task->params.sampling.n_probs > 0) {
                 populate_token_probs(slot, result, slot.task->params.post_sampling_probs, params_base.special, tok_idx);
             }
@@ -4319,6 +4390,26 @@ private:
                 send_final_response(slot);
                 slot.release();
 
+                return;
+            }
+
+            // The agent reader independently recognizes the first complete
+            // JSON object and requests cancellation. Finish it here as well:
+            // otherwise the server can sample one extra token before that
+            // cancellation is observed, which makes a completed grammar look
+            // like an empty-stack error to the next sampler accept.
+            const bool output_schema = slot.task != nullptr &&
+                slot.task->params.sampling.grammar.type == COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT;
+            auto completed = json(json::value_t::discarded);
+            if (output_schema) {
+                completed = json::parse(slot.generated_text, nullptr, false);
+            }
+            if (output_schema && !completed.is_discarded()) {
+                slot.stop = STOP_TYPE_EOS;
+                slot.has_next_token = false;
+                slot.print_timings();
+                send_final_response(slot);
+                slot.release();
                 return;
             }
 

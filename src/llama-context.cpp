@@ -1331,6 +1331,17 @@ void llama_context::set_adapter_cvec_batch(const llama_adapter_cvec_batch_ref * 
     sched_need_reserve = true;
 }
 
+void llama_context::set_residual_patch(const llama_residual_patch_ref * ref) {
+    // The server clears this request-scoped hook before every batch.  A
+    // normal request has no patch, so an unchanged nullptr must not force a
+    // graph re-reservation or otherwise perturb the ordinary generation path.
+    if (residual_patch == ref) {
+        return;
+    }
+    residual_patch = ref;
+    sched_need_reserve = true;
+}
+
 llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, llm_graph_type gtype, llama_memory_context_i * mctx, ggml_status & ret) {
     if (mctx && !mctx->apply()) {
         LLAMA_LOG_ERROR("%s: failed to apply memory context\n", __func__);
@@ -2476,6 +2487,7 @@ llm_graph_params llama_context::graph_params(
         /*.backend_cpu =*/ backend_cpu,
         /*.cvec        =*/ cvec.get(),
         /*.cvec_batch  =*/ cvec_batch,
+        /*.residual_patch =*/ residual_patch,
         /*.loras       =*/ loras.get(),
         /*.mctx        =*/ mctx,
         /*.cross       =*/ &cross,
@@ -3824,6 +3836,10 @@ float * llama_get_embeddings_layer_inp(llama_context * ctx, uint32_t lid) {
     ctx->synchronize();
 
     return ctx->get_embeddings_layer_inp(lid);
+}
+
+void llama_set_residual_patch(llama_context * ctx, const llama_residual_patch_ref * ref) {
+    ctx->set_residual_patch(ref);
 }
 
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {

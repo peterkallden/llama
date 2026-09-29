@@ -750,6 +750,7 @@ struct llm_graph_params {
 
     const llama_adapter_cvec     * cvec;
     const llama_adapter_cvec_batch_ref * cvec_batch = nullptr;
+    const llama_residual_patch_ref * residual_patch = nullptr;
     const llama_adapter_loras    * loras;
     const llama_memory_context_i * mctx;
     const llama_cross            * cross;
@@ -847,6 +848,7 @@ struct llm_graph_params {
             gtype == other.gtype &&
             cvec  == other.cvec  &&
             cvec_batch == other.cvec_batch &&
+            residual_patch == other.residual_patch &&
             loras == other.loras &&
             cross == other.cross;
     }
@@ -992,6 +994,7 @@ struct llm_graph_context {
 
     const llama_adapter_cvec     * cvec;
     const llama_adapter_cvec_batch_ref * cvec_batch;
+    const llama_residual_patch_ref * residual_patch;
     const llama_adapter_loras    * loras;
     const llama_memory_context_i * mctx;
     const llama_cross            * cross;
@@ -1017,6 +1020,7 @@ struct llm_graph_context {
     ggml_tensor * build_cvec(
              ggml_tensor * cur,
                      int   il) const;
+    ggml_tensor * build_residual_patch(ggml_tensor * cur, int il) const;
 
     // do mat_mul, while optionally apply lora and per-tensor scale
     ggml_tensor * build_lora_mm(

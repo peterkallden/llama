@@ -11,6 +11,20 @@
 
 struct llama_ubatch;
 
+enum class llama_residual_patch_operation : uint8_t { replace, add };
+
+// Non-owning, single-site graph intervention. It is deliberately unrelated
+// to adapters/cvecs: callers provide a fully prepared vector.
+struct llama_residual_patch_ref {
+    llama_residual_patch_operation operation = llama_residual_patch_operation::add;
+    uint32_t layer = 0;
+    int32_t absolute_position = -1;
+    llama_seq_id sequence_id = -1;
+    const float * values = nullptr;
+    size_t n_embd = 0;
+    bool * applied = nullptr;
+};
+
 // Non-owning graph hook for a backend that can apply different control
 // vectors to different sequences in one ubatch. The callback runs while the
 // graph is being built and must return `cur` unchanged when no overlay is

@@ -2,6 +2,90 @@
 
 ## Status and purpose
 
+### Internal causal residual-patch seam
+
+`layer_input_residual` patching is a bounded causal-experiment seam, not a
+FlyDelta activation or lifecycle mechanism. A request supplies one prepared
+F32 vector and one absolute prompt position. `replace` sets that layer-input
+row to the vector; `add` adds it. The graph applies the change before the
+remaining layer work and its downstream KV/logit computation.
+
+The seam is request-scoped, default-off and serialized in V0: patched slots
+are not co-batched, prompt/KV reuse is disabled, and an unmatchable
+layer/position/width fails instead of broadcasting or falling back. Capture
+and injection share the `layer-input:generation-boundary:v1` coordinate system: capture is
+pre-patch, while the model consumes the patched state.
+
+It creates no learning credit, artifact, promotion or activation authority.
+Behavioral claims still require full generation and the host semantic oracle.
+
+### Causal-patch smoke evidence
+
+The Qwen instruct causal-patch smoke is an experiment-only model-behavior
+check. Its default `schema-selection` fixture probes a natural
+`dataset.inspect` -> `dataset.schema` repair case; the historical
+`overview-selection` (`statistics.describe` -> `dataset.inspect`) case remains
+selectable with `--fixture`. Its bounded default probes layer 21;
+`--all-layers` expands the probe to 20--22 and `--full-matrix` expands the direction/alpha set. It captures a
+baseline and a host-correction context at their respective final generation
+positions, then patches the baseline position with the repair state or a
+derived direction. Because the two prompts may have different token counts,
+the repair vector is a transferred state at the baseline decision site, not a
+claim that both captures are the same prompt coordinate.
+
+The smoke runs teacher-forced scoring before any full generation. Its positive
+and negative continuations are complete model-facing tool-call continuations
+from the selected fixture; the tool name must be part of the continuation
+because the scorer prefers it over the legacy choice fields.
+Only margin-gated frontier arms reach full generation. The smoke uses a fixed
+model-facing semantic predicate for this diagnostic and is not a replacement
+for the production host Oracle/counterfactual evaluator. It does not run TFO
+and it does not create learning credit or promotion evidence.
+
+Teacher-forced fixtures are fail-closed at the shared scoring seam: empty or
+identical effective positive/negative continuations are rejected before model
+scoring. This protects both the resident server path and the CLI fallback from
+silently turning a malformed contrast into a zero-margin diagnostic. The
+always-runnable contract test is
+`llama-agent-flydelta-teacher-forced-contrast-contract-ctest`.
+
+The causal-patch smoke is also fail-closed at the fixture boundary. It first
+requires the naturally failed tool and subsequent host-repaired tool declared
+by the selected fixture. By default that is `dataset.inspect` followed by
+`dataset.schema`; the historical overview fixture declares the reverse pair.
+If either side is already correct,
+missing, or otherwise differs, it reports `fixture_not_counterfactual`, returns
+CTest's skip code, and does not execute the patch matrix. The repair request is
+constructed from the rejected model-facing call and the canonical host repair,
+matching the production repair-smoke shape rather than replacing the task with
+an opposite instruction. The smoke additionally runs a scaled exact-delta
+alpha=1 arm and reports the norm of
+`base + (repair - base) - repair`; this must be within tolerance before the
+alpha=1 path is considered equivalent to exact replacement. These checks are
+experiment-fixture guards, not production evidence or Oracle outcomes.
+
+An earlier run reported zero baseline/repair direction norms because capture
+requests were allowed to reuse prompt/KV state. Capture now forces a fresh full
+prompt, and the integrity smoke reports distinct finite states with non-zero
+deltas at the tested layers. A second smoke bug compared identical positive
+and negative continuations and therefore produced a false zero margin; this is
+now corrected.
+
+An earlier bounded Qwen run did produce finite, distinct captures
+(`delta_norm=9.50928` at layer 21), and patched frontier requests reported
+`applied=yes`. It is **not causal evidence**: its baseline had already selected
+`dataset.inspect`, so the run only tested retention of a correct decision. The
+fixture guard above now rejects that condition before the patch matrix begins.
+No `HELPED`, learning credit or promotion evidence was created. A future run is
+interpretable only when the declared baseline failure and host repair both pass
+the counterfactual fixture gate.
+
+Capture is also fail-closed for model architectures whose graph does not
+publish the optional `t_layer_inp` seam. Such a request now returns an empty
+capture with a controlled failure and the model smoke skips; it must not reach
+an internal graph assertion. This is an execution-safety guard, not evidence
+about the model's tool choice.
+
 **Status: V0 host seam, bounded capture, explicit CLI activation and
 request-scoped server-context activation are implemented. The daemon's
 production model-host binding runs the bounded FlyDelta phase chain through

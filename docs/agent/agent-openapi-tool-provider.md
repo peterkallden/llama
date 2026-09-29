@@ -124,13 +124,17 @@ projection parameter and the model did not provide one. This keeps projection
 defaults operation-specific and avoids inventing fields for unrelated APIs.
 An operation policy may also set `required_parameters` for parameters that are
 semantically required by the host-approved use of an otherwise broader API.
-These remain host-use policy rather than additions to the OpenAPI schema's
-`required` list or to the model-facing schema. That preserves the common
-validator's repairable execution seam. The host checks them immediately before
-HTTP execution and, if one is missing, returns a retryable required-parameter
-result with repair context so the existing planner or reflection path can
-revise the tool step. The host does not invent a search term or silently
-execute an unscoped collection request.
+The provider keeps the canonical OpenAPI schema unchanged for execution, but
+adds these already-declared properties to the optional model-facing schema
+projection used by the compact tool contract. Ordinary planning therefore
+sees `query`/`search` and similar host-required values as required before the
+first call. If a configured name is absent from the canonical properties,
+provider resolution fails rather than inventing an untyped model field.
+The host still checks the requirements immediately before HTTP execution and,
+if one is missing, returns a retryable required-parameter result with repair
+context so the existing reflection path can revise the tool step. The host
+does not invent a search term or silently execute an unscoped collection
+request.
 
 The optional model-backed smoke uses the same host/provider path and forces
 the model to use `openalex.listWorks` rather than the generic web tools:

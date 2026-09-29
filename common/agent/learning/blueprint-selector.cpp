@@ -36,6 +36,7 @@ const common_blueprint_candidate * keyword_fallback(
         const common_agent_request & request,
         const std::vector<common_blueprint_candidate> & candidates,
         size_t minimum_score) {
+    constexpr size_t kMinimumDistinctKeywordMatches = 2;
     std::string request_text = request.prompt;
     if (request.policy_pack) {
         request_text += " " + request.policy_pack->purpose + " " + request.policy_pack->goal +
@@ -48,19 +49,25 @@ const common_blueprint_candidate * keyword_fallback(
     size_t best_score = 0;
     bool tied = false;
     for (const auto & candidate : candidates) {
-        const auto overlap = [&](const std::string & text) {
-            const auto words = keyword_set(text);
+        std::set<std::string> matched_words;
+        const auto weighted_overlap = [&](const std::string & text, size_t weight) {
             size_t value = 0;
-            for (const auto & word : request_words) value += words.count(word);
-            return value;
+            for (const auto & word : keyword_set(text)) {
+                if (request_words.count(word)) {
+                    ++value;
+                    matched_words.insert(word);
+                }
+            }
+            return value * weight;
         };
         size_t score = 0;
-        score += overlap(candidate.purpose) * 6;
-        score += overlap(candidate.goal) * 5;
-        score += overlap(candidate.success_criteria) * 4;
-        score += overlap(candidate.description) * 2;
-        for (const auto & contribution : candidate.contributions) score += overlap(contribution) * 3;
-        for (const auto & constraint : candidate.constraints) score += overlap(constraint.description);
+        score += weighted_overlap(candidate.purpose, 6);
+        score += weighted_overlap(candidate.goal, 5);
+        score += weighted_overlap(candidate.success_criteria, 4);
+        score += weighted_overlap(candidate.description, 2);
+        for (const auto & contribution : candidate.contributions) score += weighted_overlap(contribution, 3);
+        for (const auto & constraint : candidate.constraints) score += weighted_overlap(constraint.description, 1);
+        if (matched_words.size() < kMinimumDistinctKeywordMatches) continue;
         if (score > best_score) { best = &candidate; best_score = score; tied = false; }
         else if (score != 0 && score == best_score) tied = true;
     }
@@ -235,17 +242,24 @@ bool common_agent_select_and_instantiate_blueprint(
             return true;
         }
         candidate = &*found;
-    } else {
+    } else if (choice.decision == common_blueprint_selection_decision::instantiate) {
         candidate = config.allow_keyword_fallback
             ? keyword_fallback(request, eligible, config.minimum_keyword_fallback_score)
             : nullptr;
         if (candidate) {
             result.confidence = 0.0f;
-            result.reason = "native keyword fallback after model declined or reported low confidence";
+            result.reason = "native keyword fallback after model reported low confidence";
         } else {
             result.outcome = common_blueprint_selection_outcome::declined;
             return true;
         }
+    } else {
+        // A model that explicitly says that no blueprint applies must leave
+        // the turn to the normal agent workflow.  Falling back here can turn
+        // a single generic word overlap into an unrelated reasoning-only
+        // task plan and thereby suppress available tool/research steps.
+        result.outcome = common_blueprint_selection_outcome::declined;
+        return true;
     }
     if (!candidate) {
         result.outcome = common_blueprint_selection_outcome::failed_safely;

@@ -2460,9 +2460,11 @@ contract. A typed input may opt in with field-level `x-agent-inferable: true`
 metadata; the model projection then carries the model-facing
 `x-agent-autowire-fields` hint and the compact contract renders `may be
 inferred`. This is deliberately field metadata, not a second list of tool
-names. A field can therefore be both host-required and model-optional: the
-host must receive it before execution, but the model need not provide it when
-the plan makes the source unambiguous.
+names. A provider may keep a field model-optional when the host can
+deterministically infer it from an unambiguous plan context. Provider policies
+that mark an already-declared OpenAPI parameter as `required_parameters` instead
+project that requirement into the model-facing schema; the canonical execution
+schema remains separate.
 
 `typed` and `inferable` are different properties. `x-agent-type` says that a
 field participates in typed dataflow. `x-agent-inferable` says that the host

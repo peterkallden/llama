@@ -3,6 +3,7 @@
 
 #include "agent/agent-prepared-generation.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/agent-residual-patch.h"
 #include "server-context.h"
 #include "server-task.h"
 
@@ -31,6 +32,11 @@ bool resident_trace_enabled() {
     return value != nullptr && value[0] != '\0' && value[0] != '0';
 }
 
+bool resident_trace_content_enabled() {
+    const char * value = std::getenv("LLAMA_AGENT_RESIDENT_TRACE_CONTENT");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
 void resident_trace(const char * event, const common_agent_generation_request & request, const char * detail = "") {
     if (!resident_trace_enabled()) {
         return;
@@ -41,6 +47,28 @@ void resident_trace(const char * event, const common_agent_generation_request & 
         request.json_schema.empty() ? "no" : "yes",
         request.options.n_predict,
         detail);
+    std::fflush(stderr);
+}
+
+void resident_trace_content(
+        const char * event,
+        const common_agent_generation_request & request,
+        const std::string & content) {
+    if (!resident_trace_content_enabled()) {
+        return;
+    }
+    std::string preview = content.substr(0, 2048);
+    for (char & ch : preview) {
+        if (static_cast<unsigned char>(ch) < 0x20 || ch == 0x7f) {
+            ch = ' ';
+        }
+    }
+    std::fprintf(stderr,
+        "agent resident trace content: event=%s purpose=%s bytes=%zu preview=%s\n",
+        event,
+        common_agent_generation_purpose_name(request.purpose),
+        content.size(),
+        preview.c_str());
     std::fflush(stderr);
 }
 
@@ -117,11 +145,31 @@ void apply_server_capture(
     capture->layer_indices = response.capture.layer_indices;
     capture->position = static_cast<common_flydelta_capture_position>(response.capture.position);
     capture->token_index = response.capture.token_index;
+    capture->token_id = response.capture.token_id;
+    capture->prompt_token_count = response.capture.prompt_token_count;
     capture->n_embd = response.capture.n_embd;
     capture->values = response.capture.values;
     capture->captured = response.capture.captured;
     capture->failure_reason = response.capture.failure_reason;
     result.flydelta_capture = std::move(capture);
+}
+
+void apply_server_residual_patch_observation(
+        const server_task_result_cmpl_final & response,
+        const common_agent_generation_request & request,
+        common_agent_generation_result & result) {
+    if (!request.residual_patch || !response.residual_patch_observation.attempted) {
+        return;
+    }
+    auto observation = std::make_shared<common_agent_residual_patch_observation>();
+    observation->attempted = response.residual_patch_observation.attempted;
+    observation->applied = response.residual_patch_observation.applied;
+    observation->layer = response.residual_patch_observation.layer;
+    observation->absolute_position = response.residual_patch_observation.absolute_position;
+    observation->sequence_id = response.residual_patch_observation.sequence_id;
+    observation->site = common_agent_residual_patch_site::layer_input_residual;
+    observation->failure_reason = response.residual_patch_observation.failure_reason;
+    result.residual_patch_observation = std::move(observation);
 }
 
 bool record_schema_partial(
@@ -141,6 +189,7 @@ bool record_schema_partial(
     if (!parsed.is_discarded() && state.first_valid_json.empty()) {
         state.first_valid_json = state.content;
         state.first_valid_decoded_tokens = state.decoded_tokens;
+        resident_trace_content("schema-first-valid", request, state.first_valid_json);
         resident_trace("schema-first-valid", request);
         apply_server_success(result, std::move(state.first_valid_json), state.first_valid_decoded_tokens, common_agent_generation_stop_reason::json_schema);
         return true;
@@ -164,6 +213,7 @@ bool apply_schema_final_response(
 
     const auto parsed = nlohmann::ordered_json::parse(state.content, nullptr, false);
     if (!parsed.is_discarded()) {
+        resident_trace_content("schema-final-valid", request, state.content);
         resident_trace("schema-final-valid", request);
         apply_server_success(result, state.content, state.decoded_tokens, common_agent_generation_stop_reason::json_schema);
         return true;
@@ -333,6 +383,25 @@ public:
                     return true;
                 }
 
+                if (state.final_response != nullptr &&
+                        state.final_stop_reason != common_agent_generation_stop_reason::error &&
+                        state.final_stop_reason != common_agent_generation_stop_reason::cancelled) {
+                    // The server completed a normal decode but the model did
+                    // not finish the requested JSON.  Preserve the partial
+                    // payload as completed output so the owning planner or
+                    // reflection path can perform its bounded repair.  This
+                    // must match the CLI adapter: invalid schema is a caller
+                    // validation result, not a server failure.
+                    apply_server_success(
+                        result,
+                        std::move(state.content),
+                        state.decoded_tokens,
+                        state.final_stop_reason);
+                    resident_trace_content("schema-incomplete", request, result.content);
+                    resident_trace("schema-incomplete", request);
+                    return true;
+                }
+
                 result.content = std::move(state.content);
                 result.decoded_tokens = state.decoded_tokens;
                 apply_server_error(
@@ -374,6 +443,7 @@ public:
             apply_server_success(result, std::move(content), decoded_tokens, stop_reason);
             if (const auto * final_response = dynamic_cast<const server_task_result_cmpl_final *>(response)) {
                 apply_server_capture(*final_response, request, result);
+                apply_server_residual_patch_observation(*final_response, request, result);
                 result.flydelta_device_batch = final_response->flydelta_device_batch;
             }
             resident_trace("nonstream-success", request);
@@ -444,8 +514,8 @@ public:
                 ? request.positive_choice : request.positive_continuation;
             const std::string & negative = request.negative_continuation.empty()
                 ? request.negative_choice : request.negative_continuation;
-            if (request.choice_prefix.empty() || positive.empty() || negative.empty()) {
-                result.error_message = "server teacher-forced scoring requires a prefix and two continuations";
+            if (!common_agent_teacher_forced_contrast_is_valid(
+                    request.choice_prefix, positive, negative, result.error_message)) {
                 return false;
             }
             if (!request.context.input_resources.empty()) {
@@ -608,9 +678,8 @@ public:
                 ? choice_request.positive_choice : choice_request.positive_continuation;
             const std::string & negative = choice_request.negative_continuation.empty()
                 ? choice_request.negative_choice : choice_request.negative_continuation;
-            if (choice_request.choice_prefix.empty() || positive.empty() || negative.empty()) {
-                result.error_message =
-                    "server teacher-forced scoring requires a prefix and two continuations";
+            if (!common_agent_teacher_forced_contrast_is_valid(
+                    choice_request.choice_prefix, positive, negative, result.error_message)) {
                 return false;
             }
             if (!choice_request.context.input_resources.empty()) {

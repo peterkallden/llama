@@ -124,6 +124,14 @@ bool daemon_flydelta_score_teacher_forced_margin_batch(
         score_request.choice_prefix = fixture.value("choice_prefix", "");
         score_request.positive_continuation = fixture["positive_continuation"].get<std::string>();
         score_request.negative_continuation = fixture["negative_continuation"].get<std::string>();
+        if (!common_agent_teacher_forced_contrast_is_valid(
+                score_request.choice_prefix,
+                score_request.positive_continuation,
+                score_request.negative_continuation,
+                error)) {
+            error = "FlyDelta fixture has an invalid teacher-forced contrast: " + error;
+            return false;
+        }
         score_batch.choices.push_back(std::move(score_request));
         score_indices.push_back(index);
     }

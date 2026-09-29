@@ -28,7 +28,12 @@ bool common_agent_prepare_chat_generation(
     prepared.parser_generation_prompt = generated_chat_params.generation_prompt;
     prepared.chat_format = generated_chat_params.format;
     prepared.parser = generated_chat_params.parser;
-    prepared.parse_tool_calls = !request.tools.empty();
+    // Tools remain part of the model-facing prompt for planners and other
+    // structured turns, but their response contract is the explicit JSON
+    // schema.  Feeding that JSON through the chat template's native tool-call
+    // parser would reject an otherwise valid plan before the host can apply
+    // its own schema and plan validation.
+    prepared.parse_tool_calls = request.json_schema.empty() && !request.tools.empty();
 
     if (request.json_schema.empty()) {
         // An empty tool view is ordinary chat, not an empty tool-call

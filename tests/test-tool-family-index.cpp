@@ -82,6 +82,11 @@ int main() {
     assert(selection.needs_tools && selection.family_ids.size() == 2 &&
         selection.family_ids[0] == "data" && selection.family_ids[1] == "statistics");
     assert(!common_parse_tool_family_selection_text("TOOLS: unknown", families, selection, error));
+    // The parser remains the authorization boundary even when the runtime
+    // gives a compact model one bounded retry.  Prompt data appended after a
+    // valid family is not silently accepted as another family selection.
+    assert(!common_parse_tool_family_selection_text(
+        "TOOLS: dataset W2101234009", families, selection, error));
     assert(common_parse_tool_family_selection_text(
         "document.tables(resource_id=r1)", families, selection, error));
     assert(selection.needs_tools && selection.family_ids.size() == 1 &&

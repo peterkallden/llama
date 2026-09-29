@@ -23,6 +23,9 @@
             "$ref": "#/components/parameters/per_page"
           },
           {
+            "$ref": "#/components/parameters/cursor"
+          },
+          {
             "$ref": "#/components/parameters/select"
           }
         ],
@@ -82,6 +85,12 @@
         "in": "query",
         "description": "Number of results to return, from 1 to 100.",
         "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 }
+      },
+      "cursor": {
+        "name": "cursor",
+        "in": "query",
+        "description": "Opaque continuation cursor for the next bounded page of works.",
+        "schema": { "type": "string" }
       },
       "select": {
         "name": "select",

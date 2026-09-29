@@ -425,10 +425,14 @@ bool generate_chat_turn_result(
 
     llama_free(ctx);
     if (prepared.stream && !completed_json_schema) {
-        result.status = common_agent_generation_status::errored;
+        // A normal decode stop can leave a structured payload incomplete.  It
+        // is model output, not a backend failure: callers such as the planner
+        // own schema validation and use the raw payload to construct their one
+        // bounded regeneration request.  Transport, prompt and decode errors
+        // returned earlier still remain errors.
+        result.status = common_agent_generation_status::completed;
         result.stop_reason = stop_reason;
-        result.error_message = "generation ended before producing valid JSON for the requested schema";
-        return false;
+        return true;
     }
 
     result.status = common_agent_generation_status::completed;
@@ -470,6 +474,8 @@ bool score_chat_choice_margin(
             positive_choice.empty() || negative_choice.empty()) {
         local_error = "FlyDelta choice scoring input is invalid";
     }
+    if (local_error.empty() && !common_agent_teacher_forced_contrast_is_valid(
+            choice_prefix, positive_choice, negative_choice, local_error)) {}
     common_agent_generation_request request;
     request.messages = messages;
     request.tools = tools;

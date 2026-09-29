@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/agent-residual-patch.h"
 
 #include "hash/hash.h"
 
@@ -71,12 +72,22 @@ bool server_context_agent_generation_supports_flydelta(
             return false;
         }
     }
+    if (request.residual_patch) {
+        const auto & patch = *request.residual_patch;
+        if (patch.site != common_agent_residual_patch_site::layer_input_residual ||
+                patch.absolute_position < 0 || patch.values.empty()) {
+            error = "server-context received an incomplete residual patch";
+            return false;
+        }
+    }
     return true;
 }
 
 bool server_context_agent_generation_requires_fresh_prompt_kv(
         const common_agent_generation_request & request) {
-    return request.flydelta_activation && request.flydelta_activation->overlay.enabled;
+    return (request.flydelta_activation && request.flydelta_activation->overlay.enabled) ||
+        static_cast<bool>(request.residual_patch) ||
+        (request.flydelta_capture && request.flydelta_capture->enabled);
 }
 
 task_params make_server_task_params_from_prepared_generation(
@@ -113,12 +124,32 @@ task_params make_server_task_params_from_prepared_generation(
     params.chat_parser_params.parse_tool_calls = prepared.parse_tool_calls;
 
     if (server_context_agent_generation_requires_fresh_prompt_kv(request)) {
-        params.cvec = make_server_task_cvec(*request.flydelta_activation);
+        if (request.flydelta_activation && request.flydelta_activation->overlay.enabled) {
+            params.cvec = make_server_task_cvec(*request.flydelta_activation);
+        }
         // The current server cvec is context-wide. Until the backend has
         // per-sequence overlay parameters in its graph, prompt/KV reuse must
-        // not cross an active FlyDelta intervention boundary.
+        // not cross an active FlyDelta intervention boundary. Capture also
+        // requires a fresh full prompt: its absolute row contract is not
+        // compatible with reading a reused-prefix/suffix batch.
         params.cache_prompt = false;
         params.n_cache_reuse = 0;
+    }
+
+    if (request.residual_patch) {
+        const auto & source = *request.residual_patch;
+        auto patch = std::make_shared<server_task_residual_patch>();
+        patch->operation = source.operation == common_agent_residual_patch_operation::replace
+            ? server_task_residual_patch_operation::replace
+            : server_task_residual_patch_operation::add;
+        patch->site = server_task_residual_patch_site::layer_input_residual;
+        patch->layer = source.layer;
+        patch->absolute_position = source.absolute_position;
+        patch->sequence_id = source.sequence_id;
+        patch->values = source.values;
+        patch->observe_applied_vector = source.observe_applied_vector;
+        patch->identity = source.identity;
+        params.residual_patch = std::move(patch);
     }
 
     if (request.flydelta_capture && request.flydelta_capture->enabled) {

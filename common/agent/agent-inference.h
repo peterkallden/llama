@@ -17,6 +17,8 @@
 struct common_flydelta_activation_result;
 struct common_flydelta_hidden_state_capture_request;
 struct common_flydelta_hidden_state_capture;
+struct common_agent_residual_patch_request;
+struct common_agent_residual_patch_observation;
 
 enum class common_agent_generation_purpose {
     planner,
@@ -96,6 +98,9 @@ struct common_agent_generation_request {
     // avoids copying potentially large cvec data across continuation steps.
     std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
     std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
+    // Neutral internal graph intervention used by causal model experiments.
+    // It is request-scoped and never participates in FlyDelta lifecycle.
+    std::shared_ptr<const common_agent_residual_patch_request> residual_patch;
 };
 
 inline common_agent_generation_request common_agent_make_generation_request(
@@ -131,6 +136,7 @@ struct common_agent_generation_result {
     std::string error_message;
     std::optional<common_chat_params> chat_params;
     std::shared_ptr<const common_flydelta_hidden_state_capture> flydelta_capture;
+    std::shared_ptr<const common_agent_residual_patch_observation> residual_patch_observation;
     // Internal runtime provenance; does not affect generation semantics.
     bool flydelta_device_batch = false;
 };
@@ -155,6 +161,26 @@ struct common_agent_teacher_forced_choice_request {
     std::string positive_continuation;
     std::string negative_continuation;
 };
+
+// Teacher-forced scoring is a contrast operation.  Equal effective
+// continuations are not a valid contrast and must fail closed instead of
+// silently producing a zero diagnostic margin.
+inline bool common_agent_teacher_forced_contrast_is_valid(
+        const std::string & choice_prefix,
+        const std::string & positive,
+        const std::string & negative,
+        std::string & error) {
+    if (choice_prefix.empty() || positive.empty() || negative.empty()) {
+        error = "teacher-forced scoring requires a prefix and two continuations";
+        return false;
+    }
+    if (positive == negative) {
+        error = "teacher-forced scoring requires distinct positive and negative continuations";
+        return false;
+    }
+    error.clear();
+    return true;
+}
 
 struct common_agent_teacher_forced_choice_result {
     std::string sequence_id;

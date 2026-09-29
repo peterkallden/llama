@@ -134,6 +134,7 @@ struct llama_context {
     // reference is non-owning and must remain valid until graph execution
     // has completed. Passing nullptr restores the scalar cvec path.
     LLAMA_API void set_adapter_cvec_batch(const llama_adapter_cvec_batch_ref * ref);
+    LLAMA_API void set_residual_patch(const llama_residual_patch_ref * ref);
 
     // process a single ubatch with a specific graph type
     // if memory_context is provided, it will be applied first to the context's memory
@@ -288,6 +289,7 @@ private:
 
     llama_adapter_cvec_ptr  cvec;
     const llama_adapter_cvec_batch_ref * cvec_batch = nullptr;
+    const llama_residual_patch_ref * residual_patch = nullptr;
     llama_adapter_loras_ptr loras;
 
     llama_cross cross; // TODO: tmp for handling cross-attention - need something better probably

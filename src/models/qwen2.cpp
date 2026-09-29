@@ -70,6 +70,9 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
 
     for (int il = 0; il < n_layer; ++il) {
         res->t_layer_inp[il] = inpL;
+        // Capture remains pre-patch; the rest of this layer consumes the
+        // request-scoped causal intervention.
+        inpL = build_residual_patch(inpL, il);
         ggml_tensor * inpSA = inpL;
 
         // norm

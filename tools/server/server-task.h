@@ -139,6 +139,8 @@ struct server_task_capture_request {
     bool enabled = false;
     std::vector<uint32_t> layer_indices;
     int32_t token_index = -1;
+    int32_t token_id = -1;
+    int32_t prompt_token_count = 0;
     int32_t position = 0;
     size_t max_bytes = 0;
     std::string model_profile_fingerprint;
@@ -152,6 +154,8 @@ struct server_task_capture_result {
     bool captured = false;
     uint32_t n_embd = 0;
     int32_t token_index = -1;
+    int32_t token_id = -1;
+    int32_t prompt_token_count = 0;
     int32_t position = 0;
     std::vector<uint32_t> layer_indices;
     std::vector<float> values;
@@ -159,6 +163,47 @@ struct server_task_capture_result {
     std::string capture_layout_revision;
     std::string failure_reason;
 };
+
+enum class server_task_residual_patch_operation : uint8_t {
+    replace,
+    add,
+};
+
+enum class server_task_residual_patch_site : uint8_t {
+    layer_input_residual,
+};
+
+// A neutral single-position graph intervention. Values are already scaled;
+// the server neither infers direction semantics nor permits broadcasting.
+struct server_task_residual_patch {
+    server_task_residual_patch_operation operation = server_task_residual_patch_operation::add;
+    server_task_residual_patch_site site = server_task_residual_patch_site::layer_input_residual;
+    uint32_t layer = 0;
+    int32_t absolute_position = -1;
+    int32_t sequence_id = -1;
+    std::vector<float> values;
+    bool observe_applied_vector = false;
+    std::string identity;
+};
+
+struct server_task_residual_patch_observation {
+    bool attempted = false;
+    bool applied = false;
+    uint32_t layer = 0;
+    int32_t absolute_position = -1;
+    int32_t sequence_id = -1;
+    server_task_residual_patch_site site = server_task_residual_patch_site::layer_input_residual;
+    std::string failure_reason;
+};
+
+using server_task_residual_patch_ptr = std::shared_ptr<const server_task_residual_patch>;
+
+bool server_task_residual_patch_validate(
+        const server_task_residual_patch & patch,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error);
 
 struct task_params {
     bool stream          = false;
@@ -185,6 +230,7 @@ struct task_params {
     // Internal typed field; deliberately omitted from task_params::to_json().
     server_task_cvec_ptr cvec;
     server_task_capture_request_ptr capture;
+    server_task_residual_patch_ptr residual_patch;
 
     std::vector<std::string> antiprompt;
     std::vector<std::string> response_fields;
@@ -476,6 +522,7 @@ struct server_task_result_cmpl_final : server_task_result {
 
     // Internal FlyDelta capture, omitted from the public JSON payload.
     server_task_capture_result capture;
+    server_task_residual_patch_observation residual_patch_observation;
 
     // True when this completion used per-sequence overlay rows in a
     // non-CPU backend graph.

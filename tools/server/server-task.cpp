@@ -218,6 +218,35 @@ bool server_task_cvec_validate(
     return true;
 }
 
+bool server_task_residual_patch_validate(
+        const server_task_residual_patch & patch,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error) {
+    error.clear();
+    if (patch.site != server_task_residual_patch_site::layer_input_residual) {
+        error = "unsupported residual patch site";
+        return false;
+    }
+    if (patch.layer >= model_n_layers || patch.absolute_position < 0) {
+        error = "invalid residual patch layer, position or sequence";
+        return false;
+    }
+    if (patch.values.size() != model_n_embd || patch.values.empty() ||
+            patch.values.size() * sizeof(float) > max_bytes) {
+        error = "residual patch vector does not match model embedding width or byte budget";
+        return false;
+    }
+    for (const float value : patch.values) {
+        if (!std::isfinite(value)) {
+            error = "residual patch contains a non-finite value";
+            return false;
+        }
+    }
+    return true;
+}
+
 //
 // task_params
 //

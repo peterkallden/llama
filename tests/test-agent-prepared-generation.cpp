@@ -1,5 +1,6 @@
 #include "agent/agent-inference.h"
 #include "agent/agent-prepared-generation.h"
+#include "agent/agent-residual-patch.h"
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent-server-generation.h"
 #include "chat.h"
@@ -8,6 +9,8 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
+#include <limits>
 
 namespace {
 
@@ -131,6 +134,7 @@ void test_prepare_tool_generation() {
         "lookup",
         "Look up a record",
         R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})",
+        {},
     });
     request.tool_choice = COMMON_CHAT_TOOL_CHOICE_REQUIRED;
 
@@ -154,10 +158,18 @@ void test_prepare_tool_generation() {
 void test_prepare_json_schema_generation() {
     auto templates = make_templates();
     auto request = make_base_request();
+    request.tools.push_back({
+        "lookup",
+        "Look up a record",
+        R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})",
+        {},
+    });
+    request.tool_choice = COMMON_CHAT_TOOL_CHOICE_REQUIRED;
     request.json_schema = R"({"type":"object","additionalProperties":false,"required":["answer"],"properties":{"answer":{"type":"string"}}})";
 
     common_agent_prepared_generation prepared;
     const bool ok = common_agent_prepare_chat_generation(templates.get(), request, prepared);
+    if (!ok || prepared.parse_tool_calls) std::abort();
     assert(ok);
     assert(prepared.grammar.type == COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT);
     assert(!prepared.grammar.empty());
@@ -166,6 +178,8 @@ void test_prepare_json_schema_generation() {
     assert(prepared.ignore_eos);
     assert(prepared.suppress_eog);
     assert(prepared.stream);
+    // A structured planner/reflection turn may expose tools in its prompt,
+    // but its response is schema JSON, not a native chat-template tool call.
     assert(!prepared.parse_tool_calls);
 }
 
@@ -356,6 +370,31 @@ void test_server_task_cvec_contract() {
     assert(!server_task_cvec_validate(over_bound, 2, 3, 1024, error));
 }
 
+void test_server_task_residual_patch_contract() {
+    server_task_residual_patch patch;
+    patch.operation = server_task_residual_patch_operation::replace;
+    patch.site = server_task_residual_patch_site::layer_input_residual;
+    patch.layer = 2;
+    patch.absolute_position = 17;
+    patch.sequence_id = 0;
+    patch.values.assign(4, 0.25f);
+
+    std::string error;
+    assert(server_task_residual_patch_validate(patch, 4, 6, 1024, error));
+
+    auto wrong_width = patch;
+    wrong_width.values.pop_back();
+    assert(!server_task_residual_patch_validate(wrong_width, 4, 6, 1024, error));
+
+    auto invalid_position = patch;
+    invalid_position.absolute_position = -1;
+    assert(!server_task_residual_patch_validate(invalid_position, 4, 6, 1024, error));
+
+    auto invalid_value = patch;
+    invalid_value.values[0] = std::numeric_limits<float>::quiet_NaN();
+    assert(!server_task_residual_patch_validate(invalid_value, 4, 6, 1024, error));
+}
+
 void test_cvec_batch_graph_identity() {
     llama_adapter_cvec_batch_ref first;
     llama_adapter_cvec_batch_ref second;
@@ -423,6 +462,7 @@ int main() {
     test_prepare_plain_chat_has_no_tool_grammar();
     test_server_task_params_from_prepared_generation();
     test_server_task_cvec_contract();
+    test_server_task_residual_patch_contract();
     test_cvec_batch_graph_identity();
     test_server_task_cvec_batch_view();
     return 0;

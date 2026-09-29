@@ -26,6 +26,15 @@ common_model_tool_contract common_project_model_tool_contract(
     const std::string & result_schema_json,
     std::string & error);
 
+// Add host-known mandatory inputs to the model-facing projection without
+// changing the execution schema used by host validation.  Every promoted
+// field must already exist in the schema properties; a mismatch is an error
+// rather than an implicit or silently invented model input.
+std::string common_project_model_input_schema_required_parameters(
+    const std::string & schema_json,
+    const std::vector<std::string> & required_parameters,
+    std::string & error);
+
 std::string common_render_compact_tool_schema(
     const std::string & schema_json,
     std::string & error);

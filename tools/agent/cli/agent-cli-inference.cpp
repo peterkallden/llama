@@ -81,6 +81,10 @@ public:
             ? request.positive_choice : request.positive_continuation;
         const std::string & negative = request.negative_continuation.empty()
             ? request.negative_choice : request.negative_continuation;
+        if (!common_agent_teacher_forced_contrast_is_valid(
+                request.choice_prefix, positive, negative, result.error_message)) {
+            return false;
+        }
         if (!score_chat_choice_margin(
                 model, templates, request.context.messages, request.context.tools,
                 request.context.tool_choice, request.context.options,

@@ -174,6 +174,56 @@ std::string common_render_compact_tool_schema(
     return render_object(schema, error);
 }
 
+std::string common_project_model_input_schema_required_parameters(
+        const std::string & schema_json,
+        const std::vector<std::string> & required_parameters,
+        std::string & error) {
+    error.clear();
+    auto schema = json::parse(schema_json, nullptr, false);
+    if (schema.is_discarded() || !schema.is_object() ||
+            schema.value("type", std::string()) != "object") {
+        error = "model input schema must be a JSON object schema";
+        return {};
+    }
+    const auto properties = schema.value("properties", json::object());
+    if (!properties.is_object()) {
+        error = "model input schema properties must be an object";
+        return {};
+    }
+
+    std::set<std::string> required;
+    if (schema.contains("required")) {
+        if (!schema["required"].is_array()) {
+            error = "model input schema required must be an array";
+            return {};
+        }
+        for (const auto & value : schema["required"]) {
+            if (!value.is_string()) {
+                error = "model input schema required entries must be strings";
+                return {};
+            }
+            required.insert(value.get<std::string>());
+        }
+    }
+    for (const auto & parameter : required_parameters) {
+        if (parameter.empty()) {
+            error = "model input schema required parameter must not be empty";
+            return {};
+        }
+        if (!properties.contains(parameter)) {
+            error = "host-required parameter is absent from model input schema: " + parameter;
+            return {};
+        }
+        required.insert(parameter);
+    }
+
+    schema["required"] = json::array();
+    for (const auto & parameter : required) {
+        schema["required"].push_back(parameter);
+    }
+    return schema.dump();
+}
+
 common_model_tool_contract common_project_model_tool_contract(
         const std::string & name,
         const std::string & description,

@@ -26,6 +26,8 @@ struct common_flydelta_hidden_state_capture_request {
     std::vector<uint32_t> layer_indices;
     // -1 selects the last prompt row. Positive values are prompt-row indices.
     int32_t token_index = -1;
+    int32_t token_id = -1;
+    int32_t prompt_token_count = 0;
     common_flydelta_capture_position position = common_flydelta_capture_position::prompt_row;
     size_t max_bytes = 4U * 1024U * 1024U;
     std::string model_profile_fingerprint;
@@ -41,6 +43,8 @@ struct common_flydelta_hidden_state_capture {
     uint32_t n_embd = 0;
     common_flydelta_capture_position position = common_flydelta_capture_position::prompt_row;
     int32_t token_index = -1;
+    int32_t token_id = -1;
+    int32_t prompt_token_count = 0;
     std::vector<float> values; // layer-major: layer 0 row, layer 1 row, ...
     std::string failure_reason;
 };

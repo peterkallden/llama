@@ -15,6 +15,7 @@
 #include "llama-memory-hybrid-iswa.h"
 #include "llama-memory-recurrent.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -1464,6 +1465,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     backend_cpu      (params.backend_cpu),
     cvec             (params.cvec),
     cvec_batch       (params.cvec_batch),
+    residual_patch   (params.residual_patch),
     loras            (params.loras),
     mctx             (params.mctx),
     cross            (params.cross),
@@ -1490,6 +1492,52 @@ ggml_tensor * llm_graph_context::build_cvec(
         return cvec_batch->apply(ctx0, cur, il, ubatch, cvec_batch->user_data);
     }
     return cvec->apply_to(ctx0, cur, il);
+}
+
+ggml_tensor * llm_graph_context::build_residual_patch(ggml_tensor * cur, int il) const {
+    if (residual_patch == nullptr || residual_patch->layer != static_cast<uint32_t>(il)) return cur;
+    class residual_patch_input final : public llm_graph_input_i {
+    public:
+        residual_patch_input(const llama_residual_patch_ref & ref, int64_t width) : ref(ref), width(width) {}
+        void set_input(const llama_ubatch * batch) override {
+            std::vector<float> patch(static_cast<size_t>(width) * batch->n_tokens, 0.0f);
+            std::vector<float> mask(patch.size(), 0.0f);
+            for (uint32_t row = 0; row < batch->n_tokens; ++row) {
+                if (batch->pos[row] != ref.absolute_position || batch->n_seq_id[row] != 1 ||
+                        batch->seq_id[row][0] != ref.sequence_id) continue;
+                std::copy(ref.values, ref.values + width, patch.begin() + static_cast<size_t>(row) * width);
+                std::fill(mask.begin() + static_cast<size_t>(row) * width,
+                    mask.begin() + static_cast<size_t>(row + 1) * width, 1.0f);
+                if (ref.applied != nullptr) *ref.applied = true;
+            }
+            ggml_backend_tensor_set(values, patch.data(), 0, patch.size()*sizeof(float));
+            if (one != nullptr && one->buffer != nullptr) {
+                const float one_value = 1.0f;
+                ggml_backend_tensor_set(one, &one_value, 0, sizeof(one_value));
+            }
+            // The selection tensor is only part of the graph for replacement
+            // patches.  Setting an unused input is invalid because the graph
+            // scheduler is allowed to leave it without a backend buffer.
+            if (selection->buffer != nullptr) {
+                ggml_backend_tensor_set(selection, mask.data(), 0, mask.size()*sizeof(float));
+            }
+        }
+        bool can_reuse(const llm_graph_params & params) override { return params.residual_patch == &ref; }
+        const llama_residual_patch_ref & ref; int64_t width;
+        ggml_tensor * values = nullptr; ggml_tensor * selection = nullptr; ggml_tensor * one = nullptr;
+    };
+    auto input = std::make_unique<residual_patch_input>(*residual_patch, n_embd);
+    input->values = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, n_tokens);
+    input->selection = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, n_tokens);
+    ggml_set_input(input->values); ggml_set_input(input->selection);
+    auto * values = input->values; auto * selection = input->selection;
+    res->add_input(std::move(input));
+    if (residual_patch->operation == llama_residual_patch_operation::add) return ggml_add(ctx0, cur, values);
+    auto * patch_input = static_cast<residual_patch_input *>(res->inputs.back().get());
+    patch_input->one = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, 1);
+    ggml_set_input(patch_input->one);
+    auto * one = patch_input->one;
+    return ggml_add(ctx0, ggml_mul(ctx0, cur, ggml_sub(ctx0, ggml_repeat(ctx0, one, selection), selection)), values);
 }
 
 ggml_tensor * llm_graph_context::build_lora_mm(

@@ -180,6 +180,119 @@ std::string render_reflection_failed_tool_observations(
     return rendered;
 }
 
+struct retryable_tool_repair_target {
+    const common_plan_step * step = nullptr;
+    std::string tool_name;
+    std::string missing_argument;
+};
+
+std::string missing_argument_from_failure(const nlohmann::json & failure) {
+    nlohmann::json context = failure.value("repair_context", nlohmann::json::object());
+    const std::string diagnostic = context.is_object()
+        ? context.value("error", std::string())
+        : failure.value("summary", std::string());
+    const std::string marker = "missing: ";
+    const auto marker_pos = diagnostic.find(marker);
+    if (marker_pos == std::string::npos) return {};
+    auto value = diagnostic.substr(marker_pos + marker.size());
+    const auto separator = value.find_first_of(" \t\r\n,;");
+    if (separator != std::string::npos) value.resize(separator);
+    const auto dot = value.rfind('.');
+    if (dot != std::string::npos) value = value.substr(dot + 1);
+    return value;
+}
+
+// A retryable validation failure is a host-established fact, not a model
+// preference. In that case prose-only reflection cannot make progress: the
+// runtime needs a replace operation with corrected arguments before it can
+// safely rerun the mandatory step. The failed step and registered tool are
+// also host-owned schema values; they must not be left as free model strings.
+retryable_tool_repair_target find_retryable_failed_mandatory_tool_validation_step(
+        const common_plan_state & plan) {
+    for (const auto & step : plan.steps) {
+        if (step.optional || step.status != common_plan_step_status::failed ||
+                common_plan_step_effective_mode(step) != common_plan_step_mode::tool) {
+            continue;
+        }
+        const std::string prefix = "tool:" + step.id + ":";
+        for (const auto & observation : plan.observations) {
+            if (observation.id.rfind(prefix, 0) != 0) continue;
+            const auto parsed = nlohmann::json::parse(observation.summary, nullptr, false);
+            if (!parsed.is_object() || !parsed.contains("failure")) continue;
+            const auto & failure = parsed["failure"];
+            if (!failure.is_object()) continue;
+            if (failure.value("retryable", false) &&
+                    failure.value("class", std::string()) == "validation") {
+                return {
+                    &step,
+                    step.tool_call ? step.tool_call->name : step.selected_tool.value_or(std::string()),
+                    missing_argument_from_failure(failure),
+                };
+            }
+        }
+    }
+    return {};
+}
+
+std::string retryable_tool_repair_schema(
+        const retryable_tool_repair_target & target,
+        const std::vector<common_chat_tool> & tools) {
+    using json = nlohmann::ordered_json;
+    json args_schema = {
+        {"type", "object"},
+    };
+    for (const auto & tool : tools) {
+        if (tool.name != target.tool_name || tool.parameters.empty()) continue;
+        const auto parsed = json::parse(tool.parameters, nullptr, false);
+        if (parsed.is_object() && parsed.value("type", std::string()) == "object") {
+            args_schema = parsed;
+        }
+        break;
+    }
+    if (!target.missing_argument.empty() && args_schema.is_object()) {
+        auto & required = args_schema["required"];
+        if (!required.is_array()) required = json::array();
+        const bool already_required = std::find(required.begin(), required.end(), target.missing_argument) != required.end();
+        if (!already_required && args_schema.value("properties", json::object()).contains(target.missing_argument)) {
+            required.push_back(target.missing_argument);
+        }
+    }
+    json item = {
+        {"type", "object"},
+        {"additionalProperties", false},
+        {"required", json::array({"step_id", "tool", "args"})},
+        {"properties", {
+            {"step_id", { {"type", "string"}, {"minLength", 1}, {"maxLength", 64} }},
+            {"tool", { {"type", "string"}, {"minLength", 1}, {"maxLength", 128} }},
+            {"args", std::move(args_schema)},
+            {"title", { {"type", "string"}, {"maxLength", 128} }},
+            {"objective", { {"type", "string"}, {"maxLength", 512} }},
+            {"contribution", { {"type", "string"}, {"maxLength", 512} }},
+        }},
+    };
+    if (target.step != nullptr) {
+        item["properties"]["step_id"] = { {"enum", json::array({target.step->id})} };
+    }
+    if (!target.tool_name.empty()) {
+        item["properties"]["tool"] = { {"enum", json::array({target.tool_name})} };
+    }
+    json schema = {
+        {"type", "object"},
+        {"additionalProperties", false},
+        {"required", json::array({"decision", "replace_steps"})},
+        {"properties", {
+            {"decision", { {"enum", json::array({"revise"})} }},
+            {"replace_steps", {
+                {"type", "array"},
+                {"minItems", 1},
+                {"maxItems", 1},
+                {"items", std::move(item)},
+            }},
+        }},
+    };
+    return schema.dump();
+}
+
 std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
     std::string names;
     for (const auto & tool : tools) {
@@ -1070,17 +1183,29 @@ public:
             return common_plan_step_effective_mode(step) == common_plan_step_mode::tool &&
                 !step.optional && step.status == common_plan_step_status::failed;
         });
+        const auto retry_target =
+            find_retryable_failed_mandatory_tool_validation_step(plan);
+        const bool retryable_validation_repair_required = retry_target.step != nullptr;
         const std::string decision_enum = failed_mandatory_tool_step
             ? R"(["revise","abort"])"
             : R"(["accept","revise","abort"])";
-        const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":)" +
-            decision_enum +
-            R"(},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"reset":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"retry":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}},"replace_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
+        const std::string reflection_schema = retryable_validation_repair_required
+            ? retryable_tool_repair_schema(retry_target, tools)
+            : R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":)" +
+                decision_enum +
+                R"(},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"reset":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"retry":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}},"replace_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
         if (failed_mandatory_tool_step) {
             system.content +=
                 " A mandatory tool step is failed. The decision must be revise or abort, never accept. "
                 "For a repair, use reset or retry with the failed step id, or replace_steps with a corrected "
                 "registered tool call and exact arguments. Do not add an unrelated pending step.";
+        }
+        if (retryable_validation_repair_required) {
+            system.content +=
+                " This is a retryable host validation failure. Return exactly one replace_steps entry for the "
+                "failed step, with its exact registered tool name and corrected args. The host schema already "
+                "binds step_id and tool to the failed operation; do not invent either identifier. Prose guidance, "
+                "reset, retry, abort, and unrelated steps cannot repair this failure.";
         }
         auto generate_reflection = [&](bool regeneration) {
             common_chat_msg attempt = user;

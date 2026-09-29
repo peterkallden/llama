@@ -33,6 +33,14 @@ public:
     }
 };
 
+class low_confidence_selector final : public common_blueprint_selector {
+public:
+    common_blueprint_selection select(const common_agent_request &, const std::vector<common_blueprint_candidate> &, std::string & error) override {
+        error.clear();
+        return {common_blueprint_selection_decision::instantiate, "repository-change", 0.1f, "model selected below threshold"};
+    }
+};
+
 int main() {
     common_memory_in_memory_store memory;
     common_plan_in_memory_store plans;
@@ -205,15 +213,38 @@ int main() {
     assert(selection_result.outcome == common_blueprint_selection_outcome::failed_safely);
 
     declining_selector declining;
+    low_confidence_selector low_confidence;
     selection_config.task_plan_id = "fallback-instance";
     selection_request.prompt = "Diagnose unexpected behavior in an agent regression.";
-    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, declining,
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, low_confidence,
         {{"repository-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
          {"agent-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
         selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
     assert(selection_result.logical_id && *selection_result.logical_id == "agent-regression");
     assert(selection_result.reason.rfind("native keyword fallback", 0) == 0);
+
+    // A single generic overlap such as "tool" must not make auto-plan replace
+    // a data task with the unrelated regression blueprint.  When no blueprint
+    // is semantically applicable, normal agent orchestration owns the turn.
+    selection_config.task_plan_id = "single-keyword-fallback-instance";
+    selection_request.prompt = "Use the data and statistics tool families to inspect a dataset.";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, low_confidence,
+        {{"repository-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
+         {"agent-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined);
+
+    // An explicit model decline is semantically different from a low
+    // confidence selection: it must preserve normal agent orchestration even
+    // when a keyword fallback would otherwise find a matching blueprint.
+    selection_config.task_plan_id = "explicit-decline-instance";
+    selection_request.prompt = "Diagnose unexpected behavior in an agent regression.";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, declining,
+        {{"repository-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
+         {"agent-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined);
 
     selection_config.allow_keyword_fallback = false;
     selection_config.task_plan_id = "fallback-disabled-instance";
@@ -242,7 +273,7 @@ int main() {
     selection_policy.success_criteria = "The affected build succeeds.";
     selection_request.policy_pack = selection_policy;
     selection_config.task_plan_id = "ranked-build-instance";
-    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, declining,
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, low_confidence,
         {{"build-repair", build_blueprint.id, "Repository work",
           build_blueprint.purpose, build_blueprint.goal, build_blueprint.success_criteria},
          {"architecture", explanation_blueprint.id, "Repository work",
