@@ -17,7 +17,8 @@ std::string common_plan_proposal_json_schema();
 // generation; the parser continues to accept the richer legacy/advanced plan
 // form and stores one host-owned plan representation.
 std::string common_plan_model_facing_json_schema(
-        const std::vector<std::string> & allowed_tools = {});
+        const std::vector<std::string> & allowed_tools = {},
+        bool require_tool_execution = false);
 // Bounded model-facing projection of the strict planner schema. The model
 // still returns JSON; this only removes schema/protocol noise from the prompt.
 std::string common_render_compact_plan_schema(

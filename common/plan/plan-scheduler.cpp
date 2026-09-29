@@ -18,6 +18,21 @@ bool has_evidence(const common_plan_state & plan, const std::string & id) {
 
 } // namespace
 
+bool common_plan_step_dependencies_ready(
+        const common_plan_state & plan,
+        const common_plan_step & step,
+        std::string * blocked_dependency) {
+    if (blocked_dependency) blocked_dependency->clear();
+    for (const auto & dependency : step.depends_on) {
+        const auto * prerequisite = find_step(plan, dependency);
+        if (!prerequisite || prerequisite->status != common_plan_step_status::completed) {
+            if (blocked_dependency) *blocked_dependency = dependency;
+            return false;
+        }
+    }
+    return true;
+}
+
 common_plan_schedule_result common_plan_schedule(const common_plan_state & plan) {
     common_plan_schedule_result result;
     if (plan.status == common_plan_status::failed || plan.status == common_plan_status::cancelled) {
@@ -32,11 +47,7 @@ common_plan_schedule_result common_plan_schedule(const common_plan_state & plan)
         if (!step.optional && step.status != common_plan_step_status::completed && step.status != common_plan_step_status::skipped) has_incomplete_mandatory = true;
         if (step.status != common_plan_step_status::pending) continue;
 
-        bool ready = true;
-        for (const auto & dependency : step.depends_on) {
-            const auto * prerequisite = find_step(plan, dependency);
-            if (!prerequisite || prerequisite->status != common_plan_step_status::completed) { ready = false; break; }
-        }
+        bool ready = common_plan_step_dependencies_ready(plan, step);
         if (ready) for (const auto & evidence : step.required_evidence) {
             if (!has_evidence(plan, evidence)) { ready = false; break; }
         }

@@ -27,6 +27,17 @@ int main() {
     assert(operations[1].step->depends_on == std::vector<std::string>{"search"});
     assert(common_plan_step_effective_mode(*operations[2].step) == common_plan_step_mode::final_response);
 
+    // Model-generated ids do not transfer dependency ownership. If no
+    // dependency fields are present, the host still creates the sequential
+    // chain that protects a producer/consumer tool workflow.
+    const auto ids_without_dependencies = R"({"goal":"find and retrieve","steps":[{"id":"first","tool":"openalex.listWorks","args":{"search":"machine learning"}},{"id":"second","tool":"openalex.getWork","args":{"id":""}}]})";
+    assert(common_plan_parse_proposal_json(ids_without_dependencies, plan, operations, error));
+    assert(operations.size() == 3); // two tool steps plus host-owned answer
+    assert(operations[0].step->id == "first");
+    assert(operations[1].step->id == "second");
+    assert(operations[1].step->depends_on == std::vector<std::string>{"first"});
+    assert(operations[2].step->depends_on == std::vector<std::string>({"first", "second"}));
+
     const auto shorthand_binding = R"({"goal":"aggregate a document table","steps":[{"id":"table","tool":"document.table","args":{"resource":"r1","table":"Budget summary"}},{"id":"sum","after":["table"],"tool":"data.aggregate","args":{"dataset":"$table.dataset","measures":[{"function":"sum","column":"amount"}]}}]})";
     assert(common_plan_parse_proposal_json(shorthand_binding, plan, operations, error));
     const auto shorthand_args = nlohmann::json::parse(operations[1].step->tool_call->arguments_json, nullptr, false);
@@ -96,10 +107,9 @@ int main() {
     assert(operations[3].step->id == "answer");
     assert(operations[3].step->depends_on == std::vector<std::string>({"step_1", "step_2", "step_3"}));
 
-    // Simple model plans do not own internal IDs or dependencies. A malformed
-    // self-dependency from a small model is ignored at this boundary, while
-    // the host creates the sequential chain and resolves $previous.
-    const auto simple_dataflow = R"({"goal":"read and aggregate","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget summary"},"as":"table"},{"tool":"data.aggregate","args":{"dataset":"$previous.dataset","measures":[{"function":"sum","column":"amount"}]},"after":["step_2"]}]})";
+    // Simple model plans do not own internal IDs or dependencies. The host
+    // creates the sequential chain and resolves $previous.
+    const auto simple_dataflow = R"({"goal":"read and aggregate","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget summary"},"as":"table"},{"tool":"data.aggregate","args":{"dataset":"$previous.dataset","measures":[{"function":"sum","column":"amount"}]}}]})";
     assert(common_plan_parse_proposal_json(simple_dataflow, plan, operations, error));
     assert(operations[0].step->id == "step_1");
     assert(operations[1].step->id == "step_2");
@@ -163,6 +173,16 @@ int main() {
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[]})", plan, operations, error));
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{}]})", plan, operations, error));
     assert(error.find("final synthesis is host-owned") != std::string::npos);
+    // Compact models sometimes append an explicit final marker after a
+    // grounded step. The host owns that synthesis, so retain the work and
+    // replace only the redundant marker with the native final operation.
+    assert(common_plan_parse_proposal_json(
+        R"({"goal":"x","steps":[{"tool":"calculator","args":{"expression":"6 * 7"}},{"mode":"final"}]})",
+        plan, operations, error));
+    assert(operations.size() == 2);
+    assert(operations[0].step && operations[0].step->tool_call);
+    assert(operations[0].step->tool_call->name == "calculator");
+    assert(operations[1].step && common_plan_step_effective_mode(*operations[1].step) == common_plan_step_mode::final_response);
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"invalid","mode":"tool"}]})", plan, operations, error));
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"search","tool":"repository.search","args":{"query":"x"}},{"id":"search","mode":"final"}]})", plan, operations, error));
     assert(error == "duplicate step id");
@@ -179,11 +199,30 @@ int main() {
     assert(model_schema["properties"]["steps"].contains("items"));
     const auto model_step_schema = model_schema["properties"]["steps"]["items"];
     assert(model_step_schema.is_object());
-    assert(model_step_schema.contains("properties"));
-    assert(model_step_schema["properties"].contains("as"));
-    assert(!model_step_schema["properties"].contains("id"));
-    assert(!model_step_schema["properties"].contains("depends_on"));
-    assert(model_step_schema["properties"]["tool"]["enum"].size() == 2);
+    assert(model_step_schema.contains("oneOf"));
+    assert(model_step_schema["oneOf"].is_array());
+    assert(model_step_schema["oneOf"].size() == 2);
+    const auto & model_tool_step_schema = model_step_schema["oneOf"][0];
+    const auto & model_reasoning_step_schema = model_step_schema["oneOf"][1];
+    assert(model_tool_step_schema["required"] == nlohmann::json::array({"tool", "args"}));
+    assert(model_tool_step_schema["properties"].contains("as"));
+    assert(!model_tool_step_schema["properties"].contains("id"));
+    assert(!model_tool_step_schema["properties"].contains("depends_on"));
+    assert(model_tool_step_schema["properties"]["tool"]["enum"].size() == 2);
+    assert(model_tool_step_schema["properties"]["mode"]["enum"] == nlohmann::json::array({"tool"}));
+    assert(model_reasoning_step_schema["required"] == nlohmann::json::array({"mode"}));
+    assert(model_reasoning_step_schema["properties"]["mode"]["enum"] == nlohmann::json::array({"reasoning"}));
+    assert(!model_reasoning_step_schema["properties"].contains("tool"));
+    assert(!model_reasoning_step_schema["properties"].contains("args"));
+    const auto tool_required_schema = nlohmann::json::parse(
+        common_plan_model_facing_json_schema({"document.table", "data.aggregate"}, true), nullptr, false);
+    assert(tool_required_schema.is_object());
+    const auto tool_required_step_schema = tool_required_schema["properties"]["steps"]["items"];
+    assert(tool_required_step_schema.is_object());
+    assert(!tool_required_step_schema.contains("oneOf"));
+    assert(tool_required_step_schema["required"] == nlohmann::json::array({"tool", "args"}));
+    assert(tool_required_step_schema["properties"]["tool"]["enum"].size() == 2);
+    assert(tool_required_step_schema["properties"]["mode"]["enum"] == nlohmann::json::array({"tool"}));
 
     common_plan_state materialize_plan;
     common_plan_step completed_search{"search", "Search", "Find evidence"};
@@ -393,5 +432,15 @@ int main() {
     assert(compact_schema.find("tool?:string") != std::string::npos);
     assert(compact_schema.find("host assigns step IDs") != std::string::npos);
     assert(compact_schema.find("$previous.field") != std::string::npos);
+    const auto model_compact_schema = common_render_compact_plan_schema(
+        common_plan_model_facing_json_schema({"document.table", "data.aggregate"}), compact_schema_error);
+    assert(compact_schema_error.empty());
+    assert(model_compact_schema.find("tool form: tool:string; args:object") != std::string::npos);
+    assert(model_compact_schema.find("reasoning form: mode:reasoning") != std::string::npos);
+    const auto tool_required_compact_schema = common_render_compact_plan_schema(
+        common_plan_model_facing_json_schema({"document.table", "data.aggregate"}, true), compact_schema_error);
+    assert(compact_schema_error.empty());
+    assert(tool_required_compact_schema.find("tool form: tool:string; args:object") != std::string::npos);
+    assert(tool_required_compact_schema.find("reasoning form") == std::string::npos);
     return 0;
 }

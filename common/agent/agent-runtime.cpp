@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cctype>
 #include <set>
+#include <utility>
 
 using json = nlohmann::ordered_json;
 
@@ -899,6 +900,35 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     }
 
     const auto activate_next_ready_step = [&]() -> bool {
+        // A plan revision or an externally restored plan can leave a
+        // dependent step active while its producer is failed/pending.  Do
+        // not let active_step_id bypass the same dependency predicate used by
+        // the scheduler.  Reset only the invalid active surface; the failed
+        // producer remains the repair target and will be retried first.
+        std::vector<std::pair<std::string, std::string>> stale_active_steps;
+        for (const auto & step : plan.steps) {
+            if (step.status != common_plan_step_status::active) continue;
+            std::string blocked_dependency;
+            if (!common_plan_step_dependencies_ready(plan, step, &blocked_dependency)) {
+                stale_active_steps.emplace_back(step.id, std::move(blocked_dependency));
+            }
+        }
+        for (const auto & stale : stale_active_steps) {
+            common_plan_operation reset;
+            reset.kind = common_plan_operation_kind::reset_step;
+            reset.plan_id = plan.id;
+            reset.expected_version = plan.version;
+            reset.step_id = stale.first;
+            reset.reason_summary = "dependent tool step deferred until its dependency is completed";
+            if (!store.apply(reset, plan, error)) return false;
+            append_event(result, request, {common_agent_event_type::plan_updated,
+                "dependent plan step deferred until dependency repair completes", {}, plan.id});
+            append_trace(result, common_runtime_trace_stage::step,
+                common_runtime_trace_kind::updated,
+                "dependency gate deferred active step until dependency=" + stale.second + " completes",
+                plan.id, stale.first);
+        }
+
         bool has_active_step = false;
         for (const auto & step : plan.steps) if (step.status == common_plan_step_status::active) { has_active_step = true; break; }
         if (has_active_step) return true;
@@ -1184,8 +1214,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             if (!tools->validate(*tool_call, error)) {
                 const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
                 const auto validation_error = error;
-                auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.invalid_arguments", common_agent_failure_class::validation, false, "Tool arguments do not satisfy the registered contract: " + validation_error);
                 auto repair = tools->make_repair_context(*tool_call, validation_error);
+                auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.invalid_arguments", common_agent_failure_class::validation, true, "Tool arguments do not satisfy the registered contract: " + validation_error);
                 repair.candidate_tools = std::move(name_candidates);
                 repair.normalized_arguments = tool_call->arguments_json;
                 repair.normalization_applied = normalization_applied || name_normalization_applied || defaults_applied;
@@ -1232,7 +1262,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     "validation_error=" + validation_error + " args=" + tool_argument_keys(tool_call->arguments_json),
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::started,
-                    "repair_required failure_code=tool.invalid_arguments retryable=false",
+                    "repair_required failure_code=tool.invalid_arguments retryable=true",
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
@@ -1379,7 +1409,17 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
 
         if (defer_draft_for_required_tools) continue;
 
-        if (context_size_tokens > 0) {
+        // A failed mandatory tool step already has host-verified repair
+        // evidence. Generating a user-facing draft before reflection would
+        // both waste a model pass and can fail in an unrelated response
+        // format seam, preventing the repair path from running at all.
+        // Reflection accepts an empty draft and receives the failed-step
+        // observation plus repair context, so defer draft generation until
+        // the tool step has been repaired and rerun.
+        const bool draft_deferred_for_tool_repair =
+            plan_has_failed_mandatory_tool_step(plan);
+
+        if (!draft_deferred_for_tool_repair && context_size_tokens > 0) {
             const size_t estimated_context_tokens = context_token_estimator
                 ? context_token_estimator(request, plan).value_or(estimate_common_agent_context_tokens(request, plan, context_budgets))
                 : estimate_common_agent_context_tokens(request, plan, context_budgets);
@@ -1412,18 +1452,26 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
         }
 
-        const auto draft_result = executor.generate_draft_result(request, plan, guidance, error);
-        auto draft = draft_result.content;
-        if (!error.empty()) { result.error = error; return result; }
-        result.generation_records.push_back(common_agent_generation_record_from_result(
-            common_agent_generation_stage::draft,
-            draft_result));
-        result.response_decoded_tokens = draft_result.decoded_tokens;
-        result.total_decoded_tokens += draft_result.decoded_tokens;
-        result.response_generation_status = draft_result.status;
-        result.response_stop_reason = draft_result.stop_reason;
-        append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::recorded,
-            "draft generated", plan.id);
+        std::string draft;
+        if (draft_deferred_for_tool_repair) {
+            append_trace(result, common_runtime_trace_stage::response,
+                common_runtime_trace_kind::decided,
+                "draft deferred until failed mandatory tool step is repaired and rerun",
+                plan.id);
+        } else {
+            const auto draft_result = executor.generate_draft_result(request, plan, guidance, error);
+            draft = draft_result.content;
+            if (!error.empty()) { result.error = error; return result; }
+            result.generation_records.push_back(common_agent_generation_record_from_result(
+                common_agent_generation_stage::draft,
+                draft_result));
+            result.response_decoded_tokens = draft_result.decoded_tokens;
+            result.total_decoded_tokens += draft_result.decoded_tokens;
+            result.response_generation_status = draft_result.status;
+            result.response_stop_reason = draft_result.stop_reason;
+            append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::recorded,
+                "draft generated", plan.id);
+        }
         if (result.research_result) {
             const auto & verifier = research_verifier ? *research_verifier : default_research_verifier;
             common_agent_research_verification_context verification_context;

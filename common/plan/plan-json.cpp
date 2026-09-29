@@ -387,9 +387,15 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
     bool has_final = false;
     std::set<std::string> seen_step_ids;
     std::map<std::string, std::string> aliases;
+    // Step identity and dependency ownership are separate concerns.  A model
+    // may emit ids despite the model-facing schema omitting them.  Unless it
+    // explicitly declares `after`/`depends_on`, the host must still build the
+    // bounded sequential dependency chain so a later tool cannot run without
+    // the producer result.
     bool host_owned_dependencies = true;
+    bool has_model_work_step = false;
     for (const auto & source : input["steps"]) {
-        if (source.is_object() && source.contains("id")) {
+        if (source.is_object() && (source.contains("after") || source.contains("depends_on"))) {
             host_owned_dependencies = false;
             break;
         }
@@ -397,15 +403,15 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
     size_t generated_index = 1;
     for (const auto & source : input["steps"]) {
         // The normal model-facing form describes work for the host to run.
-        // Final synthesis is host-owned, so an empty/default-final step is
-        // never a useful model proposal. Reasoning remains an explicit
-        // model-facing step when it is requested with mode: reasoning.
-        if (host_owned_dependencies && source.is_object() && !source.contains("tool") &&
+        // Final synthesis is host-owned. A compact model can still append a
+        // redundant final marker after otherwise valid tool/reasoning steps;
+        // discard only that redundant marker rather than rejecting the
+        // grounded plan. A final-only proposal remains invalid below.
+        if (host_owned_dependencies && source.is_object() && !source.contains("id") && !source.contains("tool") &&
                 source.value("mode", std::string("final_response")) != "reasoning") {
-            error = "model plan steps require a tool or explicit mode: reasoning; final synthesis is host-owned";
-            return false;
+            continue;
         }
-        const std::string fallback_id = host_owned_dependencies || (source.is_object() && !source.contains("id"))
+        const std::string fallback_id = source.is_object() && !source.contains("id")
             ? next_generated_step_id(generated_index, seen_step_ids) : std::string();
         std::map<std::string, std::string> binding_aliases = aliases;
         if (!operations.empty() && operations.back().step) binding_aliases["previous"] = operations.back().step->id;
@@ -444,11 +450,16 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
             step.semantic_alias = alias;
         }
         has_final = has_final || common_plan_step_effective_mode(step) == common_plan_step_mode::final_response;
+        has_model_work_step = true;
         common_plan_operation operation;
         operation.kind = common_plan_operation_kind::add_step;
         operation.reason_summary = source.value("reason_summary", std::string());
         operation.step = std::move(step);
         operations.push_back(std::move(operation));
+    }
+    if (!has_model_work_step) {
+        error = "model plan steps require a tool or explicit mode: reasoning; final synthesis is host-owned";
+        return false;
     }
     if (!has_final && operations.size() < max_operations) {
         common_plan_step final_step;
@@ -511,21 +522,39 @@ std::string common_plan_proposal_json_schema() {
 }
 
 std::string common_plan_model_facing_json_schema(
-        const std::vector<std::string> & allowed_tools) {
+        const std::vector<std::string> & allowed_tools,
+        bool require_tool_execution) {
     json tool_schema = { {"type", "string"}, {"maxLength", 256} };
     if (!allowed_tools.empty()) tool_schema["enum"] = allowed_tools;
+    // A compact planner step must name executable work.  Leaving every field
+    // optional makes `{}` grammar-valid, after which it is parsed as the
+    // host-owned final response and a tool-required turn has nothing to run.
+    // Keep the richer persisted-plan grammar unchanged; this is only the
+    // model-facing projection used while generating a new compact plan.
+    const json tool_step_schema = {
+        {"type", "object"}, {"additionalProperties", false}, {"required", {"tool", "args"}},
+        {"properties", {
+            {"tool", tool_schema},
+            {"args", {{"type", "object"}}},
+            {"as", {{"type", "string"}, {"minLength", 1}, {"maxLength", 64}}},
+            {"mode", {{"type", "string"}, {"enum", {"tool"}}}}
+        }}
+    };
+    const json reasoning_step_schema = {
+        {"type", "object"}, {"additionalProperties", false}, {"required", {"mode"}},
+        {"properties", {
+            {"as", {{"type", "string"}, {"minLength", 1}, {"maxLength", 64}}},
+            {"mode", {{"type", "string"}, {"enum", {"reasoning"}}}}
+        }}
+    };
+    const json model_step_schema = require_tool_execution
+        ? tool_step_schema
+        : json{{"oneOf", json::array({tool_step_schema, reasoning_step_schema})}};
     const json schema = {
         {"type", "object"}, {"additionalProperties", false}, {"required", {"goal", "steps"}},
         {"properties", {
             {"goal", {{"type", "string"}, {"maxLength", 256}}},
-            {"steps", {{"type", "array"}, {"minItems", 1}, {"maxItems", 5}, {"items", {
-                {"type", "object"}, {"additionalProperties", false}, {"properties", {
-                    {"tool", tool_schema},
-                    {"args", {{"type", "object"}}},
-                    {"as", {{"type", "string"}, {"minLength", 1}, {"maxLength", 64}}},
-                    {"mode", {{"type", "string"}, {"enum", {"tool", "reasoning"}}}}
-                }}
-            }}}}
+            {"steps", {{"type", "array"}, {"minItems", 1}, {"maxItems", 5}, {"items", model_step_schema}}}
         }}
     };
     return schema.dump();
@@ -597,10 +626,26 @@ std::string common_render_compact_plan_schema(
         if (!optional.empty()) optional += "; ";
         optional += it.key() + '?' + ':' + compact_schema_type(it.value());
     }
+    std::string step_fields = "tool?:string; args?:object; as?:string; mode?:string";
+    const auto has_required = [&step_schema](const char * name) {
+        const auto required_fields = step_schema.value("required", json::array());
+        return required_fields.is_array() && std::any_of(
+            required_fields.begin(), required_fields.end(),
+            [name](const json & value) { return value.is_string() && value == name; });
+    };
+    if (has_required("tool") && has_required("args")) {
+        step_fields = "tool form: tool:string; args:object; as?:string; mode?:tool";
+    } else if (step_schema.contains("oneOf") && step_schema["oneOf"].is_array()) {
+        // The model-facing planner projection distinguishes executable tool
+        // work from explicit reasoning. Preserve that distinction in the
+        // compact prompt instead of rendering both forms as optional fields.
+        step_fields = "tool form: tool:string; args:object; as?:string; mode?:tool; "
+            "reasoning form: mode:reasoning; as?:string";
+    }
     std::string result = "plan\nrequired: " + required +
         "\noptional: " + (optional.empty() ? "none" : optional) +
         "\nsteps: step[]" +
-        "\nstep fields: tool?:string; args?:object; as?:string; mode?:string" +
+        "\nstep fields: " + step_fields +
         "\nstep order: host assigns step IDs and sequential dependencies when id/after/depends_on are omitted" +
         "\noutput binding: use $previous.field or $alias.field; host resolves both to typed step bindings";
     return result;

@@ -58,9 +58,12 @@ public:
 class executor final : public common_action_executor {
 public:
     std::string generate_draft(const common_agent_request &, const common_plan_state & plan, const std::vector<std::string> &, std::string & error) override {
+        ++draft_calls;
         error.clear();
         return "observations=" + std::to_string(plan.observations.size());
     }
+
+    size_t draft_calls = 0;
 };
 
 class reflector final : public common_reflection_engine {
@@ -254,6 +257,105 @@ int main() {
     run_repair_case(common_agent_thinking_mode::reflective, "repair-redaction", "lookup", R"({"token":"do-not-log","wrong":true})", "\"id\":\"\"");
     run_repair_case(common_agent_thinking_mode::reflective, "repair-unavailable", "missing", R"({})", "\"lookup\"");
 
+    class retrying_repair_reflector final : public common_reflection_engine {
+    public:
+        common_reflection_result evaluate(
+                const common_agent_request &, const common_plan_state & plan,
+                const std::string &, std::string & error) override {
+            common_reflection_result result;
+            const auto failed = std::find_if(plan.steps.begin(), plan.steps.end(), [](const common_plan_step & step) {
+                return step.id == "repair" && step.status == common_plan_step_status::failed;
+            });
+            if (failed != plan.steps.end()) {
+                common_plan_operation replace;
+                replace.kind = common_plan_operation_kind::replace_step;
+                replace.step_id = "repair";
+                common_plan_step corrected{"repair", "Repair tool call", "Retry with host-required arguments"};
+                corrected.selected_tool = "lookup";
+                corrected.tool_call = common_plan_tool_call{"lookup", R"({"id":"repaired"})"};
+                corrected.mode = common_plan_step_mode::tool;
+                replace.step = std::move(corrected);
+                result.proposed_plan_operations.push_back(std::move(replace));
+                result.decision = common_reflection_decision::revise;
+            } else {
+                result.decision = common_reflection_decision::accept;
+                result.ready_to_answer = true;
+            }
+            error.clear();
+            return result;
+        }
+    } retrying_repair_reflector_instance;
+    common_plan_in_memory_store retry_repair_store;
+    assert(retry_repair_store.open("", error));
+    repair_planner retry_repair_plan("repair-retryable-validation", "lookup", R"({"wrong":true})");
+    executor retry_repair_executor;
+    repair_test_runtime retry_repair_tools(registry);
+    common_agent_runtime retry_repair_runtime(
+        retry_repair_store, retry_repair_plan, retry_repair_executor,
+        retrying_repair_reflector_instance, &retry_repair_tools);
+    common_agent_request retry_repair_request;
+    retry_repair_request.prompt = "repair retryable validation failure";
+    retry_repair_request.deliberation_policy = make_common_agent_deliberation_policy(common_agent_thinking_mode::reflective);
+    retry_repair_request.max_iterations = 3;
+    retry_repair_request.max_reflection_rounds = 2;
+    retry_repair_request.max_tool_batches = 2;
+    const auto retry_repair_result = retry_repair_runtime.run(retry_repair_request);
+    assert(retry_repair_result.error.empty());
+    auto retry_repair_plan_result = retry_repair_store.get("repair-retryable-validation", error);
+    assert(retry_repair_plan_result && retry_repair_plan_result->status == common_plan_status::completed);
+    assert(retry_repair_plan_result->steps[0].status == common_plan_step_status::completed);
+    assert(retry_repair_plan_result->observations.size() == 2);
+    // The failed attempt is repaired before the first user-facing draft.
+    // Without the runtime repair gate this case would draft once while the
+    // failed step is unresolved and once again after the retry.
+    assert(retry_repair_executor.draft_calls == 1);
+
+    class wrong_identity_repair_reflector final : public common_reflection_engine {
+    public:
+        common_reflection_result evaluate(
+                const common_agent_request &, const common_plan_state & plan,
+                const std::string &, std::string & error) override {
+            common_reflection_result result;
+            const auto failed = std::find_if(plan.steps.begin(), plan.steps.end(), [](const common_plan_step & step) {
+                return step.id == "repair" && step.status == common_plan_step_status::failed;
+            });
+            if (failed != plan.steps.end()) {
+                common_plan_operation replace;
+                replace.kind = common_plan_operation_kind::replace_step;
+                replace.step_id = "not-the-failed-step";
+                common_plan_step wrong{"not-the-failed-step", "Wrong repair", "Must not replace another step"};
+                wrong.selected_tool = "lookup";
+                wrong.tool_call = common_plan_tool_call{"lookup", R"({"id":"repaired"})"};
+                wrong.mode = common_plan_step_mode::tool;
+                replace.step = std::move(wrong);
+                result.proposed_plan_operations.push_back(std::move(replace));
+                result.decision = common_reflection_decision::revise;
+            } else {
+                result.decision = common_reflection_decision::accept;
+                result.ready_to_answer = true;
+            }
+            error.clear();
+            return result;
+        }
+    } wrong_identity_reflector;
+    common_plan_in_memory_store wrong_identity_store;
+    assert(wrong_identity_store.open("", error));
+    repair_planner wrong_identity_plan("repair-wrong-identity", "lookup", R"({"wrong":true})");
+    executor wrong_identity_executor;
+    repair_test_runtime wrong_identity_tools(registry);
+    common_agent_runtime wrong_identity_runtime(
+        wrong_identity_store, wrong_identity_plan, wrong_identity_executor,
+        wrong_identity_reflector, &wrong_identity_tools);
+    common_agent_request wrong_identity_request;
+    wrong_identity_request.prompt = "reject repair for another step";
+    wrong_identity_request.deliberation_policy = make_common_agent_deliberation_policy(common_agent_thinking_mode::reflective);
+    wrong_identity_request.max_iterations = 2;
+    wrong_identity_request.max_reflection_rounds = 1;
+    wrong_identity_request.max_tool_batches = 1;
+    const auto wrong_identity_result = wrong_identity_runtime.run(wrong_identity_request);
+    assert(!wrong_identity_result.error.empty());
+    assert(wrong_identity_result.error.find("unrepaired failed tool step") != std::string::npos);
+
     common_registered_tool write_tool;
     write_tool.name = "write_tool";
     write_tool.executor_id = "test.write";
@@ -298,5 +400,100 @@ int main() {
              trace.detail.find("write_tool") != std::string::npos);
     }
     assert(saw_policy_failure);
+
+    // A dependent step may arrive already active in a restored/model-authored
+    // plan.  The runtime must defer it before execution, repair the failed
+    // producer, and only then execute the dependent step.
+    class dependency_repair_planner final : public common_planner {
+    public:
+        common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
+            common_plan_proposal proposal;
+            proposal.plan.id = "dependency-repair";
+            proposal.plan.goal = "Repair the producer before its dependent lookup";
+            common_plan_step producer{"producer", "Producer lookup", "Fetch the source record"};
+            producer.status = common_plan_step_status::active;
+            producer.selected_tool = "lookup";
+            producer.tool_call = common_plan_tool_call{"lookup", R"({"wrong":true})"};
+            common_plan_step consumer{"consumer", "Consumer lookup", "Use the source record"};
+            consumer.status = common_plan_step_status::active;
+            consumer.selected_tool = "lookup";
+            consumer.tool_call = common_plan_tool_call{"lookup", R"({"id":"second"})"};
+            consumer.depends_on = {"producer"};
+            common_plan_step answer{"answer", "Answer", "Return the verified result"};
+            answer.mode = common_plan_step_mode::final_response;
+            answer.depends_on = {"consumer"};
+            proposal.plan.steps = {producer, consumer, answer};
+            proposal.plan.active_step_id = "producer";
+            proposal.plan.status = common_plan_status::active;
+            error.clear();
+            return proposal;
+        }
+    } dependency_repair_plan;
+
+    class dependency_repair_reflector final : public common_reflection_engine {
+    public:
+        common_reflection_result evaluate(
+                const common_agent_request &, const common_plan_state & plan,
+                const std::string &, std::string & error) override {
+            common_reflection_result result;
+            const auto failed = std::find_if(plan.steps.begin(), plan.steps.end(), [](const common_plan_step & step) {
+                return step.id == "producer" && step.status == common_plan_step_status::failed;
+            });
+            if (failed != plan.steps.end()) {
+                const auto consumer = std::find_if(plan.steps.begin(), plan.steps.end(), [](const common_plan_step & step) {
+                    return step.id == "consumer";
+                });
+                assert(consumer != plan.steps.end());
+                assert(consumer->status == common_plan_step_status::pending);
+                const bool saw_consumer_observation = std::any_of(plan.observations.begin(), plan.observations.end(), [](const common_plan_observation & observation) {
+                    return observation.source == "lookup" && observation.summary.find("second result") != std::string::npos;
+                });
+                assert(!saw_consumer_observation);
+                common_plan_operation replace;
+                replace.kind = common_plan_operation_kind::replace_step;
+                replace.step_id = "producer";
+                common_plan_step corrected{"producer", "Producer lookup", "Fetch the source record"};
+                corrected.selected_tool = "lookup";
+                corrected.tool_call = common_plan_tool_call{"lookup", R"({"id":"first"})"};
+                replace.step = std::move(corrected);
+                result.proposed_plan_operations.push_back(std::move(replace));
+                result.decision = common_reflection_decision::revise;
+            } else {
+                result.decision = common_reflection_decision::accept;
+                result.ready_to_answer = true;
+            }
+            error.clear();
+            return result;
+        }
+    } dependency_repair_reflection;
+
+    common_plan_in_memory_store dependency_store;
+    assert(dependency_store.open("", error));
+    executor dependency_executor;
+    repair_test_runtime dependency_tools(registry);
+    common_agent_runtime dependency_runtime(
+        dependency_store, dependency_repair_plan, dependency_executor,
+        dependency_repair_reflection, &dependency_tools);
+    common_agent_request dependency_request;
+    dependency_request.prompt = "repair producer before dependent tool";
+    dependency_request.deliberation_policy = make_common_agent_deliberation_policy(common_agent_thinking_mode::reflective);
+    dependency_request.max_iterations = 3;
+    dependency_request.max_reflection_rounds = 2;
+    dependency_request.max_tool_batches = 3;
+    const auto dependency_result = dependency_runtime.run(dependency_request);
+    assert(dependency_result.error.empty());
+    assert(dependency_result.response == "observations=3");
+    auto dependency_plan_result = dependency_store.get("dependency-repair", error);
+    assert(dependency_plan_result && dependency_plan_result->status == common_plan_status::completed);
+    assert(dependency_plan_result->steps[0].status == common_plan_step_status::completed);
+    assert(dependency_plan_result->steps[1].status == common_plan_step_status::completed);
+    assert(dependency_plan_result->steps[2].status == common_plan_step_status::completed);
+    bool saw_dependency_gate = false;
+    for (const auto & trace : dependency_result.trace) {
+        saw_dependency_gate = saw_dependency_gate ||
+            (trace.stage == common_runtime_trace_stage::step &&
+             trace.detail.find("dependency gate deferred active step") != std::string::npos);
+    }
+    assert(saw_dependency_gate);
     return 0;
 }

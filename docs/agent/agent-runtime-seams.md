@@ -181,6 +181,35 @@ model-facing tools == executable tools == host-approved tools
 The catalog, provider and tool-view tests should therefore check both exposure
 and execution, not only that a definition can be parsed.
 
+### Model-facing tool projection
+
+Provider definitions keep two related but separate input views when needed:
+
+```text
+canonical input_schema_json
+    -> host normalization, validation and execution
+
+optional model_input_schema_json
+    -> compact model contract and resolved chat-tool parameters
+```
+
+The existing common schema projection helper may add host-known mandatory
+parameters to the model-facing view, but only when those names already exist
+in the canonical schema properties. OpenAPI uses this for configured
+`host_required_parameters`; the OpenAPI provider still executes against the
+original operation schema. A mismatch fails provider resolution rather than
+silently creating a model-only argument. This keeps native, MCP and OpenAPI
+providers on the same model-facing seam while preserving transport-neutral
+execution validation.
+
+The practical invariant is:
+
+```text
+model sees all host-required inputs before planning
+host still validates the canonical call before execution
+repair is fallback for invalid/missing values, not normal parameter discovery
+```
+
 ## Seam 2: host turn selection to runtime request
 
 The host assembles the turn scope and discovers current inputs before creating
@@ -242,6 +271,18 @@ string. The internal `agent_tool_call.arguments_json` field is the serialized
 transport representation used after normalization and validation. It is not a
 second model-facing plan field. A provider executor receives that canonical
 serialized object through its adapter contract.
+
+### Structured-output parser boundary
+
+The planner and reflection may receive the registered tool view in their
+model-facing prompt, but when a generation carries an explicit JSON schema its
+response contract is schema JSON. The server-context response parser must not
+reinterpret that payload as the chat template's native tool-call format merely
+because tools were presented. Native tool-call parsing applies only to turns
+whose output contract is native tool calls; planner JSON continues to the host
+schema, compact-plan and repair validators. This keeps tool visibility and
+output parsing as separate concerns, and prevents a valid structured plan from
+being discarded before host validation.
 
 The compatibility boundary may unwrap bounded older wrappers such as nested
 `tool`/`arguments` shapes, but it must end in the same canonical `{tool,args}`
@@ -399,6 +440,48 @@ closed, reflection may revise the answer but may not reopen completed tool work.
 Deliberate planning owns multi-step ordering and bounded repair. Research owns
 its acquisition controller and evidence workspace; it does not create a
 parallel tool scheduler.
+
+### Required-tool repair boundary
+
+The normative model-facing and host-facing contract is documented separately
+in [Required-tool repair contract](agent-repair-contract.md). This section
+records the seam ownership and runtime consequences; it is not the sole
+definition of the JSON contract.
+
+A failed mandatory tool step has priority over user-facing draft generation.
+The runtime records the host-verified failure and its repair context, then
+invokes reflection with no draft rather than attempting a response from an
+unrepaired plan. This keeps a response-format failure from masking a repairable
+tool precondition.
+
+For a retryable validation failure, the model-facing reflection contract
+requires exactly one `replace_steps` entry for the failed step. The entry names
+the host-bound failed-step identifier and already registered tool name, then
+supplies corrected `args`; those two identifiers are schema-bound values, not
+free model strings. Prose in
+`next_action`, a generic retry, or an unrelated added step is not a repair.
+The runtime still merges only compatible prior arguments, canonicalizes the
+call, validates policy and the provider contract, and then reruns the repaired
+step. If no valid replacement is returned, the turn remains fail-closed and
+final synthesis is blocked.
+
+The same runtime gate is applied again immediately before execution. A
+dependent step cannot bypass repair merely because it was already marked
+`active` by a restored or model-authored plan: every dependency must be
+completed. If a producer is failed or incomplete, the dependent step is
+deferred and the failed producer remains the repair target. This is generic
+plan orchestration for native, MCP and OpenAPI providers; it is not a
+provider-specific repair rule.
+
+The compact plan parser keeps the same boundary: model-emitted step IDs do
+not imply model-owned dependencies. If `after` and `depends_on` are omitted,
+the host assigns the bounded sequential chain; only explicit dependency fields
+select the advanced dependency form.
+
+This is an orchestration contract, not OpenAPI-specific behavior. OpenAPI may
+classify a missing host-required operation parameter as retryable validation,
+but native and MCP providers use the same failed-step/repair boundary when they
+provide the corresponding host facts.
 
 ## Seam 7: protocol and event projection
 
