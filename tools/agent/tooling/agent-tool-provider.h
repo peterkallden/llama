@@ -175,6 +175,10 @@ struct mcp_agent_tool_definition {
     std::string name;
     std::string description;
     std::string input_schema_json = R"({"type":"object"})";
+    // Optional model-facing projection. Host execution and validation always
+    // use input_schema_json; providers may strengthen this projection with
+    // host-known required inputs so normal planning does not depend on repair.
+    std::string model_input_schema_json;
     bool read_only = true;
     bool requires_confirmation = false;
     bool uses_network = false;
@@ -182,6 +186,9 @@ struct mcp_agent_tool_definition {
     bool writes_plan = false;
     size_t max_result_bytes = 16 * 1024;
     std::string result_schema_json = R"({"type":"object"})";
+    // Optional model-facing result projection. Host execution keeps the
+    // canonical result_schema_json; planner bindings use this bounded view.
+    std::string model_result_schema_json;
 };
 
 struct mcp_agent_tool_call_result {

@@ -7,12 +7,40 @@ int main() {
     agent_openapi_catalog catalog;
     catalog.provider_id = "sales-api";
     catalog.prefix = "sales";
-    catalog.operations.push_back({
-        "listSales", "get", "/sales", "List sales", "List sales", R"({"type":"object"})",
-        {}, {}, agent_openapi_access::read, true, false});
-    catalog.operations.push_back({
-        "getSale", "get", "/sales/{id}", "Get sale", "Get sale", R"({"type":"object"})",
-        {"id"}, {}, agent_openapi_access::read, true, false});
+    agent_openapi_operation list_sales;
+    list_sales.operation_id = "listSales";
+    list_sales.method = "get";
+    list_sales.path = "/sales";
+    list_sales.summary = "List sales";
+    list_sales.description = "List sales";
+    list_sales.input_schema_json = R"({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":100}}})";
+    list_sales.host_required_parameters = {"limit"};
+    list_sales.result_schema_json = R"({
+        "type":"object",
+        "properties":{
+            "results":{"type":"array","items":{"type":"object","properties":{
+                "id":{"type":"string"},"display_name":{"type":"string"}
+            }}}
+        }
+    })";
+    list_sales.access = agent_openapi_access::read;
+    list_sales.read_only = true;
+    list_sales.paging.kind = agent_openapi_paging_kind::cursor;
+    list_sales.paging.page_size_parameter = "per-page";
+    list_sales.paging.cursor_parameter = "cursor";
+    list_sales.paging.projection_parameter = "select";
+    catalog.operations.push_back(std::move(list_sales));
+    agent_openapi_operation get_sale;
+    get_sale.operation_id = "getSale";
+    get_sale.method = "get";
+    get_sale.path = "/sales/{id}";
+    get_sale.summary = "Get sale";
+    get_sale.description = "Get sale";
+    get_sale.input_schema_json = R"({"type":"object"})";
+    get_sale.path_parameters = {"id"};
+    get_sale.access = agent_openapi_access::read;
+    get_sale.read_only = true;
+    catalog.operations.push_back(std::move(get_sale));
     catalog.relations.push_back({"listSales", "getSale", "/sales", "id"});
     bool called = false;
     bool materialized = false;
@@ -64,6 +92,14 @@ int main() {
     assert(openapi_metadata.tool_family == "sales");
     assert(openapi_metadata.provider_kind == "openapi");
     assert(view->chat_tools()[0].description.find("workflow: sales.listSales -> choose/bind id -> sales.getSale") != std::string::npos);
+    assert(view->chat_tools()[0].description.find("pagination: host-classified cursor") != std::string::npos);
+    assert(view->chat_tools()[0].description.find("per-page") != std::string::npos);
+    assert(view->chat_tools()[0].description.find("cursor") != std::string::npos);
+    assert(view->chat_tools()[0].description.find("select") != std::string::npos);
+    assert(view->chat_tools()[0].description.find("returns: results:{") != std::string::npos);
+    assert(view->chat_tools()[0].description.find("display_name?:string") != std::string::npos);
+    assert(view->chat_tools()[0].result_schema.find("display_name") != std::string::npos);
+    assert(view->chat_tools()[0].parameters.find(R"("required":["limit"])" ) != std::string::npos);
     common_plan_state invalid_plan;
     invalid_plan.steps.push_back({});
     invalid_plan.steps[0].tool_call = common_plan_tool_call{
@@ -79,6 +115,10 @@ int main() {
     assert(!view->is_policy_gated("sales.listSales"));
     agent_tool_call call{"call-1", "sales.listSales", R"({"limit":10})"};
     assert(view->validate(call, error));
+    // The host-required projection is model-facing only. Execution validation
+    // still uses the OpenAPI input schema and therefore remains optional here.
+    agent_tool_call model_omitted_call{"call-optional", "sales.listSales", R"({})"};
+    assert(view->validate(model_omitted_call, error));
     const auto result = view->call(call, error);
     assert(result.ok && called && materialized);
     assert(result.content_json.find(R"("count":1)") != std::string::npos);

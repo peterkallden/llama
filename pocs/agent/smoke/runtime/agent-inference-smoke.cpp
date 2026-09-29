@@ -548,6 +548,60 @@ static void test_planner_regenerates_truncated_json() {
     assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
 }
 
+static void test_planner_repairs_final_only_plan_without_binding_noise() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"goal":"Search works","steps":[{}]})"),
+        make_success(R"({"goal":"Search works","steps":[{"tool":"openalex.listWorks","args":{"search":"machine learning","per_page":1,"select":"id,display_name"},"mode":"tool"}]})"),
+    };
+
+    const auto options = make_test_args();
+    common_agent_request request = make_request();
+    request.require_tool_execution = true;
+    const std::vector<common_chat_tool> tools = {
+        {"openalex.listWorks", "List OpenAlex works.", R"({"type":"object","additionalProperties":false})"},
+    };
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    assert(error.empty());
+    assert(proposal.operations.size() == 2);
+    assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
+    assert(proposal.operations[0].step->tool_call->name == "openalex.listWorks");
+    assert(inference.seen.size() == 2);
+    const auto & repair = inference.seen[1].messages[1].content;
+    assert(repair.find("model plan steps require a tool or explicit mode: reasoning") != std::string::npos);
+    assert(repair.find("Do not emit a final or answer step") != std::string::npos);
+    assert(repair.find("There are no current attached resources") == std::string::npos);
+}
+
+static void test_planner_rejects_missing_model_tool_arguments() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"goal":"Search works","steps":[{"tool":"openalex.listWorks","args":{},"mode":"tool"}]})"),
+        make_success(R"({"goal":"Search works","steps":[{"tool":"openalex.listWorks","args":{"search":"machine learning"},"mode":"tool"}]})"),
+    };
+
+    const auto options = make_test_args();
+    common_agent_request request = make_request();
+    request.require_tool_execution = true;
+    const std::vector<common_chat_tool> tools = {
+        {"openalex.listWorks", "List OpenAlex works.",
+            R"({"type":"object","additionalProperties":false,"required":["search"],"properties":{"search":{"type":"string"}}})"},
+    };
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    assert(error.empty());
+    assert(proposal.operations.size() == 2);
+    assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
+    assert(proposal.operations[0].step->tool_call->arguments_json == R"({"search":"machine learning"})");
+    assert(inference.seen.size() == 2);
+    const auto & repair = inference.seen[1].messages[1].content;
+    assert(repair.find("planner tool arguments missing required field: openalex.listWorks.search") != std::string::npos);
+    assert(repair.find("args matching that tool's registered model-facing schema") != std::string::npos);
+}
+
 static void test_planner_repairs_invalid_resource_binding() {
     fake_agent_inference inference;
     inference.queued = {
@@ -2360,6 +2414,10 @@ static bool run_named_test(const std::string & name) {
         test_runtime_generation_metadata();
     } else if (name == "planner-regeneration") {
         test_planner_regenerates_truncated_json();
+    } else if (name == "planner-final-only-repair") {
+        test_planner_repairs_final_only_plan_without_binding_noise();
+    } else if (name == "planner-missing-tool-arguments") {
+        test_planner_rejects_missing_model_tool_arguments();
     } else if (name == "planner-resource-binding-repair") {
         test_planner_repairs_invalid_resource_binding();
     } else if (name == "planner-host-dataset-inventory") {
@@ -2440,6 +2498,8 @@ int main(int argc, char ** argv) {
         "runtime-assembly",
         "runtime-metadata",
         "planner-regeneration",
+        "planner-final-only-repair",
+        "planner-missing-tool-arguments",
         "planner-resource-binding-repair",
         "planner-host-dataset-inventory",
         "planner-compact-dataset-handles",

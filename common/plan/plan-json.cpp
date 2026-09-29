@@ -713,5 +713,11 @@ bool common_plan_parse_proposal_json(const std::string & text, common_plan_state
         operations = std::move(parsed_operations);
         error.clear();
         return true;
-    } catch (const json::exception &) { error = "malformed plan proposal JSON"; return false; }
+    } catch (const json::parse_error & exception) {
+        error = "plan JSON parse error at byte " + std::to_string(exception.byte) + ": " + exception.what();
+        return false;
+    } catch (const json::exception & exception) {
+        error = "plan JSON validation error: " + std::string(exception.what());
+        return false;
+    }
 }

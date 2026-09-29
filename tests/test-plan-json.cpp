@@ -442,5 +442,9 @@ int main() {
     assert(compact_schema_error.empty());
     assert(tool_required_compact_schema.find("tool form: tool:string; args:object") != std::string::npos);
     assert(tool_required_compact_schema.find("reasoning form") == std::string::npos);
+
+    const auto truncated = R"({"goal":"inspect","steps":[{"tool":"repository.search","args":{"query":"planner"}})";
+    assert(!common_plan_parse_proposal_json(truncated, plan, operations, error));
+    assert(error.find("plan JSON parse error at byte ") == 0);
     return 0;
 }

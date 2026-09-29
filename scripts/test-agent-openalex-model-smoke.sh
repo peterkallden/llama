@@ -48,8 +48,23 @@ pathlib.Path(output).write_text(json.dumps({
             "spec_path": str(pathlib.Path(spec).resolve()),
             "base_url": "https://api.openalex.org",
             "prefix": "openalex",
-            "policy": {"access": "read_only", "exposure": "auto"},
+            "policy": {
+                "access": "read_only",
+                "exposure": "include",
+                "operations": {
+                    "listWorks": {
+                        "enabled": True,
+                        "default_projection": "id,display_name",
+                        "required_parameters": ["search"],
+                    },
+                },
+            },
             "auth": {"type": "none"},
+            "limits": {
+                "default_page_size": 1,
+                "max_page_size": 1,
+                "max_result_bytes": 1048576,
+            },
         }],
     },
     # The generic CLI default is intentionally short for local tools.  Make

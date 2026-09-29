@@ -1,7 +1,36 @@
 #include "agent-openapi-provider.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
 
 #include <algorithm>
 #include <nlohmann/json.hpp>
+
+namespace {
+
+std::string paging_description(const agent_openapi_operation & operation) {
+    const auto & paging = operation.paging;
+    if (paging.kind == agent_openapi_paging_kind::none) return {};
+
+    std::string description = " pagination: host-classified ";
+    description += agent_openapi_paging_kind_name(paging.kind);
+    description += " operation; bound each collection request";
+    if (!paging.page_size_parameter.empty()) {
+        description += " with " + paging.page_size_parameter;
+    }
+    if (!paging.cursor_parameter.empty()) {
+        description += "; continue with " + paging.cursor_parameter +
+            " only when the response supplies a continuation value";
+    } else if (!paging.page_parameter.empty()) {
+        description += "; advance " + paging.page_parameter + " explicitly when another page is needed";
+    }
+    if (!paging.projection_parameter.empty()) {
+        description += "; use " + paging.projection_parameter +
+            " to request only fields needed for the task";
+    }
+    description += ".";
+    return description;
+}
+
+} // namespace
 
 class agent_openapi_tool_provider::client : public agent_mcp_tool_client {
 public:
@@ -10,13 +39,14 @@ public:
         : catalog(catalog), executor(std::move(executor)), materializer(std::move(materializer)) {}
 
     bool list_tools(const agent_tool_context &, std::vector<mcp_agent_tool_definition> & tools,
-                    std::string &) override {
+                    std::string & error) override {
         tools.clear();
         for (const auto & operation : catalog.operations) {
             mcp_agent_tool_definition definition;
             definition.provider_id = catalog.provider_id;
             definition.name = operation.operation_id;
             definition.description = operation.description.empty() ? operation.summary : operation.description;
+            definition.description += paging_description(operation);
             for (const auto & relation : catalog.relations) {
                 if (relation.collection_operation_id == operation.operation_id) {
                     definition.description += " workflow: " + catalog.prefix + "." +
@@ -30,7 +60,22 @@ public:
                 }
             }
             definition.input_schema_json = operation.input_schema_json;
+            std::string model_schema_error;
+            definition.model_input_schema_json =
+                common_project_model_input_schema_required_parameters(
+                    operation.input_schema_json,
+                    operation.host_required_parameters,
+                    model_schema_error);
+            if (!model_schema_error.empty()) {
+                error = "OpenAPI model-facing schema projection failed for " +
+                    operation.operation_id + ": " + model_schema_error;
+                return false;
+            }
             definition.result_schema_json = operation.result_schema_json;
+            // OpenAPI response schemas are already provider-declared and are
+            // therefore the model-facing result contract until a narrower
+            // projection is supplied by the provider configuration.
+            definition.model_result_schema_json = operation.result_schema_json;
             definition.read_only = operation.read_only;
             definition.requires_confirmation = operation.requires_confirmation;
             definition.uses_network = true;

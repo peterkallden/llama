@@ -44,6 +44,10 @@ struct common_agent_generation_config {
     int n_predict = 0;
     int n_threads = 2;
     bool generation_trace = false;
+    // Emit planner candidate diagnostics through the existing agent trace.
+    // This is host-side observability only; it never changes the model-facing
+    // contract or planner acceptance policy.
+    bool agent_trace = false;
     size_t context_size_tokens = 0;
     common_agent_context_budget_config context_budgets;
     // Optional host-side preflight that narrows the model-facing tool view by

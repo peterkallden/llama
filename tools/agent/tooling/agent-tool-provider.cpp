@@ -1194,11 +1194,17 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
             continue;
         }
         std::string compact_error;
+        const auto & model_input_schema = definition.model_input_schema_json.empty()
+            ? definition.input_schema_json
+            : definition.model_input_schema_json;
+        const auto & model_result_schema = definition.model_result_schema_json.empty()
+            ? definition.result_schema_json
+            : definition.model_result_schema_json;
         const auto model_description = common_render_compact_tool_description(
             exposed_name,
             definition.description,
-            definition.input_schema_json,
-            R"({"type":"object"})",
+            model_input_schema,
+            model_result_schema,
             compact_error);
         if (!compact_error.empty()) {
             error = compact_error;
@@ -1207,7 +1213,8 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         chat_tools.push_back({
             exposed_name,
             model_description,
-            definition.input_schema_json,
+            model_input_schema,
+            model_result_schema,
         });
         resolved_definitions.emplace(exposed_name, std::move(definition));
     }

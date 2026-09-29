@@ -182,3 +182,30 @@ second repair scheduler or authority model.
 The repair path changes execution control only. It does not change tool
 semantics, planning policy, reflection meaning, evidence rank, FlyDelta
 learning credit or promotion rules.
+
+## Planner diagnostics and model-facing result contracts
+
+The `--agent-trace` option also exposes a bounded `planner_candidate` record
+for each structured planner attempt. It reports the attempt number, generation
+status, stop reason, decoded-token count, candidate byte count, acceptance
+status, parser error and a bounded single-line candidate preview. This is
+host-side observability; it does not relax parsing or repair malformed JSON.
+The raw candidate is intentionally not part of the durable plan or learning
+record.
+
+When `require_tool_execution` is active, the planner prompt and its
+model-facing JSON schema describe the same contract: each proposed step is a
+registered tool with an ordinary JSON `args` object, and no reasoning or final
+step is model-owned. Before a planner candidate is accepted, host-known
+required argument names are checked against that model-facing schema; a missing
+field is a planner-candidate rejection and bounded regeneration, not an
+execution attempt with an incomplete call. When tool execution is optional,
+the bounded reasoning form remains available. Host-owned step IDs, dependency
+edges and final synthesis remain outside the model-facing contract.
+
+Provider result schemas follow the same projection boundary. An OpenAPI
+response schema is available to the compact planner contract as a
+model-facing result description, while canonical execution results remain
+host-owned. If the response schema describes fields such as
+`results[].id`, a later model-facing binding may refer to that typed output;
+the provider does not invent fields that are absent from its OpenAPI schema.
