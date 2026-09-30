@@ -33,7 +33,11 @@ agent_smoke_prepare_workdir() {
 agent_smoke_run_logged() {
     local log_path="$1"; shift
     echo "running: $*"
-    set +e; timeout --foreground "${LLAMA_AGENT_TIMEOUT_SECONDS:-180}" "$@" >"$log_path" 2>&1; local status=$?; set -e
+    # Model-backed smokes include planner, tool execution, draft and the
+    # mandatory reflection path. Keep the default bounded but long enough for
+    # a small model on a shared Vulkan/CPU host; callers may still choose a
+    # narrower or wider budget with LLAMA_AGENT_TIMEOUT_SECONDS.
+    set +e; timeout --foreground "${LLAMA_AGENT_TIMEOUT_SECONDS:-600}" "$@" >"$log_path" 2>&1; local status=$?; set -e
     cat "$log_path"
     if [[ $status -ne 0 ]]; then echo "model smoke failed: exit=${status}; log=${log_path}" >&2; return "$status"; fi
 }
