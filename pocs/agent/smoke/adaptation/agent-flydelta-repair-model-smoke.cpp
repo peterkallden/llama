@@ -23,8 +23,6 @@
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "tools/agent/cli/agent-cli-generation.h"
-#include "tools/agent/cli/agent-cli-inference.h"
-#include "tools/agent/runtime/agent-model-loaders.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/server/server-context.h"
 
@@ -459,29 +457,39 @@ int main(int argc, char ** argv) {
     std::string error;
     llama_model * batch_model = nullptr;
     const common_chat_templates * batch_templates = nullptr;
-    common_agent_model_selection selection;
-    selection.profile_id = "flydelta-repair-e2e";
-    selection.base_model_id = "generation-base";
-    selection.backend = "cli";
-    selection.path = value.model;
-    selection.context_size_tokens = 2048;
-    selection.load_policy = "resident";
-    common_agent_runtime_cli_model_loader loader({value.n_gpu_layers, value.n_threads, true});
-    std::shared_ptr<common_agent_runtime_resident_model> resident;
-    if (!loader.load(selection, resident, error)) {
-        std::cerr << "FlyDelta repair model smoke could not load model: " << error << '\n';
+    auto initial_server_host = std::make_shared<common_agent_server_context_host>();
+    common_agent_server_context_host_config initial_server_config;
+    initial_server_config.context_key.load_key.model = value.model;
+    initial_server_config.context_key.load_key.n_gpu_layers = value.n_gpu_layers;
+    initial_server_config.context_key.load_key.fit_params = true;
+    initial_server_config.context_key.n_parallel = 1;
+    initial_server_config.context_key.n_sequences = 1;
+    initial_server_config.context_key.n_ctx = 2048;
+    initial_server_config.context_key.n_threads = value.n_threads;
+    initial_server_config.verbosity = LOG_LEVEL_WARN;
+    if (!initial_server_host->start(initial_server_config, error)) {
+        std::cerr << "FlyDelta repair model smoke could not start initial server-context: "
+                  << error << '\n';
         return 1;
     }
-    auto loaded = common_agent_runtime_loaded_model_cast(resident);
-    if (!loaded || !loaded->model || !loaded->chat_templates) {
-        std::cerr << "FlyDelta repair model smoke received an incomplete model\n";
+    common_agent_inference_session initial_server_session;
+    if (!initial_server_host->build_inference_session(initial_server_session, error) ||
+            !initial_server_session.inference) {
+        std::cerr << "FlyDelta repair model smoke could not build initial server-context: "
+                  << error << '\n';
         return 1;
     }
-    auto inference = make_llama_cli_agent_inference(
-        loaded->model, loaded->chat_templates.get());
+    auto inference = std::move(initial_server_session.inference);
+    auto * initial_model_context = initial_server_host->server().get_llama_context();
+    auto * initial_model = initial_model_context == nullptr
+        ? nullptr : llama_get_model(initial_model_context);
+    if (initial_model == nullptr) {
+        std::cerr << "FlyDelta repair model smoke initial server-context has no model\n";
+        return 1;
+    }
     const std::string profile = "sha256:flydelta-repair-qwen";
-    const size_t model_n_embd = static_cast<size_t>(llama_model_n_embd(loaded->model));
-    const size_t model_n_layers = static_cast<size_t>(llama_model_n_layer(loaded->model));
+    const size_t model_n_embd = static_cast<size_t>(llama_model_n_embd(initial_model));
+    const size_t model_n_layers = static_cast<size_t>(llama_model_n_layer(initial_model));
     if (model_n_embd == 0 || model_n_layers <= 2) {
         std::cerr << "FlyDelta repair model smoke received unsupported model dimensions\n";
         return 1;
@@ -994,13 +1002,12 @@ int main(int argc, char ** argv) {
         }
     }
 
-    // Release the CLI model before the production-style resident server host
-    // is created below. The smoke intentionally exercises both capture
-    // implementations, but it must never keep two Vulkan model allocations
-    // alive at once.
+    // Release the initial resident server-context before the production-style
+    // two-slot server host is created below. The smoke uses server-context for
+    // both phases, but it must never keep two model allocations alive at once.
     inference.reset();
-    loaded.reset();
-    resident.reset();
+    initial_server_session = {};
+    initial_server_host.reset();
 
     if (value.region_scan && !selected.selected) {
         const auto anchor = std::find_if(basis.directions().begin(), basis.directions().end(),

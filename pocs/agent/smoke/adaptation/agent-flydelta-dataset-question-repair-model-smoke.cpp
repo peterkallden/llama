@@ -15,9 +15,7 @@
 #include "agent/adaptation/flydelta/flydelta-worker.h"
 #include "agent/adaptation/learning-transaction.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
-#include "tools/agent/cli/agent-cli-inference.h"
 #include "tools/agent/host/agent-host-config.h"
-#include "tools/agent/runtime/agent-model-loaders.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/server/server-context.h"
 
@@ -51,7 +49,7 @@ struct options {
     int n_predict = 128;
     int n_threads = 3;
     int n_gpu_layers = 0;
-    std::string backend = "cli";
+    std::string backend = "server";
     std::string scenario_id;
     size_t max_scenarios = 0;
 };
@@ -83,7 +81,6 @@ bool parse_args(int argc, char ** argv, options & value) {
             std::string(adaptive_alpha) == "true";
     }
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
-    if (const char * backend = std::getenv("LLAMA_AGENT_BACKEND")) value.backend = backend;
     if (const char * scenario_id = std::getenv("LLAMA_AGENT_SCENARIO_ID")) value.scenario_id = scenario_id;
     if (const char * max_scenarios = std::getenv("LLAMA_AGENT_MAX_SCENARIOS")) value.max_scenarios = std::stoul(max_scenarios);
     for (int index = 1; index < argc; ++index) {
@@ -363,7 +360,7 @@ int main(int argc, char ** argv) {
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL --suite SUITE_JSON [--config AGENT_CONFIG]"
-                  << " [--backend cli|server]"
+                  << " [--backend server]"
                   << " [--scenario-id ID]"
                   << " [--max-scenarios N]"
                   << " [--learning-ledger JSONL]"
@@ -389,8 +386,8 @@ int main(int argc, char ** argv) {
             return 1;
         }
     }
-    if (value.backend != "cli" && value.backend != "server") {
-        std::cerr << "backend must be cli or server\n";
+    if (value.backend != "server") {
+        std::cerr << "dataset repair model smoke requires the server backend\n";
         return 2;
     }
 
@@ -422,25 +419,9 @@ int main(int argc, char ** argv) {
 
     std::shared_ptr<common_agent_server_context_host> server_host;
     std::unique_ptr<common_agent_inference> inference;
-    std::shared_ptr<common_agent_runtime_resident_model> resident;
     size_t n_embd = 0;
     size_t n_layers = 0;
-    if (value.backend == "cli") {
-        common_agent_model_selection selection;
-        selection.profile_id = "flydelta-dataset-question-repair";
-        selection.base_model_id = "generation-base";
-        selection.backend = "cli";
-        selection.path = value.model;
-        selection.context_size_tokens = 2048;
-        selection.load_policy = "resident";
-        common_agent_runtime_cli_model_loader loader({value.n_gpu_layers, value.n_threads, true});
-        if (!loader.load(selection, resident, error)) { host.close(); std::cerr << error << '\n'; return 1; }
-        const auto loaded = common_agent_runtime_loaded_model_cast(resident);
-        if (!loaded || !loaded->model || !loaded->chat_templates) { host.close(); return 1; }
-        inference = make_llama_cli_agent_inference(loaded->model, loaded->chat_templates.get());
-        n_embd = static_cast<size_t>(llama_model_n_embd(loaded->model));
-        n_layers = static_cast<size_t>(llama_model_n_layer(loaded->model));
-    } else {
+    {
         server_host = std::make_shared<common_agent_server_context_host>();
         common_agent_server_context_host_config server_config;
         server_config.context_key.load_key.model = value.model;
@@ -451,7 +432,9 @@ int main(int argc, char ** argv) {
         // waves can use the same per-sequence overlay/batch path as runtime.
         server_config.context_key.n_parallel = 2;
         server_config.context_key.n_sequences = 2;
-        server_config.context_key.n_ctx = 2048;
+        // Repair must see the complete model-facing tool contract and the
+        // host repair context in one resident server request.
+        server_config.context_key.n_ctx = 4096;
         server_config.context_key.n_threads = value.n_threads;
         server_config.per_sequence_cvec_batch = true;
         if (!server_host->start(server_config, error)) {

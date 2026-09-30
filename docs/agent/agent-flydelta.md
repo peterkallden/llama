@@ -443,6 +443,7 @@ journal remains the durable evidence boundary.
 | 2026-09-26 | this local sweep | Legacy inspection-tool aliases removed and model-facing arm scoring corrected to the catalog contract | 63 focused CTests passed serially; model-free Oracle, tool-repair, concept and learning smokes passed with tracing; Qwen Instruct repair E2E passed on Intel GPU 0 with three model threads: baseline `statistics.describe`, repaired `dataset.inspect`, four region trials, Whirlpool centre 22/radius 1, all FlyDelta arms `UNKNOWN`, no selected overlay, augmentation retained | Removed legacy inspection/description compatibility references from scoped tests, fixtures, configs, scripts and documentation. Teacher-forced scoring now uses `dataset.inspect`, `statistics.describe` and `dataset://local/sales`; production FlyDelta algorithms, Oracle policy, learning credit and promotion semantics were not changed. Evidence is wiring and host-verification evidence, not a model-quality or promotion claim |
 | 2026-09-30 | this local sweep | Repair/contrast smoke corrected to use an observed small-model baseline failure and a semantically distinct host-verifiable repair; generation-boundary capture now tolerates different prompt lengths | 53 deterministic FlyDelta CTests and 12 relevant agent/adaptation CTests passed serially; Qwen repair/contrast smoke produced baseline `dataset.inspect` (host failure), repaired `statistics.describe` with `amount,units` (host pass), 26 behavior deltas and three fresh overlay arms; all overlay arms remained `UNKNOWN`, no overlay was selected or promoted | Kept the change smoke-local. The fixture now demonstrates a real `HELPED` repair transition without turning it into causal overlay evidence. The generation-boundary alignment fix uses the existing capture contract; FlyDelta algorithms, Oracle policy, learning credit and promotion semantics are unchanged |
 | 2026-09-30 | this local sweep | Server-context cvec application and prompt-cache isolation made observable and fail-closed | Focused prepared-generation, sparse-cvec and server-binding CTests passed serially; Qwen Instruct Vulkan server-context repair smoke completed with six distinct cvec hashes, six non-empty 165888-byte payloads, `applied=yes`, `cache_prompt=no` and `n_cache_reuse=0` for every overlay arm; Whirlpool/region completed with six trials and no selected overlay | Closed the stale-cache ambiguity in the resident context by clearing/disabling the cvec-unsafe global prompt cache after the first cvec task and exposing request-scoped runtime telemetry. This is execution/wiring evidence only: all arms remained `UNKNOWN`, with no learning credit or promotion |
+| 2026-09-30 | this local sweep | All model-backed FlyDelta smokes now use resident server-context execution | Six affected smoke targets rebuilt with three compile workers; Qwen Vulkan0 runtime, model A/B, concept, dataset-question incremental (4/4 requests completed), dataset-repair incremental and repair-model runs all used resident server-context tracing. The full 12-scenario dataset-question run reached inference with `n_ctx=4096` but hit a reproducible long-prompt smoke segfault under `n_predict=96`; it is not claimed as passed. | Removed smoke-only CLI execution from the FlyDelta validation surface; dataset-question hosts use 4096 context for the generated model-facing contract. The generic agent CLI backend remains available outside FlyDelta; model-free contract smokes remain model-free. The long-prompt dataset smoke remains an open bounded validation issue, not a reason to reintroduce CLI execution |
 
 ## Natural dataset-question smoke
 
@@ -3208,17 +3209,17 @@ The optional `llama-agent-flydelta-runtime-smoke` is the first end-to-end
 runtime wiring check. It uses the public session-host turn contract and runs
 exactly three fresh arms against the same prompt: a no-op baseline, a small
 activation, and a larger activation. The model profile is resident between
-arms, while each arm receives a fresh runtime context so the cvec affects
-prefill consistently. The backend is selectable with `--backend
-server-context|cli` (or `LLAMA_AGENT_BACKEND`), and the local example keeps
-the thread limit at three:
+arms, while each arm receives a fresh server-context runtime context so the
+cvec affects prefill consistently. This FlyDelta smoke has no CLI backend
+override; the production-like server-context path is mandatory. The local
+example keeps the thread limit at three:
 
 ```bash
 LD_LIBRARY_PATH=build-agent-cozo/bin \
 LLAMA_AGENT_MODEL=/path/to/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf \
 LLAMA_AGENT_THREADS=3 \
 build-agent-cozo/bin/llama-agent-flydelta-runtime-smoke \
-  --backend server-context --threads 3 --n-predict 16
+  --threads 3 --n-predict 16
 ```
 
 This smoke proves activation propagation through the host, model residency,

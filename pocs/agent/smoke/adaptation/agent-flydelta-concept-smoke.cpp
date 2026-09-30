@@ -5,8 +5,8 @@
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-semantic-decision.h"
 #include "tools/agent/cli/agent-cli-generation.h"
-#include "tools/agent/cli/agent-cli-inference.h"
-#include "tools/agent/runtime/agent-model-loaders.h"
+#include "tools/agent/runtime/agent-server-context-host.h"
+#include "tools/server/server-context.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -664,28 +664,38 @@ bool run_model(const options & value) {
         std::cerr << "concept model smoke requires threads in range 1..3\n";
         return false;
     }
-    common_agent_model_selection selection;
-    selection.profile_id = "flydelta-host-taught-concept";
-    selection.base_model_id = "generation-base";
-    selection.backend = "cli";
-    selection.path = value.model;
-    selection.context_size_tokens = 2048;
-    selection.load_policy = "resident";
-    common_agent_runtime_cli_model_loader loader({value.n_gpu_layers, value.n_threads, true});
-    std::shared_ptr<common_agent_runtime_resident_model> resident;
     std::string error;
-    if (!loader.load(selection, resident, error)) {
-        std::cerr << "concept model smoke could not load model: " << error << '\n';
+    auto server_host = std::make_shared<common_agent_server_context_host>();
+    common_agent_server_context_host_config server_config;
+    server_config.context_key.load_key.model = value.model;
+    server_config.context_key.load_key.n_gpu_layers = value.n_gpu_layers;
+    server_config.context_key.load_key.fit_params = true;
+    server_config.context_key.n_parallel = 1;
+    server_config.context_key.n_sequences = 1;
+    server_config.context_key.n_ctx = 2048;
+    server_config.context_key.n_threads = value.n_threads;
+    server_config.verbosity = LOG_LEVEL_WARN;
+    if (!server_host->start(server_config, error)) {
+        std::cerr << "concept model smoke could not start server-context: " << error << '\n';
         return false;
     }
-    const auto loaded = common_agent_runtime_loaded_model_cast(resident);
-    if (!loaded || !loaded->model || !loaded->chat_templates) {
-        std::cerr << "concept model smoke received incomplete model\n";
+    common_agent_inference_session server_session;
+    if (!server_host->build_inference_session(server_session, error) ||
+            !server_session.inference || !server_session.templates) {
+        std::cerr << "concept model smoke could not build server-context session: "
+                  << error << '\n';
         return false;
     }
-    auto inference = make_llama_cli_agent_inference(loaded->model, loaded->chat_templates.get());
+    auto inference = std::move(server_session.inference);
+    auto * model_context = server_host->server().get_llama_context();
+    auto * model = model_context == nullptr
+        ? nullptr : const_cast<llama_model *>(llama_get_model(model_context));
+    if (model == nullptr) {
+        std::cerr << "concept model smoke server-context has no model\n";
+        return false;
+    }
     const uint32_t layer = static_cast<uint32_t>(std::max<int>(1,
-        std::min<int>(static_cast<int>(llama_model_n_layer(loaded->model)) - 1, 21)));
+        std::min<int>(static_cast<int>(llama_model_n_layer(model)) - 1, 21)));
     const uint32_t layers[] = {layer};
     auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
     capture->enabled = true;
@@ -860,10 +870,10 @@ bool run_model(const options & value) {
             if (!common_flydelta_concept_candidate_to_direction(
                     *candidate_it, evaluation_direction, error) ||
                     !run_concept_model_evaluation(
-                        value, loaded->model, loaded->chat_templates.get(), *inference,
+                        value, model, server_session.templates, *inference,
                         layer, *candidate_it, evaluation_direction,
-                        static_cast<size_t>(llama_model_n_embd(loaded->model)),
-                        static_cast<size_t>(llama_model_n_layer(loaded->model)),
+                        static_cast<size_t>(llama_model_n_embd(model)),
+                        static_cast<size_t>(llama_model_n_layer(model)),
                         family.key,
                         "sha256:concept-qwen-model", mode)) {
                 std::cerr << "concept model candidate evaluation failed for " << family.key

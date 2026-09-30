@@ -2,8 +2,8 @@
 #include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-sideband-registry.h"
-#include "tools/agent/cli/agent-cli-inference.h"
-#include "tools/agent/runtime/agent-model-loaders.h"
+#include "tools/agent/runtime/agent-server-context-host.h"
+#include "tools/server/server-context.h"
 
 #include <algorithm>
 #include <chrono>
@@ -100,28 +100,35 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    common_agent_model_selection selection;
-    selection.profile_id = "flydelta-ab-base";
-    selection.base_model_id = "generation-base";
-    selection.backend = "cli";
-    selection.path = value.model;
-    selection.context_size_tokens = 2048;
-    selection.load_policy = "resident";
-
-    common_agent_runtime_cli_model_loader loader({value.n_gpu_layers, value.n_threads, true});
-    std::shared_ptr<common_agent_runtime_resident_model> resident;
     std::string error;
-    if (!loader.load(selection, resident, error)) {
-        std::cerr << "FlyDelta model A/B smoke could not load model: " << error << '\n';
+    auto server_host = std::make_shared<common_agent_server_context_host>();
+    common_agent_server_context_host_config server_config;
+    server_config.context_key.load_key.model = value.model;
+    server_config.context_key.load_key.n_gpu_layers = value.n_gpu_layers;
+    server_config.context_key.load_key.fit_params = true;
+    server_config.context_key.n_parallel = 1;
+    server_config.context_key.n_sequences = 1;
+    server_config.context_key.n_ctx = 2048;
+    server_config.context_key.n_threads = value.n_threads;
+    server_config.verbosity = LOG_LEVEL_WARN;
+    if (!server_host->start(server_config, error)) {
+        std::cerr << "FlyDelta model A/B smoke could not start server-context: " << error << '\n';
         return 1;
     }
-    const auto loaded = common_agent_runtime_loaded_model_cast(resident);
-    if (!loaded || !loaded->model || !loaded->chat_templates) {
-        std::cerr << "FlyDelta model A/B smoke received an incomplete CLI model\n";
+    common_agent_inference_session server_session;
+    if (!server_host->build_inference_session(server_session, error) ||
+            !server_session.inference || !server_session.templates) {
+        std::cerr << "FlyDelta model A/B smoke could not build server-context session: "
+                  << error << '\n';
         return 1;
     }
-    auto inference = make_llama_cli_agent_inference(
-        loaded->model, loaded->chat_templates.get());
+    auto inference = std::move(server_session.inference);
+    auto * model_context = server_host->server().get_llama_context();
+    auto * model = model_context == nullptr ? nullptr : llama_get_model(model_context);
+    if (model == nullptr) {
+        std::cerr << "FlyDelta model A/B smoke server-context has no model\n";
+        return 1;
+    }
 
     common_agent_model_profile profile;
     profile.id = "flydelta-ab-base";
@@ -143,8 +150,8 @@ int main(int argc, char ** argv) {
     manifest.compatibility.template_fingerprint = profile.chat_template_fingerprint;
     manifest.compatibility.architecture = "runtime-model";
     manifest.compatibility.inference_layout_revision = "layout:cvec-v1";
-    manifest.model_n_embd = static_cast<size_t>(llama_model_n_embd(loaded->model));
-    manifest.model_n_layers = static_cast<size_t>(llama_model_n_layer(loaded->model));
+    manifest.model_n_embd = static_cast<size_t>(llama_model_n_embd(model));
+    manifest.model_n_layers = static_cast<size_t>(llama_model_n_layer(model));
     if (manifest.model_n_layers <= 1 || manifest.model_n_layers > static_cast<size_t>(INT32_MAX)) {
         std::cerr << "FlyDelta model A/B smoke received unsupported model layer count\n";
         return 1;

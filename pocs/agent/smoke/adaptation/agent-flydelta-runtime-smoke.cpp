@@ -1,6 +1,8 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "tools/agent/runtime/agent-model-loaders.h"
+#include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/agent/runtime/agent-runtime-session-host.h"
+#include "tools/server/server-context.h"
 
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
@@ -20,7 +22,6 @@ namespace {
 
 struct options {
     std::string model;
-    std::string backend = "server-context";
     int n_predict = 16;
     int n_threads = 3;
     int n_gpu_layers = 0;
@@ -28,7 +29,6 @@ struct options {
 
 bool parse_args(int argc, char ** argv, options & value) {
     if (const char * model = std::getenv("LLAMA_AGENT_MODEL")) value.model = model;
-    if (const char * backend = std::getenv("LLAMA_AGENT_BACKEND")) value.backend = backend;
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
@@ -41,8 +41,6 @@ bool parse_args(int argc, char ** argv, options & value) {
         };
         if (argument == "--model") {
             const char * path = next("--model"); if (!path) return false; value.model = path;
-        } else if (argument == "--backend") {
-            const char * backend = next("--backend"); if (!backend) return false; value.backend = backend;
         } else if (argument == "--n-predict") {
             const char * count = next("--n-predict"); if (!count) return false; value.n_predict = std::stoi(count);
         } else if (argument == "--threads") {
@@ -83,7 +81,7 @@ common_agent_model_catalog make_catalog(
     catalog.max_loaded_generation_models = 1;
     catalog.default_profile = profile_id;
     catalog.bases.emplace("generation", common_agent_model_base_spec{
-        "generation", value.backend,
+        "generation", "server-context",
         std::filesystem::path(value.model).filename().string(), {}, "resident"});
     catalog.profiles.emplace(profile_id, common_agent_model_profile_spec{
         "generation", {}, {}, 2048, 1, 1, "resident"});
@@ -100,7 +98,6 @@ std::shared_ptr<common_agent_runtime_model_residency> make_residency(
     };
     std::unordered_map<std::string,
         std::shared_ptr<common_agent_runtime_model_loader>> loaders;
-    loaders.emplace("cli", std::make_shared<common_agent_runtime_cli_model_loader>(loader_config));
 #ifndef LLAMA_AGENT_ANDROID_CLI_ONLY
     loaders.emplace("server-context",
         std::make_shared<common_agent_runtime_server_context_model_loader>(loader_config));
@@ -158,7 +155,7 @@ bool run_arm(
     if (!memory_store.open("", error) || !plan_store.open("", error)) return false;
 
     common_agent_runtime_policy policy;
-    policy.agent_inference_backend = value.backend;
+    policy.agent_inference_backend = "server-context";
     policy.enable_reflection = false;
     policy.max_iterations = 1;
     policy.max_reflection_rounds = 0;
@@ -191,7 +188,7 @@ bool run_arm(
                 value.n_predict,
                 value.n_gpu_layers,
                 true,
-                value.backend,
+                "server-context",
                 common_memory_scope::session,
                 common_plan_scope::turn,
                 value.n_threads,
@@ -243,37 +240,31 @@ int main(int argc, char ** argv) {
     options value;
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
-                  << " --model MODEL [--backend cli|server-context]"
-                  << " [--n-predict N] [--threads N] [--n-gpu-layers N]\n";
+                  << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N]\n";
         return 2;
     }
     if (!regular_file(value.model)) {
         std::cerr << "FlyDelta runtime smoke skipped: provide --model or LLAMA_AGENT_MODEL\n";
         return 77;
     }
-    if (value.backend != "cli" && value.backend != "server-context") {
-        std::cerr << "--backend must be cli or server-context\n";
-        return 2;
-    }
     if (value.n_threads <= 0 || value.n_threads > 3 || value.n_predict <= 0) {
         std::cerr << "threads must be in range 1..3 and n-predict must be positive\n";
         return 2;
     }
 #ifdef LLAMA_AGENT_ANDROID_CLI_ONLY
-    if (value.backend == "server-context") {
-        std::cerr << "FlyDelta runtime smoke skipped: server-context is unavailable on Android\n";
-        return 77;
-    }
+    std::cerr << "FlyDelta runtime smoke skipped: server-context is unavailable on Android\n";
+    return 77;
 #endif
 
     // Inspect the model once to build a dimension-safe activation. The
-    // inspection model is released before the resident runtime is created.
+    // inspection server-context is released before the resident runtime is created.
     common_agent_model_selection inspect_selection;
     inspect_selection.profile_id = "flydelta-runtime-inspect";
-    inspect_selection.backend = "cli";
+    inspect_selection.backend = "server-context";
     inspect_selection.path = value.model;
     inspect_selection.context_size_tokens = 2048;
-    common_agent_runtime_cli_model_loader inspect_loader({value.n_gpu_layers, value.n_threads, true});
+    common_agent_runtime_server_context_model_loader inspect_loader(
+        {value.n_gpu_layers, value.n_threads, true});
     std::shared_ptr<common_agent_runtime_resident_model> inspected;
     std::string error;
     if (!inspect_loader.load(inspect_selection, inspected, error)) {
@@ -281,12 +272,19 @@ int main(int argc, char ** argv) {
         return 1;
     }
     const auto loaded = common_agent_runtime_loaded_model_cast(inspected);
-    if (!loaded || !loaded->model) {
+    if (!loaded || !loaded->server_context_host) {
         std::cerr << "FlyDelta runtime smoke received an incomplete inspection model\n";
         return 1;
     }
-    const size_t model_n_embd = static_cast<size_t>(llama_model_n_embd(loaded->model));
-    const size_t model_n_layers = static_cast<size_t>(llama_model_n_layer(loaded->model));
+    auto * inspection_context = loaded->server_context_host->server().get_llama_context();
+    auto * inspection_model = inspection_context == nullptr
+        ? nullptr : llama_get_model(inspection_context);
+    if (inspection_model == nullptr) {
+        std::cerr << "FlyDelta runtime smoke inspection server-context has no model\n";
+        return 1;
+    }
+    const size_t model_n_embd = static_cast<size_t>(llama_model_n_embd(inspection_model));
+    const size_t model_n_layers = static_cast<size_t>(llama_model_n_layer(inspection_model));
     inspected.reset();
     if (model_n_embd == 0 || model_n_layers <= 1) {
         std::cerr << "FlyDelta runtime smoke received unsupported model dimensions\n";
@@ -305,7 +303,7 @@ int main(int argc, char ** argv) {
         }
     }
     std::cout << "flydelta_runtime_three_arm=passed\n"
-              << "backend=" << value.backend << '\n'
+              << "backend=server-context\n"
               << "arm_count=3\n"
               << "model_n_embd=" << model_n_embd << '\n'
               << "model_n_layers=" << model_n_layers << '\n'
