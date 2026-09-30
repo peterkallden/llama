@@ -4514,6 +4514,16 @@ existing evidence, provenance, scope, and memory-learning policy. The first
 payload is never treated as a candidate and is not concatenated with the retry;
 if validation still fails, no candidate is proposed.
 
+The extractor has a separate bounded generation budget from the normal draft
+budget (`common_agent_generation_config::memory_learning_n_predict`, exposed by
+the CLI and daemon as `--memory-learning-n-predict`, default 128). This prevents a small
+model from spending a large response budget on a short post-turn JSON object.
+Candidate objects remain strict: an overlong or otherwise invalid `reason` is
+classified as `memory_candidate_model_output_invalid` and is not persisted. A
+`candidate: null` response is a safe negative result; an invalid explanatory
+reason is replaced by a bounded host-owned summary because there is no memory
+candidate to persist.
+
 Memory learning is a separate policy switch from the thinking mode. For the
 normal CLI agent profile, reflective and deliberate turns default to
 `--memory-learn post-turn`; an explicit `--memory-learn off` always disables

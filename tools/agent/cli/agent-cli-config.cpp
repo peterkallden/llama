@@ -15,7 +15,7 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "  %s %s --model MODEL --prompt TEXT [--backend auto|in-memory|cozo] [--memory-db PATH] [--config PATH] [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static]\n"
         "         [--tool-profile NAME] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--max-reflection-rounds N] [--max-plan-revisions N] [--max-research-iterations N]\n"
-        "         [--max-tool-rounds N] [--n-predict N] [--planner-n-predict N] [--context-size N] [--threads N] [-ngl N]\n"
+        "         [--max-tool-rounds N] [--n-predict N] [--planner-n-predict N] [--memory-learning-n-predict N] [--context-size N] [--threads N] [-ngl N]\n"
         "         [--inference-step-timeout-ms N] [--generation-trace] [--require-tool-execution]\n"
         "         [--agent-inference-backend cli|server-context] [--mmproj PATH]\n"
         "         [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...] [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX]\n"
@@ -32,14 +32,14 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--agent-trace] [--plan-show-summary] [--include-summary] [--memory-scope turn|session|project|global]\n"
         "         [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--plan-scope turn|session|project|global]\n"
-        "         [--n-predict N] [--planner-n-predict N] [--context-size N] [--threads N] [-ngl N] [--agent-inference-backend server-context]\n"
+        "         [--n-predict N] [--planner-n-predict N] [--memory-learning-n-predict N] [--context-size N] [--threads N] [-ngl N] [--agent-inference-backend server-context]\n"
         "  %s daemon-session --model MODEL [--prompt TEXT] [--embedding-model MODEL] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F] [--memory-learn-show-candidate]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--agent-trace] [--plan-show-summary] [--include-summary] [--memory-scope turn|session|project|global]\n"
         "         [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--plan-scope turn|session|project|global]\n"
-        "         [--n-predict N] [--planner-n-predict N] [--context-size N] [-ngl N] [--agent-inference-backend server-context]\n",
+        "         [--n-predict N] [--planner-n-predict N] [--memory-learning-n-predict N] [--context-size N] [-ngl N] [--agent-inference-backend server-context]\n",
         argv0, command_name, argv0, argv0);
 }
 
@@ -118,6 +118,11 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.planner_n_predict = std::stoi(v);
             if (out.planner_n_predict < 0) {
                 fprintf(stderr, "--planner-n-predict must not be negative\n"); return false;
+            }
+        } else if (strcmp(argv[i], "--memory-learning-n-predict") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.memory_learning_n_predict = std::stoi(v);
+            if (out.memory_learning_n_predict < 1) {
+                fprintf(stderr, "--memory-learning-n-predict must be greater than zero\n"); return false;
             }
         } else if (strcmp(argv[i], "--context-size") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.context_size = std::stoi(v);

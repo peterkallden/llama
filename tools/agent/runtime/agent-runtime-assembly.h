@@ -56,6 +56,10 @@ struct common_agent_generation_config {
     // Optional host-side preflight that narrows the model-facing tool view by
     // generated family before the planner sees individual tool contracts.
     bool enable_tool_family_routing = false;
+    // Separate bounded budget for post-turn memory-candidate extraction. A
+    // small model must not inherit the much larger normal response budget for
+    // this short, schema-constrained payload.
+    int memory_learning_n_predict = 128;
 };
 
 struct common_agent_runtime_config {

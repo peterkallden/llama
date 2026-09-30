@@ -204,7 +204,9 @@ static common_agent_inference_options make_agent_inference_options(const args & 
 }
 
 static common_agent_generation_config make_agent_generation_config(const args & options) {
-    return {options.n_predict};
+    common_agent_generation_config result;
+    result.n_predict = options.n_predict;
+    return result;
 }
 
 static common_agent_runtime_policy make_agent_runtime_policy(const args & options) {
@@ -522,7 +524,7 @@ static void test_runtime_generation_metadata() {
     assert(inference.seen[2].options.n_predict == 64);
     assert(inference.seen[3].options.n_predict == 64);
     assert(inference.seen[4].options.n_predict == 384);
-    assert(inference.seen[5].options.n_predict == 256);
+    assert(inference.seen[5].options.n_predict == 128);
     assert(inference.queued.empty());
 }
 
@@ -975,6 +977,71 @@ static void test_memory_learning_regenerates_invalid_json() {
     assert(candidate.candidate->kind == common_memory_kind::procedure);
     assert(inference.seen.size() == 2);
     assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
+}
+
+static void test_memory_learning_rejects_invalid_reason_and_accepts_null_candidate() {
+    const auto overlong_reason = nlohmann::json{
+        {"candidate", {
+            {"kind", "procedure"},
+            {"content", "A bounded reusable procedure."},
+            {"rationale", "Completed work supports reuse."},
+            {"importance", 0.8},
+            {"confidence", 0.9},
+            {"expected_reuse", 0.7},
+            {"evidence_ids", nlohmann::json::array({"obs-1"})},
+            {"source_plan_step_ids", nlohmann::json::array({"inspect"})},
+        }},
+        {"reason", std::string(241, 'x')},
+    }.dump();
+    fake_agent_inference invalid_candidate_inference;
+    invalid_candidate_inference.queued = {
+        make_success(overlong_reason),
+        make_success(overlong_reason),
+    };
+
+    const auto options = make_test_args();
+    const common_agent_request request = make_request();
+    common_plan_state plan;
+    plan.id = "plan-memory-invalid-reason";
+    plan.goal = request.prompt;
+    plan.success_criteria = "Reply clearly";
+    common_agent_result agent_result;
+    agent_result.response = "Final answer";
+    auto invalid_extractor = make_llama_cli_memory_candidate_extractor(
+        invalid_candidate_inference, make_agent_generation_config(options));
+    std::string error;
+    const auto invalid = invalid_extractor->extract_result(request, plan, agent_result, error);
+    assert(!error.empty());
+    assert(error.find("memory_candidate_model_output_invalid") != std::string::npos);
+    assert(!invalid.candidate);
+    assert(invalid_candidate_inference.seen.size() == 2);
+    assert(invalid_candidate_inference.seen[0].options.n_predict == 128);
+
+    fake_agent_inference inference;
+    const auto overlong_null_reason = nlohmann::json{
+        {"candidate", nullptr},
+        {"reason", std::string(241, 'x')},
+    }.dump();
+    inference.queued = {make_success(overlong_null_reason)};
+
+    const auto null_options = make_test_args();
+    const common_agent_request null_request = make_request();
+    common_plan_state null_plan;
+    null_plan.id = "plan-memory-null-candidate";
+    null_plan.goal = null_request.prompt;
+    null_plan.success_criteria = "Reply clearly";
+    common_agent_result null_agent_result;
+    null_agent_result.response = "Final answer";
+    auto extractor = make_llama_cli_memory_candidate_extractor(
+        inference, make_agent_generation_config(null_options));
+    std::string null_error;
+    const auto candidate = extractor->extract_result(
+        null_request, null_plan, null_agent_result, null_error);
+    assert(null_error.empty());
+    assert(!candidate.candidate);
+    assert(candidate.reason == "model returned no durable memory candidate");
+    assert(inference.seen.size() == 1);
+    assert(inference.seen[0].options.n_predict == 128);
 }
 
 static void test_selection_generation_metadata() {
@@ -2597,6 +2664,7 @@ static bool run_named_test(const std::string & name) {
         test_reflection_regenerates_invalid_json();
     } else if (name == "memory-regeneration") {
         test_memory_learning_regenerates_invalid_json();
+        test_memory_learning_rejects_invalid_reason_and_accepts_null_candidate();
     } else if (name == "selection-metadata") {
         test_selection_generation_metadata();
     } else if (name == "runtime-failure") {

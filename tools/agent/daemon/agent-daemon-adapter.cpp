@@ -166,6 +166,11 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.max_research_iterations = static_cast<size_t>(std::stoul(value));
         } else if (std::strcmp(argv[i], "-n") == 0 || std::strcmp(argv[i], "--n-predict") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.n_predict = std::stoi(value);
+        } else if (std::strcmp(argv[i], "--memory-learning-n-predict") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.memory_learning_n_predict = std::stoi(value);
+            if (options.memory_learning_n_predict < 1) {
+                std::fprintf(stderr, "--memory-learning-n-predict must be greater than zero\n"); return false;
+            }
         } else if (std::strcmp(argv[i], "--context-size") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.context_size = std::stoi(value);
             if (options.context_size < 0) { std::fprintf(stderr, "--context-size must not be negative\n"); return false; }
@@ -337,6 +342,10 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--memory-learn must be off or post-turn\n");
         return false;
     }
+    if (options.memory_learning_n_predict < 1) {
+        std::fprintf(stderr, "--memory-learning-n-predict must be greater than zero\n");
+        return false;
+    }
     if (options.agent_plan != "off" && options.agent_plan != "auto") {
         std::fprintf(stderr, "--agent-plan must be off or auto\n");
         return false;
@@ -398,7 +407,7 @@ void print_agent_daemon_usage(const char * argv0) {
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--memory-learn-show-candidate] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
         "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
-        "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--worker-count N] [--max-turn-seconds N] [--n-predict N] [--context-size N] [--threads N] [-ngl N]\n"
+        "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--worker-count N] [--max-turn-seconds N] [--n-predict N] [--memory-learning-n-predict N] [--context-size N] [--threads N] [-ngl N]\n"
         "         [--http-listen ADDRESS] [--http-port N] [--http-token-env ENV] [--http-allowed-origin ORIGIN] [--http-agent-tools]\n"
         "         [--tcp-listen ADDRESS] [--tcp-port N] [--tcp-max-line-bytes N]\n"
         "         [--unix-socket PATH] [--unix-socket-mode OCTAL]\n",

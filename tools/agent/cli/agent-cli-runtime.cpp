@@ -1858,14 +1858,35 @@ bool parse_memory_candidate_json(const std::string & text, common_memory_candida
     common_json_contract_value root;
     if (!common_json_contract_parse_object(text, root, error)) return false;
     if (!root.contains("candidate")) { error = "candidate output must contain candidate"; return false; }
-    std::string reason;
-    if (!common_json_contract_required_string(root, "reason", 240, reason, error)) return false;
-    result = {};
-    result.reason = std::move(reason);
+
+    // A null candidate is a safe negative result. Do not let a malformed
+    // explanatory string turn that negative result into a learning failure;
+    // no durable candidate can be persisted in this branch. Candidate objects
+    // remain strictly validated below.
     if (root["candidate"].is_null()) {
+        if (!root.contains("reason") || !root["reason"].is_string()) {
+            error = "memory_candidate_model_output_invalid: null candidate requires a string reason";
+            return false;
+        }
+        result = {};
+        result.reason = root["reason"].get<std::string>();
+        if (result.reason.empty() || result.reason.size() > 240) {
+            result.reason = "model returned no durable memory candidate";
+        }
         error.clear();
         return true;
     }
+
+    std::string reason;
+    if (!common_json_contract_required_string(root, "reason", 240, reason, error)) {
+        if (error == "contract field 'reason' is out of bounds" ||
+                error == "contract field 'reason' must be a string") {
+            error = "memory_candidate_model_output_invalid: reason must be a string of 1..240 characters";
+        }
+        return false;
+    }
+    result = {};
+    result.reason = std::move(reason);
     const auto & item = root["candidate"];
     if (!item.is_object() || !item.contains("kind") || !item.contains("content") || !item["kind"].is_string() || !item["content"].is_string()) {
         error = "candidate object must contain kind and content";
@@ -1941,7 +1962,11 @@ public:
                 request,
                 common_agent_generation_purpose::memory_learning,
                 {system, attempt},
-                make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 256)),
+                make_agent_cli_generation_options(
+                    generation_config,
+                    generation_config.memory_learning_n_predict > 0
+                        ? generation_config.memory_learning_n_predict
+                        : 128),
                 schema));
         };
         common_memory_candidate_result parsed;
