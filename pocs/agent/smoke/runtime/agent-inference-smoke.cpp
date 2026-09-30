@@ -560,7 +560,8 @@ static void test_planner_repairs_final_only_plan_without_binding_noise() {
     common_agent_request request = make_request();
     request.require_tool_execution = true;
     const std::vector<common_chat_tool> tools = {
-        {"openalex.listWorks", "List OpenAlex works.", R"({"type":"object","additionalProperties":false})"},
+        {"openalex.listWorks", "List OpenAlex works.",
+            R"({"type":"object","additionalProperties":false,"properties":{"search":{"type":"string"},"per_page":{"type":"integer"},"select":{"type":"string"}}})"},
     };
     auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
     std::string error;
@@ -638,6 +639,40 @@ static void test_planner_repairs_missing_arguments_after_structural_regeneration
     assert(inference.seen[2].json_schema.find("\"required\":[\"args\"]") != std::string::npos);
     assert(inference.seen[2].json_schema.find("\"search\"") != std::string::npos);
     assert(inference.seen[2].messages[0].content.find("already selected tool") != std::string::npos);
+}
+
+static void test_planner_rejects_and_replaces_invalid_model_tool_arguments() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"goal":"Inspect fields","steps":[{"tool":"dataset.inspect","args":{":dataset://://local/sales, ":",: "},"mode":"tool"}]})"),
+        make_success(R"({"args":{"dataset":"dataset://local/sales"}})"),
+    };
+
+    const auto options = make_test_args();
+    common_agent_request request = make_request();
+    request.prompt = "Inspect the available fields in dataset://local/sales.";
+    request.require_tool_execution = true;
+    const std::vector<common_chat_tool> tools = {
+        {"dataset.inspect", "Inspect bounded dataset metadata.",
+            R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string"},"resource":{"type":"string"},"path":{"type":"string"}}})"},
+    };
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    assert(error.empty());
+    assert(proposal.operations.size() == 2);
+    assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
+    assert(proposal.operations[0].step->tool_call->name == "dataset.inspect");
+    assert(proposal.operations[0].step->tool_call->arguments_json ==
+        R"({"dataset":"dataset://local/sales"})");
+    assert(inference.seen.size() == 2);
+    assert(inference.seen[1].json_schema.find("\"dataset\"") != std::string::npos);
+    const auto & repair_system = inference.seen[1].messages[0].content;
+    const auto & repair = inference.seen[1].messages[1].content;
+    assert(repair_system.find("remove unknown or invalid fields") != std::string::npos);
+    assert(repair_system.find("dataset.inspect") != std::string::npos);
+    assert(repair.find("unexpected contract field") != std::string::npos);
+    assert(repair.find("dataset://local/sales") != std::string::npos);
 }
 
 static void test_planner_applies_host_bound_openalex_arguments() {
@@ -2544,6 +2579,8 @@ static bool run_named_test(const std::string & name) {
         test_planner_rejects_missing_model_tool_arguments();
     } else if (name == "planner-missing-tool-arguments-after-regeneration") {
         test_planner_repairs_missing_arguments_after_structural_regeneration();
+    } else if (name == "planner-invalid-tool-arguments") {
+        test_planner_rejects_and_replaces_invalid_model_tool_arguments();
     } else if (name == "planner-host-bound-tool-arguments") {
         test_planner_applies_host_bound_openalex_arguments();
     } else if (name == "planner-resource-binding-repair") {
@@ -2629,6 +2666,7 @@ int main(int argc, char ** argv) {
         "planner-final-only-repair",
         "planner-missing-tool-arguments",
         "planner-missing-tool-arguments-after-regeneration",
+        "planner-invalid-tool-arguments",
         "planner-host-bound-tool-arguments",
         "planner-resource-binding-repair",
         "planner-host-dataset-inventory",

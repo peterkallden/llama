@@ -2697,6 +2697,25 @@ Model-facing plan
     -> execution after source completion
 ```
 
+The outer planner grammar intentionally keeps `args` as an object because the
+active tool set is dynamic. That does not make arbitrary argument objects
+valid. After model-reference normalization, and before host-owned
+materialization is added, the planner validates the selected tool against its
+model-facing input schema. Unknown fields, invalid types and bounds therefore
+enter the same bounded argument-repair path as other planner failures. Once
+host bindings and host defaults have been applied, required fields are checked
+again; the registry/executor repeats the authoritative full input validation
+before dispatch.
+
+Argument repair is local to the selected tool. A missing required field may be
+merged into otherwise valid arguments; an unknown or invalid field causes the
+repair response to replace the rejected argument object so that the original
+invalid value cannot survive the repair. This applies equally to native, MCP
+and dynamically generated OpenAPI tools. Tools with several valid locators,
+such as `dataset.inspect` (`dataset`, `resource` or `path`), keep that
+alternative shape in their tool contract; the host may satisfy a locator from
+an existing binding before validation.
+
 For example:
 
 ```text

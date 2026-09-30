@@ -408,14 +408,52 @@ struct planner_argument_repair_target {
     std::string tool_name;
     std::string base_arguments_json = "{}";
     std::string missing_argument;
+    std::string validation_error;
+    bool merge_existing_arguments = true;
     std::string candidate_plan_json;
 };
+
+void project_planner_bindings_to_model_values(
+        nlohmann::ordered_json & value,
+        const nlohmann::ordered_json & schema) {
+    if (value.is_object() &&
+            schema.value("type", std::string()) == "string" &&
+            value.contains("$from_step") && value["$from_step"].is_string() &&
+            value.contains("$json_pointer") && value["$json_pointer"].is_string()) {
+        // Plan parsing canonicalizes model references before planner
+        // validation. Project that host-owned IR back to a harmless string
+        // placeholder for validation against the model-facing contract; the
+        // original binding remains in the plan and is still materialized by
+        // the host before execution.
+        value = "$planner_binding";
+        return;
+    }
+    if (value.is_object() && schema.value("type", std::string()) == "object") {
+        const auto properties = schema.value("properties", nlohmann::ordered_json::object());
+        if (!properties.is_object()) return;
+        for (auto & field : value.items()) {
+            const auto property = properties.find(field.key());
+            if (property != properties.end()) {
+                project_planner_bindings_to_model_values(field.value(), *property);
+            }
+        }
+        return;
+    }
+    if (value.is_array() && schema.value("type", std::string()) == "array" &&
+            schema.contains("items")) {
+        for (auto & item : value) {
+            project_planner_bindings_to_model_values(item, schema["items"]);
+        }
+    }
+}
 
 bool validate_planner_tool_arguments(
         const std::vector<common_plan_operation> & operations,
         const std::vector<common_chat_tool> & tools,
         struct planner_argument_repair_target * repair_target,
-        std::string & error) {
+        std::string & error,
+        bool validate_required = true,
+        bool validate_schema = true) {
     for (size_t operation_index = 0; operation_index < operations.size(); ++operation_index) {
         const auto & operation = operations[operation_index];
         if (!operation.step || !operation.step->tool_call) continue;
@@ -427,19 +465,70 @@ bool validate_planner_tool_arguments(
         const auto schema = nlohmann::ordered_json::parse(tool->parameters, nullptr, false);
         if (schema.is_object() && schema.value("type", std::string()) == "object") {
             const auto arguments = nlohmann::ordered_json::parse(call.arguments_json, nullptr, false);
-            const auto required = schema.value("required", nlohmann::ordered_json::array());
-            for (const auto & field : required) {
-                if (!field.is_string() || !arguments.is_object() || arguments.contains(field.get<std::string>())) continue;
-                error = "planner tool arguments missing required field: " + call.name + "." +
-                    field.get<std::string>();
+            if (!arguments.is_object()) {
+                error = "planner tool arguments must be a JSON object: " + call.name;
                 if (repair_target != nullptr) {
                     repair_target->step_index = operation_index;
                     repair_target->step_id = operation.step->id;
                     repair_target->tool_name = call.name;
                     repair_target->base_arguments_json = call.arguments_json;
-                    repair_target->missing_argument = field.get<std::string>();
+                    repair_target->validation_error = error;
+                    repair_target->merge_existing_arguments = false;
                 }
                 return false;
+            }
+            if (validate_required) {
+                const auto required = schema.value("required", nlohmann::ordered_json::array());
+                for (const auto & field : required) {
+                    if (!field.is_string() || arguments.contains(field.get<std::string>())) continue;
+                    error = "planner tool arguments missing required field: " + call.name + "." +
+                        field.get<std::string>();
+                    if (repair_target != nullptr) {
+                        repair_target->step_index = operation_index;
+                        repair_target->step_id = operation.step->id;
+                        repair_target->tool_name = call.name;
+                        repair_target->base_arguments_json = call.arguments_json;
+                        repair_target->missing_argument = field.get<std::string>();
+                        repair_target->validation_error = error;
+                        repair_target->merge_existing_arguments = true;
+                    }
+                    return false;
+                }
+            }
+
+            // The planner schema intentionally keeps the outer plan generic,
+            // but the selected tool still has a concrete model-facing
+            // contract.  Validate that contract before accepting the plan so
+            // unknown fields, bad types and bounds cannot be mistaken for a
+            // valid planner candidate.  The executor/registry remains the
+            // final authority; this is the earlier bounded repair gate.
+            if (validate_schema) {
+                auto model_arguments = arguments;
+                project_planner_bindings_to_model_values(model_arguments, schema);
+                // A host may fill required fields after this model-facing
+                // validation phase. Required-field validation is therefore
+                // controlled separately from the shape/type validation.
+                auto model_schema = schema;
+                if (!validate_required && model_schema.is_object()) {
+                    model_schema["required"] = nlohmann::ordered_json::array();
+                }
+                std::string normalized_arguments;
+                std::string schema_error;
+                if (!common_schema_normalize_and_validate_object(
+                        model_arguments.dump(), model_schema.dump(),
+                        normalized_arguments, schema_error)) {
+                    error = "planner tool arguments do not satisfy " + call.name +
+                        " model-facing schema: " + schema_error;
+                    if (repair_target != nullptr) {
+                        repair_target->step_index = operation_index;
+                        repair_target->step_id = operation.step->id;
+                        repair_target->tool_name = call.name;
+                        repair_target->base_arguments_json = call.arguments_json;
+                        repair_target->validation_error = error;
+                        repair_target->merge_existing_arguments = false;
+                    }
+                    return false;
+                }
             }
         }
     }
@@ -492,14 +581,19 @@ bool apply_planner_argument_repair(
         error = "planner argument repair must contain only args:object";
         return false;
     }
-    std::string merged_arguments;
-    if (!common_plan_merge_tool_arguments_json(
-            target.base_arguments_json, response["args"].dump(), merged_arguments, error)) {
-        return false;
-    }
     std::string normalized_arguments;
-    if (!common_plan_normalize_tool_arguments_json(
-            target.tool_name, merged_arguments, normalized_arguments, error)) {
+    if (target.merge_existing_arguments) {
+        std::string merged_arguments;
+        if (!common_plan_merge_tool_arguments_json(
+                target.base_arguments_json, response["args"].dump(), merged_arguments, error)) {
+            return false;
+        }
+        if (!common_plan_normalize_tool_arguments_json(
+                target.tool_name, merged_arguments, normalized_arguments, error)) {
+            return false;
+        }
+    } else if (!common_plan_normalize_tool_arguments_json(
+            target.tool_name, response["args"].dump(), normalized_arguments, error)) {
         return false;
     }
     auto plan = json::parse(target.candidate_plan_json, nullptr, false);
@@ -712,7 +806,8 @@ bool normalize_planner_host_dataset_references(
         const common_agent_request & request,
         const std::string & content,
         std::string & normalized,
-        std::string & error) {
+        std::string & error,
+        bool include_host_materialization = true) {
     auto document = json::parse(content, nullptr, false);
     if (document.is_discarded()) {
         normalized = content;
@@ -807,33 +902,35 @@ bool normalize_planner_host_dataset_references(
                 changed = true;
             }
 
-            // A dataset-producing data step must materialize its bounded rows
-            // when a later step consumes its dataset output. The model should
-            // not have to invent a result URI; this is a host-owned plan
-            // detail and remains stable across bounded regeneration.
-            for (size_t index = 0; index < original["steps"].size() && index < document["steps"].size(); ++index) {
-                const auto & source_step = original["steps"][index];
-                if (!source_step.is_object() || !source_step.contains("as") || !source_step["as"].is_string() ||
-                        !source_step.contains("tool") || !source_step["tool"].is_string() ||
-                        !is_materializable_data_tool(source_step["tool"].get<std::string>())) continue;
-                const auto alias = source_step["as"].get<std::string>();
-                if (alias.empty() || !document["steps"][index].is_object() ||
-                        !document["steps"][index].contains("args") || !document["steps"][index]["args"].is_object()) continue;
-                bool consumed_as_dataset = false;
-                for (size_t later = index + 1; later < document["steps"].size() && !consumed_as_dataset; ++later) {
-                    const auto & later_step = document["steps"][later];
-                    if (!later_step.is_object() || !later_step.contains("args")) continue;
-                    consumed_as_dataset = json_references_dataset_alias(later_step["args"], alias);
+            if (include_host_materialization) {
+                // A dataset-producing data step must materialize its bounded rows
+                // when a later step consumes its dataset output. The model should
+                // not have to invent a result URI; this is a host-owned plan
+                // detail and remains stable across bounded regeneration.
+                for (size_t index = 0; index < original["steps"].size() && index < document["steps"].size(); ++index) {
+                    const auto & source_step = original["steps"][index];
+                    if (!source_step.is_object() || !source_step.contains("as") || !source_step["as"].is_string() ||
+                            !source_step.contains("tool") || !source_step["tool"].is_string() ||
+                            !is_materializable_data_tool(source_step["tool"].get<std::string>())) continue;
+                    const auto alias = source_step["as"].get<std::string>();
+                    if (alias.empty() || !document["steps"][index].is_object() ||
+                            !document["steps"][index].contains("args") || !document["steps"][index]["args"].is_object()) continue;
+                    bool consumed_as_dataset = false;
+                    for (size_t later = index + 1; later < document["steps"].size() && !consumed_as_dataset; ++later) {
+                        const auto & later_step = document["steps"][later];
+                        if (!later_step.is_object() || !later_step.contains("args")) continue;
+                        consumed_as_dataset = json_references_dataset_alias(later_step["args"], alias);
+                    }
+                    if (!consumed_as_dataset) continue;
+                    auto & arguments = document["steps"][index]["args"];
+                    arguments["materialize"] = true;
+                    if (!arguments.contains("result_dataset") || !arguments["result_dataset"].is_string() ||
+                            arguments["result_dataset"].get<std::string>().empty()) {
+                        arguments["result_dataset"] = "dataset://agent/turn/" +
+                            common_agent_dataset_uri_scope_component(request.turn_id) + "/step-" + std::to_string(index + 1);
+                    }
+                    changed = true;
                 }
-                if (!consumed_as_dataset) continue;
-                auto & arguments = document["steps"][index]["args"];
-                arguments["materialize"] = true;
-                if (!arguments.contains("result_dataset") || !arguments["result_dataset"].is_string() ||
-                        arguments["result_dataset"].get<std::string>().empty()) {
-                    arguments["result_dataset"] = "dataset://agent/turn/" +
-                        common_agent_dataset_uri_scope_component(request.turn_id) + "/step-" + std::to_string(index + 1);
-                }
-                changed = true;
             }
         }
     }
@@ -1161,36 +1258,46 @@ public:
                             bounded_operations,
                             bounded_json_error,
                             1);
-                        if (parsed && apply_planner_host_argument_bindings(
-                                request, bounded_operations, bounded.plan, bounded_json_error)) {
-                            planner_argument_repair_target repair_target;
-                            if (validate_planner_tool_arguments(
-                                    bounded_operations,
-                                    tool_definitions,
-                                    &repair_target,
-                                    bounded_json_error)) {
-                                bounded.operations = std::move(bounded_operations);
-                                if (request.require_tool_execution) {
-                                    bounded.operations.erase(
-                                        std::remove_if(
-                                            bounded.operations.begin(),
-                                            bounded.operations.end(),
-                                            [](const common_plan_operation & operation) {
-                                                return operation.step &&
-                                                    common_plan_step_effective_mode(*operation.step) ==
-                                                        common_plan_step_mode::final_response;
-                                            }),
-                                        bounded.operations.end());
-                                }
-                                if (generation_config.agent_trace) {
-                                    std::fprintf(
-                                        stderr,
-                                        "agent: operation_selection accepted=true tool=%s\n",
-                                        call.name.c_str());
-                                }
-                                error.clear();
-                                return bounded;
+                        planner_argument_repair_target repair_target;
+                        bool bounded_valid = parsed &&
+                            validate_planner_tool_arguments(
+                                bounded_operations,
+                                tool_definitions,
+                                &repair_target,
+                                bounded_json_error,
+                                false,
+                                true) &&
+                            apply_planner_host_argument_bindings(
+                                request, bounded_operations, bounded.plan, bounded_json_error) &&
+                            validate_planner_tool_arguments(
+                                bounded_operations,
+                                tool_definitions,
+                                &repair_target,
+                                bounded_json_error,
+                                true,
+                                false);
+                        if (bounded_valid) {
+                            bounded.operations = std::move(bounded_operations);
+                            if (request.require_tool_execution) {
+                                bounded.operations.erase(
+                                    std::remove_if(
+                                        bounded.operations.begin(),
+                                        bounded.operations.end(),
+                                        [](const common_plan_operation & operation) {
+                                            return operation.step &&
+                                                common_plan_step_effective_mode(*operation.step) ==
+                                                    common_plan_step_mode::final_response;
+                                        }),
+                                    bounded.operations.end());
                             }
+                            if (generation_config.agent_trace) {
+                                std::fprintf(
+                                    stderr,
+                                    "agent: operation_selection accepted=true tool=%s\n",
+                                    call.name.c_str());
+                            }
+                            error.clear();
+                            return bounded;
                         }
                         operation_error = bounded_json_error;
                     }
@@ -1294,14 +1401,17 @@ public:
                         break;
                     }
                 }
+                const std::string repair_rule = target.missing_argument.empty()
+                    ? "Replace the rejected arguments with a complete valid args object; remove unknown or invalid fields. Host validation error: " + target.validation_error + ". "
+                    : "Add the missing required field while preserving valid existing fields. Required field: " + target.missing_argument + ". ";
                 common_chat_msg repair_system{
                     "system",
                     "Return only one JSON object with an args object for the already selected tool. "
                     "Do not choose a different tool, add a plan step, or return a complete plan. "
-                    "The host will merge these args into the existing step and validate them. "
+                    "The host will validate the repaired args against the tool contract. "
                     "Use only values explicitly present in the user request or already present in "
                     "the existing args; the host will not invent semantic values. Selected tool: " +
-                    target.tool_name + ". Required field: " + target.missing_argument + ". "
+                    target.tool_name + ". " + repair_rule +
                     "Return args matching that tool's registered model-facing schema. "
                     "Tool contract:" + selected_contract,
                 };
@@ -1310,8 +1420,8 @@ public:
                     "[Original user request]\n" + request.prompt +
                     "\n[Existing selected step]\ntool: " + target.tool_name +
                     "\nargs: " + target.base_arguments_json +
-                    "\n[Host validation error]\n" + parse_error +
-                    "\nReturn only {\"args\":{...}} with the missing required argument repaired.",
+                    "\n[Host validation error]\n" + target.validation_error +
+                    "\nReturn only {\"args\":{...}} with the tool arguments repaired.",
                 };
                 auto repaired = inference.generate_result(make_agent_cli_generation_request(
                     request,
@@ -1367,10 +1477,40 @@ public:
                 common_plan_state candidate_plan = proposal.plan;
                 std::vector<common_plan_operation> candidate_operations;
                 std::string normalized_candidate;
+                std::string model_normalized_candidate;
+                common_plan_state model_candidate_plan = proposal.plan;
+                std::vector<common_plan_operation> model_candidate_operations;
                 parsed = normalize_planner_host_dataset_references(
-                    request, candidate.content, normalized_candidate, parse_error) &&
+                    request, candidate.content, model_normalized_candidate, parse_error, false) &&
                     common_plan_parse_proposal_json(
-                        normalized_candidate, candidate_plan, candidate_operations, parse_error, 6);
+                        model_normalized_candidate, model_candidate_plan,
+                        model_candidate_operations, parse_error, 6);
+                if (parsed) {
+                    // Validate only what the model authored. Host-owned
+                    // materialization fields are deliberately absent from
+                    // this phase, and required fields are checked after host
+                    // bindings/defaults have been applied.
+                    planner_argument_repair_target detected_repair;
+                    parsed = validate_planner_tool_arguments(
+                        model_candidate_operations, tool_definitions,
+                        &detected_repair, parse_error, false, true);
+                    if (!parsed && !detected_repair.tool_name.empty() &&
+                            !argument_repair_attempted) {
+                        detected_repair.candidate_plan_json = model_normalized_candidate;
+                        pending_argument_repair = std::move(detected_repair);
+                    }
+                }
+                if (parsed) {
+                    // Rebuild the executable candidate with host-owned
+                    // materialization details, then apply request-scoped
+                    // bindings. This is a separate phase from model-facing
+                    // schema validation.
+                    parsed = normalize_planner_host_dataset_references(
+                        request, candidate.content, normalized_candidate, parse_error) &&
+                        common_plan_parse_proposal_json(
+                            normalized_candidate, candidate_plan,
+                            candidate_operations, parse_error, 6);
+                }
                 if (parsed && !apply_planner_host_argument_bindings(
                         request, candidate_operations, candidate_plan, parse_error)) {
                     parsed = false;
@@ -1394,9 +1534,13 @@ public:
                     }
                 }
                 if (parsed) {
+                    // The host may own fields that are not part of the
+                    // model-facing schema. At this point only enforce the
+                    // required-field contract against the completed args.
                     planner_argument_repair_target detected_repair;
                     parsed = validate_planner_tool_arguments(
-                        candidate_operations, tool_definitions, &detected_repair, parse_error);
+                        candidate_operations, tool_definitions, &detected_repair,
+                        parse_error, true, false);
                     if (!parsed && !detected_repair.tool_name.empty() &&
                             !argument_repair_attempted) {
                         detected_repair.candidate_plan_json = normalized_candidate;
