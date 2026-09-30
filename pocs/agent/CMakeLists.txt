@@ -907,6 +907,22 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Smoke-only model-format probe. It uses the resident server-context path and
+# renders the existing OpenAPI-derived model-facing contract, but deliberately
+# leaves the native production tool parser disabled. This target never changes
+# production prompts, parsers, or execution wiring.
+set(TARGET llama-agent-openalex-compact-dsl-model-smoke)
+add_executable(${TARGET}
+    smoke/cli/agent-cli-openalex-compact-dsl-model-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/openapi
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # This target intentionally remains opt-in and is not part of the installed
 # package.  It calls the live Eurostat service and is neither a default CTest
 # nor part of the agent test build pack.
