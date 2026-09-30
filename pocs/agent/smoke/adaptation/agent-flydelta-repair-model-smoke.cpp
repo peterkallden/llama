@@ -48,8 +48,12 @@ namespace {
 
 using json = nlohmann::ordered_json;
 
-constexpr const char * kExpectedTool = "dataset.inspect";
-constexpr const char * kAlternativeTool = "statistics.describe";
+// The fixture is intentionally shaped around the current small-model failure:
+// Qwen tends to choose dataset.inspect for a broad dataset request. That
+// observed choice is the baseline failure here; the repaired semantic task is
+// the host-verifiable numeric statistics operation.
+constexpr const char * kExpectedTool = "statistics.describe";
+constexpr const char * kAlternativeTool = "dataset.inspect";
 constexpr const char * kDatasetReference = "dataset://local/sales";
 
 struct options {
@@ -422,11 +426,11 @@ bool generate(
 common_flydelta_experiment_fixture fixture(const std::string & profile) {
     common_flydelta_experiment_fixture value;
     value.id = "flydelta://fixture/model-repair-e2e";
-    value.task_fingerprint = "sha256:structured-tool-repair-e2e";
+    value.task_fingerprint = "sha256:structured-tool-repair-statistics-e2e";
     value.model_profile_fingerprint = profile;
     value.tokenizer_fingerprint = "sha256:flydelta-qwen-tokenizer";
     value.template_fingerprint = "sha256:flydelta-qwen-template";
-    value.execution_context_fingerprint = "sha256:data-inspect-sales-context-v1";
+    value.execution_context_fingerprint = "sha256:statistics-describe-sales-context-v1";
     value.verifier_revision = "verifier:structured-tool-name-v1";
     return value;
 }
@@ -490,6 +494,7 @@ int main(int argc, char ** argv) {
     }
     const json expected_tool_arguments = {
         {"dataset", kDatasetReference},
+        {"columns", {"amount", "units"}},
     };
     common_tool_catalog model_tool_catalog;
     common_tool_bootstrap_result model_tool_bootstrap;
@@ -526,17 +531,18 @@ int main(int argc, char ** argv) {
     // layer-input is sampled before that layer's cvec addition. Capture a
     // bounded dense profile so host-side discovery can find the useful region
     // from activation separation instead of assuming that early layers win.
-    // Layer 1 is the raw token-input representation. These two repair
-    // prompts deliberately share their final JSON suffix, so that input row
-    // is legitimately identical and cannot form a behavior delta. Start at
-    // the first post-input layer for the model-backed teaching pair.
+    // Layer 1 is the raw token-input representation. The repair prompts are
+    // semantically different, so the capture uses the final generation-boundary
+    // state rather than assuming an identical absolute input row. Start at the
+    // first post-input layer for the model-backed teaching pair.
     for (uint32_t layer = 2; layer < model_n_layers && layer <= 64; ++layer) {
         capture_request->layer_indices.push_back(layer);
     }
-    // Capture the final prompt row. The two controlled prompts have the same
-    // token length, and this row is after the tool-selection instruction;
-    // token zero would be identical and produce a zero behavior delta.
+    // Capture the final prompt row after the tool-selection instruction. The
+    // repair prompt may have a different token length, so this is a semantic
+    // generation-boundary capture rather than an absolute prompt-row match.
     capture_request->token_index = -1;
+    capture_request->position = common_flydelta_capture_position::generation_boundary;
     capture_request->max_bytes = 4U * 1024U * 1024U;
     capture_request->model_profile_fingerprint = profile;
     capture_request->capture_layout_revision = "layer-input:v1";
@@ -544,9 +550,11 @@ int main(int argc, char ** argv) {
     // These are two host-controlled attempts over the same tool contract. The
     // first is deliberately the known wrong tool; the second is the repair.
     const char * failed_instruction =
-        "Call statistics.describe for dataset://local/sales. Do not call dataset.inspect.";
+        "Describe the Sales dataset at a high level, including its records and main fields. "
+        "Call dataset.inspect for dataset://local/sales.";
     const char * repaired_instruction =
-        "Call dataset.inspect for dataset://local/sales. Do not call statistics.describe.";
+        "For amount and units, report count, minimum, maximum, mean, and population standard deviation. "
+        "Call statistics.describe for dataset://local/sales with columns amount and units.";
 
     common_agent_generation_result failed;
     common_agent_generation_result repaired;
