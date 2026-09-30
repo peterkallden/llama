@@ -56,6 +56,11 @@ pathlib.Path(output).write_text(json.dumps({
                         "enabled": True,
                         "default_projection": "id,display_name",
                         "required_parameters": ["search"],
+                        "bound_arguments": {
+                            "search": "machine learning",
+                            "per_page": 1,
+                            "select": "id,display_name",
+                        },
                     },
                 },
             },
@@ -77,7 +82,7 @@ pathlib.Path(output).write_text(json.dumps({
 PY
 
 log_path="$work_dir/openalex-model.log"
-prompt="Use only the openalex.listWorks tool. Call it with the search argument set to machine learning, per_page set to 1, and select set to id,display_name. After the tool succeeds, answer with the first work id and display name. Do not invent a result."
+prompt="Use only the openalex.listWorks tool to search the configured OpenAlex workflow. After the tool succeeds, answer with the first work id and display name. Do not invent a result."
 args=(
     run --config "$config" --model "$model"
     --agent-profile default --tool-profile openalex-smoke

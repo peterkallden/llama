@@ -77,6 +77,10 @@ struct common_agent_runtime_driver_inputs {
     // Optional host-prepared activation for callers that construct the
     // generic driver input path directly instead of using session-host.
     std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
+    // Host-owned concrete tool arguments propagated into every request built
+    // by the agent driver. These are merged before planner validation and
+    // execution; they are not model-inferred arguments.
+    std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
 };
 
 struct common_agent_runtime_driver_execution {
@@ -129,6 +133,9 @@ struct common_agent_runtime_driver_execution {
     // request created for this runtime turn. Selection and activation remain
     // host responsibilities; the driver only carries the snapshot.
     std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
+    // Host-owned concrete tool arguments propagated into every request built
+    // by the agent driver.
+    std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

@@ -930,6 +930,30 @@ bool resolve_agent_cli_tool_selection(
     return ok;
 }
 
+std::vector<common_agent_tool_argument_binding>
+make_agent_host_openapi_argument_bindings(
+        const std::vector<agent_host_openapi_provider_config> & providers) {
+    std::vector<common_agent_tool_argument_binding> bindings;
+    for (const auto & provider : providers) {
+        if (!provider.enabled) continue;
+        const std::string prefix = provider.prefix.empty() ? provider.id : provider.prefix;
+        for (const auto & operation : provider.operations) {
+            if (!operation.second.enabled || operation.second.bound_arguments_json == "{}") continue;
+            const auto bound = json::parse(operation.second.bound_arguments_json, nullptr, false);
+            if (bound.is_discarded() || !bound.is_object() || bound.empty()) continue;
+            const std::string tool_name = prefix.empty()
+                ? operation.first
+                : prefix + "." + operation.first;
+            bindings.push_back({
+                tool_name,
+                bound.dump(),
+                "config://openapi/" + provider.id + "/" + operation.first,
+                true});
+        }
+    }
+    return bindings;
+}
+
 common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
         const args & options,
         const common_agent_scope & scope,
@@ -941,6 +965,9 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
         common_agent_request request,
         common_agent_generation_options generation_options,
         std::vector<common_agent_input_resource> input_resources) {
+    const auto bindings = make_agent_host_openapi_argument_bindings(options.openapi_providers);
+    request.tool_argument_bindings.insert(
+        request.tool_argument_bindings.end(), bindings.begin(), bindings.end());
     common_agent_runtime_turn_request turn_request;
     turn_request.request = std::move(request);
     turn_request.request.input_resources = std::move(input_resources);

@@ -295,6 +295,8 @@ common_agent_runtime_resident_request_config make_resident_request_config(
         static_cast<size_t>(std::max(0, options.context_size)),
     };
     config.mmproj = options.mmproj;
+    config.tool_argument_bindings = make_agent_host_openapi_argument_bindings(
+        options.openapi_providers);
     return config;
 }
 

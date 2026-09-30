@@ -284,6 +284,14 @@ bool read_openapi_provider(
                             "OpenAPI operation policy required_parameters", error)) {
                     return false;
                 }
+                if (it.value().contains("bound_arguments")) {
+                    if (!it.value()["bound_arguments"].is_object() ||
+                            it.value()["bound_arguments"].dump().size() > 16384) {
+                        error = "OpenAPI operation policy bound_arguments must be a bounded JSON object";
+                        return false;
+                    }
+                    operation.bound_arguments_json = it.value()["bound_arguments"].dump();
+                }
                 provider.operations.emplace(it.key(), std::move(operation));
             }
         }
@@ -1110,6 +1118,12 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"default_projection", operation.second.default_projection},
                 {"required_parameters", operation.second.required_parameters},
             };
+            const auto bound_arguments = json::parse(
+                operation.second.bound_arguments_json, nullptr, false);
+            if (!bound_arguments.is_discarded() && bound_arguments.is_object() &&
+                    !bound_arguments.empty()) {
+                operations[operation.first]["bound_arguments"] = bound_arguments;
+            }
         }
         providers.push_back({
             {"type", "openapi"},
@@ -1903,6 +1917,14 @@ bool validate_agent_host_config(
                      operation.second.access != "write" &&
                      operation.second.access != "destructive")) {
                 error = "OpenAPI operation policy has an invalid access value: " + operation.first;
+                return false;
+            }
+            const auto bound_arguments = json::parse(
+                operation.second.bound_arguments_json, nullptr, false);
+            if (bound_arguments.is_discarded() || !bound_arguments.is_object() ||
+                    bound_arguments.dump().size() > 16384) {
+                error = "OpenAPI operation policy bound_arguments must be a bounded JSON object: " +
+                    operation.first;
                 return false;
             }
         }

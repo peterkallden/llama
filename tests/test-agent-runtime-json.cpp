@@ -58,9 +58,40 @@ int main() {
 
     common_agent_request request;
     request.prompt = "Search planner runtime contract details";
+    bool changed = false;
+
+    request.tool_argument_bindings.push_back({
+        "openalex.listWorks",
+        R"({"search":"machine learning","per_page":1,"select":"id,display_name"})",
+        "config://openapi/openalex/listWorks",
+        true});
+    nlohmann::ordered_json bound_arguments;
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_host_tool_arguments_to_json(
+        request,
+        "openalex.listWorks",
+        nlohmann::ordered_json::object(),
+        bound_arguments,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(bound_arguments.value("search", "") == "machine learning");
+    TEST_ASSERT(bound_arguments.value("per_page", 0) == 1);
+    TEST_ASSERT(bound_arguments.value("select", "") == "id,display_name");
+
+    bound_arguments = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(!common_agent_runtime_apply_host_tool_arguments_to_json(
+        request,
+        "openalex.listWorks",
+        nlohmann::ordered_json::object({{"search", "conflicting model value"}}),
+        bound_arguments,
+        changed,
+        error));
+    TEST_ASSERT(error.find("search") != std::string::npos);
 
     nlohmann::ordered_json normalized;
-    bool changed = false;
+    changed = false;
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
         request,
         "web_search",

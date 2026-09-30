@@ -191,6 +191,7 @@ bool run_agent_runtime_host(
             driver_execution.explicit_memory_confirmed = execution.turn_request.request.explicit_memory_confirmed;
             driver_execution.require_tool_execution = execution.turn_request.request.require_tool_execution;
             driver_execution.flydelta_activation = execution.turn_request.request.flydelta_activation;
+            driver_execution.tool_argument_bindings = execution.turn_request.request.tool_argument_bindings;
             return run_agent_runtime_driver(driver_execution, result, error);
         }
 

@@ -42,6 +42,7 @@ common_agent_runtime_turn_request make_agent_runtime_resident_base_turn_request(
     turn_request.orchestration_config.prompt = config.prompt;
     turn_request.generation_options.n_predict = config.n_predict;
     turn_request.generation_options.n_threads = config.n_threads;
+    turn_request.request.tool_argument_bindings = config.tool_argument_bindings;
     return turn_request;
 }
 

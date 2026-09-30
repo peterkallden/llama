@@ -90,6 +90,10 @@ void append_legacy_stdio_mcp_provider(
     const std::string & prefix,
     std::vector<agent_host_stdio_mcp_provider_request> & request_providers);
 
+std::vector<common_agent_tool_argument_binding>
+make_agent_host_openapi_argument_bindings(
+    const std::vector<agent_host_openapi_provider_config> & providers);
+
 bool resolve_agent_host_tool_selection(
     common_memory_store & store,
     common_plan_store * plan_store,

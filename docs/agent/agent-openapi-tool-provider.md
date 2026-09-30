@@ -136,6 +136,30 @@ context so the existing reflection path can revise the tool step. The host
 does not invent a search term or silently execute an unscoped collection
 request.
 
+For a workflow that already has concrete host-owned values, an operation policy
+may additionally set `bound_arguments` as a JSON object. These values are
+copied into the generic `common_agent_tool_argument_binding` request seam
+before planning and are merged again before execution. The planner may omit
+the fields, but a conflicting model value is rejected. This is a structured
+workflow binding, not inference from the user's prose:
+
+```json
+{
+  "listWorks": {
+    "required_parameters": ["search"],
+    "bound_arguments": {
+      "search": "machine learning",
+      "per_page": 1,
+      "select": "id,display_name"
+    }
+  }
+}
+```
+
+Only callers that actually know the concrete values should set
+`bound_arguments`; otherwise the existing model-facing required-parameter and
+tool-repair path remains authoritative.
+
 The optional model-backed smoke uses the same host/provider path and forces
 the model to use `openalex.listWorks` rather than the generic web tools:
 

@@ -42,4 +42,5 @@ struct common_agent_runtime_resident_request_config {
     int n_threads = 2;
     size_t context_size_tokens = 0;
     std::string mmproj;
+    std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
 };
