@@ -13,6 +13,7 @@
 #include "tools/agent/runtime/agent-runtime-execution.h"
 #include "tools/agent/runtime/agent-runtime-host.h"
 #include "tools/agent/runtime/agent-runtime-resident.h"
+#include "agent/runtime-json-contracts.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/agent/runtime/agent-runtime-tooling.h"
 #include "tools/agent/tooling/agent-tool-provider.h"
@@ -637,6 +638,71 @@ static void test_planner_repairs_missing_arguments_after_structural_regeneration
     assert(inference.seen[2].json_schema.find("\"required\":[\"args\"]") != std::string::npos);
     assert(inference.seen[2].json_schema.find("\"search\"") != std::string::npos);
     assert(inference.seen[2].messages[0].content.find("already selected tool") != std::string::npos);
+}
+
+static void test_planner_applies_host_bound_openalex_arguments() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"goal":"Search works","steps":[{"tool":"openalex.listWorks","args":{},"mode":"tool"}]})"),
+    };
+
+    const auto options = make_test_args();
+    common_agent_request request = make_request();
+    request.prompt = "Search OpenAlex for machine learning works.";
+    request.require_tool_execution = true;
+    request.tool_argument_bindings.push_back({
+        "openalex.listWorks",
+        R"({"search":"machine learning","per_page":1,"select":"id,display_name"})",
+        "fixture://openalex/search-machine-learning",
+        true});
+    const std::vector<common_chat_tool> tools = {
+        {"openalex.listWorks", "List OpenAlex works.",
+            R"({"type":"object","additionalProperties":false,"required":["search"],"properties":{"search":{"type":"string"},"per_page":{"type":"integer"},"select":{"type":"string"}}})"},
+    };
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    if (!error.empty() || proposal.operations.size() != 1 ||
+            !proposal.operations[0].step || !proposal.operations[0].step->tool_call ||
+            proposal.operations[0].step->tool_call->name != "openalex.listWorks" ||
+            proposal.operations[0].step->tool_call->arguments_json !=
+                R"({"search":"machine learning","per_page":1,"select":"id,display_name"})" ||
+            inference.seen.size() != 1 || inference.seen[0].messages.empty() ||
+            inference.seen[0].messages[0].content.find("openalex.listWorks fixed args") == std::string::npos ||
+            inference.seen[0].messages[0].content.find("machine learning") == std::string::npos) {
+        std::fprintf(stderr, "host-bound OpenAlex planner contract failed: %s ops=%zu calls=%zu",
+            error.c_str(), proposal.operations.size(), inference.seen.size());
+        if (!proposal.operations.empty() && proposal.operations[0].step &&
+                proposal.operations[0].step->tool_call) {
+            std::fprintf(stderr, " tool=%s args=%s",
+                proposal.operations[0].step->tool_call->name.c_str(),
+                proposal.operations[0].step->tool_call->arguments_json.c_str());
+        }
+        std::fprintf(stderr, "\n");
+        std::exit(1);
+    }
+
+    nlohmann::ordered_json normalized;
+    bool changed = false;
+    if (!common_agent_runtime_apply_safe_tool_defaults_to_json(
+            request, "openalex.listWorks", nlohmann::ordered_json::object(),
+            normalized, changed, error) || !changed ||
+            normalized != nlohmann::ordered_json::parse(
+                R"({"search":"machine learning","per_page":1,"select":"id,display_name"})")) {
+        std::fprintf(stderr, "host-bound OpenAlex runtime contract failed: %s\n", error.c_str());
+        std::exit(1);
+    }
+
+    auto conflicting_request = request;
+    conflicting_request.tool_argument_bindings.front().arguments_json =
+        R"({"search":"different query"})";
+    if (common_agent_runtime_apply_safe_tool_defaults_to_json(
+            conflicting_request, "openalex.listWorks",
+            nlohmann::ordered_json({{"search", "machine learning"}}),
+            normalized, changed, error) || error.find("conflicts") == std::string::npos) {
+        std::fprintf(stderr, "host-bound OpenAlex conflict was not rejected\n");
+        std::exit(1);
+    }
 }
 
 static void test_planner_repairs_invalid_resource_binding() {
@@ -2462,6 +2528,8 @@ static bool run_named_test(const std::string & name) {
         test_planner_rejects_missing_model_tool_arguments();
     } else if (name == "planner-missing-tool-arguments-after-regeneration") {
         test_planner_repairs_missing_arguments_after_structural_regeneration();
+    } else if (name == "planner-host-bound-tool-arguments") {
+        test_planner_applies_host_bound_openalex_arguments();
     } else if (name == "planner-resource-binding-repair") {
         test_planner_repairs_invalid_resource_binding();
     } else if (name == "planner-host-dataset-inventory") {
@@ -2545,6 +2613,7 @@ int main(int argc, char ** argv) {
         "planner-final-only-repair",
         "planner-missing-tool-arguments",
         "planner-missing-tool-arguments-after-regeneration",
+        "planner-host-bound-tool-arguments",
         "planner-resource-binding-repair",
         "planner-host-dataset-inventory",
         "planner-compact-dataset-handles",

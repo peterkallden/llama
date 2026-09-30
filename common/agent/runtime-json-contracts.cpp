@@ -214,6 +214,55 @@ std::string common_agent_runtime_normalize_reasoning_observation_json(
     return common_agent_runtime_reasoning_observation_to_json(reasoning_text).dump();
 }
 
+bool common_agent_runtime_apply_host_tool_arguments_to_json(
+        const common_agent_request & request,
+        const std::string & tool_name,
+        const json & arguments,
+        json & normalized_arguments,
+        bool & changed,
+        std::string & error) {
+    error.clear();
+    changed = false;
+    if (!arguments.is_object()) {
+        error = "tool arguments must be a JSON object";
+        return false;
+    }
+    normalized_arguments = arguments;
+    size_t binding_count = 0;
+    for (const auto & binding : request.tool_argument_bindings) {
+        if (++binding_count > 32) {
+            error = "too many host tool argument bindings";
+            return false;
+        }
+        if (binding.tool_name != tool_name) continue;
+        if (binding.tool_name.empty() || binding.arguments_json.size() > 16384) {
+            error = "host tool argument binding is invalid";
+            return false;
+        }
+        const auto bound = json::parse(binding.arguments_json, nullptr, false);
+        if (bound.is_discarded() || !bound.is_object()) {
+            error = "host tool argument binding must contain a JSON object";
+            return false;
+        }
+        for (const auto & item : bound.items()) {
+            if (item.key().empty() || item.key().size() > 128) {
+                error = "host tool argument binding contains an invalid field name";
+                return false;
+            }
+            const auto existing = normalized_arguments.find(item.key());
+            if (existing != normalized_arguments.end() && *existing != item.value()) {
+                error = "host-bound tool argument conflicts with model argument: " + item.key();
+                return false;
+            }
+            if (existing == normalized_arguments.end()) {
+                normalized_arguments[item.key()] = item.value();
+                changed = true;
+            }
+        }
+    }
+    return true;
+}
+
 bool common_agent_runtime_apply_safe_tool_defaults_to_json(
         const common_agent_request & request,
         const std::string & tool_name,
@@ -228,7 +277,13 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
         return false;
     }
 
-    normalized_arguments = arguments;
+    bool host_arguments_changed = false;
+    if (!common_agent_runtime_apply_host_tool_arguments_to_json(
+            request, tool_name, arguments, normalized_arguments,
+            host_arguments_changed, error)) {
+        return false;
+    }
+    changed = host_arguments_changed;
     const auto set_prompt_query = [&](size_t max_length) {
         if (normalized_arguments.contains("query")) {
             return;

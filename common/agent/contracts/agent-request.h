@@ -39,6 +39,17 @@ struct common_agent_input_resource {
     bool required = false;
 };
 
+// Host-owned arguments that are already resolved before planning. The model
+// may omit these fields, but it may not replace them with a conflicting
+// value. The JSON remains a model-facing tool argument object so the same
+// contract works for native, MCP and OpenAPI tools.
+struct common_agent_tool_argument_binding {
+    std::string tool_name;
+    std::string arguments_json = "{}";
+    std::string source_ref;
+    bool model_visible = true;
+};
+
 struct common_agent_request {
     std::vector<common_chat_msg> messages;
     common_memory_scope memory_scope = common_memory_scope::session;
@@ -60,6 +71,9 @@ struct common_agent_request {
     // Host-owned candidates discovered from the scoped resource store. These
     // are available for selection but are not current-turn inputs.
     std::vector<common_agent_input_resource> available_resources;
+    // Structured arguments supplied by the host for a selected tool. These
+    // are merged before planner/tool validation and execution.
+    std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
     // Host-owned, scoped dataset inventory captured for this turn. These are
     // lookup candidates, not model-created plan aliases.
     std::vector<common_agent_dataset_descriptor> available_datasets;

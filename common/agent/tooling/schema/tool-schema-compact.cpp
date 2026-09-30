@@ -110,8 +110,19 @@ std::string render_object(const json & schema, std::string & error) {
 std::vector<common_model_tool_field> project_fields(
         const json & schema, bool outputs, std::string & error) {
     std::vector<common_model_tool_field> fields;
-    if (!schema.is_object() || schema.value("type", std::string()) != "object") {
-        error = "model tool contract requires an object schema";
+    if (!schema.is_object()) {
+        error = "model tool contract schema must be a JSON schema object";
+        return fields;
+    }
+    // Tool inputs remain object-shaped, but OpenAPI responses may legitimately
+    // be top-level arrays or scalars (for example a collection operation).  A
+    // model-facing compact contract needs one stable field for those values;
+    // the host-facing result schema and actual payload stay unchanged.
+    if (schema.value("type", std::string()) != "object") {
+        common_model_tool_field field;
+        field.name = "value";
+        field.display_type = scalar_type(schema);
+        fields.push_back(std::move(field));
         return fields;
     }
     const auto properties = schema.value("properties", json::object());

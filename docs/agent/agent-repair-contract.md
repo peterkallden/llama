@@ -73,6 +73,31 @@ an untyped field. Native tools already use the same full-schema versus
 model-schema distinction, and other providers may populate the optional
 projection when they have equivalent host-owned requirements.
 
+When the host already knows a concrete argument value from a structured
+request, workflow slot or fixture, it may attach a
+`common_agent_tool_argument_binding` to the turn. The binding is generic across
+native, MCP and OpenAPI tools:
+
+```json
+{
+  "tool": "openalex.listWorks",
+  "fixed_args": {
+    "search": "machine learning",
+    "per_page": 1,
+    "select": "id,display_name"
+  },
+  "source_ref": "fixture://openalex/search-machine-learning"
+}
+```
+
+The planner may omit these fields. The host merges the fixed arguments before
+planner validation and again at runtime before provider validation, so plans
+from reflection or another planner receive the same protection. A conflicting
+model value is rejected; the host never silently overwrites it. Bindings are
+not inferred from arbitrary prose and must not be used to fabricate semantic
+values. `model_visible` controls whether the concrete value is rendered in the
+planner context; the host binding remains authoritative in either case.
+
 ## Model-facing repair response
 
 For a retryable failed mandatory validation, reflection receives a narrower
