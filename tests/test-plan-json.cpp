@@ -442,6 +442,12 @@ int main() {
     assert(compact_schema_error.empty());
     assert(tool_required_compact_schema.find("tool form: tool:string; args:object") != std::string::npos);
     assert(tool_required_compact_schema.find("reasoning form") == std::string::npos);
+    const auto singleton_model_schema = nlohmann::json::parse(
+        common_plan_model_facing_json_schema({"openalex.listWorks"}, true, 1, 96),
+        nullptr, false);
+    assert(singleton_model_schema.is_object());
+    assert(singleton_model_schema["properties"]["goal"]["maxLength"] == 96);
+    assert(singleton_model_schema["properties"]["steps"]["maxItems"] == 1);
 
     const auto truncated = R"({"goal":"inspect","steps":[{"tool":"repository.search","args":{"query":"planner"}})";
     assert(!common_plan_parse_proposal_json(truncated, plan, operations, error));

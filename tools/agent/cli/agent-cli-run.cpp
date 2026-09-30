@@ -35,6 +35,27 @@
 #include <cstdio>
 #include <memory>
 
+namespace {
+
+void print_agent_runtime_trace(const common_agent_result & result, bool enabled) {
+    if (!enabled) return;
+    for (const auto & entry : result.trace) {
+        std::fprintf(
+            stderr,
+            "agent trace: stage=%s kind=%s detail=%s plan=%s step=%s tool=%s observation=%s related=%s\n",
+            common_runtime_trace_stage_name(entry.stage),
+            common_runtime_trace_kind_name(entry.kind),
+            entry.detail.c_str(),
+            entry.plan_id.c_str(),
+            entry.step_id.c_str(),
+            entry.tool_name.c_str(),
+            entry.observation_id.c_str(),
+            entry.related_id.c_str());
+    }
+}
+
+} // namespace
+
 int run_agent_cli(common_memory_store & store, args a) {
     std::string error;
     if (!prepare_agent_cli_args(a, error)) {
@@ -194,9 +215,11 @@ int run_agent_cli(common_memory_store & store, args a) {
             std::move(input_resources));
         common_agent_result result;
         if (!run_agent_runtime_host_turn(inputs, runtime_session, result, error)) {
+            print_agent_runtime_trace(result, a.agent_trace);
             fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }
+        print_agent_runtime_trace(result, a.agent_trace);
         return finish_agent_cli_runtime_result(result);
     }
 #endif
@@ -216,8 +239,10 @@ int run_agent_cli(common_memory_store & store, args a) {
 
     common_agent_result result;
     if (!run_agent_runtime_host_turn(inputs, runtime_session, result, error)) {
+        print_agent_runtime_trace(result, a.agent_trace);
         fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
+    print_agent_runtime_trace(result, a.agent_trace);
     return finish_agent_cli_runtime_result(result);
 }

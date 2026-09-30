@@ -23,6 +23,7 @@ struct common_agent_residual_patch_observation;
 enum class common_agent_generation_purpose {
     planner,
     tool_family_selection,
+    operation_selection,
     plan_selection,
     blueprint_selection,
     blueprint_binding,
@@ -38,6 +39,7 @@ inline const char * common_agent_generation_purpose_name(common_agent_generation
     switch (purpose) {
         case common_agent_generation_purpose::planner:             return "planner";
         case common_agent_generation_purpose::tool_family_selection: return "tool_family_selection";
+        case common_agent_generation_purpose::operation_selection: return "operation_selection";
         case common_agent_generation_purpose::plan_selection:      return "plan_selection";
         case common_agent_generation_purpose::blueprint_selection: return "blueprint_selection";
         case common_agent_generation_purpose::blueprint_binding:   return "blueprint_binding";

@@ -643,7 +643,14 @@ static void test_planner_repairs_missing_arguments_after_structural_regeneration
 static void test_planner_applies_host_bound_openalex_arguments() {
     fake_agent_inference inference;
     inference.queued = {
-        make_success(R"({"goal":"Search works","steps":[{"tool":"openalex.listWorks","args":{},"mode":"tool"}]})"),
+        make_success(
+            R"(<tool_calls>[{"name":"openalex.listWorks","arguments":{"search":"wrong","select":"wrong"}}]</tool_calls>)",
+            8,
+            common_agent_generation_stop_reason::none,
+            make_tool_call_chat_params({
+                {"openalex.listWorks", "List OpenAlex works.",
+                    R"({"type":"object","additionalProperties":false,"required":["search"],"properties":{"search":{"type":"string"},"per_page":{"type":"integer"},"select":{"type":"string"}}})"},
+            })),
     };
 
     const auto options = make_test_args();
@@ -668,8 +675,13 @@ static void test_planner_applies_host_bound_openalex_arguments() {
             proposal.operations[0].step->tool_call->arguments_json !=
                 R"({"search":"machine learning","per_page":1,"select":"id,display_name"})" ||
             inference.seen.size() != 1 || inference.seen[0].messages.empty() ||
-            inference.seen[0].messages[0].content.find("openalex.listWorks fixed args") == std::string::npos ||
-            inference.seen[0].messages[0].content.find("machine learning") == std::string::npos) {
+            inference.seen[0].purpose != common_agent_generation_purpose::operation_selection ||
+            inference.seen[0].tool_choice != COMMON_CHAT_TOOL_CHOICE_REQUIRED ||
+            inference.seen[0].tools.size() != 1 ||
+            inference.seen[0].tools[0].name != "openalex.listWorks" ||
+            inference.seen[0].tools[0].parameters.find("\"required\":[\"search\"]") != std::string::npos ||
+            inference.seen[0].messages[0].content.find("Host-provided fixed arguments are authoritative") == std::string::npos ||
+            inference.seen[0].messages[1].content.find("machine learning") == std::string::npos) {
         std::fprintf(stderr, "host-bound OpenAlex planner contract failed: %s ops=%zu calls=%zu",
             error.c_str(), proposal.operations.size(), inference.seen.size());
         if (!proposal.operations.empty() && proposal.operations[0].step &&

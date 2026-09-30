@@ -229,6 +229,28 @@ When tool execution is optional, the bounded reasoning form remains available.
 Host-owned step IDs, dependency edges and final synthesis remain outside the
 model-facing contract.
 
+### Singleton operation selection
+
+When required tool execution exposes exactly one effective host-bound
+operation, a bounded native tool-call phase may be used before the ordinary
+JSON planner. This phase is only an operation selector: it must emit exactly
+one call to the already registered operation. It does not create a second
+executor, scheduler or plan authority.
+
+The host removes configured binding names from the native selector's required
+fields and materializes those values after the operation name has been
+selected. If the model emits a value for a host-bound field anyway, that value
+is discarded in this phase. The ordinary planner and provider validation still
+reject conflicting values when they receive a model-owned argument. A missing
+or malformed native call falls back to the bounded JSON planner projection;
+neither path bypasses host binding, argument validation, tool observation,
+follow-up, reflection or required-tool completion.
+
+The singleton JSON projection is limited to one executable step and a bounded
+goal. These limits reduce output surface for small instruct models; they do
+not change the persisted plan representation or the semantics of native,
+MCP or OpenAPI execution.
+
 ### Planner argument repair before execution
 
 This is distinct from the reflection repair of a failed executed step. It is

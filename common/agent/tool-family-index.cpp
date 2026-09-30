@@ -110,6 +110,8 @@ std::string common_tool_family_selection_schema() {
 
 std::string common_tool_family_required_selection_schema(
         const std::vector<common_tool_family_index> & families) {
+    const size_t family_count = families.size();
+    const size_t max_items = std::max<size_t>(1, family_count);
     json schema = {
         {"type", "object"},
         {"additionalProperties", false},
@@ -118,7 +120,9 @@ std::string common_tool_family_required_selection_schema(
             {"families", {
                 {"type", "array"},
                 {"minItems", 1},
-                {"maxItems", 8},
+                // Match the already policy-filtered choice set. A singleton
+                // family must not permit repeated copies of the same id.
+                {"maxItems", max_items},
                 {"uniqueItems", true},
                 {"items", {
                     {"type", "string"},
@@ -156,7 +160,8 @@ bool common_parse_tool_family_required_selection(
         error = "required tool family selection must include at least one family";
         return false;
     }
-    if (value["families"].size() > 8) {
+    const size_t available_family_count = families.size();
+    if (value["families"].size() > available_family_count) {
         error = "required tool family selection contains too many families";
         return false;
     }

@@ -179,6 +179,25 @@ execution (`stage=tool ... tool=openalex.listWorks`). A plan mention or a
 textual answer is not enough. This makes small-model planner/argument
 contract failures visible instead of allowing a false-positive smoke result.
 
+For a profile containing one host-bound operation, the runtime may first ask
+the model for one native operation selection. That selection is not a second
+tool runtime and does not grant authority: the selected name must be the
+already filtered registered operation. The host then materializes an ordinary
+plan step, merges the configured bindings, validates the model-facing and
+provider contracts, and continues through the same execution and reflection
+seams. A native selection that is unavailable or malformed falls back to the
+bounded JSON planner projection; it never bypasses planner validation.
+Native selection arguments do not have authority over configured OpenAPI
+bindings: bound fields are discarded before host materialization. Ordinary
+planner output that conflicts with a binding still enters the existing repair
+and conflict-rejection path.
+
+The singleton projection is derived from the effective tool view. Its family
+grammar permits exactly one family, and its plan grammar permits exactly one
+executable step. This is an output-size reduction for small models, not a
+change to required tool execution, host authority, reflection, research, or
+final-answer policy.
+
 ## Configuration
 
 Host configuration is JSON. OpenAPI entries use the existing

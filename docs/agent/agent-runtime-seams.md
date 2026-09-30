@@ -430,13 +430,26 @@ Selecting a family means that the request needs external evidence. The host
 sets the existing `require_tool_execution` contract, so an answer-only model
 response cannot silently replace the required tool work.
 
-The singleton fast path is limited to one authorized argument-free tool. It
-uses the ordinary chat/tool driver with required tool choice and then the
-normal tool follow-up. Multiple tools, dataflow, required semantic arguments,
-resource workflows and active plans remain in ordinary planning. The fast path
-does not bypass validation, scope, policy, cancellation, deadlines, result
-bounds or tool-round limits. It also does not create a hidden plan, retry or
-completion observation.
+The singleton fast path is limited to one authorized operation when the host
+has already resolved its required arguments. It uses a bounded native
+operation-selection generation and immediately materializes the result into
+the ordinary persisted plan representation. The normal tool driver,
+host-binding merge, provider validation, tool observation, follow-up and
+reflection then remain in force. When semantic arguments are still unresolved,
+the model-facing operation contract keeps those arguments available and the
+ordinary planner/repair path is used. Multiple tools, dataflow, resource
+workflows and active plans remain in ordinary planning. The bounded selection
+does not bypass scope, policy, cancellation, deadlines, result bounds or
+tool-round limits, and it does not create a parallel executor.
+
+The native selection phase has no authority over host-bound fields. If a small
+model emits such fields anyway, the host drops those fields and materializes
+the configured binding before the ordinary validation path. Conflicting
+model-supplied values remain rejected in the ordinary planner/repair path.
+
+For a singleton family the required family schema also has exactly one
+possible array item. This is still an explicit model selection; it only keeps
+the grammar from producing repeated copies of the same host-authorized family.
 
 Reflection is a bounded quality pass after execution, not a second discovery
 orchestration. Its context is compact and bounded. Once required tool work has
@@ -444,6 +457,11 @@ closed, reflection may revise the answer but may not reopen completed tool work.
 Deliberate planning owns multi-step ordering and bounded repair. Research owns
 its acquisition controller and evidence workspace; it does not create a
 parallel tool scheduler.
+
+With `--agent-trace`, the CLI emits the host-owned runtime trace after the
+turn, including plan, tool, observation and reflection entries. It also emits
+the trace before reporting a runtime failure, so a failed model response does
+not hide whether the required tool was actually dispatched.
 
 ### Required-tool repair boundary
 

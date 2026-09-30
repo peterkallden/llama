@@ -67,6 +67,7 @@ int main() {
     assert(!selection.needs_tools && selection.family_ids.empty());
     const auto required_schema = common_tool_family_required_selection_schema(families);
     assert(required_schema.find("\"minItems\":1") != std::string::npos);
+    assert(required_schema.find("\"maxItems\":9") != std::string::npos);
     assert(required_schema.find("\"needs_tools\"") == std::string::npos);
     assert(required_schema.find("\"enum\"") != std::string::npos);
     assert(common_parse_tool_family_required_selection(
@@ -80,6 +81,15 @@ int main() {
         R"({"families":["data","data"]})", families, selection, error));
     assert(!common_parse_tool_family_required_selection(
         R"({"needs_tools":false,"families":[]})", families, selection, error));
+    const std::vector<common_tool_family_index> singleton_families = {
+        {"openalex", "Search OpenAlex", {"openalex.listWorks"}},
+    };
+    const auto singleton_schema = common_tool_family_required_selection_schema(singleton_families);
+    assert(singleton_schema.find("\"maxItems\":1") != std::string::npos);
+    assert(common_parse_tool_family_required_selection(
+        R"({"families":["openalex"]})", singleton_families, selection, error));
+    assert(!common_parse_tool_family_required_selection(
+        R"({"families":["openalex","openalex"]})", singleton_families, selection, error));
     assert(!common_parse_tool_family_selection(
         R"({"needs_tools":true,"families":["data","data"]})",
         selection,

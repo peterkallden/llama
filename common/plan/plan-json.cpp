@@ -523,7 +523,11 @@ std::string common_plan_proposal_json_schema() {
 
 std::string common_plan_model_facing_json_schema(
         const std::vector<std::string> & allowed_tools,
-        bool require_tool_execution) {
+        bool require_tool_execution,
+        size_t max_steps,
+        size_t max_goal_length) {
+    max_steps = std::max<size_t>(1, std::min<size_t>(max_steps, 5));
+    max_goal_length = std::max<size_t>(1, std::min<size_t>(max_goal_length, 256));
     json tool_schema = { {"type", "string"}, {"maxLength", 256} };
     if (!allowed_tools.empty()) tool_schema["enum"] = allowed_tools;
     // A compact planner step must name executable work.  Leaving every field
@@ -553,8 +557,8 @@ std::string common_plan_model_facing_json_schema(
     const json schema = {
         {"type", "object"}, {"additionalProperties", false}, {"required", {"goal", "steps"}},
         {"properties", {
-            {"goal", {{"type", "string"}, {"maxLength", 256}}},
-            {"steps", {{"type", "array"}, {"minItems", 1}, {"maxItems", 5}, {"items", model_step_schema}}}
+            {"goal", {{"type", "string"}, {"maxLength", max_goal_length}}},
+            {"steps", {{"type", "array"}, {"minItems", 1}, {"maxItems", max_steps}, {"items", model_step_schema}}}
         }}
     };
     return schema.dump();
