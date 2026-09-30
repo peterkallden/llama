@@ -442,6 +442,7 @@ journal remains the durable evidence boundary.
 | 2026-09-26 | this local sweep | Model-facing tool verification aligned with the shared runtime normalization boundary | 15 focused FlyDelta CTests passed serially; model-free Oracle smoke and Oracle CTest passed; Qwen Instruct repair E2E passed with host-verified baseline/candidate calls, `repair_transition_outcome=helped`, Whirlpool centre discovery and augmentation controls | The repair and Oracle fixtures now apply runtime defaults, registry normalization and schema validation before executing normalized arguments. FlyDelta algorithms, Oracle verdict policy, learning credit and promotion semantics are unchanged; evidence remains wiring/host-verification evidence, not model-quality or promotion evidence |
 | 2026-09-26 | this local sweep | Legacy inspection-tool aliases removed and model-facing arm scoring corrected to the catalog contract | 63 focused CTests passed serially; model-free Oracle, tool-repair, concept and learning smokes passed with tracing; Qwen Instruct repair E2E passed on Intel GPU 0 with three model threads: baseline `statistics.describe`, repaired `dataset.inspect`, four region trials, Whirlpool centre 22/radius 1, all FlyDelta arms `UNKNOWN`, no selected overlay, augmentation retained | Removed legacy inspection/description compatibility references from scoped tests, fixtures, configs, scripts and documentation. Teacher-forced scoring now uses `dataset.inspect`, `statistics.describe` and `dataset://local/sales`; production FlyDelta algorithms, Oracle policy, learning credit and promotion semantics were not changed. Evidence is wiring and host-verification evidence, not a model-quality or promotion claim |
 | 2026-09-30 | this local sweep | Repair/contrast smoke corrected to use an observed small-model baseline failure and a semantically distinct host-verifiable repair; generation-boundary capture now tolerates different prompt lengths | 53 deterministic FlyDelta CTests and 12 relevant agent/adaptation CTests passed serially; Qwen repair/contrast smoke produced baseline `dataset.inspect` (host failure), repaired `statistics.describe` with `amount,units` (host pass), 26 behavior deltas and three fresh overlay arms; all overlay arms remained `UNKNOWN`, no overlay was selected or promoted | Kept the change smoke-local. The fixture now demonstrates a real `HELPED` repair transition without turning it into causal overlay evidence. The generation-boundary alignment fix uses the existing capture contract; FlyDelta algorithms, Oracle policy, learning credit and promotion semantics are unchanged |
+| 2026-09-30 | this local sweep | Server-context cvec application and prompt-cache isolation made observable and fail-closed | Focused prepared-generation, sparse-cvec and server-binding CTests passed serially; Qwen Instruct Vulkan server-context repair smoke completed with six distinct cvec hashes, six non-empty 165888-byte payloads, `applied=yes`, `cache_prompt=no` and `n_cache_reuse=0` for every overlay arm; Whirlpool/region completed with six trials and no selected overlay | Closed the stale-cache ambiguity in the resident context by clearing/disabling the cvec-unsafe global prompt cache after the first cvec task and exposing request-scoped runtime telemetry. This is execution/wiring evidence only: all arms remained `UNKNOWN`, with no learning credit or promotion |
 
 ## Natural dataset-question smoke
 
@@ -1565,11 +1566,15 @@ is the canonical per-arm material, while the dense overlay is its validated
 compatibility expansion for the current scalar cvec server path. Legacy
 dense-only activation results remain accepted so older host integrations can
 migrate without changing search semantics. When the dense cvec path is active,
-the runtime also disables prompt/KV reuse for that request; changing the cvec
-identity clears slot-local prompt state, but the persistent prompt cache does
-not yet carry per-sequence overlay identity. The current per-sequence binding
-therefore preserves the conservative fresh-context contract rather than
-attempting unsafe cache reuse.
+the runtime also disables prompt/KV reuse for that request. Changing the cvec
+identity clears slot-local prompt state. Because the persistent server prompt
+cache does not carry per-sequence overlay identity, the first cvec-backed task
+also clears and disables that global idle prompt cache for the lifetime of the
+resident context. This prevents a prompt state produced under one overlay (or
+without an overlay) from being selected before the task-specific cvec is
+applied. The server reports the applied cvec hash, payload size and cache
+flags in the generation result; FlyDelta model smokes fail closed if an active
+arm does not report a non-empty applied cvec with prompt reuse disabled.
 
 The sparse overlay batch contract is likewise execution-only. Every enabled
 entry in `common_flydelta_sparse_overlay_batch` must have a distinct artifact

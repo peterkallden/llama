@@ -942,6 +942,14 @@ private:
 
     std::unique_ptr<server_prompt_cache> prompt_cache;
 
+    // Prompt-cache entries do not carry the request cvec identity. Once a
+    // cvec-backed task enters this resident context, stop loading or saving
+    // the global prompt cache for subsequent tasks. Otherwise a cache entry
+    // produced under one overlay could be selected for a task with another
+    // overlay (or no overlay) before launch_slot_with_task can compare the
+    // slot-local cvec pointer.
+    bool cvec_cache_isolation_active = false;
+
     server_metrics metrics;
 
     // queued prompt stats - llama_decode() is async, so the timing is only valid after a sync
@@ -1777,6 +1785,13 @@ private:
 
         if (ret) {
             update_cache = update_cache && prompt_cache;
+
+            // A task that explicitly disables prompt reuse must also bypass
+            // the server-level idle prompt cache. FlyDelta activates the
+            // stronger context-wide isolation below because those cache
+            // entries are not cvec-aware.
+            update_cache = update_cache && task.params.cache_prompt;
+            update_cache = update_cache && !cvec_cache_isolation_active;
 
             // cache prompts only for completion tasks
             update_cache = update_cache && task.type == SERVER_TASK_TYPE_COMPLETION;
@@ -2772,6 +2787,14 @@ private:
 
                     const int id_task = task.id;
 
+                    if (task.params.cvec && !cvec_cache_isolation_active) {
+                        cvec_cache_isolation_active = true;
+                        if (prompt_cache) {
+                            prompt_cache->states.clear();
+                        }
+                        SRV_TRC("%s", "cvec-backed task entered cache-isolated mode\n");
+                    }
+
                     server_slot * slot = get_available_slot(task);
 
                     //
@@ -2810,7 +2833,7 @@ private:
                         break; // drop the task
                     }
 
-                    if (params_base.cache_idle_slots) {
+                    if (params_base.cache_idle_slots && !cvec_cache_isolation_active) {
                         for (auto & slot : slots) {
                             if (!slot.is_processing()) {
                                 SLT_TRC(slot, "%s", "saving idle slot to prompt cache\n");

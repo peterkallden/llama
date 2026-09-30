@@ -884,6 +884,12 @@ int main(int argc, char ** argv) {
                 const bool executed = generate(
                     *inference, value, failed_instruction, result, activation_ptr,
                     capture_request);
+                if (apply_overlay && (!result.flydelta_runtime.requested ||
+                        !result.flydelta_runtime.applied ||
+                        result.flydelta_runtime.data_bytes == 0)) {
+                    runner_error = "FlyDelta CLI arm did not report its active cvec";
+                    return false;
+                }
                 host_tool_verdict host_verdict;
                 if (!verify_model_tool_contract(
                         result, kExpectedTool, expected_tool_arguments, host,
@@ -931,6 +937,11 @@ int main(int argc, char ** argv) {
                 }
                 std::cout << "arm_model_output alpha=" << alpha
                           << " overlay=" << (apply_overlay ? "yes" : "no")
+                          << " runtime_applied="
+                          << (result.flydelta_runtime.applied ? "yes" : "no")
+                          << " cvec_hash="
+                          << (result.flydelta_runtime.content_hash.empty()
+                              ? "n/a" : result.flydelta_runtime.content_hash)
                           << " output=" << output_preview(result) << '\n';
                 if (!executed && !result.error_message.empty()) runner_error = result.error_message;
                 return executed;
@@ -1174,6 +1185,15 @@ int main(int argc, char ** argv) {
             arm_result.executed_alpha = arm_request.alpha;
             arm_result.generation_available = true;
             arm_result.host_evaluated = true;
+            if (arm_request.apply_overlay &&
+                    (!generated.flydelta_runtime.requested ||
+                     !generated.flydelta_runtime.applied ||
+                     generated.flydelta_runtime.data_bytes == 0 ||
+                     generated.flydelta_runtime.cache_prompt ||
+                     generated.flydelta_runtime.n_cache_reuse != 0)) {
+                finalize_error = "server FlyDelta arm was not isolated and applied with its request cvec";
+                return false;
+            }
             host_tool_verdict candidate_verdict;
             if (!verify_model_tool_contract(
                     generated, kExpectedTool, expected_tool_arguments, host,
@@ -1191,6 +1211,18 @@ int main(int argc, char ** argv) {
             if (!arm_request.apply_overlay && generated.flydelta_capture &&
                     generated.flydelta_capture->captured) {
                 server_baseline_capture = generated.flydelta_capture;
+            }
+            if (arm_request.apply_overlay) {
+                std::cout << "server_flydelta_runtime arm=" << arm_request.arm_id
+                          << " applied=" << (generated.flydelta_runtime.applied ? "yes" : "no")
+                          << " cvec_hash=" << generated.flydelta_runtime.content_hash
+                          << " bytes=" << generated.flydelta_runtime.data_bytes
+                          << " cache_prompt="
+                          << (generated.flydelta_runtime.cache_prompt ? "yes" : "no")
+                          << " n_cache_reuse=" << generated.flydelta_runtime.n_cache_reuse
+                          << " device_batch="
+                          << (generated.flydelta_runtime.device_batch ? "yes" : "no")
+                          << '\n';
             }
             if (arm_request.apply_overlay && generated.flydelta_capture &&
                     generated.flydelta_capture->captured && server_baseline_capture) {

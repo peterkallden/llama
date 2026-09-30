@@ -2,6 +2,7 @@
 #include "../runtime/agent-server-generation.h"
 
 #include "agent/agent-prepared-generation.h"
+#include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/agent-residual-patch.h"
 #include "server-context.h"
@@ -445,6 +446,23 @@ public:
                 apply_server_capture(*final_response, request, result);
                 apply_server_residual_patch_observation(*final_response, request, result);
                 result.flydelta_device_batch = final_response->flydelta_device_batch;
+                result.flydelta_runtime.requested = request.flydelta_activation &&
+                    request.flydelta_activation->overlay.enabled;
+                if (final_response->generation_params.cvec) {
+                    const auto & cvec = *final_response->generation_params.cvec;
+                    result.flydelta_runtime.applied = true;
+                    result.flydelta_runtime.device_batch = final_response->flydelta_device_batch;
+                    result.flydelta_runtime.cache_prompt =
+                        final_response->generation_params.cache_prompt;
+                    result.flydelta_runtime.n_cache_reuse =
+                        final_response->generation_params.n_cache_reuse;
+                    result.flydelta_runtime.n_embd = cvec.n_embd;
+                    result.flydelta_runtime.il_start = cvec.il_start;
+                    result.flydelta_runtime.il_end = cvec.il_end;
+                    result.flydelta_runtime.data_bytes = cvec.data.size() * sizeof(float);
+                    result.flydelta_runtime.artifact_id = cvec.identity;
+                    result.flydelta_runtime.content_hash = cvec.content_hash;
+                }
             }
             resident_trace("nonstream-success", request);
             return true;

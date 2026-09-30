@@ -282,6 +282,13 @@ bool generate_chat_turn_result(
             llama_free(ctx);
             return false;
         }
+        result.flydelta_runtime.requested = true;
+        result.flydelta_runtime.applied = true;
+        result.flydelta_runtime.n_embd = flydelta_overlay.n_embd;
+        result.flydelta_runtime.il_start = flydelta_overlay.il_start;
+        result.flydelta_runtime.il_end = flydelta_overlay.il_end;
+        result.flydelta_runtime.data_bytes = scaled.size() * sizeof(float);
+        result.flydelta_runtime.artifact_id = flydelta_overlay.artifact_id;
     }
 
     common_params_sampling sampling;

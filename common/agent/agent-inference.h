@@ -141,6 +141,22 @@ struct common_agent_generation_result {
     std::shared_ptr<const common_agent_residual_patch_observation> residual_patch_observation;
     // Internal runtime provenance; does not affect generation semantics.
     bool flydelta_device_batch = false;
+    // Request-scoped evidence that the model host received and applied the
+    // exact cvec associated with this generation. This is diagnostic
+    // telemetry, not learning or promotion evidence.
+    struct {
+        bool requested = false;
+        bool applied = false;
+        bool device_batch = false;
+        bool cache_prompt = true;
+        int32_t n_cache_reuse = 0;
+        int32_t n_embd = 0;
+        int32_t il_start = 1;
+        int32_t il_end = 0;
+        size_t data_bytes = 0;
+        std::string artifact_id;
+        std::string content_hash;
+    } flydelta_runtime;
 };
 
 // A bounded teacher-forced comparison over one model-facing choice slot.
