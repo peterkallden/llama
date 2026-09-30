@@ -80,6 +80,22 @@ No `HELPED`, learning credit or promotion evidence was created. A future run is
 interpretable only when the declared baseline failure and host repair both pass
 the counterfactual fixture gate.
 
+The causal smoke uses the existing runtime-host/driver seam over the resident
+server-context inference session. It does not construct a planner directly
+through a smoke-local CLI entry point. The host-owned capture request is
+propagated through the generic runtime request builder; the residual patch
+itself remains an experiment-only decorator and is applied only to planner
+generations, so an absolute layer/position from a planner capture cannot leak
+into family selection, tool execution, reflection, or later runtime phases.
+
+The Qwen Instruct validation on this path is currently fixture-limited rather
+than seam-limited: schema selection, the dataset overview, OpenAlex argument
+repair, and OpenAlex known-id all produced a valid first planner candidate, so
+the smoke correctly reported `fixture_not_counterfactual` and did not run the
+patch matrix. The OpenAlex candidate included the required search, per-page,
+and select arguments on its first attempt. This is runtime-wiring evidence,
+not a claim that a causal overlay helped.
+
 Capture is also fail-closed for model architectures whose graph does not
 publish the optional `t_layer_inp` seam. Such a request now returns an empty
 capture with a controlled failure and the model smoke skips; it must not reach
@@ -444,6 +460,7 @@ journal remains the durable evidence boundary.
 | 2026-09-30 | this local sweep | Repair/contrast smoke corrected to use an observed small-model baseline failure and a semantically distinct host-verifiable repair; generation-boundary capture now tolerates different prompt lengths | 53 deterministic FlyDelta CTests and 12 relevant agent/adaptation CTests passed serially; Qwen repair/contrast smoke produced baseline `dataset.inspect` (host failure), repaired `statistics.describe` with `amount,units` (host pass), 26 behavior deltas and three fresh overlay arms; all overlay arms remained `UNKNOWN`, no overlay was selected or promoted | Kept the change smoke-local. The fixture now demonstrates a real `HELPED` repair transition without turning it into causal overlay evidence. The generation-boundary alignment fix uses the existing capture contract; FlyDelta algorithms, Oracle policy, learning credit and promotion semantics are unchanged |
 | 2026-09-30 | this local sweep | Server-context cvec application and prompt-cache isolation made observable and fail-closed | Focused prepared-generation, sparse-cvec and server-binding CTests passed serially; Qwen Instruct Vulkan server-context repair smoke completed with six distinct cvec hashes, six non-empty 165888-byte payloads, `applied=yes`, `cache_prompt=no` and `n_cache_reuse=0` for every overlay arm; Whirlpool/region completed with six trials and no selected overlay | Closed the stale-cache ambiguity in the resident context by clearing/disabling the cvec-unsafe global prompt cache after the first cvec task and exposing request-scoped runtime telemetry. This is execution/wiring evidence only: all arms remained `UNKNOWN`, with no learning credit or promotion |
 | 2026-09-30 | this local sweep | All model-backed FlyDelta smokes now use resident server-context execution | Six affected smoke targets rebuilt with three compile workers; Qwen Vulkan0 runtime, model A/B, concept, dataset-question incremental (4/4 requests completed), dataset-repair incremental and repair-model runs all used resident server-context tracing. The full 12-scenario dataset-question run reached inference with `n_ctx=4096` but hit a reproducible long-prompt smoke segfault under `n_predict=96`; it is not claimed as passed. | Removed smoke-only CLI execution from the FlyDelta validation surface; dataset-question hosts use 4096 context for the generated model-facing contract. The generic agent CLI backend remains available outside FlyDelta; model-free contract smokes remain model-free. The long-prompt dataset smoke remains an open bounded validation issue, not a reason to reintroduce CLI execution |
+| 2026-09-30 | this local sweep | Causal FlyDelta smoke aligned with the existing runtime-host/driver seam | Runtime contract CTest passed; Cozo/Vulkan targets rebuilt with three compile workers; Qwen Instruct on Intel Vulkan used resident server-context tracing for schema, overview and OpenAlex fixtures, all of which correctly stopped at `fixture_not_counterfactual` because the first planner candidate was already valid | Propagated the existing host-owned capture request through runtime host/driver request construction and removed the smoke's direct planner invocation. Residual patching remains smoke-local and planner-scoped; no production algorithm, Oracle, learning-credit or promotion semantics changed |
 
 ## Natural dataset-question smoke
 

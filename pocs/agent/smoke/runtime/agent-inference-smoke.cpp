@@ -1403,6 +1403,8 @@ static void test_runtime_execution_builder() {
     };
     inputs.require_tool_execution = true;
     inputs.flydelta_activation = activation;
+    const auto capture = std::make_shared<const common_flydelta_hidden_state_capture_request>();
+    inputs.flydelta_capture = capture;
 
     const auto execution = make_agent_runtime_driver_execution(inputs, inference);
     assert(&execution.memory_store == &memories);
@@ -1432,10 +1434,12 @@ static void test_runtime_execution_builder() {
     assert(execution.memory_enabled);
     assert(&execution.tooling == &tooling);
     assert(execution.flydelta_activation == activation);
+    assert(execution.flydelta_capture == capture);
     assert(!execution.tooling.profile_tools_active);
     assert(execution.tooling.tool_view == nullptr);
     const auto request = make_agent_runtime_driver_request(execution);
     assert(request.require_tool_execution);
+    assert(request.flydelta_capture == capture);
 }
 
 static void test_chat_runtime_driver_smoke() {

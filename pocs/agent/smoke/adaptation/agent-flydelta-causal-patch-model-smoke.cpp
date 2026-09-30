@@ -3,9 +3,11 @@
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 #include "tools/agent/openapi/agent-openapi-catalog.h"
-#include "tools/agent/cli/agent-cli-runtime.h"
+#include "tools/agent/runtime/agent-runtime-host.h"
 #include "tools/agent/runtime/agent-runtime-assembly.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
+#include "memory/memory-in-memory.h"
+#include "plan/plan-in-memory.h"
 
 #include <algorithm>
 #include <cmath>
@@ -332,7 +334,13 @@ public:
     bool generate(const common_agent_generation_request & request,
             common_agent_generation_result & result) override {
         common_agent_generation_request observed = request;
-        if (patch) observed.residual_patch = patch;
+        // The patch is a planner-local causal intervention.  In the full
+        // runtime path family preflight and later execution generations are
+        // separate model-facing requests and must not silently inherit a
+        // planner capture's absolute layer/position.
+        if (patch && request.purpose == common_agent_generation_purpose::planner) {
+            observed.residual_patch = patch;
+        }
         const bool ok = delegate.generate(observed, result);
         observations.push_back({observed, result});
         return ok;
@@ -411,21 +419,61 @@ bool run_planner_observations(
     generation_config.agent_trace = true;
     generation_config.context_size_tokens = 2048;
 
-    common_agent_request planner_request;
-    planner_request.session_id = "flydelta-causal-planner";
-    planner_request.turn_id = "flydelta-causal-" + std::string(fixture.id);
-    planner_request.prompt = fixture.task;
-    planner_request.require_tool_execution = true;
-    planner_request.enable_planning = true;
-    planner_request.enable_reflection = true;
-    planner_request.max_iterations = 2;
-    planner_request.max_reflection_rounds = 1;
-    planner_request.max_tool_batches = 1;
-    planner_request.flydelta_capture = capture;
-    auto planner = make_llama_cli_planner(observing, generation_config, tools);
-    const auto proposal = planner->create_plan_result(planner_request, error);
-    (void) proposal;
+    common_memory_in_memory_store memories;
+    common_plan_in_memory_store plans;
+    if (!memories.open("", error) || !plans.open("", error)) {
+        return false;
+    }
+    common_agent_runtime_turn_request turn_request;
+    turn_request.request.session_id = "flydelta-causal-planner";
+    turn_request.request.namespace_id = "local";
+    turn_request.request.turn_id = "flydelta-causal-" + std::string(fixture.id);
+    turn_request.request.prompt = fixture.task;
+    turn_request.request.require_tool_execution = true;
+    turn_request.request.enable_planning = true;
+    turn_request.request.enable_reflection = true;
+    turn_request.request.max_iterations = 2;
+    turn_request.request.max_reflection_rounds = 1;
+    turn_request.request.max_tool_batches = 1;
+    turn_request.request.flydelta_capture = capture;
+    turn_request.scope.session_id = turn_request.request.session_id;
+    turn_request.scope.namespace_id = turn_request.request.namespace_id;
+    turn_request.scope.turn_id = turn_request.request.turn_id;
+    turn_request.policy.agent_inference_backend = "server-context";
+    turn_request.policy.enable_reflection = true;
+    turn_request.policy.max_iterations = 2;
+    turn_request.policy.max_reflection_rounds = 1;
+    turn_request.policy.max_tool_rounds = 1;
+    turn_request.runtime_config.generation_config = generation_config;
+    turn_request.orchestration_config = make_agent_orchestration_config({
+        fixture.task, "auto", "auto", "none", {}, {}});
+    turn_request.generation_options.n_predict = generation_config.n_predict;
+    turn_request.generation_options.n_threads = generation_config.n_threads;
+
+    common_agent_runtime_tooling tooling;
+    tooling.tools = tools;
+    const std::vector<common_blueprint_candidate> blueprints;
+    const std::vector<common_memory_hit> memory_hits;
+    std::string current_plan_id;
+    common_agent_runtime_host_execution execution{
+        common_agent_runtime_host_mode::agent,
+        memories,
+        &plans,
+        observing,
+        std::move(turn_request),
+        &current_plan_id,
+        &blueprints,
+        &memory_hits,
+        tooling,
+    };
+    common_agent_result runtime_result;
+    const bool runtime_ok = run_agent_runtime_host(execution, runtime_result, error);
+    // The causal smoke consumes planner observations. The subsequent real
+    // action may fail because this smoke deliberately supplies no tool
+    // handler; that is not a planner-capture failure once observations exist.
     observations = std::move(observing.observations);
+    if (observations.empty() && !runtime_ok) return false;
+    error.clear();
     return true;
 }
 

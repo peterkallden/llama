@@ -81,6 +81,10 @@ struct common_agent_runtime_driver_inputs {
     // by the agent driver. These are merged before planner validation and
     // execution; they are not model-inferred arguments.
     std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
+    // Optional host-owned capture request used by the causal FlyDelta smoke.
+    // The runtime only carries the request; capture remains disabled unless a
+    // caller explicitly supplies it.
+    std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
 };
 
 struct common_agent_runtime_driver_execution {
@@ -136,6 +140,7 @@ struct common_agent_runtime_driver_execution {
     // Host-owned concrete tool arguments propagated into every request built
     // by the agent driver.
     std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
+    std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

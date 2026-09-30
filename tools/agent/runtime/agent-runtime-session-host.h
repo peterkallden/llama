@@ -57,6 +57,9 @@ struct common_agent_runtime_session_host_turn_request {
     // Host-prepared, immutable per-turn FlyDelta activation. The session
     // host only propagates this snapshot to the runtime request.
     std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
+    // Optional host-owned capture request for diagnostic/counterfactual
+    // callers. It is request-scoped and remains disabled by default.
+    std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
 };
 
 struct common_agent_runtime_session_host_turn_result {

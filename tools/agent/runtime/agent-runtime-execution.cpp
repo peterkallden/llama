@@ -665,6 +665,7 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
     execution.require_tool_execution = inputs.require_tool_execution;
     execution.flydelta_activation = inputs.flydelta_activation;
     execution.tool_argument_bindings = inputs.tool_argument_bindings;
+    execution.flydelta_capture = inputs.flydelta_capture;
     return execution;
 }
 
@@ -698,6 +699,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.explicit_memory_candidate = execution.explicit_memory_candidate;
     request.explicit_memory_confirmed = execution.explicit_memory_confirmed;
     request.flydelta_activation = execution.flydelta_activation;
+    request.flydelta_capture = execution.flydelta_capture;
     request.tool_argument_bindings = execution.tool_argument_bindings;
     apply_explicit_deliberation_policy(request.deliberation_policy, request);
     return request;
