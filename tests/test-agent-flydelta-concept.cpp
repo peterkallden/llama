@@ -167,6 +167,20 @@ int main() {
     unverified_positive.front().host_verified = false;
     CHECK(!common_flydelta_build_positive_prototype_candidates(
         concept_spec, prototype_config, unverified_positive, controls, candidates, error));
+    CHECK(common_flydelta_build_positive_prototype_candidates(
+        concept_spec, prototype_config, positive, controls, candidates, error));
+
+    std::vector<common_flydelta_concept_candidate> residual_candidates;
+    CHECK(common_flydelta_build_concept_candidates(
+        concept_spec, config, trajectories, residual_candidates, error));
+    std::vector<common_flydelta_concept_candidate> portfolio = residual_candidates;
+    portfolio.insert(portfolio.end(), candidates.begin(), candidates.end());
+    const auto frontier = common_flydelta_select_concept_synthesis_frontier(portfolio, 2);
+    CHECK(frontier.size() == 2);
+    CHECK(frontier[0] == 0);
+    CHECK(frontier[1] == residual_candidates.size());
+    CHECK(common_flydelta_select_concept_synthesis_frontier(portfolio, 1).size() == 1);
+    CHECK(common_flydelta_select_concept_synthesis_frontier(portfolio, 0).empty());
 
     common_flydelta_semantic_decision normalized_filter;
     common_flydelta_semantic_decision_status status;

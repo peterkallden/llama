@@ -284,6 +284,46 @@ const char * common_flydelta_concept_synthesis_semantics_name(
     return "unknown";
 }
 
+std::vector<size_t> common_flydelta_select_concept_synthesis_frontier(
+        const std::vector<common_flydelta_concept_candidate> & candidates,
+        size_t max_candidates) {
+    std::vector<size_t> selected;
+    if (max_candidates == 0) return selected;
+    selected.reserve(std::min(max_candidates, candidates.size()));
+
+    // Keep the semantic comparison deterministic and bounded. The raw
+    // estimator is preferred because it is the least transformed candidate;
+    // a source's first available estimator remains a safe fallback.
+    const common_flydelta_concept_synthesis_semantics semantics[] = {
+        common_flydelta_concept_synthesis_semantics::control_residualized,
+        common_flydelta_concept_synthesis_semantics::positive_prototype,
+    };
+    for (const auto semantic : semantics) {
+        if (selected.size() >= max_candidates) break;
+        size_t fallback = candidates.size();
+        size_t preferred = candidates.size();
+        for (size_t index = 0; index < candidates.size(); ++index) {
+            if (candidates[index].synthesis_semantics != semantic) continue;
+            if (fallback == candidates.size()) fallback = index;
+            if (candidates[index].kind == common_flydelta_concept_candidate_kind::raw_mean) {
+                preferred = index;
+                break;
+            }
+        }
+        const size_t chosen = preferred != candidates.size() ? preferred : fallback;
+        if (chosen != candidates.size() &&
+                std::find(selected.begin(), selected.end(), chosen) == selected.end()) {
+            selected.push_back(chosen);
+        }
+    }
+    for (size_t index = 0; index < candidates.size() && selected.size() < max_candidates; ++index) {
+        if (std::find(selected.begin(), selected.end(), index) == selected.end()) {
+            selected.push_back(index);
+        }
+    }
+    return selected;
+}
+
 bool common_flydelta_concept_candidate_validate(
         const common_flydelta_concept_candidate & candidate,
         size_t expected_dimension,

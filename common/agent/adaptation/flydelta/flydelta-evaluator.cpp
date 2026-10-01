@@ -15,47 +15,6 @@ bool valid_reference_count(size_t count, size_t max_references) {
     return count != 0 && count <= max_references;
 }
 
-std::vector<size_t> select_concept_frontier(
-        const std::vector<common_flydelta_concept_candidate> & candidates,
-        size_t max_candidates) {
-    std::vector<size_t> selected;
-    if (max_candidates == 0) return selected;
-    selected.reserve(std::min(max_candidates, candidates.size()));
-
-    // V0 compares one raw estimator per semantic source. This keeps the
-    // model budget deterministic and makes control-residualized versus
-    // positive-prototype an apples-to-apples frontier. If a semantic source
-    // has no raw estimator, its first available estimator is the fallback.
-    const common_flydelta_concept_synthesis_semantics semantics[] = {
-        common_flydelta_concept_synthesis_semantics::control_residualized,
-        common_flydelta_concept_synthesis_semantics::positive_prototype,
-    };
-    for (const auto semantic : semantics) {
-        if (selected.size() >= max_candidates) break;
-        size_t fallback = candidates.size();
-        size_t preferred = candidates.size();
-        for (size_t index = 0; index < candidates.size(); ++index) {
-            if (candidates[index].synthesis_semantics != semantic) continue;
-            if (fallback == candidates.size()) fallback = index;
-            if (candidates[index].kind == common_flydelta_concept_candidate_kind::raw_mean) {
-                preferred = index;
-                break;
-            }
-        }
-        const size_t chosen = preferred != candidates.size() ? preferred : fallback;
-        if (chosen != candidates.size() &&
-                std::find(selected.begin(), selected.end(), chosen) == selected.end()) {
-            selected.push_back(chosen);
-        }
-    }
-    for (size_t index = 0; index < candidates.size() && selected.size() < max_candidates; ++index) {
-        if (std::find(selected.begin(), selected.end(), index) == selected.end()) {
-            selected.push_back(index);
-        }
-    }
-    return selected;
-}
-
 bool resolve_bootstrap_zoom_state_for_job(
         const common_flydelta_evaluator_callbacks & callbacks,
         const common_flydelta_experiment_job & job,
@@ -357,7 +316,7 @@ bool common_flydelta_evaluate_job(
                 error = "FlyDelta concept synthesis requires an experimental direction persistence callback for graft";
                 return false;
             }
-            const auto selected = select_concept_frontier(
+            const auto selected = common_flydelta_select_concept_synthesis_frontier(
                 result.concept_candidates, config.concept_frontier_max_candidates);
             for (const size_t index : selected) {
                 std::string direction_ref;

@@ -127,6 +127,16 @@ struct common_flydelta_concept_candidate {
     bool learning_eligible = false;
 };
 
+// Selects a bounded, deterministic comparison frontier across synthesis
+// semantics. The selector compares at most one raw estimator per semantic
+// source first (control_residualized, then positive_prototype), and only then
+// fills remaining capacity in source order. It does not rank behavior,
+// assign evidence, or grant lifecycle authority; the selected candidates
+// continue through the existing search and Oracle path.
+std::vector<size_t> common_flydelta_select_concept_synthesis_frontier(
+        const std::vector<common_flydelta_concept_candidate> & candidates,
+        size_t max_candidates);
+
 bool common_flydelta_concept_candidate_validate(
         const common_flydelta_concept_candidate & candidate,
         size_t expected_dimension,
