@@ -95,6 +95,8 @@ bool make_candidate(
         std::string & error) {
     candidate = {};
     candidate.kind = kind;
+    candidate.synthesis_semantics =
+        common_flydelta_concept_synthesis_semantics::control_residualized;
     candidate.concept_key = spec.concept_key;
     candidate.extraction_id = spec.extraction_id;
     candidate.behavior_key = spec.behavior_key;
@@ -104,8 +106,97 @@ bool make_candidate(
     candidate.values = normalized(values);
     candidate.source_trajectories = residuals.size();
     candidate.retained_trajectories = retained.size();
+    candidate.control_trajectories = residuals.size();
+    candidate.retained_control_trajectories = retained.size();
     candidate.median_alignment = median_alignment;
     candidate.control_residualized = true;
+    candidate.experimental_only = true;
+    candidate.learning_eligible = false;
+    return common_flydelta_concept_candidate_validate(
+        candidate, values.size(), error);
+}
+
+std::vector<float> prototype_mean(
+        const std::vector<common_flydelta_concept_prototype_sample> & samples,
+        const std::vector<size_t> & indices) {
+    std::vector<std::vector<float>> values;
+    values.reserve(indices.size());
+    for (const size_t index : indices) values.push_back(samples[index].values);
+    return mean_vectors(values, [&]() {
+        std::vector<size_t> local(indices.size());
+        std::iota(local.begin(), local.end(), 0);
+        return local;
+    }(), true);
+}
+
+std::vector<size_t> prototype_retained_indices(
+        const std::vector<common_flydelta_concept_prototype_sample> & samples,
+        float trim_fraction) {
+    std::vector<size_t> all(samples.size());
+    std::iota(all.begin(), all.end(), 0);
+    if (samples.size() < 2 || trim_fraction <= 0.0f) return all;
+
+    const auto centroid = prototype_mean(samples, all);
+    std::vector<std::pair<float, size_t>> ranked;
+    ranked.reserve(samples.size());
+    for (const size_t index : all) {
+        ranked.emplace_back(cosine(normalized(samples[index].values), centroid), index);
+    }
+    std::sort(ranked.begin(), ranked.end(),
+        [](const auto & left, const auto & right) { return left.first > right.first; });
+    const size_t requested_trim = static_cast<size_t>(
+        std::floor(trim_fraction * samples.size()));
+    const size_t trim = std::min(requested_trim, samples.size() - 2);
+    std::vector<size_t> retained;
+    retained.reserve(samples.size() - trim);
+    for (size_t index = 0; index < ranked.size() - trim; ++index) {
+        retained.push_back(ranked[index].second);
+    }
+    return retained;
+}
+
+bool same_prototype_identity(
+        const common_flydelta_concept_prototype_sample & left,
+        const common_flydelta_concept_prototype_sample & right) {
+    // A positive prototype intentionally combines independent manifestations.
+    // Their task anchors and fixture/verifier refs may differ; model, capture
+    // site and scope identity must not.
+    return left.model_profile_fingerprint == right.model_profile_fingerprint &&
+        left.tokenizer_fingerprint == right.tokenizer_fingerprint &&
+        left.template_fingerprint == right.template_fingerprint &&
+        left.capture_layout_revision == right.capture_layout_revision &&
+        left.scope_fingerprint == right.scope_fingerprint &&
+        left.layer_index == right.layer_index;
+}
+
+bool make_prototype_candidate(
+        const common_flydelta_concept_spec & spec,
+        common_flydelta_concept_candidate_kind kind,
+        int32_t layer,
+        const std::vector<float> & values,
+        size_t positive_count,
+        size_t retained_positive_count,
+        size_t control_count,
+        size_t retained_control_count,
+        common_flydelta_concept_candidate & candidate,
+        std::string & error) {
+    candidate = {};
+    candidate.kind = kind;
+    candidate.synthesis_semantics =
+        common_flydelta_concept_synthesis_semantics::positive_prototype;
+    candidate.concept_key = spec.concept_key;
+    candidate.extraction_id = spec.extraction_id;
+    candidate.behavior_key = spec.behavior_key;
+    candidate.origin = "host_taught_positive_prototype";
+    candidate.model_profile_fingerprint = spec.model_profile_fingerprint;
+    candidate.capture_layout_revision = spec.capture_layout_revision;
+    candidate.layer_index = layer;
+    candidate.values = normalized(values);
+    candidate.source_trajectories = positive_count;
+    candidate.retained_trajectories = retained_positive_count;
+    candidate.control_trajectories = control_count;
+    candidate.retained_control_trajectories = retained_control_count;
+    candidate.control_residualized = false;
     candidate.experimental_only = true;
     candidate.learning_eligible = false;
     return common_flydelta_concept_candidate_validate(
@@ -182,21 +273,47 @@ const char * common_flydelta_concept_candidate_kind_name(
     return "unknown";
 }
 
+const char * common_flydelta_concept_synthesis_semantics_name(
+        common_flydelta_concept_synthesis_semantics semantics) {
+    switch (semantics) {
+        case common_flydelta_concept_synthesis_semantics::control_residualized:
+            return "control_residualized";
+        case common_flydelta_concept_synthesis_semantics::positive_prototype:
+            return "positive_prototype";
+    }
+    return "unknown";
+}
+
 bool common_flydelta_concept_candidate_validate(
         const common_flydelta_concept_candidate & candidate,
         size_t expected_dimension,
         std::string & error) {
     error.clear();
+    const bool residualized = candidate.synthesis_semantics ==
+        common_flydelta_concept_synthesis_semantics::control_residualized;
+    const bool prototype = candidate.synthesis_semantics ==
+        common_flydelta_concept_synthesis_semantics::positive_prototype;
     if (candidate.schema_version != 1 || !bounded(candidate.concept_key) ||
             !bounded(candidate.extraction_id) ||
-            !bounded(candidate.behavior_key) || candidate.origin != "host_taught_extracted" ||
+            !bounded(candidate.behavior_key) ||
+            (candidate.origin != "host_taught_extracted" &&
+             candidate.origin != "host_taught_positive_prototype") ||
             !bounded(candidate.model_profile_fingerprint) ||
             !bounded(candidate.capture_layout_revision) || candidate.layer_index <= 0 ||
             candidate.values.size() != expected_dimension || !finite_vector(candidate.values) ||
             norm(candidate.values) < 0.99f || norm(candidate.values) > 1.01f ||
             candidate.source_trajectories < 2 ||
-            candidate.retained_trajectories < 2 || !candidate.control_residualized ||
-            !candidate.experimental_only || candidate.learning_eligible) {
+            candidate.retained_trajectories < 2 ||
+            !candidate.experimental_only || candidate.learning_eligible ||
+            (!residualized && !prototype) ||
+            (residualized && candidate.origin != "host_taught_extracted") ||
+            (prototype && candidate.origin != "host_taught_positive_prototype") ||
+            (residualized && (!candidate.control_residualized ||
+                candidate.control_trajectories < 2 ||
+                candidate.retained_control_trajectories < 2)) ||
+            (prototype && (candidate.control_residualized ||
+                candidate.control_trajectories < 2 ||
+                candidate.retained_control_trajectories < 2))) {
         error = "FlyDelta concept candidate is invalid or not experimental-only";
         return false;
     }
@@ -216,13 +333,22 @@ bool common_flydelta_concept_candidate_to_direction(
     direction = {};
     switch (candidate.kind) {
         case common_flydelta_concept_candidate_kind::raw_mean:
-            direction.kind = common_flydelta_direction_kind::raw_repair;
+            direction.kind = candidate.synthesis_semantics ==
+                    common_flydelta_concept_synthesis_semantics::positive_prototype
+                ? common_flydelta_direction_kind::positive_prototype
+                : common_flydelta_direction_kind::raw_repair;
             break;
         case common_flydelta_concept_candidate_kind::trimmed_mean:
-            direction.kind = common_flydelta_direction_kind::normalized_trimmed_mean;
+            direction.kind = candidate.synthesis_semantics ==
+                    common_flydelta_concept_synthesis_semantics::positive_prototype
+                ? common_flydelta_direction_kind::positive_prototype_trimmed_mean
+                : common_flydelta_direction_kind::normalized_trimmed_mean;
             break;
         case common_flydelta_concept_candidate_kind::diagonal_whitened_mean:
-            direction.kind = common_flydelta_direction_kind::diagonal_whitened_mean;
+            direction.kind = candidate.synthesis_semantics ==
+                    common_flydelta_concept_synthesis_semantics::positive_prototype
+                ? common_flydelta_direction_kind::positive_prototype_diagonal_whitened_mean
+                : common_flydelta_direction_kind::diagonal_whitened_mean;
             break;
     }
     direction.layer_index = candidate.layer_index;
@@ -330,6 +456,155 @@ bool common_flydelta_build_concept_candidates(
         common_flydelta_concept_candidate candidate;
         if (!make_candidate(spec, kind_values.first, trajectories.front().layer_index,
                 residuals, retained, kind_values.second, median_alignment, candidate, error)) {
+            candidates.clear();
+            return false;
+        }
+        candidates.push_back(std::move(candidate));
+    }
+    return true;
+}
+
+bool common_flydelta_concept_prototype_build_config_validate(
+        const common_flydelta_concept_prototype_build_config & config,
+        std::string & error) {
+    error.clear();
+    if (config.schema_version != 1 || config.dimension == 0 ||
+            config.min_positive_samples < 2 || config.min_control_samples < 2 ||
+            config.max_samples < config.min_positive_samples ||
+            config.max_samples < config.min_control_samples ||
+            config.max_samples > 64 || config.trim_fraction < 0.0f ||
+            config.trim_fraction >= 0.5f || !std::isfinite(config.variance_ridge) ||
+            config.variance_ridge <= 0.0f) {
+        error = "FlyDelta positive prototype build configuration is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_concept_prototype_sample_validate(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_concept_prototype_sample & sample,
+        size_t expected_dimension,
+        std::string & error) {
+    error.clear();
+    if (!common_flydelta_concept_spec_validate(spec, error)) return false;
+    if (sample.schema_version != 1 || !bounded(sample.id) ||
+            !bounded(sample.capture_ref) || !bounded(sample.semantic_anchor) ||
+            sample.model_profile_fingerprint != spec.model_profile_fingerprint ||
+            sample.tokenizer_fingerprint != spec.tokenizer_fingerprint ||
+            sample.template_fingerprint != spec.template_fingerprint ||
+            sample.capture_layout_revision != spec.capture_layout_revision ||
+            sample.scope_fingerprint != spec.scope_fingerprint ||
+            !bounded(sample.verifier_ref) || sample.layer_index <= 0 ||
+            sample.values.size() != expected_dimension || !finite_vector(sample.values) ||
+            norm(sample.values) <= 1.0e-8f || !sample.host_verified ||
+            !sample.independent) {
+        error = "FlyDelta prototype capture is incompatible or not host verified";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_build_positive_prototype_candidates(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_concept_prototype_build_config & config,
+        const std::vector<common_flydelta_concept_prototype_sample> & positive,
+        const std::vector<common_flydelta_concept_prototype_sample> & controls,
+        std::vector<common_flydelta_concept_candidate> & candidates,
+        std::string & error) {
+    error.clear();
+    candidates.clear();
+    if (!common_flydelta_concept_spec_validate(spec, error) ||
+            !common_flydelta_concept_prototype_build_config_validate(config, error)) {
+        return false;
+    }
+    if (positive.size() < config.min_positive_samples ||
+            controls.size() < config.min_control_samples ||
+            positive.size() > config.max_samples || controls.size() > config.max_samples) {
+        error = "FlyDelta positive prototype has insufficient or excessive samples";
+        return false;
+    }
+
+    std::vector<std::string> seen_ids;
+    seen_ids.reserve(positive.size() + controls.size());
+    auto validate_set = [&](const auto & samples) {
+        for (const auto & sample : samples) {
+            if (!common_flydelta_concept_prototype_sample_validate(
+                    spec, sample, config.dimension, error)) return false;
+            if (!seen_ids.empty() && std::find(seen_ids.begin(), seen_ids.end(), sample.id) !=
+                    seen_ids.end()) {
+                error = "FlyDelta positive prototype reuses a capture sample";
+                return false;
+            }
+            seen_ids.push_back(sample.id);
+        }
+        return true;
+    };
+    if (!validate_set(positive) || !validate_set(controls)) return false;
+
+    for (const auto & sample : positive) {
+        if (!same_prototype_identity(sample, positive.front())) {
+            error = "FlyDelta positive prototype samples are not compatible";
+            return false;
+        }
+    }
+    for (const auto & sample : controls) {
+        if (!same_prototype_identity(sample, positive.front())) {
+            error = "FlyDelta positive prototype controls are not compatible";
+            return false;
+        }
+    }
+
+    const auto positive_indices = prototype_retained_indices(positive, config.trim_fraction);
+    const auto control_indices = prototype_retained_indices(controls, config.trim_fraction);
+    std::vector<size_t> all_positive(positive.size());
+    std::vector<size_t> all_controls(controls.size());
+    std::iota(all_positive.begin(), all_positive.end(), 0);
+    std::iota(all_controls.begin(), all_controls.end(), 0);
+    const auto raw_positive_mean = prototype_mean(positive, all_positive);
+    const auto raw_control_mean = prototype_mean(controls, all_controls);
+    const auto raw_difference = subtract(raw_positive_mean, raw_control_mean);
+    const auto positive_mean = prototype_mean(positive, positive_indices);
+    const auto control_mean = prototype_mean(controls, control_indices);
+    const auto trimmed_difference = subtract(positive_mean, control_mean);
+    if (raw_difference.empty() || trimmed_difference.empty() ||
+            norm(raw_difference) <= 1.0e-8f || norm(trimmed_difference) <= 1.0e-8f) {
+        error = "FlyDelta positive prototype has no usable positive-control signal";
+        return false;
+    }
+
+    std::vector<float> variance(config.dimension, 0.0f);
+    for (const size_t index : positive_indices) {
+        const auto value = normalized(positive[index].values);
+        for (size_t dimension = 0; dimension < config.dimension; ++dimension) {
+            const float difference = value[dimension] - positive_mean[dimension];
+            variance[dimension] += difference * difference;
+        }
+    }
+    for (const size_t index : control_indices) {
+        const auto value = normalized(controls[index].values);
+        for (size_t dimension = 0; dimension < config.dimension; ++dimension) {
+            const float difference = value[dimension] - control_mean[dimension];
+            variance[dimension] += difference * difference;
+        }
+    }
+    const float divisor = static_cast<float>(positive_indices.size() + control_indices.size());
+    for (float & value : variance) value /= divisor;
+    std::vector<float> whitened = trimmed_difference;
+    for (size_t dimension = 0; dimension < whitened.size(); ++dimension) {
+        whitened[dimension] /= std::sqrt(variance[dimension] + config.variance_ridge);
+    }
+
+    for (const auto & kind_values : {
+            std::pair<common_flydelta_concept_candidate_kind, std::vector<float>>{
+                common_flydelta_concept_candidate_kind::raw_mean, raw_difference},
+            {common_flydelta_concept_candidate_kind::trimmed_mean, trimmed_difference},
+            {common_flydelta_concept_candidate_kind::diagonal_whitened_mean, whitened}}) {
+        common_flydelta_concept_candidate candidate;
+        if (!make_prototype_candidate(
+                spec, kind_values.first, positive.front().layer_index,
+                kind_values.second, positive.size(), positive_indices.size(),
+                controls.size(), control_indices.size(), candidate, error)) {
             candidates.clear();
             return false;
         }

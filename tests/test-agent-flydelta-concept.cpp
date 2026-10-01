@@ -39,6 +39,29 @@ static common_flydelta_concept_trajectory trajectory(int index, bool verified = 
     return value;
 }
 
+static common_flydelta_concept_prototype_sample prototype_sample(
+        const common_flydelta_concept_spec & concept_spec,
+        int index, bool positive) {
+    common_flydelta_concept_prototype_sample value;
+    value.id = std::string(positive ? "positive://test/" : "control://test/") +
+        std::to_string(index);
+    value.capture_ref = value.id + "/capture";
+    value.semantic_anchor = "generation_boundary";
+    value.model_profile_fingerprint = concept_spec.model_profile_fingerprint;
+    value.tokenizer_fingerprint = concept_spec.tokenizer_fingerprint;
+    value.template_fingerprint = concept_spec.template_fingerprint;
+    value.capture_layout_revision = concept_spec.capture_layout_revision;
+    value.scope_fingerprint = concept_spec.scope_fingerprint;
+    value.verifier_ref = concept_spec.verifier_ref;
+    value.layer_index = 12;
+    value.values = positive
+        ? std::vector<float>{1.0f + index * 0.05f, 0.7f, 0.2f}
+        : std::vector<float>{0.2f, 0.7f + index * 0.03f, 1.0f};
+    value.host_verified = true;
+    value.independent = true;
+    return value;
+}
+
 int main() {
     std::string error;
     const auto concept_spec = spec();
@@ -101,6 +124,49 @@ int main() {
     auto no_control = config;
     no_control.require_control = false;
     CHECK(!common_flydelta_concept_build_config_validate(no_control, error));
+
+    common_flydelta_concept_prototype_build_config prototype_config;
+    prototype_config.dimension = 3;
+    std::vector<common_flydelta_concept_prototype_sample> positive = {
+        prototype_sample(concept_spec, 0, true),
+        prototype_sample(concept_spec, 1, true),
+        prototype_sample(concept_spec, 2, true),
+    };
+    std::vector<common_flydelta_concept_prototype_sample> controls = {
+        prototype_sample(concept_spec, 0, false),
+        prototype_sample(concept_spec, 1, false),
+        prototype_sample(concept_spec, 2, false),
+    };
+    CHECK(common_flydelta_build_positive_prototype_candidates(
+        concept_spec, prototype_config, positive, controls, candidates, error));
+    CHECK(candidates.size() == 3);
+    for (const auto & candidate : candidates) {
+        CHECK(candidate.synthesis_semantics ==
+            common_flydelta_concept_synthesis_semantics::positive_prototype);
+        CHECK(candidate.origin == "host_taught_positive_prototype");
+        CHECK(!candidate.control_residualized);
+        CHECK(candidate.source_trajectories == positive.size());
+        CHECK(candidate.control_trajectories == controls.size());
+        CHECK(common_flydelta_concept_candidate_validate(candidate, 3, error));
+        common_flydelta_direction_candidate direction;
+        CHECK(common_flydelta_concept_candidate_to_direction(candidate, direction, error));
+        CHECK(direction.experimental_only);
+        const auto expected_kind = candidate.kind ==
+                common_flydelta_concept_candidate_kind::raw_mean
+            ? common_flydelta_direction_kind::positive_prototype
+            : candidate.kind == common_flydelta_concept_candidate_kind::trimmed_mean
+                ? common_flydelta_direction_kind::positive_prototype_trimmed_mean
+                : common_flydelta_direction_kind::positive_prototype_diagonal_whitened_mean;
+        CHECK(direction.kind == expected_kind);
+    }
+    auto incompatible_control = controls;
+    incompatible_control.front().scope_fingerprint = "sha256:other-scope";
+    CHECK(!common_flydelta_build_positive_prototype_candidates(
+        concept_spec, prototype_config, positive, incompatible_control, candidates, error));
+    auto unverified_positive = positive;
+    unverified_positive.front().host_verified = false;
+    CHECK(!common_flydelta_build_positive_prototype_candidates(
+        concept_spec, prototype_config, unverified_positive, controls, candidates, error));
 
     common_flydelta_semantic_decision normalized_filter;
     common_flydelta_semantic_decision_status status;

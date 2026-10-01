@@ -550,6 +550,46 @@ bool run_offline() {
             std::cerr << "concept offline build failed: " << error << '\n';
             return false;
         }
+        const auto trajectories = synthetic_trajectories(
+            family, profile,
+            family_count == 0 ? std::vector<float>{1.0f, 0.5f, 0.2f, 0.1f} :
+            family_count == 1 ? std::vector<float>{0.1f, 1.0f, 0.4f, 0.2f} :
+            std::vector<float>{0.2f, 0.1f, 1.0f, 0.5f});
+        std::vector<common_flydelta_concept_prototype_sample> positive;
+        std::vector<common_flydelta_concept_prototype_sample> controls;
+        for (const auto & trajectory : trajectories) {
+            const auto make_sample = [&](const char * suffix,
+                    const std::string & capture_ref, const std::vector<float> & values) {
+                common_flydelta_concept_prototype_sample sample;
+                sample.id = trajectory.id + "/" + suffix;
+                sample.capture_ref = capture_ref;
+                sample.semantic_anchor = trajectory.semantic_anchor;
+                sample.model_profile_fingerprint = spec.model_profile_fingerprint;
+                sample.tokenizer_fingerprint = spec.tokenizer_fingerprint;
+                sample.template_fingerprint = spec.template_fingerprint;
+                sample.capture_layout_revision = spec.capture_layout_revision;
+                sample.scope_fingerprint = spec.scope_fingerprint;
+                sample.verifier_ref = spec.verifier_ref;
+                sample.layer_index = trajectory.layer_index;
+                sample.values = values;
+                sample.host_verified = trajectory.conditioned_host_verified;
+                sample.independent = true;
+                return sample;
+            };
+            positive.push_back(make_sample(
+                "positive", trajectory.conditioned_capture_ref, trajectory.conditioned));
+            controls.push_back(make_sample(
+                "neutral-control", trajectory.control_capture_ref, trajectory.control));
+        }
+        common_flydelta_concept_prototype_build_config prototype_config;
+        prototype_config.dimension = config.dimension;
+        std::vector<common_flydelta_concept_candidate> prototype_candidates;
+        if (!common_flydelta_build_positive_prototype_candidates(
+                spec, prototype_config, positive, controls, prototype_candidates, error) ||
+                prototype_candidates.size() != 3) {
+            std::cerr << "positive prototype offline build failed: " << error << '\n';
+            return false;
+        }
         for (const auto & candidate : candidates) {
             common_flydelta_direction_candidate direction;
             if (!common_flydelta_concept_candidate_to_direction(
@@ -563,6 +603,7 @@ bool run_offline() {
                   << " candidates=" << candidates.size()
                   << " source_trajectories=" << candidates.front().source_trajectories
                   << " retained_trajectories=" << candidates.front().retained_trajectories
+                  << " prototype_candidates=" << prototype_candidates.size()
                   << " median_alignment=" << candidates.front().median_alignment
                   << " experimental_only=yes learning_eligible=no\n";
         ++family_count;

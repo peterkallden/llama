@@ -554,12 +554,15 @@ int main(int argc, char ** argv) {
     for (const auto & candidate : synthesis_report.concept_candidates) {
         candidates.push_back({
             {"kind", common_flydelta_concept_candidate_kind_name(candidate.kind)},
+            {"synthesis_semantics", common_flydelta_concept_synthesis_semantics_name(
+                candidate.synthesis_semantics)},
             {"concept_key", candidate.concept_key},
             {"layer_index", candidate.layer_index},
             {"source_trajectories", candidate.source_trajectories},
             {"retained_trajectories", candidate.retained_trajectories},
             {"median_alignment", candidate.median_alignment},
             {"control_residualized", candidate.control_residualized},
+            {"control_trajectories", candidate.control_trajectories},
             {"experimental_only", candidate.experimental_only},
             {"learning_eligible", candidate.learning_eligible},
         });

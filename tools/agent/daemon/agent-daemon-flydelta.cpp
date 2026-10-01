@@ -1,5 +1,7 @@
 #include "agent-daemon-flydelta-internal.h"
 
+#include <iterator>
+
 namespace agent_daemon_flydelta_internal {
 
 bool daemon_flydelta_run_concept_capture(
@@ -249,8 +251,56 @@ bool daemon_flydelta_run_concept_synthesis(
     build_config.dimension = provider->model_n_embd;
     build_config.min_trajectories = group.minimum_trajectories;
     build_config.max_trajectories = std::min<size_t>(64, trajectories.size());
-    return common_flydelta_build_concept_candidates(
-        spec, build_config, trajectories, candidates, error);
+    if (!common_flydelta_build_concept_candidates(
+            spec, build_config, trajectories, candidates, error)) return false;
+
+    // The existing trajectory material also contains a host-verified positive
+    // conditioned state and a neutral/control state.  Reuse those captures to
+    // expose the positive-prototype synthesis semantics without fabricating a
+    // failed baseline.  The candidates remain experimental and continue
+    // through the same evaluator, search and Oracle path as the residualized
+    // candidates above.
+    std::vector<common_flydelta_concept_prototype_sample> positive_samples;
+    std::vector<common_flydelta_concept_prototype_sample> control_samples;
+    positive_samples.reserve(trajectories.size());
+    control_samples.reserve(trajectories.size());
+    for (const auto & trajectory : trajectories) {
+        const auto make_sample = [&](const std::string & suffix,
+                const std::string & capture_ref, const std::vector<float> & values) {
+            common_flydelta_concept_prototype_sample sample;
+            sample.id = trajectory.id + "/" + suffix;
+            sample.capture_ref = capture_ref;
+            sample.semantic_anchor = trajectory.semantic_anchor;
+            sample.model_profile_fingerprint = spec.model_profile_fingerprint;
+            sample.tokenizer_fingerprint = spec.tokenizer_fingerprint;
+            sample.template_fingerprint = spec.template_fingerprint;
+            sample.capture_layout_revision = spec.capture_layout_revision;
+            sample.scope_fingerprint = spec.scope_fingerprint;
+            sample.verifier_ref = spec.verifier_ref;
+            sample.layer_index = trajectory.layer_index;
+            sample.values = values;
+            sample.host_verified = trajectory.conditioned_host_verified;
+            sample.independent = true;
+            return sample;
+        };
+        positive_samples.push_back(make_sample(
+            "positive", trajectory.conditioned_capture_ref, trajectory.conditioned));
+        control_samples.push_back(make_sample(
+            "neutral-control", trajectory.control_capture_ref, trajectory.control));
+    }
+    common_flydelta_concept_prototype_build_config prototype_config;
+    prototype_config.dimension = provider->model_n_embd;
+    prototype_config.min_positive_samples = group.minimum_trajectories;
+    prototype_config.min_control_samples = group.minimum_trajectories;
+    prototype_config.max_samples = std::min<size_t>(64, trajectories.size());
+    std::vector<common_flydelta_concept_candidate> prototype_candidates;
+    if (!common_flydelta_build_positive_prototype_candidates(
+            spec, prototype_config, positive_samples, control_samples,
+            prototype_candidates, error)) return false;
+    candidates.insert(candidates.end(),
+        std::make_move_iterator(prototype_candidates.begin()),
+        std::make_move_iterator(prototype_candidates.end()));
+    return true;
 }
 
 bool daemon_flydelta_fixture_from_job(

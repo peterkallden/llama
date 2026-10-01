@@ -45,6 +45,9 @@ bool supported_kind(common_flydelta_direction_kind kind) {
         case common_flydelta_direction_kind::diagonal_whitened_mean:
         case common_flydelta_direction_kind::token_margin_direction:
         case common_flydelta_direction_kind::execution_boundary_prototype:
+        case common_flydelta_direction_kind::positive_prototype:
+        case common_flydelta_direction_kind::positive_prototype_trimmed_mean:
+        case common_flydelta_direction_kind::positive_prototype_diagonal_whitened_mean:
             return true;
     }
     return false;
@@ -75,6 +78,11 @@ const char * common_flydelta_direction_kind_name(
         case common_flydelta_direction_kind::diagonal_whitened_mean: return "diagonal_whitened_mean";
         case common_flydelta_direction_kind::token_margin_direction: return "token_margin_direction";
         case common_flydelta_direction_kind::execution_boundary_prototype: return "execution_boundary_prototype";
+        case common_flydelta_direction_kind::positive_prototype: return "positive_prototype";
+        case common_flydelta_direction_kind::positive_prototype_trimmed_mean:
+            return "positive_prototype_trimmed_mean";
+        case common_flydelta_direction_kind::positive_prototype_diagonal_whitened_mean:
+            return "positive_prototype_diagonal_whitened_mean";
     }
     return "unknown";
 }

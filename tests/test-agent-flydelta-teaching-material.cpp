@@ -202,6 +202,8 @@ int main() {
         candidate.values = {0.26726124f, 0.53452248f, 0.80178374f};
         candidate.source_trajectories = 2;
         candidate.retained_trajectories = 2;
+        candidate.control_trajectories = 2;
+        candidate.retained_control_trajectories = 2;
         candidate.median_alignment = 0.9f;
         candidate.control_residualized = true;
         candidates.push_back(std::move(candidate));

@@ -88,6 +88,18 @@ enum class common_flydelta_concept_candidate_kind {
     diagonal_whitened_mean,
 };
 
+// The semantic source of a candidate is independent from the estimator used
+// to construct its vector.  In particular, a positive prototype is not an
+// observed repair pair and must retain that distinction through search and
+// verification.
+enum class common_flydelta_concept_synthesis_semantics {
+    control_residualized,
+    positive_prototype,
+};
+
+const char * common_flydelta_concept_synthesis_semantics_name(
+        common_flydelta_concept_synthesis_semantics semantics);
+
 const char * common_flydelta_concept_candidate_kind_name(
         common_flydelta_concept_candidate_kind kind);
 
@@ -95,6 +107,8 @@ struct common_flydelta_concept_candidate {
     int schema_version = 1;
     common_flydelta_concept_candidate_kind kind =
         common_flydelta_concept_candidate_kind::raw_mean;
+    common_flydelta_concept_synthesis_semantics synthesis_semantics =
+        common_flydelta_concept_synthesis_semantics::control_residualized;
     std::string concept_key;
     std::string extraction_id;
     std::string behavior_key;
@@ -105,6 +119,8 @@ struct common_flydelta_concept_candidate {
     std::vector<float> values;
     size_t source_trajectories = 0;
     size_t retained_trajectories = 0;
+    size_t control_trajectories = 0;
+    size_t retained_control_trajectories = 0;
     float median_alignment = 0.0f;
     bool control_residualized = false;
     bool experimental_only = true;
@@ -135,5 +151,57 @@ bool common_flydelta_build_concept_candidates(
         const common_flydelta_concept_spec & spec,
         const common_flydelta_concept_build_config & config,
         const std::vector<common_flydelta_concept_trajectory> & trajectories,
+        std::vector<common_flydelta_concept_candidate> & candidates,
+        std::string & error);
+
+// An independently host-verified activation sample for prototype synthesis.
+// Unlike a concept trajectory, it does not pretend that every positive sample
+// has a matched baseline or repair event.  The two sample sets still must be
+// compatible in model, scope, capture site and semantic anchor.
+struct common_flydelta_concept_prototype_sample {
+    int schema_version = 1;
+    std::string id;
+    std::string capture_ref;
+    std::string semantic_anchor;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string capture_layout_revision;
+    std::string scope_fingerprint;
+    std::string verifier_ref;
+    int32_t layer_index = -1;
+    std::vector<float> values;
+    bool host_verified = false;
+    bool independent = false;
+};
+
+struct common_flydelta_concept_prototype_build_config {
+    int schema_version = 1;
+    size_t dimension = 0;
+    size_t min_positive_samples = 2;
+    size_t min_control_samples = 2;
+    size_t max_samples = 32;
+    float trim_fraction = 0.20f;
+    float variance_ridge = 0.001f;
+};
+
+bool common_flydelta_concept_prototype_build_config_validate(
+        const common_flydelta_concept_prototype_build_config & config,
+        std::string & error);
+
+bool common_flydelta_concept_prototype_sample_validate(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_concept_prototype_sample & sample,
+        size_t expected_dimension,
+        std::string & error);
+
+// Builds positive/control prototype candidates from independently verified
+// capture sets.  This is CPU-only synthesis; the candidates remain
+// experimental and must use the ordinary FlyDelta search and Oracle path.
+bool common_flydelta_build_positive_prototype_candidates(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_concept_prototype_build_config & config,
+        const std::vector<common_flydelta_concept_prototype_sample> & positive,
+        const std::vector<common_flydelta_concept_prototype_sample> & controls,
         std::vector<common_flydelta_concept_candidate> & candidates,
         std::string & error);

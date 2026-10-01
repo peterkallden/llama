@@ -17,6 +17,9 @@ enum class common_flydelta_direction_kind {
     diagonal_whitened_mean,
     token_margin_direction,
     execution_boundary_prototype,
+    positive_prototype,
+    positive_prototype_trimmed_mean,
+    positive_prototype_diagonal_whitened_mean,
 };
 
 // Direction construction has two deliberately separate policies. Learning
