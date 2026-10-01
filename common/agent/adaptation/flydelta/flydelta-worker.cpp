@@ -25,6 +25,7 @@ const char * phase_name(const common_flydelta_experiment_job_kind kind) {
         case common_flydelta_experiment_job_kind::concept_capture: return "concept_capture";
         case common_flydelta_experiment_job_kind::concept_synthesis: return "concept_synthesis";
         case common_flydelta_experiment_job_kind::evaluation: return "evaluation";
+        case common_flydelta_experiment_job_kind::causal_diagnostic: return "causal_diagnostic";
     }
     return "unknown";
 }
@@ -156,6 +157,26 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
     if (result.counterfactual_reports.size() <= 256) {
         for (const auto & report : result.counterfactual_reports) {
             append_counterfactual_arm(report, job, trace);
+        }
+    }
+    if (result.has_causal_diagnostic_report) {
+        for (const auto & diagnostic : result.causal_diagnostic_report.arms) {
+            if (trace.arms.size() >= 256) break;
+            common_flydelta_trace_arm arm;
+            arm.phase = "causal_diagnostic";
+            arm.arm_id = std::string(common_flydelta_causal_patch_kind_name(
+                diagnostic.patch_kind)) + ":" + diagnostic.arm_id;
+            arm.layer_indices = {diagnostic.layer};
+            arm.margin_available = diagnostic.margin_available;
+            arm.margin_total = diagnostic.candidate_margin;
+            arm.margin_delta_total = diagnostic.margin_delta;
+            arm.host_evaluated = diagnostic.host_evaluated;
+            arm.verifier_known = diagnostic.verifier_known;
+            arm.host_outcome = diagnostic.host_outcome;
+            arm.execution_class = diagnostic.host_evaluated ? "full" :
+                diagnostic.executed ? "diagnostic" : "not_executed";
+            arm.evidence_ref = diagnostic.evidence_ref;
+            trace.arms.push_back(std::move(arm));
         }
     }
     size_t direction_index = 0;
@@ -302,6 +323,11 @@ bool validate_result(
                     fixture.candidate_id != claimed.job.evaluation_candidate_id) return false;
         }
     }
+    if (result.has_causal_diagnostic_report &&
+            !common_flydelta_causal_diagnostic_report_validate(
+                result.causal_diagnostic_report, error)) {
+        return false;
+    }
     for (const auto & direction : result.direction_candidates) {
         if (!common_flydelta_direction_candidate_validate(
                 direction, direction.values.size(), error)) return false;
@@ -326,6 +352,11 @@ bool validate_result(
     if (claimed.job.kind == common_flydelta_experiment_job_kind::evaluation &&
             (!result.has_evaluation_report || result.evaluation_fixture_results.empty())) {
         error = "FlyDelta evaluation worker result requires a report and fixture results";
+        return false;
+    }
+    if (claimed.job.kind == common_flydelta_experiment_job_kind::causal_diagnostic &&
+            !result.has_causal_diagnostic_report) {
+        error = "FlyDelta causal diagnostic worker result requires a report";
         return false;
     }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::search_pipeline) {
@@ -434,11 +465,15 @@ bool common_flydelta_experiment_worker_run_once(
         result.concept_candidates.size() +
         result.concept_trajectory_refs.size() +
         result.search_pipeline_results.size() +
-        result.evaluation_fixture_results.size();
+        result.evaluation_fixture_results.size() +
+        (result.has_causal_diagnostic_report
+            ? result.causal_diagnostic_report.arms.size() : 0U);
     report.capture_manifests = std::move(result.capture_manifests);
     report.concept_candidates = std::move(result.concept_candidates);
     report.concept_trajectory_refs = std::move(result.concept_trajectory_refs);
     report.counterfactual_reports = std::move(result.counterfactual_reports);
+    report.has_causal_diagnostic_report = result.has_causal_diagnostic_report;
+    report.causal_diagnostic_report = std::move(result.causal_diagnostic_report);
     report.has_evaluation_report = result.has_evaluation_report;
     report.evaluation_report = std::move(result.evaluation_report);
     report.evaluation_fixture_results = std::move(result.evaluation_fixture_results);
@@ -581,6 +616,8 @@ bool common_flydelta_worker_result_from_evaluator(
     target.graft_direction_ref = source.graft_direction_ref;
     target.graft_direction_refs = source.graft_direction_refs;
     target.counterfactual_reports = source.counterfactual_reports;
+    target.has_causal_diagnostic_report = source.has_causal_diagnostic_report;
+    target.causal_diagnostic_report = source.causal_diagnostic_report;
     target.has_evaluation_report = source.has_evaluation_report;
     target.evaluation_report = source.evaluation_report;
     target.evaluation_fixture_results = source.evaluation_fixture_results;

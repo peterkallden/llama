@@ -69,7 +69,8 @@ common_agent_generation_request make_generation_request(
         {},
         model_tools,
         model_tool_choice,
-        request.flydelta_activation);
+        request.flydelta_activation,
+        request.flydelta_capture);
     generation.input_resources.reserve(request.input_resources.size());
     for (const auto & input : request.input_resources) {
         common_agent_generation_resource resource{input.resource, input.role, input.required};

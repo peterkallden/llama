@@ -116,5 +116,38 @@ int main() {
     job.seed.split = common_flydelta_training_split::validation;
     job.training_example_ids = {"flydelta://training/1"};
     CHECK(!common_flydelta_experiment_job_validate(job, 8, error));
+
+    job = {};
+    job.id = "flydelta://job/causal-diagnostic-1";
+    job.kind = common_flydelta_experiment_job_kind::causal_diagnostic;
+    job.seed = seed();
+    job.causal_diagnostic_manifest_ref =
+        "flydelta://causal-diagnostic-manifest/1";
+    job.code_revision = "test:v1";
+    CHECK(common_flydelta_experiment_job_validate(job, 8, error));
+    const auto causal_text = common_flydelta_experiment_job_to_json(job);
+    common_flydelta_experiment_job causal_parsed;
+    CHECK(common_flydelta_experiment_job_from_json(causal_text, causal_parsed, error));
+    CHECK(causal_parsed.kind == common_flydelta_experiment_job_kind::causal_diagnostic);
+    CHECK(causal_parsed.causal_diagnostic_manifest_ref ==
+        job.causal_diagnostic_manifest_ref);
+
+    common_flydelta_causal_diagnostic_report causal_report;
+    causal_report.experiment_id = job.id;
+    causal_report.manifest_ref = job.causal_diagnostic_manifest_ref;
+    common_flydelta_causal_diagnostic_arm causal_arm;
+    causal_arm.arm_id = "flydelta://causal-diagnostic-arm/1";
+    causal_arm.absolute_position = 3;
+    causal_arm.executed = true;
+    causal_arm.patch_attempted = true;
+    causal_arm.patch_applied = true;
+    causal_arm.margin_available = true;
+    causal_arm.baseline_margin = -1.0f;
+    causal_arm.candidate_margin = -0.5f;
+    causal_arm.margin_delta = 0.5f;
+    causal_report.arms.push_back(causal_arm);
+    CHECK(common_flydelta_causal_diagnostic_report_validate(causal_report, error));
+    causal_report.learning_eligible = true;
+    CHECK(!common_flydelta_causal_diagnostic_report_validate(causal_report, error));
     return 0;
 }

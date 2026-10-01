@@ -435,6 +435,24 @@ bool common_flydelta_evaluate_job(
             result.processed_references = result.counterfactual_reports.size();
             return true;
         }
+        case common_flydelta_experiment_job_kind::causal_diagnostic: {
+            if (!callbacks.run_causal_diagnostic) {
+                error = "FlyDelta causal diagnostic evaluator requires a host runner";
+                return false;
+            }
+            if (!callbacks.run_causal_diagnostic(
+                    job, result.causal_diagnostic_report, error) ||
+                    !common_flydelta_causal_diagnostic_report_validate(
+                        result.causal_diagnostic_report, error)) {
+                if (error.empty()) {
+                    error = "FlyDelta causal diagnostic returned an invalid report";
+                }
+                return false;
+            }
+            result.has_causal_diagnostic_report = true;
+            result.processed_references = result.causal_diagnostic_report.arms.size();
+            return true;
+        }
         case common_flydelta_experiment_job_kind::evaluation: {
             if (!callbacks.run_evaluation) {
                 error = "FlyDelta evaluation requires a host-owned evaluation runner";

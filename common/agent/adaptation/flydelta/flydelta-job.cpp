@@ -26,6 +26,7 @@ const char * common_flydelta_experiment_job_kind_name(
         case common_flydelta_experiment_job_kind::concept_capture: return "concept_capture";
         case common_flydelta_experiment_job_kind::concept_synthesis: return "concept_synthesis";
         case common_flydelta_experiment_job_kind::evaluation: return "evaluation";
+        case common_flydelta_experiment_job_kind::causal_diagnostic: return "causal_diagnostic";
     }
     return "basis";
 }
@@ -42,6 +43,7 @@ bool common_flydelta_experiment_job_kind_from_name(
     else if (value == "concept_capture") kind = common_flydelta_experiment_job_kind::concept_capture;
     else if (value == "concept_synthesis") kind = common_flydelta_experiment_job_kind::concept_synthesis;
     else if (value == "evaluation") kind = common_flydelta_experiment_job_kind::evaluation;
+    else if (value == "causal_diagnostic") kind = common_flydelta_experiment_job_kind::causal_diagnostic;
     else return false;
     return true;
 }
@@ -61,6 +63,8 @@ bool common_flydelta_experiment_job_validate(
             (!job.evaluation_candidate_id.empty() && !bounded(job.evaluation_candidate_id)) ||
             (!job.evaluation_suite_ref.empty() && !bounded(job.evaluation_suite_ref)) ||
             (!job.evaluation_revision.empty() && !bounded(job.evaluation_revision)) ||
+            (!job.causal_diagnostic_manifest_ref.empty() &&
+                !bounded(job.causal_diagnostic_manifest_ref)) ||
             max_references == 0 || !common_flydelta_experiment_seed_validate(job.seed, error) ||
             !std::isfinite(job.learning_rate) || job.learning_rate <= 0.0f ||
             !std::isfinite(job.decay) || job.decay < 0.0f || job.decay > 1.0f) {
@@ -131,6 +135,15 @@ bool common_flydelta_experiment_job_validate(
             return false;
         }
     }
+    if (job.kind == common_flydelta_experiment_job_kind::causal_diagnostic) {
+        if (!bounded(job.causal_diagnostic_manifest_ref) ||
+                job.seed.baseline_ref.empty() || job.seed.verifier_ref.empty() ||
+                !job.capture_manifest_ids.empty() || !job.behavior_delta_ids.empty() ||
+                !job.training_example_ids.empty()) {
+            error = "FlyDelta causal diagnostic job requires a bounded manifest reference";
+            return false;
+        }
+    }
     return true;
 }
 
@@ -174,6 +187,7 @@ std::string common_flydelta_experiment_job_to_json(
         {"evaluation_candidate_id", job.evaluation_candidate_id},
         {"evaluation_suite_ref", job.evaluation_suite_ref},
         {"evaluation_revision", job.evaluation_revision},
+        {"causal_diagnostic_manifest_ref", job.causal_diagnostic_manifest_ref},
         {"evaluation_limits", {
             {"max_fixtures", job.evaluation_limits.max_fixtures},
             {"max_model_calls", job.evaluation_limits.max_model_calls},
@@ -244,6 +258,8 @@ bool common_flydelta_experiment_job_from_json(
         job.evaluation_candidate_id = value.value("evaluation_candidate_id", "");
         job.evaluation_suite_ref = value.value("evaluation_suite_ref", "");
         job.evaluation_revision = value.value("evaluation_revision", "");
+        job.causal_diagnostic_manifest_ref = value.value(
+            "causal_diagnostic_manifest_ref", "");
         const auto limits = value.value("evaluation_limits", json::object());
         job.evaluation_limits.max_fixtures = limits.value("max_fixtures", 0U);
         job.evaluation_limits.max_model_calls = limits.value("max_model_calls", 0U);

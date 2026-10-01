@@ -167,6 +167,37 @@ int main() {
     CHECK(common_flydelta_evaluate_job(counterfactual, config, callbacks, result, error));
     CHECK(result.processed_references == 1 && result.counterfactual_reports.size() == 1);
 
+    auto causal = base_job(common_flydelta_experiment_job_kind::causal_diagnostic,
+            "flydelta://job/causal-diagnostic");
+    causal.capture_manifest_ids.clear();
+    causal.causal_diagnostic_manifest_ref = "flydelta://manifest/causal-diagnostic";
+    callbacks = {};
+    callbacks.run_causal_diagnostic = [](const auto & job, auto & report, std::string &) {
+        report.experiment_id = job.id;
+        report.manifest_ref = job.causal_diagnostic_manifest_ref;
+        report.model_profile_fingerprint = "sha256:model";
+        report.capture_layout_revision = "layout:v1";
+        common_flydelta_causal_diagnostic_arm arm;
+        arm.arm_id = job.id + ":arm";
+        arm.patch_kind = common_flydelta_causal_patch_kind::self_replacement;
+        arm.layer = 4;
+        arm.absolute_position = 7;
+        arm.sequence_id = 0;
+        arm.executed = true;
+        arm.patch_attempted = true;
+        arm.patch_applied = true;
+        arm.margin_available = true;
+        arm.baseline_margin = 0.25f;
+        arm.candidate_margin = 0.25f;
+        arm.margin_delta = 0.0f;
+        report.arms.push_back(std::move(arm));
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(causal, config, callbacks, result, error));
+    CHECK(result.has_causal_diagnostic_report);
+    CHECK(result.processed_references == 1);
+    CHECK(result.causal_diagnostic_report.experiment_id == causal.id);
+
     auto basis = base_job(common_flydelta_experiment_job_kind::basis,
             "flydelta://job/basis");
     basis.behavior_delta_ids = {"flydelta://behavior/evaluator"};

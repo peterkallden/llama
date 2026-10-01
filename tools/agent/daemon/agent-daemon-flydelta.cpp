@@ -1,5 +1,7 @@
 #include "agent-daemon-flydelta-internal.h"
 
+#include "agent/agent-residual-patch.h"
+
 #include <iterator>
 
 namespace agent_daemon_flydelta_internal {
@@ -2334,6 +2336,258 @@ bool daemon_flydelta_run_counterfactual(
     return !reports.empty();
 }
 
+bool daemon_flydelta_run_causal_diagnostic(
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
+        const common_flydelta_experiment_job & job,
+        common_flydelta_causal_diagnostic_report & report,
+        std::string & error) {
+    error.clear();
+    report = {};
+    provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
+    if (!provider || job.causal_diagnostic_manifest_ref.empty()) {
+        error = "FlyDelta causal diagnostic requires a scoped manifest";
+        return false;
+    }
+    json manifest;
+    if (!daemon_flydelta_read_json(*provider, job.causal_diagnostic_manifest_ref,
+            manifest, error)) return false;
+    if (manifest.value("kind", "") != "flydelta_causal_diagnostic_manifest" ||
+            manifest.value("schema_version", 0) != 1) {
+        error = "FlyDelta causal diagnostic manifest kind or schema is invalid";
+        return false;
+    }
+    const std::string baseline_ref = manifest.value("baseline_capture_ref", "");
+    const std::string repair_ref = manifest.value("repair_capture_ref", "");
+    const std::string control_ref = manifest.value("control_capture_ref", "");
+    const std::string direction_ref = manifest.value("direction_ref", "");
+    const int32_t layer = manifest.value("layer", -1);
+    const int32_t absolute_position = manifest.value("absolute_position", -1);
+    if (baseline_ref.empty() || repair_ref.empty() || layer < 0 || absolute_position < 0) {
+        error = "FlyDelta causal diagnostic manifest lacks aligned capture site";
+        return false;
+    }
+    std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_capture;
+    std::shared_ptr<const common_flydelta_hidden_state_capture> repair_capture;
+    if (!daemon_flydelta_capture_from_reference(provider, baseline_ref, baseline_capture, error) ||
+            !daemon_flydelta_capture_from_reference(provider, repair_ref, repair_capture, error)) {
+        return false;
+    }
+    std::vector<float> baseline_values;
+    std::vector<float> repair_values;
+    if (!daemon_flydelta_capture_layer(*baseline_capture, layer, baseline_values, error) ||
+            !daemon_flydelta_capture_layer(*repair_capture, layer, repair_values, error) ||
+            baseline_values.size() != repair_values.size() || baseline_values.empty()) {
+        error = "FlyDelta causal diagnostic captures are not dimension-aligned";
+        return false;
+    }
+    std::vector<float> control_values;
+    if (!control_ref.empty()) {
+        std::shared_ptr<const common_flydelta_hidden_state_capture> control_capture;
+        if (!daemon_flydelta_capture_from_reference(provider, control_ref, control_capture, error) ||
+                !daemon_flydelta_capture_layer(*control_capture, layer, control_values, error) ||
+                control_values.size() != baseline_values.size()) {
+            error = "FlyDelta causal diagnostic control capture is not dimension-aligned";
+            return false;
+        }
+    }
+    std::vector<float> direction_values;
+    if (!direction_ref.empty()) {
+        std::vector<common_flydelta_basis_direction> directions;
+        if (!daemon_flydelta_parse_directions(*provider, direction_ref, directions, error)) {
+            return false;
+        }
+        const auto it = std::find_if(directions.begin(), directions.end(),
+            [layer](const auto & value) { return value.layer_index == layer; });
+        if (it != directions.end()) direction_values = it->values;
+        if (!direction_values.empty() && direction_values.size() != baseline_values.size()) {
+            error = "FlyDelta causal diagnostic direction dimension does not match captures";
+            return false;
+        }
+    }
+    const auto requested_kinds = manifest.value(
+        "patch_kinds", std::vector<std::string>{
+            "self_replacement", "exact_replacement", "scaled_exact_delta",
+            "existing_direction", "norm_matched_control"});
+    if (requested_kinds.empty() || requested_kinds.size() > 8) {
+        error = "FlyDelta causal diagnostic patch family budget is invalid";
+        return false;
+    }
+    const float scaled_alpha = manifest.value("scaled_alpha", 0.5f);
+    const size_t max_full_generation = std::min<size_t>(2,
+        manifest.value("max_full_generation", 2U));
+    if (!std::isfinite(scaled_alpha) || scaled_alpha <= 0.0f || scaled_alpha > 1.0f) {
+        error = "FlyDelta causal diagnostic scaled alpha is invalid";
+        return false;
+    }
+    common_flydelta_arm_batch_request diagnostic_batch;
+    diagnostic_batch.batch_id = job.id + ":causal-diagnostic";
+    diagnostic_batch.wave_id = "causal-diagnostic";
+    std::vector<common_flydelta_causal_patch_kind> kinds;
+    std::vector<std::shared_ptr<const common_agent_residual_patch_request>> patches;
+    const auto make_patch = [&](const common_flydelta_causal_patch_kind kind,
+            std::shared_ptr<const common_agent_residual_patch_request> & patch) {
+        auto value = std::make_shared<common_agent_residual_patch_request>();
+        value->site = common_agent_residual_patch_site::layer_input_residual;
+        value->layer = static_cast<uint32_t>(layer);
+        value->absolute_position = absolute_position;
+        value->sequence_id = manifest.value("sequence_id", -1);
+        value->observe_applied_vector = true;
+        value->identity = job.id + ":" + common_flydelta_causal_patch_kind_name(kind);
+        switch (kind) {
+            case common_flydelta_causal_patch_kind::self_replacement:
+                value->operation = common_agent_residual_patch_operation::replace;
+                value->values = baseline_values;
+                break;
+            case common_flydelta_causal_patch_kind::exact_replacement:
+                value->operation = common_agent_residual_patch_operation::replace;
+                value->values = repair_values;
+                break;
+            case common_flydelta_causal_patch_kind::scaled_exact_delta:
+                value->operation = common_agent_residual_patch_operation::add;
+                value->values.resize(baseline_values.size());
+                for (size_t index = 0; index < baseline_values.size(); ++index) {
+                    value->values[index] = scaled_alpha *
+                        (repair_values[index] - baseline_values[index]);
+                }
+                break;
+            case common_flydelta_causal_patch_kind::existing_direction:
+                if (direction_values.empty()) return false;
+                value->operation = common_agent_residual_patch_operation::add;
+                value->values = direction_values;
+                break;
+            case common_flydelta_causal_patch_kind::norm_matched_control:
+                value->operation = common_agent_residual_patch_operation::add;
+                value->values.resize(baseline_values.size());
+                for (size_t index = 0; index < baseline_values.size(); ++index) {
+                    value->values[index] = std::sin(static_cast<float>(
+                        (index + 1) * (layer + 3)) * 0.017f);
+                }
+                break;
+            case common_flydelta_causal_patch_kind::wrong_concept:
+                if (control_values.empty()) return false;
+                value->operation = common_agent_residual_patch_operation::replace;
+                value->values = control_values;
+                break;
+        }
+        float patch_norm = 0.0f;
+        float target_norm = 0.0f;
+        for (size_t index = 0; index < value->values.size(); ++index) {
+            patch_norm += value->values[index] * value->values[index];
+            const float delta = repair_values[index] - baseline_values[index];
+            target_norm += delta * delta;
+        }
+        if (kind == common_flydelta_causal_patch_kind::norm_matched_control &&
+                patch_norm > 1.0e-12f && target_norm > 0.0f) {
+            const float scale = std::sqrt(target_norm / patch_norm);
+            for (float & item : value->values) item *= scale;
+        }
+        if (value->values.size() != baseline_values.size()) return false;
+        patch = std::move(value);
+        return true;
+    };
+    for (const auto & kind_name : requested_kinds) {
+        common_flydelta_causal_patch_kind kind;
+        if (!common_flydelta_causal_patch_kind_from_name(kind_name, kind)) {
+            error = "FlyDelta causal diagnostic patch family is unknown";
+            return false;
+        }
+        std::shared_ptr<const common_agent_residual_patch_request> patch;
+        if (!make_patch(kind, patch)) continue;
+        common_flydelta_arm_request arm;
+        arm.job_id = job.id;
+        arm.wave_id = diagnostic_batch.wave_id;
+        arm.proposal_index = diagnostic_batch.arms.size();
+        arm.arm_id = job.id + ":causal:" + std::to_string(arm.proposal_index);
+        arm.context_ref = job.seed.baseline_ref;
+        arm.fixture_ref = job.seed.verifier_ref;
+        arm.intervention_ref = job.causal_diagnostic_manifest_ref;
+        arm.batch_compatibility_key = arm.context_ref + "\n" + arm.fixture_ref;
+        arm.fresh_context = true;
+        arm.request_teacher_forced_margin = true;
+        arm.request_generation = false;
+        arm.request_host_verification = false;
+        arm.residual_patch = patch;
+        if (!common_flydelta_arm_request_validate(arm, error)) return false;
+        diagnostic_batch.arms.push_back(std::move(arm));
+        kinds.push_back(kind);
+        patches.push_back(std::move(patch));
+    }
+    if (diagnostic_batch.arms.empty()) {
+        error = "FlyDelta causal diagnostic produced no compatible patch arms";
+        return false;
+    }
+    common_flydelta_arm_batch_result diagnostic_result;
+    if (!daemon_flydelta_execute_batch(provider, diagnostic_batch, diagnostic_result, error) ||
+            diagnostic_result.arms.size() != diagnostic_batch.arms.size()) return false;
+    report.experiment_id = job.id;
+    report.manifest_ref = job.causal_diagnostic_manifest_ref;
+    report.model_profile_fingerprint = provider->model_profile_fingerprint;
+    report.capture_layout_revision = provider->capture_layout_revision;
+    report.arms.reserve(diagnostic_result.arms.size());
+    float baseline_margin = 0.0f;
+    bool baseline_available = false;
+    for (size_t index = 0; index < diagnostic_result.arms.size(); ++index) {
+        const auto & result = diagnostic_result.arms[index];
+        common_flydelta_causal_diagnostic_arm arm;
+        arm.arm_id = result.arm_id;
+        arm.patch_kind = kinds[index];
+        arm.layer = static_cast<uint32_t>(layer);
+        arm.absolute_position = absolute_position;
+        arm.sequence_id = patches[index]->sequence_id;
+        arm.executed = result.executed;
+        arm.patch_attempted = true;
+        arm.patch_applied = result.executed;
+        arm.margin_available = result.margin_available;
+        arm.candidate_margin = result.margin_total;
+        if (kinds[index] == common_flydelta_causal_patch_kind::self_replacement &&
+                result.margin_available) {
+            baseline_margin = result.margin_total;
+            baseline_available = true;
+        }
+        if (baseline_available && result.margin_available) {
+            arm.baseline_margin = baseline_margin;
+            arm.margin_delta = arm.candidate_margin - baseline_margin;
+        }
+        report.arms.push_back(std::move(arm));
+    }
+    std::vector<size_t> full_indices;
+    for (size_t index = 0; index < report.arms.size(); ++index) {
+        if (report.arms[index].margin_available && report.arms[index].margin_delta > 0.0f) {
+            full_indices.push_back(index);
+        }
+    }
+    std::sort(full_indices.begin(), full_indices.end(), [&](const size_t left, const size_t right) {
+        return report.arms[left].margin_delta > report.arms[right].margin_delta;
+    });
+    if (full_indices.size() > max_full_generation) full_indices.resize(max_full_generation);
+    if (!full_indices.empty()) {
+        common_flydelta_arm_batch_request full_batch;
+        full_batch.batch_id = job.id + ":causal-diagnostic-full";
+        full_batch.wave_id = "causal-diagnostic-full";
+        for (const size_t index : full_indices) {
+            auto arm = diagnostic_batch.arms[index];
+            arm.wave_id = full_batch.wave_id;
+            arm.request_generation = true;
+            arm.request_host_verification = true;
+            arm.max_generated_tokens = std::max<size_t>(
+                64U, provider->n_predict > 0 ? provider->n_predict : 64U);
+            full_batch.arms.push_back(std::move(arm));
+        }
+        common_flydelta_arm_batch_result full_result;
+        if (!daemon_flydelta_execute_batch(provider, full_batch, full_result, error) ||
+                full_result.arms.size() != full_batch.arms.size()) return false;
+        for (size_t index = 0; index < full_result.arms.size(); ++index) {
+            const auto & full = full_result.arms[index];
+            auto & target = report.arms[full_indices[index]];
+            target.host_evaluated = full.host_evaluated;
+            target.verifier_known = full.verifier_known;
+            target.host_outcome = full.host_outcome;
+            target.evidence_ref = full.generation_ref;
+        }
+    }
+    return common_flydelta_causal_diagnostic_report_validate(report, error);
+}
+
 bool daemon_flydelta_run_evaluation(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const common_flydelta_experiment_job & job,
@@ -2584,6 +2838,13 @@ make_daemon_flydelta_resource_binding_factory(
                     std::string & callback_error) {
                 return daemon_flydelta_run_evaluation(
                     provider, job, report, fixtures, callback_error);
+            };
+            callbacks.run_causal_diagnostic = [provider](
+                    const common_flydelta_experiment_job & job,
+                    common_flydelta_causal_diagnostic_report & report,
+                    std::string & callback_error) {
+                return daemon_flydelta_run_causal_diagnostic(
+                    provider, job, report, callback_error);
             };
             const auto pipeline = config.pipeline;
             callbacks.resolve_behavior_delta = [provider](const std::string & reference,

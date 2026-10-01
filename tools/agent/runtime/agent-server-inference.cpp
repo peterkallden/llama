@@ -47,7 +47,10 @@ void resident_trace(const char * event, const common_agent_generation_request & 
         common_agent_generation_purpose_name(request.purpose),
         request.json_schema.empty() ? "no" : "yes",
         request.options.n_predict,
-        detail);
+        (std::string("capture=") +
+            ((request.flydelta_capture && request.flydelta_capture->enabled) ? "yes" : "no") +
+            " residual_patch=" + (request.residual_patch ? "yes" : "no") +
+            " " + detail).c_str());
     std::fflush(stderr);
 }
 
@@ -349,7 +352,11 @@ public:
                 logit_bias_eog);
             reader.post_task(std::move(task));
 
-            if (prepared.stream) {
+            // The task parameters are authoritative here.  Diagnostic
+            // capture/patch requests deliberately disable streaming in
+            // make_server_task_params_from_prepared_generation(), even
+            // though the prepared JSON contract itself is stream-capable.
+            if (task.params.stream) {
                 schema_stream_state state;
 
                 while (auto response = reader.next([]() { return false; })) {

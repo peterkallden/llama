@@ -130,6 +130,36 @@ int main() {
     CHECK(worker_report.trace_json.find("flydelta_trace") != std::string::npos);
     CHECK(worker_report.trace_json.find("host_outcome") != std::string::npos);
 
+    auto causal_job = job("flydelta://job/worker-causal-diagnostic");
+    causal_job.kind = common_flydelta_experiment_job_kind::causal_diagnostic;
+    causal_job.capture_manifest_ids.clear();
+    causal_job.causal_diagnostic_manifest_ref = "flydelta://manifest/worker-causal";
+    CHECK(common_flydelta_experiment_queue_enqueue(root, causal_job, {}, error));
+    CHECK(common_flydelta_experiment_worker_run_once(root, {},
+        [&](const auto & claimed, auto & result, std::string &) {
+            result.safe_summary = "causal diagnostic completed";
+            result.has_causal_diagnostic_report = true;
+            result.causal_diagnostic_report.experiment_id = claimed.id;
+            result.causal_diagnostic_report.manifest_ref =
+                claimed.causal_diagnostic_manifest_ref;
+            result.causal_diagnostic_report.model_profile_fingerprint = "sha256:model";
+            result.causal_diagnostic_report.capture_layout_revision = "layout:v1";
+            common_flydelta_causal_diagnostic_arm arm;
+            arm.arm_id = claimed.id + ":arm";
+            arm.layer = 2;
+            arm.absolute_position = 3;
+            arm.executed = true;
+            arm.patch_attempted = true;
+            arm.patch_applied = true;
+            result.causal_diagnostic_report.arms.push_back(std::move(arm));
+            return true;
+        }, worker_report, error));
+    CHECK(worker_report.state == common_flydelta_experiment_queue_state::succeeded);
+    CHECK(worker_report.report_count == 1);
+    CHECK(worker_report.has_causal_diagnostic_report);
+    CHECK(worker_report.trace.phase == "causal_diagnostic");
+    CHECK(worker_report.trace.arms.size() == 1);
+
     auto direction_job = job("flydelta://job/worker-direction");
     direction_job.kind = common_flydelta_experiment_job_kind::direction;
     direction_job.capture_manifest_ids.clear();

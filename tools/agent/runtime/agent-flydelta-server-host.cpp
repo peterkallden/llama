@@ -1,5 +1,7 @@
 #include "agent-daemon-flydelta-internal.h"
 
+#include "agent/agent-residual-patch.h"
+
 namespace agent_daemon_flydelta_internal {
 
 bool daemon_flydelta_prepare_arm(
@@ -66,6 +68,13 @@ bool daemon_flydelta_prepare_arm(
         }
         request.flydelta_activation = std::make_shared<const common_flydelta_activation_result>(
             std::move(activation));
+    }
+    if (arm.residual_patch) {
+        if (arm.apply_overlay) {
+            error = "FlyDelta causal patch arm cannot combine a residual patch with an overlay";
+            return false;
+        }
+        request.residual_patch = arm.residual_patch;
     }
     if (arm.request_capture) {
         auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
@@ -280,6 +289,18 @@ bool daemon_flydelta_finalize_arm(
     if (!result.executed) {
         result.provenance_ref = generation.error_message;
         return false;
+    }
+    if (arm.residual_patch) {
+        if (!generation.residual_patch_observation ||
+                !generation.residual_patch_observation->attempted ||
+                !generation.residual_patch_observation->applied) {
+            error = generation.residual_patch_observation &&
+                    !generation.residual_patch_observation->failure_reason.empty()
+                ? "FlyDelta residual patch was not applied: " +
+                    generation.residual_patch_observation->failure_reason
+                : "FlyDelta residual patch completed without an applied observation";
+            return false;
+        }
     }
     if (generation.flydelta_capture && generation.flydelta_capture->captured) {
         result.capture_ref = "flydelta://runtime/capture/" + arm.arm_id;

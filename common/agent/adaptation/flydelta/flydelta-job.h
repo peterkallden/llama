@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-evidence.h"
 #include "agent/adaptation/flydelta/flydelta-contracts.h"
+#include "agent/adaptation/flydelta/flydelta-causal-diagnostic.h"
 
 #include <cstddef>
 #include <string>
@@ -17,6 +18,7 @@ enum class common_flydelta_experiment_job_kind {
     concept_capture,
     concept_synthesis,
     evaluation,
+    causal_diagnostic,
 };
 
 const char * common_flydelta_experiment_job_kind_name(
@@ -55,6 +57,10 @@ struct common_flydelta_experiment_job {
     std::string evaluation_suite_ref;
     std::string evaluation_revision;
     common_flydelta_evaluation_limits evaluation_limits;
+    // A causal diagnostic job carries only a host-owned manifest reference.
+    // The manifest resolves captures and patch metadata at execution time;
+    // raw activation vectors never cross the queue boundary.
+    std::string causal_diagnostic_manifest_ref;
     common_flydelta_alpha_search_config alpha_search;
     float learning_rate = 0.1f;
     float decay = 1.0f;

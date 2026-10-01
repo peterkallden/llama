@@ -33,6 +33,7 @@ struct causal_fixture {
     const char * failed_arguments;
     const char * task;
     bool openapi = false;
+    const char * repair_task = nullptr;
 };
 
 // The schema case is the primary candidate: the same field-oriented question
@@ -57,6 +58,21 @@ constexpr causal_fixture kOverviewFixture = {
     R"({"dataset":"dataset://local/sales"})",
     R"({"dataset":"dataset://local/sales"})",
     "For dataset://local/sales, determine which fields are available before analysis.",
+};
+
+// Smoke-local counterfactual material.  The baseline and repair prompts are
+// deliberately separate so the causal matrix can be exercised even when the
+// model solves the ordinary production wording on its first planner pass.
+// This does not change production prompting or admission semantics.
+constexpr causal_fixture kExplicitRepairPairFixture = {
+    "explicit-repair-pair",
+    "dataset.schema",
+    "dataset.inspect",
+    R"({"dataset":"dataset://local/sales"})",
+    R"({"dataset":"dataset://local/sales"})",
+    "Inspect dataset://local/sales and return the available dataset fields.",
+    false,
+    "For dataset://local/sales, return its schema with each field and type before analysis.",
 };
 
 // Observed in the production-like Qwen/OpenAlex planner run: the registered
@@ -84,15 +100,6 @@ constexpr causal_fixture kOpenAlexKnownIdFixture = {
     "Retrieve the scholarly work whose OpenAlex id is W2101234009.",
     true,
 };
-
-// Both runs ask the same semantic question.  The repair run adds the same
-// host-owned rejected-call/canonical-repair context used by the production
-// repair smoke; it does not replace the task with an opposite instruction.
-// The pair is admitted only when the model naturally produces the failed
-// choice first and then echoes the host repair.
-constexpr const char * kSystemContext =
-    "Select exactly one native tool call for the host-controlled dataset request. Return no explanation. "
-    "Use the supplied native tool definitions and return only the tool call.";
 
 struct options {
     std::string model;
@@ -135,6 +142,7 @@ bool parse_options(int argc, char ** argv, options & out) {
 const causal_fixture * fixture_for(const options & value) {
     if (value.fixture == kSchemaFixture.id) return &kSchemaFixture;
     if (value.fixture == kOverviewFixture.id) return &kOverviewFixture;
+    if (value.fixture == kExplicitRepairPairFixture.id) return &kExplicitRepairPairFixture;
     if (value.fixture == kOpenAlexArgumentRepairFixture.id) return &kOpenAlexArgumentRepairFixture;
     if (value.fixture == kOpenAlexKnownIdFixture.id) return &kOpenAlexKnownIdFixture;
     return nullptr;
@@ -174,27 +182,6 @@ bool same_json(const std::string & lhs, const std::string & rhs) {
     return !left.is_discarded() && !right.is_discarded() && left == right;
 }
 
-common_agent_generation_request request(
-        const options & value, const std::vector<common_chat_tool> & tools,
-        const char * instruction, const char * system_context,
-        std::shared_ptr<const common_agent_residual_patch_request> patch = {},
-        std::shared_ptr<const common_flydelta_hidden_state_capture_request> capture = {}) {
-    common_agent_generation_request result;
-    result.purpose = common_agent_generation_purpose::tool_followup;
-    result.options.n_predict = value.n_predict;
-    result.options.n_threads = value.threads;
-    result.options.generation_trace = true;
-    result.tools = tools;
-    result.tool_choice = COMMON_CHAT_TOOL_CHOICE_REQUIRED;
-    result.messages = {
-        {"system", system_context},
-        {"user", instruction},
-    };
-    result.residual_patch = std::move(patch);
-    result.flydelta_capture = std::move(capture);
-    return result;
-}
-
 std::string tool_continuation(const char * tool, const char * arguments) {
     // choice_prefix is {"name":".  Keep the continuation in the same
     // model-facing JSON form as the production FlyDelta scorer so the
@@ -202,16 +189,20 @@ std::string tool_continuation(const char * tool, const char * arguments) {
     return std::string(tool) + "\",\"arguments\":" + arguments + "}";
 }
 
-bool score_margin(common_agent_inference & inference, const options & value,
+bool score_margin(common_agent_inference & inference,
         const causal_fixture & fixture,
-        const std::vector<common_chat_tool> & tools, const char * instruction,
-        const char * system_context,
+        const common_agent_generation_request & base_context,
         const std::shared_ptr<const common_agent_residual_patch_request> & patch,
         common_agent_teacher_forced_choice_result & result) {
     common_agent_teacher_forced_choice_request score;
     score.sequence_id = patch && !patch->identity.empty() ? patch->identity : "baseline";
-    score.context = request(value, tools, instruction, system_context, patch);
+    // Teacher-forced scoring must use the same model-facing planner surface
+    // as the captured causal state.  Rebuilding a shorter prompt here would
+    // make the capture's absolute token position invalid and would compare
+    // a different contract/context than the observed planner decision.
+    score.context = base_context;
     score.context.flydelta_capture.reset();
+    score.context.residual_patch = patch;
     score.choice_prefix = "{\"name\":\"";
     score.positive_choice = fixture.expected_tool;
     score.negative_choice = fixture.failed_tool;
@@ -490,6 +481,46 @@ bool run_planner_counterfactual(
     if (!run_planner_observations(delegate, value, fixture, tools, capture, patch,
             observations, error)) return false;
 
+    if (fixture.repair_task != nullptr) {
+        const auto find_observation = [&](
+                const std::vector<planner_generation_observation> & values,
+                const char * expected_tool, const char * expected_arguments,
+                planner_generation_observation & selected) {
+            for (const auto & observation : values) {
+                if (planner_tool(observation.result) == expected_tool &&
+                        same_json(planner_arguments(observation.result), expected_arguments)) {
+                    selected = observation;
+                    return true;
+                }
+            }
+            return false;
+        };
+        planner_generation_observation baseline;
+        if (!find_observation(observations, fixture.failed_tool,
+                fixture.failed_arguments, baseline)) {
+            std::cerr << "planner explicit-pair baseline was not emitted\n";
+            return false;
+        }
+        causal_fixture repair_fixture = fixture;
+        repair_fixture.task = fixture.repair_task;
+        std::vector<planner_generation_observation> repair_observations;
+        if (!run_planner_observations(delegate, value, repair_fixture, tools, capture, patch,
+                repair_observations, error)) return false;
+        planner_generation_observation repair;
+        if (!find_observation(repair_observations, fixture.expected_tool,
+                fixture.expected_arguments, repair)) {
+            std::cerr << "planner explicit-pair repair was not emitted\n";
+            return false;
+        }
+        out.baseline = std::move(baseline);
+        out.repair = std::move(repair);
+        out.diagnostic_context = out.baseline.request;
+        out.diagnostic_context.flydelta_capture.reset();
+        out.diagnostic_context.residual_patch.reset();
+        error.clear();
+        return true;
+    }
+
     size_t baseline_index = observations.size();
     size_t repair_index = observations.size();
     for (size_t index = 0; index < observations.size(); ++index) {
@@ -536,7 +567,7 @@ int main(int argc, char ** argv) {
     if (!parse_options(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL [--threads N] [--n-gpu-layers N]"
-                  << " [--fixture schema-selection|overview-selection|openalex-known-id]"
+                  << " [--fixture schema-selection|overview-selection|explicit-repair-pair|openalex-known-id]"
                   << " [--openalex-spec PATH]"
                   << " [--layer N|--all-layers] [--full-matrix] [--capture-only]\n";
         return 2;
@@ -625,9 +656,9 @@ int main(int argc, char ** argv) {
     common_agent_teacher_forced_choice_result baseline_margin;
     common_agent_teacher_forced_choice_result repair_margin;
     const bool baseline_margin_available = score_margin(
-        *inference, value, *fixture, tools, fixture->task, kSystemContext, {}, baseline_margin);
+        *inference, *fixture, counterfactual.diagnostic_context, {}, baseline_margin);
     const bool repair_margin_available = score_margin(
-        *inference, value, *fixture, tools, fixture->task, kSystemContext, {}, repair_margin);
+        *inference, *fixture, counterfactual.diagnostic_context, {}, repair_margin);
     std::cout << "baseline_teacher_margin_available="
               << (baseline_margin_available ? "yes" : "no")
               << " baseline_teacher_margin="
@@ -728,7 +759,7 @@ int main(int argc, char ** argv) {
             arm.patch = patch;
             common_agent_teacher_forced_choice_result margin;
             arm.margin_available = score_margin(
-                *inference, value, *fixture, tools, fixture->task, kSystemContext, patch, margin);
+                *inference, *fixture, counterfactual.diagnostic_context, patch, margin);
             if (arm.margin_available) {
                 arm.margin = margin;
                 any_direction_signal = any_direction_signal ||
@@ -833,17 +864,32 @@ int main(int argc, char ** argv) {
                 ? &observations[valid_index].result : nullptr;
             const std::string selected = result == nullptr ? std::string{} : planner_tool(*result);
             const std::string selected_args = result == nullptr ? std::string{} : planner_arguments(*result);
-            const bool applied = result != nullptr && result->residual_patch_observation &&
-                result->residual_patch_observation->applied;
+            bool patch_attempted = false;
+            bool patch_applied = false;
+            std::string patch_failure_reason;
+            for (const auto & observation : observations) {
+                if (!observation.result.residual_patch_observation) continue;
+                patch_attempted = patch_attempted ||
+                    observation.result.residual_patch_observation->attempted;
+                patch_applied = patch_applied ||
+                    observation.result.residual_patch_observation->applied;
+                if (patch_failure_reason.empty()) {
+                    patch_failure_reason =
+                        observation.result.residual_patch_observation->failure_reason;
+                }
+            }
             std::cout << "frontier family=" << arm.family << " layer=" << arm.layer
                       << " position=" << position << " alpha=" << arm.alpha
                       << " executed=" << (executed ? "yes" : "no")
-                      << " applied=" << (applied ? "yes" : "no")
+                      << " patch_attempted=" << (patch_attempted ? "yes" : "no")
+                      << " patch_applied=" << (patch_applied ? "yes" : "no")
                       << " selected_tool=" << (selected.empty() ? "<none>" : selected)
                       << " selected_arguments=" << (selected_args.empty() ? "<none>" : selected_args)
                       << " teacher_margin=" << (arm.margin_available ? arm.margin.normalized_delta() : 0.0f)
                       << " outcome=" << (selected.empty() ? "UNKNOWN" : outcome_name(
                           baseline_selected_tool == fixture->expected_tool, candidate_passed))
+                      << (patch_failure_reason.empty() ? "" :
+                          " patch_failure=" + patch_failure_reason)
                       << '\n';
         }
         std::cout << "frontier_count=" << frontier.size() << " diagnostic_count="

@@ -111,6 +111,8 @@ struct common_flydelta_experiment_worker_result {
     std::string graft_direction_ref;
     std::vector<std::string> graft_direction_refs;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
+    bool has_causal_diagnostic_report = false;
+    common_flydelta_causal_diagnostic_report causal_diagnostic_report;
     bool has_evaluation_report = false;
     common_flydelta_evaluation_report evaluation_report;
     std::vector<common_flydelta_evaluation_fixture_result> evaluation_fixture_results;
@@ -163,6 +165,8 @@ struct common_flydelta_experiment_worker_report {
     // dropping them here would leave only the derived trace and make a real
     // HELPED result unavailable to the host lifecycle.
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
+    bool has_causal_diagnostic_report = false;
+    common_flydelta_causal_diagnostic_report causal_diagnostic_report;
     bool has_evaluation_report = false;
     common_flydelta_evaluation_report evaluation_report;
     std::vector<common_flydelta_evaluation_fixture_result> evaluation_fixture_results;

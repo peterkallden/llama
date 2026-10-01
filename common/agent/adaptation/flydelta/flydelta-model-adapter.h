@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+struct common_agent_residual_patch_request;
+
 inline constexpr size_t common_flydelta_compact_geometry_scalar_count = 4;
 inline constexpr size_t common_flydelta_compact_geometry_bytes =
     common_flydelta_compact_geometry_scalar_count * sizeof(float);
@@ -43,6 +45,9 @@ struct common_flydelta_arm_request {
     bool request_host_verification = false;
     size_t max_capture_bytes = 0;
     size_t max_generated_tokens = 0;
+    // In-memory host bridge for causal diagnostics. This is never serialized
+    // into a queue job and contains no semantic lifecycle authority.
+    std::shared_ptr<const common_agent_residual_patch_request> residual_patch;
 };
 
 // Optional backend timing/transfer telemetry. It is deliberately diagnostic:

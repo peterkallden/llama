@@ -555,6 +555,12 @@ bool daemon_flydelta_run_counterfactual(
         std::vector<common_flydelta_counterfactual_report> & reports,
         std::string & error);
 
+bool daemon_flydelta_run_causal_diagnostic(
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
+        const common_flydelta_experiment_job & job,
+        common_flydelta_causal_diagnostic_report & report,
+        std::string & error);
+
 bool daemon_flydelta_run_evaluation(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const common_flydelta_experiment_job & job,

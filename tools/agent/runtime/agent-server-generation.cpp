@@ -102,7 +102,16 @@ task_params make_server_task_params_from_prepared_generation(
     params.n_cache_reuse = params_base.n_cache_reuse;
     params.cache_prompt = params_base.cache_prompt;
     params.antiprompt = params_base.antiprompt;
-    params.stream = prepared.stream;
+    // Structured planner generations normally stream so the host can stop at
+    // the first complete JSON object.  A causal capture or residual patch is
+    // different: its evidence and patch-observation metadata are attached to
+    // the final server response.  Do not return through the first-valid JSON
+    // path before that metadata has been copied back to the request result.
+    // This keeps the diagnostic intervention request-scoped and leaves the
+    // ordinary production planner path unchanged.
+    params.stream = prepared.stream &&
+        !(request.flydelta_capture && request.flydelta_capture->enabled) &&
+        !request.residual_patch;
     params.n_predict = request.options.n_predict;
     if (request.options.t_max_prompt_ms) {
         params.t_max_prompt_ms = *request.options.t_max_prompt_ms;

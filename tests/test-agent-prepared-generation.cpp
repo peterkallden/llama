@@ -317,6 +317,36 @@ void test_server_task_params_from_prepared_generation() {
     assert(!baseline_params.cvec);
     assert(baseline_params.cache_prompt);
     assert(baseline_params.n_cache_reuse == params_base.n_cache_reuse);
+    assert(baseline_params.stream);
+
+    // Structured JSON remains streaming by default, but capture and residual
+    // patch requests must receive the final server response so their
+    // request-scoped metadata is not lost on the first valid JSON object.
+    auto capture_request = std::make_shared<common_flydelta_hidden_state_capture_request>();
+    capture_request->enabled = true;
+    capture_request->layer_indices = {1};
+    capture_request->max_bytes = 1024;
+    capture_request->position = common_flydelta_capture_position::generation_boundary;
+    auto capture_context = baseline_request;
+    capture_context.flydelta_capture = capture_request;
+    const auto capture_params = make_server_task_params_from_prepared_generation(
+        params_base, capture_context, prepared, logit_bias_eog);
+    assert(!capture_params.stream);
+    assert(!capture_params.cache_prompt);
+    assert(capture_params.n_cache_reuse == 0);
+
+    auto residual_patch = std::make_shared<common_agent_residual_patch_request>();
+    residual_patch->site = common_agent_residual_patch_site::layer_input_residual;
+    residual_patch->layer = 1;
+    residual_patch->absolute_position = 0;
+    residual_patch->values = {0.25f, 0.5f};
+    auto patch_context = baseline_request;
+    patch_context.residual_patch = residual_patch;
+    const auto patch_params = make_server_task_params_from_prepared_generation(
+        params_base, patch_context, prepared, logit_bias_eog);
+    assert(!patch_params.stream);
+    assert(!patch_params.cache_prompt);
+    assert(patch_params.n_cache_reuse == 0);
 
     assert(params.stream);
     assert(!params.cache_prompt);

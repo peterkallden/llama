@@ -11,6 +11,7 @@
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-concept.h"
+#include "agent/adaptation/flydelta/flydelta-causal-diagnostic.h"
 
 #include <cstddef>
 #include <functional>
@@ -58,6 +59,13 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_experiment_job & job,
             std::vector<common_flydelta_counterfactual_report> & reports,
             std::string & error)> run_counterfactual;
+
+    // Host-owned causal intervention diagnostics. The callback returns
+    // observations only; it must not persist activation authority or evidence.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            common_flydelta_causal_diagnostic_report & report,
+            std::string & error)> run_causal_diagnostic;
 
     // Host-owned pre-canary evaluation. All prompt/context/artifact
     // resolution remains behind this callback; the queue carries references.
@@ -228,6 +236,8 @@ struct common_flydelta_evaluator_callbacks {
 struct common_flydelta_evaluator_result {
     std::vector<common_flydelta_capture_manifest> capture_manifests;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
+    bool has_causal_diagnostic_report = false;
+    common_flydelta_causal_diagnostic_report causal_diagnostic_report;
     bool has_evaluation_report = false;
     common_flydelta_evaluation_report evaluation_report;
     std::vector<common_flydelta_evaluation_fixture_result> evaluation_fixture_results;
