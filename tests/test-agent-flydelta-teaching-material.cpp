@@ -207,6 +207,24 @@ int main() {
         candidate.median_alignment = 0.9f;
         candidate.control_residualized = true;
         candidates.push_back(std::move(candidate));
+        common_flydelta_concept_candidate prototype;
+        prototype.synthesis_semantics =
+            common_flydelta_concept_synthesis_semantics::positive_prototype;
+        prototype.concept_key = "dataset.grouped_sum.v1";
+        prototype.extraction_id = "extraction:grouped-sum:1";
+        prototype.behavior_key = "tool_choice/dataset/grouped_sum";
+        prototype.origin = "host_taught_positive_prototype";
+        prototype.model_profile_fingerprint = "model:v1";
+        prototype.capture_layout_revision = "capture:v1";
+        prototype.layer_index = 12;
+        prototype.values = {0.80178374f, 0.53452248f, 0.26726124f};
+        prototype.source_trajectories = 2;
+        prototype.retained_trajectories = 2;
+        prototype.control_trajectories = 2;
+        prototype.retained_control_trajectories = 2;
+        prototype.median_alignment = 0.9f;
+        prototype.control_residualized = false;
+        candidates.push_back(std::move(prototype));
         return true;
     };
     callbacks.persist_experimental_direction = [](
@@ -214,18 +232,24 @@ int main() {
             std::string & direction_ref,
             std::string &) {
         if (!candidate.experimental_only || candidate.values.size() != 3) return false;
-        direction_ref = "flydelta://concept-direction/test";
+        direction_ref = candidate.kind == common_flydelta_direction_kind::positive_prototype
+            ? "flydelta://concept-direction/prototype"
+            : "flydelta://concept-direction/control";
         return true;
     };
     common_flydelta_evaluator_result evaluator_result;
     CHECK(common_flydelta_evaluate_job(
         job, evaluator_config, callbacks, evaluator_result, error));
-    CHECK(evaluator_result.concept_candidates.size() == 1);
-    CHECK(evaluator_result.direction_candidates.size() == 1);
+    CHECK(evaluator_result.concept_candidates.size() == 2);
+    CHECK(evaluator_result.direction_candidates.size() == 2);
     CHECK(evaluator_result.direction_candidates.front().experimental_only);
     CHECK(evaluator_result.direction_candidates.front().origin ==
         "host_taught_extracted");
-    CHECK(evaluator_result.graft_direction_ref == "flydelta://concept-direction/test");
+    CHECK(evaluator_result.graft_direction_refs.size() == 2);
+    CHECK(evaluator_result.graft_direction_ref ==
+        "flydelta://concept-direction/control");
+    CHECK(evaluator_result.graft_direction_refs[1] ==
+        "flydelta://concept-direction/prototype");
     CHECK(evaluator_result.next_action == common_flydelta_next_action::run_bootstrap);
 
     common_flydelta_evaluator_callbacks capture_callbacks;

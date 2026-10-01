@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <ctime>
+#include <vector>
 
 namespace {
 
@@ -716,13 +717,22 @@ int main(int argc, char ** argv) {
             const common_flydelta_experiment_job & parent_job,
             const common_flydelta_experiment_worker_report & report,
             std::string & schedule_error) {
-            common_flydelta_experiment_collection_result collection_result;
-            return common_flydelta_collect_next_action_job(
-                queue_root, queue_limits, parent_job, report.next_action,
-                report.bootstrap_zoom_state_ref, report.search_state_ref,
-                report.representation_augmentation_state_ref,
-                report.graft_direction_ref,
-                collection_result, schedule_error);
+            std::vector<std::string> graft_refs = report.graft_direction_refs;
+            if (graft_refs.empty() && !report.graft_direction_ref.empty()) {
+                graft_refs.push_back(report.graft_direction_ref);
+            }
+            if (graft_refs.empty()) graft_refs.push_back({});
+            for (const auto & graft_ref : graft_refs) {
+                common_flydelta_experiment_collection_result collection_result;
+                if (!common_flydelta_collect_next_action_job(
+                        queue_root, queue_limits, parent_job, report.next_action,
+                        report.bootstrap_zoom_state_ref, report.search_state_ref,
+                        report.representation_augmentation_state_ref,
+                        graft_ref, collection_result, schedule_error)) {
+                    return false;
+                }
+            }
+            return true;
         };
     flydelta_worker_config.bind_teaching_material_group =
         [material_runtime = runtime.flydelta_teaching_material_runtime](

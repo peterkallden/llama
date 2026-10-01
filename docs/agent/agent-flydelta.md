@@ -376,11 +376,18 @@ representation extension only: neither source grants learning credit,
 promotion eligibility or activation authority.
 
 The current concept-synthesis job returns the complete candidate set for
-inspection and validation but retains the existing single primary graft
-reference in the scheduler contract. The first graft is therefore a search
-continuation, not a claim that all candidate variants were independently
-selected or model-verified. Multi-candidate frontier scheduling remains a
-separate bounded follow-up change.
+inspection and validation and persists a bounded frontier of at most two
+directions: the first raw `control_residualized` candidate and the first raw
+`positive_prototype` candidate. The first persisted reference is mirrored in
+the legacy single `graft_direction_ref`; the additional references are carried
+through the worker report as `graft_direction_refs`. Each reference receives
+its own idempotent ordinary search-pipeline job, with the same localized
+WHERE/state references and a candidate-specific queue identity. The model
+smoke executes those frontier jobs serially so the comparison is between
+strategies, not concurrent GPU workloads. This is a bounded model-backed
+comparison seam: candidates remain experimental-only, and neither diagnostics
+nor a successful search job creates learning credit, promotion evidence or
+activation authority.
 
 Capability reporting must follow the same boundary: a capability is available
 only when its production callback and durable resolver are registered. The
@@ -490,7 +497,7 @@ journal remains the durable evidence boundary.
 | 2026-10-01 | this local sweep | Model-facing tool output now has a shared `native`/`jsonl`/`compact_dsl` selection seam; compact V1 accepts both command- and call-shaped scalar DSL | Model-free codec CTest passed; Cozo/Vulkan build linked the codec, runtime host and OpenAlex compact-DSL smoke. Model-backed rerun remains a separate validation step after this wiring change | Added profile/request format selection and canonical normalization to the existing tool-call contract. Unsupported nested/array/union schemas are filtered from compact-DSL views; no provider, planner, repair, FlyDelta or promotion policy was changed |
 | 2026-10-01 | this local sweep | Qwen format smoke verified the shared codec on the resident server-context path | Qwen Instruct on Intel Vulkan0 with four inference threads produced a parseable JSONL `openalex.listWorks` call; the exact fixture still lacked optional `per_page=1`. Compact DSL was not accepted because the model emitted unsupported `contains(...)`/misnamed arguments, so no model-quality pass is claimed | This is model-output evidence, not a production policy change: the host now distinguishes codec parsing from exact fixture/host validation. The compact DSL V1 remains intentionally scalar-only and the smoke exposes `--tool-output-format {jsonl,compact_dsl}` for controlled comparison |
 | 2026-10-01 | this local sweep | Compact DSL comparison now normalizes explicitly declared comma-separated fields | Codec CTest passed; Phi-4 Mini Instruct on Intel Vulkan0 with four inference threads produced `openalex.listWorks(search="machine learning", select="id, display_name", per_page=1)` and the OpenAlex smoke passed after normalizing `select` token whitespace | Added a shared comma-separated-string normalizer for schema-aware callers. Ordinary scalar strings such as `search` remain unchanged; `per_page` remains optional in the OpenAPI schema but is required by this one-result smoke fixture |
-| 2026-10-01 | this local sweep | Positive-prototype synthesis added beside the existing control-residualized concept path | Cozo/Vulkan daemon target and focused concept/teaching CTests passed serially; model-free concept smoke produced three residualized plus three positive-prototype candidates per family; Qwen Instruct Vulkan0 resident server-context smoke passed with two relations, six capture arms, six candidates and safe `no_useful_utility` graft termination | Added explicit synthesis semantics, independent positive/control capture validation and CPU prototype estimators. Positive prototypes remain experimental-only; the current scheduler still persists one primary graft reference per synthesis job and no learning credit or promotion was created |
+| 2026-10-01 | this local sweep | Positive-prototype synthesis added beside the existing control-residualized concept path | Cozo/Vulkan daemon target and focused concept/teaching CTests passed serially; model-free concept smoke produced three residualized plus three positive-prototype candidates per family; Qwen Instruct Vulkan0 resident server-context smoke passed with two relations, six capture arms, six candidates and safe `no_useful_utility` graft termination | Added explicit synthesis semantics, independent positive/control capture validation and CPU prototype estimators. Positive prototypes remain experimental-only; the scheduler now persists and runs a bounded two-candidate frontier (control-residualized raw plus positive-prototype raw) serially, with no learning credit or promotion created |
 
 ## Natural dataset-question smoke
 

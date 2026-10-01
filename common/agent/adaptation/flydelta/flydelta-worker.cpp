@@ -151,6 +151,7 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
     trace.next_action = result.next_action;
     trace.next_action_reason = result.next_action_reason;
     trace.graft_direction_ref = result.graft_direction_ref;
+    trace.graft_direction_refs = result.graft_direction_refs;
 
     if (result.counterfactual_reports.size() <= 256) {
         for (const auto & report : result.counterfactual_reports) {
@@ -270,6 +271,16 @@ bool validate_result(
         error = "FlyDelta worker graft direction reference is invalid";
         return false;
     }
+    if (result.graft_direction_refs.size() > 8) {
+        error = "FlyDelta worker graft direction portfolio exceeds its bound";
+        return false;
+    }
+    for (const auto & direction_ref : result.graft_direction_refs) {
+        if (direction_ref.empty() || direction_ref.size() > 512) {
+            error = "FlyDelta worker graft direction portfolio contains an invalid reference";
+            return false;
+        }
+    }
     for (const auto & counterfactual : result.counterfactual_reports) {
         if (!common_flydelta_counterfactual_report_validate(counterfactual, error)) return false;
         const bool belongs_to_evaluation = claimed.job.kind ==
@@ -358,7 +369,8 @@ bool validate_result(
     }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::concept_synthesis &&
             (result.concept_candidates.empty() || result.direction_candidates.empty() ||
-             result.graft_direction_ref.empty())) {
+             result.graft_direction_ref.empty() || result.graft_direction_refs.empty() ||
+             result.graft_direction_refs.front() != result.graft_direction_ref)) {
         error = "FlyDelta concept synthesis worker result requires candidates and a graft reference";
         return false;
     }
@@ -443,6 +455,7 @@ bool common_flydelta_experiment_worker_run_once(
     report.utility_decision = result.utility_decision;
     report.next_action_reason = std::move(result.next_action_reason);
     report.graft_direction_ref = std::move(result.graft_direction_ref);
+    report.graft_direction_refs = std::move(result.graft_direction_refs);
     report.has_representation_augmentation_state = result.has_representation_augmentation_state;
     report.representation_augmentation_state = std::move(result.representation_augmentation_state);
     report.representation_augmentation_state_ref =
@@ -458,11 +471,23 @@ bool common_flydelta_trace_validate(
             trace.fixture_baseline_ref.size() > 512 ||
             trace.surface_parent_best_ref.size() > 512 ||
             trace.next_action_reason.size() > 512 || trace.graft_direction_ref.size() > 512 ||
+            trace.graft_direction_refs.size() > 8 ||
             trace.arms.size() > 256 ||
             trace.whirlpool.size() > 32 || trace.bootstrap_refinement.size() > 64 ||
             !finite(trace.alpha_last_scale) || !finite(trace.alpha_utility_slope) ||
             !finite(trace.alpha_best_margin_delta_normalized)) {
         error = "FlyDelta trace exceeds its bounds";
+        return false;
+    }
+    for (const auto & direction_ref : trace.graft_direction_refs) {
+        if (direction_ref.empty() || direction_ref.size() > 512) {
+            error = "FlyDelta trace contains an invalid graft direction portfolio reference";
+            return false;
+        }
+    }
+    if (!trace.graft_direction_refs.empty() &&
+            trace.graft_direction_refs.front() != trace.graft_direction_ref) {
+        error = "FlyDelta trace primary graft reference does not match its portfolio";
         return false;
     }
     for (const auto & arm : trace.arms) {
@@ -538,6 +563,7 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
         {"next_action", common_flydelta_next_action_name(trace.next_action)},
         {"next_action_reason", trace.next_action_reason},
         {"graft_direction_ref", trace.graft_direction_ref},
+        {"graft_direction_refs", trace.graft_direction_refs},
         {"arms", std::move(arms)}, {"whirlpool", std::move(whirlpool)}
     };
     return payload.dump();
@@ -553,6 +579,7 @@ bool common_flydelta_worker_result_from_evaluator(
     target.concept_candidates = source.concept_candidates;
     target.concept_trajectory_refs = source.concept_trajectory_refs;
     target.graft_direction_ref = source.graft_direction_ref;
+    target.graft_direction_refs = source.graft_direction_refs;
     target.counterfactual_reports = source.counterfactual_reports;
     target.has_evaluation_report = source.has_evaluation_report;
     target.evaluation_report = source.evaluation_report;

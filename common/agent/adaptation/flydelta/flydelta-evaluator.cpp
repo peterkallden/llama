@@ -1,5 +1,6 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace {
@@ -12,6 +13,47 @@ bool is_representation_augmentation_state_ref(const std::string & value) {
 
 bool valid_reference_count(size_t count, size_t max_references) {
     return count != 0 && count <= max_references;
+}
+
+std::vector<size_t> select_concept_frontier(
+        const std::vector<common_flydelta_concept_candidate> & candidates,
+        size_t max_candidates) {
+    std::vector<size_t> selected;
+    if (max_candidates == 0) return selected;
+    selected.reserve(std::min(max_candidates, candidates.size()));
+
+    // V0 compares one raw estimator per semantic source. This keeps the
+    // model budget deterministic and makes control-residualized versus
+    // positive-prototype an apples-to-apples frontier. If a semantic source
+    // has no raw estimator, its first available estimator is the fallback.
+    const common_flydelta_concept_synthesis_semantics semantics[] = {
+        common_flydelta_concept_synthesis_semantics::control_residualized,
+        common_flydelta_concept_synthesis_semantics::positive_prototype,
+    };
+    for (const auto semantic : semantics) {
+        if (selected.size() >= max_candidates) break;
+        size_t fallback = candidates.size();
+        size_t preferred = candidates.size();
+        for (size_t index = 0; index < candidates.size(); ++index) {
+            if (candidates[index].synthesis_semantics != semantic) continue;
+            if (fallback == candidates.size()) fallback = index;
+            if (candidates[index].kind == common_flydelta_concept_candidate_kind::raw_mean) {
+                preferred = index;
+                break;
+            }
+        }
+        const size_t chosen = preferred != candidates.size() ? preferred : fallback;
+        if (chosen != candidates.size() &&
+                std::find(selected.begin(), selected.end(), chosen) == selected.end()) {
+            selected.push_back(chosen);
+        }
+    }
+    for (size_t index = 0; index < candidates.size() && selected.size() < max_candidates; ++index) {
+        if (std::find(selected.begin(), selected.end(), index) == selected.end()) {
+            selected.push_back(index);
+        }
+    }
+    return selected;
 }
 
 bool resolve_bootstrap_zoom_state_for_job(
@@ -251,7 +293,8 @@ bool common_flydelta_evaluate_job(
         std::string & error) {
     error.clear();
     result = {};
-    if (config.max_references == 0 ||
+    if (config.max_references == 0 || config.concept_frontier_max_candidates == 0 ||
+            config.concept_frontier_max_candidates > 8 ||
             !common_flydelta_experiment_job_validate(
                 job, config.max_references, error)) return false;
     if (has_orchestration_resolver(callbacks) != has_orchestration_persister(callbacks)) {
@@ -314,24 +357,33 @@ bool common_flydelta_evaluate_job(
                 error = "FlyDelta concept synthesis requires an experimental direction persistence callback for graft";
                 return false;
             }
-            const bool persisted = !result.direction_candidates.empty() &&
-                (callbacks.persist_experimental_direction_for_job
+            const auto selected = select_concept_frontier(
+                result.concept_candidates, config.concept_frontier_max_candidates);
+            for (const size_t index : selected) {
+                std::string direction_ref;
+                const bool persisted = callbacks.persist_experimental_direction_for_job
                     ? callbacks.persist_experimental_direction_for_job(
-                        job, result.direction_candidates.front(),
-                        result.graft_direction_ref, error)
+                        job, result.direction_candidates[index], direction_ref, error)
                     : callbacks.persist_experimental_direction(
-                        result.direction_candidates.front(),
-                        result.graft_direction_ref, error));
-            if (!persisted ||
-                    result.graft_direction_ref.empty() || result.graft_direction_ref.size() > 512) {
+                        result.direction_candidates[index], direction_ref, error);
+                if (!persisted || direction_ref.empty() || direction_ref.size() > 512) {
+                    if (error.empty()) {
+                        error = "FlyDelta concept synthesis did not return a bounded graft direction reference";
+                    }
+                    return false;
+                }
+                result.graft_direction_refs.push_back(std::move(direction_ref));
+            }
+            if (result.graft_direction_refs.empty()) {
                 if (error.empty()) {
-                    error = "FlyDelta concept synthesis did not return a bounded graft direction reference";
+                    error = "FlyDelta concept synthesis selected no bounded frontier candidates";
                 }
                 return false;
             }
+            result.graft_direction_ref = result.graft_direction_refs.front();
             result.has_next_action = true;
             result.next_action = common_flydelta_next_action::run_bootstrap;
-            result.next_action_reason = "Concept direction persisted; graft into ordinary FlyDelta search surface";
+            result.next_action_reason = "Bounded concept direction frontier persisted; schedule independent ordinary FlyDelta searches";
             return true;
         }
         case common_flydelta_experiment_job_kind::donor_capture: {

@@ -93,6 +93,7 @@ struct common_flydelta_trace {
     common_flydelta_next_action next_action = common_flydelta_next_action::retain;
     std::string next_action_reason;
     std::string graft_direction_ref;
+    std::vector<std::string> graft_direction_refs;
     std::vector<common_flydelta_trace_arm> arms;
     std::vector<common_flydelta_whirlpool_trace> whirlpool;
 };
@@ -108,6 +109,7 @@ struct common_flydelta_experiment_worker_result {
     std::vector<common_flydelta_concept_candidate> concept_candidates;
     std::vector<std::string> concept_trajectory_refs;
     std::string graft_direction_ref;
+    std::vector<std::string> graft_direction_refs;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
     bool has_evaluation_report = false;
     common_flydelta_evaluation_report evaluation_report;
@@ -177,6 +179,7 @@ struct common_flydelta_experiment_worker_report {
     common_flydelta_utility_gate_decision utility_decision;
     std::string next_action_reason;
     std::string graft_direction_ref;
+    std::vector<std::string> graft_direction_refs;
     bool has_representation_augmentation_state = false;
     common_flydelta_representation_augmentation_state representation_augmentation_state;
     std::string representation_augmentation_state_ref;

@@ -327,9 +327,27 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
 
     const auto generation_start = std::chrono::steady_clock::now();
     std::vector<common_agent_generation_result> generation_results;
-    if (!session.inference->generate_batch(generation_requests, generation_results) ||
-            generation_results.size() != request.arms.size()) {
+    const bool generation_ok = session.inference->generate_batch(
+        generation_requests, generation_results);
+    if (!generation_ok || generation_results.size() != request.arms.size()) {
         error = "resident FlyDelta host batch generation returned incomplete results";
+        if (generation_results.size() != request.arms.size()) {
+            error += " (results=" + std::to_string(generation_results.size()) +
+                ", requested=" + std::to_string(request.arms.size()) + ")";
+        }
+        const size_t diagnostic_count = std::min(
+            generation_results.size(), request.arms.size());
+        for (size_t index = 0; index < diagnostic_count; ++index) {
+            const auto & generation_result = generation_results[index];
+            if (common_agent_generation_succeeded(generation_result)) {
+                continue;
+            }
+            error += " arm=" + request.arms[index].arm_id +
+                " status=" + std::to_string(static_cast<int>(generation_result.status));
+            if (!generation_result.error_message.empty()) {
+                error += " detail=" + generation_result.error_message;
+            }
+        }
         return false;
     }
     const float generation_ms = static_cast<float>(

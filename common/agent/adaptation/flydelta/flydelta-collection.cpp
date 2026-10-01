@@ -191,7 +191,7 @@ bool common_flydelta_collect_next_action_job(
     }
     const std::string state_key = bootstrap_zoom_state_ref + "\n" +
         search_state_ref + "\n" + representation_augmentation_state_ref + "\n" +
-        parent_job.teaching_material_group_ref;
+        parent_job.teaching_material_group_ref + "\n" + graft_direction_ref;
     common_flydelta_experiment_job follow_up = parent_job;
     follow_up.id = parent_job.id + "/next/" +
         common_flydelta_next_action_name(next_action) + "/" +

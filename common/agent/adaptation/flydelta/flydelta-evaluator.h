@@ -30,6 +30,10 @@ struct common_flydelta_evaluator_config {
     size_t aggregation_max_retained_samples = 32;
     size_t max_capture_bytes = 4U * 1024U * 1024U;
     size_t max_references = 128;
+    // Bounded synthesis frontier. The default compares one deterministic
+    // candidate per synthesis semantic while preserving the legacy primary
+    // graft reference for single-candidate callers.
+    size_t concept_frontier_max_candidates = 2;
 };
 
 struct common_flydelta_evaluator_callbacks {
@@ -236,6 +240,9 @@ struct common_flydelta_evaluator_result {
     std::vector<std::string> concept_trajectory_refs;
     // Opaque intervention reference for the next ordinary search surface.
     std::string graft_direction_ref;
+    // Persisted portfolio refs for independent bounded frontier searches.
+    // The first entry is mirrored by graft_direction_ref.
+    std::vector<std::string> graft_direction_refs;
     common_flydelta_aggregation_snapshot aggregation;
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;

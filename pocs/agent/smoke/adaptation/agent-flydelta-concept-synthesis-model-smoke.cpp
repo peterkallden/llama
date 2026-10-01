@@ -293,6 +293,29 @@ void print_search_summary(
             {"rounds", std::move(rounds)},
         });
     }
+    json arms = json::array();
+    for (const auto & arm : report.trace.arms) {
+        arms.push_back({
+            {"arm_id", arm.arm_id},
+            {"layers", arm.layer_indices},
+            {"requested_scale", arm.requested_scale},
+            {"executed_scale", arm.executed_scale},
+            {"margin_available", arm.margin_available},
+            {"margin_delta_total", arm.margin_delta_total},
+            {"margin_delta_normalized", arm.margin_delta_normalized},
+            {"geometry_available", arm.geometry_available},
+            {"cosine", arm.cosine},
+            {"progress", arm.progress},
+            {"leakage", arm.leakage},
+            {"shift_norm", arm.shift_norm},
+            {"search_score", arm.search_score},
+            {"safe_to_continue", arm.safe_to_continue},
+            {"host_evaluated", arm.host_evaluated},
+            {"verifier_known", arm.verifier_known},
+            {"candidate_passed", arm.candidate_passed},
+            {"host_outcome", common_flydelta_counterfactual_outcome_name(arm.host_outcome)},
+        });
+    }
     std::cout << "flydelta_concept_synthesis_search=" << json{
         {"phase", phase},
         {"state", common_flydelta_experiment_queue_state_name(report.state)},
@@ -303,6 +326,8 @@ void print_search_summary(
         {"next_action", common_flydelta_next_action_name(report.next_action)},
         {"bootstrap_state_ref", report.bootstrap_zoom_state_ref},
         {"search_state_ref", report.search_state_ref},
+        {"graft_direction_ref", report.completed_job.seed.candidate_ref},
+        {"arms_detail", std::move(arms)},
         {"whirlpool", std::move(whirlpool)},
     }.dump() << '\n';
 }
@@ -572,6 +597,8 @@ int main(int argc, char ** argv) {
         {"candidate_count", synthesis_report.concept_candidates.size()},
         {"candidates", std::move(candidates)},
         {"graft_direction_ref", synthesis_report.graft_direction_ref},
+        {"graft_direction_refs", synthesis_report.graft_direction_refs},
+        {"frontier_semantics", {"control_residualized", "positive_prototype"}},
         {"next_action", common_flydelta_next_action_name(synthesis_report.next_action)},
         {"promotion", false},
     }.dump() << '\n';
@@ -585,16 +612,41 @@ int main(int argc, char ** argv) {
             collection_result != common_flydelta_experiment_collection_result::enqueued) {
         return fail("grafted search queue: " + error);
     }
-    common_flydelta_experiment_worker_report graft_report;
-    if (!common_flydelta_experiment_worker_run_evaluator_once(
-            queue_root, {}, evaluator_config, callbacks, graft_report, error) ||
-            !report_succeeded(
-                graft_report, common_flydelta_experiment_job_kind::search_pipeline, error)) {
-        return fail("grafted production search: " + error);
+    if (synthesis_report.graft_direction_refs.size() != 2) {
+        return fail("bounded concept frontier did not select control and prototype directions");
     }
-    print_search_summary(graft_report, "concept-graft");
-    if (graft_report.completed_job.seed.candidate_ref != synthesis_report.graft_direction_ref) {
-        return fail("grafted search did not consume the persisted concept direction");
+    // The two frontier jobs are deliberately executed one at a time. This
+    // keeps the model comparison serial while still using the production
+    // queue, resident server-context and ordinary search pipeline.
+    std::vector<common_flydelta_experiment_worker_report> graft_reports;
+    graft_reports.reserve(synthesis_report.graft_direction_refs.size());
+    for (size_t index = 0; index < synthesis_report.graft_direction_refs.size(); ++index) {
+        if (index != 0) {
+            if (!common_flydelta_collect_next_action_job(
+                    queue_root, {}, synthesis_report.completed_job,
+                    common_flydelta_next_action::run_bootstrap,
+                    synthesis_report.bootstrap_zoom_state_ref, synthesis_report.search_state_ref,
+                    synthesis_report.representation_augmentation_state_ref,
+                    synthesis_report.graft_direction_refs[index], collection_result, error) ||
+                    collection_result != common_flydelta_experiment_collection_result::enqueued) {
+                return fail("frontier search queue: " + error);
+            }
+        }
+        common_flydelta_experiment_worker_report graft_report;
+        if (!common_flydelta_experiment_worker_run_evaluator_once(
+                queue_root, {}, evaluator_config, callbacks, graft_report, error) ||
+                !report_succeeded(
+                    graft_report, common_flydelta_experiment_job_kind::search_pipeline, error)) {
+            return fail("frontier production search: " + error);
+        }
+        if (graft_report.completed_job.seed.candidate_ref !=
+                synthesis_report.graft_direction_refs[index]) {
+            return fail("frontier search did not consume its persisted concept direction");
+        }
+        print_search_summary(graft_report,
+            index == 0 ? "concept-graft-control-residualized" :
+                "concept-graft-positive-prototype");
+        graft_reports.push_back(std::move(graft_report));
     }
 
     std::cout << "flydelta_concept_synthesis_model_smoke=completed"
@@ -606,6 +658,8 @@ int main(int argc, char ** argv) {
               << " capture_arms=" << group.relation_refs.size() * 3
               << " trajectories=" << capture_report.concept_trajectory_refs.size()
               << " candidates=" << synthesis_report.concept_candidates.size()
+              << " frontier_candidates=" << synthesis_report.graft_direction_refs.size()
+              << " frontier_searches=" << graft_reports.size()
               << " graft_to_search=yes"
               << " learning_credit=none"
               << " promotion=false\n";
