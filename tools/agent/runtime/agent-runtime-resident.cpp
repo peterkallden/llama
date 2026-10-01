@@ -43,6 +43,7 @@ common_agent_runtime_turn_request make_agent_runtime_resident_base_turn_request(
     turn_request.generation_options.n_predict = config.n_predict;
     turn_request.generation_options.n_threads = config.n_threads;
     turn_request.request.tool_argument_bindings = config.tool_argument_bindings;
+    turn_request.request.tool_output_format = config.tool_output_format;
     return turn_request;
 }
 
@@ -124,6 +125,7 @@ bool common_agent_runtime_resident_runtime::prepare_model(std::string & error) {
         base_turn_request.inference_options.context_size_tokens =
             resident_model_handle.selection.context_size_tokens;
         base_turn_request.policy.agent_inference_backend = resident_model_handle.selection.backend;
+        base_turn_request.request.tool_output_format = resident_model_handle.selection.tool_output_format;
         agent_inference_backend backend;
         if (!parse_agent_inference_backend(
                 base_turn_request.policy.agent_inference_backend, backend) ||

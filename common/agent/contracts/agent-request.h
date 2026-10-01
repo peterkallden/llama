@@ -10,6 +10,7 @@
 #include "agent/thinking/deliberation-policy.h"
 #include "agent/thinking/research/research-contract.h"
 #include "agent/tooling/contracts/tool-runtime-contract.h"
+#include "agent/tooling/schema/tool-output-codec.h"
 #include "memory/memory-candidate.h"
 #include "memory/memory-policy-pack.h"
 #include "memory/memory-types.h"
@@ -65,6 +66,10 @@ struct common_agent_request {
     // CLI/tests may require at least one successfully completed tool call
     // before the turn is allowed to fall back to a plain answer.
     bool require_tool_execution = false;
+    // Native preserves the existing chat-template path. JSONL and compact DSL
+    // are explicit textual model-output modes selected by the host/model
+    // profile or a smoke-local request override.
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
     common_agent_deliberation_policy deliberation_policy;
     std::string prompt;
     std::vector<common_agent_input_resource> input_resources;

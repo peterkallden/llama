@@ -52,6 +52,12 @@ bool common_agent_validate_model_profile(
         error = "model profile load policy is invalid";
         return false;
     }
+    if (profile.tool_output_format != common_agent_tool_output_format::native &&
+            profile.tool_output_format != common_agent_tool_output_format::jsonl &&
+            profile.tool_output_format != common_agent_tool_output_format::compact_dsl) {
+        error = "model profile tool output format is invalid";
+        return false;
+    }
     if (profile.adapters.size() > 8) {
         error = "model profile has too many adapter overlays";
         return false;
@@ -112,6 +118,7 @@ std::string common_agent_model_profile_cache_key(
         key << "flydelta:" << sideband.sideband_id << ':' << sideband.binding_key << ':' <<
             sideband.scale << '\n';
     }
+    key << "tool-output:" << common_agent_tool_output_format_name(profile.tool_output_format) << '\n';
     return key.str();
 }
 
@@ -137,6 +144,7 @@ std::string common_agent_model_profile_to_json(
         {"n_parallel", profile.n_parallel},
         {"n_sequences", profile.n_sequences},
         {"load_policy", profile.load_policy},
+        {"tool_output_format", common_agent_tool_output_format_name(profile.tool_output_format)},
         {"adapters", adapters},
         {"sidebands", sidebands},
     }.dump();
@@ -169,6 +177,15 @@ bool common_agent_model_profile_from_json(
                 !json_string(value, "chat_template_fingerprint", profile.chat_template_fingerprint, error) ||
                 !json_string(value, "load_policy", profile.load_policy, error)) {
             return false;
+        }
+        if (value.contains("tool_output_format")) {
+            if (!value.at("tool_output_format").is_string() ||
+                    !common_parse_agent_tool_output_format(
+                        value.at("tool_output_format").get<std::string>(),
+                        profile.tool_output_format, error)) {
+                if (error.empty()) error = "model profile tool output format is invalid";
+                return false;
+            }
         }
         for (const auto & item : value.at("adapters")) {
             if (!item.is_object() || !item.contains("adapter_id") ||

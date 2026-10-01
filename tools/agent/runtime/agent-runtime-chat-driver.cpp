@@ -3,10 +3,16 @@
 #include "../tooling/agent-tool-provider.h"
 #include "tools/agent/resource/agent-resource-processing-service.h"
 #include "agent/tooling/bridge/tool-chat-bridge.h"
+#include "agent/tooling/schema/tool-output-codec.h"
 
 #include <ctime>
 
 namespace {
+
+bool is_textual_tool_output_format(common_agent_tool_output_format format) {
+    return format == common_agent_tool_output_format::jsonl ||
+        format == common_agent_tool_output_format::compact_dsl;
+}
 
 std::string make_generation_trace_id(
         const common_agent_request & request,
@@ -35,15 +41,34 @@ common_agent_generation_request make_generation_request(
         const std::vector<common_chat_tool> & tools,
         common_chat_tool_choice tool_choice,
         const common_agent_runtime_tooling & execution_tooling) {
+    const bool textual_tool_output = is_textual_tool_output_format(request.tool_output_format) &&
+        !tools.empty();
+    std::vector<common_chat_msg> model_messages = messages;
+    std::vector<common_chat_tool> model_tools = tools;
+    common_chat_tool_choice model_tool_choice = tool_choice;
+    if (textual_tool_output) {
+        std::vector<std::string> unsupported;
+        std::string format_error;
+        const auto instructions = common_render_model_tool_output_instructions(
+            request.tool_output_format, tools, &unsupported, format_error);
+        if (!instructions.empty()) {
+            model_messages.insert(model_messages.begin(), {"system", instructions});
+        }
+        // Textual output is parsed by the shared model-output codec below;
+        // passing native tools here would activate the chat-template parser
+        // and make the two model-facing dialects impossible to distinguish.
+        model_tools.clear();
+        model_tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;
+    }
     auto generation = common_agent_make_generation_request(
         purpose,
         make_generation_trace_id(request, purpose),
         common_agent_scope_from_request(request),
-        messages,
+        model_messages,
         options,
         {},
-        tools,
-        tool_choice,
+        model_tools,
+        model_tool_choice,
         request.flydelta_activation);
     generation.input_resources.reserve(request.input_resources.size());
     for (const auto & input : request.input_resources) {
@@ -98,10 +123,21 @@ common_agent_generation_request make_generation_request(
 bool parse_assistant_message(
         const common_agent_generation_result & generation_result,
         bool parse_tool_calls,
+        common_agent_tool_output_format output_format,
         common_chat_msg & assistant_message,
         std::string & error) {
     assistant_message = {};
     assistant_message.role = "assistant";
+    if (parse_tool_calls && is_textual_tool_output_format(output_format)) {
+        assistant_message.content = generation_result.content;
+        common_agent_tool_call call;
+        if (!common_parse_model_tool_call(output_format, generation_result.content, call, error)) {
+            return false;
+        }
+        assistant_message.tool_calls.push_back({call.name, call.arguments_json, "textual-tool-1"});
+        error.clear();
+        return true;
+    }
     if (!parse_tool_calls && !generation_result.chat_params) {
         assistant_message.content = generation_result.content;
         error.clear();
@@ -213,6 +249,22 @@ bool run_agent_chat_runtime(
         : (execution.request.require_tool_execution
             ? COMMON_CHAT_TOOL_CHOICE_REQUIRED
             : COMMON_CHAT_TOOL_CHOICE_AUTO);
+    if (!available_tools.empty() && is_textual_tool_output_format(execution.request.tool_output_format)) {
+        std::vector<std::string> unsupported;
+        std::string format_error;
+        const auto instructions = common_render_model_tool_output_instructions(
+            execution.request.tool_output_format,
+            available_tools,
+            &unsupported,
+            format_error);
+        if (instructions.empty() || !format_error.empty()) {
+            error = format_error.empty()
+                ? "model-facing tool output format has no representable tools"
+                : "model-facing tool output contract is invalid: " + format_error;
+            result.error = error;
+            return false;
+        }
+    }
     auto generation_result = execution.inference.generate_result(make_generation_request(
         execution.request,
         common_agent_generation_purpose::conversation,
@@ -269,7 +321,12 @@ bool run_agent_chat_runtime(
     }
 
     common_chat_msg assistant_message;
-    if (!parse_assistant_message(generation_result, !execution.tooling.tools.empty(), assistant_message, error)) {
+    if (!parse_assistant_message(
+            generation_result,
+            !execution.tooling.tools.empty(),
+            execution.request.tool_output_format,
+            assistant_message,
+            error)) {
         return false;
     }
 
@@ -318,7 +375,12 @@ bool run_agent_chat_runtime(
             error = describe_generation_failure("chat generation", generation_result);
             return false;
         }
-        if (!parse_assistant_message(generation_result, allow_another_tool_round && !execution.tooling.tools.empty(), assistant_message, error)) {
+        if (!parse_assistant_message(
+                generation_result,
+                allow_another_tool_round && !execution.tooling.tools.empty(),
+                execution.request.tool_output_format,
+                assistant_message,
+                error)) {
             return false;
         }
     }

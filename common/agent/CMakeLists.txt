@@ -151,6 +151,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     tooling/registry/tool-registry.cpp tooling/registry/tool-registry.h
     tooling/contracts/tool-result-contracts.cpp tooling/contracts/tool-result-contracts.h
     tooling/schema/tool-schema-compact.cpp tooling/schema/tool-schema-compact.h
+    tooling/schema/tool-output-codec.cpp tooling/schema/tool-output-codec.h
     tooling/synthetic/synthetic-tool-cases.cpp tooling/synthetic/synthetic-tool-cases.h
     tooling/routing/tool-navigation.cpp tooling/routing/tool-navigation.h
     thinking/research/research-contract.h
@@ -177,6 +178,7 @@ set(AGENT_TOOLING_SOURCES
     tooling/registry/tool-registry.cpp
     tooling/contracts/tool-result-contracts.cpp
     tooling/schema/tool-schema-compact.cpp
+    tooling/schema/tool-output-codec.cpp
     tooling/synthetic/synthetic-tool-cases.cpp
     tool-family-index.cpp
     tool-workflow-index.cpp

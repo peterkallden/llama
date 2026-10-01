@@ -5,6 +5,8 @@
 // model to select itself.
 #pragma once
 
+#include "agent/tooling/schema/tool-output-codec.h"
+
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -37,6 +39,7 @@ struct common_agent_model_profile {
     std::string load_policy = "lazy";
     std::vector<common_agent_adapter_overlay> adapters;
     std::vector<common_agent_flydelta_sideband_overlay> sidebands;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
 };
 
 bool common_agent_validate_model_profile(

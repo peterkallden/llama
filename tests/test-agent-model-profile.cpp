@@ -13,6 +13,7 @@ static common_agent_model_profile profile() {
     value.n_parallel = 2;
     value.n_sequences = 3;
     value.load_policy = "resident";
+    value.tool_output_format = common_agent_tool_output_format::compact_dsl;
     value.adapters.push_back({"adapter-v1", 0.75});
     return value;
 }
@@ -28,6 +29,7 @@ int main() {
     assert(common_agent_model_profile_cache_key(parsed) == key);
     assert(parsed.n_parallel == 2);
     assert(parsed.n_sequences == 3);
+    assert(parsed.tool_output_format == common_agent_tool_output_format::compact_dsl);
 
     value.sidebands.push_back({"", 0.5, "flydelta://binding/tool-repair"});
     assert(common_agent_validate_model_profile(value, error));

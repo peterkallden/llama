@@ -448,6 +448,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-tool-adapters.cpp
         test-tool-catalog.cpp
         test-tool-chat-bridge.cpp
+        test-agent-tool-output-codec.cpp
         test-tool-family-index.cpp
         test-tool-navigation.cpp
         test-agent-clangd-protocol.cpp

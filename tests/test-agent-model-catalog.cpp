@@ -34,7 +34,8 @@ const char * kCatalog = R"json({
       "context_size": 4096,
       "n_parallel": 2,
       "n_sequences": 3,
-      "load": "resident"
+      "load": "resident",
+      "tool_output_format": "jsonl"
     }
   },
   "routing": {
@@ -71,6 +72,7 @@ bool test_parse_and_resolve() {
         profile.sidebands.size() == 1 &&
         profile.sidebands.front().sideband_id == "flydelta://sideband/tool-repair-v1" &&
         profile.load_policy == "resident")) return false;
+    if (profile.tool_output_format != common_agent_tool_output_format::jsonl) return false;
 
     common_agent_model_selection selection;
     if (!common_agent_model_catalog_resolve_profile(catalog, {}, selection, error)) return false;
@@ -79,6 +81,7 @@ bool test_parse_and_resolve() {
         selection.path == (std::filesystem::path("/models") / "qwen.gguf").lexically_normal().string() &&
         selection.mmproj.empty() && selection.context_size_tokens == 4096 &&
         selection.n_parallel == 2 && selection.n_sequences == 3 &&
+        selection.tool_output_format == common_agent_tool_output_format::jsonl &&
         selection.adapters.size() == 1 && selection.sidebands.size() == 1;
 }
 

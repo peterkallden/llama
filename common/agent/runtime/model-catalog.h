@@ -27,6 +27,7 @@ struct common_agent_model_profile_spec {
     int n_sequences = 1;
     // Empty means inherit the base model's load policy.
     std::string load_policy;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
 };
 
 struct common_agent_model_catalog {
@@ -54,6 +55,7 @@ struct common_agent_model_selection {
     std::string load_policy;
     std::vector<common_agent_adapter_overlay> adapters;
     std::vector<common_agent_flydelta_sideband_overlay> sidebands;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
 };
 
 bool common_agent_validate_model_catalog(

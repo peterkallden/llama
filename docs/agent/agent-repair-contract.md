@@ -73,6 +73,40 @@ an untyped field. Native tools already use the same full-schema versus
 model-schema distinction, and other providers may populate the optional
 projection when they have equivalent host-owned requirements.
 
+### Model-facing output dialects
+
+The host may select the model-facing tool output format per model profile. The
+legacy `native` value keeps the chat-template tool-call path. The explicit
+textual formats are `jsonl` and `compact_dsl`:
+
+```json
+{"tool":"openalex.listWorks","arguments":{"search":"machine learning","per_page":1}}
+```
+
+The V1 compact DSL accepts both the command form:
+
+```text
+open! openalex.listWorks search="machine learning" per_page=1
+```
+
+and the compatible call form:
+
+```text
+openalex.listWorks(search="machine learning", per_page=1)
+```
+
+Both forms normalize to the same canonical `{tool,args}` call before ordinary
+host validation. The compact V1 projection supports scalar strings, numbers,
+booleans and scalar enums. Nested objects, arrays and unions are not rendered
+as an approximate contract; tools requiring them are omitted from a compact
+DSL model profile and remain available through a profile using JSONL/native
+output. These deferred types are an explicit extension point, not a repair
+fallback.
+
+The output dialect changes only serialization and parsing. Tool identity,
+provider authority, host-required arguments, schema normalization, policy,
+reflection repair, execution and learning/evidence semantics remain shared.
+
 When the host already knows a concrete argument value from a structured
 request, workflow slot or fixture, it may attach a
 `common_agent_tool_argument_binding` to the turn. The binding is generic across

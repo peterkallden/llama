@@ -1,11 +1,10 @@
-#include "agent/tooling/schema/tool-schema-compact.h"
+#include "agent/tooling/schema/tool-output-codec.h"
 #include "tools/agent/openapi/agent-openapi-catalog.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -21,6 +20,7 @@ using json = nlohmann::ordered_json;
 struct options {
     std::string model;
     std::string spec;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
     int threads = 4;
     int gpu_layers = 99;
     int n_predict = 48;
@@ -41,6 +41,11 @@ bool parse_options(int argc, char ** argv, options & value) {
             const char * value_text = next(); if (!value_text) return false; value.model = value_text;
         } else if (argument == "--openalex-spec") {
             const char * value_text = next(); if (!value_text) return false; value.spec = value_text;
+        } else if (argument == "--tool-output-format") {
+            const char * value_text = next(); if (!value_text) return false;
+            std::string format_error;
+            if (!common_parse_agent_tool_output_format(value_text, value.tool_output_format, format_error) ||
+                    value.tool_output_format == common_agent_tool_output_format::native) return false;
         } else if (argument == "--threads") {
             const char * value_text = next(); if (!value_text) return false; value.threads = std::stoi(value_text);
         } else if (argument == "--n-gpu-layers") {
@@ -59,104 +64,6 @@ bool parse_options(int argc, char ** argv, options & value) {
         !value.model.empty() && !value.spec.empty();
 }
 
-std::string trim(const std::string & input) {
-    size_t first = 0;
-    while (first < input.size() && std::isspace(static_cast<unsigned char>(input[first]))) ++first;
-    size_t last = input.size();
-    while (last > first && std::isspace(static_cast<unsigned char>(input[last - 1]))) --last;
-    return input.substr(first, last - first);
-}
-
-bool identifier_char(char value) {
-    return std::isalnum(static_cast<unsigned char>(value)) || value == '_' || value == '.' || value == '-';
-}
-
-bool parse_compact_dsl(
-        const std::string & text,
-        std::string & tool,
-        json & arguments,
-        std::string & error) {
-    const std::string line = trim(text);
-    if (line.empty() || line.find('\n') != std::string::npos || line.find('\r') != std::string::npos) {
-        error = "compact DSL must be exactly one non-empty line";
-        return false;
-    }
-    if (line.rfind("open!", 0) != 0) {
-        error = "compact DSL must start with open!";
-        return false;
-    }
-    size_t position = 5;
-    const size_t tool_start = position;
-    while (position < line.size() && !std::isspace(static_cast<unsigned char>(line[position]))) {
-        if (!identifier_char(line[position])) {
-            error = "compact DSL contains an invalid tool name";
-            return false;
-        }
-        ++position;
-    }
-    if (position == tool_start) {
-        error = "compact DSL has no tool name";
-        return false;
-    }
-    tool = line.substr(tool_start, position - tool_start);
-    arguments = json::object();
-    while (position < line.size()) {
-        while (position < line.size() && std::isspace(static_cast<unsigned char>(line[position]))) ++position;
-        if (position == line.size()) break;
-        const size_t key_start = position;
-        while (position < line.size() && identifier_char(line[position])) ++position;
-        if (position == key_start || position >= line.size() || line[position] != '=') {
-            error = "compact DSL argument must be key=value";
-            return false;
-        }
-        const std::string key = line.substr(key_start, position - key_start);
-        if (arguments.contains(key)) {
-            error = "compact DSL repeats argument: " + key;
-            return false;
-        }
-        ++position;
-        if (position >= line.size()) {
-            error = "compact DSL argument has no value: " + key;
-            return false;
-        }
-        if (line[position] == '"') {
-            ++position;
-            std::string value;
-            bool closed = false;
-            while (position < line.size()) {
-                const char character = line[position++];
-                if (character == '"') { closed = true; break; }
-                if (character == '\\') {
-                    if (position >= line.size()) break;
-                    const char escaped = line[position++];
-                    if (escaped == '"' || escaped == '\\') value.push_back(escaped);
-                    else { error = "compact DSL has unsupported string escape"; return false; }
-                } else {
-                    value.push_back(character);
-                }
-            }
-            if (!closed) { error = "compact DSL has an unterminated string"; return false; }
-            arguments[key] = value;
-            continue;
-        }
-        const size_t value_start = position;
-        while (position < line.size() && !std::isspace(static_cast<unsigned char>(line[position]))) ++position;
-        const std::string value = line.substr(value_start, position - value_start);
-        if (value == "true" || value == "false") {
-            arguments[key] = value == "true";
-        } else {
-            const auto parsed = json::parse(value, nullptr, false);
-            if (parsed.is_discarded() || !parsed.is_number()) {
-                error = "compact DSL scalar is not a JSON number or boolean: " + key;
-                return false;
-            }
-            arguments[key] = parsed;
-        }
-    }
-    error.clear();
-    return true;
-}
-
 std::string one_line(const std::string & text) {
     std::string result = text;
     for (char & character : result) {
@@ -165,6 +72,37 @@ std::string one_line(const std::string & text) {
         if (character == '\t') character = ' ';
     }
     return result;
+}
+
+bool model_arguments_match_fixture(
+        const json & arguments,
+        std::string & mismatch) {
+    mismatch.clear();
+    if (arguments.value("search", std::string{}) != "machine learning") {
+        mismatch = "search does not match";
+        return false;
+    }
+    if (!arguments.contains("per_page") || !arguments["per_page"].is_number_integer() ||
+            arguments["per_page"].get<int>() != 1) {
+        mismatch = "fixture requests per_page=1";
+        return false;
+    }
+    if (!arguments.contains("select") || !arguments["select"].is_string()) {
+        mismatch = "select is missing or not a string";
+        return false;
+    }
+    std::string normalized_select;
+    std::string select_error;
+    if (!common_normalize_comma_separated_string(
+            arguments["select"].get<std::string>(), normalized_select, select_error)) {
+        mismatch = select_error;
+        return false;
+    }
+    if (normalized_select != "id,display_name") {
+        mismatch = "select does not match id,display_name";
+        return false;
+    }
+    return true;
 }
 
 bool load_tool(const options & value, common_chat_tool & tool, std::string & error) {
@@ -201,6 +139,7 @@ int main(int argc, char ** argv) {
     if (!parse_options(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL --openalex-spec PATH [--threads N]"
+                  << " [--tool-output-format {jsonl,compact_dsl}]"
                   << " [--n-gpu-layers N] [--n-predict N] [--strict]\n";
         return 2;
     }
@@ -213,10 +152,15 @@ int main(int argc, char ** argv) {
         std::cerr << error << '\n';
         return 1;
     }
-    const std::string compact_contract = common_render_compact_tool_description(
-        tool.name, tool.description, tool.parameters, tool.result_schema, error);
+    std::vector<std::string> unsupported;
+    const std::string model_contract = common_render_model_tool_output_instructions(
+        value.tool_output_format, {tool}, &unsupported, error);
     if (!error.empty()) {
         std::cerr << "could not render model-facing contract: " << error << '\n';
+        return 1;
+    }
+    if (!unsupported.empty()) {
+        std::cerr << "OpenAlex operation is not compact-DSL representable\n";
         return 1;
     }
 
@@ -251,37 +195,35 @@ int main(int argc, char ** argv) {
     // the production native tool grammar to intercept the output.
     request.messages = {
         {"system",
-            "Tool execution is required. Use the registered model-facing tool contract below, "
-            "but return exactly one compact DSL call on one line. The format is "
-            "open!TOOL_NAME key=value ... . Quote string values with double quotes. "
-            "Do not return JSON, native tool-call wrappers, explanations, or a final answer.\n\n"
-            "Registered tool contract:\n" + compact_contract},
+            model_contract + "\nDo not return JSON, native tool-call wrappers, explanations, or a final answer."},
         {"user",
             "Search OpenAlex for machine learning and request one result with fields id and display_name. "
             "Emit the compact DSL call now."},
     };
 
     const auto result = session.inference->generate_result(request);
-    std::cout << "compact_dsl_raw=" << one_line(result.content) << '\n';
+    std::cout << "model_output_format="
+              << common_agent_tool_output_format_name(value.tool_output_format) << '\n';
+    std::cout << "model_output_raw=" << one_line(result.content) << '\n';
     if (!common_agent_generation_succeeded(result)) {
-        std::cout << "compact_dsl_result=not_generated error=" << result.error_message << '\n';
+        std::cout << "model_output_result=not_generated error=" << result.error_message << '\n';
         return 1;
     }
-    std::string selected_tool;
-    json arguments;
+    common_agent_tool_call parsed_call;
     std::string parse_error;
-    const bool parsed = parse_compact_dsl(result.content, selected_tool, arguments, parse_error);
-    const json expected_arguments = {
-        {"search", "machine learning"},
-        {"per_page", 1},
-        {"select", "id,display_name"},
-    };
-    const bool contract_match = parsed && selected_tool == tool.name && arguments == expected_arguments;
-    std::cout << "compact_dsl_parsed=" << (parsed ? "yes" : "no")
-              << " tool=" << (selected_tool.empty() ? "<none>" : selected_tool)
+    const bool parsed = common_parse_model_tool_call(
+        value.tool_output_format, result.content, parsed_call, parse_error);
+    const auto arguments = parsed ? json::parse(parsed_call.arguments_json) : json::object();
+    std::string fixture_mismatch;
+    const bool contract_match = parsed && parsed_call.name == tool.name &&
+        model_arguments_match_fixture(arguments, fixture_mismatch);
+    std::cout << "model_output_parsed=" << (parsed ? "yes" : "no")
+              << " tool=" << (parsed_call.name.empty() ? "<none>" : parsed_call.name)
               << " arguments=" << (parsed ? arguments.dump() : "<none>")
-              << " parse_error=" << (parse_error.empty() ? "<none>" : parse_error) << '\n';
-    std::cout << "compact_dsl_result=" << (contract_match ? "passed" : "invalid")
+              << " parse_error=" << (parse_error.empty() ? "<none>" : parse_error)
+              << " fixture_mismatch=" << (fixture_mismatch.empty() ? "<none>" : fixture_mismatch)
+              << '\n';
+    std::cout << "model_output_result=" << (contract_match ? "passed" : "invalid")
               << " production_changed=no server_context=yes native_parser_used=no\n";
     return contract_match || !value.strict ? 0 : 1;
 }
