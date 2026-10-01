@@ -190,9 +190,9 @@ common_flydelta_teaching_relation make_relation(
         const std::string & verifier) {
     common_flydelta_teaching_relation relation;
     relation.id = "teaching://concept-synthesis/" + id;
-    relation.teaching_key = "qwen.instruction-following.v1";
+    relation.teaching_key = "dataset.grouped-aggregation.v1";
     relation.source = common_adaptation_evidence_source::procedure_blueprint;
-    relation.behavior_key = "concept/qwen/instruction-following";
+    relation.behavior_key = "dataset/grouped-aggregation";
     relation.scope = scope;
     relation.task_fingerprint = "task:concept-synthesis:" + id;
     relation.baseline_ref = baseline;
@@ -201,8 +201,8 @@ common_flydelta_teaching_relation make_relation(
     relation.verifier_ref = verifier;
     relation.evidence_ref = "evidence://concept-synthesis/" + id;
     relation.contrast_ref = "contrast://concept-synthesis/" + id;
-    relation.procedure_ref = "procedure://qwen-instruction-following/v1";
-    relation.blueprint_ref = "blueprint://qwen-instruction-following/v1";
+    relation.procedure_ref = "procedure://dataset-grouped-aggregation/v1";
+    relation.blueprint_ref = "blueprint://dataset-grouped-aggregation/v1";
     relation.status = common_flydelta_teaching_relation_status::resolved;
     relation.baseline_origin = common_flydelta_teaching_origin::host_derived;
     relation.conditioned_origin = common_flydelta_teaching_origin::host_derived;
@@ -226,7 +226,7 @@ common_flydelta_experiment_collection_request make_search_request(
     request.evidence.id = "evidence://concept-synthesis/search";
     request.evidence.source = common_adaptation_evidence_source::procedure_blueprint;
     request.evidence.scope = scope;
-    request.evidence.behavior_key = "concept/qwen/instruction-following";
+    request.evidence.behavior_key = "dataset/grouped-aggregation";
     request.evidence.task_fingerprint = "task:concept-synthesis/search";
     request.evidence.baseline_ref = baseline_ref;
     request.evidence.candidate_ref = direction_ref;
@@ -399,16 +399,27 @@ int main(int argc, char ** argv) {
     std::string baseline_ref;
     if (!put_json_resource(
             *runtime.resource_store, scope, "concept-synthesis-baseline.json",
-            json{{"prompt", "Follow the instruction and answer with one short sentence."},
-                 {"n_predict", 1}}, baseline_ref, error)) {
+            json{{"prompt",
+                "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. For this baseline attempt, deliberately inspect the dataset instead of computing the grouped total. Return exactly this one JSON object and no prose: {\"name\":\"statistics.describe\",\"arguments\":{\"dataset\":\"dataset://local/sales\"}}."},
+                 {"n_predict", 64}}, baseline_ref, error)) {
         return fail("baseline resource: " + error);
     }
     std::string verifier_ref;
     if (!put_json_resource(
             *runtime.resource_store, scope, "concept-synthesis-fixture.json",
-            json{{"choice_prefix", "Answer:"},
-                 {"positive_continuation", " yes"},
-                 {"negative_continuation", " no"}}, verifier_ref, error)) {
+            json{
+                {"verification_mode", "normalized_call"},
+                {"semantic_kind", "dataset_operation"},
+                {"oracle_ref", "flydelta://oracle/dataset-operation"},
+                {"oracle_revision", "dataset-operation:v1"},
+                {"oracle_policy_revision", "dataset-operation-policy:v1"},
+                {"expected_decision", {
+                    {"operation", "aggregate"},
+                    {"dataset", "dataset://local/sales"},
+                    {"group_by", {"region"}},
+                    {"measure", "amount"},
+                }},
+            }, verifier_ref, error)) {
         return fail("fixture resource: " + error);
     }
     std::string direction_ref;
@@ -436,7 +447,7 @@ int main(int argc, char ** argv) {
                     {"kind", "flydelta_behavior_delta"},
                     {"id", "delta://concept-synthesis/search/" + std::to_string(index)},
                     {"source", "procedure_blueprint"},
-                    {"behavior_key", "concept/qwen/instruction-following"},
+                    {"behavior_key", "dataset/grouped-aggregation"},
                     {"capture_manifest_id", baseline_ref},
                     {"host_evidence_ref", "evidence://concept-synthesis/search"},
                     {"scope_fingerprint", "scope:concept-synthesis-smoke"},
@@ -469,17 +480,17 @@ int main(int argc, char ** argv) {
                 *runtime.resource_store, scope,
                 "concept-synthesis-conditioned-" + std::to_string(index) + ".json",
                 json{{"prompt", index == 0
-                    ? "Follow the instruction and answer with one short sentence about a cat."
-                    : "Follow the instruction and answer with one short sentence about a river."},
-                     {"n_predict", 1}}, conditioned_ref, error)) {
+                    ? "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. Use the host-required grouped aggregation call. Return exactly this one JSON object and no prose: {\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"group_by\":[\"region\"],\"measures\":[{\"function\":\"sum\",\"column\":\"amount\"}]}}."
+                    : "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. The required operation is grouped aggregation: sum amount grouped by region. Return exactly this one JSON object and no prose: {\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"group_by\":[\"region\"],\"measures\":[{\"function\":\"sum\",\"column\":\"amount\"}]}}."},
+                     {"n_predict", 64}}, conditioned_ref, error)) {
             return fail("conditioned resource: " + error);
         }
         std::string control_ref;
         if (!put_json_resource(
                 *runtime.resource_store, scope,
                 "concept-synthesis-control-" + std::to_string(index) + ".json",
-                json{{"prompt", "Ignore the subject and answer with one short sentence."},
-                     {"n_predict", 1}}, control_ref, error)) {
+                json{{"prompt", "You are a dataset tool-calling agent. Acknowledge the request without selecting the requested grouped aggregation. Return exactly this one JSON object and no prose: {\"name\":\"statistics.describe\",\"arguments\":{\"dataset\":\"dataset://local/sales\"}}."},
+                     {"n_predict", 32}}, control_ref, error)) {
             return fail("control resource: " + error);
         }
         relations.push_back(make_relation(
@@ -501,7 +512,7 @@ int main(int argc, char ** argv) {
     material_identity.verifier_revision = "daemon:host-verifier-v1";
     common_flydelta_teaching_material_group group;
     if (!runtime.flydelta_teaching_material_runtime->store().group_ready(
-            "qwen.instruction-following.v1", "concept/qwen/instruction-following",
+            "dataset.grouped-aggregation.v1", "dataset/grouped-aggregation",
             material_identity, 2, group, error) || !group.relation_set_ready) {
         return fail("teaching material group: " + error);
     }

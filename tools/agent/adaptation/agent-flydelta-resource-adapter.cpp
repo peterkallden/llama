@@ -784,6 +784,7 @@ bool daemon_flydelta_persist_concept_trajectory(
         const common_flydelta_hidden_state_capture & baseline,
         const common_flydelta_hidden_state_capture & conditioned,
         const common_flydelta_hidden_state_capture & control,
+        bool conditioned_host_verified,
         std::string & trajectory_ref,
         std::string & error) {
     std::vector<float> baseline_values;
@@ -813,7 +814,7 @@ bool daemon_flydelta_persist_concept_trajectory(
         {"conditioned", conditioned_values},
         {"control", control_values},
         {"aligned", true},
-        {"conditioned_host_verified", relation.host_approved},
+        {"conditioned_host_verified", conditioned_host_verified},
         {"teaching_key", relation.teaching_key},
         {"concept_key", relation.teaching_key},
         {"extraction_id", "flydelta://extraction/" + relation.teaching_key},

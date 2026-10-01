@@ -113,6 +113,8 @@ common_flydelta_concept_candidate candidate() {
     value.values = {0.26726124f, 0.53452248f, 0.80178374f};
     value.source_trajectories = 2;
     value.retained_trajectories = 2;
+    value.control_trajectories = 2;
+    value.retained_control_trajectories = 2;
     value.median_alignment = 0.9f;
     value.control_residualized = true;
     return value;

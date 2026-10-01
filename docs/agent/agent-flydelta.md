@@ -389,6 +389,17 @@ comparison seam: candidates remain experimental-only, and neither diagnostics
 nor a successful search job creates learning credit, promotion evidence or
 activation authority.
 
+The production concept-capture seam now host-verifies the conditioned arm
+before persisting `conditioned_host_verified`; relation admission alone is not
+model evidence. The resident Qwen concept-synthesis smoke uses a versioned
+`normalized_call` dataset-operation fixture with the host-grounded
+`data.aggregate(dataset://local/sales, group_by=[region], sum(amount))`
+decision. Its baseline is deliberately wrong, while conditioned captures must
+pass the same production dataset Oracle. This makes the positive-prototype
+fixture counterfactual and model-facing without granting learning credit or
+promotion. The smoke still does not provide holdout/transfer validation for
+the synthesized direction.
+
 Capability reporting must follow the same boundary: a capability is available
 only when its production callback and durable resolver are registered. The
 presence of a common algorithm or model-free smoke callback is not sufficient.
@@ -499,6 +510,7 @@ journal remains the durable evidence boundary.
 | 2026-10-01 | this local sweep | Compact DSL comparison now normalizes explicitly declared comma-separated fields | Codec CTest passed; Phi-4 Mini Instruct on Intel Vulkan0 with four inference threads produced `openalex.listWorks(search="machine learning", select="id, display_name", per_page=1)` and the OpenAlex smoke passed after normalizing `select` token whitespace | Added a shared comma-separated-string normalizer for schema-aware callers. Ordinary scalar strings such as `search` remain unchanged; `per_page` remains optional in the OpenAPI schema but is required by this one-result smoke fixture |
 | 2026-10-01 | this local sweep | Positive-prototype synthesis added beside the existing control-residualized concept path | Cozo/Vulkan daemon target and focused concept/teaching CTests passed serially; model-free concept smoke produced three residualized plus three positive-prototype candidates per family; Qwen Instruct Vulkan0 resident server-context smoke passed with two relations, six capture arms, six candidates and safe `no_useful_utility` graft termination | Added explicit synthesis semantics, independent positive/control capture validation and CPU prototype estimators. Positive prototypes remain experimental-only; the scheduler now persists and runs a bounded two-candidate frontier (control-residualized raw plus positive-prototype raw) serially, with no learning credit or promotion created |
 | 2026-10-01 | this local correction sweep | Full-generation attempt is now reported independently from verifier decisiveness | Focused FlyDelta CTests passed serially; the Qwen resident server-context run completed its bounded frontier with `host_evaluated=true` and `verifier_known=false` on the generic concept fixture | Propagated explicit host-evaluation provenance through counterfactual trials and lifecycle observations, and enabled non-stream resident content tracing. `UNKNOWN` remains fail-closed: no learning credit, selection or promotion |
+| 2026-10-01 | this local correction sweep | Positive-prototype capture now requires actual host verification and the model fixture is a dataset grouped-aggregation counterfactual | Six focused contract/smoke CTests passed serially; Qwen Instruct Vulkan0 resident server-context smoke completed with a deliberately failing baseline, host-valid conditioned captures, 2 relations x 3 capture arms, six synthesis candidates and two serial grafted frontiers; both frontiers stopped at `no_useful_utility`, with no learning credit or promotion | Replaced the generic instruction-following fixture with a versioned `normalized_call` dataset-operation fixture; production trajectory provenance now records the conditioned arm's real verifier result rather than relation admission. The remaining gap is holdout/transfer validation, not the positive-prototype admission seam |
 
 ## Natural dataset-question smoke
 

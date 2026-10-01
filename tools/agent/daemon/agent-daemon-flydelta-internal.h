@@ -302,6 +302,7 @@ bool daemon_flydelta_persist_concept_trajectory(
         const common_flydelta_hidden_state_capture & baseline,
         const common_flydelta_hidden_state_capture & conditioned,
         const common_flydelta_hidden_state_capture & control,
+        bool conditioned_host_verified,
         std::string & trajectory_ref,
         std::string & error);
 

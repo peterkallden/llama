@@ -98,9 +98,10 @@ bool daemon_flydelta_run_concept_capture(
             arm.fresh_context = true;
             arm.request_capture = true;
             arm.request_generation = true;
-            arm.request_host_verification = false;
+            arm.request_host_verification = true;
             arm.max_capture_bytes = 4U * 1024U * 1024U;
-            arm.max_generated_tokens = 1;
+            arm.max_generated_tokens = std::max<size_t>(
+                64U, provider->n_predict > 0 ? provider->n_predict : 64U);
             const std::string identity = job.id + "\n" + material.relation.id + "\n" +
                 std::to_string(side) + "\n" + contexts[side];
             arm.arm_id = "flydelta://concept-arm/" +
@@ -130,6 +131,13 @@ bool daemon_flydelta_run_concept_capture(
             error = "FlyDelta concept capture contains an unexecuted arm";
             return false;
         }
+        if (!conditioned_result.host_evaluated ||
+                !conditioned_result.verifier_known ||
+                conditioned_result.host_outcome !=
+                    common_flydelta_counterfactual_outcome::neutral) {
+            error = "FlyDelta concept capture conditioned arm is not host verified";
+            return false;
+        }
         std::shared_ptr<const common_flydelta_hidden_state_capture> baseline;
         std::shared_ptr<const common_flydelta_hidden_state_capture> conditioned;
         std::shared_ptr<const common_flydelta_hidden_state_capture> control;
@@ -151,6 +159,10 @@ bool daemon_flydelta_run_concept_capture(
                 provider, material, job.teaching_material_group_ref, job.id,
                 baseline_result.capture_ref, conditioned_result.capture_ref,
                 control_result.capture_ref, *baseline, *conditioned, *control,
+                conditioned_result.host_evaluated &&
+                    conditioned_result.verifier_known &&
+                    conditioned_result.host_outcome ==
+                        common_flydelta_counterfactual_outcome::neutral,
                 trajectory_ref, error)) return false;
         trajectory_refs.push_back(std::move(trajectory_ref));
     }
