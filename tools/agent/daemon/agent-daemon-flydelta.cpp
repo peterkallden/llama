@@ -2729,6 +2729,90 @@ bool daemon_flydelta_run_evaluation(
     }
     report.status = report.intended_behavior_passed && report.retention_passed &&
         report.agent_regression_passed ? "passed" : "failed";
+
+    // Persist the detailed Oracle observations as a separate immutable
+    // resource.  The lifecycle evaluation report keeps only this reference
+    // and provenance revisions, so promotion continues to consume the same
+    // bounded gates as before without embedding a second evidence system.
+    common_flydelta_oracle_suite_report oracle_report;
+    const std::string oracle_identity = job.id + "\n" + job.evaluation_candidate_id +
+        "\n" + job.evaluation_revision;
+    oracle_report.id = "flydelta://oracle-suite/" +
+        hash_sha256_hex(oracle_identity.data(), oracle_identity.size()).substr(0, 32);
+    oracle_report.candidate_id = job.evaluation_candidate_id;
+    oracle_report.evaluation_revision = job.evaluation_revision;
+    oracle_report.model_profile_id = report.candidate_profile_id;
+    oracle_report.oracle_ref = "flydelta://oracle/host-counterfactual";
+    oracle_report.oracle_revision = "daemon:host-verifier-v1";
+    oracle_report.policy_revision = "daemon:evaluation-gates-v1";
+    oracle_report.observations.reserve(fixture_results.size());
+    size_t controls = 0;
+    size_t retained_controls = 0;
+    size_t transfers = 0;
+    int transfer_delta = 0;
+    bool no_harm = true;
+    for (const auto & fixture : fixture_results) {
+        common_flydelta_oracle_suite_fixture_observation observation;
+        observation.probe_id = fixture.report_ref;
+        observation.suite_kind = common_flydelta_evaluation_suite_kind_name(fixture.suite_kind);
+        observation.fixture_ref = fixture.fixture_ref;
+        observation.verifier_revision = fixture.verifier_revision;
+        observation.outcome = common_flydelta_counterfactual_outcome_name(
+            fixture.counterfactual.outcome);
+        observation.baseline_known = fixture.baseline_known;
+        observation.baseline_passed = fixture.baseline_passed;
+        observation.candidate_known = fixture.candidate_known;
+        observation.candidate_passed = fixture.candidate_passed;
+        oracle_report.observations.push_back(std::move(observation));
+        if (fixture.counterfactual.outcome == common_flydelta_counterfactual_outcome::harmed) {
+            no_harm = false;
+        }
+        if (fixture.suite_kind == common_flydelta_evaluation_suite_kind::retention ||
+                fixture.suite_kind == common_flydelta_evaluation_suite_kind::control) {
+            ++controls;
+            if (fixture.counterfactual.outcome == common_flydelta_counterfactual_outcome::neutral) {
+                ++retained_controls;
+            }
+        }
+        if (fixture.suite_kind == common_flydelta_evaluation_suite_kind::transfer) {
+            ++transfers;
+            if (fixture.candidate_passed != fixture.baseline_passed) {
+                transfer_delta += fixture.candidate_passed ? 1 : -1;
+            }
+        }
+    }
+    const float evaluated = static_cast<float>(std::max<size_t>(1, report.evaluated_turns));
+    oracle_report.baseline_success_rate =
+        static_cast<float>(report.baseline_successes) / evaluated;
+    oracle_report.candidate_success_rate =
+        static_cast<float>(report.candidate_successes) / evaluated;
+    oracle_report.intervention_gain = oracle_report.candidate_success_rate -
+        oracle_report.baseline_success_rate;
+    oracle_report.false_intervention_rate = report.candidate_interventions == 0
+        ? 0.0f : static_cast<float>(report.false_interventions) /
+            static_cast<float>(report.candidate_interventions);
+    oracle_report.control_retention = controls == 0
+        ? 1.0f : static_cast<float>(retained_controls) / static_cast<float>(controls);
+    oracle_report.transfer_gain = transfers == 0
+        ? 0.0f : static_cast<float>(transfer_delta) /
+            static_cast<float>(transfers);
+    oracle_report.semantically_helped = oracle_report.intervention_gain > 0.0f && no_harm;
+    oracle_report.safe_to_continue = no_harm &&
+        oracle_report.candidate_success_rate >= oracle_report.baseline_success_rate;
+    if (!common_flydelta_oracle_suite_report_validate(oracle_report, error)) return false;
+    if (!daemon_flydelta_put_json_resource(
+            scoped_provider,
+            "flydelta-oracle-suite-" +
+                hash_sha256_hex(oracle_identity.data(), oracle_identity.size()).substr(0, 24) +
+                ".json",
+            "flydelta_oracle_suite_report",
+            job.evaluation_suite_ref,
+            common_flydelta_oracle_suite_report_to_json(oracle_report),
+            report.oracle_suite_report_ref,
+            error)) return false;
+    report.oracle_ref = oracle_report.oracle_ref;
+    report.oracle_revision = oracle_report.oracle_revision;
+    report.oracle_policy_revision = oracle_report.policy_revision;
     return common_flydelta_evaluation_report_validate(report, error);
 }
 

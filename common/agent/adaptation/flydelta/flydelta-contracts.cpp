@@ -269,6 +269,17 @@ bool common_flydelta_evaluation_report_validate(
         error = "FlyDelta evaluation identity is incomplete";
         return false;
     }
+    const bool has_oracle_provenance = !report.oracle_suite_report_ref.empty() ||
+        !report.oracle_ref.empty() || !report.oracle_revision.empty() ||
+        !report.oracle_policy_revision.empty();
+    if (report.oracle_suite_report_ref.size() > 512 || report.oracle_ref.size() > 512 ||
+            report.oracle_revision.size() > 512 || report.oracle_policy_revision.size() > 512 ||
+            (has_oracle_provenance &&
+                (report.oracle_suite_report_ref.empty() || report.oracle_ref.empty() ||
+                 report.oracle_revision.empty() || report.oracle_policy_revision.empty()))) {
+        error = "FlyDelta evaluation Oracle provenance is incomplete";
+        return false;
+    }
     if (report.evaluated_turns == 0 || report.baseline_successes > report.evaluated_turns ||
             report.candidate_successes > report.evaluated_turns || report.candidate_interventions > report.evaluated_turns ||
             report.false_interventions > report.candidate_interventions) {
@@ -293,6 +304,10 @@ std::string common_flydelta_evaluation_report_to_json(
         {"baseline_profile_id", report.baseline_profile_id},
         {"candidate_profile_id", report.candidate_profile_id},
         {"test_suite_revision", report.test_suite_revision},
+        {"oracle_suite_report_ref", report.oracle_suite_report_ref},
+        {"oracle_ref", report.oracle_ref},
+        {"oracle_revision", report.oracle_revision},
+        {"oracle_policy_revision", report.oracle_policy_revision},
         {"gates", {
             {"intended_behavior", report.intended_behavior_passed},
             {"retention", report.retention_passed},
@@ -321,6 +336,10 @@ bool common_flydelta_evaluation_report_from_json(
         report.baseline_profile_id = value.value("baseline_profile_id", "");
         report.candidate_profile_id = value.value("candidate_profile_id", "");
         report.test_suite_revision = value.value("test_suite_revision", "");
+        report.oracle_suite_report_ref = value.value("oracle_suite_report_ref", "");
+        report.oracle_ref = value.value("oracle_ref", "");
+        report.oracle_revision = value.value("oracle_revision", "");
+        report.oracle_policy_revision = value.value("oracle_policy_revision", "");
         const auto gates = value.value("gates", json::object());
         report.intended_behavior_passed = gates.value("intended_behavior", false);
         report.retention_passed = gates.value("retention", false);

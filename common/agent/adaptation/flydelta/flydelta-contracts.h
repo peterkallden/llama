@@ -121,6 +121,13 @@ struct common_flydelta_evaluation_report {
     std::string baseline_profile_id;
     std::string candidate_profile_id;
     std::string test_suite_revision;
+    // The evaluation report remains the lifecycle/gate summary. Detailed
+    // Oracle-suite observations live in the immutable artifact referenced by
+    // this field; these revisions bind the two without duplicating them.
+    std::string oracle_suite_report_ref;
+    std::string oracle_ref;
+    std::string oracle_revision;
+    std::string oracle_policy_revision;
     bool intended_behavior_passed = false;
     bool retention_passed = false;
     bool agent_regression_passed = false;

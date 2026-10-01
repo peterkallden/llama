@@ -11,6 +11,7 @@
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-queue.h"
 #include "agent/adaptation/flydelta/flydelta-sideband-review-store.h"
+#include "agent/adaptation/flydelta/oracles/flydelta-oracle-suite.h"
 
 #include <nlohmann/json.hpp>
 
@@ -603,14 +604,37 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "model-backed FlyDelta evaluation failed: %s\n", error.c_str());
             result_code = 1;
         } else {
+            agent_resource_read_authority authority;
+            authority.namespace_id = "default-namespace";
+            authority.session_id = "default-session";
+            authority.project_id = "llama-agent-model-smoke";
+            authority.now = static_cast<int64_t>(std::time(nullptr));
+            std::string oracle_report_json;
+            common_flydelta_oracle_suite_report oracle_report;
+            if (report.oracle_suite_report_ref.empty() ||
+                    !runtime.resource_store->read_text(
+                        report.oracle_suite_report_ref, authority,
+                        4U * 1024U * 1024U, oracle_report_json, error) ||
+                    !common_flydelta_oracle_suite_report_from_json(
+                        oracle_report_json, oracle_report, error) ||
+                    oracle_report.candidate_id != report.candidate_id ||
+                    oracle_report.evaluation_revision != report.revision_id ||
+                    oracle_report.observations.size() != fixtures.size()) {
+                if (error.empty()) error = "model-backed Oracle-suite artifact identity is invalid";
+                std::fprintf(stderr, "model-backed Oracle-suite artifact failed: %s\n", error.c_str());
+                result_code = 1;
+            } else {
+                std::printf("flydelta_model_oracle_suite={%s}\n",
+                    common_flydelta_oracle_suite_report_to_json(oracle_report).c_str());
+            }
             common_flydelta_promotion_summary summary;
-            if (!common_flydelta_load_promotion_summary(
+            if (result_code == 0 && (!common_flydelta_load_promotion_summary(
                     *lifecycle_store, material.candidate_id, summary, error) ||
-                    summary.status != common_flydelta_candidate_status::eligible) {
+                    summary.status != common_flydelta_candidate_status::eligible)) {
                 if (error.empty()) error = "model-backed evaluation did not produce an eligible promotion summary";
                 std::fprintf(stderr, "model-backed FlyDelta promotion gate failed: %s\n", error.c_str());
                 result_code = 1;
-            } else if (!execute_admin(
+            } else if (result_code == 0 && (!execute_admin(
                     json{{"request_id", "model-admin-get-evaluation"}, {"command", "flydelta.get_evaluation"}, {"candidate_id", material.candidate_id}},
                     "flydelta.evaluation.loaded", result) ||
                 !execute_admin(
@@ -621,7 +645,7 @@ int main(int argc, char ** argv) {
                     "flydelta.review.recorded", result) ||
                 !execute_admin(
                     json{{"request_id", "model-admin-stage"}, {"command", "flydelta.stage_canary"}, {"candidate_id", material.candidate_id}, {"explicit_host_approval", true}, {"reason", "model-backed daemon smoke canary"}, {"actor_id", "smoke-operator"}},
-                    "flydelta.canary.staged", result)) {
+                    "flydelta.canary.staged", result))) {
                 std::fprintf(stderr, "model-backed FlyDelta admin chain failed: %s\n", error.c_str());
                 result_code = 1;
             }

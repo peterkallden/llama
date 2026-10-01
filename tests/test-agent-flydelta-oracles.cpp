@@ -129,5 +129,31 @@ int main() {
     CHECK(common_flydelta_astar_propose(astar, astar_result, error));
     CHECK(astar_result.found && astar_result.states.size() == 3 && astar_result.actions.size() == 2);
     CHECK(astar_result.total_cost == 2.0f);
+
+    common_flydelta_oracle_suite_report durable_report;
+    durable_report.id = "flydelta://oracle-suite/test-report";
+    durable_report.candidate_id = "flydelta://candidate/test";
+    durable_report.evaluation_revision = "evaluation:test-v1";
+    durable_report.model_profile_id = "model:test";
+    durable_report.oracle_ref = "flydelta://oracle/dataset-operation";
+    durable_report.oracle_revision = "v1";
+    durable_report.policy_revision = "policy-v1";
+    durable_report.observations.push_back({
+        "fixture-report", "intended", "fixture-target", "verifier-v1", "helped",
+        false, false, true, true});
+    durable_report.baseline_success_rate = 0.0f;
+    durable_report.candidate_success_rate = 1.0f;
+    durable_report.intervention_gain = 1.0f;
+    durable_report.control_retention = 1.0f;
+    durable_report.semantically_helped = true;
+    durable_report.safe_to_continue = true;
+    CHECK(common_flydelta_oracle_suite_report_validate(durable_report, error));
+    common_flydelta_oracle_suite_report reloaded_report;
+    CHECK(common_flydelta_oracle_suite_report_from_json(
+        common_flydelta_oracle_suite_report_to_json(durable_report),
+        reloaded_report, error));
+    CHECK(reloaded_report.id == durable_report.id);
+    CHECK(reloaded_report.observations.size() == 1);
+    CHECK(reloaded_report.intervention_gain == 1.0f);
     return 0;
 }

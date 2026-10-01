@@ -106,6 +106,10 @@ int main() {
     report.baseline_profile_id = "base";
     report.candidate_profile_id = "flydelta-canary";
     report.test_suite_revision = "fixture:1";
+    report.oracle_suite_report_ref = "resource://oracle-suite/1";
+    report.oracle_ref = "flydelta://oracle/host-counterfactual";
+    report.oracle_revision = "daemon:host-verifier-v1";
+    report.oracle_policy_revision = "daemon:evaluation-gates-v1";
     report.intended_behavior_passed = true;
     report.retention_passed = true;
     report.agent_regression_passed = true;
@@ -119,6 +123,10 @@ int main() {
     common_flydelta_evaluation_report parsed_report;
     CHECK(common_flydelta_evaluation_report_from_json(
         common_flydelta_evaluation_report_to_json(report), parsed_report, error));
+    auto incomplete_oracle_provenance = report;
+    incomplete_oracle_provenance.oracle_revision.clear();
+    CHECK(!common_flydelta_evaluation_report_validate(
+        incomplete_oracle_provenance, error));
     report.false_interventions = 5;
     CHECK(!common_flydelta_evaluation_report_validate(report, error));
 
