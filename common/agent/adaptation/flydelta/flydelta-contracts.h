@@ -137,6 +137,13 @@ enum class common_flydelta_evaluation_suite_kind {
     holdout,
     retention,
     agent_regression,
+    // These optional fixture classes align the durable evaluation vocabulary
+    // with the semantic Oracle probe classes. Existing lifecycle gates remain
+    // based on intended/holdout/retention/agent_regression.
+    paraphrase,
+    transfer,
+    control,
+    competing,
 };
 
 const char * common_flydelta_evaluation_suite_kind_name(

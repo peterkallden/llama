@@ -345,6 +345,10 @@ const char * common_flydelta_evaluation_suite_kind_name(
         case common_flydelta_evaluation_suite_kind::holdout: return "holdout";
         case common_flydelta_evaluation_suite_kind::retention: return "retention";
         case common_flydelta_evaluation_suite_kind::agent_regression: return "agent_regression";
+        case common_flydelta_evaluation_suite_kind::paraphrase: return "paraphrase";
+        case common_flydelta_evaluation_suite_kind::transfer: return "transfer";
+        case common_flydelta_evaluation_suite_kind::control: return "control";
+        case common_flydelta_evaluation_suite_kind::competing: return "competing";
     }
     return "intended";
 }
@@ -357,6 +361,14 @@ bool common_flydelta_evaluation_suite_kind_from_name(
     else if (value == "retention") kind = common_flydelta_evaluation_suite_kind::retention;
     else if (value == "agent_regression") {
         kind = common_flydelta_evaluation_suite_kind::agent_regression;
+    } else if (value == "paraphrase") {
+        kind = common_flydelta_evaluation_suite_kind::paraphrase;
+    } else if (value == "transfer") {
+        kind = common_flydelta_evaluation_suite_kind::transfer;
+    } else if (value == "control") {
+        kind = common_flydelta_evaluation_suite_kind::control;
+    } else if (value == "competing") {
+        kind = common_flydelta_evaluation_suite_kind::competing;
     } else return false;
     return true;
 }

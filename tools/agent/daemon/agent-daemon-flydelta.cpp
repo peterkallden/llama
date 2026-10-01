@@ -2711,9 +2711,12 @@ bool daemon_flydelta_run_evaluation(
         ++report.candidate_interventions;
         if (fixture_result.baseline_passed && !fixture_result.candidate_passed) ++report.false_interventions;
         if (suite_kind == common_flydelta_evaluation_suite_kind::intended ||
-                suite_kind == common_flydelta_evaluation_suite_kind::holdout) {
+                suite_kind == common_flydelta_evaluation_suite_kind::holdout ||
+                suite_kind == common_flydelta_evaluation_suite_kind::paraphrase ||
+                suite_kind == common_flydelta_evaluation_suite_kind::transfer) {
             report.intended_behavior_passed = report.intended_behavior_passed && fixture_result.passed;
-        } else if (suite_kind == common_flydelta_evaluation_suite_kind::retention) {
+        } else if (suite_kind == common_flydelta_evaluation_suite_kind::retention ||
+                suite_kind == common_flydelta_evaluation_suite_kind::control) {
             report.retention_passed = report.retention_passed && fixture_result.passed;
         } else {
             report.agent_regression_passed = report.agent_regression_passed && fixture_result.passed;

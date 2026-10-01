@@ -121,5 +121,18 @@ int main() {
         common_flydelta_evaluation_report_to_json(report), parsed_report, error));
     report.false_interventions = 5;
     CHECK(!common_flydelta_evaluation_report_validate(report, error));
+
+    const common_flydelta_evaluation_suite_kind semantic_kinds[] = {
+        common_flydelta_evaluation_suite_kind::paraphrase,
+        common_flydelta_evaluation_suite_kind::transfer,
+        common_flydelta_evaluation_suite_kind::control,
+        common_flydelta_evaluation_suite_kind::competing,
+    };
+    for (const auto kind : semantic_kinds) {
+        common_flydelta_evaluation_suite_kind parsed_kind;
+        CHECK(common_flydelta_evaluation_suite_kind_from_name(
+            common_flydelta_evaluation_suite_kind_name(kind), parsed_kind));
+        CHECK(parsed_kind == kind);
+    }
     return 0;
 }
