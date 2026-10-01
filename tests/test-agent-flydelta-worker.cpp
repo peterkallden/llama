@@ -189,6 +189,7 @@ int main() {
             trial.candidate.total_scale = 0.05f;
             trial.candidate.per_layer_scale = 0.05f;
             trial.executed = true;
+            trial.host_evaluated = true;
             trial.verifier_known = true;
             trial.search_score = 0.0f;
             trial.promising = false;
@@ -264,6 +265,7 @@ int main() {
         region.candidate.total_scale = 0.05f;
         region.candidate.per_layer_scale = 0.05f;
         region.executed = true;
+        region.host_evaluated = true;
         region.verifier_known = true;
         region.search_score = 0.5f;
         region.promising = true;
@@ -333,6 +335,7 @@ int main() {
         region.candidate.total_scale = 0.05f;
         region.candidate.per_layer_scale = 0.05f;
         region.executed = true;
+        region.host_evaluated = true;
         region.verifier_known = true;
         region.search_score = 0.5f;
         region.promising = true;

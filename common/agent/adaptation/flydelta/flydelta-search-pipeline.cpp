@@ -463,7 +463,7 @@ bool common_flydelta_append_search_pipeline_lifecycle(
             observation.fixture_baseline_ref = fixture.id;
             observation.surface_parent_best_ref = experimental_artifact_id;
             observation.outcome = region.outcome;
-            observation.host_evaluated = region.executed;
+            observation.host_evaluated = region.host_evaluated;
             observation.verifier_known = region.verifier_known;
             observation.diagnostics_available = region.geometry_available;
             if (region.geometry_available) observation.diagnostics = region.geometry;

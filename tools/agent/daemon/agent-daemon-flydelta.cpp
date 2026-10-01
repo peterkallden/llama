@@ -673,6 +673,7 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
         region_trial.margin_comparison.baseline = baseline_result.margin;
         region_trial.margin_comparison.candidate = arm_result.margin;
         region_trial.executed = arm_result.executed;
+        region_trial.host_evaluated = full_execution && arm_result.host_evaluated;
         region_trial.verifier_known = full_execution && arm_result.verifier_known;
         region_trial.geometry_available = trial.diagnostics_available;
         region_trial.geometry = diagnostics;
@@ -1062,6 +1063,7 @@ bool daemon_flydelta_run_search_pipeline(
     const auto & baseline_arm = full_result.arms.front();
     common_flydelta_counterfactual_trial baseline_trial;
     baseline_trial.executed = baseline_arm.executed;
+    baseline_trial.host_evaluated = baseline_arm.host_evaluated;
     baseline_trial.passed = daemon_flydelta_arm_semantic_passed(baseline_arm);
     baseline_trial.quality = baseline_arm.quality;
     baseline_trial.verifier_known = baseline_arm.verifier_known;
@@ -1073,6 +1075,7 @@ bool daemon_flydelta_run_search_pipeline(
         const auto & arm = full_result.arms[index + 1];
         common_flydelta_counterfactual_trial candidate_trial;
         candidate_trial.executed = arm.executed;
+        candidate_trial.host_evaluated = arm.host_evaluated;
         candidate_trial.passed = daemon_flydelta_arm_semantic_passed(arm);
         candidate_trial.quality = arm.quality;
         candidate_trial.verifier_known = arm.verifier_known;
@@ -1085,6 +1088,9 @@ bool daemon_flydelta_run_search_pipeline(
         trial.margin_comparison.baseline = baseline_arm.margin;
         trial.margin_comparison.candidate = arm.margin;
         trial.executed = candidate_trial.executed;
+        // This loop iterates only over the bounded full-generation frontier,
+        // but the result still comes from the arm's actual execution metadata.
+        trial.host_evaluated = candidate_trial.host_evaluated;
         trial.verifier_known = baseline_trial.verifier_known && candidate_trial.verifier_known;
         trial.evidence_ref = candidate_trial.evidence_ref;
     }
@@ -1232,6 +1238,7 @@ bool daemon_flydelta_run_adaptive_alpha_slice(
         region_trial.quality_delta = alpha_trial.counterfactual.quality;
         region_trial.margin = alpha_trial.margin;
         region_trial.executed = alpha_trial.counterfactual.executed;
+        region_trial.host_evaluated = alpha_trial.counterfactual.host_evaluated;
         region_trial.verifier_known = alpha_trial.counterfactual.verifier_known;
         region_trial.geometry_available = alpha_trial.geometry_available;
         region_trial.geometry = alpha_trial.geometry;
@@ -1497,6 +1504,7 @@ bool daemon_flydelta_run_orthogonal_slice(
             ? arm.quality - baseline_result.quality : 0.0f;
         region_trial.margin = arm.margin;
         region_trial.executed = arm.executed;
+        region_trial.host_evaluated = full_execution && arm.host_evaluated;
         region_trial.verifier_known = full_execution && arm.verifier_known;
         region_trial.geometry_available = trial.diagnostics_available;
         region_trial.geometry = trial.diagnostics;

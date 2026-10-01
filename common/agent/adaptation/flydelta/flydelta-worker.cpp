@@ -78,9 +78,9 @@ void append_region_arm(const common_flydelta_intervention_region_trial & trial,
     arm.search_score = trial.search_score;
     arm.promising = trial.promising;
     arm.safe_to_continue = trial.safe_to_continue;
-    arm.execution_class = trial.verifier_known ? "full" :
+    arm.execution_class = trial.host_evaluated ? "full" :
         trial.executed ? "diagnostic" : "not_executed";
-    arm.host_evaluated = trial.verifier_known;
+    arm.host_evaluated = trial.host_evaluated;
     arm.verifier_known = trial.verifier_known;
     arm.host_outcome = trial.outcome;
     arm.candidate_passed = trial.outcome == common_flydelta_counterfactual_outcome::helped;

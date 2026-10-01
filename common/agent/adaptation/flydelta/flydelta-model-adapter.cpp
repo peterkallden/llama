@@ -533,6 +533,7 @@ common_flydelta_counterfactual_trial arm_trial_from_result(
         size_t intervention_count) {
     common_flydelta_counterfactual_trial trial;
     trial.executed = arm.executed;
+    trial.host_evaluated = arm.host_evaluated;
     trial.verifier_known = arm.verifier_known;
     trial.passed = arm.host_outcome == common_flydelta_counterfactual_outcome::helped;
     trial.quality = arm.quality;

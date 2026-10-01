@@ -39,6 +39,11 @@ bool common_flydelta_experiment_fixture_validate(
 // correctness. Unknown verification is deliberately preserved as UNKNOWN.
 struct common_flydelta_counterfactual_trial {
     bool executed = false;
+    // The host ran the requested evaluation/generation path. This is
+    // intentionally independent from verifier_known: an attempted host
+    // verification may still produce UNKNOWN when no semantic predicate
+    // applies to the fixture.
+    bool host_evaluated = false;
     bool verifier_known = false;
     bool passed = false;
     float quality = 0.0f;

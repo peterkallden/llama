@@ -9,6 +9,7 @@ static common_flydelta_intervention_region_trial arm(uint32_t layer, float score
     value.candidate.total_scale = 0.1f;
     value.candidate.per_layer_scale = 0.1f;
     value.executed = true;
+    value.host_evaluated = true;
     value.verifier_known = true;
     value.outcome = helped ? common_flydelta_counterfactual_outcome::helped :
         common_flydelta_counterfactual_outcome::unknown;

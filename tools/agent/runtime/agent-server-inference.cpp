@@ -464,6 +464,7 @@ public:
                     result.flydelta_runtime.content_hash = cvec.content_hash;
                 }
             }
+            resident_trace_content("nonstream-success", request, result.content);
             resident_trace("nonstream-success", request);
             return true;
         } catch (const std::exception & err) {

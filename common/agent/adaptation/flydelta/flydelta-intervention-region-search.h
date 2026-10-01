@@ -62,6 +62,10 @@ struct common_flydelta_intervention_region_trial {
     common_flydelta_decision_margin margin;
     common_flydelta_margin_comparison margin_comparison;
     bool executed = false;
+    // Full generation/host-verification was attempted. This is deliberately
+    // separate from verifier_known: an attempted verifier may return
+    // UNKNOWN when the fixture has no applicable semantic predicate.
+    bool host_evaluated = false;
     bool verifier_known = false;
     bool geometry_available = false;
     common_flydelta_representation_diagnostics geometry;

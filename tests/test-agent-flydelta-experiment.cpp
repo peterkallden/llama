@@ -17,6 +17,7 @@ static common_flydelta_experiment_fixture fixture() {
 static common_flydelta_counterfactual_trial trial(bool passed, bool overlay, const char * evidence) {
     common_flydelta_counterfactual_trial value;
     value.executed = true;
+    value.host_evaluated = true;
     value.verifier_known = true;
     value.passed = passed;
     value.quality = passed ? 1.0f : 0.25f;
@@ -50,6 +51,7 @@ int main() {
     common_flydelta_counterfactual_report parsed;
     CHECK(common_flydelta_counterfactual_report_from_json(json, parsed, error));
     CHECK(parsed.outcome == common_flydelta_counterfactual_outcome::helped);
+    CHECK(parsed.baseline.host_evaluated && parsed.candidate.host_evaluated);
 
     const auto baseline_pass = trial(true, false, "evidence:baseline");
     const auto candidate_fail = trial(false, true, "evidence:candidate");

@@ -26,6 +26,7 @@ common_flydelta_counterfactual_outcome parse_outcome(const std::string & value) 
 json trial_to_json(const common_flydelta_counterfactual_trial & trial) {
     return json{
         {"executed", trial.executed},
+        {"host_evaluated", trial.host_evaluated},
         {"verifier_known", trial.verifier_known},
         {"status", trial_outcome(trial.passed)},
         {"quality", trial.quality},
@@ -38,6 +39,7 @@ json trial_to_json(const common_flydelta_counterfactual_trial & trial) {
 void trial_from_json(const json & value, common_flydelta_counterfactual_trial & trial) {
     trial = {};
     trial.executed = value.value("executed", false);
+    trial.host_evaluated = value.value("host_evaluated", false);
     trial.verifier_known = value.value("verifier_known", false);
     trial.passed = value.value("status", "failed") == "passed";
     trial.quality = value.value("quality", 0.0f);

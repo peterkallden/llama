@@ -104,6 +104,7 @@ static common_flydelta_search_pipeline_result search_pipeline_result() {
     trial.candidate.total_scale = 0.1f;
     trial.candidate.per_layer_scale = 0.1f;
     trial.executed = true;
+    trial.host_evaluated = true;
     trial.verifier_known = true;
     trial.search_score = 0.5f;
     trial.promising = true;

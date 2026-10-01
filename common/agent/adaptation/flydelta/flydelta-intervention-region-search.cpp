@@ -126,6 +126,14 @@ bool common_flydelta_intervention_region_trial_validate(
         error = "FlyDelta intervention region trial evidence reference is invalid";
         return false;
     }
+    if (trial.host_evaluated && !trial.executed) {
+        error = "FlyDelta intervention region trial cannot be host-evaluated without execution";
+        return false;
+    }
+    if (trial.verifier_known && !trial.host_evaluated) {
+        error = "FlyDelta intervention region trial cannot have known verification without host evaluation";
+        return false;
+    }
     return true;
 }
 
@@ -234,6 +242,11 @@ bool common_flydelta_run_intervention_region_search(
         region_trial.margin_comparison.baseline = baseline_margin;
         region_trial.margin_comparison.candidate = margin;
         region_trial.executed = counterfactual.executed;
+        // Older pure host runners only exposed verifier_known. Preserve that
+        // contract while preferring the explicit execution provenance when a
+        // model adapter supplies it.
+        region_trial.host_evaluated = counterfactual.host_evaluated ||
+            counterfactual.verifier_known;
         region_trial.verifier_known = baseline.verifier_known && counterfactual.verifier_known;
         region_trial.geometry_available = geometry_available;
         region_trial.geometry = geometry;
