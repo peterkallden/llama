@@ -175,6 +175,16 @@ public:
             const common_agent_model_profile & profile,
             const std::string & binding_key,
             const common_flydelta_compatibility & expected,
+            size_t model_n_embd,
+            size_t model_n_layers,
+            common_flydelta_sideband_manifest & manifest,
+            double & profile_scale,
+            std::string & error) const;
+
+    bool resolve_bound(
+            const common_agent_model_profile & profile,
+            const std::string & binding_key,
+            const common_flydelta_compatibility & expected,
             const common_flydelta_applicability & expected_applicability,
             size_t model_n_embd,
             size_t model_n_layers,

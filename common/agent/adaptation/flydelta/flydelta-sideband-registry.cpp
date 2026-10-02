@@ -469,8 +469,46 @@ bool common_flydelta_sideband_registry::resolve(
         common_flydelta_sideband_manifest & manifest,
         double & profile_scale,
         std::string & error) const {
+    const auto it = manifests.find(sideband_id);
+    if (it != manifests.end()) {
+        // This overload is intentionally for active profile resolution when
+        // the host has not yet produced behavior/scope applicability. The
+        // manifest remains the authority for its own compatibility; canary
+        // resolution still requires an explicit host applicability context.
+        return resolve(profile, sideband_id, expected, it->second.applicability,
+            model_n_embd, model_n_layers, manifest, profile_scale, error);
+    }
     return resolve(profile, sideband_id, expected, {}, model_n_embd, model_n_layers,
         manifest, profile_scale, error);
+}
+
+bool common_flydelta_sideband_registry::resolve_bound(
+        const common_agent_model_profile & profile,
+        const std::string & binding_key,
+        const common_flydelta_compatibility & expected,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        common_flydelta_sideband_manifest & manifest,
+        double & profile_scale,
+        std::string & error) const {
+    error.clear();
+    if (!bounded(binding_key)) {
+        error = "FlyDelta activation binding key is invalid";
+        return false;
+    }
+    const auto configured = std::find_if(profile.sidebands.begin(), profile.sidebands.end(),
+        [&](const auto & sideband) { return sideband.binding_key == binding_key; });
+    if (configured == profile.sidebands.end()) {
+        error = "FlyDelta activation binding is not configured in model profile: " + binding_key;
+        return false;
+    }
+    const auto selected = active_bindings.find(binding_key);
+    if (selected == active_bindings.end()) {
+        error = "FlyDelta activation binding has no selected revision: " + binding_key;
+        return false;
+    }
+    return resolve(profile, selected->second.selected_revision_id, expected,
+        model_n_embd, model_n_layers, manifest, profile_scale, error);
 }
 
 bool common_flydelta_sideband_registry::resolve_bound(

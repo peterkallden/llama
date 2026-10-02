@@ -808,6 +808,47 @@ bool common_agent_daemon_service::execute_flydelta_admin(
         if (manifest_it == runtime.flydelta_sideband_registry->list().end()) return nullptr;
         return &manifest_it->second;
     };
+    if (request.operation == "flydelta.close_canary") {
+        if (!request.explicit_host_approval) {
+            return fail("FlyDelta canary close requires explicit host approval");
+        }
+        if (request.reason.empty()) {
+            return fail("FlyDelta canary close requires a reason");
+        }
+        std::vector<common_flydelta_sideband_review> open;
+        if (runtime.flydelta_sideband_review_store) {
+            open = runtime.flydelta_sideband_review_store->open_canaries(error);
+        }
+        if (!error.empty()) return fail(error);
+        const auto it = std::find_if(open.begin(), open.end(), [&](const auto & item) {
+            return item.manifest.id == request.candidate_id &&
+                (request.canary_event_id.empty() || item.event_id == request.canary_event_id) &&
+                (request.binding_key.empty() ||
+                 item.canary_envelope.binding_key == request.binding_key);
+        });
+        if (it == open.end()) return fail("FlyDelta canary envelope is not open");
+        common_flydelta_sideband_review close;
+        close.event_id = it->event_id + ":close:explicit";
+        close.actor_id = request.actor_id.empty() ? "host" : request.actor_id;
+        close.policy_revision = "flydelta-canary-manual-v1";
+        close.reason = request.reason;
+        close.source = common_flydelta_review_source::operator_action;
+        close.action = common_flydelta_review_action::close_canary;
+        close.manifest = it->manifest;
+        close.canary_envelope_event_id = it->event_id;
+        if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                *runtime.flydelta_sideband_registry, close, true, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.canary.closed";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"candidate_id", request.candidate_id},
+            {"canary_event_id", it->event_id},
+            {"fallback", "active"},
+            {"reason", close.reason},
+        }.dump();
+        return true;
+    }
     if (request.operation == "flydelta.canary_disposition") {
         std::vector<common_flydelta_sideband_review> open;
         if (runtime.flydelta_sideband_review_store) {
@@ -878,12 +919,23 @@ bool common_agent_daemon_service::execute_flydelta_admin(
         } else if (decision.disposition == common_flydelta_canary_disposition::expand_scope) {
             const auto & configured_scopes =
                 current_options->adaptation_flydelta_canary_policy.scope_step_fingerprints;
-            const std::string next_scope = request.next_scope_fingerprint.empty()
-                ? it->canary_envelope.scope_fingerprint : request.next_scope_fingerprint;
-            if (!configured_scopes.empty() && std::find(
-                    configured_scopes.begin(), configured_scopes.end(), next_scope) ==
-                    configured_scopes.end()) {
-                return fail("FlyDelta expansion scope is not preconfigured");
+            std::string next_scope = request.next_scope_fingerprint;
+            if (!configured_scopes.empty()) {
+                const auto current_scope = std::find(
+                    configured_scopes.begin(), configured_scopes.end(),
+                    it->canary_envelope.scope_fingerprint);
+                if (current_scope == configured_scopes.end() ||
+                        std::next(current_scope) == configured_scopes.end()) {
+                    return fail("FlyDelta expansion has no next configured scope step");
+                }
+                const std::string expected_scope = *std::next(current_scope);
+                if (next_scope.empty()) {
+                    next_scope = expected_scope;
+                } else if (next_scope != expected_scope) {
+                    return fail("FlyDelta expansion must use the immediate next configured scope step");
+                }
+            } else if (next_scope.empty()) {
+                next_scope = it->canary_envelope.scope_fingerprint;
             }
             common_flydelta_sideband_review close;
             close.event_id = it->event_id + ":expand-close:" +

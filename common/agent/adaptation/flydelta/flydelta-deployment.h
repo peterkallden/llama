@@ -136,8 +136,7 @@ using common_flydelta_observation_counter = std::function<size_t(
 // the race between cohort selection and generation without making a request
 // count as HELPED or promotion evidence.
 using common_flydelta_observation_reserver = std::function<bool(
-        const std::string & binding_key,
-        const std::string & canary_event_id,
+        const common_flydelta_sideband_review & canary_review,
         size_t max_observations,
         std::string & error)>;
 
@@ -150,6 +149,10 @@ public:
             const std::string & canary_event_id,
             size_t max_observations,
             std::string & error);
+    void seed(
+            const std::string & binding_key,
+            const std::string & canary_event_id,
+            size_t count);
     size_t reserved(
             const std::string & binding_key,
             const std::string & canary_event_id) const;

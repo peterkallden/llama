@@ -117,6 +117,20 @@ int main() {
     CHECK(baseline.activation && baseline.activation->overlay.enabled);
     CHECK(baseline.activation->overlay.data[0] == 3.0f);
 
+    // A normal daemon turn may not yet have a host-owned behavior/scope
+    // classification. Active resolution remains usable, but canary matching
+    // must fail closed rather than guessing applicability.
+    request.applicability = {};
+    request.authority = common_flydelta_runtime_authority::canary_evaluation;
+    request.allocation_key = "session:stable";
+    common_flydelta_deployment_result missing_applicability;
+    CHECK(common_flydelta_resolve_deployment(
+        config, request, missing_applicability, error));
+    CHECK(!missing_applicability.canary_selected && missing_applicability.active_only);
+    request.applicability = active_a.applicability;
+    request.authority = common_flydelta_runtime_authority::active_only;
+    request.allocation_key.clear();
+
     auto canary = make_manifest("flydelta://sideband/b-canary", "binding:b", 9);
     canary.status = common_flydelta_sideband_status::candidate;
     CHECK(registry.admit(canary, error));
@@ -156,6 +170,14 @@ int main() {
     CHECK(candidate.activation && candidate.activation->overlay.data[0] == 10.0f);
     CHECK(seen_scales[canary.id] == 0.125);
 
+    request.applicability = {};
+    common_flydelta_deployment_result profile_derived_candidate;
+    CHECK(common_flydelta_resolve_deployment(
+        config, request, profile_derived_candidate, error));
+    CHECK(profile_derived_candidate.canary_selected &&
+        profile_derived_candidate.effective[1].revision_id == canary.id);
+    request.applicability = active_a.applicability;
+
     request.allocation_key.clear();
     common_flydelta_deployment_result fallback;
     CHECK(common_flydelta_resolve_deployment(config, request, fallback, error));
@@ -173,10 +195,14 @@ int main() {
     policy.scope_step_fingerprints = {"scope:openalex", "scope:openalex-expanded"};
     policy_input.completed_observations = 2;
     policy_input.unique_allocations = 1;
-    policy_input.semantic_evidence_complete = true;
     policy_input.target_gain = 1.0f;
     policy_input.next_scope_available = true;
     policy_input.current_traffic_basis_points = 100;
+    CHECK(common_flydelta_decide_canary_disposition(
+        policy, policy_input, decision, error));
+    CHECK(decision.disposition == common_flydelta_canary_disposition::retain);
+    CHECK(decision.reason == "insufficient_canary_evidence");
+    policy_input.semantic_evidence_complete = true;
     CHECK(common_flydelta_decide_canary_disposition(
         policy, policy_input, decision, error));
     CHECK(decision.disposition == common_flydelta_canary_disposition::expand_scope);

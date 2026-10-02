@@ -20,6 +20,7 @@ enum class common_flydelta_review_action {
     activate,
     rollback,
     close_canary,
+    reserve_canary_observation,
     retire,
     revoke,
 };

@@ -4242,9 +4242,11 @@ active-bindingen orörd.
 Canary-konfigurationen ligger under `runtime.adaptation.flydelta.canary`.
 `mode` är `disabled`, `manual` eller `policy`; default när FlyDelta är
 aktiverat är `manual`. `disabled` stänger routing helt, `manual` kräver en
-explicit host/admin-authority och `policy` kör den hostägda, journalförda
-dispositionsfunktionen. Vanlig inference har fortfarande alltid
-`active_only` som default.
+explicit host/admin-authority och `policy` gör den hostägda, journalförda
+dispositionsfunktionen tillgänglig för policykörning. `policy` betyder inte
+att en experimentell revision automatiskt blir active: `allow_promotion`
+måste dessutom vara aktiverad och den färdiga evidensen måste passera alla
+trösklar. Vanlig inference har fortfarande alltid `active_only` som default.
 
 En policy läser endast färdiga semantic/counterfactual-observationer och
 returnerar en av:
@@ -4259,8 +4261,9 @@ close         -> journalförd close och omedelbar active-fallback
 `expand_scope` får inte skapa ett godtyckligt scope; `scope_step_fingerprints`
 är den hostkonfigurerade tillåtna listan. Observation-reservationen före
 generation är bara en atomisk exponeringsbudget. Den räknas inte som
-`HELPED`, semantic evidence eller promotion evidence. Endast färdiga
-verifierade resultat får driva policybeslut.
+`HELPED`, semantic evidence eller promotion evidence. Reservationerna skrivs
+som journalhändelser i samma review-journal och seedas tillbaka vid omstart;
+endast färdiga verifierade resultat får driva policybeslut.
 
 `HARMED` stänger det berörda envelope:t/den berörda strategy-revisionen och
 underkänner inte automatiskt konceptet, andra strategier eller andra active
@@ -4270,10 +4273,21 @@ revision som beslutet avser fortfarande är vald. Replay av samma review-journal
 
 Session-hosten bygger deployment-requesten från modellprofil, applicability,
 modellidentitet, layout, host-owned allocation key, authority, gate och sparse
-code. Factoryn resolverar en gång före turnens runtime-start. Den effektiva
+code. Factoryn resolverar en gång före turnens runtime-start. Om en vanlig
+daemon-turn saknar explicit host-owned applicability använder factoryn den
+redan konfigurerade applicabilityn från den matchande aktiva bindingen för
+canary-matchningen. Det är en profilbunden host-seam, inte en gissning från
+modellens output eller klientens JSONL; saknas applicability även i bindingen
+faller resolutionen active-only. Den effektiva
 deployment-fingerprinten ingår i session/KV-identiteten, medan Oracle-, policy-
 och evaluationrevisioner endast är provenance. Samma resolution används genom
 planner, tool execution, repair, reflection och final generation.
+
+En policy- eller admin-klient kan stänga en öppen canary explicit med
+`flydelta.close_canary` och host approval. Det är en journalförd close med
+omedelbar active-fallback; den muterar inte active-bindingen. `expand_scope`
+får endast välja det omedelbart nästa värdet i `scope_step_fingerprints`, inte
+ett senare eller modellföreslaget scope.
 
 ### Adaptive rank-one alpha response search
 

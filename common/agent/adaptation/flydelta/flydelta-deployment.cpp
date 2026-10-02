@@ -152,6 +152,16 @@ bool common_flydelta_observation_budget::try_reserve(
     return true;
 }
 
+void common_flydelta_observation_budget::seed(
+        const std::string & binding_key,
+        const std::string & canary_event_id,
+        size_t count) {
+    if (binding_key.empty() || canary_event_id.empty() || count == 0) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto & current = reservations_[make_key(binding_key, canary_event_id)];
+    current = std::max(current, count);
+}
+
 size_t common_flydelta_observation_budget::reserved(
         const std::string & binding_key,
         const std::string & canary_event_id) const {
@@ -325,18 +335,32 @@ bool common_flydelta_resolve_deployment(
 
     std::vector<common_flydelta_sideband_manifest> active_manifests;
     std::vector<common_flydelta_resolved_deployment_entry> active_entries;
+    const bool host_applicability_available =
+        !request.applicability.behavior_key.empty() ||
+        !request.applicability.scope_fingerprint.empty() ||
+        !request.applicability.verifier_revision.empty();
     for (const auto & configured : request.profile.sidebands) {
         common_flydelta_sideband_manifest manifest;
         double scale = configured.scale;
         const bool resolved = configured.binding_key.empty()
-            ? config.registry->resolve(
-                request.profile, configured.sideband_id, request.compatibility,
-                request.applicability, request.model_n_embd, request.model_n_layers,
-                manifest, scale, error)
-            : config.registry->resolve_bound(
-                request.profile, configured.binding_key, request.compatibility,
-                request.applicability, request.model_n_embd, request.model_n_layers,
-                manifest, scale, error);
+            ? (host_applicability_available
+                ? config.registry->resolve(
+                    request.profile, configured.sideband_id, request.compatibility,
+                    request.applicability, request.model_n_embd, request.model_n_layers,
+                    manifest, scale, error)
+                : config.registry->resolve(
+                    request.profile, configured.sideband_id, request.compatibility,
+                    request.model_n_embd, request.model_n_layers,
+                    manifest, scale, error))
+            : (host_applicability_available
+                ? config.registry->resolve_bound(
+                    request.profile, configured.binding_key, request.compatibility,
+                    request.applicability, request.model_n_embd, request.model_n_layers,
+                    manifest, scale, error)
+                : config.registry->resolve_bound(
+                    request.profile, configured.binding_key, request.compatibility,
+                    request.model_n_embd, request.model_n_layers,
+                    manifest, scale, error));
         if (!resolved) return false;
         active_manifests.push_back(manifest);
         active_entries.push_back({
@@ -359,11 +383,27 @@ bool common_flydelta_resolve_deployment(
             if (!review.has_canary_envelope || review.action != common_flydelta_review_action::stage_canary ||
                     (!review.canary_envelope_event_id.empty() &&
                      review.canary_envelope_event_id != review.event_id) ||
-                    review.canary_envelope.behavior_key != request.applicability.behavior_key ||
-                    review.canary_envelope.scope_fingerprint != request.applicability.scope_fingerprint) {
+                    review.canary_envelope.binding_key.empty()) {
                 continue;
             }
             const auto & envelope = review.canary_envelope;
+            const auto active_entry = std::find_if(active_entries.begin(), active_entries.end(),
+                [&](const auto & entry) { return entry.binding_key == envelope.binding_key; });
+            const auto active_manifest_value = active_entry == active_entries.end()
+                ? active_manifests.end()
+                : std::find_if(active_manifests.begin(), active_manifests.end(),
+                    [&](const auto & manifest) { return manifest.id == active_entry->revision_id; });
+            if (active_entry == active_entries.end() ||
+                    active_manifest_value == active_manifests.end()) {
+                continue;
+            }
+            const common_flydelta_applicability effective_applicability =
+                host_applicability_available
+                    ? request.applicability : active_manifest_value->applicability;
+            if (envelope.behavior_key != effective_applicability.behavior_key ||
+                    envelope.scope_fingerprint != effective_applicability.scope_fingerprint) {
+                continue;
+            }
             const size_t observed = config.observation_counter
                 ? config.observation_counter(envelope.binding_key, review.event_id)
                 : request.observed_default;
@@ -384,29 +424,11 @@ bool common_flydelta_resolve_deployment(
             if (!config.registry->resolve_canary_bound(
                     request.profile, envelope,
                     common_flydelta_runtime_authority::canary_evaluation,
-                    request.applicability, request.model_n_embd, request.model_n_layers,
+                    effective_applicability, request.model_n_embd, request.model_n_layers,
                     canary_manifest, canary_scale, canary_error)) {
                 result.fallback_to_active = true;
                 result.fallback_reason = canary_error;
                 continue;
-            }
-            // Reserve only after the envelope and staged revision have been
-            // validated.  A malformed/expired/incompatible canary must not
-            // consume the finite exposure budget before generation begins.
-            if (config.reserve_observation) {
-                std::string reservation_error;
-                if (!config.reserve_observation(
-                        envelope.binding_key, review.event_id, envelope.max_observations,
-                        reservation_error)) {
-                    if (!reservation_error.empty()) {
-                        result.fallback_to_active = true;
-                        result.fallback_reason = reservation_error;
-                    } else {
-                        result.fallback_to_active = true;
-                        result.fallback_reason = "canary_observation_budget_exhausted";
-                    }
-                    continue;
-                }
             }
             const auto existing = std::find_if(result.effective.begin(), result.effective.end(),
                 [&](const auto & entry) { return entry.binding_key == envelope.binding_key; });
@@ -417,6 +439,24 @@ bool common_flydelta_resolve_deployment(
                 result.fallback_to_active = true;
                 result.fallback_reason = "canary_rollback_revision_mismatch";
                 continue;
+            }
+            // Reserve only after the envelope, staged revision and baseline
+            // rollback identity have all been validated. A malformed,
+            // expired or mismatched canary must not consume the finite
+            // exposure budget before generation begins.
+            if (config.reserve_observation) {
+                std::string reservation_error;
+                if (!config.reserve_observation(
+                        review, envelope.max_observations, reservation_error)) {
+                    if (!reservation_error.empty()) {
+                        result.fallback_to_active = true;
+                        result.fallback_reason = reservation_error;
+                    } else {
+                        result.fallback_to_active = true;
+                        result.fallback_reason = "canary_observation_budget_exhausted";
+                    }
+                    continue;
+                }
             }
             result.canary_selected = true;
             result.active_only = false;

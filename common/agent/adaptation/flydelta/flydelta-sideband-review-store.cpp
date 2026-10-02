@@ -29,6 +29,7 @@ common_learning_lifecycle_status lifecycle_status(common_flydelta_review_action 
         case common_flydelta_review_action::activate: return common_learning_lifecycle_status::active;
         case common_flydelta_review_action::rollback: return common_learning_lifecycle_status::active;
         case common_flydelta_review_action::close_canary: return common_learning_lifecycle_status::retired;
+        case common_flydelta_review_action::reserve_canary_observation: return common_learning_lifecycle_status::canary;
         case common_flydelta_review_action::retire: return common_learning_lifecycle_status::retired;
         case common_flydelta_review_action::revoke: return common_learning_lifecycle_status::revoked;
     }
@@ -66,9 +67,10 @@ int replay_order(common_flydelta_review_action action) {
         case common_flydelta_review_action::activate: return 4;
         case common_flydelta_review_action::rollback: return 5;
         case common_flydelta_review_action::close_canary: return 6;
-        case common_flydelta_review_action::retire: return 7;
-        case common_flydelta_review_action::revoke: return 8;
-        case common_flydelta_review_action::reject: return 9;
+        case common_flydelta_review_action::reserve_canary_observation: return 7;
+        case common_flydelta_review_action::retire: return 8;
+        case common_flydelta_review_action::revoke: return 9;
+        case common_flydelta_review_action::reject: return 10;
     }
     return 8;
 }
@@ -162,6 +164,7 @@ const char * common_flydelta_review_action_name(common_flydelta_review_action ac
         case common_flydelta_review_action::activate: return "activate";
         case common_flydelta_review_action::rollback: return "rollback";
         case common_flydelta_review_action::close_canary: return "close_canary";
+        case common_flydelta_review_action::reserve_canary_observation: return "reserve_canary_observation";
         case common_flydelta_review_action::retire: return "retire";
         case common_flydelta_review_action::revoke: return "revoke";
     }
@@ -186,6 +189,7 @@ bool parse_common_flydelta_review_action(
     else if (value == "activate") action = common_flydelta_review_action::activate;
     else if (value == "rollback") action = common_flydelta_review_action::rollback;
     else if (value == "close_canary") action = common_flydelta_review_action::close_canary;
+    else if (value == "reserve_canary_observation") action = common_flydelta_review_action::reserve_canary_observation;
     else if (value == "retire") action = common_flydelta_review_action::retire;
     else if (value == "revoke") action = common_flydelta_review_action::revoke;
     else { error = "unknown FlyDelta review action"; return false; }
@@ -289,6 +293,11 @@ bool common_flydelta_sideband_review_validate(
     if (review.action == common_flydelta_review_action::close_canary &&
             (!bounded(review.canary_envelope_event_id) || !bounded(review.reason))) {
         error = "FlyDelta canary close requires an envelope id and reason";
+        return false;
+    }
+    if (review.action == common_flydelta_review_action::reserve_canary_observation &&
+            !bounded(review.canary_envelope_event_id)) {
+        error = "FlyDelta canary observation reservation requires an envelope id";
         return false;
     }
     return true;
@@ -481,6 +490,12 @@ bool common_flydelta_sideband_review_store::apply(
         case common_flydelta_review_action::close_canary:
             // Closing is journal-only: it removes a temporary request override
             // without changing an immutable candidate or active binding.
+            error.clear();
+            return true;
+        case common_flydelta_review_action::reserve_canary_observation:
+            // Exposure reservations are durable journal facts only. They do
+            // not mutate registry lifecycle or open-canary state during
+            // replay.
             error.clear();
             return true;
         case common_flydelta_review_action::retire:

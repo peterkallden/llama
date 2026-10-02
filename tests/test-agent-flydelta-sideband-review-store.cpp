@@ -125,6 +125,11 @@ int main() {
     canary_review.evaluation = evaluation();
     attach_envelope(canary_review);
     CHECK(store.apply_and_append(registry, canary_review, true, error));
+    auto observation = canary_review;
+    observation.event_id = "review-3:observation:1";
+    observation.action = common_flydelta_review_action::reserve_canary_observation;
+    observation.canary_envelope_event_id = canary_review.event_id;
+    CHECK(store.append(observation, error));
     value.status = common_flydelta_sideband_status::canary;
     CHECK(store.apply_and_append(registry,
         review("review-4", common_flydelta_review_action::activate, value), true, error));
@@ -169,7 +174,7 @@ int main() {
     CHECK(store.apply_and_append(registry, rollback_review, true, error));
     CHECK(registry.binding("flydelta://binding/review-store", binding, error));
     CHECK(binding.selected_revision_id == value.id && binding.previous_revision_id == value2.id);
-    CHECK(store.list(error).size() == 9);
+    CHECK(store.list(error).size() == 10);
 
     common_flydelta_sideband_registry restored;
     CHECK(store.replay(restored, error));

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
 
 namespace {
 
@@ -27,6 +28,29 @@ void session_host_trace(const char * event, const common_agent_runtime_session_h
         request.turn_id.c_str(),
         request.n_predict);
     std::fflush(stderr);
+}
+
+std::string flydelta_deployment_trace_detail(
+        const common_flydelta_deployment_result & deployment) {
+    std::ostringstream detail;
+    detail << "active_only=" << (deployment.active_only ? "true" : "false")
+           << " canary_considered=" << (deployment.canary_considered ? "true" : "false")
+           << " canary_selected=" << (deployment.canary_selected ? "true" : "false")
+           << " fallback=" << (deployment.fallback_to_active ? "true" : "false")
+           << " baseline=" << deployment.baseline_deployment_fingerprint
+           << " candidate=" << deployment.candidate_deployment_fingerprint;
+    if (!deployment.fallback_reason.empty()) {
+        detail << " fallback_reason=" << deployment.fallback_reason;
+    }
+    detail << " effective=";
+    for (size_t i = 0; i < deployment.effective.size(); ++i) {
+        if (i != 0) detail << ',';
+        const auto & entry = deployment.effective[i];
+        detail << entry.binding_key << ':' << entry.revision_id
+               << '@' << entry.scale;
+        if (entry.canary) detail << "[canary:" << entry.canary_event_id << ']';
+    }
+    return detail.str();
 }
 
 common_agent_failure_class classify_execution_control_failure(
@@ -407,6 +431,14 @@ bool common_agent_runtime_session_host::run_turn(
     result.memory_learning_summary = agent_result.memory_learning_summary;
     result.events = std::move(agent_result.events);
     result.trace = std::move(agent_result.trace);
+    if (result.flydelta_deployment.has_value()) {
+        result.trace.push_back({
+            common_runtime_trace_stage::turn,
+            common_runtime_trace_kind::summary,
+            flydelta_deployment_trace_detail(*result.flydelta_deployment),
+            {}, {}, {}, {}, "flydelta-deployment"});
+    }
+    result.trace_count = result.trace.size();
     if (!result.ok && request.execution_control.should_stop()) {
         result.cancelled = true;
         result.failure_class = classify_execution_control_failure(request.execution_control);

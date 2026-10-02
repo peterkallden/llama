@@ -251,6 +251,7 @@ bool parse_agent_daemon_command_name(
             command_name == "flydelta.activate_candidate" ||
             command_name == "flydelta.rollback_candidate" ||
             command_name == "flydelta.canary_disposition" ||
+            command_name == "flydelta.close_canary" ||
             command_name == "flydelta.get_binding") {
         command.type = common_agent_daemon_command_type::flydelta_admin;
         common_agent_daemon_flydelta_admin_payload payload;
