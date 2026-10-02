@@ -622,6 +622,17 @@ int main(int argc, char ** argv) {
             {"learning_eligible", candidate.learning_eligible},
         });
     }
+    json frontier_semantics = json::array();
+    const auto frontier_indices = common_flydelta_select_concept_synthesis_frontier(
+        synthesis_report.concept_candidates,
+        evaluator_config.concept_frontier_max_candidates);
+    if (frontier_indices.size() != synthesis_report.graft_direction_refs.size()) {
+        return fail("concept synthesis frontier trace does not match persisted directions");
+    }
+    for (const size_t index : frontier_indices) {
+        frontier_semantics.push_back(common_flydelta_concept_synthesis_semantics_name(
+            synthesis_report.concept_candidates[index].synthesis_semantics));
+    }
     std::cout << "flydelta_concept_synthesis_model=" << json{
         {"state", common_flydelta_experiment_queue_state_name(synthesis_report.state)},
         {"source", "user_taught_concept"},
@@ -629,7 +640,7 @@ int main(int argc, char ** argv) {
         {"candidates", std::move(candidates)},
         {"graft_direction_ref", synthesis_report.graft_direction_ref},
         {"graft_direction_refs", synthesis_report.graft_direction_refs},
-        {"frontier_semantics", {"control_residualized", "positive_prototype", "negative_repulsion"}},
+        {"frontier_semantics", std::move(frontier_semantics)},
         {"next_action", common_flydelta_next_action_name(synthesis_report.next_action)},
         {"promotion", false},
     }.dump() << '\n';

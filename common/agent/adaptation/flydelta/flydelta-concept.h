@@ -137,11 +137,11 @@ struct common_flydelta_concept_candidate {
 };
 
 // Selects a bounded, deterministic comparison frontier across synthesis
-// semantics. The selector compares at most one raw estimator per semantic
-// source first (control_residualized, positive_prototype, then
-// negative_repulsion), and only then fills remaining capacity in source order.
-// A negative-only portfolio is intentionally not selectable: negative
-// repulsion supports a contrast/basis but is never a standalone answer.
+// semantics. The selector compares at most one raw estimator per primary
+// semantic source first (control_residualized, then positive_prototype), and
+// only then fills remaining capacity in source order. Negative repulsion is
+// intentionally never selected for an independent rank-1 frontier: it is
+// retained as support material for a later explicitly paired contrast/basis.
 // It does not rank behavior,
 // assign evidence, or grant lifecycle authority; the selected candidates
 // continue through the existing search and Oracle path.

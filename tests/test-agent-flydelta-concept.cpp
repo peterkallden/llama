@@ -221,7 +221,7 @@ int main() {
     CHECK(frontier[1] == residual_candidates.size());
     const auto extended_frontier = common_flydelta_select_concept_synthesis_frontier(portfolio, 3);
     CHECK(extended_frontier.size() == 3);
-    CHECK(extended_frontier[2] == residual_candidates.size() + positive_portfolio.size());
+    CHECK(extended_frontier[2] == 1);
     CHECK(common_flydelta_select_concept_synthesis_frontier(
         negative_portfolio, 3).empty());
     CHECK(common_flydelta_select_concept_synthesis_frontier(portfolio, 1).size() == 1);

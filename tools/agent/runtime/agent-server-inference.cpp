@@ -503,19 +503,24 @@ public:
         const size_t max_parallel = static_cast<size_t>(std::max(1, params_base.n_parallel));
         for (size_t start = 0; start < requests.size(); start += max_parallel) {
             const size_t end = std::min(requests.size(), start + max_parallel);
-            std::vector<bool> completed(end - start, false);
+            // Do not use vector<bool> here. Its bit-packed proxy elements can
+            // share a storage word, so concurrent worker completion writes
+            // race even when their logical indices differ. Each byte below is
+            // an independent completion cell; worker joins establish the
+            // required happens-before relation before it is inspected.
+            std::vector<uint8_t> completed(end - start, 0);
             std::vector<std::thread> workers;
             workers.reserve(end - start);
             for (size_t index = start; index < end; ++index) {
                 workers.emplace_back([&, index, start]() {
-                    completed[index - start] = generate(requests[index], results[index]);
+                    completed[index - start] = generate(requests[index], results[index]) ? 1 : 0;
                 });
             }
             for (auto & worker : workers) {
                 worker.join();
             }
-            if (!std::all_of(completed.begin(), completed.end(), [](bool value) {
-                    return value;
+            if (!std::all_of(completed.begin(), completed.end(), [](uint8_t value) {
+                    return value != 0;
                 })) {
                 return false;
             }

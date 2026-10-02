@@ -309,21 +309,12 @@ std::vector<size_t> common_flydelta_select_concept_synthesis_frontier(
     // Keep the semantic comparison deterministic and bounded. The raw
     // estimator is preferred because it is the least transformed candidate;
     // a source's first available estimator remains a safe fallback.
-    const common_flydelta_concept_synthesis_semantics semantics[] = {
+    const common_flydelta_concept_synthesis_semantics primary_semantics[] = {
         common_flydelta_concept_synthesis_semantics::control_residualized,
         common_flydelta_concept_synthesis_semantics::positive_prototype,
-        common_flydelta_concept_synthesis_semantics::negative_repulsion,
     };
-    const auto has_primary = std::any_of(candidates.begin(), candidates.end(), [](const auto & candidate) {
-        return candidate.synthesis_semantics ==
-                common_flydelta_concept_synthesis_semantics::control_residualized ||
-            candidate.synthesis_semantics ==
-                common_flydelta_concept_synthesis_semantics::positive_prototype;
-    });
-    for (const auto semantic : semantics) {
+    for (const auto semantic : primary_semantics) {
         if (selected.size() >= max_candidates) break;
-        if (semantic == common_flydelta_concept_synthesis_semantics::negative_repulsion &&
-                !has_primary) continue;
         size_t fallback = candidates.size();
         size_t preferred = candidates.size();
         for (size_t index = 0; index < candidates.size(); ++index) {
@@ -342,8 +333,7 @@ std::vector<size_t> common_flydelta_select_concept_synthesis_frontier(
     }
     for (size_t index = 0; index < candidates.size() && selected.size() < max_candidates; ++index) {
         if (candidates[index].synthesis_semantics ==
-                common_flydelta_concept_synthesis_semantics::negative_repulsion &&
-                !has_primary) continue;
+                common_flydelta_concept_synthesis_semantics::negative_repulsion) continue;
         if (std::find(selected.begin(), selected.end(), index) == selected.end()) {
             selected.push_back(index);
         }
