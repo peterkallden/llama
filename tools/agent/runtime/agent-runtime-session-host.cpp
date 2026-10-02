@@ -39,6 +39,11 @@ std::string flydelta_deployment_trace_detail(
            << " fallback=" << (deployment.fallback_to_active ? "true" : "false")
            << " baseline=" << deployment.baseline_deployment_fingerprint
            << " candidate=" << deployment.candidate_deployment_fingerprint;
+    if (deployment.has_canary_evaluation_context) {
+        detail << " canary_event=" << deployment.canary_evaluation_context.canary_event_id
+               << " observation=" << deployment.canary_evaluation_context.observation_id
+               << " allocation=" << deployment.canary_evaluation_context.allocation_id;
+    }
     if (!deployment.fallback_reason.empty()) {
         detail << " fallback_reason=" << deployment.fallback_reason;
     }
@@ -48,7 +53,8 @@ std::string flydelta_deployment_trace_detail(
         const auto & entry = deployment.effective[i];
         detail << entry.binding_key << ':' << entry.revision_id
                << '@' << entry.scale;
-        if (entry.canary) detail << "[canary:" << entry.canary_event_id << ']';
+        if (entry.canary) detail << "[canary:" << entry.canary_event_id
+            << ":observation:" << entry.observation_id << ']';
     }
     return detail.str();
 }

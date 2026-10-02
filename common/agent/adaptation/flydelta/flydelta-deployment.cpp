@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <sstream>
 
 namespace {
@@ -290,6 +291,57 @@ bool common_flydelta_decide_canary_disposition(
     return true;
 }
 
+bool common_flydelta_build_canary_policy_snapshot(
+        const std::vector<common_flydelta_sideband_review> & reviews,
+        const std::string & canary_event_id,
+        common_flydelta_canary_policy_snapshot & snapshot,
+        std::string & error) {
+    error.clear();
+    snapshot = {};
+    snapshot.canary_event_id = canary_event_id;
+    if (canary_event_id.empty() || canary_event_id.size() > 512) {
+        error = "FlyDelta policy snapshot requires a bounded canary event id";
+        return false;
+    }
+    std::set<std::string> allocations;
+    std::set<std::string> terminal_ids;
+    std::set<std::string> evaluated_ids;
+    float target_gain_sum = 0.0f;
+    for (const auto & review : reviews) {
+        if (review.canary_envelope_event_id != canary_event_id) continue;
+        if (review.action == common_flydelta_review_action::reserve_canary_observation) {
+            ++snapshot.reserved_observations;
+            continue;
+        }
+        if (review.action == common_flydelta_review_action::complete_canary_observation) {
+            if (terminal_ids.insert(review.observation_id).second) {
+                ++snapshot.terminal_observations;
+            }
+            continue;
+        }
+        if (review.action != common_flydelta_review_action::attach_canary_evaluation ||
+                !evaluated_ids.insert(review.observation_id).second) continue;
+        ++snapshot.evaluated_observations;
+        if (!review.allocation_id.empty()) allocations.insert(review.allocation_id);
+        target_gain_sum += review.target_gain;
+        snapshot.control_regression = std::max(
+            snapshot.control_regression, review.control_regression);
+        snapshot.competitor_regression = std::max(
+            snapshot.competitor_regression, review.competitor_regression);
+        if (review.canary_outcome == common_flydelta_counterfactual_outcome::harmed) {
+            ++snapshot.harmed_results;
+        }
+    }
+    snapshot.unique_allocations = allocations.size();
+    if (snapshot.evaluated_observations > 0) {
+        snapshot.target_gain = target_gain_sum /
+            static_cast<float>(snapshot.evaluated_observations);
+    }
+    snapshot.semantic_evidence_complete = snapshot.evaluated_observations > 0 &&
+        snapshot.evaluated_observations <= snapshot.terminal_observations;
+    return true;
+}
+
 std::string common_flydelta_deployment_fingerprint(
         const common_flydelta_deployment_request & request,
         const std::vector<common_flydelta_resolved_deployment_entry> & entries) {
@@ -335,6 +387,8 @@ bool common_flydelta_resolve_deployment(
 
     std::vector<common_flydelta_sideband_manifest> active_manifests;
     std::vector<common_flydelta_resolved_deployment_entry> active_entries;
+    std::string selected_scope_step_id;
+    std::string selected_oracle_revision;
     const bool host_applicability_available =
         !request.applicability.behavior_key.empty() ||
         !request.applicability.scope_fingerprint.empty() ||
@@ -364,7 +418,7 @@ bool common_flydelta_resolve_deployment(
         if (!resolved) return false;
         active_manifests.push_back(manifest);
         active_entries.push_back({
-            configured.binding_key, manifest.id, scale, false, {}});
+            configured.binding_key, manifest.id, scale, false, {}, {}});
     }
     result.baseline = active_entries;
     result.effective = active_entries;
@@ -444,10 +498,12 @@ bool common_flydelta_resolve_deployment(
             // rollback identity have all been validated. A malformed,
             // expired or mismatched canary must not consume the finite
             // exposure budget before generation begins.
+            std::string observation_id;
             if (config.reserve_observation) {
                 std::string reservation_error;
                 if (!config.reserve_observation(
-                        review, envelope.max_observations, reservation_error)) {
+                        review, request.allocation_key, envelope.max_observations,
+                        observation_id, reservation_error)) {
                     if (!reservation_error.empty()) {
                         result.fallback_to_active = true;
                         result.fallback_reason = reservation_error;
@@ -460,11 +516,14 @@ bool common_flydelta_resolve_deployment(
             }
             result.canary_selected = true;
             result.active_only = false;
+            selected_scope_step_id = envelope.scope_fingerprint;
+            selected_oracle_revision = envelope.oracle_revision;
             if (existing != result.effective.end()) {
                 existing->revision_id = canary_manifest.id;
                 existing->scale = canary_scale;
                 existing->canary = true;
                 existing->canary_event_id = review.event_id;
+                existing->observation_id = observation_id;
                 const auto active_index = std::distance(active_entries.begin(), active_manifest);
                 active_manifests[active_index] = canary_manifest;
             } else {
@@ -474,7 +533,7 @@ bool common_flydelta_resolve_deployment(
                     continue;
                 }
                 result.effective.push_back({envelope.binding_key, canary_manifest.id,
-                    canary_scale, true, review.event_id});
+                    canary_scale, true, review.event_id, observation_id});
                 active_manifests.push_back(canary_manifest);
             }
             break;
@@ -503,6 +562,24 @@ bool common_flydelta_resolve_deployment(
                 result.activation, error)) return false;
         result.candidate_deployment_fingerprint =
             common_flydelta_deployment_fingerprint(request, result.effective);
+        const auto selected = std::find_if(result.effective.begin(), result.effective.end(),
+            [](const auto & entry) { return entry.canary; });
+        if (selected != result.effective.end() && !selected->observation_id.empty()) {
+            result.has_canary_evaluation_context = true;
+            result.canary_evaluation_context.canary_event_id = selected->canary_event_id;
+            result.canary_evaluation_context.observation_id = selected->observation_id;
+            result.canary_evaluation_context.binding_key = selected->binding_key;
+            result.canary_evaluation_context.candidate_revision_id = selected->revision_id;
+            result.canary_evaluation_context.allocation_id = request.allocation_key;
+            result.canary_evaluation_context.scope_step_id =
+                selected_scope_step_id;
+            result.canary_evaluation_context.baseline_deployment_fingerprint =
+                result.baseline_deployment_fingerprint;
+            result.canary_evaluation_context.candidate_deployment_fingerprint =
+                result.candidate_deployment_fingerprint;
+            result.canary_evaluation_context.oracle_ref = "flydelta://oracle/" + selected_oracle_revision;
+            result.canary_evaluation_context.oracle_revision = selected_oracle_revision;
+        }
     } else {
         if (!load_entries(config, request, result.baseline, active_manifests,
                 result.activation, error)) return false;

@@ -252,6 +252,8 @@ bool parse_agent_daemon_command_name(
             command_name == "flydelta.rollback_candidate" ||
             command_name == "flydelta.canary_disposition" ||
             command_name == "flydelta.close_canary" ||
+            command_name == "flydelta.complete_canary_observation" ||
+            command_name == "flydelta.attach_canary_evaluation" ||
             command_name == "flydelta.get_binding") {
         command.type = common_agent_daemon_command_type::flydelta_admin;
         common_agent_daemon_flydelta_admin_payload payload;
@@ -260,6 +262,7 @@ bool parse_agent_daemon_command_name(
         payload.candidate_manifest_ref = parsed.value("candidate_manifest_ref", "");
         payload.suite_ref = parsed.value("suite_ref", "");
         payload.evaluation_revision = parsed.value("evaluation_revision", "");
+        payload.evaluation_report_ref = parsed.value("evaluation_report_ref", "");
         payload.verifier_revision = parsed.value("verifier_revision", payload.evaluation_revision);
         payload.model_profile_fingerprint = parsed.value("model_profile_fingerprint", "");
         payload.tokenizer_fingerprint = parsed.value("tokenizer_fingerprint", "");
@@ -274,6 +277,12 @@ bool parse_agent_daemon_command_name(
         payload.canary_behavior_key = parsed.value("canary_behavior_key", "");
         payload.canary_scope_fingerprint = parsed.value("canary_scope_fingerprint", "");
         payload.canary_event_id = parsed.value("canary_event_id", "");
+        payload.observation_id = parsed.value("observation_id", "");
+        payload.allocation_id = parsed.value("allocation_id", "");
+        payload.scope_step_id = parsed.value("scope_step_id", "");
+        payload.observation_status = parsed.value("observation_status", "");
+        payload.counterfactual_report_ref = parsed.value("counterfactual_report_ref", "");
+        payload.canary_outcome = parsed.value("canary_outcome", "unknown");
         payload.next_scope_fingerprint = parsed.value("next_scope_fingerprint", "");
         payload.baseline_deployment_fingerprint = parsed.value("baseline_deployment_fingerprint", "");
         payload.rollback_revision_id = parsed.value("rollback_revision_id", "");
@@ -299,6 +308,12 @@ bool parse_agent_daemon_command_name(
             "canary_control_regression", payload.canary_control_regression);
         payload.canary_competitor_regression = parsed.value(
             "canary_competitor_regression", payload.canary_competitor_regression);
+        payload.canary_target_gain_observation = parsed.value(
+            "canary_target_gain_observation", payload.canary_target_gain_observation);
+        payload.canary_control_regression_observation = parsed.value(
+            "canary_control_regression_observation", payload.canary_control_regression_observation);
+        payload.canary_competitor_regression_observation = parsed.value(
+            "canary_competitor_regression_observation", payload.canary_competitor_regression_observation);
         payload.canary_next_scope_available = parsed.value(
             "canary_next_scope_available", payload.canary_next_scope_available);
         payload.canary_semantic_evidence_complete = parsed.value(

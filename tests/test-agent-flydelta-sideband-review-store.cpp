@@ -129,7 +129,30 @@ int main() {
     observation.event_id = "review-3:observation:1";
     observation.action = common_flydelta_review_action::reserve_canary_observation;
     observation.canary_envelope_event_id = canary_review.event_id;
+    observation.observation_id = "review-3:observation:1";
+    observation.allocation_id = "session:test";
+    observation.scope_step_id = canary_review.canary_envelope.scope_fingerprint;
     CHECK(store.append(observation, error));
+    auto completion = observation;
+    completion.event_id = "review-3:observation:1:complete";
+    completion.action = common_flydelta_review_action::complete_canary_observation;
+    completion.observation_status = common_flydelta_canary_observation_status::evaluated;
+    completion.evaluation_report_ref = "evaluation:canary-observation:1";
+    completion.canary_outcome = common_flydelta_counterfactual_outcome::helped;
+    CHECK(store.append(completion, error));
+    auto attachment = completion;
+    attachment.event_id = "review-3:observation:1:attach";
+    attachment.action = common_flydelta_review_action::attach_canary_evaluation;
+    attachment.counterfactual_report_ref = "counterfactual:canary-observation:1";
+    attachment.target_gain = 0.4f;
+    attachment.control_regression = 0.0f;
+    attachment.competitor_regression = 0.0f;
+    CHECK(store.append(attachment, error));
+    CHECK(store.append(attachment, error));
+    auto conflicting_attachment = attachment;
+    conflicting_attachment.event_id = "review-3:observation:1:attach-conflict";
+    conflicting_attachment.target_gain = 0.9f;
+    CHECK(!store.append(conflicting_attachment, error));
     value.status = common_flydelta_sideband_status::canary;
     CHECK(store.apply_and_append(registry,
         review("review-4", common_flydelta_review_action::activate, value), true, error));
@@ -174,7 +197,7 @@ int main() {
     CHECK(store.apply_and_append(registry, rollback_review, true, error));
     CHECK(registry.binding("flydelta://binding/review-store", binding, error));
     CHECK(binding.selected_revision_id == value.id && binding.previous_revision_id == value2.id);
-    CHECK(store.list(error).size() == 10);
+    CHECK(store.list(error).size() == 12);
 
     common_flydelta_sideband_registry restored;
     CHECK(store.replay(restored, error));

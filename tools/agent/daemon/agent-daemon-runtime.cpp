@@ -580,7 +580,9 @@ make_daemon_flydelta_deployment_resolver(
         };
         factory.reserve_observation = [observation_budget, review_store, observation_journal_mutex](
                 const common_flydelta_sideband_review & canary_review,
-                size_t max_observations, std::string & reservation_error) {
+                const std::string & allocation_id,
+                size_t max_observations, std::string & observation_id,
+                std::string & reservation_error) {
             if (!observation_budget || !observation_budget->try_reserve(
                     canary_review.canary_envelope.binding_key,
                     canary_review.event_id, max_observations, reservation_error)) {
@@ -589,15 +591,22 @@ make_daemon_flydelta_deployment_resolver(
             if (review_store) {
                 std::lock_guard<std::mutex> journal_lock(*observation_journal_mutex);
                 common_flydelta_sideband_review reservation = canary_review;
-                reservation.event_id = canary_review.event_id + ":observation:" +
+                observation_id = canary_review.event_id + ":observation:" +
                     std::to_string(observation_budget->reserved(
                         canary_review.canary_envelope.binding_key, canary_review.event_id));
+                reservation.event_id = observation_id;
                 reservation.actor_id = "flydelta-runtime";
                 reservation.source = common_flydelta_review_source::host_automation;
                 reservation.action = common_flydelta_review_action::reserve_canary_observation;
                 reservation.policy_revision = "flydelta-canary-observation-v1";
                 reservation.canary_envelope_event_id = canary_review.event_id;
+                reservation.observation_id = observation_id;
+                reservation.allocation_id = allocation_id;
+                reservation.scope_step_id = canary_review.canary_envelope.scope_fingerprint;
                 if (!review_store->append(reservation, reservation_error)) return false;
+            }
+            if (observation_id.empty()) {
+                observation_id = canary_review.event_id + ":observation:unjournaled";
             }
             return true;
         };

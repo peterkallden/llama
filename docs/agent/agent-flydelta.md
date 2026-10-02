@@ -4265,6 +4265,23 @@ generation är bara en atomisk exponeringsbudget. Den räknas inte som
 som journalhändelser i samma review-journal och seedas tillbaka vid omstart;
 endast färdiga verifierade resultat får driva policybeslut.
 
+Evaluation-lineage är explicit. En reservation skapar ett bounded
+`observation_id` och en immutable canary-evaluation-context med event-id,
+binding/candidate, allocation, scope-steg, baseline/candidate-deployment och
+Oracle-revision. Runtime trace och evaluation-/counterfactual-rapporter kan
+föra samma context vidare. En observation avslutas genom journalhändelsen
+`complete_canary_observation` med terminalstatus (`generation_failed`,
+`cancelled`, `oracle_unknown` eller `evaluated`); en verifierad rapport kopplas
+sedan genom `attach_canary_evaluation`.
+
+Policy-snapshoten projiceras vid replay från dessa händelser och innehåller
+reserverade, terminala och utvärderade observationer, unika allocations,
+HELPED/NEUTRAL/UNKNOWN/HARMED-utfall samt gain- och regressionsmått. Endast
+utvärderade observationer räknas som `completed_observations` i
+`retain`/`expand_scope`/`promote_active`. En observation får högst en terminal
+completion och en evaluation attachment; retry med samma id är idempotent och
+en konkurrerande attachment avvisas.
+
 `HARMED` stänger det berörda envelope:t/den berörda strategy-revisionen och
 underkänner inte automatiskt konceptet, andra strategier eller andra active
 bindings. Active rollback är CAS-skyddad: den får bara byta tillbaka om den

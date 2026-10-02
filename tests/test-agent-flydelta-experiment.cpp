@@ -47,6 +47,32 @@ int main() {
     CHECK(report.outcome == common_flydelta_counterfactual_outcome::helped);
     CHECK(report.quality_delta > 0.0f);
 
+    common_flydelta_canary_evaluation_context canary_context;
+    canary_context.canary_event_id = "canary:event-1";
+    canary_context.observation_id = "canary:event-1:observation:1";
+    canary_context.binding_key = "binding:tool";
+    canary_context.candidate_revision_id = "revision:candidate";
+    canary_context.allocation_id = "session:test";
+    canary_context.scope_step_id = "scope:small";
+    canary_context.baseline_deployment_fingerprint = "sha256:baseline";
+    canary_context.candidate_deployment_fingerprint = "sha256:candidate";
+    canary_context.oracle_ref = "oracle:dataset";
+    canary_context.oracle_revision = "oracle:dataset:v1";
+    common_flydelta_counterfactual_report canary_report;
+    CHECK(common_flydelta_run_counterfactual(
+        "flydelta://experiment/canary", "flydelta://candidate/1", "base", "overlay",
+        experiment_fixture,
+        [&](const auto &, bool apply_overlay, auto & result, auto &) {
+            result = trial(apply_overlay, apply_overlay, apply_overlay ? "evidence:candidate" : "evidence:baseline");
+            return true;
+        }, canary_report, error, &canary_context));
+    CHECK(canary_report.has_canary_context);
+    CHECK(canary_report.canary_context.observation_id == canary_context.observation_id);
+    common_flydelta_counterfactual_report parsed_canary;
+    CHECK(common_flydelta_counterfactual_report_from_json(
+        common_flydelta_counterfactual_report_to_json(canary_report), parsed_canary, error));
+    CHECK(parsed_canary.canary_context.canary_event_id == canary_context.canary_event_id);
+
     const auto json = common_flydelta_counterfactual_report_to_json(report);
     common_flydelta_counterfactual_report parsed;
     CHECK(common_flydelta_counterfactual_report_from_json(json, parsed, error));

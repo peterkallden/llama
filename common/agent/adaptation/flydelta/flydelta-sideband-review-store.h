@@ -21,6 +21,8 @@ enum class common_flydelta_review_action {
     rollback,
     close_canary,
     reserve_canary_observation,
+    complete_canary_observation,
+    attach_canary_evaluation,
     retire,
     revoke,
 };
@@ -64,6 +66,20 @@ struct common_flydelta_sideband_review {
     bool has_canary_envelope = false;
     common_flydelta_canary_envelope canary_envelope;
     std::string canary_envelope_event_id;
+    // Observation lineage and terminal/evaluation projection fields. These
+    // are journal metadata; the referenced immutable reports remain the
+    // semantic source of truth.
+    std::string observation_id;
+    std::string allocation_id;
+    std::string scope_step_id;
+    common_flydelta_canary_observation_status observation_status =
+        common_flydelta_canary_observation_status::generation_failed;
+    common_flydelta_counterfactual_outcome canary_outcome =
+        common_flydelta_counterfactual_outcome::unknown;
+    std::string counterfactual_report_ref;
+    float target_gain = 0.0f;
+    float control_regression = 0.0f;
+    float competitor_regression = 0.0f;
 };
 
 bool common_flydelta_sideband_review_validate(

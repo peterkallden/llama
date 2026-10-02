@@ -74,6 +74,17 @@ common_flydelta_counterfactual_outcome parse_outcome(const std::string & value) 
     return common_flydelta_counterfactual_outcome::unknown;
 }
 
+const char * observation_status_name(
+        common_flydelta_canary_observation_status status) {
+    switch (status) {
+        case common_flydelta_canary_observation_status::generation_failed: return "generation_failed";
+        case common_flydelta_canary_observation_status::cancelled: return "cancelled";
+        case common_flydelta_canary_observation_status::oracle_unknown: return "oracle_unknown";
+        case common_flydelta_canary_observation_status::evaluated: return "evaluated";
+    }
+    return "generation_failed";
+}
+
 json trial_to_json(const common_flydelta_counterfactual_trial & trial) {
     return json{
         {"executed", trial.executed},
@@ -125,6 +136,48 @@ void trial_from_json(const json & value, common_flydelta_counterfactual_trial & 
 }
 
 } // namespace
+
+const char * common_flydelta_canary_observation_status_name(
+        common_flydelta_canary_observation_status status) {
+    return observation_status_name(status);
+}
+
+bool parse_common_flydelta_canary_observation_status(
+        const std::string & value,
+        common_flydelta_canary_observation_status & status,
+        std::string & error) {
+    for (const auto candidate : {
+            common_flydelta_canary_observation_status::generation_failed,
+            common_flydelta_canary_observation_status::cancelled,
+            common_flydelta_canary_observation_status::oracle_unknown,
+            common_flydelta_canary_observation_status::evaluated}) {
+        if (value == observation_status_name(candidate)) {
+            status = candidate;
+            error.clear();
+            return true;
+        }
+    }
+    error = "unknown FlyDelta canary observation status";
+    return false;
+}
+
+bool common_flydelta_canary_evaluation_context_validate(
+        const common_flydelta_canary_evaluation_context & context,
+        std::string & error) {
+    error.clear();
+    if (context.schema_version != 1 || !nonempty_bounded(context.canary_event_id) ||
+            !nonempty_bounded(context.observation_id) || !nonempty_bounded(context.binding_key) ||
+            !nonempty_bounded(context.candidate_revision_id) || !nonempty_bounded(context.allocation_id) ||
+            !nonempty_bounded(context.scope_step_id) ||
+            !nonempty_bounded(context.baseline_deployment_fingerprint) ||
+            !nonempty_bounded(context.candidate_deployment_fingerprint) ||
+            context.baseline_deployment_fingerprint == context.candidate_deployment_fingerprint ||
+            !nonempty_bounded(context.oracle_ref) || !nonempty_bounded(context.oracle_revision)) {
+        error = "FlyDelta canary evaluation context is incomplete";
+        return false;
+    }
+    return true;
+}
 
 const char * common_flydelta_counterfactual_outcome_name(
         common_flydelta_counterfactual_outcome outcome) {
@@ -212,6 +265,10 @@ bool common_flydelta_counterfactual_report_validate(
         error = "FlyDelta counterfactual deployment identity is incomplete";
         return false;
     }
+    if (report.has_canary_context &&
+            !common_flydelta_canary_evaluation_context_validate(report.canary_context, error)) {
+        return false;
+    }
     if (!common_flydelta_counterfactual_trial_validate(report.baseline, error) ||
             !common_flydelta_counterfactual_trial_validate(report.candidate, error)) {
         return false;
@@ -233,7 +290,8 @@ bool common_flydelta_run_counterfactual(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_counterfactual_runner & runner,
         common_flydelta_counterfactual_report & report,
-        std::string & error) {
+        std::string & error,
+        const common_flydelta_canary_evaluation_context * canary_context) {
     error.clear();
     if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
             !nonempty_bounded(experiment_id) || !nonempty_bounded(candidate_id) ||
@@ -248,6 +306,13 @@ bool common_flydelta_run_counterfactual(
     report.candidate_id = candidate_id;
     report.baseline_profile_id = baseline_profile_id;
     report.candidate_profile_id = candidate_profile_id;
+    if (canary_context) {
+        if (!common_flydelta_canary_evaluation_context_validate(*canary_context, error)) return false;
+        report.has_canary_context = true;
+        report.canary_context = *canary_context;
+        report.baseline_deployment_fingerprint = canary_context->baseline_deployment_fingerprint;
+        report.candidate_deployment_fingerprint = canary_context->candidate_deployment_fingerprint;
+    }
     if (!runner(fixture, false, report.baseline, error)) return false;
     if (!runner(fixture, true, report.candidate, error)) return false;
     report.outcome = common_flydelta_classify_counterfactual(report.baseline, report.candidate);
@@ -271,6 +336,20 @@ std::string common_flydelta_counterfactual_report_to_json(
         {"candidate_profile_id", report.candidate_profile_id},
         {"baseline_deployment_fingerprint", report.baseline_deployment_fingerprint},
         {"candidate_deployment_fingerprint", report.candidate_deployment_fingerprint},
+        {"has_canary_context", report.has_canary_context},
+        {"canary_context", {
+            {"schema_version", report.canary_context.schema_version},
+            {"canary_event_id", report.canary_context.canary_event_id},
+            {"observation_id", report.canary_context.observation_id},
+            {"binding_key", report.canary_context.binding_key},
+            {"candidate_revision_id", report.canary_context.candidate_revision_id},
+            {"allocation_id", report.canary_context.allocation_id},
+            {"scope_step_id", report.canary_context.scope_step_id},
+            {"baseline_deployment_fingerprint", report.canary_context.baseline_deployment_fingerprint},
+            {"candidate_deployment_fingerprint", report.canary_context.candidate_deployment_fingerprint},
+            {"oracle_ref", report.canary_context.oracle_ref},
+            {"oracle_revision", report.canary_context.oracle_revision},
+        }},
         {"baseline", trial_to_json(report.baseline)},
         {"candidate", trial_to_json(report.candidate)},
         {"outcome", common_flydelta_counterfactual_outcome_name(report.outcome)},
@@ -295,6 +374,19 @@ bool common_flydelta_counterfactual_report_from_json(
         report.candidate_profile_id = value.value("candidate_profile_id", "");
         report.baseline_deployment_fingerprint = value.value("baseline_deployment_fingerprint", "");
         report.candidate_deployment_fingerprint = value.value("candidate_deployment_fingerprint", "");
+        report.has_canary_context = value.value("has_canary_context", false);
+        const auto context = value.value("canary_context", json::object());
+        report.canary_context.schema_version = context.value("schema_version", 1);
+        report.canary_context.canary_event_id = context.value("canary_event_id", "");
+        report.canary_context.observation_id = context.value("observation_id", "");
+        report.canary_context.binding_key = context.value("binding_key", "");
+        report.canary_context.candidate_revision_id = context.value("candidate_revision_id", "");
+        report.canary_context.allocation_id = context.value("allocation_id", "");
+        report.canary_context.scope_step_id = context.value("scope_step_id", "");
+        report.canary_context.baseline_deployment_fingerprint = context.value("baseline_deployment_fingerprint", "");
+        report.canary_context.candidate_deployment_fingerprint = context.value("candidate_deployment_fingerprint", "");
+        report.canary_context.oracle_ref = context.value("oracle_ref", "");
+        report.canary_context.oracle_revision = context.value("oracle_revision", "");
         trial_from_json(value.value("baseline", json::object()), report.baseline);
         trial_from_json(value.value("candidate", json::object()), report.candidate);
         report.outcome = parse_outcome(value.value("outcome", "unknown"));

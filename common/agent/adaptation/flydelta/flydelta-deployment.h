@@ -74,6 +74,27 @@ struct common_flydelta_canary_policy_decision {
     std::string reason;
 };
 
+// Deterministic projection of journaled canary observation/evaluation events.
+// It is policy input, not a second semantic evidence store.
+struct common_flydelta_canary_policy_snapshot {
+    std::string canary_event_id;
+    size_t reserved_observations = 0;
+    size_t terminal_observations = 0;
+    size_t evaluated_observations = 0;
+    size_t unique_allocations = 0;
+    size_t harmed_results = 0;
+    float target_gain = 0.0f;
+    float control_regression = 0.0f;
+    float competitor_regression = 0.0f;
+    bool semantic_evidence_complete = false;
+};
+
+bool common_flydelta_build_canary_policy_snapshot(
+        const std::vector<common_flydelta_sideband_review> & reviews,
+        const std::string & canary_event_id,
+        common_flydelta_canary_policy_snapshot & snapshot,
+        std::string & error);
+
 bool common_flydelta_decide_canary_disposition(
         const common_flydelta_canary_policy & policy,
         const common_flydelta_canary_policy_input & input,
@@ -109,6 +130,7 @@ struct common_flydelta_resolved_deployment_entry {
     double scale = 1.0;
     bool canary = false;
     std::string canary_event_id;
+    std::string observation_id;
 };
 
 struct common_flydelta_deployment_result {
@@ -119,6 +141,8 @@ struct common_flydelta_deployment_result {
     std::string fallback_reason;
     std::string baseline_deployment_fingerprint;
     std::string candidate_deployment_fingerprint;
+    bool has_canary_evaluation_context = false;
+    common_flydelta_canary_evaluation_context canary_evaluation_context;
     std::vector<common_flydelta_resolved_deployment_entry> baseline;
     std::vector<common_flydelta_resolved_deployment_entry> effective;
     std::shared_ptr<const common_flydelta_activation_result> activation;
@@ -137,7 +161,9 @@ using common_flydelta_observation_counter = std::function<size_t(
 // count as HELPED or promotion evidence.
 using common_flydelta_observation_reserver = std::function<bool(
         const common_flydelta_sideband_review & canary_review,
+        const std::string & allocation_id,
         size_t max_observations,
+        std::string & observation_id,
         std::string & error)>;
 
 // Request-exposure accounting only. Semantic/counterfactual evidence remains

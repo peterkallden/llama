@@ -217,6 +217,31 @@ int main() {
         policy, policy_input, decision, error));
     CHECK(decision.disposition == common_flydelta_canary_disposition::close);
 
+    common_flydelta_sideband_review reserved_review;
+    reserved_review.action = common_flydelta_review_action::reserve_canary_observation;
+    reserved_review.canary_envelope_event_id = "review:canary-b";
+    reserved_review.observation_id = "review:canary-b:observation:1";
+    common_flydelta_sideband_review completed_review = reserved_review;
+    completed_review.action = common_flydelta_review_action::complete_canary_observation;
+    completed_review.allocation_id = "session:stable";
+    completed_review.scope_step_id = "scope:openalex";
+    completed_review.observation_status = common_flydelta_canary_observation_status::evaluated;
+    completed_review.evaluation_report_ref = "flydelta://evaluation/1";
+    common_flydelta_sideband_review attached_review = completed_review;
+    attached_review.action = common_flydelta_review_action::attach_canary_evaluation;
+    attached_review.counterfactual_report_ref = "flydelta://counterfactual/1";
+    attached_review.canary_outcome = common_flydelta_counterfactual_outcome::helped;
+    attached_review.target_gain = 0.5f;
+    std::vector<common_flydelta_sideband_review> observation_reviews = {
+        reserved_review, completed_review, attached_review};
+    common_flydelta_canary_policy_snapshot snapshot;
+    CHECK(common_flydelta_build_canary_policy_snapshot(
+        observation_reviews, "review:canary-b", snapshot, error));
+    CHECK(snapshot.reserved_observations == 1 && snapshot.terminal_observations == 1);
+    CHECK(snapshot.evaluated_observations == 1 && snapshot.unique_allocations == 1);
+    CHECK(snapshot.semantic_evidence_complete && snapshot.harmed_results == 0);
+    CHECK(snapshot.target_gain == 0.5f);
+
     common_flydelta_observation_budget budget;
     CHECK(budget.try_reserve("binding:b", "review:canary-b", 1, error));
     CHECK(!budget.try_reserve("binding:b", "review:canary-b", 1, error));

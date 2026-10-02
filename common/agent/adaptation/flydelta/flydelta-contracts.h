@@ -136,6 +136,8 @@ struct common_flydelta_evaluation_report {
     size_t candidate_successes = 0;
     size_t candidate_interventions = 0;
     size_t false_interventions = 0;
+    bool has_canary_context = false;
+    common_flydelta_canary_evaluation_context canary_context;
     std::string status = "failed";
 };
 

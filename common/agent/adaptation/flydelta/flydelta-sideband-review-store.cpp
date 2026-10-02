@@ -14,6 +14,13 @@ bool bounded(const std::string & value, size_t max = 512) {
     return !value.empty() && value.size() <= max;
 }
 
+common_flydelta_counterfactual_outcome parse_counterfactual_outcome(const std::string & value) {
+    if (value == "helped") return common_flydelta_counterfactual_outcome::helped;
+    if (value == "neutral") return common_flydelta_counterfactual_outcome::neutral;
+    if (value == "harmed") return common_flydelta_counterfactual_outcome::harmed;
+    return common_flydelta_counterfactual_outcome::unknown;
+}
+
 std::string now_id() {
     return std::to_string(static_cast<unsigned long long>(
         std::chrono::system_clock::now().time_since_epoch().count()));
@@ -30,6 +37,8 @@ common_learning_lifecycle_status lifecycle_status(common_flydelta_review_action 
         case common_flydelta_review_action::rollback: return common_learning_lifecycle_status::active;
         case common_flydelta_review_action::close_canary: return common_learning_lifecycle_status::retired;
         case common_flydelta_review_action::reserve_canary_observation: return common_learning_lifecycle_status::canary;
+        case common_flydelta_review_action::complete_canary_observation: return common_learning_lifecycle_status::canary;
+        case common_flydelta_review_action::attach_canary_evaluation: return common_learning_lifecycle_status::canary;
         case common_flydelta_review_action::retire: return common_learning_lifecycle_status::retired;
         case common_flydelta_review_action::revoke: return common_learning_lifecycle_status::revoked;
     }
@@ -68,9 +77,11 @@ int replay_order(common_flydelta_review_action action) {
         case common_flydelta_review_action::rollback: return 5;
         case common_flydelta_review_action::close_canary: return 6;
         case common_flydelta_review_action::reserve_canary_observation: return 7;
-        case common_flydelta_review_action::retire: return 8;
-        case common_flydelta_review_action::revoke: return 9;
-        case common_flydelta_review_action::reject: return 10;
+        case common_flydelta_review_action::complete_canary_observation: return 8;
+        case common_flydelta_review_action::attach_canary_evaluation: return 9;
+        case common_flydelta_review_action::retire: return 10;
+        case common_flydelta_review_action::revoke: return 11;
+        case common_flydelta_review_action::reject: return 12;
     }
     return 8;
 }
@@ -165,6 +176,8 @@ const char * common_flydelta_review_action_name(common_flydelta_review_action ac
         case common_flydelta_review_action::rollback: return "rollback";
         case common_flydelta_review_action::close_canary: return "close_canary";
         case common_flydelta_review_action::reserve_canary_observation: return "reserve_canary_observation";
+        case common_flydelta_review_action::complete_canary_observation: return "complete_canary_observation";
+        case common_flydelta_review_action::attach_canary_evaluation: return "attach_canary_evaluation";
         case common_flydelta_review_action::retire: return "retire";
         case common_flydelta_review_action::revoke: return "revoke";
     }
@@ -190,6 +203,8 @@ bool parse_common_flydelta_review_action(
     else if (value == "rollback") action = common_flydelta_review_action::rollback;
     else if (value == "close_canary") action = common_flydelta_review_action::close_canary;
     else if (value == "reserve_canary_observation") action = common_flydelta_review_action::reserve_canary_observation;
+    else if (value == "complete_canary_observation") action = common_flydelta_review_action::complete_canary_observation;
+    else if (value == "attach_canary_evaluation") action = common_flydelta_review_action::attach_canary_evaluation;
     else if (value == "retire") action = common_flydelta_review_action::retire;
     else if (value == "revoke") action = common_flydelta_review_action::revoke;
     else { error = "unknown FlyDelta review action"; return false; }
@@ -296,8 +311,27 @@ bool common_flydelta_sideband_review_validate(
         return false;
     }
     if (review.action == common_flydelta_review_action::reserve_canary_observation &&
-            !bounded(review.canary_envelope_event_id)) {
+            (!bounded(review.canary_envelope_event_id) || !bounded(review.observation_id))) {
         error = "FlyDelta canary observation reservation requires an envelope id";
+        return false;
+    }
+    if (review.action == common_flydelta_review_action::complete_canary_observation &&
+            (!bounded(review.canary_envelope_event_id) || !bounded(review.observation_id) ||
+             !bounded(review.allocation_id) || !bounded(review.scope_step_id))) {
+        error = "FlyDelta canary observation completion is incomplete";
+        return false;
+    }
+    if (review.action == common_flydelta_review_action::attach_canary_evaluation &&
+            (!bounded(review.canary_envelope_event_id) || !bounded(review.observation_id) ||
+             !bounded(review.evaluation_report_ref) || !bounded(review.counterfactual_report_ref) ||
+             review.observation_status != common_flydelta_canary_observation_status::evaluated)) {
+        error = "FlyDelta canary evaluation attachment is incomplete";
+        return false;
+    }
+    if (review.action == common_flydelta_review_action::complete_canary_observation &&
+            review.observation_status == common_flydelta_canary_observation_status::evaluated &&
+            !bounded(review.evaluation_report_ref)) {
+        error = "FlyDelta evaluated observation requires an evaluation report";
         return false;
     }
     return true;
@@ -322,6 +356,15 @@ std::string common_flydelta_sideband_review_to_json(
         {"has_canary_admission", review.has_canary_admission},
         {"canary_progress", canary_progress_json(review.canary_progress)},
         {"canary_envelope_event_id", review.canary_envelope_event_id},
+        {"observation_id", review.observation_id},
+        {"allocation_id", review.allocation_id},
+        {"scope_step_id", review.scope_step_id},
+        {"observation_status", common_flydelta_canary_observation_status_name(review.observation_status)},
+        {"canary_outcome", common_flydelta_counterfactual_outcome_name(review.canary_outcome)},
+        {"counterfactual_report_ref", review.counterfactual_report_ref},
+        {"target_gain", review.target_gain},
+        {"control_regression", review.control_regression},
+        {"competitor_regression", review.competitor_regression},
         {"canary_envelope", {
             {"schema_version", review.canary_envelope.schema_version},
             {"binding_key", review.canary_envelope.binding_key},
@@ -378,6 +421,17 @@ bool common_flydelta_sideband_review_from_json(
         review.has_canary_admission = value.value("has_canary_admission", false);
         canary_progress_from_json(value.value("canary_progress", json::object()), review.canary_progress);
         review.canary_envelope_event_id = value.value("canary_envelope_event_id", "");
+        review.observation_id = value.value("observation_id", "");
+        review.allocation_id = value.value("allocation_id", "");
+        review.scope_step_id = value.value("scope_step_id", "");
+        if (!parse_common_flydelta_canary_observation_status(
+                value.value("observation_status", "generation_failed"),
+                review.observation_status, error)) return false;
+        review.canary_outcome = parse_counterfactual_outcome(value.value("canary_outcome", "unknown"));
+        review.counterfactual_report_ref = value.value("counterfactual_report_ref", "");
+        review.target_gain = value.value("target_gain", 0.0f);
+        review.control_regression = value.value("control_regression", 0.0f);
+        review.competitor_regression = value.value("competitor_regression", 0.0f);
         const auto envelope = value.value("canary_envelope", json::object());
         review.canary_envelope.schema_version = envelope.value("schema_version", 1);
         review.canary_envelope.binding_key = envelope.value("binding_key", "");
@@ -421,6 +475,42 @@ bool common_flydelta_sideband_review_from_json(
 bool common_flydelta_sideband_review_store::append(
         const common_flydelta_sideband_review & review, std::string & error) {
     if (!common_flydelta_sideband_review_validate(review, error)) return false;
+    if (review.action == common_flydelta_review_action::complete_canary_observation ||
+            review.action == common_flydelta_review_action::attach_canary_evaluation) {
+        std::string existing_error;
+        const auto existing_reviews = list(existing_error);
+        if (!existing_error.empty()) {
+            error = existing_error;
+            return false;
+        }
+        bool has_reservation = false;
+        bool has_evaluated_completion = false;
+        for (const auto & existing : existing_reviews) {
+            if (existing.observation_id != review.observation_id ||
+                    existing.canary_envelope_event_id != review.canary_envelope_event_id) continue;
+            if (existing.action == common_flydelta_review_action::reserve_canary_observation) {
+                has_reservation = true;
+            }
+            if (existing.action == common_flydelta_review_action::complete_canary_observation &&
+                    existing.observation_status == common_flydelta_canary_observation_status::evaluated) {
+                has_evaluated_completion = true;
+            }
+            const bool same_terminal = existing.action == review.action;
+            if (same_terminal && existing.event_id != review.event_id) {
+                error = "FlyDelta canary observation terminal state already exists";
+                return false;
+            }
+        }
+        if (!has_reservation) {
+            error = "FlyDelta canary observation has no reservation";
+            return false;
+        }
+        if (review.action == common_flydelta_review_action::attach_canary_evaluation &&
+                !has_evaluated_completion) {
+            error = "FlyDelta canary evaluation has no evaluated terminal observation";
+            return false;
+        }
+    }
     common_learning_lifecycle_record record;
     record.event_id = review.event_id;
     record.subject_id = review.manifest.id;
@@ -496,6 +586,12 @@ bool common_flydelta_sideband_review_store::apply(
             // Exposure reservations are durable journal facts only. They do
             // not mutate registry lifecycle or open-canary state during
             // replay.
+            error.clear();
+            return true;
+        case common_flydelta_review_action::complete_canary_observation:
+        case common_flydelta_review_action::attach_canary_evaluation:
+            // Completion and report attachment are journal projections only;
+            // registry lifecycle remains unchanged until policy disposition.
             error.clear();
             return true;
         case common_flydelta_review_action::retire:

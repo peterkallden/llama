@@ -61,6 +61,41 @@ struct common_flydelta_counterfactual_trial {
     std::string evidence_ref;
 };
 
+enum class common_flydelta_canary_observation_status {
+    generation_failed,
+    cancelled,
+    oracle_unknown,
+    evaluated,
+};
+
+const char * common_flydelta_canary_observation_status_name(
+        common_flydelta_canary_observation_status status);
+bool parse_common_flydelta_canary_observation_status(
+        const std::string & value,
+        common_flydelta_canary_observation_status & status,
+        std::string & error);
+
+// Immutable lineage captured at canary reservation time. It is carried by
+// evaluation reports so replay never has to infer ownership from timestamps,
+// artifact ids or the latest open envelope.
+struct common_flydelta_canary_evaluation_context {
+    int schema_version = 1;
+    std::string canary_event_id;
+    std::string observation_id;
+    std::string binding_key;
+    std::string candidate_revision_id;
+    std::string allocation_id;
+    std::string scope_step_id;
+    std::string baseline_deployment_fingerprint;
+    std::string candidate_deployment_fingerprint;
+    std::string oracle_ref;
+    std::string oracle_revision;
+};
+
+bool common_flydelta_canary_evaluation_context_validate(
+        const common_flydelta_canary_evaluation_context & context,
+        std::string & error);
+
 bool common_flydelta_counterfactual_trial_validate(
         const common_flydelta_counterfactual_trial & trial,
         std::string & error);
@@ -77,6 +112,8 @@ struct common_flydelta_counterfactual_report {
     // A+B on the same base profile.
     std::string baseline_deployment_fingerprint;
     std::string candidate_deployment_fingerprint;
+    bool has_canary_context = false;
+    common_flydelta_canary_evaluation_context canary_context;
     common_flydelta_counterfactual_trial baseline;
     common_flydelta_counterfactual_trial candidate;
     common_flydelta_counterfactual_outcome outcome = common_flydelta_counterfactual_outcome::unknown;
@@ -108,7 +145,8 @@ bool common_flydelta_run_counterfactual(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_counterfactual_runner & runner,
         common_flydelta_counterfactual_report & report,
-        std::string & error);
+        std::string & error,
+        const common_flydelta_canary_evaluation_context * canary_context = nullptr);
 
 std::string common_flydelta_counterfactual_report_to_json(
         const common_flydelta_counterfactual_report & report);

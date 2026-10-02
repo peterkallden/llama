@@ -261,6 +261,7 @@ struct common_agent_daemon_flydelta_admin_payload {
     std::string candidate_manifest_ref;
     std::string suite_ref;
     std::string evaluation_revision;
+    std::string evaluation_report_ref;
     std::string verifier_revision;
     std::string model_profile_fingerprint;
     std::string tokenizer_fingerprint;
@@ -274,6 +275,12 @@ struct common_agent_daemon_flydelta_admin_payload {
     std::string canary_behavior_key;
     std::string canary_scope_fingerprint;
     std::string canary_event_id;
+    std::string observation_id;
+    std::string allocation_id;
+    std::string scope_step_id;
+    std::string observation_status;
+    std::string counterfactual_report_ref;
+    std::string canary_outcome;
     std::string next_scope_fingerprint;
     std::string baseline_deployment_fingerprint;
     std::string rollback_revision_id;
@@ -289,6 +296,9 @@ struct common_agent_daemon_flydelta_admin_payload {
     float canary_target_gain = 0.0f;
     float canary_control_regression = 0.0f;
     float canary_competitor_regression = 0.0f;
+    float canary_target_gain_observation = 0.0f;
+    float canary_control_regression_observation = 0.0f;
+    float canary_competitor_regression_observation = 0.0f;
     bool canary_next_scope_available = false;
     bool canary_semantic_evidence_complete = false;
     bool explicit_host_approval = false;

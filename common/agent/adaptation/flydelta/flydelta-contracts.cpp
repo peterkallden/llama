@@ -286,6 +286,10 @@ bool common_flydelta_evaluation_report_validate(
         error = "FlyDelta evaluation counts are invalid";
         return false;
     }
+    if (report.has_canary_context &&
+            !common_flydelta_canary_evaluation_context_validate(report.canary_context, error)) {
+        return false;
+    }
     const bool passed = report.intended_behavior_passed && report.retention_passed && report.agent_regression_passed;
     if ((report.status == "passed") != passed ||
             (report.status != "passed" && report.status != "failed")) {
@@ -318,6 +322,20 @@ std::string common_flydelta_evaluation_report_to_json(
         {"candidate_successes", report.candidate_successes},
         {"candidate_interventions", report.candidate_interventions},
         {"false_interventions", report.false_interventions},
+        {"has_canary_context", report.has_canary_context},
+        {"canary_context", {
+            {"schema_version", report.canary_context.schema_version},
+            {"canary_event_id", report.canary_context.canary_event_id},
+            {"observation_id", report.canary_context.observation_id},
+            {"binding_key", report.canary_context.binding_key},
+            {"candidate_revision_id", report.canary_context.candidate_revision_id},
+            {"allocation_id", report.canary_context.allocation_id},
+            {"scope_step_id", report.canary_context.scope_step_id},
+            {"baseline_deployment_fingerprint", report.canary_context.baseline_deployment_fingerprint},
+            {"candidate_deployment_fingerprint", report.canary_context.candidate_deployment_fingerprint},
+            {"oracle_ref", report.canary_context.oracle_ref},
+            {"oracle_revision", report.canary_context.oracle_revision},
+        }},
         {"status", report.status},
     }.dump();
 }
@@ -349,6 +367,19 @@ bool common_flydelta_evaluation_report_from_json(
         report.candidate_successes = value.value("candidate_successes", 0U);
         report.candidate_interventions = value.value("candidate_interventions", 0U);
         report.false_interventions = value.value("false_interventions", 0U);
+        report.has_canary_context = value.value("has_canary_context", false);
+        const auto context = value.value("canary_context", json::object());
+        report.canary_context.schema_version = context.value("schema_version", 1);
+        report.canary_context.canary_event_id = context.value("canary_event_id", "");
+        report.canary_context.observation_id = context.value("observation_id", "");
+        report.canary_context.binding_key = context.value("binding_key", "");
+        report.canary_context.candidate_revision_id = context.value("candidate_revision_id", "");
+        report.canary_context.allocation_id = context.value("allocation_id", "");
+        report.canary_context.scope_step_id = context.value("scope_step_id", "");
+        report.canary_context.baseline_deployment_fingerprint = context.value("baseline_deployment_fingerprint", "");
+        report.canary_context.candidate_deployment_fingerprint = context.value("candidate_deployment_fingerprint", "");
+        report.canary_context.oracle_ref = context.value("oracle_ref", "");
+        report.canary_context.oracle_revision = context.value("oracle_revision", "");
         report.status = value.value("status", "failed");
     } catch (const std::exception & exception) {
         error = std::string("invalid FlyDelta evaluation JSON: ") + exception.what();

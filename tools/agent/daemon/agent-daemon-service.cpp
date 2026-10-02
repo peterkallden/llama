@@ -61,6 +61,13 @@ std::string bounded_summary_text(const std::string & value) {
     return value.size() <= max_summary_text ? value : value.substr(0, max_summary_text);
 }
 
+common_flydelta_counterfactual_outcome parse_canary_outcome(const std::string & value) {
+    if (value == "helped") return common_flydelta_counterfactual_outcome::helped;
+    if (value == "neutral") return common_flydelta_counterfactual_outcome::neutral;
+    if (value == "harmed") return common_flydelta_counterfactual_outcome::harmed;
+    return common_flydelta_counterfactual_outcome::unknown;
+}
+
 common_agent_turn_summary make_turn_summary(
         const common_agent_runtime_session_host_turn_request & request,
         const common_agent_runtime_session_host_turn_result & result) {
@@ -849,6 +856,75 @@ bool common_agent_daemon_service::execute_flydelta_admin(
         }.dump();
         return true;
     }
+    if (request.operation == "flydelta.complete_canary_observation" ||
+            request.operation == "flydelta.attach_canary_evaluation") {
+        if (!request.explicit_host_approval) {
+            return fail("FlyDelta canary observation write requires explicit host approval");
+        }
+        if (request.canary_event_id.empty() || request.observation_id.empty()) {
+            return fail("FlyDelta canary observation requires event and observation ids");
+        }
+        std::vector<common_flydelta_sideband_review> open;
+        if (runtime.flydelta_sideband_review_store) {
+            open = runtime.flydelta_sideband_review_store->open_canaries(error);
+        }
+        if (!error.empty()) return fail(error);
+        const auto it = std::find_if(open.begin(), open.end(), [&](const auto & item) {
+            return item.event_id == request.canary_event_id &&
+                item.manifest.id == request.candidate_id;
+        });
+        if (it == open.end()) return fail("FlyDelta canary envelope is not open");
+        common_flydelta_sideband_review observation;
+        observation.event_id = request.canary_event_id + ":observation:" +
+            request.observation_id + ":" + request.operation.substr(17);
+        observation.actor_id = request.actor_id.empty() ? "host" : request.actor_id;
+        observation.policy_revision = "flydelta-canary-observation-v1";
+        observation.source = common_flydelta_review_source::host_automation;
+        observation.manifest = it->manifest;
+        observation.canary_envelope_event_id = it->event_id;
+        observation.observation_id = request.observation_id;
+        observation.allocation_id = request.allocation_id;
+        observation.scope_step_id = request.scope_step_id.empty()
+            ? it->canary_envelope.scope_fingerprint : request.scope_step_id;
+        observation.observation_status = common_flydelta_canary_observation_status::generation_failed;
+        std::string observation_status_error;
+        if (request.observation_status.empty() ||
+                !parse_common_flydelta_canary_observation_status(
+                    request.observation_status, observation.observation_status,
+                    observation_status_error)) {
+            return fail(observation_status_error.empty()
+                ? "FlyDelta canary observation requires a terminal status"
+                : observation_status_error);
+        }
+        if (request.operation == "flydelta.complete_canary_observation") {
+            observation.action = common_flydelta_review_action::complete_canary_observation;
+            observation.evaluation_report_ref = request.evaluation_report_ref;
+            observation.reason = request.reason;
+        } else {
+            if (observation.observation_status != common_flydelta_canary_observation_status::evaluated) {
+                return fail("FlyDelta evaluation attachment requires evaluated status");
+            }
+            observation.action = common_flydelta_review_action::attach_canary_evaluation;
+            observation.evaluation_report_ref = request.evaluation_report_ref;
+            observation.counterfactual_report_ref = request.counterfactual_report_ref;
+            observation.canary_outcome = parse_canary_outcome(request.canary_outcome);
+            observation.target_gain = request.canary_target_gain_observation;
+            observation.control_regression = request.canary_control_regression_observation;
+            observation.competitor_regression = request.canary_competitor_regression_observation;
+        }
+        if (!runtime.flydelta_sideband_review_store->append(observation, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = request.operation == "flydelta.complete_canary_observation"
+            ? "flydelta.canary.observation.completed"
+            : "flydelta.canary.evaluation.attached";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"canary_event_id", it->event_id},
+            {"observation_id", observation.observation_id},
+            {"status", common_flydelta_canary_observation_status_name(observation.observation_status)},
+        }.dump();
+        return true;
+    }
     if (request.operation == "flydelta.canary_disposition") {
         std::vector<common_flydelta_sideband_review> open;
         if (runtime.flydelta_sideband_review_store) {
@@ -865,16 +941,24 @@ bool common_agent_daemon_service::execute_flydelta_admin(
         const auto current_options = runtime.config_store
             ? runtime.config_store->snapshot() : std::shared_ptr<const daemon_options>();
         if (!current_options) return fail("FlyDelta daemon configuration is unavailable");
+        std::string journal_error;
+        const auto all_reviews = runtime.flydelta_sideband_review_store
+            ? runtime.flydelta_sideband_review_store->list(journal_error)
+            : std::vector<common_flydelta_sideband_review>{};
+        if (!journal_error.empty()) return fail(journal_error);
+        common_flydelta_canary_policy_snapshot snapshot;
+        if (!common_flydelta_build_canary_policy_snapshot(
+                all_reviews, it->event_id, snapshot, error)) return fail(error);
         common_flydelta_canary_policy_input input;
-        input.completed_observations = request.canary_completed_observations;
-        input.unique_allocations = request.canary_unique_allocations;
-        input.harmed_results = request.canary_harmed_results;
-        input.target_gain = request.canary_target_gain;
-        input.control_regression = request.canary_control_regression;
-        input.competitor_regression = request.canary_competitor_regression;
+        input.completed_observations = snapshot.evaluated_observations;
+        input.unique_allocations = snapshot.unique_allocations;
+        input.harmed_results = snapshot.harmed_results;
+        input.target_gain = snapshot.target_gain;
+        input.control_regression = snapshot.control_regression;
+        input.competitor_regression = snapshot.competitor_regression;
         input.current_traffic_basis_points = it->canary_envelope.traffic_basis_points;
         input.next_scope_available = request.canary_next_scope_available;
-        input.semantic_evidence_complete = request.canary_semantic_evidence_complete;
+        input.semantic_evidence_complete = snapshot.semantic_evidence_complete;
         common_flydelta_canary_policy_decision decision;
         if (!common_flydelta_decide_canary_disposition(
                 current_options->adaptation_flydelta_canary_policy, input, decision, error)) {
