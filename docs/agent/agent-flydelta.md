@@ -416,6 +416,94 @@ presence of a common algorithm or model-free smoke callback is not sufficient.
 Scalar fallback remains a backend policy; when the production batch host is
 enabled, FlyDelta logical waves must use it.
 
+### Canonical end-to-end component flow
+
+The production FlyDelta flow is a chain of existing seams, not one monolithic
+algorithm. Each component receives typed references and returns a bounded
+result to the next seam. The canonical flow is:
+
+```text
+learning/runtime host
+  -> host-verified relation and teaching-material group
+  -> typed FlyDelta seed/job and bounded filesystem queue
+  -> daemon evaluator slice
+  -> scoped resource binding
+  -> resident server-context arm batch
+  -> diagnostic capture/teacher scoring
+  -> WHERE search and bounded refinement
+  -> WHAT synthesis or existing direction admission
+  -> basis/coefficient/alpha search
+  -> bounded full-generation frontier
+  -> semantic Oracle per arm
+  -> paired baseline/candidate counterfactual
+  -> lifecycle report and typed next_action
+  -> review/promotion gates
+  -> optional activation
+```
+
+The component responsibilities and hand-offs are:
+
+| Component/seam | Owns | Does not own | Output to next seam |
+| --- | --- | --- | --- |
+| Learning observer and host collector | Source discovery, transaction/scope references and collection policy | Semantic correctness, hidden-state capture or activation | Host-owned baseline/candidate/verifier references |
+| Teaching-material runtime | Relation admission, relation grouping, provenance and readiness | Model inference, direction construction or promotion | Relation-ready group with compatible material refs |
+| Experiment queue and evaluator | Typed job validation, one bounded worker slice, resume references and result routing | Prompt construction, raw model data or lifecycle approval | Worker report and typed `next_action` |
+| Daemon FlyDelta workflow | Phase orchestration, callback composition, Whirlpool/Bootstrap/augmentation/concept workflows and continuation | Vector mathematics, model internals or independent Oracle truth | Arm batches, search state and candidate references |
+| Scoped resource adapter | Authority-checked resource resolution, JSON/material loading and durable artifact refs | Search policy, model generation or promotion decisions | Validated prompt/material/capture references |
+| Resident server-context host | Request construction, fresh inference, batch execution, capture, generation finalization and execution telemetry | Search ranking, semantic truth, lifecycle persistence or model paths in callers | Per-arm execution, capture, generation and host observations |
+| Common FlyDelta search algorithms | Whirlpool/WHERE, Bootstrap, alpha/dose, coefficient/TFO, Deep and low-rank math | Prompt semantics, host authority or promotion | Diagnostic trials and bounded frontier proposals |
+| Synthesis and semantic basis admission | Candidate strategy/estimator descriptors and strict identity-compatible basis admission | New evidence, learning credit or activation authority | Experimental candidates or stable verified basis inputs |
+| Host semantic Oracle | Parse/canonicalize model-facing output and decide whether expected behavior is satisfied | Hidden-state geometry, search ranking or promotion | Per-arm `verifier_known`/pass result with Oracle revision |
+| Counterfactual classifier | Compare executed baseline and candidate against the same Oracle fixture | Inventing a semantic result when either side is unknown | `HELPED`, `HARMED`, `NEUTRAL` or `UNKNOWN` |
+| Lifecycle/review/promotion | Durable reports, evidence aggregation, review and promotion gates | Correcting model output, searching new directions or silently activating | Durable decision/review state and, only after policy, activation authority |
+
+The hand-off rules are deliberately strict:
+
+1. A queue job contains references and identity, not prompts, raw tool output or
+   activation tensors.
+2. The daemon may choose the next bounded phase, but it cannot turn geometry or
+   a teacher-forced margin into semantic evidence.
+3. Diagnostic arms may capture and score, but only the bounded full-generation
+   frontier reaches the host Oracle and counterfactual classifier.
+4. Synthesis may propose `contrast_repair`, `conditioned_prototype`,
+   `decision_output_margin` or `execution_boundary_prototype`. The descriptor
+   records identity and compatibility; it does not grant trust.
+5. The semantic basis resolver admits only identity-matching,
+   host-verified, non-experimental directions. It is an admission filter in
+   front of the existing low-rank/coefficient/TFO path, not a second store or
+   evaluator.
+6. The same Oracle fixture must be used for baseline and candidate comparison.
+   A single arm's semantic pass is represented locally as `NEUTRAL`; the
+   paired classifier supplies the actual counterfactual outcome.
+
+#### Individual arm status versus paired counterfactual outcome
+
+The host finalizer first evaluates each generated arm independently. For a
+known fixture, an individual arm that satisfies the Oracle is represented as a
+host `NEUTRAL` observation because that arm has no comparison partner yet. The
+paired counterfactual classifier then compares the baseline and candidate:
+
+```text
+baseline fails  + candidate passes -> HELPED
+baseline passes + candidate fails  -> HARMED
+baseline passes + candidate passes -> NEUTRAL
+either side not executed/unknown   -> UNKNOWN
+```
+
+Therefore `HARMED` does not necessarily mean that the baseline was a known
+failure. It can mean that the baseline already passed and an intervention
+regressed the behavior. In the Qwen positive-prototype smoke, the baseline arm
+passed the grouped-aggregation Oracle, while the layer-1 prototype arms at
+`alpha=0.01` and `alpha=0.02` did not. Those paired trials were consequently
+`HARMED`; the `alpha=0.03` arm was not decisively verified and remained
+`UNKNOWN`. None of these outcomes creates learning credit or promotion.
+
+The smoke summary records the Oracle outcome and provenance, but not the full
+generated text or the Oracle reason. A detailed investigation must therefore
+inspect the host trace or add explicit redacted generation/verifier-reason
+telemetry; the summary line alone must not be read as proof of which invalid
+tool text the model emitted.
+
 ### Execution optimization boundary
 
 The production phase chain is wired end to end and now uses a uniform
@@ -524,7 +612,7 @@ journal remains the durable evidence boundary.
 | 2026-10-01 | this local correction sweep | Positive-prototype capture now requires actual host verification and the model fixture is a dataset grouped-aggregation counterfactual | Six focused contract/smoke CTests passed serially; Qwen Instruct Vulkan0 resident server-context smoke completed with a deliberately failing baseline, host-valid conditioned captures, 2 relations x 3 capture arms, six synthesis candidates and two serial grafted frontiers; both frontiers stopped at `no_useful_utility`, with no learning credit or promotion | Replaced the generic instruction-following fixture with a versioned `normalized_call` dataset-operation fixture; production trajectory provenance now records the conditioned arm's real verifier result rather than relation admission. The remaining gap is holdout/transfer validation, not the positive-prototype admission seam |
 | 2026-10-01 | this local causal correction sweep | Resident planner capture and causal patch diagnostics now complete the intended request-scoped server-context path | `test-agent-flydelta*` passed 53/53 serially; prepared-generation/runtime contract tests passed; Qwen Instruct on Intel Vulkan0 with four runtime threads produced a counterfactual baseline `dataset.inspect` and repair `dataset.schema`, finite distinct layer-21 captures (`base_norm=60.7102`, `repair_norm=61.3367`, `delta_norm=9.46182`), teacher margins for all six diagnostic arms and two bounded frontier generations | Propagated capture through the runtime chat driver, forced final-response handling for capture/patch requests so JSON-schema streaming cannot drop metadata, and made teacher scoring reuse the captured planner context. The run remained diagnostic-only: exact replacement reached margin `0.0151199` from baseline `0.0114106` but did not change the tool choice; no `HELPED`, learning credit, overlay selection or promotion was produced |
 | 2026-10-01 | this local synthesis-portfolio correction sweep | The existing control-residualized and positive-prototype candidates now share one tested, bounded frontier selector | Cozo/Vulkan common/daemon targets built with three compile threads; focused concept test passed after correction; serial `test-agent-flydelta*` passed 53/53 | Moved the pre-existing semantic-source selection out of the evaluator-local helper into the common concept contract. It still prefers one raw candidate per semantic source, preserves source order and frontier bounds, and continues through the existing search/Oracle path; no synthesis estimator, low-rank builder, evidence, lifecycle or promotion semantics changed |
-| 2026-10-02 | this local synthesis-portfolio sweep | Synthesis strategy/estimator descriptors and strict semantic basis admission added around the existing direction, low-rank and coefficient seams | Deterministic descriptor and resolver CTests are included; full Cozo/Vulkan rebuild and serial focused suite remain the next verification step | Decision-margin and boundary-prototype builders remain challenger-capable only when host material exists. Basis resolution requires matching concept/behavior/model/capture/scope/Oracle identity plus host-verified, non-experimental directions; no new store, evaluator, learning-credit or promotion path |
+| 2026-10-02 | 2ed3616f0 | Synthesis strategy/estimator descriptors and strict semantic basis admission added around the existing direction, low-rank and coefficient seams | Cozo/Vulkan rebuild passed with three compile threads; serial `test-agent-flydelta*` passed 53/53; model-free concept smoke passed; full Qwen Instruct server-context concept-synthesis smoke passed with six candidates and two serial frontier searches | Decision-margin and boundary-prototype builders remain challenger-capable only when host material exists. Basis resolution requires matching concept/behavior/model/capture/scope/Oracle identity plus host-verified, non-experimental directions; no new store, evaluator, learning-credit or promotion path. The complete component flow and individual-arm versus paired-counterfactual outcome semantics are documented above |
 | 2026-10-01 | this local evaluation-contract sweep | Durable evaluation fixtures can now name the Oracle-aligned classes `paraphrase`, `transfer`, `control` and `competing` in addition to the existing lifecycle gate classes | Contract round-trip checks passed; production daemon mapping preserves the existing intended/holdout/retention/agent-regression gates; no model-backed rerun was needed for this vocabulary-only change | The new names are optional fixture identity only; they do not alter lifecycle gates |
 | 2026-10-01 | this local Oracle-report sweep | Evaluation now emits a separate immutable, redacted Oracle-suite report resource and links it from the lifecycle evaluation report | Cozo/Vulkan build with three compile threads passed; 53 focused FlyDelta CTests passed serially, including Oracle-report and evaluation-provenance round trips; the TinyLlama Cozo/Vulkan daemon smoke traced resource `agent-resource://.../resource-12` through lifecycle-report reference and post-evaluation readback | The report is an audit/diagnostic artifact only. It does not create learning credit, select an overlay or change promotion semantics; no second store or evaluator path was introduced. The smoke's synthetic candidate verifies wiring only, not useful Qwen adaptation. |
 
