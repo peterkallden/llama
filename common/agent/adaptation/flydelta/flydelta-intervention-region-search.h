@@ -74,6 +74,9 @@ struct common_flydelta_intervention_region_trial {
     float search_score = 0.0f;
     bool promising = false;
     bool safe_to_continue = false;
+    std::string observed_decision_summary;
+    std::string expected_decision_summary;
+    std::string verifier_reason;
     std::string evidence_ref;
 };
 

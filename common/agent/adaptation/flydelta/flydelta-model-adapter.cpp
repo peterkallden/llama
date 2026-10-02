@@ -146,6 +146,12 @@ bool common_flydelta_arm_result_validate(
         error = "FlyDelta arm execution fallback reason is too long";
         return false;
     }
+    if (result.observed_decision_summary.size() > 1024 ||
+            result.expected_decision_summary.size() > 1024 ||
+            result.verifier_reason.size() > 1024) {
+        error = "FlyDelta arm verifier observation is too long";
+        return false;
+    }
     if (result.execution_metrics.execution_class.size() > 32) {
         error = "FlyDelta arm execution class is too long";
         return false;
@@ -539,6 +545,9 @@ common_flydelta_counterfactual_trial arm_trial_from_result(
     trial.quality = arm.quality;
     trial.overlay_applied = apply_overlay;
     trial.intervention_count = intervention_count;
+    trial.observed_decision_summary = arm.observed_decision_summary;
+    trial.expected_decision_summary = arm.expected_decision_summary;
+    trial.verifier_reason = arm.verifier_reason;
     trial.evidence_ref = arm.provenance_ref.empty() ? arm.generation_ref : arm.provenance_ref;
     return trial;
 }

@@ -58,6 +58,9 @@ struct common_flydelta_trace_arm {
     bool baseline_passed = false;
     common_flydelta_counterfactual_outcome host_outcome =
         common_flydelta_counterfactual_outcome::unknown;
+    std::string observed_decision_summary;
+    std::string expected_decision_summary;
+    std::string verifier_reason;
     std::string evidence_ref;
 };
 

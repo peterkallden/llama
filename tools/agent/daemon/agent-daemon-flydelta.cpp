@@ -758,6 +758,9 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
             diagnostics.leakage <= 1.0f && diagnostics.shift_norm <= 1.0f;
         region_trial.promising = trial.margin_available && trial.margin_delta > 0.0f;
         region_trial.search_score = trial.margin_delta;
+        region_trial.observed_decision_summary = arm_result.observed_decision_summary;
+        region_trial.expected_decision_summary = arm_result.expected_decision_summary;
+        region_trial.verifier_reason = arm_result.verifier_reason;
         region_trial.evidence_ref = full_execution ? arm_result.generation_ref : arm_result.capture_ref;
         direction_result.region_trials.push_back(std::move(region_trial));
     }
@@ -916,11 +919,15 @@ bool daemon_flydelta_run_search_pipeline(
         const auto & arm_result = batch_result.arms.front();
         if (!apply_overlay) baseline_capture_arm_id = arm.arm_id;
         trial.executed = arm_result.executed;
+        trial.host_evaluated = arm_result.host_evaluated;
         trial.verifier_known = arm_result.verifier_known;
         trial.passed = daemon_flydelta_arm_semantic_passed(arm_result);
         trial.quality = arm_result.quality;
         trial.overlay_applied = apply_overlay;
         trial.intervention_count = arm.layer_indices.size();
+        trial.observed_decision_summary = arm_result.observed_decision_summary;
+        trial.expected_decision_summary = arm_result.expected_decision_summary;
+        trial.verifier_reason = arm_result.verifier_reason;
         trial.evidence_ref = arm_result.generation_ref;
         margin = arm_result.margin;
         geometry = {};
@@ -1013,11 +1020,15 @@ bool daemon_flydelta_run_search_pipeline(
             }
             common_flydelta_counterfactual_trial trial;
             trial.executed = arm.executed;
+            trial.host_evaluated = arm.host_evaluated;
             trial.verifier_known = arm.verifier_known;
             trial.passed = daemon_flydelta_arm_semantic_passed(arm);
             trial.quality = arm.quality;
             trial.overlay_applied = true;
             trial.intervention_count = batch.arms[index].layer_indices.size();
+            trial.observed_decision_summary = arm.observed_decision_summary;
+            trial.expected_decision_summary = arm.expected_decision_summary;
+            trial.verifier_reason = arm.verifier_reason;
             trial.evidence_ref = arm.generation_ref;
             trials.push_back(std::move(trial));
             margins.push_back(arm.margin);
@@ -1142,6 +1153,9 @@ bool daemon_flydelta_run_search_pipeline(
     baseline_trial.passed = daemon_flydelta_arm_semantic_passed(baseline_arm);
     baseline_trial.quality = baseline_arm.quality;
     baseline_trial.verifier_known = baseline_arm.verifier_known;
+    baseline_trial.observed_decision_summary = baseline_arm.observed_decision_summary;
+    baseline_trial.expected_decision_summary = baseline_arm.expected_decision_summary;
+    baseline_trial.verifier_reason = baseline_arm.verifier_reason;
     baseline_trial.evidence_ref = baseline_arm.generation_ref;
     if (!common_flydelta_counterfactual_trial_validate(baseline_trial, error)) return false;
     for (size_t index = 0; index < frontier.size(); ++index) {
@@ -1154,6 +1168,9 @@ bool daemon_flydelta_run_search_pipeline(
         candidate_trial.passed = daemon_flydelta_arm_semantic_passed(arm);
         candidate_trial.quality = arm.quality;
         candidate_trial.verifier_known = arm.verifier_known;
+        candidate_trial.observed_decision_summary = arm.observed_decision_summary;
+        candidate_trial.expected_decision_summary = arm.expected_decision_summary;
+        candidate_trial.verifier_reason = arm.verifier_reason;
         candidate_trial.evidence_ref = arm.generation_ref;
         if (!common_flydelta_counterfactual_trial_validate(candidate_trial, error)) return false;
         trial.outcome = common_flydelta_classify_counterfactual(baseline_trial, candidate_trial);
@@ -1167,6 +1184,9 @@ bool daemon_flydelta_run_search_pipeline(
         // but the result still comes from the arm's actual execution metadata.
         trial.host_evaluated = candidate_trial.host_evaluated;
         trial.verifier_known = baseline_trial.verifier_known && candidate_trial.verifier_known;
+        trial.observed_decision_summary = candidate_trial.observed_decision_summary;
+        trial.expected_decision_summary = candidate_trial.expected_decision_summary;
+        trial.verifier_reason = candidate_trial.verifier_reason;
         trial.evidence_ref = candidate_trial.evidence_ref;
     }
     result.selection = {};
@@ -1317,6 +1337,9 @@ bool daemon_flydelta_run_adaptive_alpha_slice(
         region_trial.verifier_known = alpha_trial.counterfactual.verifier_known;
         region_trial.geometry_available = alpha_trial.geometry_available;
         region_trial.geometry = alpha_trial.geometry;
+        region_trial.observed_decision_summary = alpha_trial.counterfactual.observed_decision_summary;
+        region_trial.expected_decision_summary = alpha_trial.counterfactual.expected_decision_summary;
+        region_trial.verifier_reason = alpha_trial.counterfactual.verifier_reason;
         region_trial.safe_to_continue = alpha_trial.outcome !=
             common_flydelta_counterfactual_outcome::harmed &&
             alpha_trial.safe_to_continue;
@@ -1583,6 +1606,9 @@ bool daemon_flydelta_run_orthogonal_slice(
         region_trial.verifier_known = full_execution && arm.verifier_known;
         region_trial.geometry_available = trial.diagnostics_available;
         region_trial.geometry = trial.diagnostics;
+        region_trial.observed_decision_summary = arm.observed_decision_summary;
+        region_trial.expected_decision_summary = arm.expected_decision_summary;
+        region_trial.verifier_reason = arm.verifier_reason;
         region_trial.safe_to_continue = arm.host_outcome !=
             common_flydelta_counterfactual_outcome::harmed &&
             trial.diagnostics_available &&
@@ -2424,6 +2450,7 @@ bool daemon_flydelta_run_counterfactual(
                 const auto & arm_result = executed.arms.front();
                 trial = {};
                 trial.executed = arm_result.executed;
+                trial.host_evaluated = arm_result.host_evaluated;
                 trial.verifier_known = arm_result.verifier_known;
                 // finalize_arm deliberately reports a single semantic pass as
                 // NEUTRAL. At this layer that pass is the trial predicate;
@@ -2433,6 +2460,9 @@ bool daemon_flydelta_run_counterfactual(
                 trial.quality = trial.passed ? 1.0f : 0.0f;
                 trial.overlay_applied = apply_overlay;
                 trial.intervention_count = apply_overlay ? 1 : 0;
+                trial.observed_decision_summary = arm_result.observed_decision_summary;
+                trial.expected_decision_summary = arm_result.expected_decision_summary;
+                trial.verifier_reason = arm_result.verifier_reason;
                 trial.evidence_ref = arm_result.generation_ref;
                 return common_flydelta_counterfactual_trial_validate(trial, runner_error);
             };

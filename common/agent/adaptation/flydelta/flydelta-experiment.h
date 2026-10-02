@@ -49,6 +49,12 @@ struct common_flydelta_counterfactual_trial {
     float quality = 0.0f;
     bool overlay_applied = false;
     size_t intervention_count = 0;
+    // Compact host-verifier observation for operator-facing traces. These
+    // fields explain a known outcome; they do not grant evidence or
+    // promotion authority.
+    std::string observed_decision_summary;
+    std::string expected_decision_summary;
+    std::string verifier_reason;
     std::string evidence_ref;
 };
 

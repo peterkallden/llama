@@ -32,6 +32,9 @@ json trial_to_json(const common_flydelta_counterfactual_trial & trial) {
         {"quality", trial.quality},
         {"overlay_applied", trial.overlay_applied},
         {"intervention_count", trial.intervention_count},
+        {"observed_decision", trial.observed_decision_summary},
+        {"expected_decision", trial.expected_decision_summary},
+        {"verifier_reason", trial.verifier_reason},
         {"evidence_ref", trial.evidence_ref},
     };
 }
@@ -45,6 +48,9 @@ void trial_from_json(const json & value, common_flydelta_counterfactual_trial & 
     trial.quality = value.value("quality", 0.0f);
     trial.overlay_applied = value.value("overlay_applied", false);
     trial.intervention_count = value.value("intervention_count", 0U);
+    trial.observed_decision_summary = value.value("observed_decision", "");
+    trial.expected_decision_summary = value.value("expected_decision", "");
+    trial.verifier_reason = value.value("verifier_reason", "");
     trial.evidence_ref = value.value("evidence_ref", "");
 }
 
@@ -88,6 +94,12 @@ bool common_flydelta_counterfactual_trial_validate(
     }
     if (!std::isfinite(trial.quality) || trial.quality < 0.0f || trial.quality > 1.0f) {
         error = "FlyDelta counterfactual trial quality is invalid";
+        return false;
+    }
+    if (trial.observed_decision_summary.size() > 1024 ||
+            trial.expected_decision_summary.size() > 1024 ||
+            trial.verifier_reason.size() > 1024) {
+        error = "FlyDelta counterfactual verifier observation is too long";
         return false;
     }
     if (trial.verifier_known && !nonempty_bounded(trial.evidence_ref)) {

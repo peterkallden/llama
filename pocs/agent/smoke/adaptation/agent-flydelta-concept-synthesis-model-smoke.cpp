@@ -317,6 +317,9 @@ void print_search_summary(
             {"verifier_known", arm.verifier_known},
             {"candidate_passed", arm.candidate_passed},
             {"host_outcome", common_flydelta_counterfactual_outcome_name(arm.host_outcome)},
+            {"observed_decision", arm.observed_decision_summary},
+            {"expected_decision", arm.expected_decision_summary},
+            {"verifier_reason", arm.verifier_reason},
         });
     }
     std::cout << "flydelta_concept_synthesis_search=" << json{

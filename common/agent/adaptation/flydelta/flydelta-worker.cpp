@@ -84,6 +84,9 @@ void append_region_arm(const common_flydelta_intervention_region_trial & trial,
     arm.host_evaluated = trial.host_evaluated;
     arm.verifier_known = trial.verifier_known;
     arm.host_outcome = trial.outcome;
+    arm.observed_decision_summary = trial.observed_decision_summary;
+    arm.expected_decision_summary = trial.expected_decision_summary;
+    arm.verifier_reason = trial.verifier_reason;
     arm.candidate_passed = trial.outcome == common_flydelta_counterfactual_outcome::helped;
     arm.evidence_ref = trial.evidence_ref;
     trace.arms.push_back(std::move(arm));
@@ -96,10 +99,13 @@ void append_counterfactual_arm(const common_flydelta_counterfactual_report & rep
     arm.arm_id = report.candidate_id;
     arm.scale = job.alpha_search.candidates.empty() ? 0.0f :
         job.alpha_search.candidates.front();
-    arm.host_evaluated = report.candidate.executed;
+    arm.host_evaluated = report.candidate.host_evaluated;
     arm.verifier_known = report.candidate.verifier_known;
     arm.candidate_passed = report.candidate.passed;
     arm.host_outcome = report.outcome;
+    arm.observed_decision_summary = report.candidate.observed_decision_summary;
+    arm.expected_decision_summary = report.candidate.expected_decision_summary;
+    arm.verifier_reason = report.candidate.verifier_reason;
     arm.evidence_ref = report.candidate.evidence_ref;
     arm.has_baseline = true;
     arm.baseline_executed = report.baseline.executed;
@@ -244,6 +250,9 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
         {"baseline_verifier_known", arm.baseline_verifier_known},
         {"baseline_passed", arm.baseline_passed},
         {"host_outcome", common_flydelta_counterfactual_outcome_name(arm.host_outcome)},
+        {"observed_decision", arm.observed_decision_summary},
+        {"expected_decision", arm.expected_decision_summary},
+        {"verifier_reason", arm.verifier_reason},
         {"evidence_ref", arm.evidence_ref}
     };
 }

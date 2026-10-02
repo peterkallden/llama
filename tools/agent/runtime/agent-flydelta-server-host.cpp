@@ -173,10 +173,28 @@ bool daemon_flydelta_verify_generation(
         const std::string & generated,
         bool & verifier_known,
         bool & passed,
+        std::string & observed_summary,
+        std::string & expected_summary,
+        std::string & verifier_reason,
         std::string & error) {
     error.clear();
     verifier_known = false;
     passed = false;
+    observed_summary.clear();
+    expected_summary.clear();
+    verifier_reason.clear();
+
+    const auto summarize = [](const common_flydelta_semantic_decision & decision) {
+        return json{
+            {"operation", decision.operation},
+            {"dataset", decision.dataset},
+            {"group_by", decision.group_by},
+            {"aggregate", decision.aggregate_function.empty() ? "" :
+                decision.aggregate_function + "(" + decision.aggregate_field + ")"},
+            {"order_by", decision.order_by_field.empty() ? "" :
+                decision.order_by_field + ":" + decision.order_by_direction},
+        }.dump();
+    };
 
     const std::string mode = fixture.value("verification_mode", "");
     if (mode == "normalized_call") {
@@ -197,6 +215,17 @@ bool daemon_flydelta_verify_generation(
                 decision_error;
             return false;
         }
+        expected_summary = summarize(expected);
+        common_flydelta_semantic_decision observed;
+        common_flydelta_semantic_decision_status observed_status;
+        std::string observed_error;
+        if (common_flydelta_parse_semantic_decision(
+                generated, observed, observed_status, observed_error)) {
+            observed_summary = summarize(observed);
+        } else {
+            observed_summary = "unparsed:" +
+                std::string(common_flydelta_semantic_decision_status_name(observed_status));
+        }
         common_flydelta_oracle_request oracle_request;
         oracle_request.oracle_ref = fixture.value(
             "oracle_ref", "flydelta://oracle/dataset-operation");
@@ -216,6 +245,7 @@ bool daemon_flydelta_verify_generation(
         }
         verifier_known = oracle_result.known;
         passed = oracle_result.verdict == common_flydelta_oracle_verdict::satisfied;
+        verifier_reason = oracle_result.reason;
         return true;
     }
 
@@ -225,6 +255,7 @@ bool daemon_flydelta_verify_generation(
             return false;
         }
         const std::string expected_tool = fixture.at("expected_tool").get<std::string>();
+        expected_summary = "tool:" + expected_tool;
         common_flydelta_semantic_decision actual;
         common_flydelta_semantic_decision_status status;
         std::string decision_error;
@@ -232,14 +263,17 @@ bool daemon_flydelta_verify_generation(
             generated, actual, status, decision_error);
         verifier_known = true;
         if (parsed) {
+            observed_summary = "operation:" + actual.operation;
             const std::string expected_operation = expected_tool.rfind("data.", 0) == 0
                 ? expected_tool.substr(5) : expected_tool;
             passed = actual.operation == expected_operation;
         } else {
+            observed_summary = "unparsed";
             // Keep the existing tool-only fixture behavior for operations
             // that are intentionally outside the semantic-decision IR.
             passed = generated.find(expected_tool) != std::string::npos;
         }
+        verifier_reason = passed ? "tool matched" : "tool mismatch";
         return true;
     }
 
@@ -259,6 +293,9 @@ bool daemon_flydelta_verify_generation(
         }
         verifier_known = true;
         passed = !expected.empty() && generated.find(expected) != std::string::npos;
+        expected_summary = "contains:" + expected;
+        observed_summary = generated.substr(0, 512);
+        verifier_reason = passed ? "expected text found" : "expected text missing";
     }
     return true;
 }
@@ -328,7 +365,10 @@ bool daemon_flydelta_finalize_arm(
         bool verifier_known = false;
         bool passed = false;
         if (!daemon_flydelta_verify_generation(
-                fixture, generation.content, verifier_known, passed, error)) return false;
+                fixture, generation.content, verifier_known, passed,
+                result.observed_decision_summary,
+                result.expected_decision_summary,
+                result.verifier_reason, error)) return false;
         if (verifier_known) {
             result.verifier_known = true;
             // An individual arm has no paired baseline in this callback. A

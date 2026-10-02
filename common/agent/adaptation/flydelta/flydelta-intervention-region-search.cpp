@@ -250,6 +250,9 @@ bool common_flydelta_run_intervention_region_search(
         region_trial.verifier_known = baseline.verifier_known && counterfactual.verifier_known;
         region_trial.geometry_available = geometry_available;
         region_trial.geometry = geometry;
+        region_trial.observed_decision_summary = counterfactual.observed_decision_summary;
+        region_trial.expected_decision_summary = counterfactual.expected_decision_summary;
+        region_trial.verifier_reason = counterfactual.verifier_reason;
         region_trial.evidence_ref = counterfactual.evidence_ref;
         region_trial.safe_to_continue = !geometry_available ||
             geometry_safe(geometry, geometry_available, config);

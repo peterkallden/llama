@@ -117,6 +117,11 @@ struct common_flydelta_arm_result {
     bool verifier_known = false;
     common_flydelta_counterfactual_outcome host_outcome =
         common_flydelta_counterfactual_outcome::unknown;
+    // Compact host-verifier observation for trace/reporting. These are not
+    // evidence or promotion fields; they explain the outcome to operators.
+    std::string observed_decision_summary;
+    std::string expected_decision_summary;
+    std::string verifier_reason;
     std::string capture_ref;
     std::string generation_ref;
     std::string provenance_ref;
