@@ -169,5 +169,38 @@ int main() {
 
     CHECK(!common_flydelta_build_boundary_prototype_candidate(
         config, {{true, {1.0f, 0.0f, 0.0f, 0.0f}}}, prototype, error));
+
+    // The portfolio descriptor keeps semantic strategy separate from the
+    // estimator and admits the existing decision-margin builder as a
+    // challenger without granting it lifecycle authority.
+    common_flydelta_synthesis_candidate_descriptor identity;
+    identity.candidate_ref = "flydelta://candidate/margin";
+    identity.concept_key = "dataset.grouped_sum";
+    identity.behavior_key = config.behavior_key;
+    identity.source_ref = "teaching://relation/grouped-sum";
+    identity.oracle_ref = "oracle://dataset-operation";
+    identity.oracle_revision = "oracle:v1";
+    identity.model_profile_fingerprint = config.model_profile_fingerprint;
+    identity.tokenizer_fingerprint = "sha256:tokenizer";
+    identity.template_fingerprint = "sha256:template";
+    identity.capture_layout_revision = config.capture_layout_revision;
+    identity.scope_fingerprint = "sha256:scope";
+    common_flydelta_synthesis_candidate_descriptor descriptor;
+    CHECK(common_flydelta_synthesis_candidate_descriptor_from_direction(
+        output_candidate, identity, descriptor, error));
+    CHECK(descriptor.strategy == common_flydelta_synthesis_strategy::decision_output_margin);
+    CHECK(descriptor.estimator == common_flydelta_synthesis_estimator::direct);
+    CHECK(descriptor.experimental_only && !descriptor.learning_eligible);
+    CHECK(std::string(common_flydelta_synthesis_strategy_name(
+        common_flydelta_synthesis_strategy::conditioned_prototype)) ==
+        "conditioned_prototype");
+    CHECK(std::string(common_flydelta_synthesis_estimator_name(
+        common_flydelta_synthesis_estimator::diagonal_whitened)) ==
+        "diagonal_whitened");
+
+    auto invalid_descriptor = descriptor;
+    invalid_descriptor.oracle_revision.clear();
+    CHECK(!common_flydelta_synthesis_candidate_descriptor_validate(
+        invalid_descriptor, error));
     return 0;
 }

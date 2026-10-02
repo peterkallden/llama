@@ -37,6 +37,71 @@ const char * common_flydelta_direction_search_mode_name(
 const char * common_flydelta_direction_kind_name(
         common_flydelta_direction_kind kind);
 
+// A synthesis strategy describes where the intervention semantics came from;
+// the estimator describes how samples from that source were aggregated.  They
+// are intentionally separate so a prototype and a repair can use the same
+// raw/trimmed/whitened estimator without becoming different lifecycle types.
+enum class common_flydelta_synthesis_strategy {
+    contrast_repair,
+    conditioned_prototype,
+    decision_output_margin,
+    execution_boundary_prototype,
+};
+
+enum class common_flydelta_synthesis_estimator {
+    raw,
+    trimmed,
+    diagonal_whitened,
+    direct,
+};
+
+const char * common_flydelta_synthesis_strategy_name(
+        common_flydelta_synthesis_strategy strategy);
+const char * common_flydelta_synthesis_estimator_name(
+        common_flydelta_synthesis_estimator estimator);
+
+// This is a comparison descriptor, not a lifecycle or evidence record.  It
+// makes candidate strategies comparable while retaining the fingerprints
+// required before a direction can be reused in a semantic basis.
+struct common_flydelta_synthesis_candidate_descriptor {
+    int schema_version = 1;
+    std::string candidate_ref;
+    common_flydelta_synthesis_strategy strategy =
+        common_flydelta_synthesis_strategy::contrast_repair;
+    common_flydelta_synthesis_estimator estimator =
+        common_flydelta_synthesis_estimator::raw;
+    common_adaptation_evidence_source source =
+        common_adaptation_evidence_source::tool_repair;
+    std::string concept_key;
+    std::string behavior_key;
+    std::string source_ref;
+    std::string oracle_ref;
+    std::string oracle_revision;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string capture_layout_revision;
+    std::string scope_fingerprint;
+    bool host_verified = false;
+    bool experimental_only = true;
+    bool learning_eligible = false;
+};
+
+bool common_flydelta_synthesis_candidate_descriptor_validate(
+        const common_flydelta_synthesis_candidate_descriptor & descriptor,
+        std::string & error);
+
+struct common_flydelta_direction_candidate;
+
+// Derives the semantic strategy/estimator labels from an already-built
+// direction.  It does not infer correctness and does not change the
+// direction's experimental or lifecycle flags.
+bool common_flydelta_synthesis_candidate_descriptor_from_direction(
+        const common_flydelta_direction_candidate & direction,
+        const common_flydelta_synthesis_candidate_descriptor & identity,
+        common_flydelta_synthesis_candidate_descriptor & descriptor,
+        std::string & error);
+
 struct common_flydelta_contrast_sample {
     common_flydelta_behavior_delta delta;
     common_flydelta_intervention_credit credit;

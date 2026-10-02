@@ -22,6 +22,25 @@ static common_flydelta_direction_candidate direction(int layer, float first, flo
     return value;
 }
 
+static common_flydelta_synthesis_candidate_descriptor descriptor(
+        const char * candidate_ref, bool host_verified = true) {
+    common_flydelta_synthesis_candidate_descriptor value;
+    value.candidate_ref = candidate_ref;
+    value.concept_key = "dataset.grouped_sum";
+    value.behavior_key = "dataset.grouped_sum";
+    value.source_ref = "teaching://relation/grouped-sum";
+    value.oracle_ref = "oracle://dataset-operation";
+    value.oracle_revision = "oracle:v1";
+    value.model_profile_fingerprint = "sha256:model";
+    value.tokenizer_fingerprint = "sha256:tokenizer";
+    value.template_fingerprint = "sha256:template";
+    value.capture_layout_revision = "layer-input:v1";
+    value.scope_fingerprint = "sha256:scope";
+    value.host_verified = host_verified;
+    value.experimental_only = false;
+    return value;
+}
+
 static common_flydelta_experiment_fixture fixture() {
     common_flydelta_experiment_fixture value;
     value.id = "flydelta://fixture/coefficient";
@@ -42,6 +61,37 @@ int main() {
     CHECK(basis.vectors.size() == 2);
     CHECK(std::fabs(basis.vectors[0][0] * basis.vectors[1][0] +
         basis.vectors[0][1] * basis.vectors[1][1]) < 0.0001f);
+
+    common_flydelta_semantic_basis_query query;
+    query.concept_key = "dataset.grouped_sum";
+    query.behavior_key = "dataset.grouped_sum";
+    query.model_profile_fingerprint = "sha256:model";
+    query.tokenizer_fingerprint = "sha256:tokenizer";
+    query.template_fingerprint = "sha256:template";
+    query.capture_layout_revision = "layer-input:v1";
+    query.scope_fingerprint = "sha256:scope";
+    query.oracle_ref = "oracle://dataset-operation";
+    query.oracle_revision = "oracle:v1";
+    query.max_rank = 2;
+    std::vector<common_flydelta_semantic_direction_candidate> semantic_candidates;
+    auto first = direction(2, 1.0f, 0.0f);
+    auto second = direction(2, 0.0f, 1.0f);
+    auto incompatible = direction(2, 1.0f, 1.0f);
+    semantic_candidates.push_back({first, descriptor("direction://grouped")});
+    semantic_candidates.push_back({second, descriptor("direction://aggregate")});
+    auto wrong = descriptor("direction://wrong");
+    wrong.oracle_revision = "oracle:old";
+    semantic_candidates.push_back({incompatible, wrong});
+    common_flydelta_low_rank_basis semantic_basis;
+    std::vector<size_t> selected_indices;
+    CHECK(common_flydelta_resolve_semantic_basis(
+        query, semantic_candidates, semantic_basis, selected_indices, error));
+    CHECK(selected_indices.size() == 2 && selected_indices[0] == 0 && selected_indices[1] == 1);
+    CHECK(semantic_basis.vectors.size() == 2);
+    auto no_verified = semantic_candidates;
+    for (auto & candidate : no_verified) candidate.descriptor.host_verified = false;
+    CHECK(!common_flydelta_resolve_semantic_basis(
+        query, no_verified, semantic_basis, selected_indices, error));
 
     common_flydelta_decision_margin margin;
     margin.available = true;

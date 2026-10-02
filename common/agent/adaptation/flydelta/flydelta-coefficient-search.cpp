@@ -39,6 +39,10 @@ bool same_coefficients(const std::vector<float> & left, const std::vector<float>
     return left == right;
 }
 
+bool nonempty_bounded(const std::string & value, size_t max_size = 512) {
+    return !value.empty() && value.size() <= max_size;
+}
+
 std::vector<float> bound_coefficients(
         std::vector<float> coefficients, float max_l2_norm) {
     const float value = norm(coefficients);
@@ -425,6 +429,89 @@ bool common_flydelta_build_low_rank_basis(
         return false;
     }
     return common_flydelta_low_rank_basis_validate(basis, max_rank, error);
+}
+
+bool common_flydelta_semantic_basis_query_validate(
+        const common_flydelta_semantic_basis_query & query,
+        std::string & error) {
+    error.clear();
+    if (query.schema_version != 1 ||
+            !common_adaptation_evidence_source_name(query.source) ||
+            std::string(common_adaptation_evidence_source_name(query.source)) == "unknown" ||
+            !nonempty_bounded(query.concept_key) ||
+            !nonempty_bounded(query.behavior_key) ||
+            !nonempty_bounded(query.model_profile_fingerprint) ||
+            !nonempty_bounded(query.tokenizer_fingerprint) ||
+            !nonempty_bounded(query.template_fingerprint) ||
+            !nonempty_bounded(query.capture_layout_revision) ||
+            !nonempty_bounded(query.scope_fingerprint) ||
+            !nonempty_bounded(query.oracle_ref) ||
+            !nonempty_bounded(query.oracle_revision) ||
+            query.max_rank == 0 || query.max_rank > 16) {
+        error = "FlyDelta semantic basis query identity or rank is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_resolve_semantic_basis(
+        const common_flydelta_semantic_basis_query & query,
+        const std::vector<common_flydelta_semantic_direction_candidate> & candidates,
+        common_flydelta_low_rank_basis & basis,
+        std::vector<size_t> & selected_candidate_indices,
+        std::string & error) {
+    error.clear();
+    basis = {};
+    selected_candidate_indices.clear();
+    if (!common_flydelta_semantic_basis_query_validate(query, error) ||
+            candidates.empty() || candidates.size() > 256) {
+        if (error.empty()) error = "FlyDelta semantic basis candidates are out of bounds";
+        return false;
+    }
+
+    std::vector<common_flydelta_direction_candidate> selected;
+    selected.reserve(query.max_rank);
+    for (size_t index = 0; index < candidates.size() && selected.size() < query.max_rank; ++index) {
+        const auto & candidate = candidates[index];
+        if (!common_flydelta_synthesis_candidate_descriptor_validate(
+                    candidate.descriptor, error) ||
+                !common_flydelta_direction_candidate_validate(
+                    candidate.direction, candidate.direction.values.size(), error)) {
+            return false;
+        }
+        const auto & descriptor = candidate.descriptor;
+        const bool identity_match =
+            descriptor.source == query.source &&
+            descriptor.concept_key == query.concept_key &&
+            descriptor.behavior_key == query.behavior_key &&
+            descriptor.model_profile_fingerprint == query.model_profile_fingerprint &&
+            descriptor.tokenizer_fingerprint == query.tokenizer_fingerprint &&
+            descriptor.template_fingerprint == query.template_fingerprint &&
+            descriptor.capture_layout_revision == query.capture_layout_revision &&
+            descriptor.scope_fingerprint == query.scope_fingerprint &&
+            descriptor.oracle_ref == query.oracle_ref &&
+            descriptor.oracle_revision == query.oracle_revision;
+        if (!identity_match || !descriptor.host_verified || descriptor.experimental_only ||
+                candidate.direction.experimental_only) continue;
+
+        std::vector<common_flydelta_direction_candidate> trial = selected;
+        trial.push_back(candidate.direction);
+        common_flydelta_low_rank_basis trial_basis;
+        if (!common_flydelta_build_low_rank_basis(
+                    candidate.direction.values.size(), query.max_rank, trial,
+                    trial_basis, error)) return false;
+        // Gram-Schmidt silently drops collinear directions.  Do not report a
+        // descriptor as selected when it contributed no new basis dimension.
+        if (trial_basis.vectors.size() == selected.size()) continue;
+        selected.push_back(candidate.direction);
+        selected_candidate_indices.push_back(index);
+        basis = std::move(trial_basis);
+    }
+    if (selected.empty()) {
+        error = "FlyDelta semantic basis has no compatible verified directions";
+        return false;
+    }
+    return common_flydelta_low_rank_basis_validate(basis, query.max_rank, error);
 }
 
 bool common_flydelta_coefficient_search_config_validate(

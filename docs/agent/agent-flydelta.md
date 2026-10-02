@@ -375,6 +375,16 @@ the existing diagnostics, bounded frontier and host-Oracle path. This is a
 representation extension only: neither source grants learning credit,
 promotion eligibility or activation authority.
 
+Synthesis candidates also carry a comparison descriptor that separates
+semantic strategy from estimator. `contrast_repair` and
+`conditioned_prototype` are the current activation-derived strategies;
+`decision_output_margin` and `execution_boundary_prototype` are challenger
+labels used only when their host material exists. The descriptor retains
+concept/behavior identity, model/tokenizer/template/capture fingerprints,
+scope and Oracle revision. It is an audit and compatibility contract, not a
+second registry or evidence store. A direction builder cannot make a
+candidate learning-eligible merely by assigning one of these labels.
+
 The current concept-synthesis job returns the complete candidate set for
 inspection and validation and persists a bounded frontier of at most two
 directions: the first raw `control_residualized` candidate and the first raw
@@ -514,6 +524,7 @@ journal remains the durable evidence boundary.
 | 2026-10-01 | this local correction sweep | Positive-prototype capture now requires actual host verification and the model fixture is a dataset grouped-aggregation counterfactual | Six focused contract/smoke CTests passed serially; Qwen Instruct Vulkan0 resident server-context smoke completed with a deliberately failing baseline, host-valid conditioned captures, 2 relations x 3 capture arms, six synthesis candidates and two serial grafted frontiers; both frontiers stopped at `no_useful_utility`, with no learning credit or promotion | Replaced the generic instruction-following fixture with a versioned `normalized_call` dataset-operation fixture; production trajectory provenance now records the conditioned arm's real verifier result rather than relation admission. The remaining gap is holdout/transfer validation, not the positive-prototype admission seam |
 | 2026-10-01 | this local causal correction sweep | Resident planner capture and causal patch diagnostics now complete the intended request-scoped server-context path | `test-agent-flydelta*` passed 53/53 serially; prepared-generation/runtime contract tests passed; Qwen Instruct on Intel Vulkan0 with four runtime threads produced a counterfactual baseline `dataset.inspect` and repair `dataset.schema`, finite distinct layer-21 captures (`base_norm=60.7102`, `repair_norm=61.3367`, `delta_norm=9.46182`), teacher margins for all six diagnostic arms and two bounded frontier generations | Propagated capture through the runtime chat driver, forced final-response handling for capture/patch requests so JSON-schema streaming cannot drop metadata, and made teacher scoring reuse the captured planner context. The run remained diagnostic-only: exact replacement reached margin `0.0151199` from baseline `0.0114106` but did not change the tool choice; no `HELPED`, learning credit, overlay selection or promotion was produced |
 | 2026-10-01 | this local synthesis-portfolio correction sweep | The existing control-residualized and positive-prototype candidates now share one tested, bounded frontier selector | Cozo/Vulkan common/daemon targets built with three compile threads; focused concept test passed after correction; serial `test-agent-flydelta*` passed 53/53 | Moved the pre-existing semantic-source selection out of the evaluator-local helper into the common concept contract. It still prefers one raw candidate per semantic source, preserves source order and frontier bounds, and continues through the existing search/Oracle path; no synthesis estimator, low-rank builder, evidence, lifecycle or promotion semantics changed |
+| 2026-10-02 | this local synthesis-portfolio sweep | Synthesis strategy/estimator descriptors and strict semantic basis admission added around the existing direction, low-rank and coefficient seams | Deterministic descriptor and resolver CTests are included; full Cozo/Vulkan rebuild and serial focused suite remain the next verification step | Decision-margin and boundary-prototype builders remain challenger-capable only when host material exists. Basis resolution requires matching concept/behavior/model/capture/scope/Oracle identity plus host-verified, non-experimental directions; no new store, evaluator, learning-credit or promotion path |
 | 2026-10-01 | this local evaluation-contract sweep | Durable evaluation fixtures can now name the Oracle-aligned classes `paraphrase`, `transfer`, `control` and `competing` in addition to the existing lifecycle gate classes | Contract round-trip checks passed; production daemon mapping preserves the existing intended/holdout/retention/agent-regression gates; no model-backed rerun was needed for this vocabulary-only change | The new names are optional fixture identity only; they do not alter lifecycle gates |
 | 2026-10-01 | this local Oracle-report sweep | Evaluation now emits a separate immutable, redacted Oracle-suite report resource and links it from the lifecycle evaluation report | Cozo/Vulkan build with three compile threads passed; 53 focused FlyDelta CTests passed serially, including Oracle-report and evaluation-provenance round trips; the TinyLlama Cozo/Vulkan daemon smoke traced resource `agent-resource://.../resource-12` through lifecycle-report reference and post-evaluation readback | The report is an audit/diagnostic artifact only. It does not create learning credit, select an overlay or change promotion semantics; no second store or evaluator path was introduced. The smoke's synthetic candidate verifies wiring only, not useful Qwen adaptation. |
 
@@ -2045,6 +2056,24 @@ geometry -> decision margin -> bounded coefficient proposals
 No gradient, SFT, LoRA or RFM path is hidden behind this component. A future
 multi-layer or model-specific adapter can compose the same coefficient vector
 with the existing `B_l * c` overlay contract.
+
+### Semantic basis resolution — implemented admission seam
+
+`common_flydelta_resolve_semantic_basis()` is the semantic admission layer in
+front of the existing Gram--Schmidt builder. It accepts a bounded collection
+of direction candidates together with their synthesis descriptors and only
+composes candidates whose concept, behavior, model, tokenizer/template,
+capture-layout, scope and Oracle revisions all match the query. Candidates
+must already be host-verified and non-experimental; incompatible, stale or
+unverified material is skipped, and collinear candidates do not consume rank.
+
+The resolver does not create a new basis store, evaluator or lifecycle path.
+It returns the selected candidate indexes and the ordinary low-rank basis,
+which then enters the existing coordinate/TFO coefficient search. Descriptor
+filtering and orthogonalization are CPU-side; model work remains the existing
+bounded coefficient-arm evaluation. Current concept synthesis still runs its
+two activation-derived frontier candidates, while semantic basis reuse is
+available when a registry contains compatible verified directions.
 
 ### TFO-lite coefficient search — implemented experimental seam
 

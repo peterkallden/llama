@@ -38,6 +38,43 @@ bool common_flydelta_build_low_rank_basis(
         common_flydelta_low_rank_basis & basis,
         std::string & error);
 
+// Semantic basis reuse is a strict admission layer in front of the existing
+// Gram-Schmidt basis builder.  The resolver only composes descriptors that
+// match the same concept/behavior/model/capture/Oracle identity and are
+// already host-verified.  It does not create evidence, activate a basis or
+// alter coefficient/TFO search.
+struct common_flydelta_semantic_basis_query {
+    int schema_version = 1;
+    common_adaptation_evidence_source source =
+        common_adaptation_evidence_source::tool_repair;
+    std::string concept_key;
+    std::string behavior_key;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string capture_layout_revision;
+    std::string scope_fingerprint;
+    std::string oracle_ref;
+    std::string oracle_revision;
+    size_t max_rank = 2;
+};
+
+bool common_flydelta_semantic_basis_query_validate(
+        const common_flydelta_semantic_basis_query & query,
+        std::string & error);
+
+struct common_flydelta_semantic_direction_candidate {
+    common_flydelta_direction_candidate direction;
+    common_flydelta_synthesis_candidate_descriptor descriptor;
+};
+
+bool common_flydelta_resolve_semantic_basis(
+        const common_flydelta_semantic_basis_query & query,
+        const std::vector<common_flydelta_semantic_direction_candidate> & candidates,
+        common_flydelta_low_rank_basis & basis,
+        std::vector<size_t> & selected_candidate_indices,
+        std::string & error);
+
 // Coefficient search remains a host-side experiment strategy. The default
 // coordinate stencil is deliberately retained; tfo_lite is an optional,
 // bounded population search for mixed coefficients inside the same basis.

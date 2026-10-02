@@ -420,6 +420,16 @@ std::string daemon_flydelta_bootstrap_key(const common_flydelta_bootstrap_zoom_s
     return hash_sha256_hex(identity.data(), identity.size());
 }
 
+std::string daemon_flydelta_scope_fingerprint(const common_agent_scope & scope) {
+    const std::string identity =
+        std::to_string(static_cast<int>(scope.memory_scope)) + "\n" +
+        std::to_string(static_cast<int>(scope.plan_scope)) + "\n" +
+        scope.namespace_id + "\n" + scope.session_id + "\n" +
+        scope.project_id + "\n" + scope.turn_id + "\n" +
+        (scope.memory_global_opt_in ? "1" : "0");
+    return "sha256:" + hash_sha256_hex(identity.data(), identity.size());
+}
+
 bool daemon_flydelta_orchestration_state_from_json(
         const std::string & text,
         common_flydelta_experiment_plan & plan,
@@ -1593,9 +1603,59 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     if (!daemon_flydelta_resolve_evidence_direction_candidates(
             provider, job, layer_index, 2, candidates, error)) return false;
     if (candidates.size() > max_rank) candidates.resize(max_rank);
+
+    // Existing post-Bootstrap directions are already HELPED and learning-
+    // eligible evidence. Use the semantic resolver as an admission filter so
+    // only directions from the same concept/behavior/surface/Oracle revision
+    // can enter the ordinary low-rank basis. This does not admit experimental
+    // concept candidates and does not change the existing search budget.
+    common_flydelta_semantic_basis_query basis_query;
+    basis_query.source = job.seed.source;
+    basis_query.concept_key = job.seed.teaching_key.empty()
+        ? job.seed.behavior_key : job.seed.teaching_key;
+    basis_query.behavior_key = job.seed.behavior_key;
+    basis_query.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+    basis_query.tokenizer_fingerprint = job.seed.tokenizer_fingerprint;
+    basis_query.template_fingerprint = job.seed.template_fingerprint;
+    basis_query.capture_layout_revision = provider->capture_layout_revision;
+    basis_query.scope_fingerprint = daemon_flydelta_scope_fingerprint(job.seed.scope);
+    basis_query.oracle_ref = job.seed.verifier_ref;
+    basis_query.oracle_revision = job.seed.verifier_ref;
+    basis_query.max_rank = max_rank;
+    std::vector<common_flydelta_semantic_direction_candidate> semantic_candidates;
+    semantic_candidates.reserve(candidates.size());
+    for (const auto & candidate : candidates) {
+        common_flydelta_synthesis_candidate_descriptor identity;
+        identity.candidate_ref = candidate.extraction_id;
+        identity.concept_key = basis_query.concept_key;
+        identity.behavior_key = basis_query.behavior_key;
+        identity.source_ref = job.seed.evidence_ref;
+        identity.oracle_ref = basis_query.oracle_ref;
+        identity.oracle_revision = basis_query.oracle_revision;
+        identity.source = basis_query.source;
+        identity.model_profile_fingerprint = basis_query.model_profile_fingerprint;
+        identity.tokenizer_fingerprint = basis_query.tokenizer_fingerprint;
+        identity.template_fingerprint = basis_query.template_fingerprint;
+        identity.capture_layout_revision = basis_query.capture_layout_revision;
+        identity.scope_fingerprint = basis_query.scope_fingerprint;
+        identity.host_verified = true;
+        identity.experimental_only = false;
+        common_flydelta_synthesis_candidate_descriptor descriptor;
+        if (!common_flydelta_synthesis_candidate_descriptor_from_direction(
+                    candidate, identity, descriptor, error)) return false;
+        semantic_candidates.push_back({candidate, std::move(descriptor)});
+    }
     common_flydelta_low_rank_basis basis;
-    if (!common_flydelta_build_low_rank_basis(
-            candidates.front().values.size(), max_rank, candidates, basis, error)) return false;
+    std::vector<size_t> selected_candidate_indices;
+    if (!common_flydelta_resolve_semantic_basis(
+                basis_query, semantic_candidates, basis,
+                selected_candidate_indices, error)) return false;
+    std::vector<common_flydelta_direction_candidate> resolved_candidates;
+    resolved_candidates.reserve(selected_candidate_indices.size());
+    for (const size_t index : selected_candidate_indices) {
+        resolved_candidates.push_back(candidates[index]);
+    }
+    candidates = std::move(resolved_candidates);
 
     common_flydelta_coefficient_search_config coefficient_config;
     coefficient_config.max_candidates = plan.budget.max_coefficient_trials == 0

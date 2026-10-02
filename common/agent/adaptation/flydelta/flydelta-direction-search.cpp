@@ -87,6 +87,113 @@ const char * common_flydelta_direction_kind_name(
     return "unknown";
 }
 
+const char * common_flydelta_synthesis_strategy_name(
+        common_flydelta_synthesis_strategy strategy) {
+    switch (strategy) {
+        case common_flydelta_synthesis_strategy::contrast_repair:
+            return "contrast_repair";
+        case common_flydelta_synthesis_strategy::conditioned_prototype:
+            return "conditioned_prototype";
+        case common_flydelta_synthesis_strategy::decision_output_margin:
+            return "decision_output_margin";
+        case common_flydelta_synthesis_strategy::execution_boundary_prototype:
+            return "execution_boundary_prototype";
+    }
+    return "unknown";
+}
+
+const char * common_flydelta_synthesis_estimator_name(
+        common_flydelta_synthesis_estimator estimator) {
+    switch (estimator) {
+        case common_flydelta_synthesis_estimator::raw: return "raw";
+        case common_flydelta_synthesis_estimator::trimmed: return "trimmed";
+        case common_flydelta_synthesis_estimator::diagonal_whitened:
+            return "diagonal_whitened";
+        case common_flydelta_synthesis_estimator::direct: return "direct";
+    }
+    return "unknown";
+}
+
+bool common_flydelta_synthesis_candidate_descriptor_validate(
+        const common_flydelta_synthesis_candidate_descriptor & descriptor,
+        std::string & error) {
+    error.clear();
+    const char * strategy = common_flydelta_synthesis_strategy_name(descriptor.strategy);
+    const char * estimator = common_flydelta_synthesis_estimator_name(descriptor.estimator);
+    const char * source = common_adaptation_evidence_source_name(descriptor.source);
+    if (descriptor.schema_version != 1 || !nonempty_bounded(descriptor.candidate_ref) ||
+            !strategy || std::string(strategy) == "unknown" ||
+            !estimator || std::string(estimator) == "unknown" ||
+            !source || std::string(source) == "unknown" ||
+            !nonempty_bounded(descriptor.concept_key) ||
+            !nonempty_bounded(descriptor.behavior_key) ||
+            !nonempty_bounded(descriptor.source_ref) ||
+            !nonempty_bounded(descriptor.oracle_ref) ||
+            !nonempty_bounded(descriptor.oracle_revision) ||
+            !nonempty_bounded(descriptor.model_profile_fingerprint) ||
+            !nonempty_bounded(descriptor.tokenizer_fingerprint) ||
+            !nonempty_bounded(descriptor.template_fingerprint) ||
+            !nonempty_bounded(descriptor.capture_layout_revision) ||
+            !nonempty_bounded(descriptor.scope_fingerprint) ||
+            (descriptor.learning_eligible &&
+                (descriptor.experimental_only || !descriptor.host_verified))) {
+        error = "FlyDelta synthesis candidate descriptor is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_synthesis_candidate_descriptor_from_direction(
+        const common_flydelta_direction_candidate & direction,
+        const common_flydelta_synthesis_candidate_descriptor & identity,
+        common_flydelta_synthesis_candidate_descriptor & descriptor,
+        std::string & error) {
+    error.clear();
+    if (!common_flydelta_direction_candidate_validate(
+                direction, direction.values.size(), error)) return false;
+    descriptor = identity;
+    if (descriptor.candidate_ref.empty()) descriptor.candidate_ref = direction.extraction_id;
+    descriptor.experimental_only = direction.experimental_only;
+    // Direction builders never grant lifecycle learning eligibility. That
+    // flag belongs to later host evidence and is not inferred from kind.
+    descriptor.learning_eligible = false;
+    switch (direction.kind) {
+        case common_flydelta_direction_kind::raw_repair:
+            descriptor.strategy = common_flydelta_synthesis_strategy::contrast_repair;
+            descriptor.estimator = common_flydelta_synthesis_estimator::raw;
+            break;
+        case common_flydelta_direction_kind::normalized_trimmed_mean:
+            descriptor.strategy = common_flydelta_synthesis_strategy::contrast_repair;
+            descriptor.estimator = common_flydelta_synthesis_estimator::trimmed;
+            break;
+        case common_flydelta_direction_kind::diagonal_whitened_mean:
+            descriptor.strategy = common_flydelta_synthesis_strategy::contrast_repair;
+            descriptor.estimator = common_flydelta_synthesis_estimator::diagonal_whitened;
+            break;
+        case common_flydelta_direction_kind::token_margin_direction:
+            descriptor.strategy = common_flydelta_synthesis_strategy::decision_output_margin;
+            descriptor.estimator = common_flydelta_synthesis_estimator::direct;
+            break;
+        case common_flydelta_direction_kind::execution_boundary_prototype:
+            descriptor.strategy = common_flydelta_synthesis_strategy::execution_boundary_prototype;
+            descriptor.estimator = common_flydelta_synthesis_estimator::direct;
+            break;
+        case common_flydelta_direction_kind::positive_prototype:
+            descriptor.strategy = common_flydelta_synthesis_strategy::conditioned_prototype;
+            descriptor.estimator = common_flydelta_synthesis_estimator::raw;
+            break;
+        case common_flydelta_direction_kind::positive_prototype_trimmed_mean:
+            descriptor.strategy = common_flydelta_synthesis_strategy::conditioned_prototype;
+            descriptor.estimator = common_flydelta_synthesis_estimator::trimmed;
+            break;
+        case common_flydelta_direction_kind::positive_prototype_diagonal_whitened_mean:
+            descriptor.strategy = common_flydelta_synthesis_strategy::conditioned_prototype;
+            descriptor.estimator = common_flydelta_synthesis_estimator::diagonal_whitened;
+            break;
+    }
+    return common_flydelta_synthesis_candidate_descriptor_validate(descriptor, error);
+}
+
 const char * common_flydelta_direction_search_mode_name(
         common_flydelta_direction_search_mode mode) {
     switch (mode) {
