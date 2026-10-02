@@ -161,5 +161,39 @@ int main() {
     CHECK(common_flydelta_resolve_deployment(config, request, fallback, error));
     CHECK(!fallback.canary_selected && fallback.active_only && fallback.fallback_to_active);
     CHECK(fallback.effective[1].revision_id == active_b.id);
+
+    common_flydelta_canary_policy policy;
+    common_flydelta_canary_policy_input policy_input;
+    common_flydelta_canary_policy_decision decision;
+    policy.mode = common_flydelta_canary_mode::policy;
+    policy.min_observations = 2;
+    policy.min_unique_allocations = 1;
+    policy.allow_scope_expansion = true;
+    policy.allow_promotion = true;
+    policy.scope_step_fingerprints = {"scope:openalex", "scope:openalex-expanded"};
+    policy_input.completed_observations = 2;
+    policy_input.unique_allocations = 1;
+    policy_input.semantic_evidence_complete = true;
+    policy_input.target_gain = 1.0f;
+    policy_input.next_scope_available = true;
+    policy_input.current_traffic_basis_points = 100;
+    CHECK(common_flydelta_decide_canary_disposition(
+        policy, policy_input, decision, error));
+    CHECK(decision.disposition == common_flydelta_canary_disposition::expand_scope);
+    CHECK(decision.next_traffic_basis_points == 500);
+    policy_input.current_traffic_basis_points = 1000;
+    policy_input.next_scope_available = false;
+    CHECK(common_flydelta_decide_canary_disposition(
+        policy, policy_input, decision, error));
+    CHECK(decision.disposition == common_flydelta_canary_disposition::promote_active);
+    policy_input.harmed_results = 1;
+    CHECK(common_flydelta_decide_canary_disposition(
+        policy, policy_input, decision, error));
+    CHECK(decision.disposition == common_flydelta_canary_disposition::close);
+
+    common_flydelta_observation_budget budget;
+    CHECK(budget.try_reserve("binding:b", "review:canary-b", 1, error));
+    CHECK(!budget.try_reserve("binding:b", "review:canary-b", 1, error));
+    CHECK(budget.reserved("binding:b", "review:canary-b") == 1);
     return 0;
 }

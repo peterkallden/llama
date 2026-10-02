@@ -24,6 +24,7 @@ struct common_agent_runtime_session_host_runtime_key {
     common_memory_scope memory_scope = common_memory_scope::session;
     common_plan_scope plan_scope = common_plan_scope::turn;
     std::string model_profile_id;
+    std::string flydelta_deployment_fingerprint;
 
     bool operator==(const common_agent_runtime_session_host_runtime_key & other) const {
         return session_id == other.session_id &&
@@ -31,7 +32,8 @@ struct common_agent_runtime_session_host_runtime_key {
                project_id == other.project_id &&
                memory_scope == other.memory_scope &&
                plan_scope == other.plan_scope &&
-               model_profile_id == other.model_profile_id;
+               model_profile_id == other.model_profile_id &&
+               flydelta_deployment_fingerprint == other.flydelta_deployment_fingerprint;
     }
 };
 
@@ -56,6 +58,15 @@ struct common_agent_runtime_session_host_turn_request {
     // but travels with the host-owned turn for checkpoint validation.
     std::string request_id;
     std::string model_profile_id;
+    // Host-owned FlyDelta deployment inputs. They are never inferred from
+    // model output; the defaults keep ordinary runtime active-only.
+    common_flydelta_runtime_authority flydelta_runtime_authority =
+        common_flydelta_runtime_authority::active_only;
+    common_flydelta_applicability flydelta_applicability;
+    common_flydelta_gate_config flydelta_gate_config;
+    common_flydelta_gate_request flydelta_gate_request;
+    common_flydelta_sparse_code flydelta_code;
+    std::string flydelta_deployment_fingerprint;
     // Host-prepared, immutable per-turn FlyDelta activation. The session
     // host only propagates this snapshot to the runtime request.
     std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;

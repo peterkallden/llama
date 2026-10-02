@@ -536,9 +536,61 @@ bool parse_agent_host_config_json(
                 read_optional(flydelta, "capture_candidates", config.adaptation_flydelta_capture_candidates);
                 read_optional(flydelta, "lifecycle_backend", config.adaptation_flydelta_lifecycle_backend);
                 read_optional(flydelta, "lifecycle_path", config.adaptation_flydelta_lifecycle_path);
+                read_optional(flydelta, "artifact_root", config.adaptation_flydelta_artifact_root);
                 read_optional(flydelta, "model_profile_fingerprint", config.adaptation_flydelta_model_profile_fingerprint);
                 read_optional(flydelta, "capture_layout_revision", config.adaptation_flydelta_capture_layout_revision);
                 read_optional(flydelta, "max_capture_candidates", config.adaptation_flydelta_max_capture_candidates);
+                if (flydelta.contains("canary")) {
+                    if (!flydelta["canary"].is_object()) {
+                        error = "runtime.adaptation.flydelta.canary must be an object";
+                        return false;
+                    }
+                    const auto & canary = flydelta["canary"];
+                    std::string mode = common_flydelta_canary_mode_name(
+                        config.adaptation_flydelta_canary_policy.mode);
+                    read_optional(canary, "mode", mode);
+                    if (!parse_common_flydelta_canary_mode(
+                            mode, config.adaptation_flydelta_canary_policy.mode, error)) return false;
+                    read_optional(canary, "min_observations", config.adaptation_flydelta_canary_policy.min_observations);
+                    read_optional(canary, "min_unique_allocations", config.adaptation_flydelta_canary_policy.min_unique_allocations);
+                    read_optional(canary, "min_target_gain", config.adaptation_flydelta_canary_policy.min_target_gain);
+                    read_optional(canary, "max_control_regression", config.adaptation_flydelta_canary_policy.max_control_regression);
+                    read_optional(canary, "max_competitor_regression", config.adaptation_flydelta_canary_policy.max_competitor_regression);
+                    read_optional(canary, "max_harmed_results", config.adaptation_flydelta_canary_policy.max_harmed_results);
+                    read_optional(canary, "pristine_control_interval", config.adaptation_flydelta_canary_policy.pristine_control_interval);
+                    read_optional(canary, "allow_scope_expansion", config.adaptation_flydelta_canary_policy.allow_scope_expansion);
+                    read_optional(canary, "allow_promotion", config.adaptation_flydelta_canary_policy.allow_promotion);
+                    read_optional(canary, "auto_close_on_harmed", config.adaptation_flydelta_canary_policy.auto_close_on_harmed);
+                    if (canary.contains("traffic_steps_basis_points")) {
+                        if (!canary["traffic_steps_basis_points"].is_array()) {
+                            error = "runtime.adaptation.flydelta.canary.traffic_steps_basis_points must be an array";
+                            return false;
+                        }
+                        config.adaptation_flydelta_canary_policy.traffic_steps_basis_points.clear();
+                        for (const auto & step : canary["traffic_steps_basis_points"]) {
+                            if (!step.is_number_unsigned()) {
+                                error = "runtime.adaptation.flydelta.canary traffic step must be unsigned";
+                                return false;
+                            }
+                            config.adaptation_flydelta_canary_policy.traffic_steps_basis_points.push_back(step.get<uint32_t>());
+                        }
+                    }
+                    if (canary.contains("scope_step_fingerprints")) {
+                        if (!canary["scope_step_fingerprints"].is_array()) {
+                            error = "runtime.adaptation.flydelta.canary.scope_step_fingerprints must be an array";
+                            return false;
+                        }
+                        config.adaptation_flydelta_canary_policy.scope_step_fingerprints.clear();
+                        for (const auto & scope : canary["scope_step_fingerprints"]) {
+                            if (!scope.is_string() || scope.get<std::string>().empty()) {
+                                error = "runtime.adaptation.flydelta.canary scope step must be a non-empty string";
+                                return false;
+                            }
+                            config.adaptation_flydelta_canary_policy.scope_step_fingerprints.push_back(
+                                scope.get<std::string>());
+                        }
+                    }
+                }
             }
             if (adaptation.contains("stable_model_facing_tools") &&
                     adaptation["stable_model_facing_tools"].is_array()) {
@@ -1256,9 +1308,25 @@ nlohmann::ordered_json agent_host_config_to_json(
                     {"capture_candidates", config.adaptation_flydelta_capture_candidates},
                     {"lifecycle_backend", config.adaptation_flydelta_lifecycle_backend},
                     {"lifecycle_path", config.adaptation_flydelta_lifecycle_path},
+                    {"artifact_root", config.adaptation_flydelta_artifact_root},
                     {"model_profile_fingerprint", config.adaptation_flydelta_model_profile_fingerprint},
                     {"capture_layout_revision", config.adaptation_flydelta_capture_layout_revision},
                     {"max_capture_candidates", config.adaptation_flydelta_max_capture_candidates},
+                    {"canary", {
+                        {"mode", common_flydelta_canary_mode_name(config.adaptation_flydelta_canary_policy.mode)},
+                        {"min_observations", config.adaptation_flydelta_canary_policy.min_observations},
+                        {"min_unique_allocations", config.adaptation_flydelta_canary_policy.min_unique_allocations},
+                        {"min_target_gain", config.adaptation_flydelta_canary_policy.min_target_gain},
+                        {"max_control_regression", config.adaptation_flydelta_canary_policy.max_control_regression},
+                        {"max_competitor_regression", config.adaptation_flydelta_canary_policy.max_competitor_regression},
+                        {"max_harmed_results", config.adaptation_flydelta_canary_policy.max_harmed_results},
+                        {"traffic_steps_basis_points", config.adaptation_flydelta_canary_policy.traffic_steps_basis_points},
+                        {"scope_step_fingerprints", config.adaptation_flydelta_canary_policy.scope_step_fingerprints},
+                        {"pristine_control_interval", config.adaptation_flydelta_canary_policy.pristine_control_interval},
+                        {"allow_scope_expansion", config.adaptation_flydelta_canary_policy.allow_scope_expansion},
+                        {"allow_promotion", config.adaptation_flydelta_canary_policy.allow_promotion},
+                        {"auto_close_on_harmed", config.adaptation_flydelta_canary_policy.auto_close_on_harmed},
+                    }},
                 }},
                 {"stable_model_facing_tools", config.adaptation_stable_model_facing_tools},
                 {"domains", {
@@ -1517,6 +1585,11 @@ bool validate_agent_host_config(
     }
     if (config.adaptation_flydelta_max_capture_candidates == 0) {
         error = "runtime.adaptation.flydelta.max_capture_candidates must be greater than zero";
+        return false;
+    }
+    if (!common_flydelta_canary_policy_validate(
+            config.adaptation_flydelta_canary_policy, error)) {
+        error = "runtime.adaptation.flydelta.canary: " + error;
         return false;
     }
     if (config.n_threads < 1) {
@@ -2007,9 +2080,11 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_flydelta_capture_candidates = config.adaptation_flydelta_capture_candidates;
     options.adaptation_flydelta_lifecycle_backend = config.adaptation_flydelta_lifecycle_backend;
     options.adaptation_flydelta_lifecycle_path = config.adaptation_flydelta_lifecycle_path;
+    options.adaptation_flydelta_artifact_root = config.adaptation_flydelta_artifact_root;
     options.adaptation_flydelta_model_profile_fingerprint = config.adaptation_flydelta_model_profile_fingerprint;
     options.adaptation_flydelta_capture_layout_revision = config.adaptation_flydelta_capture_layout_revision;
     options.adaptation_flydelta_max_capture_candidates = config.adaptation_flydelta_max_capture_candidates;
+    options.adaptation_flydelta_canary_policy = config.adaptation_flydelta_canary_policy;
     options.max_tool_rounds = config.max_tool_rounds;
     options.queue_capacity = config.queue_capacity;
     options.worker_count = config.worker_count;

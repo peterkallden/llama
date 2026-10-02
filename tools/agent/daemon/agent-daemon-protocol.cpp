@@ -250,6 +250,7 @@ bool parse_agent_daemon_command_name(
             command_name == "flydelta.stage_canary" ||
             command_name == "flydelta.activate_candidate" ||
             command_name == "flydelta.rollback_candidate" ||
+            command_name == "flydelta.canary_disposition" ||
             command_name == "flydelta.get_binding") {
         command.type = common_agent_daemon_command_type::flydelta_admin;
         common_agent_daemon_flydelta_admin_payload payload;
@@ -269,6 +270,38 @@ bool parse_agent_daemon_command_name(
         payload.binding_key = parsed.value("binding_key", "");
         payload.expected_current_revision_id = parsed.value(
             "expected_current_revision_id", "");
+        payload.canary_behavior_key = parsed.value("canary_behavior_key", "");
+        payload.canary_scope_fingerprint = parsed.value("canary_scope_fingerprint", "");
+        payload.canary_event_id = parsed.value("canary_event_id", "");
+        payload.next_scope_fingerprint = parsed.value("next_scope_fingerprint", "");
+        payload.baseline_deployment_fingerprint = parsed.value("baseline_deployment_fingerprint", "");
+        payload.rollback_revision_id = parsed.value("rollback_revision_id", "");
+        payload.oracle_revision = parsed.value("oracle_revision", "");
+        payload.canary_policy_revision = parsed.value("canary_policy_revision", "");
+        payload.canary_traffic_basis_points = parsed.value(
+            "canary_traffic_basis_points", payload.canary_traffic_basis_points);
+        payload.canary_expires_at_epoch_ms = parsed.value(
+            "canary_expires_at_epoch_ms", payload.canary_expires_at_epoch_ms);
+        payload.canary_max_observations = parsed.value(
+            "canary_max_observations", payload.canary_max_observations);
+        payload.canary_max_scale = parsed.value(
+            "canary_max_scale", payload.canary_max_scale);
+        payload.canary_completed_observations = parsed.value(
+            "canary_completed_observations", payload.canary_completed_observations);
+        payload.canary_unique_allocations = parsed.value(
+            "canary_unique_allocations", payload.canary_unique_allocations);
+        payload.canary_harmed_results = parsed.value(
+            "canary_harmed_results", payload.canary_harmed_results);
+        payload.canary_target_gain = parsed.value(
+            "canary_target_gain", payload.canary_target_gain);
+        payload.canary_control_regression = parsed.value(
+            "canary_control_regression", payload.canary_control_regression);
+        payload.canary_competitor_regression = parsed.value(
+            "canary_competitor_regression", payload.canary_competitor_regression);
+        payload.canary_next_scope_available = parsed.value(
+            "canary_next_scope_available", payload.canary_next_scope_available);
+        payload.canary_semantic_evidence_complete = parsed.value(
+            "canary_semantic_evidence_complete", payload.canary_semantic_evidence_complete);
         payload.explicit_host_approval = parsed.value("explicit_host_approval", false);
         if (parsed.contains("limits")) {
             if (!parsed["limits"].is_object()) {

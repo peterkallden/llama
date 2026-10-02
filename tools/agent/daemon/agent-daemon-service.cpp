@@ -9,6 +9,8 @@
 #include <nlohmann/json.hpp>
 
 #include <set>
+#include <chrono>
+#include <algorithm>
 
 using json = nlohmann::ordered_json;
 
@@ -806,6 +808,117 @@ bool common_agent_daemon_service::execute_flydelta_admin(
         if (manifest_it == runtime.flydelta_sideband_registry->list().end()) return nullptr;
         return &manifest_it->second;
     };
+    if (request.operation == "flydelta.canary_disposition") {
+        std::vector<common_flydelta_sideband_review> open;
+        if (runtime.flydelta_sideband_review_store) {
+            open = runtime.flydelta_sideband_review_store->open_canaries(error);
+        }
+        if (!error.empty()) return fail(error);
+        const auto it = std::find_if(open.begin(), open.end(), [&](const auto & item) {
+            return item.manifest.id == request.candidate_id &&
+                (request.canary_event_id.empty() || item.event_id == request.canary_event_id) &&
+                (request.binding_key.empty() ||
+                 item.canary_envelope.binding_key == request.binding_key);
+        });
+        if (it == open.end()) return fail("FlyDelta canary envelope is not open");
+        const auto current_options = runtime.config_store
+            ? runtime.config_store->snapshot() : std::shared_ptr<const daemon_options>();
+        if (!current_options) return fail("FlyDelta daemon configuration is unavailable");
+        common_flydelta_canary_policy_input input;
+        input.completed_observations = request.canary_completed_observations;
+        input.unique_allocations = request.canary_unique_allocations;
+        input.harmed_results = request.canary_harmed_results;
+        input.target_gain = request.canary_target_gain;
+        input.control_regression = request.canary_control_regression;
+        input.competitor_regression = request.canary_competitor_regression;
+        input.current_traffic_basis_points = it->canary_envelope.traffic_basis_points;
+        input.next_scope_available = request.canary_next_scope_available;
+        input.semantic_evidence_complete = request.canary_semantic_evidence_complete;
+        common_flydelta_canary_policy_decision decision;
+        if (!common_flydelta_decide_canary_disposition(
+                current_options->adaptation_flydelta_canary_policy, input, decision, error)) {
+            return fail(error);
+        }
+        if (decision.disposition == common_flydelta_canary_disposition::close) {
+            common_flydelta_sideband_review close;
+            close.event_id = it->event_id + ":close:" +
+                std::to_string(request.canary_harmed_results);
+            close.actor_id = request.actor_id.empty() ? "policy" : request.actor_id;
+            close.policy_revision = current_options->adaptation_flydelta_canary_policy.mode ==
+                common_flydelta_canary_mode::policy ? "flydelta-canary-policy-v1" : "flydelta-canary-manual-v1";
+            close.reason = request.reason.empty() ? decision.reason : request.reason;
+            close.source = common_flydelta_review_source::host_automation;
+            close.action = common_flydelta_review_action::close_canary;
+            close.manifest = it->manifest;
+            close.canary_envelope_event_id = it->event_id;
+            if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                    *runtime.flydelta_sideband_registry, close, true, error)) return fail(error);
+        } else if (decision.disposition == common_flydelta_canary_disposition::promote_active) {
+            if (!current_options->adaptation_flydelta_canary_policy.allow_promotion) {
+                return fail("FlyDelta canary policy does not allow active promotion");
+            }
+            common_flydelta_activation_binding binding;
+            const std::string binding_key = request.binding_key.empty()
+                ? it->canary_envelope.binding_key : request.binding_key;
+            if (!runtime.flydelta_sideband_registry->binding(binding_key, binding, error)) {
+                return fail(error);
+            }
+            common_flydelta_sideband_review promote;
+            promote.event_id = it->event_id + ":promote-active";
+            promote.actor_id = request.actor_id.empty() ? "policy" : request.actor_id;
+            promote.policy_revision = "flydelta-canary-promotion-v1";
+            promote.reason = request.reason.empty() ? decision.reason : request.reason;
+            promote.source = common_flydelta_review_source::host_automation;
+            promote.action = common_flydelta_review_action::activate;
+            promote.manifest = it->manifest;
+            promote.binding_key = binding_key;
+            promote.expected_current_revision_id = binding.selected_revision_id;
+            if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                    *runtime.flydelta_sideband_registry, promote, true, error)) return fail(error);
+        } else if (decision.disposition == common_flydelta_canary_disposition::expand_scope) {
+            const auto & configured_scopes =
+                current_options->adaptation_flydelta_canary_policy.scope_step_fingerprints;
+            const std::string next_scope = request.next_scope_fingerprint.empty()
+                ? it->canary_envelope.scope_fingerprint : request.next_scope_fingerprint;
+            if (!configured_scopes.empty() && std::find(
+                    configured_scopes.begin(), configured_scopes.end(), next_scope) ==
+                    configured_scopes.end()) {
+                return fail("FlyDelta expansion scope is not preconfigured");
+            }
+            common_flydelta_sideband_review close;
+            close.event_id = it->event_id + ":expand-close:" +
+                std::to_string(decision.next_traffic_basis_points);
+            close.actor_id = request.actor_id.empty() ? "policy" : request.actor_id;
+            close.policy_revision = "flydelta-canary-policy-v1";
+            close.reason = "replace envelope for next configured canary step";
+            close.source = common_flydelta_review_source::host_automation;
+            close.action = common_flydelta_review_action::close_canary;
+            close.manifest = it->manifest;
+            close.canary_envelope_event_id = it->event_id;
+            if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                    *runtime.flydelta_sideband_registry, close, true, error)) return fail(error);
+            common_flydelta_sideband_review expanded = *it;
+            expanded.event_id = it->event_id + ":expand:" +
+                std::to_string(decision.next_traffic_basis_points);
+            expanded.actor_id = request.actor_id.empty() ? "policy" : request.actor_id;
+            expanded.source = common_flydelta_review_source::host_automation;
+            expanded.canary_envelope_event_id = expanded.event_id;
+            expanded.canary_envelope.traffic_basis_points = decision.next_traffic_basis_points;
+            expanded.canary_envelope.scope_fingerprint = next_scope;
+            if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                    *runtime.flydelta_sideband_registry, expanded, true, error)) return fail(error);
+        }
+        outcome.ok = true;
+        outcome.event = "flydelta.canary.dispositioned";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"candidate_id", request.candidate_id},
+            {"disposition", common_flydelta_canary_disposition_name(decision.disposition)},
+            {"reason", decision.reason},
+            {"next_traffic_basis_points", decision.next_traffic_basis_points},
+        }.dump();
+        return true;
+    }
     if (request.operation == "flydelta.evaluate_candidate") {
         if (!runtime.flydelta_job_enqueue) return fail("FlyDelta queue is not configured");
         const auto * candidate_manifest = require_manifest();
@@ -1017,6 +1130,32 @@ bool common_agent_daemon_service::execute_flydelta_admin(
         review.evaluation = evaluation;
         review.promotion_summary_ref = summary.id;
         review.evaluation_report_ref = evaluation_report_ref;
+        if (request.binding_key.empty()) return fail("FlyDelta canary staging requires binding_key");
+        common_flydelta_activation_binding binding;
+        if (!runtime.flydelta_sideband_registry->binding(request.binding_key, binding, error)) {
+            return fail(error);
+        }
+        review.binding_key = request.binding_key;
+        review.has_canary_envelope = true;
+        review.canary_envelope_event_id = review.event_id;
+        review.canary_envelope.binding_key = request.binding_key;
+        review.canary_envelope.candidate_revision_id = manifest->id;
+        review.canary_envelope.behavior_key = request.canary_behavior_key.empty()
+            ? manifest->applicability.behavior_key : request.canary_behavior_key;
+        review.canary_envelope.scope_fingerprint = request.canary_scope_fingerprint.empty()
+            ? manifest->applicability.scope_fingerprint : request.canary_scope_fingerprint;
+        review.canary_envelope.traffic_basis_points = request.canary_traffic_basis_points;
+        review.canary_envelope.expires_at_epoch_ms = request.canary_expires_at_epoch_ms;
+        review.canary_envelope.max_observations = request.canary_max_observations;
+        review.canary_envelope.max_scale = request.canary_max_scale;
+        review.canary_envelope.compatibility = manifest->compatibility;
+        review.canary_envelope.oracle_revision = request.oracle_revision.empty()
+            ? manifest->oracle_revision : request.oracle_revision;
+        review.canary_envelope.policy_revision = request.canary_policy_revision.empty()
+            ? "flydelta-canary-manual-v1" : request.canary_policy_revision;
+        review.canary_envelope.baseline_deployment_fingerprint = request.baseline_deployment_fingerprint;
+        review.canary_envelope.rollback_revision_id = request.rollback_revision_id.empty()
+            ? binding.selected_revision_id : request.rollback_revision_id;
         // Apply and persist as one durable boundary. The review store applies
         // to a registry copy before appending; the live registry advances only
         // after the journal write succeeds. This prevents a failed append from

@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <functional>
@@ -459,6 +460,153 @@ bool resolve_agent_daemon_tooling(
 
 namespace {
 
+std::function<bool(
+        const common_agent_runtime_session_host_turn_request &,
+        common_flydelta_deployment_result &,
+        std::string &)>
+make_daemon_flydelta_deployment_resolver(
+        const daemon_options & options,
+        const common_agent_daemon_runtime & runtime) {
+    if (!runtime.flydelta_sideband_registry || !runtime.model_residency) {
+        return {};
+    }
+    const auto registry = runtime.flydelta_sideband_registry;
+    const auto artifact_store = runtime.flydelta_artifact_store;
+    const auto observation_budget = runtime.flydelta_observation_budget;
+    const auto model_handle = runtime.flydelta_model_handle;
+    const auto review_store = runtime.flydelta_sideband_review_store;
+    return [options, registry, artifact_store, observation_budget, model_handle, review_store](
+            const common_agent_runtime_session_host_turn_request & request,
+            common_flydelta_deployment_result & result,
+            std::string & error) {
+        error.clear();
+        // The resident model handle is the host-owned source of truth for the
+        // effective profile.  A daemon request may legitimately omit the
+        // profile id when the catalog selected its default profile; treating
+        // that omission as "no FlyDelta" would silently bypass policy-mode
+        // canary resolution for normal production turns.
+        if (!model_handle.has_value() || !model_handle->valid()) {
+            result = {};
+            result.active_only = true;
+            return true;
+        }
+        auto loaded = common_agent_runtime_loaded_model_cast(model_handle->model);
+        if (!loaded || loaded->model == nullptr) {
+            error = "FlyDelta deployment resolver requires the resident model handle";
+            return false;
+        }
+        common_agent_model_profile profile;
+        profile.id = model_handle->selection.profile_id;
+        profile.base_model_id = model_handle->selection.base_model_id;
+        profile.base_model_fingerprint = options.adaptation_flydelta_model_profile_fingerprint.empty()
+            ? "model:" + std::filesystem::path(model_handle->selection.path).filename().string()
+            : options.adaptation_flydelta_model_profile_fingerprint;
+        profile.tokenizer_fingerprint = "daemon:tokenizer-unspecified-v1";
+        profile.chat_template_fingerprint = "daemon:template-unspecified-v1";
+        profile.context_size_tokens = model_handle->selection.context_size_tokens;
+        profile.n_parallel = model_handle->selection.n_parallel;
+        profile.n_sequences = model_handle->selection.n_sequences;
+        profile.load_policy = model_handle->selection.load_policy;
+        profile.adapters = model_handle->selection.adapters;
+        profile.sidebands = model_handle->selection.sidebands;
+        profile.tool_output_format = model_handle->selection.tool_output_format;
+
+        common_flydelta_deployment_request deployment_request;
+        deployment_request.profile = std::move(profile);
+        deployment_request.compatibility.base_model_id = deployment_request.profile.base_model_id;
+        deployment_request.compatibility.base_model_fingerprint =
+            deployment_request.profile.base_model_fingerprint;
+        deployment_request.compatibility.tokenizer_fingerprint =
+            deployment_request.profile.tokenizer_fingerprint;
+        deployment_request.compatibility.template_fingerprint =
+            deployment_request.profile.chat_template_fingerprint;
+        deployment_request.compatibility.architecture = "llama";
+        deployment_request.compatibility.inference_layout_revision =
+            options.adaptation_flydelta_capture_layout_revision;
+        deployment_request.applicability = request.flydelta_applicability;
+        deployment_request.authority = request.flydelta_runtime_authority;
+        // Canary mode is host-owned.  Policy mode is the only configuration
+        // that may grant the daemon's ordinary production turn an explicit
+        // canary evaluation authority; manual mode still requires the caller
+        // to put that authority on the request, while disabled always forces
+        // the safe active-only path.
+        if (options.adaptation_flydelta_canary_policy.mode ==
+                common_flydelta_canary_mode::disabled) {
+            deployment_request.authority = common_flydelta_runtime_authority::active_only;
+        } else if (options.adaptation_flydelta_canary_policy.mode ==
+                common_flydelta_canary_mode::policy) {
+            deployment_request.authority = common_flydelta_runtime_authority::canary_evaluation;
+        }
+        deployment_request.allocation_key = request.namespace_id + "/" +
+            request.project_id + "/" + request.session_id;
+        deployment_request.now_epoch_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        deployment_request.model_n_embd = static_cast<size_t>(llama_model_n_embd(loaded->model));
+        deployment_request.model_n_layers = static_cast<size_t>(llama_model_n_layer(loaded->model));
+        deployment_request.model_profile_fingerprint =
+            deployment_request.profile.base_model_fingerprint;
+        deployment_request.capture_layout_revision =
+            options.adaptation_flydelta_capture_layout_revision;
+        deployment_request.gate_config = request.flydelta_gate_config;
+        deployment_request.gate_request = request.flydelta_gate_request;
+        deployment_request.code = request.flydelta_code;
+        deployment_request.max_artifact_weights = 1U << 20;
+        deployment_request.max_artifact_bytes = 4U * 1024U * 1024U;
+        deployment_request.max_overlay_bytes = 64U * 1024U * 1024U;
+
+        common_flydelta_deployment_factory_config factory;
+        factory.registry = registry.get();
+        factory.open_canaries = [review_store](
+                std::vector<common_flydelta_sideband_review> & reviews,
+                std::string & provider_error) {
+            if (!review_store) {
+                reviews.clear();
+                provider_error.clear();
+                return true;
+            }
+            reviews = review_store->open_canaries(provider_error);
+            return provider_error.empty();
+        };
+        factory.observation_counter = [observation_budget](
+                const std::string & binding_key, const std::string & event_id) {
+            return observation_budget ? observation_budget->reserved(binding_key, event_id) : 0;
+        };
+        factory.reserve_observation = [observation_budget](
+                const std::string & binding_key, const std::string & event_id,
+                size_t max_observations, std::string & reservation_error) {
+            return observation_budget && observation_budget->try_reserve(
+                binding_key, event_id, max_observations, reservation_error);
+        };
+        factory.load_activation = [artifact_store](
+                const common_flydelta_sideband_manifest & manifest,
+                double effective_scale,
+                const common_flydelta_deployment_request & request,
+                common_flydelta_activation_result & activation,
+                std::string & loader_error) {
+            if (!artifact_store) {
+                loader_error = "FlyDelta artifact store is not configured";
+                return false;
+            }
+            common_flydelta_artifact artifact;
+            if (!artifact_store->read(manifest.artifact_path, artifact, loader_error)) return false;
+            if (artifact.content_hash != manifest.artifact_hash) {
+                loader_error = "FlyDelta artifact hash does not match its manifest";
+                return false;
+            }
+            auto gate_request = request.gate_request;
+            gate_request.requested_scale = std::min(
+                gate_request.requested_scale, static_cast<float>(effective_scale));
+            return common_flydelta_prepare_activation_from_artifact(
+                artifact, request.compatibility, request.model_profile_fingerprint,
+                request.code, manifest.id, request.gate_config, gate_request,
+                request.max_artifact_weights, request.max_artifact_bytes,
+                request.max_overlay_bytes, activation, loader_error);
+        };
+        return common_flydelta_resolve_deployment(factory, deployment_request, result, error);
+    };
+}
+
 common_agent_runtime_session_host_build_config make_session_host_build_config(
         common_memory_store & memory_store,
         common_plan_store & plan_store,
@@ -495,6 +643,8 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
                 error,
                 data_store);
         },
+        runtime.model_residency,
+        make_daemon_flydelta_deployment_resolver(options, runtime),
     };
 }
 
@@ -620,6 +770,21 @@ bool initialize_agent_daemon_environment(
             options, runtime, error)) {
         return false;
     }
+    if (options.adaptation_flydelta_enabled) {
+        runtime.flydelta_observation_budget =
+            std::make_shared<common_flydelta_observation_budget>();
+        if (!options.adaptation_flydelta_artifact_root.empty()) {
+            std::error_code artifact_ec;
+            auto artifact_root = std::filesystem::absolute(
+                options.adaptation_flydelta_artifact_root, artifact_ec);
+            if (artifact_ec) {
+                error = "could not resolve FlyDelta artifact root: " + artifact_ec.message();
+                return false;
+            }
+            runtime.flydelta_artifact_store =
+                std::make_shared<common_flydelta_artifact_store>(std::move(artifact_root));
+        }
+    }
     if (!parse_mode(options.default_mode, runtime.default_mode)) {
         error = "unsupported default mode: " + options.default_mode;
         return false;
@@ -652,6 +817,7 @@ bool initialize_agent_daemon_environment(
             runtime.inference_gate,
             {},
             runtime.model_residency,
+            session_manager_build_config.flydelta_deployment_resolver,
         }));
 
     common_memory_store * memory_store = runtime.memory_store.get();

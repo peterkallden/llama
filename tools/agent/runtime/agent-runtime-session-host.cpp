@@ -131,6 +131,7 @@ common_agent_runtime_session_host_runtime_key common_agent_runtime_session_host:
         request.memory_scope,
         request.plan_scope,
         request.model_profile_id,
+        request.flydelta_deployment_fingerprint,
     };
 }
 
@@ -326,6 +327,10 @@ bool common_agent_runtime_session_host::run_turn(
             return false;
         }
         effective_request.flydelta_activation = deployment.activation;
+        effective_request.flydelta_deployment_fingerprint =
+            deployment.canary_selected
+                ? deployment.candidate_deployment_fingerprint
+                : deployment.baseline_deployment_fingerprint;
         result.flydelta_deployment = std::move(deployment);
     }
 

@@ -9,6 +9,8 @@
 #include "../runtime/agent-server-context-host.h"
 #include "../tooling/agent-tool-provider.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
+#include "agent/adaptation/flydelta/flydelta-artifact-store.h"
+#include "agent/adaptation/flydelta/flydelta-deployment.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-teaching-material.h"
 #include "agent/adaptation/semantic-teaching.h"
@@ -151,6 +153,11 @@ struct common_agent_daemon_runtime {
         flydelta_sideband_review_store;
     std::shared_ptr<common_flydelta_sideband_registry>
         flydelta_sideband_registry;
+    // Shared host-owned artifact reader and request-exposure ledger. Neither
+    // is a second lifecycle/store; lifecycle truth remains in the review
+    // journal and registry above.
+    std::shared_ptr<common_flydelta_artifact_store> flydelta_artifact_store;
+    std::shared_ptr<common_flydelta_observation_budget> flydelta_observation_budget;
     bool flydelta_sideband_reviews_replayed = false;
     std::optional<common_agent_runtime_model_resident_handle> flydelta_model_handle;
     common_flydelta_model_capabilities flydelta_model_capabilities;
@@ -264,6 +271,26 @@ struct common_agent_daemon_flydelta_admin_payload {
     std::string reason;
     std::string binding_key;
     std::string expected_current_revision_id;
+    std::string canary_behavior_key;
+    std::string canary_scope_fingerprint;
+    std::string canary_event_id;
+    std::string next_scope_fingerprint;
+    std::string baseline_deployment_fingerprint;
+    std::string rollback_revision_id;
+    std::string oracle_revision;
+    std::string canary_policy_revision;
+    uint32_t canary_traffic_basis_points = 100;
+    uint64_t canary_expires_at_epoch_ms = 0;
+    size_t canary_max_observations = 0;
+    float canary_max_scale = 0.0f;
+    size_t canary_completed_observations = 0;
+    size_t canary_unique_allocations = 0;
+    size_t canary_harmed_results = 0;
+    float canary_target_gain = 0.0f;
+    float canary_control_regression = 0.0f;
+    float canary_competitor_regression = 0.0f;
+    bool canary_next_scope_available = false;
+    bool canary_semantic_evidence_complete = false;
     bool explicit_host_approval = false;
     common_flydelta_evaluation_limits limits;
 };

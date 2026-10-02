@@ -7,8 +7,78 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <string>
 #include <vector>
+
+enum class common_flydelta_canary_mode {
+    disabled,
+    manual,
+    policy,
+};
+
+const char * common_flydelta_canary_mode_name(common_flydelta_canary_mode mode);
+bool parse_common_flydelta_canary_mode(
+        const std::string & value, common_flydelta_canary_mode & mode, std::string & error);
+
+enum class common_flydelta_canary_disposition {
+    retain,
+    expand_scope,
+    promote_active,
+    close,
+};
+
+const char * common_flydelta_canary_disposition_name(
+        common_flydelta_canary_disposition disposition);
+
+// Host-owned policy controls disposition only. It never changes FlyDelta
+// search, Oracle truth, learning credit, or the ordinary active-only path.
+struct common_flydelta_canary_policy {
+    common_flydelta_canary_mode mode = common_flydelta_canary_mode::manual;
+    size_t min_observations = 8;
+    size_t min_unique_allocations = 2;
+    float min_target_gain = 0.0f;
+    float max_control_regression = 0.0f;
+    float max_competitor_regression = 0.0f;
+    size_t max_harmed_results = 0;
+    std::vector<uint32_t> traffic_steps_basis_points = {100, 500, 1000};
+    // Host-owned, preconfigured applicability steps. Policy may select only
+    // one of these values; it never derives a scope from model output.
+    std::vector<std::string> scope_step_fingerprints;
+    uint64_t pristine_control_interval = 16;
+    bool allow_scope_expansion = false;
+    bool allow_promotion = false;
+    bool auto_close_on_harmed = true;
+};
+
+bool common_flydelta_canary_policy_validate(
+        const common_flydelta_canary_policy & policy, std::string & error);
+
+struct common_flydelta_canary_policy_input {
+    size_t completed_observations = 0;
+    size_t unique_allocations = 0;
+    size_t harmed_results = 0;
+    float target_gain = 0.0f;
+    float control_regression = 0.0f;
+    float competitor_regression = 0.0f;
+    uint32_t current_traffic_basis_points = 0;
+    bool next_scope_available = false;
+    bool semantic_evidence_complete = false;
+};
+
+struct common_flydelta_canary_policy_decision {
+    common_flydelta_canary_disposition disposition =
+        common_flydelta_canary_disposition::retain;
+    uint32_t next_traffic_basis_points = 0;
+    std::string reason;
+};
+
+bool common_flydelta_decide_canary_disposition(
+        const common_flydelta_canary_policy & policy,
+        const common_flydelta_canary_policy_input & input,
+        common_flydelta_canary_policy_decision & decision,
+        std::string & error);
 
 // Request-scoped host input for resolving the already configured profile.
 // The factory never reads files or lets the model choose a revision; artifact
@@ -62,6 +132,37 @@ using common_flydelta_observation_counter = std::function<size_t(
         const std::string & binding_key,
         const std::string & canary_event_id)>;
 
+// Reservation is deliberately separate from semantic evidence. It closes
+// the race between cohort selection and generation without making a request
+// count as HELPED or promotion evidence.
+using common_flydelta_observation_reserver = std::function<bool(
+        const std::string & binding_key,
+        const std::string & canary_event_id,
+        size_t max_observations,
+        std::string & error)>;
+
+// Request-exposure accounting only. Semantic/counterfactual evidence remains
+// in the existing lifecycle journal and is never inferred from this ledger.
+class common_flydelta_observation_budget final {
+public:
+    bool try_reserve(
+            const std::string & binding_key,
+            const std::string & canary_event_id,
+            size_t max_observations,
+            std::string & error);
+    size_t reserved(
+            const std::string & binding_key,
+            const std::string & canary_event_id) const;
+
+private:
+    static std::string make_key(
+            const std::string & binding_key,
+            const std::string & canary_event_id);
+
+    mutable std::mutex mutex_;
+    std::unordered_map<std::string, size_t> reservations_;
+};
+
 // The host owns artifact-store access and converts one verified manifest into
 // the existing activation result. This keeps paths, artifact loading and gate
 // context outside the deployment resolver.
@@ -76,6 +177,7 @@ struct common_flydelta_deployment_factory_config {
     const common_flydelta_sideband_registry * registry = nullptr;
     common_flydelta_open_canary_provider open_canaries;
     common_flydelta_observation_counter observation_counter;
+    common_flydelta_observation_reserver reserve_observation;
     common_flydelta_activation_loader load_activation;
 };
 

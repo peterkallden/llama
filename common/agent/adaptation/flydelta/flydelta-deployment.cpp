@@ -8,6 +8,10 @@
 
 namespace {
 
+bool finite_nonnegative(float value) {
+    return std::isfinite(value) && value >= 0.0f;
+}
+
 bool finite_scale(double value) {
     return std::isfinite(value) && value > 0.0 && value <= 4.0;
 }
@@ -123,6 +127,159 @@ bool load_entries(
 
 } // namespace
 
+std::string common_flydelta_observation_budget::make_key(
+        const std::string & binding_key,
+        const std::string & canary_event_id) {
+    return binding_key + "\n" + canary_event_id;
+}
+
+bool common_flydelta_observation_budget::try_reserve(
+        const std::string & binding_key,
+        const std::string & canary_event_id,
+        size_t max_observations,
+        std::string & error) {
+    error.clear();
+    if (binding_key.empty() || canary_event_id.empty() || max_observations == 0) {
+        error = "FlyDelta observation reservation identity or budget is invalid";
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto & count = reservations_[make_key(binding_key, canary_event_id)];
+    if (count >= max_observations) {
+        return false;
+    }
+    ++count;
+    return true;
+}
+
+size_t common_flydelta_observation_budget::reserved(
+        const std::string & binding_key,
+        const std::string & canary_event_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = reservations_.find(make_key(binding_key, canary_event_id));
+    return it == reservations_.end() ? 0 : it->second;
+}
+
+const char * common_flydelta_canary_mode_name(common_flydelta_canary_mode mode) {
+    switch (mode) {
+        case common_flydelta_canary_mode::disabled: return "disabled";
+        case common_flydelta_canary_mode::manual: return "manual";
+        case common_flydelta_canary_mode::policy: return "policy";
+    }
+    return "disabled";
+}
+
+bool parse_common_flydelta_canary_mode(
+        const std::string & value, common_flydelta_canary_mode & mode, std::string & error) {
+    if (value == "disabled") mode = common_flydelta_canary_mode::disabled;
+    else if (value == "manual") mode = common_flydelta_canary_mode::manual;
+    else if (value == "policy") mode = common_flydelta_canary_mode::policy;
+    else {
+        error = "FlyDelta canary mode must be disabled, manual or policy";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+const char * common_flydelta_canary_disposition_name(
+        common_flydelta_canary_disposition disposition) {
+    switch (disposition) {
+        case common_flydelta_canary_disposition::retain: return "retain";
+        case common_flydelta_canary_disposition::expand_scope: return "expand_scope";
+        case common_flydelta_canary_disposition::promote_active: return "promote_active";
+        case common_flydelta_canary_disposition::close: return "close";
+    }
+    return "retain";
+}
+
+bool common_flydelta_canary_policy_validate(
+        const common_flydelta_canary_policy & policy, std::string & error) {
+    if (policy.min_observations == 0 || policy.min_unique_allocations == 0 ||
+            policy.pristine_control_interval == 0 ||
+            !finite_nonnegative(policy.min_target_gain) ||
+            !finite_nonnegative(policy.max_control_regression) ||
+            !finite_nonnegative(policy.max_competitor_regression)) {
+        error = "FlyDelta canary policy contains invalid bounds";
+        return false;
+    }
+    if (policy.traffic_steps_basis_points.empty() ||
+            policy.traffic_steps_basis_points.size() > 32) {
+        error = "FlyDelta canary policy requires 1..32 traffic steps";
+        return false;
+    }
+    uint32_t previous = 0;
+    for (const uint32_t step : policy.traffic_steps_basis_points) {
+        if (step == 0 || step > 10000 || step <= previous) {
+            error = "FlyDelta canary traffic steps must be strictly increasing basis points";
+            return false;
+        }
+        previous = step;
+    }
+    if (policy.scope_step_fingerprints.size() > 32) {
+        error = "FlyDelta canary policy allows at most 32 scope steps";
+        return false;
+    }
+    for (const auto & scope : policy.scope_step_fingerprints) {
+        if (scope.empty() || scope.size() > 512) {
+            error = "FlyDelta canary scope steps must be bounded non-empty fingerprints";
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool common_flydelta_decide_canary_disposition(
+        const common_flydelta_canary_policy & policy,
+        const common_flydelta_canary_policy_input & input,
+        common_flydelta_canary_policy_decision & decision,
+        std::string & error) {
+    if (!common_flydelta_canary_policy_validate(policy, error)) return false;
+    decision = {};
+    decision.disposition = common_flydelta_canary_disposition::retain;
+    decision.reason = "insufficient_canary_evidence";
+    if (policy.mode != common_flydelta_canary_mode::policy) {
+        decision.reason = policy.mode == common_flydelta_canary_mode::disabled
+            ? "canary_policy_disabled" : "canary_requires_explicit_host_disposition";
+        return true;
+    }
+    if (input.harmed_results > policy.max_harmed_results && policy.auto_close_on_harmed) {
+        decision.disposition = common_flydelta_canary_disposition::close;
+        decision.reason = "canary_harmed_result_limit_exceeded";
+        return true;
+    }
+    if (input.completed_observations < policy.min_observations ||
+            input.unique_allocations < policy.min_unique_allocations ||
+            !input.semantic_evidence_complete) {
+        return true;
+    }
+    if (input.control_regression > policy.max_control_regression ||
+            input.competitor_regression > policy.max_competitor_regression ||
+            input.target_gain < policy.min_target_gain) {
+        decision.reason = "canary_safety_or_gain_threshold_not_met";
+        return true;
+    }
+    if (policy.allow_scope_expansion && input.next_scope_available) {
+        for (const uint32_t step : policy.traffic_steps_basis_points) {
+            if (step > input.current_traffic_basis_points) {
+                decision.disposition = common_flydelta_canary_disposition::expand_scope;
+                decision.next_traffic_basis_points = step;
+                decision.reason = "canary_evidence_supports_next_scope_step";
+                return true;
+            }
+        }
+    }
+    if (policy.allow_promotion &&
+            input.current_traffic_basis_points >= policy.traffic_steps_basis_points.back()) {
+        decision.disposition = common_flydelta_canary_disposition::promote_active;
+        decision.reason = "canary_evidence_supports_active_promotion";
+    } else {
+        decision.reason = "canary_evidence_stable_at_current_scope";
+    }
+    return true;
+}
+
 std::string common_flydelta_deployment_fingerprint(
         const common_flydelta_deployment_request & request,
         const std::vector<common_flydelta_resolved_deployment_entry> & entries) {
@@ -233,6 +390,24 @@ bool common_flydelta_resolve_deployment(
                 result.fallback_reason = canary_error;
                 continue;
             }
+            // Reserve only after the envelope and staged revision have been
+            // validated.  A malformed/expired/incompatible canary must not
+            // consume the finite exposure budget before generation begins.
+            if (config.reserve_observation) {
+                std::string reservation_error;
+                if (!config.reserve_observation(
+                        envelope.binding_key, review.event_id, envelope.max_observations,
+                        reservation_error)) {
+                    if (!reservation_error.empty()) {
+                        result.fallback_to_active = true;
+                        result.fallback_reason = reservation_error;
+                    } else {
+                        result.fallback_to_active = true;
+                        result.fallback_reason = "canary_observation_budget_exhausted";
+                    }
+                    continue;
+                }
+            }
             const auto existing = std::find_if(result.effective.begin(), result.effective.end(),
                 [&](const auto & entry) { return entry.binding_key == envelope.binding_key; });
             const auto active_manifest = std::find_if(active_entries.begin(), active_entries.end(),
@@ -253,6 +428,11 @@ bool common_flydelta_resolve_deployment(
                 const auto active_index = std::distance(active_entries.begin(), active_manifest);
                 active_manifests[active_index] = canary_manifest;
             } else {
+                if (result.effective.size() >= 4) {
+                    result.fallback_to_active = true;
+                    result.fallback_reason = "canary_composition_exceeds_four_overlays";
+                    continue;
+                }
                 result.effective.push_back({envelope.binding_key, canary_manifest.id,
                     canary_scale, true, review.event_id});
                 active_manifests.push_back(canary_manifest);

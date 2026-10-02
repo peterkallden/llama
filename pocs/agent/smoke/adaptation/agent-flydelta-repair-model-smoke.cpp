@@ -2659,6 +2659,7 @@ int main(int argc, char ** argv) {
             next_state.local_layers = {continuation.region.anchor_layer_index};
             next_state.completed_trials = zoom_trials;
             next_state.selection = zoom_selection;
+            next_state.surface_origin = "model-repair-bootstrap";
             if (surface_state.surface_revision > 1) {
                 next_state.surface_revision = surface_state.surface_revision;
                 next_state.parent_surface_revision = surface_state.parent_surface_revision;

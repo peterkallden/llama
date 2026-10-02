@@ -134,6 +134,7 @@ int main() {
     value2.id = "flydelta://sideband/review-store-v2";
     value2.artifact_path = "sidebands/review-store-v2.flyd";
     value2.artifact_hash = "sha256:review-store-artifact-v2";
+    value2.applicability.scope_fingerprint = "scope:review-store-v2";
     CHECK(store.apply_and_append(registry,
         review("review-5", common_flydelta_review_action::admit_experimental, value2), true, error));
     CHECK(store.apply_and_append(registry,

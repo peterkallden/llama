@@ -81,9 +81,20 @@
         "capture_candidates": true,
         "lifecycle_backend": "cozo",
         "lifecycle_path": "var/agent/flydelta/lifecycle.cozo",
+        "artifact_root": "var/agent/flydelta/artifacts",
         "model_profile_fingerprint": "profile:agent-default",
         "capture_layout_revision": "layer-input:generation-boundary:v1",
-        "max_capture_candidates": 128
+        "max_capture_candidates": 128,
+        "canary": {
+          "mode": "manual",
+          "min_observations": 8,
+          "min_unique_allocations": 2,
+          "traffic_steps_basis_points": [100, 500, 1000],
+          "scope_step_fingerprints": [],
+          "allow_scope_expansion": false,
+          "allow_promotion": false,
+          "auto_close_on_harmed": true
+        }
       }
     }
   },

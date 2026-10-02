@@ -508,6 +508,21 @@ bool common_flydelta_sideband_review_store::apply_and_append(
             return false;
         }
     }
+    if (review.action == common_flydelta_review_action::stage_canary) {
+        for (const auto & item : open_canaries(error)) {
+            if (!error.empty()) return false;
+            if (!item.has_canary_envelope) continue;
+            const auto & left = item.canary_envelope;
+            const auto & right = review.canary_envelope;
+            if (left.binding_key == right.binding_key &&
+                    left.behavior_key == right.behavior_key &&
+                    left.scope_fingerprint == right.scope_fingerprint &&
+                    item.event_id != review.event_id) {
+                error = "FlyDelta canary conflicts with an open replacement for the same binding, behavior and scope";
+                return false;
+            }
+        }
+    }
     // Apply to a copy first. If persistence fails, the live registry must not
     // advance without a durable journal event.
     auto next = registry;

@@ -21,6 +21,10 @@ using json = nlohmann::ordered_json;
 namespace {
 
 constexpr const char * kCandidateId = "flydelta://sideband/admin-smoke-v1";
+constexpr const char * kBaselineId = "flydelta://sideband/admin-smoke-baseline";
+constexpr const char * kBindingKey = "flydelta://binding/admin-smoke";
+constexpr const char * kBehaviorKey = "tool_use/admin-smoke";
+constexpr const char * kScopeFingerprint = "scope:admin-smoke";
 constexpr const char * kArtifactPath = "artifact://sideband/admin-smoke-v1";
 constexpr const char * kSuiteRef = "suite://admin-smoke-v1";
 constexpr const char * kEvaluationRevision = "evaluation:admin-smoke-v1";
@@ -46,6 +50,10 @@ common_flydelta_sideband_manifest make_manifest() {
     manifest.compatibility.template_fingerprint = kTemplateFingerprint;
     manifest.compatibility.architecture = "model-free-test-host";
     manifest.compatibility.inference_layout_revision = "layout:admin-smoke-v1";
+    manifest.binding_key = kBindingKey;
+    manifest.applicability.behavior_key = kBehaviorKey;
+    manifest.applicability.scope_fingerprint = kScopeFingerprint;
+    manifest.applicability.verifier_revision = kVerifierRevision;
     manifest.model_n_embd = 4;
     manifest.model_n_layers = 3;
     manifest.il_start = 1;
@@ -203,6 +211,18 @@ int run_smoke() {
     auto registry = std::make_shared<common_flydelta_sideband_registry>();
 
     auto manifest = make_manifest();
+    auto baseline = manifest;
+    baseline.id = kBaselineId;
+    baseline.artifact_path = "artifact://sideband/admin-smoke-baseline";
+    baseline.artifact_hash = "sha256:artifact-admin-smoke-baseline";
+    if (!registry->admit_experimental(baseline, error) ||
+            !registry->promote_experimental(baseline.id, kEvaluationRevision, error, true) ||
+            !registry->stage_canary(baseline.id, kEvaluationRevision, error) ||
+            !registry->activate(baseline.id, error) ||
+            !registry->bind_revision(kBindingKey, baseline.id, "", error)) {
+        std::fprintf(stderr, "failed to seed FlyDelta active baseline: %s\n", error.c_str());
+        return 1;
+    }
     if (!review_store->apply_and_append(
             *registry,
             common_flydelta_sideband_review{
@@ -343,8 +363,19 @@ int run_smoke() {
                 !execute_admin(json{
                     {"request_id", "admin-stage"},
                     {"command", "flydelta.stage_canary"},
-                    {"candidate_id", kCandidateId},
-                    {"explicit_host_approval", true},
+                {"candidate_id", kCandidateId},
+                {"explicit_host_approval", true},
+                    {"binding_key", kBindingKey},
+                    {"canary_behavior_key", kBehaviorKey},
+                    {"canary_scope_fingerprint", kScopeFingerprint},
+                    {"canary_traffic_basis_points", 100},
+                    {"canary_expires_at_epoch_ms", 4102444800000ULL},
+                    {"canary_max_observations", 16},
+                    {"canary_max_scale", 1.0},
+                    {"baseline_deployment_fingerprint", "sha256:admin-smoke-baseline"},
+                    {"rollback_revision_id", kBaselineId},
+                    {"oracle_revision", kVerifierRevision},
+                    {"canary_policy_revision", "flydelta-canary-manual-v1"},
                     {"reason", "model-free admin smoke canary"},
                     {"actor_id", "smoke-operator"},
                 }, "flydelta.canary.staged", result)) {

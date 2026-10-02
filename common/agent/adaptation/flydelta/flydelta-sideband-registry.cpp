@@ -355,8 +355,9 @@ bool common_flydelta_sideband_registry::stage_canary(
         bool canary_progress_only) {
     const auto it = manifests.find(id);
     if (it == manifests.end()) { error = "FlyDelta sideband is unavailable: " + id; return false; }
-    if (it->second.status != common_flydelta_sideband_status::candidate) {
-        error = "only a candidate FlyDelta sideband can enter canary";
+    if (it->second.status != common_flydelta_sideband_status::candidate &&
+            it->second.status != common_flydelta_sideband_status::canary) {
+        error = "only a candidate or existing canary FlyDelta sideband can enter canary";
         return false;
     }
     if (it->second.expires_at_epoch_ms != 0 && it->second.expires_at_epoch_ms <= current_epoch_ms()) {

@@ -105,6 +105,10 @@ struct common_agent_runtime_session_manager_build_config {
     std::shared_ptr<common_agent_inference_capacity_gate> inference_gate;
     std::shared_ptr<common_agent_runtime_inference_executor> inference_executor;
     std::shared_ptr<common_agent_runtime_model_residency> model_residency;
+    std::function<bool(
+        const common_agent_runtime_session_host_turn_request & request,
+        common_flydelta_deployment_result & result,
+        std::string & error)> flydelta_deployment_resolver;
 };
 
 struct common_agent_runtime_active_turn_descriptor {
@@ -134,6 +138,7 @@ inline common_agent_runtime_session_manager_config make_agent_runtime_session_ma
         std::move(config.tooling),
         std::move(config.tooling_resolver),
         std::move(config.model_residency),
+        std::move(config.flydelta_deployment_resolver),
     };
     return {
         make_agent_runtime_session_host_config(std::move(host_build_config)),

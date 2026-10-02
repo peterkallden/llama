@@ -12,6 +12,7 @@
 #include "agent/adaptation/learning-cause-classifier.h"
 #include "agent/adaptation/learning-domain-policy.h"
 #include "agent/adaptation/flydelta/flydelta-worker-budget.h"
+#include "agent/adaptation/flydelta/flydelta-deployment.h"
 #include "agent/runtime/model-catalog.h"
 
 #include <cstdint>
@@ -82,9 +83,11 @@ struct agent_host_config {
     bool adaptation_flydelta_capture_candidates = false;
     std::string adaptation_flydelta_lifecycle_backend = "auto";
     std::string adaptation_flydelta_lifecycle_path;
+    std::string adaptation_flydelta_artifact_root;
     std::string adaptation_flydelta_model_profile_fingerprint;
     std::string adaptation_flydelta_capture_layout_revision = "flydelta-capture-v1";
     size_t adaptation_flydelta_max_capture_candidates = 64;
+    common_flydelta_canary_policy adaptation_flydelta_canary_policy;
 
     std::string memory_backend = "auto";
     std::string memory_db;
