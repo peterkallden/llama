@@ -111,6 +111,10 @@ bool common_flydelta_arm_result_validate(
         error = "FlyDelta arm result verifier state requires host evaluation";
         return false;
     }
+    if (result.verifier_passed && !result.verifier_known) {
+        error = "FlyDelta arm result pass state requires a known verifier";
+        return false;
+    }
     const float dose_epsilon = 1.0e-6f;
     if (!result.dose_safety_limited &&
             std::fabs(result.executed_alpha - result.requested_alpha) > dose_epsilon) {
@@ -221,6 +225,7 @@ bool common_flydelta_arm_result_replay_equivalent(
             expected.generation_available != actual.generation_available ||
             expected.host_evaluated != actual.host_evaluated ||
             expected.verifier_known != actual.verifier_known ||
+            expected.verifier_passed != actual.verifier_passed ||
             expected.host_outcome != actual.host_outcome) {
         error = "FlyDelta replay result flags or identity differ";
         return false;
@@ -541,13 +546,14 @@ common_flydelta_counterfactual_trial arm_trial_from_result(
     trial.executed = arm.executed;
     trial.host_evaluated = arm.host_evaluated;
     trial.verifier_known = arm.verifier_known;
-    trial.passed = arm.host_outcome == common_flydelta_counterfactual_outcome::helped;
+    trial.passed = arm.verifier_passed;
     trial.quality = arm.quality;
     trial.overlay_applied = apply_overlay;
     trial.intervention_count = intervention_count;
     trial.observed_decision_summary = arm.observed_decision_summary;
     trial.expected_decision_summary = arm.expected_decision_summary;
     trial.verifier_reason = arm.verifier_reason;
+    trial.semantic_progress_observation = arm.semantic_progress_observation;
     trial.evidence_ref = arm.provenance_ref.empty() ? arm.generation_ref : arm.provenance_ref;
     return trial;
 }

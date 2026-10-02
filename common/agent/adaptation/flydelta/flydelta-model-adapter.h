@@ -115,6 +115,9 @@ struct common_flydelta_arm_result {
     float quality = 0.0f;
     bool host_evaluated = false;
     bool verifier_known = false;
+    // Individual strict Oracle truth. This is deliberately separate from
+    // host_outcome, which is reserved for paired counterfactual comparison.
+    bool verifier_passed = false;
     common_flydelta_counterfactual_outcome host_outcome =
         common_flydelta_counterfactual_outcome::unknown;
     // Compact host-verifier observation for trace/reporting. These are not
@@ -122,6 +125,7 @@ struct common_flydelta_arm_result {
     std::string observed_decision_summary;
     std::string expected_decision_summary;
     std::string verifier_reason;
+    common_flydelta_semantic_progress_observation semantic_progress_observation;
     std::string capture_ref;
     std::string generation_ref;
     std::string provenance_ref;

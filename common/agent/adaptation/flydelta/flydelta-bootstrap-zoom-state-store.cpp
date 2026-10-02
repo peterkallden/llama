@@ -72,6 +72,54 @@ bool parse_alpha_status(
     return false;
 }
 
+const char * progress_outcome_name(common_flydelta_semantic_progress_outcome outcome) {
+    return common_flydelta_semantic_progress_outcome_name(outcome);
+}
+
+bool parse_progress_outcome(
+        const std::string & value, common_flydelta_semantic_progress_outcome & outcome) {
+    for (const auto candidate : {
+            common_flydelta_semantic_progress_outcome::unknown,
+            common_flydelta_semantic_progress_outcome::unchanged,
+            common_flydelta_semantic_progress_outcome::improved,
+            common_flydelta_semantic_progress_outcome::solved,
+            common_flydelta_semantic_progress_outcome::regressed}) {
+        if (value == progress_outcome_name(candidate)) {
+            outcome = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+json progress_json(const common_flydelta_semantic_progress & progress) {
+    return {
+        {"outcome", progress_outcome_name(progress.outcome)},
+        {"comparable", progress.comparable},
+        {"baseline_score", progress.baseline_score},
+        {"candidate_score", progress.candidate_score},
+        {"improved_dimensions", progress.improved_dimensions},
+        {"regressed_dimensions", progress.regressed_dimensions},
+        {"residual_dimensions", progress.residual_dimensions},
+    };
+}
+
+bool parse_progress(const json & value, common_flydelta_semantic_progress & progress) {
+    progress = {};
+    if (!value.is_object() || !parse_progress_outcome(
+            value.value("outcome", "unknown"), progress.outcome)) return false;
+    progress.comparable = value.value("comparable", false);
+    progress.baseline_score = value.value("baseline_score", 0);
+    progress.candidate_score = value.value("candidate_score", 0);
+    progress.improved_dimensions = value.value(
+        "improved_dimensions", std::vector<std::string>{});
+    progress.regressed_dimensions = value.value(
+        "regressed_dimensions", std::vector<std::string>{});
+    progress.residual_dimensions = value.value(
+        "residual_dimensions", std::vector<std::string>{});
+    return true;
+}
+
 const char * outcome_name(common_flydelta_counterfactual_outcome outcome) {
     return common_flydelta_counterfactual_outcome_name(outcome);
 }
@@ -116,6 +164,7 @@ json trial_json(const common_flydelta_bootstrap_zoom_trial & trial) {
             {"shift_norm", trial.diagnostics.shift_norm},
         };
     }
+    if (trial.progress_available) value["progress"] = progress_json(trial.progress);
     return value;
 }
 
@@ -150,6 +199,10 @@ bool parse_trial(const json & value, common_flydelta_bootstrap_zoom_trial & tria
         trial.diagnostics.leakage = diagnostics.value("leakage", 0.0f);
         trial.diagnostics.shift_norm = diagnostics.value("shift_norm", 0.0f);
     }
+    if (value.contains("progress")) {
+        trial.progress_available = parse_progress(value.at("progress"), trial.progress);
+        if (!trial.progress_available) return false;
+    }
     return true;
 }
 
@@ -175,6 +228,10 @@ std::string state_to_json(const common_flydelta_bootstrap_zoom_state & state) {
         {"evidence_rank", state.evidence_rank},
         {"surface_origin", state.surface_origin},
         {"parent_surface_ref", state.parent_surface_ref},
+        {"progress_available", state.progress_available},
+        {"best_progress", progress_json(state.best_progress)},
+        {"best_experimental_candidate_ref", state.best_experimental_candidate_ref},
+        {"progress_iteration", state.progress_iteration},
         {"local_layers", state.local_layers},
         {"completed_trials", json::array()},
         {"surface_trials", json::array()},
@@ -247,6 +304,15 @@ bool state_from_json(const std::string & text,
         state.evidence_rank = value.value("evidence_rank", 1.0f);
         state.surface_origin = value.value("surface_origin", "bootstrap_rank1");
         state.parent_surface_ref = value.value("parent_surface_ref", "");
+        state.progress_available = value.value("progress_available", false);
+        if (state.progress_available && !parse_progress(
+                value.value("best_progress", json::object()), state.best_progress)) {
+            error = "invalid FlyDelta BootstrapZoom progress state";
+            return false;
+        }
+        state.best_experimental_candidate_ref = value.value(
+            "best_experimental_candidate_ref", "");
+        state.progress_iteration = value.value("progress_iteration", 0U);
         state.local_layers = value.value("local_layers", std::vector<uint32_t>{});
         for (const auto & item : value.value("completed_trials", json::array())) {
             common_flydelta_bootstrap_zoom_trial trial;

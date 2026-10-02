@@ -176,6 +176,7 @@ bool daemon_flydelta_verify_generation(
         std::string & observed_summary,
         std::string & expected_summary,
         std::string & verifier_reason,
+        common_flydelta_semantic_progress_observation & progress_observation,
         std::string & error) {
     error.clear();
     verifier_known = false;
@@ -183,6 +184,7 @@ bool daemon_flydelta_verify_generation(
     observed_summary.clear();
     expected_summary.clear();
     verifier_reason.clear();
+    progress_observation = {};
 
     const auto summarize = [](const common_flydelta_semantic_decision & decision) {
         return json{
@@ -226,6 +228,9 @@ bool daemon_flydelta_verify_generation(
             observed_summary = "unparsed:" +
                 std::string(common_flydelta_semantic_decision_status_name(observed_status));
         }
+        std::string progress_error;
+        (void) common_flydelta_observe_semantic_progress(
+            generated, expected, progress_observation, progress_error);
         common_flydelta_oracle_request oracle_request;
         oracle_request.oracle_ref = fixture.value(
             "oracle_ref", "flydelta://oracle/dataset-operation");
@@ -300,13 +305,11 @@ bool daemon_flydelta_verify_generation(
     return true;
 }
 
-// A single arm has no baseline/candidate relation, so a semantic verifier
-// pass is represented as NEUTRAL in host_outcome. Search runners still need
-// the individual predicate for the existing counterfactual classifiers; keep
-// that translation local to the daemon instead of changing outcome semantics.
+// A single arm has no baseline/candidate relation. Its strict verifier pass
+// is carried separately; host_outcome remains reserved for paired outcomes.
 bool daemon_flydelta_arm_semantic_passed(const common_flydelta_arm_result & result) {
     return result.executed && result.host_evaluated && result.verifier_known &&
-        result.host_outcome == common_flydelta_counterfactual_outcome::neutral;
+        result.verifier_passed;
 }
 
 bool daemon_flydelta_finalize_arm(
@@ -368,16 +371,18 @@ bool daemon_flydelta_finalize_arm(
                 fixture, generation.content, verifier_known, passed,
                 result.observed_decision_summary,
                 result.expected_decision_summary,
-                result.verifier_reason, error)) return false;
+                result.verifier_reason, result.semantic_progress_observation,
+                error)) return false;
         if (verifier_known) {
             result.verifier_known = true;
-            // An individual arm has no paired baseline in this callback. A
-            // semantic pass is therefore NEUTRAL experimental truth here;
-            // common_flydelta_run_counterfactual() derives HELPED only from
-            // the baseline/candidate pair below.
+            result.verifier_passed = passed;
+            // An individual arm cannot be HELPED or HARMED. Keep the legacy
+            // NEUTRAL marker for a strict individual pass because existing
+            // concept-capture consumers use it as a pass marker; failures
+            // remain UNKNOWN until a paired classifier compares them.
             result.host_outcome = passed
                 ? common_flydelta_counterfactual_outcome::neutral
-                : common_flydelta_counterfactual_outcome::harmed;
+                : common_flydelta_counterfactual_outcome::unknown;
             result.quality = passed ? 1.0f : 0.0f;
         }
     }
@@ -531,6 +536,10 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         trial.quality = arm.quality;
         trial.overlay_applied = apply_overlay;
         trial.intervention_count = request.arms[index].layer_indices.size();
+        trial.semantic_progress_observation = arm.semantic_progress_observation;
+        trial.observed_decision_summary = arm.observed_decision_summary;
+        trial.expected_decision_summary = arm.expected_decision_summary;
+        trial.verifier_reason = arm.verifier_reason;
         trial.evidence_ref = arm.generation_ref;
         trials.push_back(std::move(trial));
         margins.push_back(arm.margin);
@@ -612,6 +621,10 @@ bool daemon_flydelta_run_rank1_alpha_arm(
     trial.quality = result.quality;
     trial.overlay_applied = apply_overlay;
     trial.intervention_count = apply_overlay ? 1 : 0;
+    trial.semantic_progress_observation = result.semantic_progress_observation;
+    trial.observed_decision_summary = result.observed_decision_summary;
+    trial.expected_decision_summary = result.expected_decision_summary;
+    trial.verifier_reason = result.verifier_reason;
     trial.evidence_ref = full_execution ? result.generation_ref : result.capture_ref;
     margin = result.margin;
     arm_id = arm.arm_id;

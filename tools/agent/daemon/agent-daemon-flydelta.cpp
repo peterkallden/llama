@@ -135,8 +135,7 @@ bool daemon_flydelta_run_concept_capture(
         }
         if (!conditioned_result.host_evaluated ||
                 !conditioned_result.verifier_known ||
-                conditioned_result.host_outcome !=
-                    common_flydelta_counterfactual_outcome::neutral) {
+                !conditioned_result.verifier_passed) {
             error = "FlyDelta concept capture conditioned arm is not host verified";
             return false;
         }
@@ -163,8 +162,7 @@ bool daemon_flydelta_run_concept_capture(
                 control_result.capture_ref, *baseline, *conditioned, *control,
                 conditioned_result.host_evaluated &&
                     conditioned_result.verifier_known &&
-                    conditioned_result.host_outcome ==
-                        common_flydelta_counterfactual_outcome::neutral,
+                    conditioned_result.verifier_passed,
                 trajectory_ref, error)) return false;
         trajectory_refs.push_back(std::move(trajectory_ref));
     }
@@ -718,7 +716,9 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
                 candidates[index].layer_indices.front(), diagnostics, error)) return false;
         common_flydelta_bootstrap_zoom_trial trial;
         trial.candidate = candidates[index];
-        trial.outcome = arm_result.host_outcome;
+        trial.outcome = arm_result.verifier_passed
+            ? common_flydelta_counterfactual_outcome::neutral
+            : common_flydelta_counterfactual_outcome::unknown;
         trial.host_evaluated = full_execution && arm_result.host_evaluated;
         trial.verifier_known = full_execution && arm_result.verifier_known;
         trial.margin_available = arm_result.margin.available;
@@ -726,6 +726,14 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
             ? (full_execution
                 ? arm_result.margin.normalized_delta() - baseline_result.margin.normalized_delta()
                 : arm_result.margin.normalized_delta()) : 0.0f;
+        if (full_execution) {
+            trial.progress = common_flydelta_compare_semantic_progress(
+                baseline_result.semantic_progress_observation,
+                arm_result.semantic_progress_observation,
+                daemon_flydelta_arm_semantic_passed(baseline_result),
+                daemon_flydelta_arm_semantic_passed(arm_result));
+            trial.progress_available = trial.progress.comparable;
+        }
         trial.diagnostics_available = diagnostics.layer_index != 0;
         trial.diagnostics = diagnostics;
         if (!common_flydelta_bootstrap_zoom_trial_validate(trial, error)) return false;
@@ -739,8 +747,9 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
             std::sqrt(static_cast<float>(candidates[index].layer_indices.size()));
         region_trial.requested_total_scale = candidates[index].total_scale;
         region_trial.executed_total_scale = candidates[index].total_scale;
-        region_trial.outcome = full_execution
-            ? arm_result.host_outcome : common_flydelta_counterfactual_outcome::unknown;
+        region_trial.outcome = full_execution && arm_result.verifier_passed
+            ? common_flydelta_counterfactual_outcome::neutral
+            : common_flydelta_counterfactual_outcome::unknown;
         region_trial.quality_delta = full_execution
             ? arm_result.quality - baseline_result.quality : 0.0f;
         region_trial.margin = arm_result.margin;
@@ -790,6 +799,20 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
         next.best_margin_delta = selected.margin_delta;
         next.best_search_score = next.selection.search_score;
     }
+    for (const auto & trial : next.completed_trials) {
+        if (!trial.progress_available ||
+                (trial.progress.outcome != common_flydelta_semantic_progress_outcome::improved &&
+                 trial.progress.outcome != common_flydelta_semantic_progress_outcome::solved)) {
+            continue;
+        }
+        if (!next.progress_available ||
+                trial.progress.candidate_score > next.best_progress.candidate_score) {
+            next.progress_available = true;
+            next.best_progress = trial.progress;
+            next.best_experimental_candidate_ref = job.seed.candidate_ref;
+        }
+    }
+    if (next.progress_available) ++next.progress_iteration;
     if (resume.phase == common_flydelta_bootstrap_zoom_phase::alpha_zoom) {
         next.phase = common_flydelta_bootstrap_zoom_phase::profile_zoom;
     } else if (resume.phase == common_flydelta_bootstrap_zoom_phase::profile_zoom &&
@@ -925,6 +948,7 @@ bool daemon_flydelta_run_search_pipeline(
         trial.quality = arm_result.quality;
         trial.overlay_applied = apply_overlay;
         trial.intervention_count = arm.layer_indices.size();
+        trial.semantic_progress_observation = arm_result.semantic_progress_observation;
         trial.observed_decision_summary = arm_result.observed_decision_summary;
         trial.expected_decision_summary = arm_result.expected_decision_summary;
         trial.verifier_reason = arm_result.verifier_reason;
@@ -1026,6 +1050,7 @@ bool daemon_flydelta_run_search_pipeline(
             trial.quality = arm.quality;
             trial.overlay_applied = true;
             trial.intervention_count = batch.arms[index].layer_indices.size();
+            trial.semantic_progress_observation = arm.semantic_progress_observation;
             trial.observed_decision_summary = arm.observed_decision_summary;
             trial.expected_decision_summary = arm.expected_decision_summary;
             trial.verifier_reason = arm.verifier_reason;
@@ -1153,6 +1178,7 @@ bool daemon_flydelta_run_search_pipeline(
     baseline_trial.passed = daemon_flydelta_arm_semantic_passed(baseline_arm);
     baseline_trial.quality = baseline_arm.quality;
     baseline_trial.verifier_known = baseline_arm.verifier_known;
+    baseline_trial.semantic_progress_observation = baseline_arm.semantic_progress_observation;
     baseline_trial.observed_decision_summary = baseline_arm.observed_decision_summary;
     baseline_trial.expected_decision_summary = baseline_arm.expected_decision_summary;
     baseline_trial.verifier_reason = baseline_arm.verifier_reason;
@@ -1168,12 +1194,17 @@ bool daemon_flydelta_run_search_pipeline(
         candidate_trial.passed = daemon_flydelta_arm_semantic_passed(arm);
         candidate_trial.quality = arm.quality;
         candidate_trial.verifier_known = arm.verifier_known;
+        candidate_trial.semantic_progress_observation = arm.semantic_progress_observation;
         candidate_trial.observed_decision_summary = arm.observed_decision_summary;
         candidate_trial.expected_decision_summary = arm.expected_decision_summary;
         candidate_trial.verifier_reason = arm.verifier_reason;
         candidate_trial.evidence_ref = arm.generation_ref;
         if (!common_flydelta_counterfactual_trial_validate(candidate_trial, error)) return false;
         trial.outcome = common_flydelta_classify_counterfactual(baseline_trial, candidate_trial);
+        trial.semantic_progress = common_flydelta_compare_semantic_progress(
+            baseline_trial.semantic_progress_observation,
+            candidate_trial.semantic_progress_observation,
+            baseline_trial.passed, candidate_trial.passed);
         trial.quality_delta = candidate_trial.quality - baseline_trial.quality;
         trial.margin = arm.margin;
         trial.margin_comparison.available = baseline_arm.margin.available && arm.margin.available;
@@ -1184,6 +1215,7 @@ bool daemon_flydelta_run_search_pipeline(
         // but the result still comes from the arm's actual execution metadata.
         trial.host_evaluated = candidate_trial.host_evaluated;
         trial.verifier_known = baseline_trial.verifier_known && candidate_trial.verifier_known;
+        trial.semantic_progress_observation = candidate_trial.semantic_progress_observation;
         trial.observed_decision_summary = candidate_trial.observed_decision_summary;
         trial.expected_decision_summary = candidate_trial.expected_decision_summary;
         trial.verifier_reason = candidate_trial.verifier_reason;
@@ -1573,8 +1605,9 @@ bool daemon_flydelta_run_orthogonal_slice(
         }
         common_flydelta_bootstrap_zoom_trial trial;
         trial.candidate = candidates[index];
-        trial.outcome = full_execution
-            ? arm.host_outcome : common_flydelta_counterfactual_outcome::unknown;
+        trial.outcome = full_execution && arm.verifier_passed
+            ? common_flydelta_counterfactual_outcome::neutral
+            : common_flydelta_counterfactual_outcome::unknown;
         trial.host_evaluated = full_execution && arm.host_evaluated;
         trial.verifier_known = full_execution && arm.verifier_known;
         trial.margin_available = arm.margin.available;
@@ -2460,6 +2493,7 @@ bool daemon_flydelta_run_counterfactual(
                 trial.quality = trial.passed ? 1.0f : 0.0f;
                 trial.overlay_applied = apply_overlay;
                 trial.intervention_count = apply_overlay ? 1 : 0;
+                trial.semantic_progress_observation = arm_result.semantic_progress_observation;
                 trial.observed_decision_summary = arm_result.observed_decision_summary;
                 trial.expected_decision_summary = arm_result.expected_decision_summary;
                 trial.verifier_reason = arm_result.verifier_reason;

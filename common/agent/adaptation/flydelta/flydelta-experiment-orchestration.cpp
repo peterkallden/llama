@@ -726,6 +726,8 @@ bool common_flydelta_bootstrap_zoom_state_validate(
             !finite(state.evidence_rank) || state.evidence_rank <= 0.0f ||
             state.evidence_rank > 1024.0f || state.surface_origin.empty() ||
             state.surface_origin.size() > 128 || state.parent_surface_ref.size() > 512 ||
+            state.best_experimental_candidate_ref.size() > 512 ||
+            state.progress_iteration > 64 ||
             state.local_layers.size() > 3 ||
             state.completed_trials.size() > 8 ||
             state.surface_trials.size() > 8 ||

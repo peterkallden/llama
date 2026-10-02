@@ -87,6 +87,8 @@ void append_region_arm(const common_flydelta_intervention_region_trial & trial,
     arm.observed_decision_summary = trial.observed_decision_summary;
     arm.expected_decision_summary = trial.expected_decision_summary;
     arm.verifier_reason = trial.verifier_reason;
+    arm.semantic_progress_observation = trial.semantic_progress_observation;
+    arm.semantic_progress = trial.semantic_progress;
     arm.candidate_passed = trial.outcome == common_flydelta_counterfactual_outcome::helped;
     arm.evidence_ref = trial.evidence_ref;
     trace.arms.push_back(std::move(arm));
@@ -101,11 +103,14 @@ void append_counterfactual_arm(const common_flydelta_counterfactual_report & rep
         job.alpha_search.candidates.front();
     arm.host_evaluated = report.candidate.host_evaluated;
     arm.verifier_known = report.candidate.verifier_known;
+    arm.verifier_passed = report.candidate.verifier_known && report.candidate.passed;
     arm.candidate_passed = report.candidate.passed;
     arm.host_outcome = report.outcome;
     arm.observed_decision_summary = report.candidate.observed_decision_summary;
     arm.expected_decision_summary = report.candidate.expected_decision_summary;
     arm.verifier_reason = report.candidate.verifier_reason;
+    arm.semantic_progress_observation = report.candidate.semantic_progress_observation;
+    arm.semantic_progress = report.semantic_progress;
     arm.evidence_ref = report.candidate.evidence_ref;
     arm.has_baseline = true;
     arm.baseline_executed = report.baseline.executed;
@@ -244,6 +249,7 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
         {"execution_class", arm.execution_class},
         {"host_evaluated", arm.host_evaluated},
         {"verifier_known", arm.verifier_known},
+        {"verifier_passed", arm.verifier_passed},
         {"candidate_passed", arm.candidate_passed},
         {"has_baseline", arm.has_baseline},
         {"baseline_executed", arm.baseline_executed},
@@ -253,6 +259,15 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
         {"observed_decision", arm.observed_decision_summary},
         {"expected_decision", arm.expected_decision_summary},
         {"verifier_reason", arm.verifier_reason},
+        {"semantic_progress", {
+            {"outcome", common_flydelta_semantic_progress_outcome_name(arm.semantic_progress.outcome)},
+            {"comparable", arm.semantic_progress.comparable},
+            {"baseline_score", arm.semantic_progress.baseline_score},
+            {"candidate_score", arm.semantic_progress.candidate_score},
+            {"improved_dimensions", arm.semantic_progress.improved_dimensions},
+            {"regressed_dimensions", arm.semantic_progress.regressed_dimensions},
+            {"residual_dimensions", arm.semantic_progress.residual_dimensions},
+        }},
         {"evidence_ref", arm.evidence_ref}
     };
 }

@@ -476,12 +476,13 @@ The hand-off rules are deliberately strict:
    A single arm's semantic pass is represented locally as `NEUTRAL`; the
    paired classifier supplies the actual counterfactual outcome.
 
-#### Individual arm status versus paired counterfactual outcome
+#### Individual arm status, semantic progress, and paired counterfactual outcome
 
-The host finalizer first evaluates each generated arm independently. For a
-known fixture, an individual arm that satisfies the Oracle is represented as a
-host `NEUTRAL` observation because that arm has no comparison partner yet. The
-paired counterfactual classifier then compares the baseline and candidate:
+The host finalizer first evaluates each generated arm independently. A strict
+individual pass is carried separately as `verifier_passed`; the legacy host
+`NEUTRAL` marker is retained only for consumers that use it as an individual
+pass marker. An individual failure is never written as `HARMED`. The paired
+counterfactual classifier then compares the baseline and candidate:
 
 ```text
 baseline fails  + candidate passes -> HELPED
@@ -490,15 +491,29 @@ baseline passes + candidate passes -> NEUTRAL
 either side not executed/unknown   -> UNKNOWN
 ```
 
-Therefore `HARMED` does not necessarily mean that the baseline was a known
-failure. It can mean that the baseline already passed and an intervention
-regressed the behavior. In the Qwen positive-prototype smoke, the baseline arm
-passed the grouped-aggregation Oracle, while the layer-1 prototype arms at
-`alpha=0.01` and `alpha=0.02` did not. Those paired trials were consequently
-`HARMED`; the `alpha=0.03` arm was not decisively verified and remained
-`UNKNOWN`. None of these outcomes creates learning credit or promotion.
+`HARMED` means a verified paired regression, not merely that a candidate is
+incomplete. When both baseline and candidate fail strict verification, the
+counterfactual outcome remains `UNKNOWN`.
 
-The smoke summary records the Oracle outcome, provenance and the bounded
+The host also records a separate bounded semantic-progress observation. For
+dataset operations it compares operation, dataset, grouping, measure and
+contract shape. A candidate may therefore report:
+
+```text
+strict_outcome: UNKNOWN
+progress:       IMPROVED
+residual:        grouping, contract_shape
+```
+
+when it moved toward the right operation and dataset but still omitted a
+required `group_by`. This progress is search state only: it does not create
+learning credit, promotion evidence or activation authority. `SOLVED` is
+emitted only when the strict host Oracle passes. Improved safe candidates may
+be retained in the existing bounded Bootstrap/search state for a later
+residual iteration.
+
+The smoke summary records the strict Oracle outcome, semantic progress,
+provenance and the bounded
 `expected_decision`, `observed_decision` and `verifier_reason` fields, but not
 the full generated text. A detailed investigation of the exact raw model
 response must therefore inspect the resident content trace when enabled; the
@@ -615,9 +630,11 @@ journal remains the durable evidence boundary.
 | 2026-10-01 | this local synthesis-portfolio correction sweep | The existing control-residualized and positive-prototype candidates now share one tested, bounded frontier selector | Cozo/Vulkan common/daemon targets built with three compile threads; focused concept test passed after correction; serial `test-agent-flydelta*` passed 53/53 | Moved the pre-existing semantic-source selection out of the evaluator-local helper into the common concept contract. It still prefers one raw candidate per semantic source, preserves source order and frontier bounds, and continues through the existing search/Oracle path; no synthesis estimator, low-rank builder, evidence, lifecycle or promotion semantics changed |
 | 2026-10-02 | 2ed3616f0 | Synthesis strategy/estimator descriptors and strict semantic basis admission added around the existing direction, low-rank and coefficient seams | Cozo/Vulkan rebuild passed with three compile threads; serial `test-agent-flydelta*` passed 53/53; model-free concept smoke passed; full Qwen Instruct server-context concept-synthesis smoke passed with six candidates and two serial frontier searches | Decision-margin and boundary-prototype builders remain challenger-capable only when host material exists. Basis resolution requires matching concept/behavior/model/capture/scope/Oracle identity plus host-verified, non-experimental directions; no new store, evaluator, learning-credit or promotion path. The complete component flow and individual-arm versus paired-counterfactual outcome semantics are documented above |
 | 2026-10-02 | this local decision-margin seam sweep | Host-owned decision-pair request/provider, output-head row resolver, challenger callback and provenance fields are now wired through the resident server-context binding and evaluator result | Cozo/Vulkan full rebuild completed with three compile threads; focused direction-search/server-binding tests passed; serial `test-agent-flydelta*` passed 53/53 | The daemon callback is optional and fail-closed. Its default provider is empty because generic output-head weight rows are not exposed by the public server-context API; logits are never substituted for `U[t]`. No challenger is persisted, grafted, activated, promoted or granted `HELPED` by this seam alone |
+| 2026-10-02 | this local iterative-progress correction | Individual strict verifier pass is separated from paired outcome; bounded dataset semantic progress, residual dimensions and Bootstrap resume fields now travel through reports, trace and existing state | Cozo/Vulkan focused build completed with three compile threads and the user-profile ccache; affected FlyDelta CTests passed after rebuilding all affected binaries | A partial candidate is now `UNKNOWN` plus `IMPROVED`, not individual `HARMED`; strict Oracle, learning credit, promotion and activation authority remain unchanged |
 | 2026-10-02 | this local decision-margin seam validation | The production concept-synthesis path was exercised after the seam change with Qwen Instruct on the resident server-context/Vulkan0 path | Cozo/Vulkan build and serial FlyDelta tests passed; model smoke completed with 2 relations, 6 capture arms, 6 synthesis candidates and 2 serial frontier searches. The full-verification arms in the positive-prototype frontier were `HARMED`; no `HELPED`, learning credit or promotion was produced. The default daemon had no decision-pair/output-head provider, so no decision-margin challenger was created | This is runtime/wiring evidence, not evidence that positive-prototype is useful. The Oracle correctly rejects the harmful frontier, and the missing model-facing output-head provider remains an explicit backend integration boundary |
 | 2026-10-02 | this local user-concept smoke correction | The same production smoke now labels its host-grounded concept relation as `user_taught_concept` | Qwen Instruct Vulkan0 server-context run completed with 2 relations, 6 capture arms, 6 candidates and 2 serial frontier searches; positive-prototype arms were `HARMED`, with no learning credit or promotion | This validates user-concept source wiring and fail-closed Oracle behavior, not a successful positive-prototype intervention. The lambda/code-structure example remains future work because it needs a separate host Oracle |
 | 2026-10-02 | this local verifier-trace correction | Full FlyDelta arm traces now preserve compact expected-versus-observed verifier observations through the common arm, trial, region and worker seams | After a complete Cozo/Vulkan rebuild, all 53 focused FlyDelta CTests passed serially. Qwen Instruct Vulkan0 resident server-context smoke completed with 2 relations, 6 capture arms, 6 candidates and 2 frontier searches; both full-verification prototype arms reported `expected_decision` as grouped `sum(amount)` by `region`, `observed_decision` as `unparsed:missing_field`, and `verifier_reason` explaining that `group_by` was missing, yielding `HARMED` and no learning credit/promotion | The fields are bounded diagnostic trace data only. They explain `HELPED/HARMED/UNKNOWN` outcomes and do not change Oracle truth, evidence, learning, selection or promotion semantics |
+| 2026-10-02 | this local iterative-progress correction | Individual strict verifier pass is separated from paired outcome; bounded dataset semantic progress, residual dimensions and Bootstrap resume fields now travel through reports, trace and existing state | Cozo/Vulkan focused build completed with three compile threads and the user-profile ccache; affected FlyDelta CTests passed after rebuilding all affected binaries | A partial candidate is now `UNKNOWN` plus `IMPROVED`, not individual `HARMED`; strict Oracle, learning credit, promotion and activation authority remain unchanged |
 | 2026-10-01 | this local evaluation-contract sweep | Durable evaluation fixtures can now name the Oracle-aligned classes `paraphrase`, `transfer`, `control` and `competing` in addition to the existing lifecycle gate classes | Contract round-trip checks passed; production daemon mapping preserves the existing intended/holdout/retention/agent-regression gates; no model-backed rerun was needed for this vocabulary-only change | The new names are optional fixture identity only; they do not alter lifecycle gates |
 | 2026-10-01 | this local Oracle-report sweep | Evaluation now emits a separate immutable, redacted Oracle-suite report resource and links it from the lifecycle evaluation report | Cozo/Vulkan build with three compile threads passed; 53 focused FlyDelta CTests passed serially, including Oracle-report and evaluation-provenance round trips; the TinyLlama Cozo/Vulkan daemon smoke traced resource `agent-resource://.../resource-12` through lifecycle-report reference and post-evaluation readback | The report is an audit/diagnostic artifact only. It does not create learning credit, select an overlay or change promotion semantics; no second store or evaluator path was introduced. The smoke's synthetic candidate verifies wiring only, not useful Qwen adaptation. |
 

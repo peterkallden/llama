@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-dose-controller.h"
+#include "agent/adaptation/flydelta/flydelta-semantic-decision.h"
 
 #include <cstddef>
 #include <functional>
@@ -77,6 +78,8 @@ struct common_flydelta_intervention_region_trial {
     std::string observed_decision_summary;
     std::string expected_decision_summary;
     std::string verifier_reason;
+    common_flydelta_semantic_progress_observation semantic_progress_observation;
+    common_flydelta_semantic_progress semantic_progress;
     std::string evidence_ref;
 };
 

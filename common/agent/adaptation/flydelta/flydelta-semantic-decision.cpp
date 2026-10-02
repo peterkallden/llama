@@ -304,3 +304,225 @@ bool common_flydelta_semantic_decision_equal(
             }) && left.order_by_field == right.order_by_field &&
         left.order_by_direction == right.order_by_direction && left.limit == right.limit;
 }
+
+namespace {
+
+int progress_rank(const common_flydelta_semantic_progress_field_state state) {
+    switch (state) {
+        case common_flydelta_semantic_progress_field_state::matched: return 2;
+        case common_flydelta_semantic_progress_field_state::partial: return 1;
+        case common_flydelta_semantic_progress_field_state::mismatch:
+        case common_flydelta_semantic_progress_field_state::missing: return 0;
+        case common_flydelta_semantic_progress_field_state::unknown: return -1;
+    }
+    return -1;
+}
+
+common_flydelta_semantic_progress_field_state compare_value(
+        const std::string & actual, const std::string & expected,
+        const bool partial = false) {
+    if (actual.empty()) return common_flydelta_semantic_progress_field_state::missing;
+    if (expected.empty()) return common_flydelta_semantic_progress_field_state::unknown;
+    if (lower(trim(actual)) == lower(trim(expected))) {
+        return common_flydelta_semantic_progress_field_state::matched;
+    }
+    return partial ? common_flydelta_semantic_progress_field_state::partial :
+        common_flydelta_semantic_progress_field_state::mismatch;
+}
+
+std::string json_string_or_empty(const json & object, const char * key) {
+    return object.contains(key) && object.at(key).is_string()
+        ? trim(object.at(key).get<std::string>()) : std::string{};
+}
+
+bool json_string_array_or_first(
+        const json & object, const char * key, std::string & value) {
+    if (!object.contains(key)) return false;
+    const auto & item = object.at(key);
+    if (item.is_string()) {
+        value = trim(item.get<std::string>());
+        return !value.empty();
+    }
+    if (!item.is_array() || item.empty() || !item.front().is_string()) return false;
+    value = trim(item.front().get<std::string>());
+    return !value.empty();
+}
+
+bool observe_fields(
+        const std::string & generated,
+        common_flydelta_semantic_decision & observed,
+        bool & strict_valid,
+        bool & grouping_alias,
+        bool & measure_alias) {
+    common_flydelta_semantic_decision_status status;
+    std::string strict_error;
+    strict_valid = common_flydelta_parse_semantic_decision(
+        generated, observed, status, strict_error);
+    if (strict_valid) return true;
+
+    json root;
+    if (!parse_json_text(generated, root)) return false;
+    json object = root;
+    if (root.contains("name")) {
+        if (!root.at("name").is_string() || !root.contains("arguments") ||
+                !root.at("arguments").is_object()) return false;
+        object = root.at("arguments");
+        const std::string name = root.at("name").get<std::string>();
+        if (name == "data.aggregate") observed.operation = "aggregate";
+        else if (name == "data.filter") observed.operation = "filter";
+        else if (name == "data.query") observed.operation = "query";
+        else {
+            // Keep unsupported operations observable for diagnostic progress.  This
+            // is deliberately not a relaxed execution path: strict_valid remains
+            // false and the normal host verifier still rejects the call.
+            const auto separator = name.rfind('.');
+            observed.operation = name.substr(separator == std::string::npos ? 0 : separator + 1);
+        }
+    } else if (object.contains("operation") && object.at("operation").is_string()) {
+        observed.operation = lower(trim(object.at("operation").get<std::string>()));
+    } else {
+        return false;
+    }
+    observed.dataset = json_string_or_empty(object, "dataset");
+    std::string grouping_value;
+    if (object.contains("group_by")) {
+        grouping_alias = json_string_array_or_first(object, "group_by", grouping_value);
+    } else if (object.contains("groupby")) {
+        grouping_alias = json_string_array_or_first(object, "groupby", grouping_value);
+    }
+    if (!grouping_value.empty()) observed.group_by = {grouping_value};
+    if (observed.operation == "aggregate") {
+        if (object.contains("measure") && object.at("measure").is_string()) {
+            observed.aggregate_field = trim(object.at("measure").get<std::string>());
+        } else if (object.contains("measures") && object.at("measures").is_array() &&
+                !object.at("measures").empty() && object.at("measures").front().is_object()) {
+            const auto & measure = object.at("measures").front();
+            observed.aggregate_field = json_string_or_empty(measure, "column");
+            if (observed.aggregate_field.empty()) observed.aggregate_field =
+                json_string_or_empty(measure, "field");
+        } else if (object.contains("columns")) {
+            measure_alias = json_string_array_or_first(object, "columns", observed.aggregate_field);
+        }
+    } else if (object.contains("columns")) {
+        // A failed/competing tool often still carries the requested field.  Keep
+        // that evidence so a later candidate can be reported as partial progress.
+        measure_alias = json_string_array_or_first(object, "columns", observed.aggregate_field);
+    }
+    return !observed.operation.empty() || !observed.dataset.empty() ||
+        !observed.group_by.empty() || !observed.aggregate_field.empty();
+}
+
+} // namespace
+
+const char * common_flydelta_semantic_progress_field_state_name(
+        common_flydelta_semantic_progress_field_state state) {
+    switch (state) {
+        case common_flydelta_semantic_progress_field_state::unknown: return "unknown";
+        case common_flydelta_semantic_progress_field_state::missing: return "missing";
+        case common_flydelta_semantic_progress_field_state::mismatch: return "mismatch";
+        case common_flydelta_semantic_progress_field_state::partial: return "partial";
+        case common_flydelta_semantic_progress_field_state::matched: return "matched";
+    }
+    return "unknown";
+}
+
+const char * common_flydelta_semantic_progress_outcome_name(
+        common_flydelta_semantic_progress_outcome outcome) {
+    switch (outcome) {
+        case common_flydelta_semantic_progress_outcome::unknown: return "unknown";
+        case common_flydelta_semantic_progress_outcome::unchanged: return "unchanged";
+        case common_flydelta_semantic_progress_outcome::improved: return "improved";
+        case common_flydelta_semantic_progress_outcome::solved: return "solved";
+        case common_flydelta_semantic_progress_outcome::regressed: return "regressed";
+    }
+    return "unknown";
+}
+
+bool common_flydelta_observe_semantic_progress(
+        const std::string & generated,
+        const common_flydelta_semantic_decision & expected,
+        common_flydelta_semantic_progress_observation & observation,
+        std::string & error) {
+    observation = {};
+    error.clear();
+    if (!common_flydelta_semantic_decision_validate(expected, error)) return false;
+
+    common_flydelta_semantic_decision observed;
+    bool strict_valid = false;
+    bool grouping_alias = false;
+    bool measure_alias = false;
+    if (!observe_fields(generated, observed, strict_valid, grouping_alias, measure_alias)) {
+        error = "semantic progress observation found no bounded decision fields";
+        return false;
+    }
+    observation.available = true;
+    observation.contract_valid = strict_valid;
+    observation.operation = observed.operation;
+    observation.dataset = observed.dataset;
+    if (!observed.group_by.empty()) {
+        observation.grouping = observed.group_by.front();
+    }
+    observation.measure = observed.aggregate_field;
+    observation.operation_state = compare_value(
+        observation.operation, expected.operation);
+    observation.dataset_state = compare_value(observation.dataset, expected.dataset);
+    observation.grouping_state = compare_value(
+        observation.grouping, expected.group_by.empty() ? std::string{} : expected.group_by.front(),
+        grouping_alias);
+    observation.measure_state = compare_value(
+        observation.measure,
+        expected.aggregate_field,
+        measure_alias);
+    observation.contract_state = strict_valid
+        ? common_flydelta_semantic_progress_field_state::matched
+        : common_flydelta_semantic_progress_field_state::partial;
+    observation.score = progress_rank(observation.operation_state) +
+        progress_rank(observation.dataset_state) +
+        progress_rank(observation.grouping_state) +
+        progress_rank(observation.measure_state) +
+        progress_rank(observation.contract_state);
+    return true;
+}
+
+common_flydelta_semantic_progress common_flydelta_compare_semantic_progress(
+        const common_flydelta_semantic_progress_observation & baseline,
+        const common_flydelta_semantic_progress_observation & candidate,
+        const bool baseline_strict_passed,
+        const bool candidate_strict_passed) {
+    common_flydelta_semantic_progress result;
+    result.baseline_score = baseline.score;
+    result.candidate_score = candidate.score;
+    result.comparable = baseline.available && candidate.available;
+    if (candidate_strict_passed) {
+        result.outcome = common_flydelta_semantic_progress_outcome::solved;
+    } else if (baseline_strict_passed && candidate.available) {
+        result.outcome = common_flydelta_semantic_progress_outcome::regressed;
+    } else if (!result.comparable) {
+        result.outcome = common_flydelta_semantic_progress_outcome::unknown;
+    } else if (candidate.score > baseline.score) {
+        result.outcome = common_flydelta_semantic_progress_outcome::improved;
+    } else if (candidate.score < baseline.score) {
+        result.outcome = common_flydelta_semantic_progress_outcome::regressed;
+    } else {
+        result.outcome = common_flydelta_semantic_progress_outcome::unchanged;
+    }
+
+    const auto add_dimension = [&](const char * name,
+            const common_flydelta_semantic_progress_field_state before,
+            const common_flydelta_semantic_progress_field_state after) {
+        if (progress_rank(after) > progress_rank(before)) result.improved_dimensions.emplace_back(name);
+        if (progress_rank(after) < progress_rank(before)) result.regressed_dimensions.emplace_back(name);
+    };
+    add_dimension("operation", baseline.operation_state, candidate.operation_state);
+    add_dimension("dataset", baseline.dataset_state, candidate.dataset_state);
+    add_dimension("grouping", baseline.grouping_state, candidate.grouping_state);
+    add_dimension("measure", baseline.measure_state, candidate.measure_state);
+    add_dimension("contract_shape", baseline.contract_state, candidate.contract_state);
+    if (candidate.grouping_state != common_flydelta_semantic_progress_field_state::matched) {
+        result.residual_dimensions.emplace_back("grouping");
+    }
+    if (candidate.contract_state != common_flydelta_semantic_progress_field_state::matched) {
+        result.residual_dimensions.emplace_back("contract_shape");
+    }
+    return result;
+}

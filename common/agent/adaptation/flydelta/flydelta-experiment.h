@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agent/adaptation/flydelta/flydelta-semantic-decision.h"
+
 #include <cstddef>
 #include <functional>
 #include <string>
@@ -55,6 +57,7 @@ struct common_flydelta_counterfactual_trial {
     std::string observed_decision_summary;
     std::string expected_decision_summary;
     std::string verifier_reason;
+    common_flydelta_semantic_progress_observation semantic_progress_observation;
     std::string evidence_ref;
 };
 
@@ -73,6 +76,7 @@ struct common_flydelta_counterfactual_report {
     common_flydelta_counterfactual_trial candidate;
     common_flydelta_counterfactual_outcome outcome = common_flydelta_counterfactual_outcome::unknown;
     float quality_delta = 0.0f;
+    common_flydelta_semantic_progress semantic_progress;
 };
 
 bool common_flydelta_counterfactual_report_validate(

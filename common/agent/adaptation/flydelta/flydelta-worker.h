@@ -51,6 +51,7 @@ struct common_flydelta_trace_arm {
     std::string execution_class;
     bool host_evaluated = false;
     bool verifier_known = false;
+    bool verifier_passed = false;
     bool candidate_passed = false;
     bool has_baseline = false;
     bool baseline_executed = false;
@@ -61,6 +62,8 @@ struct common_flydelta_trace_arm {
     std::string observed_decision_summary;
     std::string expected_decision_summary;
     std::string verifier_reason;
+    common_flydelta_semantic_progress_observation semantic_progress_observation;
+    common_flydelta_semantic_progress semantic_progress;
     std::string evidence_ref;
 };
 

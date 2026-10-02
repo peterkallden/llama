@@ -16,6 +16,57 @@ const char * trial_outcome(bool passed) {
     return passed ? "passed" : "failed";
 }
 
+json progress_observation_to_json(
+        const common_flydelta_semantic_progress_observation & observation) {
+    return json{
+        {"available", observation.available},
+        {"contract_valid", observation.contract_valid},
+        {"operation", observation.operation},
+        {"dataset", observation.dataset},
+        {"grouping", observation.grouping},
+        {"measure", observation.measure},
+        {"operation_state", common_flydelta_semantic_progress_field_state_name(observation.operation_state)},
+        {"dataset_state", common_flydelta_semantic_progress_field_state_name(observation.dataset_state)},
+        {"grouping_state", common_flydelta_semantic_progress_field_state_name(observation.grouping_state)},
+        {"measure_state", common_flydelta_semantic_progress_field_state_name(observation.measure_state)},
+        {"contract_state", common_flydelta_semantic_progress_field_state_name(observation.contract_state)},
+        {"score", observation.score},
+    };
+}
+
+json progress_to_json(const common_flydelta_semantic_progress & progress) {
+    return json{
+        {"outcome", common_flydelta_semantic_progress_outcome_name(progress.outcome)},
+        {"comparable", progress.comparable},
+        {"baseline_score", progress.baseline_score},
+        {"candidate_score", progress.candidate_score},
+        {"improved_dimensions", progress.improved_dimensions},
+        {"regressed_dimensions", progress.regressed_dimensions},
+        {"residual_dimensions", progress.residual_dimensions},
+    };
+}
+
+common_flydelta_semantic_progress_outcome parse_progress_outcome(const std::string & value) {
+    if (value == "solved") return common_flydelta_semantic_progress_outcome::solved;
+    if (value == "improved") return common_flydelta_semantic_progress_outcome::improved;
+    if (value == "unchanged") return common_flydelta_semantic_progress_outcome::unchanged;
+    if (value == "regressed") return common_flydelta_semantic_progress_outcome::regressed;
+    return common_flydelta_semantic_progress_outcome::unknown;
+}
+
+common_flydelta_semantic_progress_field_state parse_progress_field_state(
+        const std::string & value) {
+    for (const auto candidate : {
+            common_flydelta_semantic_progress_field_state::unknown,
+            common_flydelta_semantic_progress_field_state::missing,
+            common_flydelta_semantic_progress_field_state::mismatch,
+            common_flydelta_semantic_progress_field_state::partial,
+            common_flydelta_semantic_progress_field_state::matched}) {
+        if (value == common_flydelta_semantic_progress_field_state_name(candidate)) return candidate;
+    }
+    return common_flydelta_semantic_progress_field_state::unknown;
+}
+
 common_flydelta_counterfactual_outcome parse_outcome(const std::string & value) {
     if (value == "helped") return common_flydelta_counterfactual_outcome::helped;
     if (value == "neutral") return common_flydelta_counterfactual_outcome::neutral;
@@ -35,6 +86,7 @@ json trial_to_json(const common_flydelta_counterfactual_trial & trial) {
         {"observed_decision", trial.observed_decision_summary},
         {"expected_decision", trial.expected_decision_summary},
         {"verifier_reason", trial.verifier_reason},
+        {"semantic_progress_observation", progress_observation_to_json(trial.semantic_progress_observation)},
         {"evidence_ref", trial.evidence_ref},
     };
 }
@@ -51,6 +103,24 @@ void trial_from_json(const json & value, common_flydelta_counterfactual_trial & 
     trial.observed_decision_summary = value.value("observed_decision", "");
     trial.expected_decision_summary = value.value("expected_decision", "");
     trial.verifier_reason = value.value("verifier_reason", "");
+    const auto progress = value.value("semantic_progress_observation", json::object());
+    trial.semantic_progress_observation.available = progress.value("available", false);
+    trial.semantic_progress_observation.contract_valid = progress.value("contract_valid", false);
+    trial.semantic_progress_observation.operation = progress.value("operation", "");
+    trial.semantic_progress_observation.dataset = progress.value("dataset", "");
+    trial.semantic_progress_observation.grouping = progress.value("grouping", "");
+    trial.semantic_progress_observation.measure = progress.value("measure", "");
+    trial.semantic_progress_observation.operation_state = parse_progress_field_state(
+        progress.value("operation_state", "unknown"));
+    trial.semantic_progress_observation.dataset_state = parse_progress_field_state(
+        progress.value("dataset_state", "unknown"));
+    trial.semantic_progress_observation.grouping_state = parse_progress_field_state(
+        progress.value("grouping_state", "unknown"));
+    trial.semantic_progress_observation.measure_state = parse_progress_field_state(
+        progress.value("measure_state", "unknown"));
+    trial.semantic_progress_observation.contract_state = parse_progress_field_state(
+        progress.value("contract_state", "unknown"));
+    trial.semantic_progress_observation.score = progress.value("score", 0);
     trial.evidence_ref = value.value("evidence_ref", "");
 }
 
@@ -174,6 +244,11 @@ bool common_flydelta_run_counterfactual(
     if (!runner(fixture, true, report.candidate, error)) return false;
     report.outcome = common_flydelta_classify_counterfactual(report.baseline, report.candidate);
     report.quality_delta = report.candidate.quality - report.baseline.quality;
+    report.semantic_progress = common_flydelta_compare_semantic_progress(
+        report.baseline.semantic_progress_observation,
+        report.candidate.semantic_progress_observation,
+        report.baseline.verifier_known && report.baseline.passed,
+        report.candidate.verifier_known && report.candidate.passed);
     return common_flydelta_counterfactual_report_validate(report, error);
 }
 
@@ -190,6 +265,7 @@ std::string common_flydelta_counterfactual_report_to_json(
         {"candidate", trial_to_json(report.candidate)},
         {"outcome", common_flydelta_counterfactual_outcome_name(report.outcome)},
         {"quality_delta", report.quality_delta},
+        {"semantic_progress", progress_to_json(report.semantic_progress)},
     }.dump();
 }
 
@@ -211,6 +287,17 @@ bool common_flydelta_counterfactual_report_from_json(
         trial_from_json(value.value("candidate", json::object()), report.candidate);
         report.outcome = parse_outcome(value.value("outcome", "unknown"));
         report.quality_delta = value.value("quality_delta", 0.0f);
+        const auto progress = value.value("semantic_progress", json::object());
+        report.semantic_progress.outcome = parse_progress_outcome(progress.value("outcome", "unknown"));
+        report.semantic_progress.comparable = progress.value("comparable", false);
+        report.semantic_progress.baseline_score = progress.value("baseline_score", 0);
+        report.semantic_progress.candidate_score = progress.value("candidate_score", 0);
+        report.semantic_progress.improved_dimensions = progress.value(
+            "improved_dimensions", std::vector<std::string>{});
+        report.semantic_progress.regressed_dimensions = progress.value(
+            "regressed_dimensions", std::vector<std::string>{});
+        report.semantic_progress.residual_dimensions = progress.value(
+            "residual_dimensions", std::vector<std::string>{});
     } catch (const std::exception & exception) {
         error = std::string("invalid FlyDelta counterfactual JSON: ") + exception.what();
         return false;

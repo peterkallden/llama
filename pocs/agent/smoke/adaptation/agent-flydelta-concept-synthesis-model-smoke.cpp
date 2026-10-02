@@ -36,7 +36,7 @@ struct smoke_args {
     std::string config_path = kDefaultConfig;
     std::string model_path;
     int threads = 4;
-    int n_predict = 8;
+    int n_predict = 64;
     int n_gpu_layers = 99;
 };
 
@@ -315,8 +315,19 @@ void print_search_summary(
             {"safe_to_continue", arm.safe_to_continue},
             {"host_evaluated", arm.host_evaluated},
             {"verifier_known", arm.verifier_known},
+            {"verifier_passed", arm.verifier_passed},
             {"candidate_passed", arm.candidate_passed},
             {"host_outcome", common_flydelta_counterfactual_outcome_name(arm.host_outcome)},
+            {"semantic_progress", {
+                {"comparable", arm.semantic_progress.comparable},
+                {"outcome", common_flydelta_semantic_progress_outcome_name(
+                    arm.semantic_progress.outcome)},
+                {"baseline_score", arm.semantic_progress.baseline_score},
+                {"candidate_score", arm.semantic_progress.candidate_score},
+                {"improved_dimensions", arm.semantic_progress.improved_dimensions},
+                {"regressed_dimensions", arm.semantic_progress.regressed_dimensions},
+                {"residual_dimensions", arm.semantic_progress.residual_dimensions},
+            }},
             {"observed_decision", arm.observed_decision_summary},
             {"expected_decision", arm.expected_decision_summary},
             {"verifier_reason", arm.verifier_reason},

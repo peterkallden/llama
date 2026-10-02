@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-evidence-depth.h"
 #include "agent/adaptation/flydelta/flydelta-alpha-response-search.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
+#include "agent/adaptation/flydelta/flydelta-semantic-decision.h"
 
 #include <cstddef>
 #include <string>
@@ -352,6 +353,8 @@ struct common_flydelta_bootstrap_zoom_trial {
     float margin_delta = 0.0f;
     bool diagnostics_available = false;
     common_flydelta_representation_diagnostics diagnostics;
+    bool progress_available = false;
+    common_flydelta_semantic_progress progress;
 };
 
 struct common_flydelta_bootstrap_zoom_selection {
@@ -389,6 +392,13 @@ struct common_flydelta_bootstrap_zoom_state {
     float evidence_rank = 1.0f;
     std::string surface_origin = "bootstrap_rank1";
     std::string parent_surface_ref;
+    // Reference-only iterative semantic progress. These fields never grant
+    // evidence or activation authority; they let the next bounded slice
+    // continue from the best experimental candidate and its residual.
+    bool progress_available = false;
+    common_flydelta_semantic_progress best_progress;
+    std::string best_experimental_candidate_ref;
+    size_t progress_iteration = 0;
     std::vector<uint32_t> local_layers;
     // The best safe experimental arm so far. This is persisted with resume
     // state so a later worker slice can retain/refine the same candidate.

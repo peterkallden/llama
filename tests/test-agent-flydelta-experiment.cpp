@@ -63,5 +63,29 @@ int main() {
         common_flydelta_counterfactual_outcome::unknown);
     CHECK(common_flydelta_classify_counterfactual(baseline_pass, baseline_pass) ==
         common_flydelta_counterfactual_outcome::neutral);
+
+    common_flydelta_semantic_decision expected;
+    expected.operation = "aggregate";
+    expected.dataset = "dataset://local/sales";
+    expected.group_by = {"region"};
+    expected.aggregate_function = "sum";
+    expected.aggregate_field = "amount";
+    common_flydelta_semantic_progress_observation before;
+    common_flydelta_semantic_progress_observation after;
+    CHECK(common_flydelta_observe_semantic_progress(
+        R"({"name":"statistics.describe","arguments":{"dataset":"dataset://local/sales","columns":["amount"]}})",
+        expected, before, error));
+    CHECK(common_flydelta_observe_semantic_progress(
+        R"({"name":"data.aggregate","arguments":{"dataset":"dataset://local/sales","groupby":["region"],"columns":["amount"]}})",
+        expected, after, error));
+    const auto progress = common_flydelta_compare_semantic_progress(before, after, false, false);
+    CHECK(progress.outcome == common_flydelta_semantic_progress_outcome::improved);
+    CHECK(progress.candidate_score > progress.baseline_score);
+    CHECK(!progress.residual_dimensions.empty());
+
+    const auto failed_baseline = trial(false, false, "evidence:baseline-failed");
+    const auto partial_candidate = trial(false, true, "evidence:partial-candidate");
+    CHECK(common_flydelta_classify_counterfactual(failed_baseline, partial_candidate) ==
+        common_flydelta_counterfactual_outcome::unknown);
     return 0;
 }
