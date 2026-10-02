@@ -114,9 +114,10 @@ Automatic learning credit, automatic promotion and automatic sideband
 activation remain disabled; policy-driven first canary admission is a bounded
 progress-only host operation through the existing review journal. Explicit
 host review and lifecycle operations remain separate, durable gates. The
-reuse-first observer and the admission helper are host-owned seams: a daemon
-must register them from its evaluation/runtime host before they can affect a
-turn; generic runtime assembly never guesses a challenger or deployment.**
+daemon installs the reuse-first observer from its shared candidate-index and
+teaching-material host seams, and invokes admission only after the existing
+worker has durably persisted a counterfactual report. Generic runtime assembly
+still never guesses a challenger, artifact or deployment binding.**
 FlyDelta is not enabled by default and is not a replacement for
 the current model-adaptation path. It must not be activated until it has
 passed explicit evaluation and promotion gates.
@@ -4294,7 +4295,7 @@ active-bindingen orörd.
 
 Canary-konfigurationen ligger under `runtime.adaptation.flydelta.canary`.
 `mode` är `disabled`, `manual` eller `policy`; default när FlyDelta är
-aktiverat är `manual`. `disabled` stänger routing helt, `manual` kräver en
+aktiverat är `policy`. `disabled` stänger routing helt, `manual` kräver en
 explicit host/admin-authority och `policy` gör den hostägda, journalförda
 dispositionsfunktionen tillgänglig för policykörning. `policy` betyder inte
 att en experimentell revision automatiskt blir active: `allow_promotion`

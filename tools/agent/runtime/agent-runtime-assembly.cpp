@@ -362,6 +362,14 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                                 for (const auto & relation : relations) {
                                     if (!common_agent_validate_concept_teaching_relation(
                                             admitted_hypothesis, grounding, relation, error)) return false;
+                                    // The project-reuse gate must see the
+                                    // current session's immutable candidate
+                                    // before it can choose to skip fresh
+                                    // capture.  Reuse does not erase local
+                                    // provenance.
+                                    if (concept_candidate_index &&
+                                            !concept_candidate_index->observe_relation(
+                                                admitted_hypothesis, relation, transaction, error)) return false;
                                     if (reuse_first_observer) {
                                         bool reused = false;
                                         if (!reuse_first_observer(relation, transaction, reused, error)) return false;
@@ -369,9 +377,6 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                                     }
                                     if (teaching_material_observer &&
                                             !teaching_material_observer(relation, error)) return false;
-                                    if (concept_candidate_index &&
-                                            !concept_candidate_index->observe_relation(
-                                                admitted_hypothesis, relation, transaction, error)) return false;
                                     common_adaptation_evidence_relation evidence_relation;
                                     if (!common_agent_teaching_relation_to_evidence_relation(
                                             relation, transaction, evidence_relation, error)) return false;

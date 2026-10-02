@@ -3696,6 +3696,17 @@ bool configure_daemon_flydelta_review_store(
         std::make_shared<common_flydelta_sideband_review_store>(
             *runtime.flydelta_review_lifecycle_store);
 
+    runtime.flydelta_concept_candidate_index =
+        std::make_shared<common_agent_concept_candidate_index>(
+            runtime.flydelta_review_lifecycle_store.get());
+    if (!runtime.flydelta_concept_candidate_index->load(error)) {
+        runtime.flydelta_concept_candidate_index.reset();
+        runtime.flydelta_sideband_review_store.reset();
+        runtime.flydelta_sideband_registry.reset();
+        runtime.flydelta_review_lifecycle_store.reset();
+        return false;
+    }
+
     if (!runtime.flydelta_sideband_review_store->replay(
             *runtime.flydelta_sideband_registry, error)) {
         runtime.flydelta_sideband_review_store.reset();
@@ -3852,6 +3863,7 @@ void configure_daemon_flydelta_runtime_config(
     config.flydelta_max_capture_candidates =
         options.adaptation_flydelta_max_capture_candidates;
     config.flydelta_capture_job_enqueue = runtime.flydelta_capture_job_enqueue;
+    config.concept_candidate_index = runtime.flydelta_concept_candidate_index;
     config.flydelta_teaching_material_observer =
         runtime.flydelta_teaching_material_observer;
     config.flydelta_reuse_first_observer = runtime.flydelta_reuse_first_observer;

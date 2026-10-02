@@ -612,6 +612,105 @@ int main(int argc, char ** argv) {
         return common_flydelta_experiment_queue_enqueue(
             queue_root, job, queue_limits, enqueue_error);
     };
+    // Reuse is deliberately a normal bounded concept-synthesis job, not a
+    // second evaluator or a direct runtime activation.  The shared material
+    // runtime has already made the relation family durable; only a family
+    // with compatible, completed trajectories may bypass fresh capture.
+    // Otherwise the ordinary relation -> capture -> synthesis path remains
+    // the sole fallback.
+    if (!runtime.flydelta_reuse_first_observer &&
+            runtime.flydelta_teaching_material_runtime &&
+            runtime.flydelta_teaching_material_observer) {
+        runtime.flydelta_reuse_first_observer = [
+                material_runtime = runtime.flydelta_teaching_material_runtime,
+                candidate_index = runtime.flydelta_concept_candidate_index,
+                relation_observer = runtime.flydelta_teaching_material_observer,
+                queue_root = flydelta_worker_config.queue_root,
+                queue_limits = flydelta_worker_config.queue_limits](
+                const common_flydelta_teaching_relation & relation,
+                const common_learning_transaction & transaction,
+                bool & reused,
+                std::string & reuse_error) {
+            reuse_error.clear();
+            reused = false;
+            if (relation.status != common_flydelta_teaching_relation_status::resolved ||
+                    !relation.host_approved || relation.control_ref.empty()) return true;
+
+            // The candidate index is the project-scoped, reference-only
+            // reuse gate.  Material readiness alone is insufficient because
+            // it cannot distinguish an accidental compatible group from a
+            // prior, durable session candidate family.
+            if (!candidate_index) return true;
+            common_agent_concept_candidate_family_query family_query;
+            family_query.concept_key = relation.teaching_key;
+            family_query.namespace_id = relation.scope.namespace_id;
+            family_query.project_id = relation.scope.project_id;
+            family_query.behavior_key = relation.behavior_key;
+            family_query.applicability_scope_fingerprint =
+                relation.applicability_scope_fingerprint;
+            family_query.model_profile_fingerprint = relation.model_profile_fingerprint;
+            family_query.tokenizer_fingerprint = relation.tokenizer_fingerprint;
+            family_query.template_fingerprint = relation.template_fingerprint;
+            family_query.capture_layout_revision = relation.capture_layout_revision;
+            family_query.oracle_revision = relation.oracle_revision.empty()
+                ? relation.verifier_ref : relation.oracle_revision;
+            common_agent_concept_candidate_family candidate_family;
+            if (!candidate_index->find_project_reusable_family(
+                    family_query, candidate_family, reuse_error)) return false;
+            if (candidate_family.members.empty()) return true;
+
+            common_flydelta_teaching_material_group group;
+            bool family_available = false;
+            if (!material_runtime->resolve_group_for_family(
+                    relation.teaching_key, relation.behavior_key,
+                    group, family_available, reuse_error)) return false;
+            if (!family_available) return true;
+            common_flydelta_teaching_material_group ready_group;
+            if (!material_runtime->store().resolve_ready_group(
+                    group.group_ref, ready_group, reuse_error)) return false;
+            if (!ready_group.trajectory_material_ready) return true;
+
+            // Only the reuse path persists early.  On a miss the generic
+            // assembly performs the usual single observe/capture flow, so
+            // an unavailable family never causes duplicate durable writes.
+            // A hit combines this newly verified relation with prior,
+            // compatible trajectories through the existing material store.
+            if (!relation_observer(relation, reuse_error)) return false;
+
+            common_flydelta_experiment_job job;
+            const std::string identity = relation.id + "\n" + group.group_ref + "\n" +
+                transaction.id;
+            job.id = "flydelta://job/reuse-concept-synthesis/" +
+                hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+            job.kind = common_flydelta_experiment_job_kind::concept_synthesis;
+            job.seed.id = job.id;
+            job.seed.teaching_key = relation.teaching_key;
+            job.seed.behavior_key = relation.behavior_key;
+            job.seed.source = relation.source;
+            job.seed.scope = relation.scope;
+            job.seed.split = common_flydelta_training_split::train;
+            job.seed.task_fingerprint = relation.task_fingerprint;
+            job.seed.model_profile_fingerprint = relation.model_profile_fingerprint;
+            job.seed.tokenizer_fingerprint = relation.tokenizer_fingerprint;
+            job.seed.template_fingerprint = relation.template_fingerprint;
+            job.seed.execution_context_fingerprint = "flydelta-server-context-v1";
+            job.seed.baseline_ref = relation.baseline_ref;
+            job.seed.candidate_ref = relation.conditioned_ref;
+            job.seed.verifier_ref = relation.verifier_ref;
+            job.seed.evidence_ref = relation.evidence_ref;
+            job.seed.transaction_ids = {transaction.id};
+            job.teaching_material_group_ref = group.group_ref;
+            job.code_revision = "flydelta-project-reuse-v1";
+            if (!common_flydelta_experiment_job_validate(job, 128, reuse_error)) return false;
+            bool already_queued = false;
+            if (!common_flydelta_experiment_queue_contains(
+                    queue_root, job.id, already_queued, reuse_error)) return false;
+            if (!already_queued && !common_flydelta_experiment_queue_enqueue(
+                    queue_root, job, queue_limits, reuse_error)) return false;
+            reused = true;
+            return true;
+        };
+    }
     if (!runtime.flydelta_model_adapter && runtime.flydelta_model_host) {
         std::string adapter_error;
         runtime.flydelta_model_adapter = common_flydelta_model_adapter_from_host(
@@ -642,8 +741,14 @@ int main(int argc, char ** argv) {
             runtime.flydelta_model_adapter->capabilities;
     }
     flydelta_worker_config.model_adapter = runtime.flydelta_model_adapter;
+    const auto canary_admission_mutex = std::make_shared<std::mutex>();
     flydelta_worker_config.persist_completed_report =
-        [lifecycle_store = runtime.flydelta_review_lifecycle_store](
+        [lifecycle_store = runtime.flydelta_review_lifecycle_store,
+            registry = runtime.flydelta_sideband_registry,
+            review_store = runtime.flydelta_sideband_review_store,
+            material_runtime = runtime.flydelta_teaching_material_runtime,
+            policy = options.adaptation_flydelta_canary_policy,
+            canary_admission_mutex](
             const common_flydelta_experiment_job & job,
             const common_flydelta_experiment_worker_report & report,
             std::string & persist_error) {
@@ -706,6 +811,97 @@ int main(int argc, char ** argv) {
                 context.created_at = job.id;
                 if (!common_flydelta_append_counterfactual_lifecycle(
                         *lifecycle_store, context, counterfactual, persist_error)) {
+                    return false;
+                }
+            }
+
+            // Admission consumes the report only after every report record
+            // above is durable.  It uses the existing registry/review journal
+            // and refuses to invent an artifact, binding, contrast or
+            // baseline identity when the completed worker job lacks one.
+            if (!registry || !review_store ||
+                    policy.mode != common_flydelta_canary_mode::policy ||
+                    !policy.allow_auto_admission ||
+                    job.teaching_material_group_ref.empty()) {
+                return true;
+            }
+            common_flydelta_teaching_material_group material_group;
+            if (!material_runtime || !material_runtime->store().resolve_ready_group(
+                    job.teaching_material_group_ref, material_group, persist_error)) {
+                if (persist_error.empty()) {
+                    // A not-ready group is a normal non-admission outcome;
+                    // it must not turn a completed worker report into a
+                    // persistence failure.
+                    persist_error.clear();
+                    return true;
+                }
+                return false;
+            }
+            if (!material_group.trajectory_material_ready) return true;
+
+            std::lock_guard<std::mutex> admission_lock(*canary_admission_mutex);
+            const auto manifests = registry->list();
+            for (const auto & counterfactual : report.counterfactual_reports) {
+                const auto manifest_it = manifests.find(counterfactual.candidate_id);
+                if (manifest_it == manifests.end() ||
+                        manifest_it->second.status != common_flydelta_sideband_status::candidate ||
+                        manifest_it->second.binding_key.empty() ||
+                        counterfactual.baseline_deployment_fingerprint.empty()) {
+                    continue;
+                }
+                common_flydelta_activation_binding binding;
+                std::string admission_error;
+                if (!registry->binding(manifest_it->second.binding_key, binding, admission_error) ||
+                        binding.selected_revision_id.empty()) {
+                    continue;
+                }
+                common_flydelta_auto_canary_request request;
+                request.source_manifest = manifest_it->second;
+                request.binding_key = manifest_it->second.binding_key;
+                request.baseline_deployment_fingerprint =
+                    counterfactual.baseline_deployment_fingerprint;
+                request.rollback_revision_id = binding.selected_revision_id;
+                request.event_id = job.id + ":auto-canary:" + counterfactual.candidate_id;
+                request.oracle_revision = manifest_it->second.oracle_revision;
+                request.scope_fingerprint = manifest_it->second.applicability.scope_fingerprint;
+                request.source_candidate_refs = {counterfactual.candidate_id};
+                if (!job.seed.scope.session_id.empty()) {
+                    request.supporting_session_ids = {job.seed.scope.session_id};
+                }
+                if (!job.seed.task_fingerprint.empty()) {
+                    request.task_fingerprints = {job.seed.task_fingerprint};
+                }
+                request.synthesis_strategy = manifest_it->second.generalization.synthesis_strategy;
+                request.admission.resolved_host_relation = true;
+                // A ready group is only produced by the existing host-owned
+                // contrast/capture path; source jobs without it cannot be
+                // auto-admitted.  The evaluator outcome remains the actual
+                // semantic signal.
+                request.admission.has_contrast_and_control = true;
+                request.admission.source_is_research_or_reflection =
+                    job.seed.source == common_adaptation_evidence_source::research_alternative ||
+                    job.seed.source == common_adaptation_evidence_source::reflection_alternative;
+                request.admission.profile_binding_available = true;
+                request.admission.compatible_arm = true;
+                request.admission.regressed_dimensions =
+                    counterfactual.semantic_progress.outcome ==
+                        common_flydelta_semantic_progress_outcome::regressed ||
+                    !counterfactual.semantic_progress.regressed_dimensions.empty();
+                request.admission.host_counterfactual_helped =
+                    counterfactual.outcome == common_flydelta_counterfactual_outcome::helped;
+                request.admission.progress = counterfactual.semantic_progress;
+
+                common_flydelta_sideband_manifest generalized;
+                common_flydelta_sideband_review staged;
+                if (!common_flydelta_auto_admit_progress_only_canary(
+                        *registry, *review_store, policy, request, generalized,
+                        staged, admission_error)) {
+                    // Rejection is an expected policy result.  A genuine
+                    // journal/registry conflict remains actionable.
+                    if (admission_error.rfind("FlyDelta automatic canary admission rejected:", 0) == 0) {
+                        continue;
+                    }
+                    persist_error = std::move(admission_error);
                     return false;
                 }
             }
