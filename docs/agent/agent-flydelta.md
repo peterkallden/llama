@@ -498,11 +498,12 @@ passed the grouped-aggregation Oracle, while the layer-1 prototype arms at
 `HARMED`; the `alpha=0.03` arm was not decisively verified and remained
 `UNKNOWN`. None of these outcomes creates learning credit or promotion.
 
-The smoke summary records the Oracle outcome and provenance, but not the full
-generated text or the Oracle reason. A detailed investigation must therefore
-inspect the host trace or add explicit redacted generation/verifier-reason
-telemetry; the summary line alone must not be read as proof of which invalid
-tool text the model emitted.
+The smoke summary records the Oracle outcome, provenance and the bounded
+`expected_decision`, `observed_decision` and `verifier_reason` fields, but not
+the full generated text. A detailed investigation of the exact raw model
+response must therefore inspect the resident content trace when enabled; the
+compact summary is the authoritative explanation of the verifier result, not
+a verbatim transcript of the model output.
 
 ### Execution optimization boundary
 
