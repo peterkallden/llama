@@ -69,6 +69,14 @@ struct common_flydelta_teaching_relation {
     std::string conditioned_ref;
     std::string control_ref;
     std::string verifier_ref;
+    // Optional host-provided compatibility identities used by project reuse.
+    // Empty means the relation is not eligible for cross-session reuse.
+    std::string applicability_scope_fingerprint;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string capture_layout_revision;
+    std::string oracle_revision;
     std::string evidence_ref;
     // Host-side identity for the semantic contrast. FlyDelta treats this as
     // provenance only; it never infers changed or invariant dimensions.

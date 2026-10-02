@@ -71,6 +71,31 @@ const char * common_flydelta_sideband_status_name(common_flydelta_sideband_statu
     return "rejected";
 }
 
+const char * common_flydelta_generalization_level_name(
+        common_flydelta_generalization_level level) {
+    switch (level) {
+        case common_flydelta_generalization_level::session: return "session";
+        case common_flydelta_generalization_level::project: return "project";
+        case common_flydelta_generalization_level::model: return "model";
+    }
+    return "model";
+}
+
+bool parse_common_flydelta_generalization_level(
+        const std::string & value,
+        common_flydelta_generalization_level & level,
+        std::string & error) {
+    if (value == "session") level = common_flydelta_generalization_level::session;
+    else if (value == "project") level = common_flydelta_generalization_level::project;
+    else if (value == "model") level = common_flydelta_generalization_level::model;
+    else {
+        error = "FlyDelta generalization level must be session, project or model";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool common_flydelta_canary_envelope_validate(
         const common_flydelta_canary_envelope & envelope, std::string & error) {
     error.clear();
@@ -130,6 +155,10 @@ bool common_flydelta_sideband_manifest_validate(
             !optional_bounded(manifest.oracle_revision) ||
             !optional_bounded(manifest.policy_revision) ||
             !optional_bounded(manifest.fixture_set_revision) ||
+            !optional_bounded(manifest.generalization.synthesis_strategy) ||
+            manifest.generalization.source_candidate_refs.size() > 64 ||
+            manifest.generalization.supporting_session_ids.size() > 64 ||
+            manifest.generalization.task_fingerprints.size() > 128 ||
             (manifest.compatibility.base_model_id.empty() &&
              manifest.compatibility.base_model_fingerprint.empty()) ||
             (!manifest.compatibility.base_model_id.empty() &&
@@ -145,6 +174,15 @@ bool common_flydelta_sideband_manifest_validate(
             static_cast<size_t>(manifest.il_end) >= manifest.model_n_layers) {
         error = "FlyDelta sideband manifest identity or layout is invalid";
         return false;
+    }
+    for (const auto & ref : manifest.generalization.source_candidate_refs) {
+        if (!bounded(ref)) { error = "FlyDelta generalized provenance has an invalid source candidate ref"; return false; }
+    }
+    for (const auto & value : manifest.generalization.supporting_session_ids) {
+        if (!bounded(value)) { error = "FlyDelta generalized provenance has an invalid session id"; return false; }
+    }
+    for (const auto & value : manifest.generalization.task_fingerprints) {
+        if (!bounded(value)) { error = "FlyDelta generalized provenance has an invalid task fingerprint"; return false; }
     }
     const bool has_behavior = !manifest.applicability.behavior_key.empty();
     const bool has_scope = !manifest.applicability.scope_fingerprint.empty();
@@ -198,6 +236,13 @@ std::string common_flydelta_sideband_manifest_to_json(
             {"policy_revision", manifest.policy_revision},
             {"fixture_set_revision", manifest.fixture_set_revision},
         }},
+        {"generalization", {
+            {"level", common_flydelta_generalization_level_name(manifest.generalization.level)},
+            {"source_candidate_refs", manifest.generalization.source_candidate_refs},
+            {"supporting_session_ids", manifest.generalization.supporting_session_ids},
+            {"task_fingerprints", manifest.generalization.task_fingerprints},
+            {"synthesis_strategy", manifest.generalization.synthesis_strategy},
+        }},
         {"expires_at_epoch_ms", manifest.expires_at_epoch_ms},
         {"revocation_reason", manifest.revocation_reason},
         {"compatibility", {
@@ -250,6 +295,16 @@ bool common_flydelta_sideband_manifest_from_json(
         manifest.oracle_revision = provenance.value("oracle_revision", "");
         manifest.policy_revision = provenance.value("policy_revision", "");
         manifest.fixture_set_revision = provenance.value("fixture_set_revision", "");
+        const auto generalization = value.value("generalization", json::object());
+        if (!parse_common_flydelta_generalization_level(
+                generalization.value("level", "session"), manifest.generalization.level, error)) return false;
+        manifest.generalization.source_candidate_refs = generalization.value(
+            "source_candidate_refs", std::vector<std::string>{});
+        manifest.generalization.supporting_session_ids = generalization.value(
+            "supporting_session_ids", std::vector<std::string>{});
+        manifest.generalization.task_fingerprints = generalization.value(
+            "task_fingerprints", std::vector<std::string>{});
+        manifest.generalization.synthesis_strategy = generalization.value("synthesis_strategy", "");
         manifest.expires_at_epoch_ms = value.value("expires_at_epoch_ms", 0ULL);
         manifest.revocation_reason = value.value("revocation_reason", "");
         const auto compatibility = value.value("compatibility", json::object());

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <vector>
 
 enum class common_flydelta_sideband_status {
     // Immutable offline-search revision. It may contain a basis and an
@@ -47,6 +48,32 @@ struct common_flydelta_canary_envelope {
     std::string policy_revision;
     std::string baseline_deployment_fingerprint;
     std::string rollback_revision_id;
+};
+
+enum class common_flydelta_generalization_level {
+    session,
+    project,
+    model,
+};
+
+const char * common_flydelta_generalization_level_name(
+        common_flydelta_generalization_level level);
+bool parse_common_flydelta_generalization_level(
+        const std::string & value,
+        common_flydelta_generalization_level & level,
+        std::string & error);
+
+// Immutable provenance for a revision generalized from earlier candidates.
+// It carries only opaque references and compatibility identities.
+struct common_flydelta_generalization_provenance {
+    // Existing/session-local manifests predate this field. Treating a
+    // missing value as session preserves their provenance; automatic
+    // generalized revisions set model explicitly.
+    common_flydelta_generalization_level level = common_flydelta_generalization_level::session;
+    std::vector<std::string> source_candidate_refs;
+    std::vector<std::string> supporting_session_ids;
+    std::vector<std::string> task_fingerprints;
+    std::string synthesis_strategy;
 };
 
 bool common_flydelta_canary_envelope_validate(
@@ -94,6 +121,7 @@ struct common_flydelta_sideband_manifest {
     std::string oracle_revision;
     std::string policy_revision;
     std::string fixture_set_revision;
+    common_flydelta_generalization_provenance generalization;
 };
 
 // The registry owns the replayed projection of a logical runtime selection.

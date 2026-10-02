@@ -129,6 +129,10 @@ struct common_agent_daemon_runtime {
     common_agent_flydelta_teaching_material_observer
         flydelta_teaching_material_observer;
     std::function<bool(
+        const common_flydelta_teaching_relation &,
+        const common_learning_transaction &,
+        bool &, std::string &)> flydelta_reuse_first_observer;
+    std::function<bool(
         const common_flydelta_capture_candidate &,
         std::string &)> flydelta_capture_job_enqueue;
     // Optional production composition hook. The daemon resolves the selected

@@ -41,6 +41,7 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.semantic_concept_grounding_provider = std::move(build_config.semantic_concept_grounding_provider);
     config.concept_candidate_index = std::move(build_config.concept_candidate_index);
     config.flydelta_teaching_material_observer = std::move(build_config.flydelta_teaching_material_observer);
+    config.flydelta_reuse_first_observer = std::move(build_config.flydelta_reuse_first_observer);
     config.flydelta_teaching_material_runtime = std::move(build_config.flydelta_teaching_material_runtime);
     return config;
 }
@@ -168,9 +169,10 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                     auto configured_relation_observer = adaptation_config.host_relation_observer;
                     auto * runtime_candidate_observer = assembly.flydelta_runtime_candidate_observer.get();
                     auto * capture_collector = assembly.flydelta_capture_collector.get();
+                    auto reuse_first_observer = runtime_config.flydelta_reuse_first_observer;
                     adaptation_config.host_relation_observer =
                         [provider, configured_relation_observer, teaching_material_observer,
-                            runtime_candidate_observer, capture_collector](
+                            runtime_candidate_observer, capture_collector, reuse_first_observer](
                                 const common_agent_request & request,
                                 const common_plan_state & plan,
                                 const common_agent_result & result,
@@ -183,6 +185,11 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                             if (!request_value) return true;
                             const auto built = common_agent_build_procedure_teaching_relation(*request_value);
                             if (!built.relation) return true;
+                            if (reuse_first_observer) {
+                                bool reused = false;
+                                if (!reuse_first_observer(*built.relation, transaction, reused, error)) return false;
+                                if (reused) return true;
+                            }
                             if (teaching_material_observer &&
                                     !teaching_material_observer(*built.relation, error)) return false;
 
@@ -209,9 +216,10 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                     auto configured_relation_observer = adaptation_config.host_relation_observer;
                     auto * runtime_candidate_observer = assembly.flydelta_runtime_candidate_observer.get();
                     auto * capture_collector = assembly.flydelta_capture_collector.get();
+                    auto reuse_first_observer = runtime_config.flydelta_reuse_first_observer;
                     adaptation_config.host_relation_observer =
                         [provider, configured_relation_observer, teaching_material_observer,
-                            runtime_candidate_observer, capture_collector](
+                            runtime_candidate_observer, capture_collector, reuse_first_observer](
                                 const common_agent_request & request,
                                 const common_plan_state & plan,
                                 const common_agent_result & result,
@@ -224,6 +232,11 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                             if (!request_value) return true;
                             const auto built = common_agent_build_user_correction_teaching_relation(*request_value);
                             if (!built.relation) return true;
+                            if (reuse_first_observer) {
+                                bool reused = false;
+                                if (!reuse_first_observer(*built.relation, transaction, reused, error)) return false;
+                                if (reused) return true;
+                            }
                             if (teaching_material_observer &&
                                     !teaching_material_observer(*built.relation, error)) return false;
 
@@ -249,9 +262,10 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                     auto configured_relation_observer = adaptation_config.host_relation_observer;
                     auto * runtime_candidate_observer = assembly.flydelta_runtime_candidate_observer.get();
                     auto * capture_collector = assembly.flydelta_capture_collector.get();
+                    auto reuse_first_observer = runtime_config.flydelta_reuse_first_observer;
                     adaptation_config.host_relation_observer =
                         [provider, configured_relation_observer, teaching_material_observer,
-                            runtime_candidate_observer, capture_collector](
+                            runtime_candidate_observer, capture_collector, reuse_first_observer](
                                 const common_agent_request & request,
                                 const common_plan_state & plan,
                                 const common_agent_result & result,
@@ -267,6 +281,11 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                                         !teaching_relation.host_approved || teaching_relation.contrast_ref.empty()) {
                                     error = "user-taught concept provider returned an unresolved or ungrounded relation";
                                     return false;
+                                }
+                                if (reuse_first_observer) {
+                                    bool reused = false;
+                                    if (!reuse_first_observer(teaching_relation, transaction, reused, error)) return false;
+                                    if (reused) continue;
                                 }
                                 if (teaching_material_observer &&
                                         !teaching_material_observer(teaching_relation, error)) return false;
@@ -296,10 +315,11 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                     auto configured_relation_observer = adaptation_config.host_relation_observer;
                     auto * runtime_candidate_observer = assembly.flydelta_runtime_candidate_observer.get();
                     auto * capture_collector = assembly.flydelta_capture_collector.get();
+                    auto reuse_first_observer = runtime_config.flydelta_reuse_first_observer;
                     adaptation_config.host_relation_observer =
                         [hypothesis_provider, grounding_provider, configured_relation_observer,
                             hypothesis_batch_provider, teaching_material_observer, runtime_candidate_observer,
-                            capture_collector, concept_candidate_index](
+                            capture_collector, concept_candidate_index, reuse_first_observer](
                             const common_agent_request & request,
                             const common_plan_state & plan,
                             const common_agent_result & result,
@@ -342,6 +362,11 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                                 for (const auto & relation : relations) {
                                     if (!common_agent_validate_concept_teaching_relation(
                                             admitted_hypothesis, grounding, relation, error)) return false;
+                                    if (reuse_first_observer) {
+                                        bool reused = false;
+                                        if (!reuse_first_observer(relation, transaction, reused, error)) return false;
+                                        if (reused) continue;
+                                    }
                                     if (teaching_material_observer &&
                                             !teaching_material_observer(relation, error)) return false;
                                     if (concept_candidate_index &&

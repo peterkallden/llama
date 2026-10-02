@@ -40,6 +40,16 @@ using common_agent_flydelta_teaching_material_observer = std::function<bool(
         const common_flydelta_teaching_relation & relation,
         std::string & error)>;
 
+// Host-owned reuse-first seam. The callback may run a bounded challenger
+// evaluation using the existing deployment/evaluator/review seams and returns
+// true only when reuse has produced a usable result. A false result falls
+// through to the existing capture/synthesis path.
+using common_agent_flydelta_reuse_first_observer = std::function<bool(
+        const common_flydelta_teaching_relation & relation,
+        const common_learning_transaction & transaction,
+        bool & reused,
+        std::string & error)>;
+
 struct common_agent_generation_config {
     int n_predict = 0;
     // Optional planner-specific generation budget. Zero preserves the
@@ -105,6 +115,7 @@ struct common_agent_runtime_config {
     common_agent_concept_grounding_provider semantic_concept_grounding_provider;
     std::shared_ptr<common_agent_concept_candidate_index> concept_candidate_index;
     common_agent_flydelta_teaching_material_observer flydelta_teaching_material_observer;
+    common_agent_flydelta_reuse_first_observer flydelta_reuse_first_observer;
     // Optional shared host-owned material index. When present and no explicit
     // observer is supplied, the runtime assembly observes resolved relations
     // in this index so the model-host readiness callback can inspect the same
@@ -143,6 +154,7 @@ struct common_agent_runtime_build_config {
     common_agent_concept_grounding_provider semantic_concept_grounding_provider;
     std::shared_ptr<common_agent_concept_candidate_index> concept_candidate_index;
     common_agent_flydelta_teaching_material_observer flydelta_teaching_material_observer;
+    common_agent_flydelta_reuse_first_observer flydelta_reuse_first_observer;
     std::shared_ptr<common_flydelta_teaching_material_runtime> flydelta_teaching_material_runtime;
 };
 

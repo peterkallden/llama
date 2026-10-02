@@ -3854,6 +3854,7 @@ void configure_daemon_flydelta_runtime_config(
     config.flydelta_capture_job_enqueue = runtime.flydelta_capture_job_enqueue;
     config.flydelta_teaching_material_observer =
         runtime.flydelta_teaching_material_observer;
+    config.flydelta_reuse_first_observer = runtime.flydelta_reuse_first_observer;
     config.flydelta_teaching_material_runtime =
         runtime.flydelta_teaching_material_runtime;
 }

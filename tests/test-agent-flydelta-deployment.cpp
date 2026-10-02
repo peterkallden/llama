@@ -246,5 +246,70 @@ int main() {
     CHECK(budget.try_reserve("binding:b", "review:canary-b", 1, error));
     CHECK(!budget.try_reserve("binding:b", "review:canary-b", 1, error));
     CHECK(budget.reserved("binding:b", "review:canary-b") == 1);
+
+    common_learning_in_memory_lifecycle_store journal;
+    common_flydelta_sideband_review_store review_store(journal);
+    auto source = make_manifest("flydelta://sideband/source", "binding:a", 7);
+    source.status = common_flydelta_sideband_status::candidate;
+    source.evaluation_passed = false;
+    CHECK(registry.admit(source, error));
+    common_flydelta_canary_policy auto_policy;
+    CHECK(auto_policy.mode == common_flydelta_canary_mode::policy);
+    CHECK(auto_policy.initial_traffic_basis_points == 500);
+    CHECK(auto_policy.initial_max_evaluated_observations == 6);
+    CHECK(auto_policy.initial_expiry_ms == 8ULL * 60ULL * 60ULL * 1000ULL);
+    common_flydelta_auto_canary_request auto_request;
+    auto_request.source_manifest = source;
+    auto_request.binding_key = "binding:a";
+    auto_request.baseline_deployment_fingerprint = "sha256:baseline";
+    auto_request.rollback_revision_id = active_a.id;
+    auto_request.event_id = "canary:auto:source";
+    auto_request.oracle_revision = "oracle:v1";
+    auto_request.scope_fingerprint = "scope:openalex";
+    auto_request.now_epoch_ms = 1000;
+    auto_request.source_candidate_refs = {source.id};
+    auto_request.supporting_session_ids = {"session:one"};
+    auto_request.task_fingerprints = {"task:one"};
+    auto_request.synthesis_strategy = "conditioned_prototype";
+    auto_request.admission.resolved_host_relation = true;
+    auto_request.admission.has_contrast_and_control = true;
+    auto_request.admission.profile_binding_available = true;
+    auto_request.admission.compatible_arm = true;
+    auto_request.admission.progress.comparable = true;
+    auto_request.admission.progress.outcome = common_flydelta_semantic_progress_outcome::improved;
+    auto_request.admission.host_counterfactual_helped = true;
+    common_flydelta_sideband_manifest generalized;
+    common_flydelta_sideband_review staged;
+    CHECK(common_flydelta_auto_admit_progress_only_canary(
+        registry, review_store, auto_policy, auto_request, generalized, staged, error));
+    CHECK(generalized.generalization.level == common_flydelta_generalization_level::model);
+    CHECK(generalized.generalization.source_candidate_refs.size() == 1);
+    CHECK(registry.list().at(generalized.id).status == common_flydelta_sideband_status::canary);
+    CHECK(registry.list().at(generalized.id).canary_progress_only);
+    CHECK(registry.bindings().at("binding:a").selected_revision_id == active_a.id);
+    CHECK(staged.canary_progress.outcome == common_flydelta_semantic_progress_outcome::improved);
+
+    // A retry after the registry transition must replay the same immutable
+    // revision and journal events rather than creating a second candidate.
+    const size_t manifest_count_after_admission = registry.list().size();
+    common_flydelta_sideband_manifest generalized_retry;
+    common_flydelta_sideband_review staged_retry;
+    CHECK(common_flydelta_auto_admit_progress_only_canary(
+        registry, review_store, auto_policy, auto_request,
+        generalized_retry, staged_retry, error));
+    CHECK(generalized_retry.id == generalized.id);
+    CHECK(registry.list().size() == manifest_count_after_admission);
+    common_flydelta_auto_canary_admission_input research_input = auto_request.admission;
+    research_input.source_is_research_or_reflection = true;
+    common_flydelta_auto_canary_admission_decision admission_decision;
+    CHECK(common_flydelta_decide_auto_canary_admission(
+        auto_policy, research_input, admission_decision, error));
+    CHECK(!admission_decision.admitted);
+    research_input.source_is_research_or_reflection = false;
+    research_input.profile_binding_available = false;
+    CHECK(common_flydelta_decide_auto_canary_admission(
+        auto_policy, research_input, admission_decision, error));
+    CHECK(!admission_decision.admitted &&
+        admission_decision.reason == "configured_profile_binding_missing");
     return 0;
 }

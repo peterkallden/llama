@@ -15,6 +15,10 @@ bool bounded(const std::string & value, size_t max_size = 512) {
     return !value.empty() && value.size() <= max_size;
 }
 
+bool optional_bounded(const std::string & value, size_t max_size = 512) {
+    return value.empty() || value.size() <= max_size;
+}
+
 template <typename T>
 void append_unique(std::vector<T> & values, const T & value) {
     if (value.empty()) return;
@@ -68,7 +72,14 @@ bool common_agent_concept_candidate_validate(
             candidate.disconfirming_evidence_refs.size() > 128 || candidate.relation_refs.size() > 128 ||
             candidate.independent_support_keys.size() > 128 || !bounded(candidate.grounding_state) ||
             !bounded(candidate.novelty_state) || !bounded(candidate.source_strength) ||
-            candidate.contrast_strength.size() > 128 || candidate.independence.size() > 128) {
+            candidate.contrast_strength.size() > 128 || candidate.independence.size() > 128 ||
+            !optional_bounded(candidate.behavior_key) ||
+            !optional_bounded(candidate.applicability_scope_fingerprint) ||
+            !optional_bounded(candidate.model_profile_fingerprint) ||
+            !optional_bounded(candidate.tokenizer_fingerprint) ||
+            !optional_bounded(candidate.template_fingerprint) ||
+            !optional_bounded(candidate.capture_layout_revision) ||
+            !optional_bounded(candidate.oracle_revision)) {
         error = "concept candidate index entry is incomplete or out of bounds";
         return false;
     }
@@ -99,6 +110,15 @@ std::string common_agent_concept_candidate_to_json(
         {"source_strength", candidate.source_strength},
         {"contrast_strength", candidate.contrast_strength},
         {"independence", candidate.independence},
+        {"compatibility", {
+            {"behavior_key", candidate.behavior_key},
+            {"scope_fingerprint", candidate.applicability_scope_fingerprint},
+            {"model_profile_fingerprint", candidate.model_profile_fingerprint},
+            {"tokenizer_fingerprint", candidate.tokenizer_fingerprint},
+            {"template_fingerprint", candidate.template_fingerprint},
+            {"capture_layout_revision", candidate.capture_layout_revision},
+            {"oracle_revision", candidate.oracle_revision},
+        }},
         {"synthesis_eligible", candidate.synthesis_eligible},
     }.dump();
 }
@@ -134,6 +154,14 @@ bool common_agent_concept_candidate_from_json(
         candidate.source_strength = value.value("source_strength", "");
         candidate.contrast_strength = value.value("contrast_strength", "");
         candidate.independence = value.value("independence", "");
+        const auto compatibility = value.value("compatibility", json::object());
+        candidate.behavior_key = compatibility.value("behavior_key", "");
+        candidate.applicability_scope_fingerprint = compatibility.value("scope_fingerprint", "");
+        candidate.model_profile_fingerprint = compatibility.value("model_profile_fingerprint", "");
+        candidate.tokenizer_fingerprint = compatibility.value("tokenizer_fingerprint", "");
+        candidate.template_fingerprint = compatibility.value("template_fingerprint", "");
+        candidate.capture_layout_revision = compatibility.value("capture_layout_revision", "");
+        candidate.oracle_revision = compatibility.value("oracle_revision", "");
         candidate.synthesis_eligible = value.value("synthesis_eligible", false);
         return common_agent_concept_candidate_validate(candidate, error);
     } catch (const std::exception & exception) {
@@ -261,6 +289,16 @@ bool common_agent_concept_candidate_index::observe_relation(
     append_unique(candidate.supporting_evidence_refs, relation.evidence_ref);
     append_unique(candidate.independent_support_keys, relation.task_fingerprint);
     candidate.grounding_state = "resolved";
+    // Compatibility is copied as identity metadata only. A relation missing
+    // these identities remains valid local evidence but cannot be reused
+    // across sessions.
+    candidate.behavior_key = relation.behavior_key;
+    candidate.applicability_scope_fingerprint = relation.applicability_scope_fingerprint;
+    candidate.model_profile_fingerprint = relation.model_profile_fingerprint;
+    candidate.tokenizer_fingerprint = relation.tokenizer_fingerprint;
+    candidate.template_fingerprint = relation.template_fingerprint;
+    candidate.capture_layout_revision = relation.capture_layout_revision;
+    candidate.oracle_revision = relation.oracle_revision.empty() ? relation.verifier_ref : relation.oracle_revision;
     candidate.contrast_strength = relation.baseline_origin == common_flydelta_teaching_origin::observed
         ? "observed_pair" : "host_verified";
     candidate.independence = candidate.independent_support_keys.size() > 1
@@ -298,5 +336,54 @@ bool common_agent_concept_candidate_index::resolve(
     });
     if (it == candidates_.end()) return true;
     candidate = *it;
+    return true;
+}
+
+bool common_agent_concept_candidate_index::find_project_reusable_family(
+        const common_agent_concept_candidate_family_query & query,
+        common_agent_concept_candidate_family & family,
+        std::string & error) const {
+    error.clear();
+    family = {};
+    family.concept_key = query.concept_key;
+    family.namespace_id = query.namespace_id;
+    family.project_id = query.project_id;
+    if (!bounded(query.concept_key) || !bounded(query.namespace_id) ||
+            !bounded(query.project_id)) {
+        error = "project reusable family query identity is incomplete";
+        return false;
+    }
+    auto matches = [&](const common_agent_concept_candidate & candidate) {
+        if (candidate.concept_key != query.concept_key ||
+                candidate.scope.namespace_id != query.namespace_id ||
+                candidate.scope.project_id != query.project_id ||
+                candidate.scope.session_id.empty()) return false;
+        const auto exact = [](const std::string & expected, const std::string & actual) {
+            return expected.empty() || expected == actual;
+        };
+        // Empty candidate compatibility is intentionally not a wildcard for
+        // a non-empty query. Reuse must never cross an unverified identity.
+        return !query.behavior_key.empty() && candidate.behavior_key == query.behavior_key &&
+            !query.applicability_scope_fingerprint.empty() &&
+            candidate.applicability_scope_fingerprint == query.applicability_scope_fingerprint &&
+            exact(query.model_profile_fingerprint, candidate.model_profile_fingerprint) &&
+            exact(query.tokenizer_fingerprint, candidate.tokenizer_fingerprint) &&
+            exact(query.template_fingerprint, candidate.template_fingerprint) &&
+            exact(query.capture_layout_revision, candidate.capture_layout_revision) &&
+            !query.oracle_revision.empty() && candidate.oracle_revision == query.oracle_revision;
+    };
+    for (const auto & candidate : candidates_) {
+        if (matches(candidate)) family.members.push_back(candidate);
+    }
+    std::stable_sort(family.members.begin(), family.members.end(),
+        [](const auto & left, const auto & right) {
+            const bool left_safe = left.disconfirming_evidence_refs.empty();
+            const bool right_safe = right.disconfirming_evidence_refs.empty();
+            if (left.synthesis_eligible != right.synthesis_eligible) {
+                return left.synthesis_eligible > right.synthesis_eligible;
+            }
+            if (left_safe != right_safe) return left_safe > right_safe;
+            return left.revision > right.revision;
+        });
     return true;
 }

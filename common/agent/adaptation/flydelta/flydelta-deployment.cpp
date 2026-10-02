@@ -3,6 +3,7 @@
 #include "hash/hash.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <set>
 #include <sstream>
@@ -15,6 +16,21 @@ bool finite_nonnegative(float value) {
 
 bool finite_scale(double value) {
     return std::isfinite(value) && value > 0.0 && value <= 4.0;
+}
+
+bool same_generalized_manifest_after_canary_transition(
+        const common_flydelta_sideband_manifest & existing,
+        const common_flydelta_sideband_manifest & desired) {
+    // Registry admission is intentionally idempotent for the retry window
+    // between manifest admission and the two journal events.  Once the stage
+    // event has applied, only lifecycle fields differ from the immutable
+    // candidate manifest.
+    auto normalized = existing;
+    normalized.status = common_flydelta_sideband_status::candidate;
+    normalized.evaluation_passed = false;
+    normalized.canary_progress_only = false;
+    return common_flydelta_sideband_manifest_to_json(normalized) ==
+        common_flydelta_sideband_manifest_to_json(desired);
 }
 
 bool same_layout(
@@ -237,7 +253,169 @@ bool common_flydelta_canary_policy_validate(
             return false;
         }
     }
+    if (policy.initial_traffic_basis_points == 0 ||
+            policy.initial_traffic_basis_points > 10000 ||
+            policy.initial_max_evaluated_observations == 0 ||
+            policy.initial_expiry_ms == 0) {
+        error = "FlyDelta automatic canary admission bounds are invalid";
+        return false;
+    }
     error.clear();
+    return true;
+}
+
+bool common_flydelta_decide_auto_canary_admission(
+        const common_flydelta_canary_policy & policy,
+        const common_flydelta_auto_canary_admission_input & input,
+        common_flydelta_auto_canary_admission_decision & decision,
+        std::string & error) {
+    if (!common_flydelta_canary_policy_validate(policy, error)) return false;
+    decision = {};
+    decision.canary_progress_only = true;
+    decision.traffic_basis_points = policy.initial_traffic_basis_points;
+    decision.max_evaluated_observations = policy.initial_max_evaluated_observations;
+    decision.expires_after_ms = policy.initial_expiry_ms;
+    auto reject = [&](const char * reason) {
+        decision.admitted = false;
+        decision.reason = reason;
+    };
+    if (policy.mode != common_flydelta_canary_mode::policy || !policy.allow_auto_admission) {
+        reject(policy.mode == common_flydelta_canary_mode::disabled
+            ? "canary_policy_disabled" : "automatic_canary_admission_disabled");
+    } else if (!input.resolved_host_relation || !input.has_contrast_and_control) {
+        reject("host_verified_relation_or_contrast_missing");
+    } else if (input.source_is_research_or_reflection) {
+        reject("research_or_reflection_cannot_admit_canary");
+    } else if (!input.profile_binding_available) {
+        reject("configured_profile_binding_missing");
+    } else if (!input.compatible_arm) {
+        reject("compatible_arm_result_missing");
+    } else if (input.regressed_dimensions ||
+            (!input.host_counterfactual_helped &&
+             (!input.progress.comparable ||
+              (input.progress.outcome != common_flydelta_semantic_progress_outcome::improved &&
+               input.progress.outcome != common_flydelta_semantic_progress_outcome::solved)))) {
+        reject("arm_has_no_compatible_positive_progress");
+    } else {
+        decision.admitted = true;
+        decision.reason = "bounded_progress_only_canary_admitted";
+    }
+    error.clear();
+    return true;
+}
+
+bool common_flydelta_auto_admit_progress_only_canary(
+        common_flydelta_sideband_registry & registry,
+        common_flydelta_sideband_review_store & review_store,
+        const common_flydelta_canary_policy & policy,
+        const common_flydelta_auto_canary_request & request,
+        common_flydelta_sideband_manifest & generalized_manifest,
+        common_flydelta_sideband_review & staged_review,
+        std::string & error) {
+    error.clear();
+    common_flydelta_auto_canary_admission_decision decision;
+    if (!common_flydelta_decide_auto_canary_admission(
+            policy, request.admission, decision, error)) return false;
+    if (!decision.admitted) {
+        error = "FlyDelta automatic canary admission rejected: " + decision.reason;
+        return false;
+    }
+    const auto & source = request.source_manifest;
+    if (source.status != common_flydelta_sideband_status::candidate ||
+            !common_flydelta_sideband_manifest_validate(source, error) ||
+            request.binding_key.empty() || request.binding_key != source.binding_key ||
+            request.baseline_deployment_fingerprint.empty() || request.rollback_revision_id.empty() ||
+            request.event_id.empty() || request.source_candidate_refs.empty()) {
+        if (error.empty()) error = "FlyDelta automatic canary admission identity is incomplete";
+        return false;
+    }
+    const auto source_it = registry.list().find(source.id);
+    if (source_it == registry.list().end() || source_it->second.status != common_flydelta_sideband_status::candidate) {
+        error = "FlyDelta automatic canary source candidate is not registered";
+        return false;
+    }
+    const uint64_t now = request.now_epoch_ms != 0 ? request.now_epoch_ms :
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    std::string lineage = request.event_id + "\n" + source.id + "\n" + request.binding_key;
+    for (const auto & ref : request.source_candidate_refs) lineage += "\n" + ref;
+    generalized_manifest = source;
+    generalized_manifest.id = "flydelta://generalized/" +
+        hash_sha256_hex(lineage.data(), lineage.size()).substr(0, 32);
+    generalized_manifest.status = common_flydelta_sideband_status::candidate;
+    generalized_manifest.parent_revision_id = source.id;
+    generalized_manifest.binding_key = request.binding_key;
+    generalized_manifest.evaluation_revision = "canary-progress:" + request.event_id;
+    generalized_manifest.evaluation_passed = false;
+    generalized_manifest.canary_progress_only = false;
+    generalized_manifest.generalization.level = common_flydelta_generalization_level::model;
+    generalized_manifest.generalization.source_candidate_refs = request.source_candidate_refs;
+    generalized_manifest.generalization.supporting_session_ids = request.supporting_session_ids;
+    generalized_manifest.generalization.task_fingerprints = request.task_fingerprints;
+    generalized_manifest.generalization.synthesis_strategy = request.synthesis_strategy;
+    if (!common_flydelta_sideband_manifest_validate(generalized_manifest, error)) return false;
+    const auto existing_generalized = registry.list().find(generalized_manifest.id);
+    if (existing_generalized != registry.list().end()) {
+        if (!same_generalized_manifest_after_canary_transition(
+                existing_generalized->second, generalized_manifest)) {
+            error = "FlyDelta generalized canary revision conflicts with existing metadata";
+            return false;
+        }
+    } else if (!registry.admit(generalized_manifest, error)) {
+        return false;
+    }
+
+    common_flydelta_sideband_review approval;
+    approval.event_id = request.event_id + ":approve";
+    approval.actor_id = request.actor_id;
+    approval.policy_revision = request.policy_revision;
+    approval.evaluation_revision = generalized_manifest.evaluation_revision;
+    approval.reason = "host-verified progress-only automatic canary";
+    approval.source = common_flydelta_review_source::host_automation;
+    approval.action = common_flydelta_review_action::approve_canary;
+    approval.manifest = generalized_manifest;
+    approval.binding_key = request.binding_key;
+    approval.has_canary_admission = true;
+    approval.canary_progress = request.admission.progress;
+    if (request.admission.host_counterfactual_helped) {
+        // Review progress has an intentionally small semantic vocabulary;
+        // HELPED is preserved by the caller's counterfactual report while its
+        // admission projection is represented as safe improvement.
+        approval.canary_progress.comparable = true;
+        approval.canary_progress.outcome = common_flydelta_semantic_progress_outcome::improved;
+    }
+    if (!review_store.apply_and_append(registry, approval, true, error)) return false;
+
+    staged_review = {};
+    staged_review.event_id = request.event_id;
+    staged_review.actor_id = request.actor_id;
+    staged_review.policy_revision = request.policy_revision;
+    staged_review.evaluation_revision = generalized_manifest.evaluation_revision;
+    staged_review.reason = approval.reason;
+    staged_review.source = common_flydelta_review_source::host_automation;
+    staged_review.action = common_flydelta_review_action::stage_canary;
+    staged_review.manifest = generalized_manifest;
+    staged_review.binding_key = request.binding_key;
+    staged_review.has_canary_admission = true;
+    staged_review.canary_progress = approval.canary_progress;
+    staged_review.has_canary_envelope = true;
+    staged_review.canary_envelope_event_id = staged_review.event_id;
+    staged_review.canary_envelope.binding_key = request.binding_key;
+    staged_review.canary_envelope.candidate_revision_id = generalized_manifest.id;
+    staged_review.canary_envelope.behavior_key = generalized_manifest.applicability.behavior_key;
+    staged_review.canary_envelope.scope_fingerprint = request.scope_fingerprint.empty()
+        ? generalized_manifest.applicability.scope_fingerprint : request.scope_fingerprint;
+    staged_review.canary_envelope.traffic_basis_points = decision.traffic_basis_points;
+    staged_review.canary_envelope.expires_at_epoch_ms = now + decision.expires_after_ms;
+    staged_review.canary_envelope.max_observations = decision.max_evaluated_observations;
+    staged_review.canary_envelope.max_scale = request.max_scale;
+    staged_review.canary_envelope.compatibility = generalized_manifest.compatibility;
+    staged_review.canary_envelope.oracle_revision = request.oracle_revision.empty()
+        ? generalized_manifest.oracle_revision : request.oracle_revision;
+    staged_review.canary_envelope.policy_revision = request.policy_revision;
+    staged_review.canary_envelope.baseline_deployment_fingerprint = request.baseline_deployment_fingerprint;
+    staged_review.canary_envelope.rollback_revision_id = request.rollback_revision_id;
+    if (!review_store.apply_and_append(registry, staged_review, true, error)) return false;
     return true;
 }
 

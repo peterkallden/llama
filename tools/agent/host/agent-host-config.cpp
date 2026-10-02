@@ -561,6 +561,10 @@ bool parse_agent_host_config_json(
                     read_optional(canary, "allow_scope_expansion", config.adaptation_flydelta_canary_policy.allow_scope_expansion);
                     read_optional(canary, "allow_promotion", config.adaptation_flydelta_canary_policy.allow_promotion);
                     read_optional(canary, "auto_close_on_harmed", config.adaptation_flydelta_canary_policy.auto_close_on_harmed);
+                    read_optional(canary, "allow_auto_admission", config.adaptation_flydelta_canary_policy.allow_auto_admission);
+                    read_optional(canary, "initial_traffic_basis_points", config.adaptation_flydelta_canary_policy.initial_traffic_basis_points);
+                    read_optional(canary, "initial_max_evaluated_observations", config.adaptation_flydelta_canary_policy.initial_max_evaluated_observations);
+                    read_optional(canary, "initial_expiry_ms", config.adaptation_flydelta_canary_policy.initial_expiry_ms);
                     if (canary.contains("traffic_steps_basis_points")) {
                         if (!canary["traffic_steps_basis_points"].is_array()) {
                             error = "runtime.adaptation.flydelta.canary.traffic_steps_basis_points must be an array";
@@ -1326,6 +1330,10 @@ nlohmann::ordered_json agent_host_config_to_json(
                         {"allow_scope_expansion", config.adaptation_flydelta_canary_policy.allow_scope_expansion},
                         {"allow_promotion", config.adaptation_flydelta_canary_policy.allow_promotion},
                         {"auto_close_on_harmed", config.adaptation_flydelta_canary_policy.auto_close_on_harmed},
+                        {"allow_auto_admission", config.adaptation_flydelta_canary_policy.allow_auto_admission},
+                        {"initial_traffic_basis_points", config.adaptation_flydelta_canary_policy.initial_traffic_basis_points},
+                        {"initial_max_evaluated_observations", config.adaptation_flydelta_canary_policy.initial_max_evaluated_observations},
+                        {"initial_expiry_ms", config.adaptation_flydelta_canary_policy.initial_expiry_ms},
                     }},
                 }},
                 {"stable_model_facing_tools", config.adaptation_stable_model_facing_tools},

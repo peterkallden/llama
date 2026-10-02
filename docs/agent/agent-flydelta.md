@@ -111,8 +111,12 @@ augmentation and the host-material concept capture/synthesis path. The
 separate teacher-score batch, post-Bootstrap state resolvers, next-action
 scheduler and lifecycle persistence are part of the same production seam.
 Automatic learning credit, automatic promotion and automatic sideband
-activation remain disabled; explicit host review and lifecycle operations are
-separate, durable gates.**
+activation remain disabled; policy-driven first canary admission is a bounded
+progress-only host operation through the existing review journal. Explicit
+host review and lifecycle operations remain separate, durable gates. The
+reuse-first observer and the admission helper are host-owned seams: a daemon
+must register them from its evaluation/runtime host before they can affect a
+turn; generic runtime assembly never guesses a challenger or deployment.**
 FlyDelta is not enabled by default and is not a replacement for
 the current model-adaptation path. It must not be activated until it has
 passed explicit evaluation and promotion gates.
@@ -546,6 +550,55 @@ BootstrapZoom and Orthogonal currently bound the full-generation frontier to
 two candidate arms per wave, in addition to a fresh full baseline. The bound
 is an execution budget; it does not change candidate construction, ranking
 order or Whirlpool continuation semantics.
+
+## Project reuse and automatic first canary
+
+Session candidates remain immutable and keep their full
+`namespace/project/session` identity. The candidate index is a projection over
+the existing lifecycle journal. `find_project_reusable_family()` is a
+read-only lookup limited to the same namespace and project and requires exact
+behavior, applicability, model/tokenizer/template, capture-layout and Oracle
+identities. It returns opaque candidate/relation/evidence references and
+identity metadata only; prompts, captures and tool output are never exposed.
+
+When a new host-resolved TeachingRelation arrives, compatible family members
+are tried first as bounded experimental challengers. A previous WHAT direction
+may be reused strongly; its WHERE and HOW MUCH are only starting priors for a
+bounded local diagnostics-first probe. Failed reuse falls through to the
+existing capture/synthesis/search path. Reuse is never implicit runtime
+activation.
+
+An automatically generalized revision is a new immutable sideband manifest.
+Its provenance declares `generalization.level=model`, source candidate refs,
+supporting session IDs, task fingerprints and synthesis strategy. The session
+parents are not mutated. Automatic admission requires a host-approved
+resolved relation with contrast/control material, a compatible configured
+profile binding and compatible `IMPROVED`/`SOLVED` progress without regressed
+dimensions. Research or reflection may discover a hypothesis but cannot alone
+generalize or stage it.
+
+The default FlyDelta canary mode is `policy` when canary routing is enabled.
+The first automatic envelope is progress-only and bounded to 500 basis points,
+6 evaluated observations and 8 hours. The host writes the existing
+`approve_canary` and `stage_canary` review events; it never changes an active
+binding. Missing profile bindings retain the family for later reuse. A
+progress-only canary cannot become `active`; active promotion still uses the
+separate promotion-backed gate and explicit lifecycle path. Compatible
+HARMED/disconfirmation closes or blocks only the affected candidate family and
+surface, not the whole concept or unrelated revisions.
+
+The resulting flow is:
+
+```text
+resolved TeachingRelation
+  -> project family lookup
+  -> bounded reusable WHAT challenger
+  -> local WHERE/HOW MUCH diagnostics
+  -> existing Oracle/counterfactual
+  -> generalized immutable model revision
+  -> approve_canary + stage_canary (progress-only)
+  -> retain/expand/close; active promotion remains separate
+```
 
 ## Current pre-canary status map
 
@@ -4364,6 +4417,17 @@ internal loss is not enough.
    generic overlay registry is outside this change.
 4. Exact redaction, scope, TTL and revocation semantics for capture manifests.
 
-The binding path is intentionally still host-gated: documentation, model-free
-contract tests and explicit model-backed evaluation remain required before a
-candidate can be activated. There is no automatic learning or activation loop.
+The binding path remains host-gated: documentation, model-free contract tests
+and explicit model-backed evaluation remain required before a candidate can be
+activated. Policy mode may automatically create only a bounded, progress-only
+canary through the review journal; it never grants learning credit or active
+activation by itself.
+
+### Maintenance note — automatic project reuse
+
+The project-reuse and first-canary implementation keeps session candidates,
+review journal, registry, configured profile bindings and the existing Oracle /
+promotion gates as the only sources of truth. It adds no parallel store,
+runtime or evaluator. The model can be a source of a hypothesis, but host
+compatibility and host-verified progress are required before generalized
+provenance or canary staging.

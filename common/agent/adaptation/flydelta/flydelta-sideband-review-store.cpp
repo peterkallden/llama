@@ -233,6 +233,7 @@ bool common_flydelta_sideband_review_validate(
         return false;
     }
     if (review.action == common_flydelta_review_action::approve_canary &&
+            !review.has_canary_admission &&
             (!bounded(review.promotion_summary_ref) ||
              !bounded(review.evaluation_report_ref))) {
         error = "FlyDelta canary approval requires durable report references";
@@ -282,6 +283,7 @@ bool common_flydelta_sideband_review_validate(
             review.evaluation.revision_id == review.evaluation_revision;
         error.clear();
         const bool progress_admitted = review.has_canary_admission &&
+            review.manifest.generalization.level == common_flydelta_generalization_level::model &&
             review.canary_progress.comparable &&
             (review.canary_progress.outcome == common_flydelta_semantic_progress_outcome::improved ||
              review.canary_progress.outcome == common_flydelta_semantic_progress_outcome::solved) &&

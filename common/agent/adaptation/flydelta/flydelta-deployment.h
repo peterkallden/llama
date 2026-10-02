@@ -35,7 +35,7 @@ const char * common_flydelta_canary_disposition_name(
 // Host-owned policy controls disposition only. It never changes FlyDelta
 // search, Oracle truth, learning credit, or the ordinary active-only path.
 struct common_flydelta_canary_policy {
-    common_flydelta_canary_mode mode = common_flydelta_canary_mode::manual;
+    common_flydelta_canary_mode mode = common_flydelta_canary_mode::policy;
     size_t min_observations = 8;
     size_t min_unique_allocations = 2;
     float min_target_gain = 0.0f;
@@ -50,6 +50,11 @@ struct common_flydelta_canary_policy {
     bool allow_scope_expansion = false;
     bool allow_promotion = false;
     bool auto_close_on_harmed = true;
+    // First automatic admission is deliberately bounded and progress-only.
+    bool allow_auto_admission = true;
+    uint32_t initial_traffic_basis_points = 500;
+    size_t initial_max_evaluated_observations = 6;
+    uint64_t initial_expiry_ms = 8ULL * 60ULL * 60ULL * 1000ULL;
 };
 
 bool common_flydelta_canary_policy_validate(
@@ -73,6 +78,67 @@ struct common_flydelta_canary_policy_decision {
     uint32_t next_traffic_basis_points = 0;
     std::string reason;
 };
+
+struct common_flydelta_auto_canary_admission_input {
+    bool resolved_host_relation = false;
+    bool has_contrast_and_control = false;
+    bool source_is_research_or_reflection = false;
+    bool profile_binding_available = false;
+    bool compatible_arm = false;
+    bool regressed_dimensions = false;
+    // HELPED is a counterfactual outcome rather than a semantic-progress
+    // enum value; the host sets this when the same candidate has that result.
+    bool host_counterfactual_helped = false;
+    common_flydelta_semantic_progress progress;
+};
+
+struct common_flydelta_auto_canary_admission_decision {
+    bool admitted = false;
+    bool canary_progress_only = true;
+    std::string reason;
+    uint32_t traffic_basis_points = 0;
+    size_t max_evaluated_observations = 0;
+    uint64_t expires_after_ms = 0;
+};
+
+// Host policy gate for the first bounded canary. It decides eligibility only;
+// review-store/registry code remains responsible for durable transitions.
+bool common_flydelta_decide_auto_canary_admission(
+        const common_flydelta_canary_policy & policy,
+        const common_flydelta_auto_canary_admission_input & input,
+        common_flydelta_auto_canary_admission_decision & decision,
+        std::string & error);
+
+// Host-owned durable admission. It creates a new immutable model-level
+// revision and writes the existing approve_canary/stage_canary journal events.
+// It never changes an active binding and is idempotent on event_id.
+struct common_flydelta_auto_canary_request {
+    common_flydelta_sideband_manifest source_manifest;
+    std::string binding_key;
+    std::string baseline_deployment_fingerprint;
+    std::string rollback_revision_id;
+    std::string event_id;
+    std::string actor_id = "flydelta-policy";
+    std::string policy_revision = "flydelta-canary-policy-v1";
+    std::string oracle_revision;
+    std::string scope_fingerprint;
+    uint64_t now_epoch_ms = 0;
+    float max_scale = 1.0f;
+    std::vector<std::string> source_candidate_refs;
+    std::vector<std::string> supporting_session_ids;
+    std::vector<std::string> task_fingerprints;
+    std::string synthesis_strategy;
+    common_flydelta_auto_canary_admission_input admission;
+};
+
+bool common_flydelta_auto_admit_progress_only_canary(
+        common_flydelta_sideband_registry & registry,
+        common_flydelta_sideband_review_store & review_store,
+        const common_flydelta_canary_policy & policy,
+        const common_flydelta_auto_canary_request & request,
+        common_flydelta_sideband_manifest & generalized_manifest,
+        common_flydelta_sideband_review & staged_review,
+        std::string & error);
 
 // Deterministic projection of journaled canary observation/evaluation events.
 // It is policy input, not a second semantic evidence store.

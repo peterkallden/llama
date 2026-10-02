@@ -40,6 +40,12 @@ static common_flydelta_teaching_relation relation(const std::string & id, const 
     value.control_origin = common_flydelta_teaching_origin::host_counterfactual;
     value.confidence = 1.0f;
     value.host_approved = true;
+    value.applicability_scope_fingerprint = "scope:dataset";
+    value.model_profile_fingerprint = "model:qwen";
+    value.tokenizer_fingerprint = "tokenizer:v1";
+    value.template_fingerprint = "template:v1";
+    value.capture_layout_revision = "capture:v1";
+    value.oracle_revision = "oracle:v1";
     return value;
 }
 
@@ -114,6 +120,42 @@ int main() {
     assert(index.resolve(concept.concept_key, concept.scope, candidate, error));
     assert(candidate.novelty_state == "conflict");
     assert(!candidate.synthesis_eligible);
+
+    common_agent_concept_candidate_index family_index;
+    auto session_a = hypothesis();
+    session_a.scope.project_id = "project-a";
+    session_a.scope.session_id = "session-a";
+    auto session_b = session_a;
+    session_b.id = "hypothesis:grouped-sum:b";
+    session_b.scope.session_id = "session-b";
+    auto relation_a = relation("relation:a", "task:a");
+    relation_a.scope.project_id = "project-a";
+    relation_a.scope.session_id = "session-a";
+    auto relation_b = relation("relation:b", "task:b");
+    relation_b.scope.project_id = "project-a";
+    relation_b.scope.session_id = "session-b";
+    assert(family_index.observe_relation(session_a, relation_a, transaction("turn:a"), error));
+    assert(family_index.observe_relation(session_b, relation_b, transaction("turn:b"), error));
+    common_agent_concept_candidate_family_query query;
+    query.concept_key = session_a.concept_key;
+    query.namespace_id = session_a.scope.namespace_id;
+    query.project_id = "project-a";
+    query.behavior_key = "dataset/grouped_sum";
+    query.applicability_scope_fingerprint = "scope:dataset";
+    query.model_profile_fingerprint = "model:qwen";
+    query.tokenizer_fingerprint = "tokenizer:v1";
+    query.template_fingerprint = "template:v1";
+    query.capture_layout_revision = "capture:v1";
+    query.oracle_revision = "oracle:v1";
+    common_agent_concept_candidate_family family;
+    assert(family_index.find_project_reusable_family(query, family, error));
+    assert(family.members.size() == 2);
+    // The family projection contains references/metadata only, never raw
+    // source material or capture payloads.
+    assert(family.members[0].source_refs.empty());
+    query.project_id = "other-project";
+    assert(family_index.find_project_reusable_family(query, family, error));
+    assert(family.members.empty());
 
     common_agent_concept_candidate_index restored(&lifecycle);
     assert(restored.load(error));

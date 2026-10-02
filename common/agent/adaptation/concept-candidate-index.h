@@ -27,7 +27,38 @@ struct common_agent_concept_candidate {
     std::string source_strength;
     std::string contrast_strength;
     std::string independence;
+    // Host-owned compatibility metadata. These are identities only; raw
+    // prompts, captures and tool output never enter the candidate index.
+    std::string behavior_key;
+    std::string applicability_scope_fingerprint;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string capture_layout_revision;
+    std::string oracle_revision;
     bool synthesis_eligible = false;
+};
+
+struct common_agent_concept_candidate_family_query {
+    std::string concept_key;
+    std::string namespace_id;
+    std::string project_id;
+    std::string behavior_key;
+    std::string applicability_scope_fingerprint;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string capture_layout_revision;
+    std::string oracle_revision;
+};
+
+// A read-only projection over compatible session candidates. It deliberately
+// contains only opaque refs and identity metadata, never source material.
+struct common_agent_concept_candidate_family {
+    std::string concept_key;
+    std::string namespace_id;
+    std::string project_id;
+    std::vector<common_agent_concept_candidate> members;
 };
 
 bool common_agent_concept_candidate_validate(
@@ -68,6 +99,11 @@ public:
             const std::string & concept_key,
             const common_agent_scope & scope,
             common_agent_concept_candidate & candidate,
+            std::string & error) const;
+
+    bool find_project_reusable_family(
+            const common_agent_concept_candidate_family_query & query,
+            common_agent_concept_candidate_family & family,
             std::string & error) const;
 
     const std::vector<common_agent_concept_candidate> & candidates() const {
