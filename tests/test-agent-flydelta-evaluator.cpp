@@ -249,6 +249,63 @@ int main() {
     CHECK(result.direction_candidates[1].experimental_only &&
         result.direction_candidates[2].experimental_only);
 
+    // Decision-margin directions are optional challengers on the same
+    // ConceptSynthesis seam. They must be visible in the typed result while
+    // remaining experimental and outside the ordinary graft frontier.
+    auto synthesis = base_job(common_flydelta_experiment_job_kind::concept_synthesis,
+            "flydelta://job/concept-synthesis-challenger");
+    synthesis.teaching_material_group_ref = "flydelta://teaching/evaluator";
+    callbacks = {};
+    callbacks.run_concept_synthesis = [](const auto &, auto & candidates, std::string &) {
+        common_flydelta_concept_candidate candidate;
+        candidate.concept_key = "concept://evaluator/challenger";
+        candidate.extraction_id = "extraction://evaluator/challenger";
+        candidate.behavior_key = "tool_use/diagnostics/missing-argument";
+        candidate.model_profile_fingerprint = "sha256:model";
+        candidate.capture_layout_revision = "layout:v1";
+        candidate.layer_index = 2;
+        candidate.values = {1.0f, 0.0f};
+        candidate.source_trajectories = 2;
+        candidate.retained_trajectories = 2;
+        candidate.control_trajectories = 2;
+        candidate.retained_control_trajectories = 2;
+        candidate.median_alignment = 1.0f;
+        candidate.control_residualized = true;
+        candidates.push_back(std::move(candidate));
+        return true;
+    };
+    bool challenger_called = false;
+    callbacks.run_decision_margin_challenger = [&](const auto &, auto & candidates, std::string &) {
+        challenger_called = true;
+        common_flydelta_direction_candidate candidate;
+        candidate.kind = common_flydelta_direction_kind::token_margin_direction;
+        candidate.origin = "decision-output-margin:v1";
+        candidate.extraction_id = "decision-pair://evaluator";
+        candidate.strategy_revision = "decision-output-margin:v1";
+        candidate.decision_pair_ref = "decision-pair://evaluator";
+        candidate.decision_score_scope = "tool_choice";
+        candidate.decision_first_divergence_index = 3;
+        candidate.layer_index = 2;
+        candidate.values = {0.5f, 0.5f};
+        candidate.source_samples = 1;
+        candidate.retained_samples = 1;
+        candidate.median_alignment = 1.0f;
+        candidate.experimental_only = true;
+        candidates.push_back(std::move(candidate));
+        return true;
+    };
+    callbacks.persist_experimental_direction = [](
+            const auto &, std::string & reference, std::string &) {
+        reference = "flydelta://direction/evaluator";
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(synthesis, config, callbacks, result, error));
+    CHECK(challenger_called && result.decision_margin_challenger_candidates.size() == 1);
+    CHECK(result.decision_margin_challenger_candidates.front().kind ==
+        common_flydelta_direction_kind::token_margin_direction);
+    CHECK(result.decision_margin_challenger_candidates.front().experimental_only);
+    CHECK(result.direction_candidates.size() == 1);
+
     auto pipeline = base_job(common_flydelta_experiment_job_kind::search_pipeline,
             "flydelta://job/search-pipeline");
     pipeline.capture_manifest_ids = {"flydelta://capture/evaluator"};

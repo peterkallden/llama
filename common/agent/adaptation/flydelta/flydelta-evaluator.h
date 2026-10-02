@@ -90,6 +90,18 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_experiment_job & job,
             std::vector<common_flydelta_concept_candidate> & candidates,
             std::string & error)> run_concept_synthesis;
+    // Optional host-owned seams for the decision-output-margin challenger.
+    // The evaluator never invents a pair or a model row; absent providers
+    // leave the existing synthesis portfolio unchanged.
+    common_flydelta_decision_pair_provider resolve_decision_pair;
+    common_flydelta_output_head_row_resolver resolve_output_head_row;
+    // Optional challenger production seam. Returned directions are recorded
+    // for the same downstream search/evaluation path but are not implicitly
+    // promoted or selected over the ordinary synthesis frontier.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            std::vector<common_flydelta_direction_candidate> & candidates,
+            std::string & error)> run_decision_margin_challenger;
     // Persists one synthesized candidate as immutable experimental direction
     // material and returns the opaque intervention reference used by the
     // ordinary FlyDelta search lane. This is the graft seam: it does not
@@ -243,6 +255,7 @@ struct common_flydelta_evaluator_result {
     std::vector<common_flydelta_evaluation_fixture_result> evaluation_fixture_results;
     std::vector<common_flydelta_basis_direction> basis_directions;
     std::vector<common_flydelta_direction_candidate> direction_candidates;
+    std::vector<common_flydelta_direction_candidate> decision_margin_challenger_candidates;
     std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;
     std::vector<common_flydelta_search_continuation> search_continuations;
     std::vector<float> delta_memory_weights;

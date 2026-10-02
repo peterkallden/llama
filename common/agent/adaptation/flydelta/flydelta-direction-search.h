@@ -66,6 +66,7 @@ const char * common_flydelta_synthesis_estimator_name(
 struct common_flydelta_synthesis_candidate_descriptor {
     int schema_version = 1;
     std::string candidate_ref;
+    std::string strategy_revision = "v1";
     common_flydelta_synthesis_strategy strategy =
         common_flydelta_synthesis_strategy::contrast_repair;
     common_flydelta_synthesis_estimator estimator =
@@ -82,6 +83,12 @@ struct common_flydelta_synthesis_candidate_descriptor {
     std::string template_fingerprint;
     std::string capture_layout_revision;
     std::string scope_fingerprint;
+    // Decision-output-margin candidates must retain the host-owned pair that
+    // produced them. These are provenance fields, never evidence or lifecycle
+    // authority.
+    std::string decision_pair_ref;
+    std::string decision_score_scope;
+    int32_t decision_first_divergence_index = -1;
     bool host_verified = false;
     bool experimental_only = true;
     bool learning_eligible = false;
@@ -131,6 +138,33 @@ struct common_flydelta_decision_pair {
     std::string tokenizer_fingerprint;
     std::string template_fingerprint;
 };
+
+// Host-owned request for materializing a model-facing decision pair. The
+// common layer supplies identity and semantic scope; the host resolves the
+// opaque relation/fixture references and must return a validated pair. Raw
+// prompts and model outputs do not cross this seam.
+struct common_flydelta_decision_pair_request {
+    int schema_version = 1;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    std::string behavior_key;
+    std::string relation_ref;
+    std::string fixture_ref;
+    std::string oracle_ref;
+    std::string oracle_revision;
+    std::string score_scope = "tool_choice";
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+};
+
+bool common_flydelta_decision_pair_request_validate(
+        const common_flydelta_decision_pair_request & request,
+        std::string & error);
+
+using common_flydelta_decision_pair_provider = std::function<bool(
+        const common_flydelta_decision_pair_request & request,
+        common_flydelta_decision_pair & pair,
+        std::string & error)>;
 
 bool common_flydelta_decision_pair_validate(
         const common_flydelta_decision_pair & pair,
@@ -195,6 +229,10 @@ struct common_flydelta_direction_candidate {
     // Optional provenance for builders outside the repair-delta path.
     std::string origin;
     std::string extraction_id;
+    std::string strategy_revision;
+    std::string decision_pair_ref;
+    std::string decision_score_scope;
+    int32_t decision_first_divergence_index = -1;
     size_t source_samples = 0;
     size_t retained_samples = 0;
     float median_alignment = 0.0f;
@@ -245,6 +283,17 @@ bool common_flydelta_build_token_margin_candidate(
 bool common_flydelta_build_decision_output_margin_candidate(
         const common_flydelta_direction_search_config & config,
         const common_flydelta_decision_pair & pair,
+        const common_flydelta_output_head_row_resolver & resolve_row,
+        common_flydelta_direction_candidate & candidate,
+        std::string & error);
+
+// Host-seam adapter for the challenger. Pair materialization and output-head
+// access stay host-owned; this helper only enforces identity matching and
+// delegates to the existing pure direction builder.
+bool common_flydelta_build_decision_output_margin_candidate_from_provider(
+        const common_flydelta_direction_search_config & config,
+        const common_flydelta_decision_pair_request & request,
+        const common_flydelta_decision_pair_provider & provide_pair,
         const common_flydelta_output_head_row_resolver & resolve_row,
         common_flydelta_direction_candidate & candidate,
         std::string & error);

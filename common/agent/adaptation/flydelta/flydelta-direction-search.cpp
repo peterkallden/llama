@@ -121,7 +121,10 @@ bool common_flydelta_synthesis_candidate_descriptor_validate(
     const char * strategy = common_flydelta_synthesis_strategy_name(descriptor.strategy);
     const char * estimator = common_flydelta_synthesis_estimator_name(descriptor.estimator);
     const char * source = common_adaptation_evidence_source_name(descriptor.source);
+    const bool decision_strategy =
+        descriptor.strategy == common_flydelta_synthesis_strategy::decision_output_margin;
     if (descriptor.schema_version != 1 || !nonempty_bounded(descriptor.candidate_ref) ||
+            !nonempty_bounded(descriptor.strategy_revision) ||
             !strategy || std::string(strategy) == "unknown" ||
             !estimator || std::string(estimator) == "unknown" ||
             !source || std::string(source) == "unknown" ||
@@ -135,6 +138,10 @@ bool common_flydelta_synthesis_candidate_descriptor_validate(
             !nonempty_bounded(descriptor.template_fingerprint) ||
             !nonempty_bounded(descriptor.capture_layout_revision) ||
             !nonempty_bounded(descriptor.scope_fingerprint) ||
+            (decision_strategy &&
+                (!nonempty_bounded(descriptor.decision_pair_ref) ||
+                 !nonempty_bounded(descriptor.decision_score_scope) ||
+                 descriptor.decision_first_divergence_index < 0)) ||
             (descriptor.learning_eligible &&
                 (descriptor.experimental_only || !descriptor.host_verified))) {
         error = "FlyDelta synthesis candidate descriptor is invalid";
@@ -154,6 +161,11 @@ bool common_flydelta_synthesis_candidate_descriptor_from_direction(
     descriptor = identity;
     if (descriptor.candidate_ref.empty()) descriptor.candidate_ref = direction.extraction_id;
     descriptor.experimental_only = direction.experimental_only;
+    descriptor.strategy_revision = direction.strategy_revision.empty()
+        ? descriptor.strategy_revision : direction.strategy_revision;
+    descriptor.decision_pair_ref = direction.decision_pair_ref;
+    descriptor.decision_score_scope = direction.decision_score_scope;
+    descriptor.decision_first_divergence_index = direction.decision_first_divergence_index;
     // Direction builders never grant lifecycle learning eligibility. That
     // flag belongs to later host evidence and is not inferred from kind.
     descriptor.learning_eligible = false;
@@ -247,6 +259,30 @@ bool common_flydelta_decision_pair_validate(
             error = "FlyDelta decision pair divergence index is not the first divergence";
             return false;
         }
+    }
+    return true;
+}
+
+bool common_flydelta_decision_pair_request_validate(
+        const common_flydelta_decision_pair_request & request,
+        std::string & error) {
+    error.clear();
+    const char * source = common_adaptation_evidence_source_name(request.source);
+    const bool valid_scope = request.score_scope == "tool_choice" ||
+        request.score_scope == "normalized_call" ||
+        request.score_scope == "selected_arguments" ||
+        request.score_scope == "full_continuation";
+    if (request.schema_version != 1 || !source || std::string(source) == "unknown" ||
+            !nonempty_bounded(request.behavior_key) ||
+            !nonempty_bounded(request.relation_ref) ||
+            !nonempty_bounded(request.fixture_ref) ||
+            !nonempty_bounded(request.oracle_ref) ||
+            !nonempty_bounded(request.oracle_revision) ||
+            !valid_scope || !nonempty_bounded(request.model_profile_fingerprint) ||
+            !nonempty_bounded(request.tokenizer_fingerprint) ||
+            !nonempty_bounded(request.template_fingerprint)) {
+        error = "FlyDelta decision pair request identity or scope is invalid";
+        return false;
     }
     return true;
 }
@@ -359,7 +395,50 @@ bool common_flydelta_build_decision_output_margin_candidate(
         if (error.empty()) error = "FlyDelta output-head row resolution failed";
         return false;
     }
-    return common_flydelta_build_token_margin_candidate(config, material, candidate, error);
+    if (!common_flydelta_build_token_margin_candidate(config, material, candidate, error)) {
+        return false;
+    }
+    candidate.origin = pair.decision_pair_id;
+    candidate.extraction_id = pair.decision_pair_id;
+    candidate.strategy_revision = "decision-output-margin:v1";
+    candidate.decision_pair_ref = pair.decision_pair_id;
+    candidate.decision_score_scope = pair.score_scope;
+    candidate.decision_first_divergence_index = pair.first_divergence_index;
+    return common_flydelta_direction_candidate_validate(candidate, config.dimension, error);
+}
+
+bool common_flydelta_build_decision_output_margin_candidate_from_provider(
+        const common_flydelta_direction_search_config & config,
+        const common_flydelta_decision_pair_request & request,
+        const common_flydelta_decision_pair_provider & provide_pair,
+        const common_flydelta_output_head_row_resolver & resolve_row,
+        common_flydelta_direction_candidate & candidate,
+        std::string & error) {
+    error.clear();
+    candidate = {};
+    if (!common_flydelta_decision_pair_request_validate(request, error) ||
+            !provide_pair || !resolve_row) {
+        if (error.empty()) error = "FlyDelta decision-margin host seams are incomplete";
+        return false;
+    }
+    common_flydelta_decision_pair pair;
+    if (!provide_pair(request, pair, error)) {
+        if (error.empty()) error = "FlyDelta decision-pair provider rejected the request";
+        return false;
+    }
+    if (!common_flydelta_decision_pair_validate(pair, error) ||
+            pair.source != request.source || pair.behavior_key != request.behavior_key ||
+            pair.tokenizer_fingerprint != request.tokenizer_fingerprint ||
+            pair.template_fingerprint != request.template_fingerprint ||
+            pair.score_scope != request.score_scope || pair.decision_pair_id.empty()) {
+        if (error.empty()) error = "FlyDelta decision pair does not match host request identity";
+        return false;
+    }
+    if (!common_flydelta_build_decision_output_margin_candidate(
+            config, pair, resolve_row, candidate, error)) return false;
+    candidate.decision_pair_ref = pair.decision_pair_id;
+    return common_flydelta_direction_candidate_validate(
+        candidate, config.dimension, error);
 }
 
 bool common_flydelta_build_boundary_prototype_candidate(

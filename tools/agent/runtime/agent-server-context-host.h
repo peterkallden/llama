@@ -99,6 +99,15 @@ struct common_agent_server_flydelta_binding {
             const common_flydelta_experiment_job &,
             std::vector<common_flydelta_concept_candidate> &,
             std::string &)> run_concept_synthesis;
+    // Optional host-owned decision-pair materialization. It is deliberately
+    // absent by default: no decision-margin challenger is admitted without a
+    // semantic pair and matching model identity.
+    common_flydelta_decision_pair_provider resolve_decision_pair;
+    common_flydelta_output_head_row_resolver resolve_output_head_row;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_direction_candidate> &,
+            std::string &)> run_decision_margin_challenger;
     std::function<bool(
             const common_flydelta_direction_candidate &,
             std::string &,
@@ -160,6 +169,12 @@ struct common_agent_server_flydelta_binding_callbacks {
             const common_flydelta_experiment_job &,
             std::vector<common_flydelta_concept_candidate> &,
             std::string &)> run_concept_synthesis;
+    common_flydelta_decision_pair_provider resolve_decision_pair;
+    common_flydelta_output_head_row_resolver resolve_output_head_row;
+    std::function<bool(
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_direction_candidate> &,
+            std::string &)> run_decision_margin_challenger;
     std::function<bool(
             const common_flydelta_direction_candidate &,
             std::string &,

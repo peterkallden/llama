@@ -306,6 +306,26 @@ bool common_flydelta_evaluate_job(
                         candidate, direction, error)) return false;
                 result.direction_candidates.push_back(std::move(direction));
             }
+            if (callbacks.run_decision_margin_challenger) {
+                if (!callbacks.run_decision_margin_challenger(
+                        job, result.decision_margin_challenger_candidates, error)) {
+                    if (error.empty()) {
+                        error = "FlyDelta decision-margin challenger failed";
+                    }
+                    return false;
+                }
+                for (const auto & candidate : result.decision_margin_challenger_candidates) {
+                    if (!common_flydelta_direction_candidate_validate(
+                            candidate, config.pipeline.dimension, error) ||
+                            candidate.kind != common_flydelta_direction_kind::token_margin_direction ||
+                            !candidate.experimental_only) {
+                        if (error.empty()) {
+                            error = "FlyDelta decision-margin challenger returned an invalid candidate";
+                        }
+                        return false;
+                    }
+                }
+            }
             result.processed_references = result.concept_candidates.size();
             result.bootstrap_zoom_state_ref = job.bootstrap_zoom_state_ref;
             result.search_state_ref = job.search_state_ref;

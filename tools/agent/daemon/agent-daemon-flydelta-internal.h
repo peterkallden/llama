@@ -86,6 +86,12 @@ struct daemon_flydelta_resource_provider {
     std::unordered_map<std::string, std::shared_ptr<const common_flydelta_hidden_state_capture>> captures;
     mutable std::mutex composed_direction_mutex;
     std::unordered_map<std::string, std::vector<common_flydelta_basis_direction>> composed_directions;
+    // Optional host-owned materialization seams for the decision-margin
+    // challenger. They remain empty for hosts that do not expose a verified
+    // decision pair or output-head rows; the ordinary synthesis path is then
+    // unchanged.
+    common_flydelta_decision_pair_provider resolve_decision_pair;
+    common_flydelta_output_head_row_resolver resolve_output_head_row;
     std::mutex orchestration_mutex;
     std::unordered_map<std::string,
         std::pair<common_flydelta_experiment_plan, common_flydelta_utility_history>> orchestration_states;

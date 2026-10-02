@@ -613,6 +613,8 @@ journal remains the durable evidence boundary.
 | 2026-10-01 | this local causal correction sweep | Resident planner capture and causal patch diagnostics now complete the intended request-scoped server-context path | `test-agent-flydelta*` passed 53/53 serially; prepared-generation/runtime contract tests passed; Qwen Instruct on Intel Vulkan0 with four runtime threads produced a counterfactual baseline `dataset.inspect` and repair `dataset.schema`, finite distinct layer-21 captures (`base_norm=60.7102`, `repair_norm=61.3367`, `delta_norm=9.46182`), teacher margins for all six diagnostic arms and two bounded frontier generations | Propagated capture through the runtime chat driver, forced final-response handling for capture/patch requests so JSON-schema streaming cannot drop metadata, and made teacher scoring reuse the captured planner context. The run remained diagnostic-only: exact replacement reached margin `0.0151199` from baseline `0.0114106` but did not change the tool choice; no `HELPED`, learning credit, overlay selection or promotion was produced |
 | 2026-10-01 | this local synthesis-portfolio correction sweep | The existing control-residualized and positive-prototype candidates now share one tested, bounded frontier selector | Cozo/Vulkan common/daemon targets built with three compile threads; focused concept test passed after correction; serial `test-agent-flydelta*` passed 53/53 | Moved the pre-existing semantic-source selection out of the evaluator-local helper into the common concept contract. It still prefers one raw candidate per semantic source, preserves source order and frontier bounds, and continues through the existing search/Oracle path; no synthesis estimator, low-rank builder, evidence, lifecycle or promotion semantics changed |
 | 2026-10-02 | 2ed3616f0 | Synthesis strategy/estimator descriptors and strict semantic basis admission added around the existing direction, low-rank and coefficient seams | Cozo/Vulkan rebuild passed with three compile threads; serial `test-agent-flydelta*` passed 53/53; model-free concept smoke passed; full Qwen Instruct server-context concept-synthesis smoke passed with six candidates and two serial frontier searches | Decision-margin and boundary-prototype builders remain challenger-capable only when host material exists. Basis resolution requires matching concept/behavior/model/capture/scope/Oracle identity plus host-verified, non-experimental directions; no new store, evaluator, learning-credit or promotion path. The complete component flow and individual-arm versus paired-counterfactual outcome semantics are documented above |
+| 2026-10-02 | this local decision-margin seam sweep | Host-owned decision-pair request/provider, output-head row resolver, challenger callback and provenance fields are now wired through the resident server-context binding and evaluator result | Cozo/Vulkan full rebuild completed with three compile threads; focused direction-search/server-binding tests passed; serial `test-agent-flydelta*` passed 53/53 | The daemon callback is optional and fail-closed. Its default provider is empty because generic output-head weight rows are not exposed by the public server-context API; logits are never substituted for `U[t]`. No challenger is persisted, grafted, activated, promoted or granted `HELPED` by this seam alone |
+| 2026-10-02 | this local decision-margin seam validation | The production concept-synthesis path was exercised after the seam change with Qwen Instruct on the resident server-context/Vulkan0 path | Cozo/Vulkan build and serial FlyDelta tests passed; model smoke completed with 2 relations, 6 capture arms, 6 synthesis candidates and 2 serial frontier searches. The full-verification arms in the positive-prototype frontier were `HARMED`; no `HELPED`, learning credit or promotion was produced. The default daemon had no decision-pair/output-head provider, so no decision-margin challenger was created | This is runtime/wiring evidence, not evidence that positive-prototype is useful. The Oracle correctly rejects the harmful frontier, and the missing model-facing output-head provider remains an explicit backend integration boundary |
 | 2026-10-01 | this local evaluation-contract sweep | Durable evaluation fixtures can now name the Oracle-aligned classes `paraphrase`, `transfer`, `control` and `competing` in addition to the existing lifecycle gate classes | Contract round-trip checks passed; production daemon mapping preserves the existing intended/holdout/retention/agent-regression gates; no model-backed rerun was needed for this vocabulary-only change | The new names are optional fixture identity only; they do not alter lifecycle gates |
 | 2026-10-01 | this local Oracle-report sweep | Evaluation now emits a separate immutable, redacted Oracle-suite report resource and links it from the lifecycle evaluation report | Cozo/Vulkan build with three compile threads passed; 53 focused FlyDelta CTests passed serially, including Oracle-report and evaluation-provenance round trips; the TinyLlama Cozo/Vulkan daemon smoke traced resource `agent-resource://.../resource-12` through lifecycle-report reference and post-evaluation readback | The report is an audit/diagnostic artifact only. It does not create learning credit, select an overlay or change promotion semantics; no second store or evaluator path was introduced. The smoke's synthetic candidate verifies wiring only, not useful Qwen adaptation. |
 
@@ -3089,21 +3091,33 @@ the applicability boundary.
 
 The model-facing decision boundary uses the same generic seam. A bounded
 `decision_pair` contains two host-selected alternatives plus tokenizer and
-template fingerprints; it is not limited to tool names. The host adapter finds
-the first divergent token and may resolve the corresponding output-head rows
-through a callback. The existing `token_margin_direction` then computes:
+template fingerprints; it is not limited to tool names. A host may implement
+the `common_flydelta_decision_pair_provider` for a request carrying relation,
+fixture, Oracle, behavior and model-identity references. The provider must
+return a validated pair with a bounded first divergence; otherwise the
+challenger is absent and the ordinary synthesis portfolio continues unchanged.
+The host may then resolve the corresponding output-head rows through the
+separate `common_flydelta_output_head_row_resolver`. The existing
+`token_margin_direction` then computes:
 
 ```text
 normalize(U[positive_token] - U[negative_token])
 ```
 
 This is an output-space decision signal, not automatically an intermediate
-layer injection. It can rank or guide the existing layer/coefficient/scale
-search. The existing `execution_boundary_prototype` remains the generic
+layer injection. The daemon exposes the optional
+`run_decision_margin_challenger` callback through the resident server-context
+binding. It records returned experimental directions separately from the
+ordinary concept frontier; it does not persist, graft, activate or promote
+them by merely existing. A missing provider/resolver, missing localized layer,
+ambiguous divergence or incompatible fingerprint fails closed without
+disabling the existing search. The current default daemon binding leaves the
+provider empty because the public server-context API does not expose generic
+output-head weight rows; logits are not substituted for `U[t]`.
+
+The existing `execution_boundary_prototype` remains the generic
 positive-minus-negative capture direction, and coefficient search can combine
 it with another direction without introducing a tool-specific candidate type.
-A missing common prefix, ambiguous divergence or incompatible fingerprint
-fails closed.
 
 Search objective, verification objective and learning authority are separate
 contracts. A model-facing margin is search evidence only; it must be bound to
@@ -3114,6 +3128,13 @@ identity, positive/negative references and a typed scope such as
 `full_continuation`. A margin improvement may guide Whirlpool, BootstrapZoom,
 UtilityGate, augmentation or coefficient search, but it cannot create
 `HELPED`.
+
+The decision-margin candidate descriptor additionally retains
+`strategy_revision`, `decision_pair_ref`, `decision_score_scope` and
+`decision_first_divergence_index`. These fields make the challenger auditable
+and prevent a direction from being reused against a different model-facing
+surface. They are provenance only; `HELPED` still comes only from the normal
+host counterfactual path.
 
 The host verification chain is separate:
 

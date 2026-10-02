@@ -50,6 +50,18 @@ int main() {
             const common_flydelta_experiment_job &,
             std::vector<common_flydelta_concept_candidate> &,
             std::string &) { return true; };
+    callbacks.resolve_decision_pair = [](
+            const common_flydelta_decision_pair_request &,
+            common_flydelta_decision_pair &,
+            std::string &) { return false; };
+    callbacks.resolve_output_head_row = [](
+            int32_t,
+            std::vector<float> &,
+            std::string &) { return false; };
+    callbacks.run_decision_margin_challenger = [](
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_direction_candidate> &,
+            std::string &) { return true; };
     callbacks.run_representation_augmentation_with_state = [](
             const common_flydelta_experiment_job &,
             const common_flydelta_representation_augmentation_state *,
@@ -69,6 +81,9 @@ int main() {
     CHECK(static_cast<bool>(binding.run_counterfactual));
     CHECK(static_cast<bool>(binding.run_concept_capture));
     CHECK(static_cast<bool>(binding.run_concept_synthesis));
+    CHECK(static_cast<bool>(binding.resolve_decision_pair));
+    CHECK(static_cast<bool>(binding.resolve_output_head_row));
+    CHECK(static_cast<bool>(binding.run_decision_margin_challenger));
     CHECK(static_cast<bool>(binding.run_representation_augmentation_with_state));
 
     common_flydelta_arm_request arm;
@@ -93,6 +108,10 @@ int main() {
     factory_callbacks.run_counterfactual = binding.run_counterfactual;
     factory_callbacks.run_concept_capture = binding.run_concept_capture;
     factory_callbacks.run_concept_synthesis = binding.run_concept_synthesis;
+    factory_callbacks.resolve_decision_pair = binding.resolve_decision_pair;
+    factory_callbacks.resolve_output_head_row = binding.resolve_output_head_row;
+    factory_callbacks.run_decision_margin_challenger =
+        binding.run_decision_margin_challenger;
     factory_callbacks.run_representation_augmentation_with_state =
         binding.run_representation_augmentation_with_state;
     auto factory = common_agent_server_flydelta_binding_factory_from_callbacks(

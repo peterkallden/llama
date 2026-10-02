@@ -121,6 +121,43 @@ int main() {
     decision_pair.score_scope = "not-a-scope";
     CHECK(!common_flydelta_decision_pair_validate(decision_pair, error));
     decision_pair.score_scope = "tool_choice";
+    common_flydelta_decision_pair_request pair_request;
+    pair_request.behavior_key = config.behavior_key;
+    pair_request.relation_ref = "teaching://relation/grouped-sum";
+    pair_request.fixture_ref = "fixture://grouped-sum/target";
+    pair_request.oracle_ref = "oracle://dataset-operation";
+    pair_request.oracle_revision = "oracle:v1";
+    pair_request.model_profile_fingerprint = config.model_profile_fingerprint;
+    pair_request.tokenizer_fingerprint = "sha256:tokenizer";
+    pair_request.template_fingerprint = "sha256:template";
+    CHECK(common_flydelta_decision_pair_request_validate(pair_request, error));
+    auto invalid_pair_request = pair_request;
+    invalid_pair_request.fixture_ref.clear();
+    CHECK(!common_flydelta_decision_pair_request_validate(invalid_pair_request, error));
+    common_flydelta_direction_candidate provider_candidate;
+    CHECK(common_flydelta_build_decision_output_margin_candidate_from_provider(
+        config, pair_request,
+        [&](const common_flydelta_decision_pair_request &,
+                common_flydelta_decision_pair & provided, std::string &) {
+            provided = decision_pair;
+            return true;
+        },
+        [](int32_t token, std::vector<float> & row, std::string &) {
+            row = token == 101 ? std::vector<float>{0.0f, 2.0f, 0.0f, 0.0f}
+                               : std::vector<float>{0.0f, 0.0f, 0.0f, 0.0f};
+            return true;
+        }, provider_candidate, error));
+    auto mismatched_pair_request = pair_request;
+    mismatched_pair_request.score_scope = "full_continuation";
+    CHECK(!common_flydelta_build_decision_output_margin_candidate_from_provider(
+        config, mismatched_pair_request,
+        [&](const common_flydelta_decision_pair_request &,
+                common_flydelta_decision_pair & provided, std::string &) {
+            provided = decision_pair;
+            return true;
+        },
+        [](int32_t, std::vector<float> &, std::string &) { return true; },
+        provider_candidate, error));
     common_flydelta_decision_pair planning_pair;
     CHECK(common_flydelta_decision_pair_from_tokens(
         common_adaptation_evidence_source::planning_revision,
@@ -144,6 +181,10 @@ int main() {
         }, output_candidate, error));
     CHECK(output_candidate.kind == common_flydelta_direction_kind::token_margin_direction);
     CHECK(output_candidate.experimental_only && output_candidate.values[1] == 1.0f);
+    CHECK(output_candidate.decision_pair_ref == decision_pair.decision_pair_id);
+    CHECK(output_candidate.decision_score_scope == decision_pair.score_scope);
+    CHECK(output_candidate.decision_first_divergence_index ==
+        decision_pair.first_divergence_index);
 
     common_flydelta_token_margin_material margin;
     margin.positive_output_row = {0.0f, 2.0f, 0.0f, 0.0f};
@@ -191,6 +232,10 @@ int main() {
     CHECK(descriptor.strategy == common_flydelta_synthesis_strategy::decision_output_margin);
     CHECK(descriptor.estimator == common_flydelta_synthesis_estimator::direct);
     CHECK(descriptor.experimental_only && !descriptor.learning_eligible);
+    CHECK(descriptor.decision_pair_ref == decision_pair.decision_pair_id);
+    CHECK(descriptor.decision_score_scope == decision_pair.score_scope);
+    CHECK(descriptor.decision_first_divergence_index ==
+        decision_pair.first_divergence_index);
     CHECK(std::string(common_flydelta_synthesis_strategy_name(
         common_flydelta_synthesis_strategy::conditioned_prototype)) ==
         "conditioned_prototype");

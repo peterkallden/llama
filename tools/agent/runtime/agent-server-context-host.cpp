@@ -256,6 +256,10 @@ common_agent_server_flydelta_binding_from_callbacks(
     binding.run_donor_capture = std::move(callbacks.run_donor_capture);
     binding.run_counterfactual = std::move(callbacks.run_counterfactual);
     binding.run_concept_synthesis = std::move(callbacks.run_concept_synthesis);
+    binding.resolve_decision_pair = std::move(callbacks.resolve_decision_pair);
+    binding.resolve_output_head_row = std::move(callbacks.resolve_output_head_row);
+    binding.run_decision_margin_challenger =
+        std::move(callbacks.run_decision_margin_challenger);
     binding.persist_experimental_direction =
         std::move(callbacks.persist_experimental_direction);
     binding.run_representation_augmentation_with_state =
@@ -509,6 +513,10 @@ common_agent_server_context_host_make_flydelta_model_host(
             run_donor_capture = std::move(binding.run_donor_capture),
             run_counterfactual = std::move(binding.run_counterfactual),
             run_concept_synthesis = std::move(binding.run_concept_synthesis),
+            resolve_decision_pair = std::move(binding.resolve_decision_pair),
+            resolve_output_head_row = std::move(binding.resolve_output_head_row),
+            run_decision_margin_challenger =
+                std::move(binding.run_decision_margin_challenger),
             persist_experimental_direction =
                 std::move(binding.persist_experimental_direction),
             run_representation_augmentation_with_state =
@@ -555,6 +563,15 @@ common_agent_server_context_host_make_flydelta_model_host(
         }
         if (run_concept_synthesis) {
             callbacks.run_concept_synthesis = run_concept_synthesis;
+        }
+        if (resolve_decision_pair) {
+            callbacks.resolve_decision_pair = resolve_decision_pair;
+        }
+        if (resolve_output_head_row) {
+            callbacks.resolve_output_head_row = resolve_output_head_row;
+        }
+        if (run_decision_margin_challenger) {
+            callbacks.run_decision_margin_challenger = run_decision_margin_challenger;
         }
         if (persist_experimental_direction) {
             callbacks.persist_experimental_direction = persist_experimental_direction;
