@@ -72,6 +72,11 @@ struct common_flydelta_counterfactual_report {
     std::string candidate_id;
     std::string baseline_profile_id;
     std::string candidate_profile_id;
+    // Canonical host-composed identities.  They are intentionally separate
+    // from profile ids because incremental evaluation may compare A against
+    // A+B on the same base profile.
+    std::string baseline_deployment_fingerprint;
+    std::string candidate_deployment_fingerprint;
     common_flydelta_counterfactual_trial baseline;
     common_flydelta_counterfactual_trial candidate;
     common_flydelta_counterfactual_outcome outcome = common_flydelta_counterfactual_outcome::unknown;

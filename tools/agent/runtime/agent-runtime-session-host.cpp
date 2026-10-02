@@ -112,6 +112,7 @@ common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
         std::move(config.tooling),
         std::move(config.tooling_resolver),
         std::move(config.model_residency),
+        std::move(config.flydelta_deployment_resolver),
     };
 }
 
@@ -317,15 +318,26 @@ bool common_agent_runtime_session_host::run_turn(
         return false;
     }
 
+    common_agent_runtime_session_host_turn_request effective_request = request;
+    if (config.flydelta_deployment_resolver) {
+        common_flydelta_deployment_result deployment;
+        if (!config.flydelta_deployment_resolver(request, deployment, error)) {
+            result.error = error;
+            return false;
+        }
+        effective_request.flydelta_activation = deployment.activation;
+        result.flydelta_deployment = std::move(deployment);
+    }
+
     bool runtime_reused = false;
-    if (!ensure_runtime(request, runtime_reused, error)) {
+    if (!ensure_runtime(effective_request, runtime_reused, error)) {
         result.error = error;
         return false;
     }
     session_host_trace("runtime-ready", request);
     update_session_policy_pack(request);
     common_agent_runtime_tooling resolved_tooling;
-    if (!resolve_tooling(runtime.get(), request, resolved_tooling, error)) {
+    if (!resolve_tooling(runtime.get(), effective_request, resolved_tooling, error)) {
         result.error = error;
         return false;
     }
@@ -337,20 +349,23 @@ bool common_agent_runtime_session_host::run_turn(
     }
     runtime->set_tooling(std::move(resolved_tooling));
     runtime->set_execution_control(request.execution_control);
+    runtime->set_flydelta_activation(effective_request.flydelta_activation);
 
-    const std::string turn_id = request.turn_id.empty()
+    const std::string turn_id = effective_request.turn_id.empty()
         ? "daemon-turn-" + std::to_string(++generated_turn_counter)
-        : request.turn_id;
+        : effective_request.turn_id;
 
     common_agent_result agent_result;
     bool ok = false;
     session_host_trace("before-runtime-run", request);
-    switch (request.mode) {
+    switch (effective_request.mode) {
         case common_agent_runtime_host_mode::chat:
-            ok = runtime->run_chat_prompt(request.prompt, turn_id, request.n_predict, agent_result, error);
+            ok = runtime->run_chat_prompt(effective_request.prompt, turn_id,
+                effective_request.n_predict, agent_result, error);
             break;
         case common_agent_runtime_host_mode::agent:
-            ok = runtime->run_agent_prompt(request.prompt, turn_id, request.n_predict, agent_result, error);
+            ok = runtime->run_agent_prompt(effective_request.prompt, turn_id,
+                effective_request.n_predict, agent_result, error);
             break;
     }
     session_host_trace("after-runtime-run", request);

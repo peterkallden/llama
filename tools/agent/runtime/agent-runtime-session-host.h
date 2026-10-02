@@ -7,9 +7,11 @@
 #include "agent/contracts/agent-failures.h"
 #include "agent/contracts/agent-result.h"
 #include "agent-model-residency.h"
+#include "agent/adaptation/flydelta/flydelta-deployment.h"
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -80,6 +82,10 @@ struct common_agent_runtime_session_host_turn_result {
     size_t trace_count = 0;
     size_t memory_learning_related_count = 0;
     std::string memory_learning_summary;
+    // Host-owned deployment resolution evidence. This is an audit projection
+    // of the request-scoped FlyDelta factory result; runtime generation still
+    // consumes only the immutable activation snapshot.
+    std::optional<common_flydelta_deployment_result> flydelta_deployment;
     std::vector<common_agent_event> events;
     std::vector<common_runtime_trace_entry> trace;
     std::string error;
@@ -111,6 +117,10 @@ struct common_agent_runtime_session_host_config {
         common_agent_runtime_tooling & tooling,
         std::string & error)> tooling_resolver;
     std::shared_ptr<common_agent_runtime_model_residency> model_residency;
+    std::function<bool(
+        const common_agent_runtime_session_host_turn_request & request,
+        common_flydelta_deployment_result & result,
+        std::string & error)> flydelta_deployment_resolver;
 };
 
 struct common_agent_runtime_session_host_build_config {
@@ -130,6 +140,10 @@ struct common_agent_runtime_session_host_build_config {
         common_agent_runtime_tooling & tooling,
         std::string & error)> tooling_resolver;
     std::shared_ptr<common_agent_runtime_model_residency> model_residency;
+    std::function<bool(
+        const common_agent_runtime_session_host_turn_request & request,
+        common_flydelta_deployment_result & result,
+        std::string & error)> flydelta_deployment_resolver;
 };
 
 common_agent_runtime_session_host_config make_agent_runtime_session_host_config(

@@ -92,6 +92,40 @@ int main() {
     CHECK(registry.resolve_bound(bound_profile, "flydelta://binding/tool-repair",
         sideband.compatibility, sideband.applicability, 4, 3, resolved, scale, error));
     CHECK(resolved.id == sideband.id && scale == 0.5);
+
+    auto canary = manifest();
+    canary.id = "flydelta://sideband/tool-repair-canary";
+    canary.artifact_path = "sidebands/tool-repair-canary.json";
+    canary.artifact_hash = "sha256:artifact-canary";
+    CHECK(registry.admit(canary, error));
+    CHECK(registry.stage_canary(canary.id, "eval:tool-repair-canary", error, true));
+    common_flydelta_canary_envelope envelope;
+    envelope.binding_key = canary.binding_key;
+    envelope.candidate_revision_id = canary.id;
+    envelope.behavior_key = canary.applicability.behavior_key;
+    envelope.scope_fingerprint = canary.applicability.scope_fingerprint;
+    envelope.traffic_basis_points = 10000;
+    envelope.expires_at_epoch_ms = 4102444800000ULL;
+    envelope.max_observations = 4;
+    envelope.max_scale = 0.25f;
+    envelope.compatibility = canary.compatibility;
+    envelope.oracle_revision = canary.applicability.verifier_revision;
+    envelope.policy_revision = "canary-policy:v1";
+    envelope.baseline_deployment_fingerprint = "sha256:active-a";
+    envelope.rollback_revision_id = sideband.id;
+    CHECK(common_flydelta_canary_select(envelope, "review:canary", "session:one", 0,
+        1ULL));
+    CHECK(!common_flydelta_canary_select(envelope, "review:canary", "", 0, 1ULL));
+    CHECK(!common_flydelta_canary_select(envelope, "review:canary", "session:one", 4, 1ULL));
+    CHECK(!registry.resolve_canary_bound(bound_profile, envelope,
+        common_flydelta_runtime_authority::active_only, canary.applicability, 4, 3,
+        resolved, scale, error));
+    CHECK(registry.resolve_canary_bound(bound_profile, envelope,
+        common_flydelta_runtime_authority::canary_evaluation, canary.applicability, 4, 3,
+        resolved, scale, error));
+    CHECK(resolved.id == canary.id && scale == 0.25);
+    CHECK(!registry.activate(canary.id, error));
+    CHECK(error.find("promotion-backed") != std::string::npos);
     CHECK(registry.bind_revision("flydelta://binding/tool-repair", revision_b.id,
         sideband.id, error));
     CHECK(registry.binding("flydelta://binding/tool-repair", binding, error));

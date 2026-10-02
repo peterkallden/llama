@@ -61,6 +61,10 @@ public:
     void set_tooling(common_agent_runtime_tooling tooling);
     void set_execution_control(common_agent_runtime_execution_control execution_control);
     void set_policy_pack(std::optional<common_memory_policy_pack> policy_pack);
+    // Replace only the immutable request-scoped activation for the next turn.
+    // The resident model, server context and orchestration state are reused.
+    void set_flydelta_activation(
+            std::shared_ptr<const common_flydelta_activation_result> activation);
 
     // Load the configured inference model without executing a user turn.
     bool prepare_model(std::string & error);

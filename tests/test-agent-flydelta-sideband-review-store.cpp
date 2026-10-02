@@ -16,10 +16,33 @@ static common_flydelta_sideband_manifest manifest() {
     value.compatibility.template_fingerprint = "sha256:template";
     value.compatibility.architecture = "qwen2";
     value.compatibility.inference_layout_revision = "layout:v1";
+    value.binding_key = "flydelta://binding/review-store";
+    value.applicability.behavior_key = "tool_use/review-store";
+    value.applicability.scope_fingerprint = "scope:review-store";
+    value.applicability.verifier_revision = "oracle:review-store-v1";
     value.model_n_embd = 4;
     value.model_n_layers = 3;
     value.il_end = 2;
     return value;
+}
+
+static void attach_envelope(common_flydelta_sideband_review & review) {
+    review.has_canary_envelope = true;
+    review.canary_envelope_event_id = review.event_id;
+    auto & envelope = review.canary_envelope;
+    envelope.binding_key = review.manifest.binding_key;
+    envelope.candidate_revision_id = review.manifest.id;
+    envelope.behavior_key = review.manifest.applicability.behavior_key;
+    envelope.scope_fingerprint = review.manifest.applicability.scope_fingerprint;
+    envelope.traffic_basis_points = 500;
+    envelope.expires_at_epoch_ms = 4102444800000ULL;
+    envelope.max_observations = 10;
+    envelope.max_scale = 0.5f;
+    envelope.compatibility = review.manifest.compatibility;
+    envelope.oracle_revision = review.manifest.applicability.verifier_revision;
+    envelope.policy_revision = "canary-policy:v1";
+    envelope.baseline_deployment_fingerprint = "sha256:deployment-active";
+    envelope.rollback_revision_id = review.manifest.id;
 }
 
 static common_flydelta_sideband_review review(
@@ -30,6 +53,9 @@ static common_flydelta_sideband_review review(
     result.actor_id = "operator:test";
     result.action = action;
     result.manifest = std::move(value);
+    if (action == common_flydelta_review_action::activate) {
+        result.binding_key = result.manifest.binding_key;
+    }
     if (action == common_flydelta_review_action::promote_to_candidate ||
             action == common_flydelta_review_action::stage_canary) {
         result.evaluation_revision = "evaluation:" + result.manifest.id;
@@ -97,6 +123,7 @@ int main() {
     canary_review.promotion_policy.min_help_confidence = 1.0f;
     canary_review.promotion_policy.max_unknown_ratio = 0.0f;
     canary_review.evaluation = evaluation();
+    attach_envelope(canary_review);
     CHECK(store.apply_and_append(registry, canary_review, true, error));
     value.status = common_flydelta_sideband_status::canary;
     CHECK(store.apply_and_append(registry,
@@ -122,6 +149,7 @@ int main() {
     canary_review2.promotion_policy.min_help_confidence = 1.0f;
     canary_review2.promotion_policy.max_unknown_ratio = 0.0f;
     canary_review2.evaluation = evaluation_for(value2.id);
+    attach_envelope(canary_review2);
     CHECK(store.apply_and_append(registry, canary_review2, true, error));
     value2.status = common_flydelta_sideband_status::canary;
     auto activate_review2 = review("review-8", common_flydelta_review_action::activate, value2);
@@ -148,5 +176,11 @@ int main() {
     CHECK(restored.list().at(value2.id).status == common_flydelta_sideband_status::active);
     CHECK(restored.binding("flydelta://binding/review-store", binding, error));
     CHECK(binding.selected_revision_id == value.id);
+    CHECK(store.open_canaries(error).size() == 2);
+    auto close = review("review-10", common_flydelta_review_action::close_canary, value2);
+    close.canary_envelope_event_id = "review-7";
+    close.reason = "bounded canary complete";
+    CHECK(store.apply_and_append(registry, close, true, error));
+    CHECK(store.open_canaries(error).size() == 1);
     return 0;
 }

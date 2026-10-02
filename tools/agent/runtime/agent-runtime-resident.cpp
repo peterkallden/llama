@@ -111,6 +111,11 @@ void common_agent_runtime_resident_runtime::set_policy_pack(
     base_turn_request.request.policy_pack = std::move(policy_pack);
 }
 
+void common_agent_runtime_resident_runtime::set_flydelta_activation(
+        std::shared_ptr<const common_flydelta_activation_result> activation) {
+    base_turn_request.request.flydelta_activation = std::move(activation);
+}
+
 bool common_agent_runtime_resident_runtime::prepare_model(std::string & error) {
     if (model_residency) {
         if (resident_model_handle.valid()) {

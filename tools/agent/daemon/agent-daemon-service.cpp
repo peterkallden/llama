@@ -765,6 +765,31 @@ bool common_agent_daemon_service::execute_flydelta_admin(
         common_flydelta_activation_binding binding;
         if (!runtime.flydelta_sideband_registry->binding(
                 request.binding_key, binding, error)) return fail(error);
+        std::vector<common_flydelta_sideband_review> open_canaries;
+        if (runtime.flydelta_sideband_review_store) {
+            open_canaries = runtime.flydelta_sideband_review_store->open_canaries(error);
+            if (!error.empty()) return fail(error);
+        }
+        json canaries = json::array();
+        for (const auto & review : open_canaries) {
+            if (!review.has_canary_envelope ||
+                    review.canary_envelope.binding_key != request.binding_key) continue;
+            const auto & envelope = review.canary_envelope;
+            canaries.push_back({
+                {"event_id", review.event_id},
+                {"candidate_revision_id", envelope.candidate_revision_id},
+                {"traffic_basis_points", envelope.traffic_basis_points},
+                {"expires_at_epoch_ms", envelope.expires_at_epoch_ms},
+                {"max_observations", envelope.max_observations},
+                {"max_scale", envelope.max_scale},
+                {"behavior_key", envelope.behavior_key},
+                {"scope_fingerprint", envelope.scope_fingerprint},
+                {"baseline_deployment_fingerprint", envelope.baseline_deployment_fingerprint},
+                {"rollback_revision_id", envelope.rollback_revision_id},
+                {"oracle_revision", envelope.oracle_revision},
+                {"policy_revision", envelope.policy_revision},
+            });
+        }
         outcome.ok = true;
         outcome.event = "flydelta.binding.loaded";
         outcome.payload_json = json{
@@ -772,6 +797,7 @@ bool common_agent_daemon_service::execute_flydelta_admin(
             {"binding_key", binding.binding_key},
             {"selected_revision_id", binding.selected_revision_id},
             {"previous_revision_id", binding.previous_revision_id},
+            {"open_canaries", canaries},
         }.dump();
         return true;
     }

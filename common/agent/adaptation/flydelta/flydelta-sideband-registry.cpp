@@ -71,6 +71,52 @@ const char * common_flydelta_sideband_status_name(common_flydelta_sideband_statu
     return "rejected";
 }
 
+bool common_flydelta_canary_envelope_validate(
+        const common_flydelta_canary_envelope & envelope, std::string & error) {
+    error.clear();
+    if (envelope.schema_version != 1 || !bounded(envelope.binding_key) ||
+            !bounded(envelope.candidate_revision_id) || !bounded(envelope.behavior_key) ||
+            !bounded(envelope.scope_fingerprint) || envelope.traffic_basis_points == 0 ||
+            envelope.traffic_basis_points > 10000 || envelope.expires_at_epoch_ms == 0 ||
+            envelope.max_observations == 0 || !std::isfinite(envelope.max_scale) ||
+            envelope.max_scale <= 0.0f || envelope.max_scale > 4.0f ||
+            !bounded(envelope.oracle_revision) || !bounded(envelope.policy_revision) ||
+            !bounded(envelope.baseline_deployment_fingerprint) ||
+            !bounded(envelope.rollback_revision_id) ||
+            (envelope.compatibility.base_model_id.empty() &&
+             envelope.compatibility.base_model_fingerprint.empty()) ||
+            !bounded(envelope.compatibility.tokenizer_fingerprint) ||
+            !bounded(envelope.compatibility.template_fingerprint) ||
+            !bounded(envelope.compatibility.architecture) ||
+            !bounded(envelope.compatibility.inference_layout_revision)) {
+        error = "FlyDelta canary envelope is incomplete or invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_canary_select(
+        const common_flydelta_canary_envelope & envelope,
+        const std::string & canary_event_id,
+        const std::string & allocation_key,
+        size_t observed_count,
+        uint64_t now_epoch_ms) {
+    std::string error;
+    if (!common_flydelta_canary_envelope_validate(envelope, error) ||
+            !bounded(canary_event_id) || !bounded(allocation_key) ||
+            now_epoch_ms >= envelope.expires_at_epoch_ms ||
+            observed_count >= envelope.max_observations) return false;
+    // FNV-1a is intentionally specified here rather than std::hash so a
+    // replay on another process/platform selects the same cohort.
+    uint64_t hash = 1469598103934665603ULL;
+    const std::string identity = allocation_key + '\n' + canary_event_id + '\n' + envelope.binding_key;
+    for (const unsigned char value : identity) {
+        hash ^= value;
+        hash *= 1099511628211ULL;
+    }
+    return (hash % 10000ULL) < envelope.traffic_basis_points;
+}
+
 bool common_flydelta_sideband_manifest_validate(
         const common_flydelta_sideband_manifest & manifest,
         std::string & error) {
@@ -122,6 +168,10 @@ bool common_flydelta_sideband_manifest_validate(
         error = "active FlyDelta sideband requires a passed evaluation";
         return false;
     }
+    if (manifest.status == common_flydelta_sideband_status::active && manifest.canary_progress_only) {
+        error = "active FlyDelta sideband cannot retain progress-only canary admission";
+        return false;
+    }
     return true;
 }
 
@@ -169,6 +219,7 @@ std::string common_flydelta_sideband_manifest_to_json(
         {"il_end", manifest.il_end},
         {"evaluation_revision", manifest.evaluation_revision},
         {"evaluation_passed", manifest.evaluation_passed},
+        {"canary_progress_only", manifest.canary_progress_only},
     }.dump();
 }
 
@@ -218,6 +269,7 @@ bool common_flydelta_sideband_manifest_from_json(
         manifest.il_end = value.value("il_end", 0);
         manifest.evaluation_revision = value.value("evaluation_revision", "");
         manifest.evaluation_passed = value.value("evaluation_passed", false);
+        manifest.canary_progress_only = value.value("canary_progress_only", false);
         const auto status = value.value("status", "candidate");
         if (status == "experimental") manifest.status = common_flydelta_sideband_status::experimental;
         else if (status == "candidate") manifest.status = common_flydelta_sideband_status::candidate;
@@ -299,7 +351,8 @@ bool common_flydelta_sideband_registry::promote_experimental(
 }
 
 bool common_flydelta_sideband_registry::stage_canary(
-        const std::string & id, const std::string & evaluation_revision, std::string & error) {
+        const std::string & id, const std::string & evaluation_revision, std::string & error,
+        bool canary_progress_only) {
     const auto it = manifests.find(id);
     if (it == manifests.end()) { error = "FlyDelta sideband is unavailable: " + id; return false; }
     if (it->second.status != common_flydelta_sideband_status::candidate) {
@@ -313,6 +366,7 @@ bool common_flydelta_sideband_registry::stage_canary(
     if (!bounded(evaluation_revision)) { error = "FlyDelta sideband evaluation revision is invalid"; return false; }
     it->second.evaluation_revision = evaluation_revision;
     it->second.evaluation_passed = true;
+    it->second.canary_progress_only = canary_progress_only;
     it->second.status = common_flydelta_sideband_status::canary;
     error.clear();
     return true;
@@ -322,8 +376,8 @@ bool common_flydelta_sideband_registry::activate(const std::string & id, std::st
     const auto it = manifests.find(id);
     if (it == manifests.end()) { error = "FlyDelta sideband is unavailable: " + id; return false; }
     if (it->second.status != common_flydelta_sideband_status::canary ||
-            !it->second.evaluation_passed) {
-        error = "FlyDelta sideband must pass canary evaluation before activation";
+            !it->second.evaluation_passed || it->second.canary_progress_only) {
+        error = "FlyDelta sideband must pass promotion-backed canary evaluation before activation";
         return false;
     }
     it->second.status = common_flydelta_sideband_status::active;
@@ -447,6 +501,66 @@ bool common_flydelta_sideband_registry::resolve_bound(
     return resolve(profile, selected->second.selected_revision_id, expected,
         expected_applicability, model_n_embd, model_n_layers, manifest,
         profile_scale, error);
+}
+
+bool common_flydelta_sideband_registry::resolve_canary_bound(
+        const common_agent_model_profile & profile,
+        const common_flydelta_canary_envelope & envelope,
+        common_flydelta_runtime_authority authority,
+        const common_flydelta_applicability & expected_applicability,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        common_flydelta_sideband_manifest & manifest,
+        double & profile_scale,
+        std::string & error) const {
+    error.clear();
+    if (authority != common_flydelta_runtime_authority::canary_evaluation) {
+        error = "FlyDelta canary resolution requires explicit canary authority";
+        return false;
+    }
+    if (!common_flydelta_canary_envelope_validate(envelope, error) ||
+            !common_agent_validate_model_profile(profile, error)) return false;
+    if (envelope.expires_at_epoch_ms <= current_epoch_ms()) {
+        error = "FlyDelta canary envelope has expired";
+        return false;
+    }
+    const auto configured = std::find_if(profile.sidebands.begin(), profile.sidebands.end(),
+        [&](const auto & sideband) { return sideband.binding_key == envelope.binding_key; });
+    if (configured == profile.sidebands.end()) {
+        error = "FlyDelta canary binding is not configured in model profile";
+        return false;
+    }
+    const auto it = manifests.find(envelope.candidate_revision_id);
+    if (it == manifests.end() || it->second.status != common_flydelta_sideband_status::canary) {
+        error = "FlyDelta canary revision is not staged";
+        return false;
+    }
+    if (it->second.binding_key != envelope.binding_key ||
+            it->second.applicability.behavior_key != envelope.behavior_key ||
+            it->second.applicability.scope_fingerprint != envelope.scope_fingerprint ||
+            it->second.applicability.verifier_revision != expected_applicability.verifier_revision ||
+            it->second.model_n_embd != model_n_embd || it->second.model_n_layers != model_n_layers ||
+            it->second.il_start < 1 || it->second.il_end >= static_cast<int32_t>(model_n_layers) ||
+            !model_identity_matches(it->second.compatibility, envelope.compatibility, error) ||
+            !same(it->second.compatibility.tokenizer_fingerprint,
+                envelope.compatibility.tokenizer_fingerprint, "tokenizer", error) ||
+            !same(it->second.compatibility.template_fingerprint,
+                envelope.compatibility.template_fingerprint, "template", error) ||
+            !same(it->second.compatibility.architecture,
+                envelope.compatibility.architecture, "architecture", error) ||
+            !same(it->second.compatibility.inference_layout_revision,
+                envelope.compatibility.inference_layout_revision, "inference layout", error)) {
+        if (error.empty()) error = "FlyDelta canary revision is incompatible with its envelope";
+        return false;
+    }
+    if (expected_applicability.behavior_key != envelope.behavior_key ||
+            expected_applicability.scope_fingerprint != envelope.scope_fingerprint) {
+        error = "FlyDelta canary request applicability is incompatible";
+        return false;
+    }
+    manifest = it->second;
+    profile_scale = std::min(configured->scale, static_cast<double>(envelope.max_scale));
+    return true;
 }
 
 bool common_flydelta_sideband_registry::binding(

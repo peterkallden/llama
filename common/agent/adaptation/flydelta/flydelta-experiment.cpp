@@ -204,6 +204,14 @@ bool common_flydelta_counterfactual_report_validate(
         error = "FlyDelta counterfactual identity is incomplete";
         return false;
     }
+    const bool has_deployment = !report.baseline_deployment_fingerprint.empty() ||
+        !report.candidate_deployment_fingerprint.empty();
+    if (has_deployment && (!nonempty_bounded(report.baseline_deployment_fingerprint) ||
+            !nonempty_bounded(report.candidate_deployment_fingerprint) ||
+            report.baseline_deployment_fingerprint == report.candidate_deployment_fingerprint)) {
+        error = "FlyDelta counterfactual deployment identity is incomplete";
+        return false;
+    }
     if (!common_flydelta_counterfactual_trial_validate(report.baseline, error) ||
             !common_flydelta_counterfactual_trial_validate(report.candidate, error)) {
         return false;
@@ -261,6 +269,8 @@ std::string common_flydelta_counterfactual_report_to_json(
         {"candidate_id", report.candidate_id},
         {"baseline_profile_id", report.baseline_profile_id},
         {"candidate_profile_id", report.candidate_profile_id},
+        {"baseline_deployment_fingerprint", report.baseline_deployment_fingerprint},
+        {"candidate_deployment_fingerprint", report.candidate_deployment_fingerprint},
         {"baseline", trial_to_json(report.baseline)},
         {"candidate", trial_to_json(report.candidate)},
         {"outcome", common_flydelta_counterfactual_outcome_name(report.outcome)},
@@ -283,6 +293,8 @@ bool common_flydelta_counterfactual_report_from_json(
         report.candidate_id = value.value("candidate_id", "");
         report.baseline_profile_id = value.value("baseline_profile_id", "");
         report.candidate_profile_id = value.value("candidate_profile_id", "");
+        report.baseline_deployment_fingerprint = value.value("baseline_deployment_fingerprint", "");
+        report.candidate_deployment_fingerprint = value.value("candidate_deployment_fingerprint", "");
         trial_from_json(value.value("baseline", json::object()), report.baseline);
         trial_from_json(value.value("candidate", json::object()), report.candidate);
         report.outcome = parse_outcome(value.value("outcome", "unknown"));

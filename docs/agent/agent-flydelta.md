@@ -634,6 +634,7 @@ journal remains the durable evidence boundary.
 | 2026-10-02 | this local decision-margin seam validation | The production concept-synthesis path was exercised after the seam change with Qwen Instruct on the resident server-context/Vulkan0 path | Cozo/Vulkan build and serial FlyDelta tests passed; model smoke completed with 2 relations, 6 capture arms, 6 synthesis candidates and 2 serial frontier searches. The full-verification arms in the positive-prototype frontier were `HARMED`; no `HELPED`, learning credit or promotion was produced. The default daemon had no decision-pair/output-head provider, so no decision-margin challenger was created | This is runtime/wiring evidence, not evidence that positive-prototype is useful. The Oracle correctly rejects the harmful frontier, and the missing model-facing output-head provider remains an explicit backend integration boundary |
 | 2026-10-02 | this local user-concept smoke correction | The same production smoke now labels its host-grounded concept relation as `user_taught_concept` | Qwen Instruct Vulkan0 server-context run completed with 2 relations, 6 capture arms, 6 candidates and 2 serial frontier searches; positive-prototype arms were `HARMED`, with no learning credit or promotion | This validates user-concept source wiring and fail-closed Oracle behavior, not a successful positive-prototype intervention. The lambda/code-structure example remains future work because it needs a separate host Oracle |
 | 2026-10-02 | this local verifier-trace correction | Full FlyDelta arm traces now preserve compact expected-versus-observed verifier observations through the common arm, trial, region and worker seams | After a complete Cozo/Vulkan rebuild, all 53 focused FlyDelta CTests passed serially. Qwen Instruct Vulkan0 resident server-context smoke completed with 2 relations, 6 capture arms, 6 candidates and 2 frontier searches; both full-verification prototype arms reported `expected_decision` as grouped `sum(amount)` by `region`, `observed_decision` as `unparsed:missing_field`, and `verifier_reason` explaining that `group_by` was missing, yielding `HARMED` and no learning credit/promotion | The fields are bounded diagnostic trace data only. They explain `HELPED/HARMED/UNKNOWN` outcomes and do not change Oracle truth, evidence, learning, selection or promotion semantics |
+| 2026-10-02 | this local canary-deployment/runtime-seam sweep | Bounded canary resolution now has a factory and an explicit resident-runtime seam on top of the existing registry and review journal | Cozo/Vulkan daemon/deployment targets rebuilt with three compile threads; 11 focused FlyDelta CTests and 10 model-free FlyDelta smokes passed serially. Qwen Instruct Vulkan0 server-context causal smoke reached planner/reflection/capture with four threads; OpenAlex fixtures were already valid on the first planner attempt and therefore stopped as `fixture_not_counterfactual` | Added active-only default resolution, explicit canary authority, deterministic cohort selection, replacement/additive ordered composition, baseline/candidate deployment fingerprints, per-turn activation refresh on a reused resident runtime, and `get_binding.open_canaries` admin projection. The Qwen result is server-context wiring evidence only; no canary, learning credit, promotion or active-binding change was performed |
 | 2026-10-02 | this local iterative-progress correction | Individual strict verifier pass is separated from paired outcome; bounded dataset semantic progress, residual dimensions and Bootstrap resume fields now travel through reports, trace and existing state | Cozo/Vulkan focused build completed with three compile threads and the user-profile ccache; affected FlyDelta CTests passed after rebuilding all affected binaries | A partial candidate is now `UNKNOWN` plus `IMPROVED`, not individual `HARMED`; strict Oracle, learning credit, promotion and activation authority remain unchanged |
 | 2026-10-01 | this local evaluation-contract sweep | Durable evaluation fixtures can now name the Oracle-aligned classes `paraphrase`, `transfer`, `control` and `competing` in addition to the existing lifecycle gate classes | Contract round-trip checks passed; production daemon mapping preserves the existing intended/holdout/retention/agent-regression gates; no model-backed rerun was needed for this vocabulary-only change | The new names are optional fixture identity only; they do not alter lifecycle gates |
 | 2026-10-01 | this local Oracle-report sweep | Evaluation now emits a separate immutable, redacted Oracle-suite report resource and links it from the lifecycle evaluation report | Cozo/Vulkan build with three compile threads passed; 53 focused FlyDelta CTests passed serially, including Oracle-report and evaluation-provenance round trips; the TinyLlama Cozo/Vulkan daemon smoke traced resource `agent-resource://.../resource-12` through lifecycle-report reference and post-evaluation readback | The report is an audit/diagnostic artifact only. It does not create learning credit, select an overlay or change promotion semantics; no second store or evaluator path was introduced. The smoke's synthetic candidate verifies wiring only, not useful Qwen adaptation. |
@@ -4143,6 +4144,97 @@ experimental candidate
 
 Direkta fysiska `sideband_id`-profiler är bakåtkompatibla. Binding-profiler
 används för revisioner som ska kunna bytas och återställas utan profiländring.
+
+### 4O. Begränsad canary ovanpå en aktiv binding
+
+`canary` är inte en svagare form av `active`. Normal runtime-resolution
+accepterar fortfarande endast den aktiva revision som bindingen valt. En
+canary får endast resolvas genom en explicit, request-scopad
+`canary_evaluation`-authority efter att hosten har valt ett öppet, durabelt
+review-envelope.
+
+```text
+model profile sidebands[]
+        ↓ stable default bindings
+active deployment composition
+        ↓ matching scope + deterministic cohort
+temporary canary override
+        ↓
+candidate deployment composition
+        ↓ host Oracle / counterfactual report
+close canary | retain for evaluation | later explicit active promotion
+```
+
+Envelope:t lagras som en `stage_canary`-händelse i den befintliga
+sideband-review-journalen, inte i den immutabla artifacten. Det anger
+`binding_key`, candidate-revision, behavior/scope, traffic i basis points,
+expiry, observationsbudget, max scale, modellkompatibilitet, Oracle/policy,
+baseline-deployment och rollback-target. En `close_canary`-händelse tar bort
+den temporära override:n utan att ändra active-bindingen eller artifacten.
+
+Alla matchande turns bucketas deterministiskt från en host-owned stabil
+session-/konversationsnyckel, canary-event-id och binding-kontext. Saknad
+nyckel, fel scope, expiry, slut budget eller inkompatibilitet ger alltid
+active-only fallback. Modellen kan inte välja cohort.
+
+Counterfactual- och evaluationrapporter kan bära både baseline- och
+candidate-deployment-fingerprint. De canonicaliseras från den ordnade
+resolved overlay-kompositionen och dess effektiva scales/layout. Detta gör
+att ett resultat kan uttrycka `A → A+B` eller `A → B` utan att felaktigt
+tolkas som ett pristine-baseline-resultat. Oracle/policyrevision är separat
+audit-provenance och ingår inte i cache-identiteten.
+
+`IMPROVED` är en host-observerad admission-signal för ett uttryckligen
+godkänt bounded experiment; den ändrar inte `HELPED`/`HARMED`, learning credit,
+promotion eller active-kravet. En progress-only canary kan därför inte
+aktiveras till `active` förrän en senare promotion-backed evaluation har
+uppfyllt den vanliga aktiveringspolicyn.
+
+#### Runtime-söm och deployment-factory
+
+Den konkreta runtime-sömmen är host-owned och ligger före den befintliga
+`make_base_turn_request`-sömmen:
+
+```text
+daemon/session-host turn request
+        ↓
+common_flydelta_resolve_deployment()
+        ↓
+profile sidebands + replayed review envelopes
+        ↓
+active-only eller explicit canary cohort
+        ↓
+host activation-loader (artifact store + gate + code)
+        ↓
+ordered deployment composition + fingerprints
+        ↓
+immutable request.flydelta_activation
+        ↓
+resident runtime / server-context generation
+```
+
+`flydelta-deployment.{h,cpp}` är en factory, inte en ny store eller runtime.
+Den äger resolution, cohortbeslut, replacement/additive composition och
+canonical deployment-identitet. Den läser inte artifactfiler och vet inte hur
+ett sparse code skapas; det levereras av hostens befintliga loader-callback.
+Loadern använder därefter de existerande artifact-, compatibility-, gate- och
+activation-seamsen. Den färdiga activationen skickas genom den redan befintliga
+`common_agent_request::flydelta_activation` till server-context-hostens cvec.
+
+En återanvänd resident runtime uppdaterar activation-snapshoten per turn, men
+byter inte modell, kö, orchestration eller lifecycle-state. Aktiv cvec tvingar
+fortsatt fresh prompt/KV enligt den befintliga server-context-regeln. Den
+effektiva ordnade overlay-listan, scales, layout och modellidentitet bildar
+deployment-fingerprint; Oracle-, policy- och evaluationrevisioner är separat
+provenance och får inte förändra cache-identiteten.
+
+Composition är begränsad till profilens befintliga högst fyra `sidebands[]` i
+stabil ordning. En canary på samma `binding_key` ersätter bara den aktiva
+revisionen i den slotten. En canary på en annan redan konfigurerad binding
+resulterar i `[A, B]` och jämförs mot `[A]`. Om allocation key saknas,
+envelope-baseline/rollback inte stämmer, budgeten är slut eller någon
+kompatibilitetskontroll faller, returnerar factoryn active-only och lämnar
+active-bindingen orörd.
 
 ### Adaptive rank-one alpha response search
 

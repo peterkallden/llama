@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <utility>
 
@@ -27,6 +28,7 @@ common_learning_lifecycle_status lifecycle_status(common_flydelta_review_action 
         case common_flydelta_review_action::stage_canary: return common_learning_lifecycle_status::canary;
         case common_flydelta_review_action::activate: return common_learning_lifecycle_status::active;
         case common_flydelta_review_action::rollback: return common_learning_lifecycle_status::active;
+        case common_flydelta_review_action::close_canary: return common_learning_lifecycle_status::retired;
         case common_flydelta_review_action::retire: return common_learning_lifecycle_status::retired;
         case common_flydelta_review_action::revoke: return common_learning_lifecycle_status::revoked;
     }
@@ -63,9 +65,10 @@ int replay_order(common_flydelta_review_action action) {
         case common_flydelta_review_action::stage_canary: return 3;
         case common_flydelta_review_action::activate: return 4;
         case common_flydelta_review_action::rollback: return 5;
-        case common_flydelta_review_action::retire: return 6;
-        case common_flydelta_review_action::revoke: return 7;
-        case common_flydelta_review_action::reject: return 8;
+        case common_flydelta_review_action::close_canary: return 6;
+        case common_flydelta_review_action::retire: return 7;
+        case common_flydelta_review_action::revoke: return 8;
+        case common_flydelta_review_action::reject: return 9;
     }
     return 8;
 }
@@ -87,6 +90,30 @@ json summary_json(const common_flydelta_promotion_summary & summary) {
         {"mean_quality_delta", summary.mean_quality_delta},
         {"status", common_flydelta_candidate_status_name(summary.status)},
     };
+}
+
+json canary_progress_json(const common_flydelta_semantic_progress & progress) {
+    return {{"outcome", common_flydelta_semantic_progress_outcome_name(progress.outcome)},
+        {"comparable", progress.comparable}, {"baseline_score", progress.baseline_score},
+        {"candidate_score", progress.candidate_score},
+        {"improved_dimensions", progress.improved_dimensions},
+        {"regressed_dimensions", progress.regressed_dimensions},
+        {"residual_dimensions", progress.residual_dimensions}};
+}
+
+void canary_progress_from_json(const json & value, common_flydelta_semantic_progress & progress) {
+    progress = {};
+    const auto outcome = value.value("outcome", "unknown");
+    if (outcome == "improved") progress.outcome = common_flydelta_semantic_progress_outcome::improved;
+    else if (outcome == "solved") progress.outcome = common_flydelta_semantic_progress_outcome::solved;
+    else if (outcome == "unchanged") progress.outcome = common_flydelta_semantic_progress_outcome::unchanged;
+    else if (outcome == "regressed") progress.outcome = common_flydelta_semantic_progress_outcome::regressed;
+    progress.comparable = value.value("comparable", false);
+    progress.baseline_score = value.value("baseline_score", 0);
+    progress.candidate_score = value.value("candidate_score", 0);
+    progress.improved_dimensions = value.value("improved_dimensions", std::vector<std::string>{});
+    progress.regressed_dimensions = value.value("regressed_dimensions", std::vector<std::string>{});
+    progress.residual_dimensions = value.value("residual_dimensions", std::vector<std::string>{});
 }
 
 bool summary_from_json(const json & value,
@@ -134,6 +161,7 @@ const char * common_flydelta_review_action_name(common_flydelta_review_action ac
         case common_flydelta_review_action::stage_canary: return "stage_canary";
         case common_flydelta_review_action::activate: return "activate";
         case common_flydelta_review_action::rollback: return "rollback";
+        case common_flydelta_review_action::close_canary: return "close_canary";
         case common_flydelta_review_action::retire: return "retire";
         case common_flydelta_review_action::revoke: return "revoke";
     }
@@ -157,6 +185,7 @@ bool parse_common_flydelta_review_action(
     else if (value == "stage_canary") action = common_flydelta_review_action::stage_canary;
     else if (value == "activate") action = common_flydelta_review_action::activate;
     else if (value == "rollback") action = common_flydelta_review_action::rollback;
+    else if (value == "close_canary") action = common_flydelta_review_action::close_canary;
     else if (value == "retire") action = common_flydelta_review_action::retire;
     else if (value == "revoke") action = common_flydelta_review_action::revoke;
     else { error = "unknown FlyDelta review action"; return false; }
@@ -223,21 +252,44 @@ bool common_flydelta_sideband_review_validate(
     if (review.action == common_flydelta_review_action::stage_canary ||
             review.action == common_flydelta_review_action::approve_canary) {
         const bool stage_manifest = review.action == common_flydelta_review_action::stage_canary;
+        const bool promotion_admitted = review.has_promotion_evidence &&
+            common_flydelta_promotion_summary_validate(
+                review.promotion_summary, review.promotion_policy, error) &&
+            review.promotion_summary.status == common_flydelta_candidate_status::eligible &&
+            common_flydelta_evaluation_report_validate(review.evaluation, error) &&
+            review.evaluation.status == "passed" &&
+            review.promotion_summary.candidate_id == review.manifest.id &&
+            review.evaluation.candidate_id == review.manifest.id &&
+            review.evaluation.revision_id == review.evaluation_revision;
+        error.clear();
+        const bool progress_admitted = review.has_canary_admission &&
+            review.canary_progress.comparable &&
+            (review.canary_progress.outcome == common_flydelta_semantic_progress_outcome::improved ||
+             review.canary_progress.outcome == common_flydelta_semantic_progress_outcome::solved) &&
+            review.canary_progress.regressed_dimensions.empty();
         if ((!stage_manifest && review.manifest.status != common_flydelta_sideband_status::candidate) ||
                 (stage_manifest && review.manifest.status != common_flydelta_sideband_status::candidate &&
                  review.manifest.status != common_flydelta_sideband_status::canary) ||
-                !review.has_promotion_evidence ||
-                !common_flydelta_promotion_summary_validate(
-                    review.promotion_summary, review.promotion_policy, error) ||
-                review.promotion_summary.status != common_flydelta_candidate_status::eligible ||
-                !common_flydelta_evaluation_report_validate(review.evaluation, error) ||
-                review.evaluation.status != "passed" ||
-                review.promotion_summary.candidate_id != review.manifest.id ||
-                review.evaluation.candidate_id != review.manifest.id ||
-                review.evaluation.revision_id != review.evaluation_revision) {
+                (!promotion_admitted && !progress_admitted)) {
             if (error.empty()) error = "FlyDelta canary review lacks valid promotion evidence";
             return false;
         }
+    }
+    if (review.action == common_flydelta_review_action::stage_canary) {
+        if (!review.has_canary_envelope || review.canary_envelope_event_id != review.event_id ||
+                !common_flydelta_canary_envelope_validate(review.canary_envelope, error) ||
+                review.canary_envelope.candidate_revision_id != review.manifest.id ||
+                review.canary_envelope.binding_key != review.manifest.binding_key ||
+                review.canary_envelope.behavior_key != review.manifest.applicability.behavior_key ||
+                review.canary_envelope.scope_fingerprint != review.manifest.applicability.scope_fingerprint) {
+            if (error.empty()) error = "FlyDelta canary review envelope is invalid";
+            return false;
+        }
+    }
+    if (review.action == common_flydelta_review_action::close_canary &&
+            (!bounded(review.canary_envelope_event_id) || !bounded(review.reason))) {
+        error = "FlyDelta canary close requires an envelope id and reason";
+        return false;
     }
     return true;
 }
@@ -257,6 +309,33 @@ std::string common_flydelta_sideband_review_to_json(
         {"evaluation_report_ref", review.evaluation_report_ref},
         {"binding_key", review.binding_key},
         {"expected_current_revision_id", review.expected_current_revision_id},
+        {"has_canary_envelope", review.has_canary_envelope},
+        {"has_canary_admission", review.has_canary_admission},
+        {"canary_progress", canary_progress_json(review.canary_progress)},
+        {"canary_envelope_event_id", review.canary_envelope_event_id},
+        {"canary_envelope", {
+            {"schema_version", review.canary_envelope.schema_version},
+            {"binding_key", review.canary_envelope.binding_key},
+            {"candidate_revision_id", review.canary_envelope.candidate_revision_id},
+            {"behavior_key", review.canary_envelope.behavior_key},
+            {"scope_fingerprint", review.canary_envelope.scope_fingerprint},
+            {"traffic_basis_points", review.canary_envelope.traffic_basis_points},
+            {"expires_at_epoch_ms", review.canary_envelope.expires_at_epoch_ms},
+            {"max_observations", review.canary_envelope.max_observations},
+            {"max_scale", review.canary_envelope.max_scale},
+            {"compatibility", {
+                {"base_model_id", review.canary_envelope.compatibility.base_model_id},
+                {"base_model_fingerprint", review.canary_envelope.compatibility.base_model_fingerprint},
+                {"tokenizer_fingerprint", review.canary_envelope.compatibility.tokenizer_fingerprint},
+                {"template_fingerprint", review.canary_envelope.compatibility.template_fingerprint},
+                {"architecture", review.canary_envelope.compatibility.architecture},
+                {"inference_layout_revision", review.canary_envelope.compatibility.inference_layout_revision},
+            }},
+            {"oracle_revision", review.canary_envelope.oracle_revision},
+            {"policy_revision", review.canary_envelope.policy_revision},
+            {"baseline_deployment_fingerprint", review.canary_envelope.baseline_deployment_fingerprint},
+            {"rollback_revision_id", review.canary_envelope.rollback_revision_id},
+        }},
         {"reason", review.reason},
         {"manifest", json::parse(common_flydelta_sideband_manifest_to_json(review.manifest))},
         {"has_promotion_evidence", review.has_promotion_evidence},
@@ -286,6 +365,31 @@ bool common_flydelta_sideband_review_from_json(
         review.evaluation_report_ref = value.value("evaluation_report_ref", "");
         review.binding_key = value.value("binding_key", "");
         review.expected_current_revision_id = value.value("expected_current_revision_id", "");
+        review.has_canary_envelope = value.value("has_canary_envelope", false);
+        review.has_canary_admission = value.value("has_canary_admission", false);
+        canary_progress_from_json(value.value("canary_progress", json::object()), review.canary_progress);
+        review.canary_envelope_event_id = value.value("canary_envelope_event_id", "");
+        const auto envelope = value.value("canary_envelope", json::object());
+        review.canary_envelope.schema_version = envelope.value("schema_version", 1);
+        review.canary_envelope.binding_key = envelope.value("binding_key", "");
+        review.canary_envelope.candidate_revision_id = envelope.value("candidate_revision_id", "");
+        review.canary_envelope.behavior_key = envelope.value("behavior_key", "");
+        review.canary_envelope.scope_fingerprint = envelope.value("scope_fingerprint", "");
+        review.canary_envelope.traffic_basis_points = envelope.value("traffic_basis_points", 0U);
+        review.canary_envelope.expires_at_epoch_ms = envelope.value("expires_at_epoch_ms", 0ULL);
+        review.canary_envelope.max_observations = envelope.value("max_observations", 0U);
+        review.canary_envelope.max_scale = envelope.value("max_scale", 0.0f);
+        const auto envelope_compatibility = envelope.value("compatibility", json::object());
+        review.canary_envelope.compatibility.base_model_id = envelope_compatibility.value("base_model_id", "");
+        review.canary_envelope.compatibility.base_model_fingerprint = envelope_compatibility.value("base_model_fingerprint", "");
+        review.canary_envelope.compatibility.tokenizer_fingerprint = envelope_compatibility.value("tokenizer_fingerprint", "");
+        review.canary_envelope.compatibility.template_fingerprint = envelope_compatibility.value("template_fingerprint", "");
+        review.canary_envelope.compatibility.architecture = envelope_compatibility.value("architecture", "");
+        review.canary_envelope.compatibility.inference_layout_revision = envelope_compatibility.value("inference_layout_revision", "");
+        review.canary_envelope.oracle_revision = envelope.value("oracle_revision", "");
+        review.canary_envelope.policy_revision = envelope.value("policy_revision", "");
+        review.canary_envelope.baseline_deployment_fingerprint = envelope.value("baseline_deployment_fingerprint", "");
+        review.canary_envelope.rollback_revision_id = envelope.value("rollback_revision_id", "");
         review.reason = value.value("reason", "");
         if (!parse_common_flydelta_review_source(value.value("source", "operator"), review.source, error) ||
                 !parse_common_flydelta_review_action(value.value("action", ""), review.action, error) ||
@@ -355,7 +459,8 @@ bool common_flydelta_sideband_review_store::apply(
                 error.clear();
                 return true;
             }
-            return registry.stage_canary(review.manifest.id, review.evaluation_revision, error);
+            return registry.stage_canary(review.manifest.id, review.evaluation_revision, error,
+                review.has_canary_admission && !review.has_promotion_evidence);
         case common_flydelta_review_action::activate:
             if (!explicit_host_approval) {
                 error = "FlyDelta activation requires explicit host approval";
@@ -373,6 +478,11 @@ bool common_flydelta_sideband_review_store::apply(
             return registry.bind_revision(
                 review.binding_key, review.manifest.id,
                 review.expected_current_revision_id, error);
+        case common_flydelta_review_action::close_canary:
+            // Closing is journal-only: it removes a temporary request override
+            // without changing an immutable candidate or active binding.
+            error.clear();
+            return true;
         case common_flydelta_review_action::retire:
             return registry.retire(review.manifest.id, error);
         case common_flydelta_review_action::revoke:
@@ -419,6 +529,23 @@ std::vector<common_flydelta_sideband_review> common_flydelta_sideband_review_sto
         if (!common_flydelta_sideband_review_from_json(record.payload_json, review, error)) return {};
         result.push_back(std::move(review));
     }
+    return result;
+}
+
+std::vector<common_flydelta_sideband_review> common_flydelta_sideband_review_store::open_canaries(
+        std::string & error) const {
+    auto reviews = list(error);
+    if (!error.empty()) return {};
+    std::map<std::string, common_flydelta_sideband_review> open;
+    for (const auto & review : reviews) {
+        if (review.action == common_flydelta_review_action::stage_canary && review.has_canary_envelope) {
+            open[review.event_id] = review;
+        } else if (review.action == common_flydelta_review_action::close_canary) {
+            open.erase(review.canary_envelope_event_id);
+        }
+    }
+    std::vector<common_flydelta_sideband_review> result;
+    for (auto & item : open) result.push_back(std::move(item.second));
     return result;
 }
 

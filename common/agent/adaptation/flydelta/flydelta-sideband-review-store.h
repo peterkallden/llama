@@ -19,6 +19,7 @@ enum class common_flydelta_review_action {
     stage_canary,
     activate,
     rollback,
+    close_canary,
     retire,
     revoke,
 };
@@ -46,6 +47,10 @@ struct common_flydelta_sideband_review {
     common_flydelta_review_action action = common_flydelta_review_action::admit_experimental;
     common_flydelta_sideband_manifest manifest;
     bool has_promotion_evidence = false;
+    // A bounded canary may be admitted on host-observed iterative progress;
+    // this is intentionally distinct from promotion evidence for `active`.
+    bool has_canary_admission = false;
+    common_flydelta_semantic_progress canary_progress;
     common_flydelta_promotion_policy promotion_policy;
     common_flydelta_promotion_summary promotion_summary;
     common_flydelta_evaluation_report evaluation;
@@ -53,6 +58,11 @@ struct common_flydelta_sideband_review {
     // positional review literals.
     std::string binding_key;
     std::string expected_current_revision_id;
+    // Canary state is projected exclusively from these append-only review
+    // events.  close_canary names the stage_canary event it closes.
+    bool has_canary_envelope = false;
+    common_flydelta_canary_envelope canary_envelope;
+    std::string canary_envelope_event_id;
 };
 
 bool common_flydelta_sideband_review_validate(
@@ -76,6 +86,7 @@ public:
             bool explicit_host_approval,
             std::string & error);
     std::vector<common_flydelta_sideband_review> list(std::string & error) const;
+    std::vector<common_flydelta_sideband_review> open_canaries(std::string & error) const;
     bool replay(common_flydelta_sideband_registry & registry, std::string & error) const;
 
 private:
