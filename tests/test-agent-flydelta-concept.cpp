@@ -170,15 +170,60 @@ int main() {
     CHECK(common_flydelta_build_positive_prototype_candidates(
         concept_spec, prototype_config, positive, controls, candidates, error));
 
+    auto negative = positive;
+    for (size_t index = 0; index < negative.size(); ++index) {
+        negative[index].id = "negative://test/" + std::to_string(index);
+        negative[index].capture_ref = negative[index].id + "/capture";
+        negative[index].values = {0.9f, 0.4f + static_cast<float>(index) * 0.02f, 0.1f};
+    }
+    CHECK(common_flydelta_build_negative_repulsion_candidates(
+        concept_spec, prototype_config, negative, controls, candidates, error));
+    CHECK(candidates.size() == 3);
+    for (const auto & candidate : candidates) {
+        CHECK(candidate.synthesis_semantics ==
+            common_flydelta_concept_synthesis_semantics::negative_repulsion);
+        CHECK(candidate.origin == "host_taught_negative_repulsion");
+        CHECK(candidate.negative_trajectories == negative.size());
+        CHECK(candidate.retained_negative_trajectories == candidate.retained_trajectories);
+        CHECK(!candidate.control_residualized);
+        CHECK(common_flydelta_concept_candidate_validate(candidate, 3, error));
+        common_flydelta_direction_candidate direction;
+        CHECK(common_flydelta_concept_candidate_to_direction(candidate, direction, error));
+        const auto expected_kind = candidate.kind ==
+                common_flydelta_concept_candidate_kind::raw_mean
+            ? common_flydelta_direction_kind::negative_repulsion
+            : candidate.kind == common_flydelta_concept_candidate_kind::trimmed_mean
+                ? common_flydelta_direction_kind::negative_repulsion_trimmed_mean
+                : common_flydelta_direction_kind::negative_repulsion_diagonal_whitened_mean;
+        CHECK(direction.kind == expected_kind);
+        CHECK(direction.experimental_only);
+    }
+    auto unverified_negative = negative;
+    unverified_negative.front().host_verified = false;
+    CHECK(!common_flydelta_build_negative_repulsion_candidates(
+        concept_spec, prototype_config, unverified_negative, controls, candidates, error));
+
     std::vector<common_flydelta_concept_candidate> residual_candidates;
     CHECK(common_flydelta_build_concept_candidates(
         concept_spec, config, trajectories, residual_candidates, error));
     std::vector<common_flydelta_concept_candidate> portfolio = residual_candidates;
-    portfolio.insert(portfolio.end(), candidates.begin(), candidates.end());
+    std::vector<common_flydelta_concept_candidate> positive_portfolio;
+    CHECK(common_flydelta_build_positive_prototype_candidates(
+        concept_spec, prototype_config, positive, controls, positive_portfolio, error));
+    portfolio.insert(portfolio.end(), positive_portfolio.begin(), positive_portfolio.end());
+    std::vector<common_flydelta_concept_candidate> negative_portfolio;
+    CHECK(common_flydelta_build_negative_repulsion_candidates(
+        concept_spec, prototype_config, negative, controls, negative_portfolio, error));
+    portfolio.insert(portfolio.end(), negative_portfolio.begin(), negative_portfolio.end());
     const auto frontier = common_flydelta_select_concept_synthesis_frontier(portfolio, 2);
     CHECK(frontier.size() == 2);
     CHECK(frontier[0] == 0);
     CHECK(frontier[1] == residual_candidates.size());
+    const auto extended_frontier = common_flydelta_select_concept_synthesis_frontier(portfolio, 3);
+    CHECK(extended_frontier.size() == 3);
+    CHECK(extended_frontier[2] == residual_candidates.size() + positive_portfolio.size());
+    CHECK(common_flydelta_select_concept_synthesis_frontier(
+        negative_portfolio, 3).empty());
     CHECK(common_flydelta_select_concept_synthesis_frontier(portfolio, 1).size() == 1);
     CHECK(common_flydelta_select_concept_synthesis_frontier(portfolio, 0).empty());
 

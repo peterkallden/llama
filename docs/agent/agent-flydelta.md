@@ -380,6 +380,21 @@ the existing diagnostics, bounded frontier and host-Oracle path. This is a
 representation extension only: neither source grants learning credit,
 promotion eligibility or activation authority.
 
+An explicitly host-labelled undesired capture can additionally produce the
+`negative_repulsion` semantic source. Its vector is `control - negative`, so
+it describes a bounded direction away from a known bad behavior. The negative
+capture must carry its own capture reference and host verification; the
+baseline is never silently reinterpreted as a negative example. It reuses the
+same raw/trimmed/diagonal-whitened estimators as the positive prototype, and
+its provenance records the negative sample count separately from the neutral
+control count. A negative candidate is a contrast/basis component only: the
+frontier selector will not select a negative-only portfolio, and a selected
+negative component remains experimental-only with no learning credit, Oracle
+truth or promotion authority of its own. When a repair or positive prototype
+is present and frontier capacity allows, the existing low-rank/coefficient
+path may evaluate the positive and negative components together without
+forcing rank two when the basis is degenerate.
+
 Synthesis candidates also carry a comparison descriptor that separates
 semantic strategy from estimator. `contrast_repair` and
 `conditioned_prototype` are the current activation-derived strategies;
@@ -413,7 +428,11 @@ decision and can run it as a `user_taught_concept` relation. Its baseline is del
 pass the same production dataset Oracle. This makes the positive-prototype
 fixture counterfactual and model-facing without granting learning credit or
 promotion. The smoke still does not provide holdout/transfer validation for
-the synthesized direction.
+the synthesized direction. Its offline contract path also builds three
+explicit negative-repulsion estimators from host-labelled undesired captures
+and verifies that they are admitted only as experimental, non-standalone
+contrast components; the Qwen path remains unchanged until a real negative
+capture fixture is available.
 
 Capability reporting must follow the same boundary: a capability is available
 only when its production callback and durable resolver are registered. The
@@ -471,8 +490,10 @@ The hand-off rules are deliberately strict:
 3. Diagnostic arms may capture and score, but only the bounded full-generation
    frontier reaches the host Oracle and counterfactual classifier.
 4. Synthesis may propose `contrast_repair`, `conditioned_prototype`,
-   `decision_output_margin` or `execution_boundary_prototype`. The descriptor
-   records identity and compatibility; it does not grant trust.
+   `negative_repulsion`, `decision_output_margin` or
+   `execution_boundary_prototype`. The descriptor records identity and
+   compatibility; it does not grant trust. Negative repulsion is support
+   material for a paired contrast, never a standalone answer.
 5. The semantic basis resolver admits only identity-matching,
    host-verified, non-experimental directions. It is an admission filter in
    front of the existing low-rank/coefficient/TFO path, not a second store or
@@ -4438,3 +4459,15 @@ promotion gates as the only sources of truth. It adds no parallel store,
 runtime or evaluator. The model can be a source of a hypothesis, but host
 compatibility and host-verified progress are required before generalized
 provenance or canary staging.
+
+### Maintenance note — negative contrast support
+
+Negative examples are optional, explicitly host-verified contrast material in
+the existing trajectory/prototype seam. They are not a second evidence store
+and do not alter the production Oracle, learning-credit or promotion rules.
+The daemon loads them only when all trajectories in a compatible group carry
+the negative reference and capture; otherwise the group fails closed. The
+negative builder reuses the positive prototype estimator and emits
+`control - negative`. A negative-only group is retained for inspection but
+cannot create a graft frontier; it must be paired with a repair or positive
+candidate before the existing search/basis path can use it.

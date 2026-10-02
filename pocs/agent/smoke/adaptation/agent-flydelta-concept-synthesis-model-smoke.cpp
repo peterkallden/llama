@@ -616,6 +616,8 @@ int main(int argc, char ** argv) {
             {"median_alignment", candidate.median_alignment},
             {"control_residualized", candidate.control_residualized},
             {"control_trajectories", candidate.control_trajectories},
+            {"negative_trajectories", candidate.negative_trajectories},
+            {"retained_negative_trajectories", candidate.retained_negative_trajectories},
             {"experimental_only", candidate.experimental_only},
             {"learning_eligible", candidate.learning_eligible},
         });
@@ -627,7 +629,7 @@ int main(int argc, char ** argv) {
         {"candidates", std::move(candidates)},
         {"graft_direction_ref", synthesis_report.graft_direction_ref},
         {"graft_direction_refs", synthesis_report.graft_direction_refs},
-        {"frontier_semantics", {"control_residualized", "positive_prototype"}},
+        {"frontier_semantics", {"control_residualized", "positive_prototype", "negative_repulsion"}},
         {"next_action", common_flydelta_next_action_name(synthesis_report.next_action)},
         {"promotion", false},
     }.dump() << '\n';

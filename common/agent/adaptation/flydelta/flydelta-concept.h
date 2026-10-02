@@ -53,13 +53,19 @@ struct common_flydelta_concept_trajectory {
     std::string baseline_capture_ref;
     std::string conditioned_capture_ref;
     std::string control_capture_ref;
+    // Optional explicitly host-labelled undesired behavior.  This is not a
+    // fallback to baseline: a negative capture is valid only when the host
+    // has verified that it represents the behavior to avoid.
+    std::string negative_capture_ref;
     std::string semantic_anchor;
     int32_t layer_index = -1;
     std::vector<float> baseline;
     std::vector<float> conditioned;
     std::vector<float> control;
+    std::vector<float> negative;
     bool aligned = false;
     bool conditioned_host_verified = false;
+    bool negative_host_verified = false;
 };
 
 bool common_flydelta_concept_trajectory_validate(
@@ -95,6 +101,7 @@ enum class common_flydelta_concept_candidate_kind {
 enum class common_flydelta_concept_synthesis_semantics {
     control_residualized,
     positive_prototype,
+    negative_repulsion,
 };
 
 const char * common_flydelta_concept_synthesis_semantics_name(
@@ -121,6 +128,8 @@ struct common_flydelta_concept_candidate {
     size_t retained_trajectories = 0;
     size_t control_trajectories = 0;
     size_t retained_control_trajectories = 0;
+    size_t negative_trajectories = 0;
+    size_t retained_negative_trajectories = 0;
     float median_alignment = 0.0f;
     bool control_residualized = false;
     bool experimental_only = true;
@@ -129,8 +138,11 @@ struct common_flydelta_concept_candidate {
 
 // Selects a bounded, deterministic comparison frontier across synthesis
 // semantics. The selector compares at most one raw estimator per semantic
-// source first (control_residualized, then positive_prototype), and only then
-// fills remaining capacity in source order. It does not rank behavior,
+// source first (control_residualized, positive_prototype, then
+// negative_repulsion), and only then fills remaining capacity in source order.
+// A negative-only portfolio is intentionally not selectable: negative
+// repulsion supports a contrast/basis but is never a standalone answer.
+// It does not rank behavior,
 // assign evidence, or grant lifecycle authority; the selected candidates
 // continue through the existing search and Oracle path.
 std::vector<size_t> common_flydelta_select_concept_synthesis_frontier(
@@ -212,6 +224,19 @@ bool common_flydelta_build_positive_prototype_candidates(
         const common_flydelta_concept_spec & spec,
         const common_flydelta_concept_prototype_build_config & config,
         const std::vector<common_flydelta_concept_prototype_sample> & positive,
+        const std::vector<common_flydelta_concept_prototype_sample> & controls,
+        std::vector<common_flydelta_concept_candidate> & candidates,
+        std::string & error);
+
+// Builds negative-repulsion candidates from explicitly host-verified
+// undesired captures and neutral controls.  The vector is control - negative,
+// so it points away from the undesired behavior.  These candidates remain
+// experimental-only and are useful only alongside a positive/repair basis
+// member; they never create learning credit or promotion evidence alone.
+bool common_flydelta_build_negative_repulsion_candidates(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_concept_prototype_build_config & config,
+        const std::vector<common_flydelta_concept_prototype_sample> & negative,
         const std::vector<common_flydelta_concept_prototype_sample> & controls,
         std::vector<common_flydelta_concept_candidate> & candidates,
         std::string & error);

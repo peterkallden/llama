@@ -48,6 +48,9 @@ bool supported_kind(common_flydelta_direction_kind kind) {
         case common_flydelta_direction_kind::positive_prototype:
         case common_flydelta_direction_kind::positive_prototype_trimmed_mean:
         case common_flydelta_direction_kind::positive_prototype_diagonal_whitened_mean:
+        case common_flydelta_direction_kind::negative_repulsion:
+        case common_flydelta_direction_kind::negative_repulsion_trimmed_mean:
+        case common_flydelta_direction_kind::negative_repulsion_diagonal_whitened_mean:
             return true;
     }
     return false;
@@ -83,6 +86,12 @@ const char * common_flydelta_direction_kind_name(
             return "positive_prototype_trimmed_mean";
         case common_flydelta_direction_kind::positive_prototype_diagonal_whitened_mean:
             return "positive_prototype_diagonal_whitened_mean";
+        case common_flydelta_direction_kind::negative_repulsion:
+            return "negative_repulsion";
+        case common_flydelta_direction_kind::negative_repulsion_trimmed_mean:
+            return "negative_repulsion_trimmed_mean";
+        case common_flydelta_direction_kind::negative_repulsion_diagonal_whitened_mean:
+            return "negative_repulsion_diagonal_whitened_mean";
     }
     return "unknown";
 }
@@ -94,6 +103,8 @@ const char * common_flydelta_synthesis_strategy_name(
             return "contrast_repair";
         case common_flydelta_synthesis_strategy::conditioned_prototype:
             return "conditioned_prototype";
+        case common_flydelta_synthesis_strategy::negative_repulsion:
+            return "negative_repulsion";
         case common_flydelta_synthesis_strategy::decision_output_margin:
             return "decision_output_margin";
         case common_flydelta_synthesis_strategy::execution_boundary_prototype:
@@ -200,6 +211,18 @@ bool common_flydelta_synthesis_candidate_descriptor_from_direction(
             break;
         case common_flydelta_direction_kind::positive_prototype_diagonal_whitened_mean:
             descriptor.strategy = common_flydelta_synthesis_strategy::conditioned_prototype;
+            descriptor.estimator = common_flydelta_synthesis_estimator::diagonal_whitened;
+            break;
+        case common_flydelta_direction_kind::negative_repulsion:
+            descriptor.strategy = common_flydelta_synthesis_strategy::negative_repulsion;
+            descriptor.estimator = common_flydelta_synthesis_estimator::raw;
+            break;
+        case common_flydelta_direction_kind::negative_repulsion_trimmed_mean:
+            descriptor.strategy = common_flydelta_synthesis_strategy::negative_repulsion;
+            descriptor.estimator = common_flydelta_synthesis_estimator::trimmed;
+            break;
+        case common_flydelta_direction_kind::negative_repulsion_diagonal_whitened_mean:
+            descriptor.strategy = common_flydelta_synthesis_strategy::negative_repulsion;
             descriptor.estimator = common_flydelta_synthesis_estimator::diagonal_whitened;
             break;
     }

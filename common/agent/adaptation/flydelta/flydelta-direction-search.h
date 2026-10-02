@@ -20,6 +20,9 @@ enum class common_flydelta_direction_kind {
     positive_prototype,
     positive_prototype_trimmed_mean,
     positive_prototype_diagonal_whitened_mean,
+    negative_repulsion,
+    negative_repulsion_trimmed_mean,
+    negative_repulsion_diagonal_whitened_mean,
 };
 
 // Direction construction has two deliberately separate policies. Learning
@@ -44,6 +47,7 @@ const char * common_flydelta_direction_kind_name(
 enum class common_flydelta_synthesis_strategy {
     contrast_repair,
     conditioned_prototype,
+    negative_repulsion,
     decision_output_margin,
     execution_boundary_prototype,
 };

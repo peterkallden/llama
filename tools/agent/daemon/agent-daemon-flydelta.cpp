@@ -240,13 +240,16 @@ bool daemon_flydelta_run_concept_synthesis(
             trajectory.baseline_capture_ref = value.value("baseline_capture_ref", "");
             trajectory.conditioned_capture_ref = value.value("conditioned_capture_ref", "");
             trajectory.control_capture_ref = value.value("control_capture_ref", "");
+            trajectory.negative_capture_ref = value.value("negative_capture_ref", "");
             trajectory.semantic_anchor = value.value("semantic_anchor", material.semantic_anchor);
             trajectory.layer_index = value.value("layer_index", material.layer_index);
             trajectory.baseline = value.value("baseline", std::vector<float>{});
             trajectory.conditioned = value.value("conditioned", std::vector<float>{});
             trajectory.control = value.value("control", std::vector<float>{});
+            trajectory.negative = value.value("negative", std::vector<float>{});
             trajectory.aligned = value.value("aligned", false);
             trajectory.conditioned_host_verified = value.value("conditioned_host_verified", false);
+            trajectory.negative_host_verified = value.value("negative_host_verified", false);
             if (trajectory.layer_index != target.layer_index) {
                 error = "FlyDelta concept trajectory layer does not match localized graft anchor";
                 return false;
@@ -274,8 +277,10 @@ bool daemon_flydelta_run_concept_synthesis(
     // candidates above.
     std::vector<common_flydelta_concept_prototype_sample> positive_samples;
     std::vector<common_flydelta_concept_prototype_sample> control_samples;
+    std::vector<common_flydelta_concept_prototype_sample> negative_samples;
     positive_samples.reserve(trajectories.size());
     control_samples.reserve(trajectories.size());
+    negative_samples.reserve(trajectories.size());
     for (const auto & trajectory : trajectories) {
         const auto make_sample = [&](const std::string & suffix,
                 const std::string & capture_ref, const std::vector<float> & values) {
@@ -299,6 +304,12 @@ bool daemon_flydelta_run_concept_synthesis(
             "positive", trajectory.conditioned_capture_ref, trajectory.conditioned));
         control_samples.push_back(make_sample(
             "neutral-control", trajectory.control_capture_ref, trajectory.control));
+        if (!trajectory.negative_capture_ref.empty()) {
+            auto negative_sample = make_sample(
+                "negative", trajectory.negative_capture_ref, trajectory.negative);
+            negative_sample.host_verified = trajectory.negative_host_verified;
+            negative_samples.push_back(std::move(negative_sample));
+        }
     }
     common_flydelta_concept_prototype_build_config prototype_config;
     prototype_config.dimension = provider->model_n_embd;
@@ -312,6 +323,19 @@ bool daemon_flydelta_run_concept_synthesis(
     candidates.insert(candidates.end(),
         std::make_move_iterator(prototype_candidates.begin()),
         std::make_move_iterator(prototype_candidates.end()));
+    if (!negative_samples.empty() && negative_samples.size() != trajectories.size()) {
+        error = "FlyDelta negative concept material must be present for every trajectory";
+        return false;
+    }
+    if (!negative_samples.empty()) {
+        std::vector<common_flydelta_concept_candidate> negative_candidates;
+        if (!common_flydelta_build_negative_repulsion_candidates(
+                spec, prototype_config, negative_samples, control_samples,
+                negative_candidates, error)) return false;
+        candidates.insert(candidates.end(),
+            std::make_move_iterator(negative_candidates.begin()),
+            std::make_move_iterator(negative_candidates.end()));
+    }
     return true;
 }
 

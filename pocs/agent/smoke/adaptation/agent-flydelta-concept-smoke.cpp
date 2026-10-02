@@ -557,6 +557,7 @@ bool run_offline() {
             std::vector<float>{0.2f, 0.1f, 1.0f, 0.5f});
         std::vector<common_flydelta_concept_prototype_sample> positive;
         std::vector<common_flydelta_concept_prototype_sample> controls;
+        std::vector<common_flydelta_concept_prototype_sample> negative;
         for (const auto & trajectory : trajectories) {
             const auto make_sample = [&](const char * suffix,
                     const std::string & capture_ref, const std::vector<float> & values) {
@@ -580,6 +581,10 @@ bool run_offline() {
                 "positive", trajectory.conditioned_capture_ref, trajectory.conditioned));
             controls.push_back(make_sample(
                 "neutral-control", trajectory.control_capture_ref, trajectory.control));
+            const auto undesired = add(trajectory.control,
+                {0.45f, 0.25f, 0.15f, 0.05f});
+            negative.push_back(make_sample(
+                "negative", trajectory.fixture_ref + "/negative", undesired));
         }
         common_flydelta_concept_prototype_build_config prototype_config;
         prototype_config.dimension = config.dimension;
@@ -589,6 +594,24 @@ bool run_offline() {
                 prototype_candidates.size() != 3) {
             std::cerr << "positive prototype offline build failed: " << error << '\n';
             return false;
+        }
+        std::vector<common_flydelta_concept_candidate> negative_candidates;
+        if (!common_flydelta_build_negative_repulsion_candidates(
+                spec, prototype_config, negative, controls, negative_candidates, error) ||
+                negative_candidates.size() != 3) {
+            std::cerr << "negative repulsion offline build failed: " << error << '\n';
+            return false;
+        }
+        for (const auto & candidate : negative_candidates) {
+            common_flydelta_direction_candidate direction;
+            if (!common_flydelta_concept_candidate_to_direction(
+                    candidate, direction, error) || !direction.experimental_only ||
+                    (direction.kind != common_flydelta_direction_kind::negative_repulsion &&
+                     direction.kind != common_flydelta_direction_kind::negative_repulsion_trimmed_mean &&
+                     direction.kind != common_flydelta_direction_kind::negative_repulsion_diagonal_whitened_mean)) {
+                std::cerr << "negative repulsion direction admission failed: " << error << '\n';
+                return false;
+            }
         }
         for (const auto & candidate : candidates) {
             common_flydelta_direction_candidate direction;
@@ -604,6 +627,7 @@ bool run_offline() {
                   << " source_trajectories=" << candidates.front().source_trajectories
                   << " retained_trajectories=" << candidates.front().retained_trajectories
                   << " prototype_candidates=" << prototype_candidates.size()
+                  << " negative_candidates=" << negative_candidates.size()
                   << " median_alignment=" << candidates.front().median_alignment
                   << " experimental_only=yes learning_eligible=no\n";
         ++family_count;

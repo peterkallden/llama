@@ -174,28 +174,33 @@ bool make_prototype_candidate(
         common_flydelta_concept_candidate_kind kind,
         int32_t layer,
         const std::vector<float> & values,
-        size_t positive_count,
-        size_t retained_positive_count,
+        common_flydelta_concept_synthesis_semantics semantics,
+        const char * origin,
+        size_t primary_count,
+        size_t retained_primary_count,
         size_t control_count,
         size_t retained_control_count,
+        size_t negative_count,
+        size_t retained_negative_count,
         common_flydelta_concept_candidate & candidate,
         std::string & error) {
     candidate = {};
     candidate.kind = kind;
-    candidate.synthesis_semantics =
-        common_flydelta_concept_synthesis_semantics::positive_prototype;
+    candidate.synthesis_semantics = semantics;
     candidate.concept_key = spec.concept_key;
     candidate.extraction_id = spec.extraction_id;
     candidate.behavior_key = spec.behavior_key;
-    candidate.origin = "host_taught_positive_prototype";
+    candidate.origin = origin;
     candidate.model_profile_fingerprint = spec.model_profile_fingerprint;
     candidate.capture_layout_revision = spec.capture_layout_revision;
     candidate.layer_index = layer;
     candidate.values = normalized(values);
-    candidate.source_trajectories = positive_count;
-    candidate.retained_trajectories = retained_positive_count;
+    candidate.source_trajectories = primary_count;
+    candidate.retained_trajectories = retained_primary_count;
     candidate.control_trajectories = control_count;
     candidate.retained_control_trajectories = retained_control_count;
+    candidate.negative_trajectories = negative_count;
+    candidate.retained_negative_trajectories = retained_negative_count;
     candidate.control_residualized = false;
     candidate.experimental_only = true;
     candidate.learning_eligible = false;
@@ -230,17 +235,25 @@ bool common_flydelta_concept_trajectory_validate(
         std::string & error) {
     error.clear();
     if (!common_flydelta_concept_spec_validate(spec, error)) return false;
+    const bool has_negative_ref = !trajectory.negative_capture_ref.empty();
+    const bool has_negative_values = !trajectory.negative.empty();
     if (trajectory.schema_version != 1 || !bounded(trajectory.id) ||
             !bounded(trajectory.fixture_ref) || !bounded(trajectory.baseline_capture_ref) ||
             !bounded(trajectory.conditioned_capture_ref) ||
             (spec.require_control && !bounded(trajectory.control_capture_ref)) ||
+            (has_negative_ref != has_negative_values) ||
+            (has_negative_ref &&
+                (!bounded(trajectory.negative_capture_ref) ||
+                 !trajectory.negative_host_verified ||
+                 trajectory.negative.size() != expected_dimension)) ||
             !bounded(trajectory.semantic_anchor) || trajectory.layer_index <= 0 ||
             !trajectory.aligned || !trajectory.conditioned_host_verified ||
             trajectory.baseline.size() != expected_dimension ||
             trajectory.conditioned.size() != expected_dimension ||
             (spec.require_control && trajectory.control.size() != expected_dimension) ||
             !finite_vector(trajectory.baseline) || !finite_vector(trajectory.conditioned) ||
-            !finite_vector(trajectory.control)) {
+            !finite_vector(trajectory.control) ||
+            (has_negative_values && !finite_vector(trajectory.negative))) {
         error = "FlyDelta concept trajectory is incomplete, unaligned or unverified";
         return false;
     }
@@ -280,6 +293,8 @@ const char * common_flydelta_concept_synthesis_semantics_name(
             return "control_residualized";
         case common_flydelta_concept_synthesis_semantics::positive_prototype:
             return "positive_prototype";
+        case common_flydelta_concept_synthesis_semantics::negative_repulsion:
+            return "negative_repulsion";
     }
     return "unknown";
 }
@@ -297,9 +312,18 @@ std::vector<size_t> common_flydelta_select_concept_synthesis_frontier(
     const common_flydelta_concept_synthesis_semantics semantics[] = {
         common_flydelta_concept_synthesis_semantics::control_residualized,
         common_flydelta_concept_synthesis_semantics::positive_prototype,
+        common_flydelta_concept_synthesis_semantics::negative_repulsion,
     };
+    const auto has_primary = std::any_of(candidates.begin(), candidates.end(), [](const auto & candidate) {
+        return candidate.synthesis_semantics ==
+                common_flydelta_concept_synthesis_semantics::control_residualized ||
+            candidate.synthesis_semantics ==
+                common_flydelta_concept_synthesis_semantics::positive_prototype;
+    });
     for (const auto semantic : semantics) {
         if (selected.size() >= max_candidates) break;
+        if (semantic == common_flydelta_concept_synthesis_semantics::negative_repulsion &&
+                !has_primary) continue;
         size_t fallback = candidates.size();
         size_t preferred = candidates.size();
         for (size_t index = 0; index < candidates.size(); ++index) {
@@ -317,6 +341,9 @@ std::vector<size_t> common_flydelta_select_concept_synthesis_frontier(
         }
     }
     for (size_t index = 0; index < candidates.size() && selected.size() < max_candidates; ++index) {
+        if (candidates[index].synthesis_semantics ==
+                common_flydelta_concept_synthesis_semantics::negative_repulsion &&
+                !has_primary) continue;
         if (std::find(selected.begin(), selected.end(), index) == selected.end()) {
             selected.push_back(index);
         }
@@ -333,11 +360,14 @@ bool common_flydelta_concept_candidate_validate(
         common_flydelta_concept_synthesis_semantics::control_residualized;
     const bool prototype = candidate.synthesis_semantics ==
         common_flydelta_concept_synthesis_semantics::positive_prototype;
+    const bool negative = candidate.synthesis_semantics ==
+        common_flydelta_concept_synthesis_semantics::negative_repulsion;
     if (candidate.schema_version != 1 || !bounded(candidate.concept_key) ||
             !bounded(candidate.extraction_id) ||
             !bounded(candidate.behavior_key) ||
             (candidate.origin != "host_taught_extracted" &&
-             candidate.origin != "host_taught_positive_prototype") ||
+             candidate.origin != "host_taught_positive_prototype" &&
+             candidate.origin != "host_taught_negative_repulsion") ||
             !bounded(candidate.model_profile_fingerprint) ||
             !bounded(candidate.capture_layout_revision) || candidate.layer_index <= 0 ||
             candidate.values.size() != expected_dimension || !finite_vector(candidate.values) ||
@@ -345,15 +375,27 @@ bool common_flydelta_concept_candidate_validate(
             candidate.source_trajectories < 2 ||
             candidate.retained_trajectories < 2 ||
             !candidate.experimental_only || candidate.learning_eligible ||
-            (!residualized && !prototype) ||
+            (!residualized && !prototype && !negative) ||
             (residualized && candidate.origin != "host_taught_extracted") ||
             (prototype && candidate.origin != "host_taught_positive_prototype") ||
+            (negative && candidate.origin != "host_taught_negative_repulsion") ||
             (residualized && (!candidate.control_residualized ||
                 candidate.control_trajectories < 2 ||
-                candidate.retained_control_trajectories < 2)) ||
+                candidate.retained_control_trajectories < 2 ||
+                candidate.negative_trajectories != 0 ||
+                candidate.retained_negative_trajectories != 0)) ||
             (prototype && (candidate.control_residualized ||
                 candidate.control_trajectories < 2 ||
-                candidate.retained_control_trajectories < 2))) {
+                candidate.retained_control_trajectories < 2 ||
+                candidate.negative_trajectories != 0 ||
+                candidate.retained_negative_trajectories != 0)) ||
+            (negative && (candidate.control_residualized ||
+                candidate.control_trajectories < 2 ||
+                candidate.retained_control_trajectories < 2 ||
+                candidate.negative_trajectories < 2 ||
+                candidate.retained_negative_trajectories < 2 ||
+                candidate.negative_trajectories != candidate.source_trajectories ||
+                candidate.retained_negative_trajectories != candidate.retained_trajectories))) {
         error = "FlyDelta concept candidate is invalid or not experimental-only";
         return false;
     }
@@ -376,19 +418,28 @@ bool common_flydelta_concept_candidate_to_direction(
             direction.kind = candidate.synthesis_semantics ==
                     common_flydelta_concept_synthesis_semantics::positive_prototype
                 ? common_flydelta_direction_kind::positive_prototype
-                : common_flydelta_direction_kind::raw_repair;
+                : candidate.synthesis_semantics ==
+                    common_flydelta_concept_synthesis_semantics::negative_repulsion
+                    ? common_flydelta_direction_kind::negative_repulsion
+                    : common_flydelta_direction_kind::raw_repair;
             break;
         case common_flydelta_concept_candidate_kind::trimmed_mean:
             direction.kind = candidate.synthesis_semantics ==
                     common_flydelta_concept_synthesis_semantics::positive_prototype
                 ? common_flydelta_direction_kind::positive_prototype_trimmed_mean
-                : common_flydelta_direction_kind::normalized_trimmed_mean;
+                : candidate.synthesis_semantics ==
+                    common_flydelta_concept_synthesis_semantics::negative_repulsion
+                    ? common_flydelta_direction_kind::negative_repulsion_trimmed_mean
+                    : common_flydelta_direction_kind::normalized_trimmed_mean;
             break;
         case common_flydelta_concept_candidate_kind::diagonal_whitened_mean:
             direction.kind = candidate.synthesis_semantics ==
                     common_flydelta_concept_synthesis_semantics::positive_prototype
                 ? common_flydelta_direction_kind::positive_prototype_diagonal_whitened_mean
-                : common_flydelta_direction_kind::diagonal_whitened_mean;
+                : candidate.synthesis_semantics ==
+                    common_flydelta_concept_synthesis_semantics::negative_repulsion
+                    ? common_flydelta_direction_kind::negative_repulsion_diagonal_whitened_mean
+                    : common_flydelta_direction_kind::diagonal_whitened_mean;
             break;
     }
     direction.layer_index = candidate.layer_index;
@@ -643,8 +694,51 @@ bool common_flydelta_build_positive_prototype_candidates(
         common_flydelta_concept_candidate candidate;
         if (!make_prototype_candidate(
                 spec, kind_values.first, positive.front().layer_index,
-                kind_values.second, positive.size(), positive_indices.size(),
-                controls.size(), control_indices.size(), candidate, error)) {
+                kind_values.second,
+                common_flydelta_concept_synthesis_semantics::positive_prototype,
+                "host_taught_positive_prototype",
+                positive.size(), positive_indices.size(), controls.size(),
+                control_indices.size(), 0, 0, candidate, error)) {
+            candidates.clear();
+            return false;
+        }
+        candidates.push_back(std::move(candidate));
+    }
+    return true;
+}
+
+bool common_flydelta_build_negative_repulsion_candidates(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_concept_prototype_build_config & config,
+        const std::vector<common_flydelta_concept_prototype_sample> & negative,
+        const std::vector<common_flydelta_concept_prototype_sample> & controls,
+        std::vector<common_flydelta_concept_candidate> & candidates,
+        std::string & error) {
+    error.clear();
+    candidates.clear();
+
+    // Reuse the existing prototype estimator, trimming and diagonal
+    // whitening.  Its positive-minus-control output is negated here so the
+    // resulting semantic direction is control-minus-negative.  This keeps
+    // whitening an estimator choice rather than a second semantic path.
+    std::vector<common_flydelta_concept_candidate> prototype_candidates;
+    if (!common_flydelta_build_positive_prototype_candidates(
+            spec, config, negative, controls, prototype_candidates, error)) {
+        if (!error.empty()) {
+            error = "FlyDelta negative repulsion material is invalid: " + error;
+        }
+        return false;
+    }
+    for (auto & candidate : prototype_candidates) {
+        for (float & value : candidate.values) value = -value;
+        candidate.synthesis_semantics =
+            common_flydelta_concept_synthesis_semantics::negative_repulsion;
+        candidate.origin = "host_taught_negative_repulsion";
+        candidate.negative_trajectories = candidate.source_trajectories;
+        candidate.retained_negative_trajectories = candidate.retained_trajectories;
+        candidate.control_residualized = false;
+        if (!common_flydelta_concept_candidate_validate(
+                candidate, config.dimension, error)) {
             candidates.clear();
             return false;
         }
