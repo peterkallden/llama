@@ -357,6 +357,10 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "model-backed FlyDelta runtime did not expose resident host/resources\n");
         return 1;
     }
+    // The dispatcher below takes ownership of runtime. Keep this borrowed
+    // pointer only for the lifetime of that dispatcher so post-evaluation
+    // artifact readback continues to use the same owned resource store.
+    agent_resource_store * const resource_store = runtime.resource_store.get();
     if (!runtime.flydelta_model_adapter) {
         runtime.flydelta_model_adapter = common_flydelta_model_adapter_from_host(
             *runtime.flydelta_model_host, error);
@@ -462,7 +466,7 @@ int main(int argc, char ** argv) {
             }
             const std::string artifact_json = common_flydelta_artifact_to_json(material.artifact);
             if (!put_json_resource(
-                    *runtime.resource_store, "model-admin-artifact-" + std::to_string(variant) + ".json",
+                    *resource_store, "model-admin-artifact-" + std::to_string(variant) + ".json",
                     artifact_json, material.artifact_uri, error)) {
                 std::fprintf(stderr, "model-backed artifact resource failed: %s\n", error.c_str());
                 return 1;
@@ -494,7 +498,7 @@ int main(int argc, char ** argv) {
     }
     std::string context_uri;
     if (!put_json_resource(
-            *runtime.resource_store, "model-admin-context.json",
+            *resource_store, "model-admin-context.json",
             json{{"prompt", "Reply with exactly PASS."}, {"n_predict", options.n_predict}}.dump(),
             context_uri, error)) {
         std::fprintf(stderr, "model-backed context resource failed: %s\n", error.c_str());
@@ -504,7 +508,7 @@ int main(int argc, char ** argv) {
     for (size_t index = 0; index < 8; ++index) {
         std::string fixture_uri;
         if (!put_json_resource(
-                *runtime.resource_store, "model-admin-fixture-" + std::to_string(index) + ".json",
+                *resource_store, "model-admin-fixture-" + std::to_string(index) + ".json",
                 json{{"expected_contains", material.expected_contains}}.dump(), fixture_uri, error)) {
             std::fprintf(stderr, "model-backed fixture resource failed: %s\n", error.c_str());
             return 1;
@@ -523,7 +527,7 @@ int main(int argc, char ** argv) {
             {"context_ref", context_uri},
         });
     }
-    if (!put_json_resource(*runtime.resource_store, "model-admin-suite.json", suite.dump(), suite_uri, error)) {
+    if (!put_json_resource(*resource_store, "model-admin-suite.json", suite.dump(), suite_uri, error)) {
         std::fprintf(stderr, "model-backed suite resource failed: %s\n", error.c_str());
         return 1;
     }
@@ -612,7 +616,7 @@ int main(int argc, char ** argv) {
             std::string oracle_report_json;
             common_flydelta_oracle_suite_report oracle_report;
             if (report.oracle_suite_report_ref.empty() ||
-                    !runtime.resource_store->read_text(
+                    !resource_store->read_text(
                         report.oracle_suite_report_ref, authority,
                         4U * 1024U * 1024U, oracle_report_json, error) ||
                     !common_flydelta_oracle_suite_report_from_json(
