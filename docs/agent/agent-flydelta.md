@@ -569,6 +569,12 @@ bounded local diagnostics-first probe. Failed reuse falls through to the
 existing capture/synthesis/search path. Reuse is never implicit runtime
 activation.
 
+The procedure, correction and explicit user-teaching adapters use the same
+reference-only index boundary through `observe_resolved_relation()`; they do
+not fabricate or persist a second hypothesis object merely to make a resolved
+relation reusable. Research/reflection still enter through the semantic
+hypothesis/grounding path and remain subject to the same host gates.
+
 An automatically generalized revision is a new immutable sideband manifest.
 Its provenance declares `generalization.level=model`, source candidate refs,
 supporting session IDs, task fingerprints and synthesis strategy. The session

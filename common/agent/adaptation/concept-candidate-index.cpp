@@ -307,6 +307,46 @@ bool common_agent_concept_candidate_index::observe_relation(
     return persist(candidate, transaction, error);
 }
 
+bool common_agent_concept_candidate_index::observe_resolved_relation(
+        const common_flydelta_teaching_relation & relation,
+        const common_learning_transaction & transaction,
+        std::string & error) {
+    error.clear();
+    if (!common_flydelta_teaching_relation_validate(relation, error) ||
+            relation.status != common_flydelta_teaching_relation_status::resolved ||
+            !relation.host_approved) {
+        if (error.empty()) error = "resolved concept relation is not host-approved";
+        return false;
+    }
+    common_agent_concept_hypothesis hypothesis;
+    const std::string identity = relation.id + "\n" + relation.teaching_key +
+        "\n" + relation.scope.namespace_id + "\n" + relation.scope.project_id +
+        "\n" + relation.scope.session_id;
+    hypothesis.id = "hypothesis://resolved-relation/" +
+        hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+    hypothesis.concept_key = relation.teaching_key;
+    hypothesis.statement = relation.teaching_key;
+    hypothesis.canonical_statement_ref = relation.contrast_ref.empty()
+        ? (relation.evidence_ref.empty() ? relation.id : relation.evidence_ref)
+        : relation.contrast_ref;
+    hypothesis.source_kind = relation.source == common_adaptation_evidence_source::research_alternative
+        ? common_agent_concept_source_kind::research
+        : relation.source == common_adaptation_evidence_source::reflection_alternative
+            ? common_agent_concept_source_kind::reflection
+            : relation.source == common_adaptation_evidence_source::user_correction
+                ? common_agent_concept_source_kind::user_correction
+                : relation.source == common_adaptation_evidence_source::user_taught_concept
+                    ? common_agent_concept_source_kind::user_taught_concept
+                    : common_agent_concept_source_kind::conversation;
+    hypothesis.status = common_agent_concept_hypothesis_status::grounded;
+    hypothesis.scope = relation.scope;
+    hypothesis.source_refs = {hypothesis.canonical_statement_ref};
+    hypothesis.confidence = relation.confidence;
+    hypothesis.host_grounded = true;
+    hypothesis.reusable = true;
+    return observe_relation(hypothesis, relation, transaction, error);
+}
+
 bool common_agent_concept_candidate_index::observe_disconfirmation(
         const common_agent_concept_hypothesis & hypothesis,
         const std::string & evidence_ref,

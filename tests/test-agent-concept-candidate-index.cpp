@@ -161,5 +161,21 @@ int main() {
     assert(restored.load(error));
     assert(restored.resolve(concept.concept_key, concept.scope, candidate, error));
     assert(candidate.novelty_state == "conflict");
+
+    // Explicit host adapters (procedure, correction and user teaching) have
+    // a resolved relation but no separate hypothesis object. They still feed
+    // the same reference-only session candidate used by project reuse.
+    common_agent_concept_candidate_index resolved_relation_index;
+    auto resolved_relation = relation("relation:adapter", "task:adapter");
+    resolved_relation.scope.project_id = "project-adapter";
+    resolved_relation.scope.session_id = "session-adapter";
+    assert(resolved_relation_index.observe_resolved_relation(
+        resolved_relation, transaction("turn:adapter"), error));
+    assert(resolved_relation_index.resolve(
+        resolved_relation.teaching_key, resolved_relation.scope, candidate, error));
+    assert(candidate.relation_refs.size() == 1);
+    assert(candidate.behavior_key == resolved_relation.behavior_key);
+    assert(candidate.oracle_revision == resolved_relation.oracle_revision);
+
     return 0;
 }

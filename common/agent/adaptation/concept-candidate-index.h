@@ -89,6 +89,13 @@ public:
             const common_learning_transaction & transaction,
             std::string & error);
 
+    // Index a host-resolved relation from an explicit adapter without
+    // creating a second semantic hypothesis persistence path.
+    bool observe_resolved_relation(
+            const common_flydelta_teaching_relation & relation,
+            const common_learning_transaction & transaction,
+            std::string & error);
+
     bool observe_disconfirmation(
             const common_agent_concept_hypothesis & hypothesis,
             const std::string & evidence_ref,
