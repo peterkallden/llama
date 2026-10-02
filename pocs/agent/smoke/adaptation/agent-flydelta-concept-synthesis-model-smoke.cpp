@@ -191,7 +191,10 @@ common_flydelta_teaching_relation make_relation(
     common_flydelta_teaching_relation relation;
     relation.id = "teaching://concept-synthesis/" + id;
     relation.teaching_key = "dataset.grouped-aggregation.v1";
-    relation.source = common_adaptation_evidence_source::procedure_blueprint;
+    // This fixture stands in for the already host-grounded output of the
+    // user-taught-concept provider.  Keep the dataset Oracle because it is
+    // deterministic; changing the source must not silently change semantics.
+    relation.source = common_adaptation_evidence_source::user_taught_concept;
     relation.behavior_key = "dataset/grouped-aggregation";
     relation.scope = scope;
     relation.task_fingerprint = "task:concept-synthesis:" + id;
@@ -224,7 +227,7 @@ common_flydelta_experiment_collection_request make_search_request(
     request.enabled = true;
     request.kind = common_flydelta_experiment_job_kind::search_pipeline;
     request.evidence.id = "evidence://concept-synthesis/search";
-    request.evidence.source = common_adaptation_evidence_source::procedure_blueprint;
+    request.evidence.source = common_adaptation_evidence_source::user_taught_concept;
     request.evidence.scope = scope;
     request.evidence.behavior_key = "dataset/grouped-aggregation";
     request.evidence.task_fingerprint = "task:concept-synthesis/search";
@@ -446,7 +449,7 @@ int main(int argc, char ** argv) {
                 json{
                     {"kind", "flydelta_behavior_delta"},
                     {"id", "delta://concept-synthesis/search/" + std::to_string(index)},
-                    {"source", "procedure_blueprint"},
+                    {"source", "user_taught_concept"},
                     {"behavior_key", "dataset/grouped-aggregation"},
                     {"capture_manifest_id", baseline_ref},
                     {"host_evidence_ref", "evidence://concept-synthesis/search"},
@@ -605,6 +608,7 @@ int main(int argc, char ** argv) {
     }
     std::cout << "flydelta_concept_synthesis_model=" << json{
         {"state", common_flydelta_experiment_queue_state_name(synthesis_report.state)},
+        {"source", "user_taught_concept"},
         {"candidate_count", synthesis_report.concept_candidates.size()},
         {"candidates", std::move(candidates)},
         {"graft_direction_ref", synthesis_report.graft_direction_ref},
