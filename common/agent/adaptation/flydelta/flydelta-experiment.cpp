@@ -97,6 +97,8 @@ json trial_to_json(const common_flydelta_counterfactual_trial & trial) {
         {"observed_decision", trial.observed_decision_summary},
         {"expected_decision", trial.expected_decision_summary},
         {"verifier_reason", trial.verifier_reason},
+        {"verifier_violation_kind", trial.verifier_violation_kind},
+        {"verifier_violation_dimensions", trial.verifier_violation_dimensions},
         {"semantic_progress_observation", progress_observation_to_json(trial.semantic_progress_observation)},
         {"evidence_ref", trial.evidence_ref},
     };
@@ -114,6 +116,9 @@ void trial_from_json(const json & value, common_flydelta_counterfactual_trial & 
     trial.observed_decision_summary = value.value("observed_decision", "");
     trial.expected_decision_summary = value.value("expected_decision", "");
     trial.verifier_reason = value.value("verifier_reason", "");
+    trial.verifier_violation_kind = value.value("verifier_violation_kind", "none");
+    trial.verifier_violation_dimensions = value.value(
+        "verifier_violation_dimensions", std::vector<std::string>{});
     const auto progress = value.value("semantic_progress_observation", json::object());
     trial.semantic_progress_observation.available = progress.value("available", false);
     trial.semantic_progress_observation.contract_valid = progress.value("contract_valid", false);
@@ -221,9 +226,17 @@ bool common_flydelta_counterfactual_trial_validate(
     }
     if (trial.observed_decision_summary.size() > 1024 ||
             trial.expected_decision_summary.size() > 1024 ||
-            trial.verifier_reason.size() > 1024) {
+            trial.verifier_reason.size() > 1024 ||
+            trial.verifier_violation_kind.size() > 64 ||
+            trial.verifier_violation_dimensions.size() > 8) {
         error = "FlyDelta counterfactual verifier observation is too long";
         return false;
+    }
+    for (const auto & dimension : trial.verifier_violation_dimensions) {
+        if (dimension.empty() || dimension.size() > 64) {
+            error = "FlyDelta counterfactual violation dimension is invalid";
+            return false;
+        }
     }
     if (trial.verifier_known && !nonempty_bounded(trial.evidence_ref)) {
         error = "FlyDelta verified trial requires evidence";

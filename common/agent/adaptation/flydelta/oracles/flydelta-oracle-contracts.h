@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 // Oracle strength describes who can establish the semantic result. It is
 // deliberately separate from FlyDelta geometry and lifecycle authority.
@@ -18,6 +19,21 @@ enum class common_flydelta_oracle_verdict {
     violated,
     not_applicable,
     unknown,
+};
+
+// A bounded, deterministic explanation for a known semantic violation.  This
+// is provenance for host-side negative-material admission, never an outcome
+// or lifecycle decision.  Only explicitly attributable values may become
+// avoid_support material.
+enum class common_flydelta_oracle_violation_kind {
+    none,
+    wrong_tool,
+    missing_required_grouping,
+    wrong_grouping_field,
+    missing_measure,
+    wrong_measure_column,
+    wrong_measure_function,
+    unattributable,
 };
 
 enum class common_flydelta_oracle_phase {
@@ -35,6 +51,8 @@ enum class common_flydelta_oracle_probe_kind {
 
 const char * common_flydelta_oracle_strength_name(common_flydelta_oracle_strength value);
 const char * common_flydelta_oracle_verdict_name(common_flydelta_oracle_verdict value);
+const char * common_flydelta_oracle_violation_kind_name(
+        common_flydelta_oracle_violation_kind value);
 const char * common_flydelta_oracle_phase_name(common_flydelta_oracle_phase value);
 const char * common_flydelta_oracle_probe_kind_name(common_flydelta_oracle_probe_kind value);
 
@@ -70,6 +88,9 @@ struct common_flydelta_oracle_result {
     std::string policy_revision;
     std::string evidence_ref;
     std::string reason;
+    common_flydelta_oracle_violation_kind violation_kind =
+        common_flydelta_oracle_violation_kind::none;
+    std::vector<std::string> violation_dimensions;
 };
 
 // Returning false means this evaluator does not own the request. Returning

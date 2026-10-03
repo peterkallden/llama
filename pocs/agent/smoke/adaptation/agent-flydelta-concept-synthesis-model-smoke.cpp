@@ -626,12 +626,24 @@ int main(int argc, char ** argv) {
     const auto frontier_indices = common_flydelta_select_concept_synthesis_frontier(
         synthesis_report.concept_candidates,
         evaluator_config.concept_frontier_max_candidates);
-    if (frontier_indices.size() != synthesis_report.graft_direction_refs.size()) {
+    const bool paired_intervention = synthesis_report.has_paired_intervention;
+    if ((!paired_intervention &&
+            frontier_indices.size() != synthesis_report.graft_direction_refs.size()) ||
+            (paired_intervention &&
+                (synthesis_report.graft_direction_refs.size() != 1 ||
+                 synthesis_report.paired_intervention.prefer_role !=
+                     common_flydelta_intervention_component_role::prefer ||
+                 synthesis_report.paired_intervention.avoid_role !=
+                     common_flydelta_intervention_component_role::avoid_support))) {
         return fail("concept synthesis frontier trace does not match persisted directions");
     }
-    for (const size_t index : frontier_indices) {
-        frontier_semantics.push_back(common_flydelta_concept_synthesis_semantics_name(
-            synthesis_report.concept_candidates[index].synthesis_semantics));
+    if (paired_intervention) {
+        frontier_semantics.push_back("paired_prefer_avoid_support");
+    } else {
+        for (const size_t index : frontier_indices) {
+            frontier_semantics.push_back(common_flydelta_concept_synthesis_semantics_name(
+                synthesis_report.concept_candidates[index].synthesis_semantics));
+        }
     }
     std::cout << "flydelta_concept_synthesis_model=" << json{
         {"state", common_flydelta_experiment_queue_state_name(synthesis_report.state)},
@@ -641,6 +653,9 @@ int main(int argc, char ** argv) {
         {"graft_direction_ref", synthesis_report.graft_direction_ref},
         {"graft_direction_refs", synthesis_report.graft_direction_refs},
         {"frontier_semantics", std::move(frontier_semantics)},
+        {"paired_intervention", paired_intervention},
+        {"paired_proposal_id", paired_intervention
+            ? synthesis_report.paired_intervention.proposal_id : std::string()},
         {"next_action", common_flydelta_next_action_name(synthesis_report.next_action)},
         {"promotion", false},
     }.dump() << '\n';
@@ -654,8 +669,9 @@ int main(int argc, char ** argv) {
             collection_result != common_flydelta_experiment_collection_result::enqueued) {
         return fail("grafted search queue: " + error);
     }
-    if (synthesis_report.graft_direction_refs.size() != 2) {
-        return fail("bounded concept frontier did not select control and prototype directions");
+    if ((!paired_intervention && synthesis_report.graft_direction_refs.size() != 2) ||
+            (paired_intervention && synthesis_report.graft_direction_refs.size() != 1)) {
+        return fail("bounded concept frontier did not select the expected direction set");
     }
     // The two frontier jobs are deliberately executed one at a time. This
     // keeps the model comparison serial while still using the production
@@ -686,8 +702,9 @@ int main(int argc, char ** argv) {
             return fail("frontier search did not consume its persisted concept direction");
         }
         print_search_summary(graft_report,
-            index == 0 ? "concept-graft-control-residualized" :
-                "concept-graft-positive-prototype");
+            paired_intervention ? "concept-graft-paired-prefer-avoid" :
+                (index == 0 ? "concept-graft-control-residualized" :
+                    "concept-graft-positive-prototype"));
         graft_reports.push_back(std::move(graft_report));
     }
 
@@ -702,6 +719,7 @@ int main(int argc, char ** argv) {
               << " candidates=" << synthesis_report.concept_candidates.size()
               << " frontier_candidates=" << synthesis_report.graft_direction_refs.size()
               << " frontier_searches=" << graft_reports.size()
+              << " paired_intervention=" << (paired_intervention ? "yes" : "no")
               << " graft_to_search=yes"
               << " learning_credit=none"
               << " promotion=false\n";

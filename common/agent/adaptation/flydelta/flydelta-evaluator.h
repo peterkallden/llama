@@ -11,6 +11,7 @@
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-concept.h"
+#include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
 #include "agent/adaptation/flydelta/flydelta-causal-diagnostic.h"
 
 #include <cstddef>
@@ -117,6 +118,15 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_direction_candidate & candidate,
             std::string & direction_ref,
             std::string & error)> persist_experimental_direction_for_job;
+    // Persists one paired prefer/avoid basis as a single immutable composed
+    // artifact. The artifact is still experimental and is resolved through
+    // the ordinary candidate_ref path on the next search job.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const common_flydelta_paired_intervention_proposal & proposal,
+            const common_flydelta_low_rank_basis & basis,
+            std::string & direction_ref,
+            std::string & error)> persist_experimental_paired_basis_for_job;
     // Answers whether the reference-only teaching-material group is ready.
     // The host owns the material store; a false answer is a normal retain
     // path, not an evaluator failure.
@@ -260,6 +270,8 @@ struct common_flydelta_evaluator_result {
     std::vector<common_flydelta_search_continuation> search_continuations;
     std::vector<float> delta_memory_weights;
     std::vector<common_flydelta_concept_candidate> concept_candidates;
+    bool has_paired_intervention = false;
+    common_flydelta_paired_intervention_proposal paired_intervention;
     std::vector<std::string> concept_trajectory_refs;
     // Opaque intervention reference for the next ordinary search surface.
     std::string graft_direction_ref;

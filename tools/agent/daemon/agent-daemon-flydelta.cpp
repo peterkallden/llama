@@ -6,6 +6,19 @@
 
 namespace agent_daemon_flydelta_internal {
 
+namespace {
+
+bool daemon_flydelta_negative_violation_allowed(const std::string & kind) {
+    return kind == "wrong_tool" ||
+        kind == "missing_required_grouping" ||
+        kind == "wrong_grouping_field" ||
+        kind == "missing_measure" ||
+        kind == "wrong_measure_column" ||
+        kind == "wrong_measure_function";
+}
+
+} // namespace
+
 bool daemon_flydelta_run_concept_capture(
         std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
@@ -163,6 +176,13 @@ bool daemon_flydelta_run_concept_capture(
                 conditioned_result.host_evaluated &&
                     conditioned_result.verifier_known &&
                     conditioned_result.verifier_passed,
+                baseline_result.host_evaluated &&
+                    baseline_result.verifier_known &&
+                    !baseline_result.verifier_passed &&
+                    daemon_flydelta_negative_violation_allowed(
+                        baseline_result.verifier_violation_kind),
+                baseline_result.verifier_violation_kind,
+                baseline_result.verifier_violation_dimensions,
                 trajectory_ref, error)) return false;
         trajectory_refs.push_back(std::move(trajectory_ref));
     }
@@ -891,6 +911,8 @@ bool daemon_flydelta_run_search_pipeline(
         input.layer_anchors.push_back(static_cast<uint32_t>(direction.layer_index));
     }
     std::sort(input.available_layers.begin(), input.available_layers.end());
+    input.available_layers.erase(std::unique(input.available_layers.begin(),
+        input.available_layers.end()), input.available_layers.end());
     std::sort(input.layer_anchors.begin(), input.layer_anchors.end());
     input.layer_anchors.erase(std::unique(input.layer_anchors.begin(), input.layer_anchors.end()),
         input.layer_anchors.end());
@@ -3190,6 +3212,39 @@ make_daemon_flydelta_resource_binding_factory(
                 return daemon_flydelta_register_composed_directions(
                     scoped_provider, source_ref, {std::move(direction)},
                     "flydelta:concept-graft", direction_ref, persist_error);
+            };
+            callbacks.persist_experimental_paired_basis_for_job = [provider](
+                    const common_flydelta_experiment_job & job,
+                    const common_flydelta_paired_intervention_proposal & proposal,
+                    const common_flydelta_low_rank_basis & basis,
+                    std::string & direction_ref,
+                    std::string & persist_error) {
+                const auto scoped_provider = daemon_flydelta_provider_for_scope(
+                    provider, job.seed.scope);
+                if (!scoped_provider) {
+                    persist_error = "FlyDelta paired concept graft requires a scoped provider";
+                    return false;
+                }
+                if (!common_flydelta_paired_intervention_proposal_validate(
+                            proposal, persist_error) ||
+                        !common_flydelta_low_rank_basis_validate(basis, 2, persist_error) ||
+                        basis.vectors.size() != 2) {
+                    if (persist_error.empty()) {
+                        persist_error = "FlyDelta paired concept graft basis is invalid";
+                    }
+                    return false;
+                }
+                std::vector<common_flydelta_basis_direction> directions;
+                directions.reserve(basis.vectors.size());
+                for (const auto & values : basis.vectors) {
+                    common_flydelta_basis_direction direction;
+                    direction.layer_index = basis.layer_index;
+                    direction.values = values;
+                    directions.push_back(std::move(direction));
+                }
+                return daemon_flydelta_register_composed_directions(
+                    scoped_provider, proposal.proposal_id, std::move(directions),
+                    "flydelta:paired-concept-graft", direction_ref, persist_error);
             };
             callbacks.run_concept_capture = [provider](
                     const common_flydelta_experiment_job & job,

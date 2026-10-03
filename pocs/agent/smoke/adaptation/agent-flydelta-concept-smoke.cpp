@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-concept.h"
+#include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
@@ -597,9 +598,14 @@ bool run_offline() {
         }
         std::vector<common_flydelta_concept_candidate> negative_candidates;
         if (!common_flydelta_build_negative_repulsion_candidates(
-                spec, prototype_config, negative, controls, negative_candidates, error) ||
+                    spec, prototype_config, negative, controls, negative_candidates, error) ||
                 negative_candidates.size() != 3) {
             std::cerr << "negative repulsion offline build failed: " << error << '\n';
+            return false;
+        }
+        if (!common_flydelta_select_concept_synthesis_frontier(
+                    negative_candidates, 1).empty()) {
+            std::cerr << "negative support was admitted as an independent frontier\n";
             return false;
         }
         for (const auto & candidate : negative_candidates) {
@@ -612,6 +618,30 @@ bool run_offline() {
                 std::cerr << "negative repulsion direction admission failed: " << error << '\n';
                 return false;
             }
+        }
+        common_flydelta_direction_candidate prefer_direction;
+        common_flydelta_direction_candidate avoid_direction;
+        if (!common_flydelta_concept_candidate_to_direction(
+                    prototype_candidates.front(), prefer_direction, error) ||
+                !common_flydelta_concept_candidate_to_direction(
+                    negative_candidates.front(), avoid_direction, error)) {
+            std::cerr << "paired intervention direction conversion failed: " << error << '\n';
+            return false;
+        }
+        common_flydelta_paired_intervention_proposal paired;
+        if (!common_flydelta_build_paired_intervention_proposal(
+                    spec, prototype_candidates.front(), negative_candidates.front(),
+                    prefer_direction, avoid_direction,
+                    spec.verifier_ref, spec.scope_fingerprint, paired, error)) {
+            std::cerr << "paired intervention proposal failed: " << error << '\n';
+            return false;
+        }
+        common_flydelta_low_rank_basis paired_basis;
+        if (!common_flydelta_build_paired_intervention_basis(
+                    paired, prefer_direction, avoid_direction, paired_basis, error) ||
+                paired_basis.vectors.size() != 2) {
+            std::cerr << "paired intervention basis failed: " << error << '\n';
+            return false;
         }
         for (const auto & candidate : candidates) {
             common_flydelta_direction_candidate direction;
@@ -628,6 +658,8 @@ bool run_offline() {
                   << " retained_trajectories=" << candidates.front().retained_trajectories
                   << " prototype_candidates=" << prototype_candidates.size()
                   << " negative_candidates=" << negative_candidates.size()
+                  << " paired_roles=prefer+avoid_support"
+                  << " paired_basis_rank=" << paired_basis.vectors.size()
                   << " median_alignment=" << candidates.front().median_alignment
                   << " experimental_only=yes learning_eligible=no\n";
         ++family_count;

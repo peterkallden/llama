@@ -394,6 +394,35 @@ truth or promotion authority of its own. A future explicit low-rank/coefficient
 path may evaluate the positive and negative components together without
 forcing rank two when the basis is degenerate.
 
+Negative material is now admitted from the ordinary production capture path
+for a narrow deterministic dataset-operation whitelist. The flow is:
+
+```text
+model-facing call
+  -> shared canonical semantic normalization
+  -> Dataset Operation Oracle
+  -> known violated + attributable violation kind
+  -> retain the already captured baseline as negative support
+  -> match verified prefer/conditioned and neutral control material
+  -> existing paired rank-2 basis/coefficient search
+  -> full generation and the same host Oracle
+```
+
+The first supported family is grouped aggregation. Missing required grouping,
+wrong grouping field, missing/wrong measure and wrong tool are recorded with a
+versioned violation kind and bounded dimensions. Generic malformed output,
+unknown semantics, `UNKNOWN`, and unverified failures remain
+`unattributable` and cannot create negative material. The negative capture
+keeps its execution, fixture, scope, model/template, capture-layout and Oracle
+provenance in the existing trajectory resource; no negative store is created.
+
+Negative support is not a standalone answer or direction. It cannot enter the
+rank-one frontier, receive `HELPED`, learning credit or promotion. It is only
+usable beside an explicit verified prefer/repair or positive-prototype
+component and a protected control. This permits iterative correction: one
+iteration may reduce a wrong tool choice, while a later iteration captures a
+narrower argument-structure violation such as missing `group_by`.
+
 Synthesis candidates also carry a comparison descriptor that separates
 semantic strategy from estimator. `contrast_repair` and
 `conditioned_prototype` are the current activation-derived strategies;
@@ -430,8 +459,9 @@ promotion. The smoke still does not provide holdout/transfer validation for
 the synthesized direction. Its offline contract path also builds three
 explicit negative-repulsion estimators from host-labelled undesired captures
 and verifies that they are admitted only as experimental, non-standalone
-contrast components; the Qwen path remains unchanged until a real negative
-capture fixture is available.
+contrast components. The Qwen path now exercises the same admission from an
+observed missing `group_by` violation; this remains wiring and host-verification
+evidence, not evidence that the paired intervention improves the model.
 
 Capability reporting must follow the same boundary: a capability is available
 only when its production callback and durable resolver are registered. The
@@ -718,6 +748,7 @@ journal remains the durable evidence boundary.
 | 2026-10-02 | this local canary-deployment/runtime-seam sweep | Bounded canary resolution now has a factory and an explicit resident-runtime seam on top of the existing registry and review journal | Cozo/Vulkan daemon/deployment targets rebuilt with three compile threads; 11 focused FlyDelta CTests and 10 model-free FlyDelta smokes passed serially. Qwen Instruct Vulkan0 server-context causal smoke reached planner/reflection/capture with four threads; OpenAlex fixtures were already valid on the first planner attempt and therefore stopped as `fixture_not_counterfactual` | Added active-only default resolution, explicit canary authority, deterministic cohort selection, replacement/additive ordered composition, baseline/candidate deployment fingerprints, per-turn activation refresh on a reused resident runtime, and `get_binding.open_canaries` admin projection. The Qwen result is server-context wiring evidence only; no canary, learning credit, promotion or active-binding change was performed |
 | 2026-10-02 | this local canary-disposition/runtime wiring sweep | Host configuration, artifact loading, observation reservation, policy disposition and deployment-aware session/KV identity now use the existing registry, review journal and resident session host | Cozo/Vulkan daemon target rebuilt with three compile threads after one compile correction; model-free deployment and sideband targets are ready for the serial correction round. Real Qwen canary routing remains unclaimed unless a host supplies explicit canary authority, applicability and sparse-code inputs | Added `disabled/manual/policy`, `retain/expand_scope/promote_active/close`, preconfigured scope-step validation, atomic exposure reservation, same-key canary conflict rejection, journaled policy close/expand/promote and CAS-preserving runtime identity. No FlyDelta search, Oracle truth, learning credit or active binding is changed implicitly |
 | 2026-10-02 | this local iterative-progress correction | Individual strict verifier pass is separated from paired outcome; bounded dataset semantic progress, residual dimensions and Bootstrap resume fields now travel through reports, trace and existing state | Cozo/Vulkan focused build completed with three compile threads and the user-profile ccache; affected FlyDelta CTests passed after rebuilding all affected binaries | A partial candidate is now `UNKNOWN` plus `IMPROVED`, not individual `HARMED`; strict Oracle, learning credit, promotion and activation authority remain unchanged |
+| 2026-10-03 | this local paired-intervention and negative-capture sweep | Host-verified negative support now retains its `avoid_support` role and can be paired with a prefer/repair or positive-prototype component through the existing rank-2 basis/coefficient seam | Cozo/Vulkan full build passed with three compile threads; 54/54 focused `test-agent-flydelta*` CTests and 11 relevant contract/replay smokes passed serially; Qwen Instruct resident server-context smoke produced 2 relations, 6 capture arms, 2 host-verified negative trajectories, 9 synthesis candidates and two serial production search phases | The Qwen trace showed `missing_required_grouping`, `negative_trajectories=2` and `paired_intervention=yes`; the paired frontier remained `UNKNOWN`/`no_useful_utility`, so no learning credit, promotion or active-binding change occurred. Negative support cannot form an independent rank-1 frontier; duplicate same-layer components are accepted only for explicitly tagged paired artifacts |
 | 2026-10-01 | this local evaluation-contract sweep | Durable evaluation fixtures can now name the Oracle-aligned classes `paraphrase`, `transfer`, `control` and `competing` in addition to the existing lifecycle gate classes | Contract round-trip checks passed; production daemon mapping preserves the existing intended/holdout/retention/agent-regression gates; no model-backed rerun was needed for this vocabulary-only change | The new names are optional fixture identity only; they do not alter lifecycle gates |
 | 2026-10-01 | this local Oracle-report sweep | Evaluation now emits a separate immutable, redacted Oracle-suite report resource and links it from the lifecycle evaluation report | Cozo/Vulkan build with three compile threads passed; 53 focused FlyDelta CTests passed serially, including Oracle-report and evaluation-provenance round trips; the TinyLlama Cozo/Vulkan daemon smoke traced resource `agent-resource://.../resource-12` through lifecycle-report reference and post-evaluation readback | The report is an audit/diagnostic artifact only. It does not create learning credit, select an overlay or change promotion semantics; no second store or evaluator path was introduced. The smoke's synthetic candidate verifies wiring only, not useful Qwen adaptation. |
 
@@ -4468,6 +4499,25 @@ and do not alter the production Oracle, learning-credit or promotion rules.
 The daemon loads them only when all trajectories in a compatible group carry
 the negative reference and capture; otherwise the group fails closed. The
 negative builder reuses the positive prototype estimator and emits
-`control - negative`. A negative-only group is retained for inspection but
-cannot create a graft frontier; it must be paired with a repair or positive
-candidate before the existing search/basis path can use it.
+`control - negative`. A negative-only group is retained for inspection and
+cannot create a graft frontier or learning evidence. When a compatible
+prefer/repair or positive-prototype candidate is available, the host keeps the
+roles explicit in a paired intervention proposal:
+
+```text
+prefer / repair or positive prototype
+avoid_support / negative repulsion
+        -> existing rank-2 basis builder
+        -> existing coefficient/TFO search
+        -> the same diagnostic, full-generation and host-Oracle path
+```
+
+`avoid_support` is therefore not a rank-one frontier candidate and can never
+receive independent `HELPED`, learning credit or promotion. The paired basis
+is persisted, when the host elects to persist it, as one ordinary composed
+experimental artifact through the existing daemon binding seam. Its proposal
+retains the two immutable candidate references, roles, fixture/Oracle identity,
+model/capture identity and layer. The role is not reconstructed from a generic
+direction later, so a negative component cannot silently become a normal
+positive arm. Coefficients may still discover that the avoid component is
+useful, but only a complete host-verified pair outcome can be `HELPED`.

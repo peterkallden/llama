@@ -15,6 +15,11 @@ bool valid_reference_count(size_t count, size_t max_references) {
     return count != 0 && count <= max_references;
 }
 
+std::string scope_fingerprint(const common_agent_scope & scope) {
+    return scope.namespace_id + "/" + scope.project_id + "/" +
+        scope.session_id + "/" + scope.turn_id;
+}
+
 bool resolve_bootstrap_zoom_state_for_job(
         const common_flydelta_evaluator_callbacks & callbacks,
         const common_flydelta_experiment_job & job,
@@ -305,6 +310,74 @@ bool common_flydelta_evaluate_job(
                 if (!common_flydelta_concept_candidate_to_direction(
                         candidate, direction, error)) return false;
                 result.direction_candidates.push_back(std::move(direction));
+            }
+
+            // Keep an explicitly host-labelled negative component attached to
+            // a positive/repair component.  The ordinary direction format is
+            // intentionally role-neutral, so the pair is constructed before
+            // persistence and becomes one rank-two composed artifact.
+            size_t prefer_index = result.concept_candidates.size();
+            size_t avoid_index = result.concept_candidates.size();
+            for (size_t index = 0; index < result.concept_candidates.size(); ++index) {
+                const auto & candidate = result.concept_candidates[index];
+                if (candidate.kind != common_flydelta_concept_candidate_kind::raw_mean) continue;
+                if (avoid_index == result.concept_candidates.size() &&
+                        candidate.synthesis_semantics ==
+                            common_flydelta_concept_synthesis_semantics::negative_repulsion) {
+                    avoid_index = index;
+                }
+                if (prefer_index == result.concept_candidates.size() &&
+                        candidate.synthesis_semantics !=
+                            common_flydelta_concept_synthesis_semantics::negative_repulsion) {
+                    prefer_index = index;
+                }
+            }
+            if (prefer_index < result.concept_candidates.size() &&
+                    avoid_index < result.concept_candidates.size() &&
+                    callbacks.persist_experimental_paired_basis_for_job) {
+                common_flydelta_concept_spec spec;
+                spec.concept_key = result.concept_candidates[prefer_index].concept_key;
+                spec.extraction_id = result.concept_candidates[prefer_index].extraction_id;
+                spec.behavior_key = job.seed.behavior_key;
+                spec.source = job.seed.source;
+                spec.source_ref = job.seed.evidence_ref.empty()
+                    ? job.seed.id : job.seed.evidence_ref;
+                spec.grounding_ref = spec.source_ref;
+                spec.verifier_ref = job.seed.verifier_ref;
+                spec.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+                spec.tokenizer_fingerprint = job.seed.tokenizer_fingerprint;
+                spec.template_fingerprint = job.seed.template_fingerprint;
+                spec.capture_layout_revision = result.concept_candidates[prefer_index].capture_layout_revision;
+                spec.scope_fingerprint = scope_fingerprint(job.seed.scope);
+                spec.host_approved = true;
+                spec.redaction_attested = true;
+                common_flydelta_paired_intervention_proposal proposal;
+                if (!common_flydelta_build_paired_intervention_proposal(
+                        spec, result.concept_candidates[prefer_index],
+                        result.concept_candidates[avoid_index],
+                        result.direction_candidates[prefer_index],
+                        result.direction_candidates[avoid_index],
+                        job.seed.verifier_ref, spec.scope_fingerprint,
+                        proposal, error)) return false;
+                common_flydelta_low_rank_basis basis;
+                if (!common_flydelta_build_paired_intervention_basis(
+                        proposal, result.direction_candidates[prefer_index],
+                        result.direction_candidates[avoid_index], basis, error)) return false;
+                std::string paired_ref;
+                if (!callbacks.persist_experimental_paired_basis_for_job(
+                        job, proposal, basis, paired_ref, error) || paired_ref.empty()) {
+                    if (error.empty()) error = "FlyDelta paired intervention persistence returned no reference";
+                    return false;
+                }
+                result.has_paired_intervention = true;
+                result.paired_intervention = std::move(proposal);
+                result.graft_direction_ref = paired_ref;
+                result.graft_direction_refs = {paired_ref};
+                result.has_next_action = true;
+                result.next_action = common_flydelta_next_action::run_bootstrap;
+                result.next_action_reason =
+                    "Typed prefer/avoid basis persisted; schedule bounded paired FlyDelta search";
+                return true;
             }
             if (callbacks.run_decision_margin_challenger) {
                 if (!callbacks.run_decision_margin_challenger(

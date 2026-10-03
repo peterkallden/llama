@@ -87,6 +87,21 @@ int main() {
         CHECK(candidate.control_residualized);
     }
 
+    auto negative_trajectories = trajectories;
+    for (size_t index = 0; index < negative_trajectories.size(); ++index) {
+        auto & value = negative_trajectories[index];
+        value.negative_capture_ref = value.fixture_ref + "/negative";
+        value.negative = {0.4f + static_cast<float>(index), 0.8f, 0.1f};
+        value.negative_host_verified = true;
+    }
+    CHECK(common_flydelta_build_concept_candidates(
+        concept_spec, config, negative_trajectories, candidates, error));
+    CHECK(candidates.size() == 3);
+    for (const auto & candidate : candidates) {
+        CHECK(candidate.negative_trajectories == 0);
+        CHECK(candidate.retained_negative_trajectories == 0);
+    }
+
     auto trim_config = config;
     trim_config.trim_fraction = 0.25f;
     auto trim_trajectories = trajectories;

@@ -306,6 +306,70 @@ int main() {
     CHECK(result.decision_margin_challenger_candidates.front().experimental_only);
     CHECK(result.direction_candidates.size() == 1);
 
+    // A host-verified avoid component must be paired before persistence.  It
+    // must not silently enter the ordinary rank-one frontier or bypass the
+    // existing composed-artifact callback.
+    auto paired_synthesis = base_job(common_flydelta_experiment_job_kind::concept_synthesis,
+            "flydelta://job/concept-synthesis-paired");
+    paired_synthesis.teaching_material_group_ref = "flydelta://teaching/evaluator-paired";
+    callbacks = {};
+    callbacks.run_concept_synthesis = [](const auto &, auto & candidates, std::string &) {
+        common_flydelta_concept_candidate prefer;
+        prefer.concept_key = "concept://evaluator/paired";
+        prefer.extraction_id = "extraction://evaluator/paired";
+        prefer.behavior_key = "tool_use/diagnostics/missing-argument";
+        prefer.origin = "host_taught_positive_prototype";
+        prefer.model_profile_fingerprint = "sha256:model";
+        prefer.capture_layout_revision = "layout:v1";
+        prefer.layer_index = 2;
+        prefer.values = {1.0f, 0.0f};
+        prefer.source_trajectories = 2;
+        prefer.retained_trajectories = 2;
+        prefer.control_trajectories = 2;
+        prefer.retained_control_trajectories = 2;
+        prefer.median_alignment = 1.0f;
+        prefer.synthesis_semantics =
+            common_flydelta_concept_synthesis_semantics::positive_prototype;
+        candidates.push_back(std::move(prefer));
+
+        common_flydelta_concept_candidate avoid;
+        avoid.concept_key = "concept://evaluator/paired";
+        avoid.extraction_id = "extraction://evaluator/paired";
+        avoid.behavior_key = "tool_use/diagnostics/missing-argument";
+        avoid.origin = "host_taught_negative_repulsion";
+        avoid.model_profile_fingerprint = "sha256:model";
+        avoid.capture_layout_revision = "layout:v1";
+        avoid.layer_index = 2;
+        avoid.values = {0.0f, 1.0f};
+        avoid.source_trajectories = 2;
+        avoid.retained_trajectories = 2;
+        avoid.control_trajectories = 2;
+        avoid.retained_control_trajectories = 2;
+        avoid.negative_trajectories = 2;
+        avoid.retained_negative_trajectories = 2;
+        avoid.median_alignment = 1.0f;
+        avoid.synthesis_semantics =
+            common_flydelta_concept_synthesis_semantics::negative_repulsion;
+        candidates.push_back(std::move(avoid));
+        return true;
+    };
+    bool paired_persisted = false;
+    callbacks.persist_experimental_paired_basis_for_job =
+        [&](const auto &, const auto & proposal, const auto & basis,
+                std::string & reference, std::string &) {
+            paired_persisted =
+                proposal.prefer_role == common_flydelta_intervention_component_role::prefer &&
+                proposal.avoid_role == common_flydelta_intervention_component_role::avoid_support &&
+                basis.vectors.size() == 2;
+            reference = paired_persisted ? "flydelta://direction/paired" : std::string();
+            return paired_persisted;
+        };
+    CHECK(common_flydelta_evaluate_job(paired_synthesis, config, callbacks, result, error));
+    CHECK(paired_persisted && result.has_paired_intervention &&
+        result.graft_direction_refs.size() == 1 &&
+        result.paired_intervention.avoid_role ==
+            common_flydelta_intervention_component_role::avoid_support);
+
     auto pipeline = base_job(common_flydelta_experiment_job_kind::search_pipeline,
             "flydelta://job/search-pipeline");
     pipeline.capture_manifest_ids = {"flydelta://capture/evaluator"};

@@ -136,6 +136,65 @@ struct common_flydelta_concept_candidate {
     bool learning_eligible = false;
 };
 
+// A synthesis component keeps its semantic role until the paired basis has
+// been built.  The role is deliberately not added to the generic executable
+// direction candidate: that type is also used by ordinary rank-one search.
+enum class common_flydelta_intervention_component_role {
+    prefer,
+    avoid_support,
+};
+
+const char * common_flydelta_intervention_component_role_name(
+        common_flydelta_intervention_component_role role);
+
+// Reference-only identity for one bounded prefer/avoid composition.  Raw
+// vectors remain in the immutable candidate/artifact stores; this proposal
+// only carries the provenance needed to validate and replay the composition.
+struct common_flydelta_paired_intervention_proposal {
+    int schema_version = 1;
+    std::string proposal_id;
+    common_flydelta_intervention_component_role prefer_role =
+        common_flydelta_intervention_component_role::prefer;
+    common_flydelta_intervention_component_role avoid_role =
+        common_flydelta_intervention_component_role::avoid_support;
+    std::string prefer_candidate_ref;
+    std::string avoid_candidate_ref;
+    common_flydelta_direction_kind prefer_direction_kind =
+        common_flydelta_direction_kind::raw_repair;
+    common_flydelta_direction_kind avoid_direction_kind =
+        common_flydelta_direction_kind::negative_repulsion;
+    std::string concept_key;
+    std::string behavior_key;
+    std::string relation_ref;
+    std::string fixture_ref;
+    std::string oracle_ref;
+    std::string oracle_revision;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string capture_layout_revision;
+    std::string scope_fingerprint;
+    int32_t layer_index = -1;
+};
+
+bool common_flydelta_paired_intervention_proposal_validate(
+        const common_flydelta_paired_intervention_proposal & proposal,
+        std::string & error);
+
+// Builds a reference-only proposal from two already validated synthesis
+// candidates.  The negative candidate is support material only; this helper
+// never creates a rank-one frontier or learning evidence.
+bool common_flydelta_build_paired_intervention_proposal(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_concept_candidate & prefer,
+        const common_flydelta_concept_candidate & avoid,
+        const common_flydelta_direction_candidate & prefer_direction,
+        const common_flydelta_direction_candidate & avoid_direction,
+        const std::string & fixture_ref,
+        const std::string & scope_fingerprint,
+        common_flydelta_paired_intervention_proposal & proposal,
+        std::string & error);
+
 // Selects a bounded, deterministic comparison frontier across synthesis
 // semantics. The selector compares at most one raw estimator per primary
 // semantic source first (control_residualized, then positive_prototype), and

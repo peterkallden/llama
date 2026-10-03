@@ -22,6 +22,25 @@ const char * common_flydelta_oracle_verdict_name(common_flydelta_oracle_verdict 
     return "unknown";
 }
 
+const char * common_flydelta_oracle_violation_kind_name(
+        common_flydelta_oracle_violation_kind value) {
+    switch (value) {
+        case common_flydelta_oracle_violation_kind::none: return "none";
+        case common_flydelta_oracle_violation_kind::wrong_tool: return "wrong_tool";
+        case common_flydelta_oracle_violation_kind::missing_required_grouping:
+            return "missing_required_grouping";
+        case common_flydelta_oracle_violation_kind::wrong_grouping_field:
+            return "wrong_grouping_field";
+        case common_flydelta_oracle_violation_kind::missing_measure: return "missing_measure";
+        case common_flydelta_oracle_violation_kind::wrong_measure_column:
+            return "wrong_measure_column";
+        case common_flydelta_oracle_violation_kind::wrong_measure_function:
+            return "wrong_measure_function";
+        case common_flydelta_oracle_violation_kind::unattributable: return "unattributable";
+    }
+    return "unattributable";
+}
+
 const char * common_flydelta_oracle_phase_name(common_flydelta_oracle_phase value) {
     switch (value) {
         case common_flydelta_oracle_phase::concept: return "concept";

@@ -310,6 +310,9 @@ bool daemon_flydelta_persist_concept_trajectory(
         const common_flydelta_hidden_state_capture & conditioned,
         const common_flydelta_hidden_state_capture & control,
         bool conditioned_host_verified,
+        bool negative_host_verified,
+        const std::string & negative_violation_kind,
+        const std::vector<std::string> & negative_violation_dimensions,
         std::string & trajectory_ref,
         std::string & error);
 
@@ -318,6 +321,12 @@ bool daemon_flydelta_verify_generation(
         const std::string & generated,
         bool & verifier_known,
         bool & passed,
+        std::string & observed_summary,
+        std::string & expected_summary,
+        std::string & verifier_reason,
+        std::string & violation_kind,
+        std::vector<std::string> & violation_dimensions,
+        common_flydelta_semantic_progress_observation & progress_observation,
         std::string & error);
 
 bool daemon_flydelta_arm_semantic_passed(const common_flydelta_arm_result & result);

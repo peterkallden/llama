@@ -431,6 +431,41 @@ bool common_flydelta_build_low_rank_basis(
     return common_flydelta_low_rank_basis_validate(basis, max_rank, error);
 }
 
+bool common_flydelta_build_paired_intervention_basis(
+        const common_flydelta_paired_intervention_proposal & proposal,
+        const common_flydelta_direction_candidate & prefer,
+        const common_flydelta_direction_candidate & avoid,
+        common_flydelta_low_rank_basis & basis,
+        std::string & error) {
+    error.clear();
+    basis = {};
+    if (!common_flydelta_paired_intervention_proposal_validate(proposal, error) ||
+            prefer.layer_index != proposal.layer_index ||
+            avoid.layer_index != proposal.layer_index ||
+            prefer.kind != proposal.prefer_direction_kind ||
+            avoid.kind != proposal.avoid_direction_kind ||
+            prefer.values.size() != avoid.values.size() ||
+            prefer.values.empty()) {
+        if (error.empty()) error = "FlyDelta paired intervention basis identity is invalid";
+        return false;
+    }
+    if (!common_flydelta_direction_candidate_validate(
+                prefer, prefer.values.size(), error) ||
+            !common_flydelta_direction_candidate_validate(
+                avoid, avoid.values.size(), error)) {
+        return false;
+    }
+    const std::vector<common_flydelta_direction_candidate> components = {prefer, avoid};
+    if (!common_flydelta_build_low_rank_basis(
+                prefer.values.size(), 2, components, basis, error)) return false;
+    if (basis.vectors.size() != 2) {
+        error = "FlyDelta paired intervention components do not span rank two";
+        basis = {};
+        return false;
+    }
+    return true;
+}
+
 bool common_flydelta_semantic_basis_query_validate(
         const common_flydelta_semantic_basis_query & query,
         std::string & error) {

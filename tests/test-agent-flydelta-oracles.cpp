@@ -37,12 +37,14 @@ int main() {
         R"({"name":"data.aggregate","arguments":{"dataset":"dataset://local/sales","group_by":["region"],"measure":"amount"}})",
         result, error));
     CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::satisfied);
+    CHECK(result.violation_kind == common_flydelta_oracle_violation_kind::none);
     CHECK(result.oracle_revision == "v1");
     CHECK(common_flydelta_dataset_operation_oracle(
         request,
         R"({"name":"statistics.describe","arguments":{"dataset":"dataset://local/sales","column":"amount"}})",
         result, error));
     CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::violated);
+    CHECK(result.violation_kind == common_flydelta_oracle_violation_kind::wrong_tool);
     // A valid but different dataset operation is still a deterministic
     // violation when it belongs to the semantic-decision IR.
     CHECK(common_flydelta_dataset_operation_oracle(
@@ -50,9 +52,23 @@ int main() {
         R"({"operation":"filter","dataset":"dataset://local/sales","predicate":"region == north"})",
         result, error));
     CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::violated);
+    CHECK(result.violation_kind == common_flydelta_oracle_violation_kind::wrong_tool);
+    CHECK(common_flydelta_dataset_operation_oracle(
+        request,
+        R"({"name":"data.aggregate","arguments":{"dataset":"dataset://local/sales","measure":"amount"}})",
+        result, error));
+    CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::violated);
+    CHECK(result.violation_kind == common_flydelta_oracle_violation_kind::missing_required_grouping);
+    CHECK(result.violation_dimensions.size() == 1 &&
+        result.violation_dimensions.front() == "grouping");
+    CHECK(common_flydelta_dataset_operation_oracle(
+        request, "not valid json", result, error));
+    CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::violated);
+    CHECK(result.violation_kind == common_flydelta_oracle_violation_kind::unattributable);
     CHECK(common_flydelta_dataset_operation_oracle(
         aggregate_request(false), "not applicable", result, error));
     CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::not_applicable);
+    CHECK(result.violation_kind == common_flydelta_oracle_violation_kind::none);
 
     common_flydelta_oracle_evaluator_chain evaluators;
     evaluators.deterministic = common_flydelta_dataset_operation_oracle;

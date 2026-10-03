@@ -299,6 +299,125 @@ const char * common_flydelta_concept_synthesis_semantics_name(
     return "unknown";
 }
 
+const char * common_flydelta_intervention_component_role_name(
+        common_flydelta_intervention_component_role role) {
+    switch (role) {
+        case common_flydelta_intervention_component_role::prefer: return "prefer";
+        case common_flydelta_intervention_component_role::avoid_support:
+            return "avoid_support";
+    }
+    return "unknown";
+}
+
+bool common_flydelta_paired_intervention_proposal_validate(
+        const common_flydelta_paired_intervention_proposal & proposal,
+        std::string & error) {
+    error.clear();
+    const char * prefer_role = common_flydelta_intervention_component_role_name(
+        proposal.prefer_role);
+    const char * avoid_role = common_flydelta_intervention_component_role_name(
+        proposal.avoid_role);
+    if (proposal.schema_version != 1 || !bounded(proposal.proposal_id) ||
+            std::string(prefer_role) != "prefer" ||
+            std::string(avoid_role) != "avoid_support" ||
+            !bounded(proposal.prefer_candidate_ref) ||
+            !bounded(proposal.avoid_candidate_ref) ||
+            proposal.prefer_candidate_ref == proposal.avoid_candidate_ref ||
+            !bounded(proposal.concept_key) || !bounded(proposal.behavior_key) ||
+            !bounded(proposal.relation_ref) || !bounded(proposal.fixture_ref) ||
+            !bounded(proposal.oracle_ref) || !bounded(proposal.oracle_revision) ||
+            !bounded(proposal.model_profile_fingerprint) ||
+            !bounded(proposal.tokenizer_fingerprint) ||
+            !bounded(proposal.template_fingerprint) ||
+            !bounded(proposal.capture_layout_revision) ||
+            !bounded(proposal.scope_fingerprint) || proposal.layer_index < 0 ||
+            proposal.prefer_direction_kind == common_flydelta_direction_kind::negative_repulsion ||
+            proposal.prefer_direction_kind == common_flydelta_direction_kind::negative_repulsion_trimmed_mean ||
+            proposal.prefer_direction_kind == common_flydelta_direction_kind::negative_repulsion_diagonal_whitened_mean ||
+            (proposal.avoid_direction_kind != common_flydelta_direction_kind::negative_repulsion &&
+             proposal.avoid_direction_kind != common_flydelta_direction_kind::negative_repulsion_trimmed_mean &&
+             proposal.avoid_direction_kind != common_flydelta_direction_kind::negative_repulsion_diagonal_whitened_mean)) {
+        error = "FlyDelta paired intervention proposal is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_build_paired_intervention_proposal(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_concept_candidate & prefer,
+        const common_flydelta_concept_candidate & avoid,
+        const common_flydelta_direction_candidate & prefer_direction,
+        const common_flydelta_direction_candidate & avoid_direction,
+        const std::string & fixture_ref,
+        const std::string & scope_fingerprint,
+        common_flydelta_paired_intervention_proposal & proposal,
+        std::string & error) {
+    error.clear();
+    proposal = {};
+    if (!common_flydelta_concept_spec_validate(spec, error) ||
+            !common_flydelta_concept_candidate_validate(
+                prefer, prefer.values.size(), error) ||
+            !common_flydelta_concept_candidate_validate(
+                avoid, avoid.values.size(), error) ||
+            !common_flydelta_direction_candidate_validate(
+                prefer_direction, prefer.values.size(), error) ||
+            !common_flydelta_direction_candidate_validate(
+                avoid_direction, avoid.values.size(), error)) {
+        return false;
+    }
+    const bool prefer_semantics =
+        prefer.synthesis_semantics != common_flydelta_concept_synthesis_semantics::negative_repulsion;
+    const bool avoid_semantics =
+        avoid.synthesis_semantics == common_flydelta_concept_synthesis_semantics::negative_repulsion;
+    if (!prefer_semantics || !avoid_semantics || prefer.layer_index != avoid.layer_index ||
+            prefer.concept_key != avoid.concept_key || prefer.behavior_key != avoid.behavior_key ||
+            prefer.model_profile_fingerprint != avoid.model_profile_fingerprint ||
+            prefer.capture_layout_revision != avoid.capture_layout_revision ||
+            prefer_direction.layer_index != avoid_direction.layer_index ||
+            prefer_direction.kind == common_flydelta_direction_kind::negative_repulsion ||
+            prefer_direction.kind == common_flydelta_direction_kind::negative_repulsion_trimmed_mean ||
+            prefer_direction.kind == common_flydelta_direction_kind::negative_repulsion_diagonal_whitened_mean ||
+            (avoid_direction.kind != common_flydelta_direction_kind::negative_repulsion &&
+             avoid_direction.kind != common_flydelta_direction_kind::negative_repulsion_trimmed_mean &&
+             avoid_direction.kind != common_flydelta_direction_kind::negative_repulsion_diagonal_whitened_mean) ||
+            fixture_ref.empty() || scope_fingerprint.empty()) {
+        error = "FlyDelta paired intervention components are incompatible or have the wrong roles";
+        return false;
+    }
+
+    // The estimator alone is not an identity here: a raw positive prototype
+    // and a raw avoid-support candidate are distinct immutable components.
+    const std::string prefer_ref = prefer.extraction_id + "/prefer/" +
+        common_flydelta_concept_candidate_kind_name(prefer.kind);
+    const std::string avoid_ref = avoid.extraction_id + "/avoid-support/" +
+        common_flydelta_concept_candidate_kind_name(avoid.kind);
+    proposal.proposal_id = spec.extraction_id + "/paired/" +
+        common_flydelta_concept_candidate_kind_name(prefer.kind) + "/" +
+        common_flydelta_concept_candidate_kind_name(avoid.kind);
+    proposal.prefer_candidate_ref = prefer_ref;
+    proposal.avoid_candidate_ref = avoid_ref;
+    proposal.prefer_direction_kind = prefer_direction.kind;
+    proposal.avoid_direction_kind = avoid_direction.kind;
+    proposal.concept_key = prefer.concept_key;
+    proposal.behavior_key = prefer.behavior_key;
+    proposal.relation_ref = spec.source_ref;
+    proposal.fixture_ref = fixture_ref;
+    proposal.oracle_ref = spec.verifier_ref;
+    proposal.oracle_revision = spec.verifier_ref;
+    proposal.model_profile_fingerprint = spec.model_profile_fingerprint;
+    proposal.tokenizer_fingerprint = spec.tokenizer_fingerprint;
+    proposal.template_fingerprint = spec.template_fingerprint;
+    proposal.capture_layout_revision = spec.capture_layout_revision;
+    proposal.scope_fingerprint = scope_fingerprint;
+    proposal.layer_index = prefer.layer_index;
+    if (!common_flydelta_paired_intervention_proposal_validate(proposal, error)) {
+        proposal = {};
+        return false;
+    }
+    return true;
+}
+
 std::vector<size_t> common_flydelta_select_concept_synthesis_frontier(
         const std::vector<common_flydelta_concept_candidate> & candidates,
         size_t max_candidates) {

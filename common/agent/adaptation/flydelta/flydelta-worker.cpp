@@ -109,6 +109,8 @@ void append_counterfactual_arm(const common_flydelta_counterfactual_report & rep
     arm.observed_decision_summary = report.candidate.observed_decision_summary;
     arm.expected_decision_summary = report.candidate.expected_decision_summary;
     arm.verifier_reason = report.candidate.verifier_reason;
+    arm.verifier_violation_kind = report.candidate.verifier_violation_kind;
+    arm.verifier_violation_dimensions = report.candidate.verifier_violation_dimensions;
     arm.semantic_progress_observation = report.candidate.semantic_progress_observation;
     arm.semantic_progress = report.semantic_progress;
     arm.evidence_ref = report.candidate.evidence_ref;
@@ -164,6 +166,8 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
     trace.next_action_reason = result.next_action_reason;
     trace.graft_direction_ref = result.graft_direction_ref;
     trace.graft_direction_refs = result.graft_direction_refs;
+    trace.has_paired_intervention = result.has_paired_intervention;
+    trace.paired_intervention = result.paired_intervention;
 
     if (result.counterfactual_reports.size() <= 256) {
         for (const auto & report : result.counterfactual_reports) {
@@ -259,6 +263,8 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
         {"observed_decision", arm.observed_decision_summary},
         {"expected_decision", arm.expected_decision_summary},
         {"verifier_reason", arm.verifier_reason},
+        {"verifier_violation_kind", arm.verifier_violation_kind},
+        {"verifier_violation_dimensions", arm.verifier_violation_dimensions},
         {"semantic_progress", {
             {"outcome", common_flydelta_semantic_progress_outcome_name(arm.semantic_progress.outcome)},
             {"comparable", arm.semantic_progress.comparable},
@@ -326,6 +332,9 @@ bool validate_result(
             return false;
         }
     }
+    if (result.has_paired_intervention &&
+            !common_flydelta_paired_intervention_proposal_validate(
+                result.paired_intervention, error)) return false;
     for (const auto & counterfactual : result.counterfactual_reports) {
         if (!common_flydelta_counterfactual_report_validate(counterfactual, error)) return false;
         const bool belongs_to_evaluation = claimed.job.kind ==
@@ -515,6 +524,8 @@ bool common_flydelta_experiment_worker_run_once(
     report.next_action_reason = std::move(result.next_action_reason);
     report.graft_direction_ref = std::move(result.graft_direction_ref);
     report.graft_direction_refs = std::move(result.graft_direction_refs);
+    report.has_paired_intervention = result.has_paired_intervention;
+    report.paired_intervention = std::move(result.paired_intervention);
     report.has_representation_augmentation_state = result.has_representation_augmentation_state;
     report.representation_augmentation_state = std::move(result.representation_augmentation_state);
     report.representation_augmentation_state_ref =
@@ -538,6 +549,9 @@ bool common_flydelta_trace_validate(
         error = "FlyDelta trace exceeds its bounds";
         return false;
     }
+    if (trace.has_paired_intervention &&
+            !common_flydelta_paired_intervention_proposal_validate(
+                trace.paired_intervention, error)) return false;
     for (const auto & direction_ref : trace.graft_direction_refs) {
         if (direction_ref.empty() || direction_ref.size() > 512) {
             error = "FlyDelta trace contains an invalid graft direction portfolio reference";
@@ -623,6 +637,23 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
         {"next_action_reason", trace.next_action_reason},
         {"graft_direction_ref", trace.graft_direction_ref},
         {"graft_direction_refs", trace.graft_direction_refs},
+        {"paired_intervention", trace.has_paired_intervention ? json({
+            {"proposal_id", trace.paired_intervention.proposal_id},
+            {"prefer_role", common_flydelta_intervention_component_role_name(
+                trace.paired_intervention.prefer_role)},
+            {"avoid_role", common_flydelta_intervention_component_role_name(
+                trace.paired_intervention.avoid_role)},
+            {"prefer_candidate_ref", trace.paired_intervention.prefer_candidate_ref},
+            {"avoid_candidate_ref", trace.paired_intervention.avoid_candidate_ref},
+            {"prefer_direction_kind", common_flydelta_direction_kind_name(
+                trace.paired_intervention.prefer_direction_kind)},
+            {"avoid_direction_kind", common_flydelta_direction_kind_name(
+                trace.paired_intervention.avoid_direction_kind)},
+            {"behavior_key", trace.paired_intervention.behavior_key},
+            {"fixture_ref", trace.paired_intervention.fixture_ref},
+            {"oracle_ref", trace.paired_intervention.oracle_ref},
+            {"layer_index", trace.paired_intervention.layer_index}
+        }) : json(nullptr)},
         {"arms", std::move(arms)}, {"whirlpool", std::move(whirlpool)}
     };
     return payload.dump();
@@ -639,6 +670,8 @@ bool common_flydelta_worker_result_from_evaluator(
     target.concept_trajectory_refs = source.concept_trajectory_refs;
     target.graft_direction_ref = source.graft_direction_ref;
     target.graft_direction_refs = source.graft_direction_refs;
+    target.has_paired_intervention = source.has_paired_intervention;
+    target.paired_intervention = source.paired_intervention;
     target.counterfactual_reports = source.counterfactual_reports;
     target.has_causal_diagnostic_report = source.has_causal_diagnostic_report;
     target.causal_diagnostic_report = source.causal_diagnostic_report;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent/adaptation/flydelta/flydelta-concept.h"
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-decision-margin.h"
@@ -35,6 +36,16 @@ bool common_flydelta_build_low_rank_basis(
         size_t dimension,
         size_t max_rank,
         const std::vector<common_flydelta_direction_candidate> & candidates,
+        common_flydelta_low_rank_basis & basis,
+        std::string & error);
+
+// Builds the bounded rank-two basis for one typed prefer/avoid proposal.
+// This is the experimental path for negative support; it does not change the
+// stricter semantic-basis reuse admission below.
+bool common_flydelta_build_paired_intervention_basis(
+        const common_flydelta_paired_intervention_proposal & proposal,
+        const common_flydelta_direction_candidate & prefer,
+        const common_flydelta_direction_candidate & avoid,
         common_flydelta_low_rank_basis & basis,
         std::string & error);
 

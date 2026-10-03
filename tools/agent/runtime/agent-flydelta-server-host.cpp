@@ -31,15 +31,19 @@ bool daemon_flydelta_prepare_arm(
         selected.reserve(arm.layer_indices.size());
         coefficients.reserve(arm.layer_indices.size());
         for (size_t index = 0; index < arm.layer_indices.size(); ++index) {
-            const auto it = std::find_if(available.begin(), available.end(), [&](const auto & direction) {
-                return direction.layer_index == static_cast<int32_t>(arm.layer_indices[index]);
-            });
-            if (it == available.end()) {
+            bool matched = false;
+            for (const auto & direction : available) {
+                if (direction.layer_index != static_cast<int32_t>(arm.layer_indices[index])) {
+                    continue;
+                }
+                selected.push_back(direction);
+                coefficients.push_back(arm.coefficients[index]);
+                matched = true;
+            }
+            if (!matched) {
                 error = "FlyDelta arm requests a layer missing from its intervention resource";
                 return false;
             }
-            selected.push_back(*it);
-            coefficients.push_back(arm.coefficients[index]);
         }
         common_flydelta_gate_config gate_config;
         gate_config.enabled = true;
@@ -176,6 +180,8 @@ bool daemon_flydelta_verify_generation(
         std::string & observed_summary,
         std::string & expected_summary,
         std::string & verifier_reason,
+        std::string & violation_kind,
+        std::vector<std::string> & violation_dimensions,
         common_flydelta_semantic_progress_observation & progress_observation,
         std::string & error) {
     error.clear();
@@ -184,6 +190,8 @@ bool daemon_flydelta_verify_generation(
     observed_summary.clear();
     expected_summary.clear();
     verifier_reason.clear();
+    violation_kind = "none";
+    violation_dimensions.clear();
     progress_observation = {};
 
     const auto summarize = [](const common_flydelta_semantic_decision & decision) {
@@ -251,6 +259,9 @@ bool daemon_flydelta_verify_generation(
         verifier_known = oracle_result.known;
         passed = oracle_result.verdict == common_flydelta_oracle_verdict::satisfied;
         verifier_reason = oracle_result.reason;
+        violation_kind = common_flydelta_oracle_violation_kind_name(
+            oracle_result.violation_kind);
+        violation_dimensions = oracle_result.violation_dimensions;
         return true;
     }
 
@@ -371,7 +382,10 @@ bool daemon_flydelta_finalize_arm(
                 fixture, generation.content, verifier_known, passed,
                 result.observed_decision_summary,
                 result.expected_decision_summary,
-                result.verifier_reason, result.semantic_progress_observation,
+                result.verifier_reason,
+                result.verifier_violation_kind,
+                result.verifier_violation_dimensions,
+                result.semantic_progress_observation,
                 error)) return false;
         if (verifier_known) {
             result.verifier_known = true;

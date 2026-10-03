@@ -125,6 +125,10 @@ struct common_flydelta_arm_result {
     std::string observed_decision_summary;
     std::string expected_decision_summary;
     std::string verifier_reason;
+    // Structured host provenance used by deterministic negative-material
+    // admission. It is not an evidence or lifecycle outcome.
+    std::string verifier_violation_kind;
+    std::vector<std::string> verifier_violation_dimensions;
     common_flydelta_semantic_progress_observation semantic_progress_observation;
     std::string capture_ref;
     std::string generation_ref;

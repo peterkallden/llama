@@ -152,9 +152,17 @@ bool common_flydelta_arm_result_validate(
     }
     if (result.observed_decision_summary.size() > 1024 ||
             result.expected_decision_summary.size() > 1024 ||
-            result.verifier_reason.size() > 1024) {
+            result.verifier_reason.size() > 1024 ||
+            result.verifier_violation_kind.size() > 64 ||
+            result.verifier_violation_dimensions.size() > 8) {
         error = "FlyDelta arm verifier observation is too long";
         return false;
+    }
+    for (const auto & dimension : result.verifier_violation_dimensions) {
+        if (dimension.empty() || dimension.size() > 64) {
+            error = "FlyDelta arm verifier violation dimension is invalid";
+            return false;
+        }
     }
     if (result.execution_metrics.execution_class.size() > 32) {
         error = "FlyDelta arm execution class is too long";
@@ -226,7 +234,9 @@ bool common_flydelta_arm_result_replay_equivalent(
             expected.host_evaluated != actual.host_evaluated ||
             expected.verifier_known != actual.verifier_known ||
             expected.verifier_passed != actual.verifier_passed ||
-            expected.host_outcome != actual.host_outcome) {
+            expected.host_outcome != actual.host_outcome ||
+            expected.verifier_violation_kind != actual.verifier_violation_kind ||
+            expected.verifier_violation_dimensions != actual.verifier_violation_dimensions) {
         error = "FlyDelta replay result flags or identity differ";
         return false;
     }
@@ -553,6 +563,8 @@ common_flydelta_counterfactual_trial arm_trial_from_result(
     trial.observed_decision_summary = arm.observed_decision_summary;
     trial.expected_decision_summary = arm.expected_decision_summary;
     trial.verifier_reason = arm.verifier_reason;
+    trial.verifier_violation_kind = arm.verifier_violation_kind;
+    trial.verifier_violation_dimensions = arm.verifier_violation_dimensions;
     trial.semantic_progress_observation = arm.semantic_progress_observation;
     trial.evidence_ref = arm.provenance_ref.empty() ? arm.generation_ref : arm.provenance_ref;
     return trial;

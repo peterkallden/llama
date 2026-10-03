@@ -62,6 +62,8 @@ struct common_flydelta_trace_arm {
     std::string observed_decision_summary;
     std::string expected_decision_summary;
     std::string verifier_reason;
+    std::string verifier_violation_kind;
+    std::vector<std::string> verifier_violation_dimensions;
     common_flydelta_semantic_progress_observation semantic_progress_observation;
     common_flydelta_semantic_progress semantic_progress;
     std::string evidence_ref;
@@ -100,6 +102,8 @@ struct common_flydelta_trace {
     std::string next_action_reason;
     std::string graft_direction_ref;
     std::vector<std::string> graft_direction_refs;
+    bool has_paired_intervention = false;
+    common_flydelta_paired_intervention_proposal paired_intervention;
     std::vector<common_flydelta_trace_arm> arms;
     std::vector<common_flydelta_whirlpool_trace> whirlpool;
 };
@@ -116,6 +120,8 @@ struct common_flydelta_experiment_worker_result {
     std::vector<std::string> concept_trajectory_refs;
     std::string graft_direction_ref;
     std::vector<std::string> graft_direction_refs;
+    bool has_paired_intervention = false;
+    common_flydelta_paired_intervention_proposal paired_intervention;
     std::vector<common_flydelta_counterfactual_report> counterfactual_reports;
     bool has_causal_diagnostic_report = false;
     common_flydelta_causal_diagnostic_report causal_diagnostic_report;
@@ -190,6 +196,8 @@ struct common_flydelta_experiment_worker_report {
     std::string next_action_reason;
     std::string graft_direction_ref;
     std::vector<std::string> graft_direction_refs;
+    bool has_paired_intervention = false;
+    common_flydelta_paired_intervention_proposal paired_intervention;
     bool has_representation_augmentation_state = false;
     common_flydelta_representation_augmentation_state representation_augmentation_state;
     std::string representation_augmentation_state_ref;

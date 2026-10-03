@@ -370,6 +370,12 @@ bool daemon_flydelta_parse_directions(
         error = "FlyDelta intervention requires a bounded directions array";
         return false;
     }
+    // Ordinary interventions have one direction per layer.  A typed paired
+    // prefer/avoid composition is the one deliberate exception: its two
+    // components share a layer and are summed by the activation composer.
+    const bool allow_duplicate_layers =
+        parsed.value("allow_duplicate_layers", false) &&
+        parsed.value("composition_kind", "") == "paired_prefer_avoid";
     directions.clear();
     directions.reserve(parsed["directions"].size());
     std::set<uint32_t> layers;
@@ -417,7 +423,8 @@ bool daemon_flydelta_parse_directions(
             if (direction.layer_index < 1 ||
                     static_cast<size_t>(direction.layer_index) >= provider.model_n_layers ||
                     direction.values.size() != provider.model_n_embd ||
-                    !layers.insert(static_cast<uint32_t>(direction.layer_index)).second) {
+                    (!allow_duplicate_layers &&
+                        !layers.insert(static_cast<uint32_t>(direction.layer_index)).second)) {
                 error = "FlyDelta intervention direction is incompatible with the resident model";
                 return false;
             }
@@ -785,6 +792,9 @@ bool daemon_flydelta_persist_concept_trajectory(
         const common_flydelta_hidden_state_capture & conditioned,
         const common_flydelta_hidden_state_capture & control,
         bool conditioned_host_verified,
+        bool negative_host_verified,
+        const std::string & negative_violation_kind,
+        const std::vector<std::string> & negative_violation_dimensions,
         std::string & trajectory_ref,
         std::string & error) {
     std::vector<float> baseline_values;
@@ -799,7 +809,7 @@ bool daemon_flydelta_persist_concept_trajectory(
     const std::string trajectory_identity = job_id + "\n" + relation.id;
     const std::string trajectory_id = "flydelta://trajectory/" +
         hash_sha256_hex(trajectory_identity.data(), trajectory_identity.size()).substr(0, 32);
-    const json payload = {
+    json payload = {
         {"kind", "flydelta_concept_trajectory"},
         {"schema_version", 1},
         {"id", trajectory_id},
@@ -832,6 +842,14 @@ bool daemon_flydelta_persist_concept_trajectory(
         {"parent_surface_revision", material.parent_surface_revision},
         {"parent_evidence_rank", material.parent_evidence_rank},
     };
+    if (negative_host_verified) {
+        payload["negative_capture_ref"] = baseline_capture_ref;
+        payload["negative_execution_ref"] = relation.baseline_ref;
+        payload["negative"] = baseline_values;
+        payload["negative_host_verified"] = true;
+        payload["negative_violation_kind"] = negative_violation_kind;
+        payload["negative_violation_dimensions"] = negative_violation_dimensions;
+    }
     return daemon_flydelta_put_json_resource(
         provider,
         "flydelta-concept-trajectory-" + hash_sha256_hex(trajectory_id.data(), trajectory_id.size()).substr(0, 24) + ".json",
@@ -854,7 +872,14 @@ bool daemon_flydelta_register_composed_directions(
         error = "FlyDelta composed direction artifact is invalid";
         return false;
     }
-    json serialized = {{"directions", json::array()}};
+    json serialized = {
+        {"directions", json::array()},
+        {"derivation", derivation},
+    };
+    if (derivation == "flydelta:paired-concept-graft") {
+        serialized["composition_kind"] = "paired_prefer_avoid";
+        serialized["allow_duplicate_layers"] = true;
+    }
     std::string identity = source_ref + "\n" + derivation;
     for (const auto & direction : directions) {
         if (direction.layer_index < 1 || direction.values.size() != provider->model_n_embd) {
