@@ -24,6 +24,8 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-runtime.cpp
     ../../tools/agent/daemon/agent-daemon-flydelta.cpp
+    ../../tools/agent/daemon/flydelta/concept-capture.cpp
+    ../../tools/agent/daemon/flydelta/concept-synthesis.cpp
     ../../tools/agent/daemon/agent-daemon-flydelta-decision-margin.cpp
     ../../tools/agent/daemon/agent-daemon-flydelta-provider.cpp
     ../../tools/agent/daemon/agent-daemon-flydelta-binding.cpp

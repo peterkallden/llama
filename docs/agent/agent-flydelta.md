@@ -421,6 +421,30 @@ dependencies are absent, the daemon reports the phase as unavailable or
 configured-but-idle; it does not invent prompts, semantic outcomes or
 material references.
 
+The daemon workflow implementation is split into two private components:
+
+```text
+tools/agent/daemon/flydelta/concept-capture.cpp
+    relation/group readiness
+    baseline/conditioned/control arm preparation
+    existing server-context batch execution
+    host verification and trajectory persistence
+
+tools/agent/daemon/flydelta/concept-synthesis.cpp
+    persisted trajectory validation
+    concept specification construction
+    existing residual/prototype/negative candidate builders
+    candidate return to the existing evaluator
+```
+
+The public binding and callback signatures remain unchanged. The split does
+not create a second capture store, evaluator, queue, lifecycle writer or model
+path. Physical model interaction remains in the resident server-context host;
+resource authority and durable references remain in the adaptation layer;
+algorithm implementations remain in `common/agent/adaptation/flydelta`.
+Capture and synthesis therefore remain one production chain while their
+responsibilities are independently readable and testable.
+
 Concept synthesis currently exposes two explicit semantic sources through the
 same experimental candidate contract. `control_residualized` preserves the
 existing matched trajectory calculation

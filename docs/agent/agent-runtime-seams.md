@@ -143,7 +143,9 @@ owns, rather than by the callback that first reaches it:
 | --- | --- | --- |
 | Arm preparation, batch execution, teacher-forced scoring, capture, generation and verification | `tools/agent/runtime/agent-flydelta-server-host.cpp` | Resident server-context model host |
 | Scoped resource resolution, capture and trajectory materialization, teaching material, composed directions and augmentation material | `tools/agent/adaptation/agent-flydelta-resource-adapter.cpp` | Resource authority and durable refs |
-| Search/evaluation/concept/augmentation workflow callbacks and binding factory | `tools/agent/daemon/agent-daemon-flydelta.cpp` | Daemon lifecycle and worker registration |
+| Concept capture workflow and negative-material admission | `tools/agent/daemon/flydelta/concept-capture.cpp` | Teaching material → batch execution → persisted trajectories |
+| Concept synthesis workflow and candidate construction | `tools/agent/daemon/flydelta/concept-synthesis.cpp` | Persisted trajectories → common synthesis algorithms |
+| Search/evaluation/augmentation workflow callbacks and binding factory | `tools/agent/daemon/agent-daemon-flydelta.cpp` | Daemon lifecycle and worker registration |
 
 `agent-daemon-flydelta-internal.h` is a private host-context contract for
 these three implementation files. It is not a common FlyDelta contract and
@@ -154,6 +156,17 @@ configuration facade.
 This is a structural ownership split only: algorithm policy, callback
 signatures, resource formats, diagnostic/full execution, HARMED safety and
 promotion semantics remain unchanged.
+
+Concept capture and synthesis are separate daemon workflow responsibilities,
+but they keep the same private `agent-daemon-flydelta-internal.h` contract and
+the same `common_agent_server_flydelta_binding` callbacks. Capture owns only
+the preparation and execution of the existing baseline/conditioned/control
+batch, host-verification checks and trajectory persistence. Synthesis owns
+only the reading and validation of persisted trajectories and the construction
+of existing concept/prototype/negative candidates. Neither workflow owns a
+queue, evaluator, lifecycle transition or model runtime. The capture result
+continues to reach synthesis through the existing durable teaching-material
+and evaluator seams.
 
 ## Identity and representation vocabulary
 
