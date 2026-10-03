@@ -82,6 +82,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-contracts.cpp adaptation/flydelta/flydelta-contracts.h
     adaptation/flydelta/flydelta-experiment.cpp adaptation/flydelta/flydelta-experiment.h
     adaptation/flydelta/flydelta-experiment-orchestration.cpp adaptation/flydelta/flydelta-experiment-orchestration.h
+    adaptation/flydelta/experiment/flydelta-experiment-routes.cpp adaptation/flydelta/experiment/flydelta-experiment-routes.h
     adaptation/flydelta/flydelta-bootstrap-zoom-state-store.cpp adaptation/flydelta/flydelta-bootstrap-zoom-state-store.h
     adaptation/flydelta/flydelta-evaluator.cpp adaptation/flydelta/flydelta-evaluator.h
     adaptation/flydelta/flydelta-causal-diagnostic.cpp adaptation/flydelta/flydelta-causal-diagnostic.h

@@ -345,6 +345,35 @@ state resolver, the same batch arm host, lifecycle persistence and the
 host-scheduler `next_action` seam. The evaluator still executes exactly one
 bounded phase slice; it never recursively runs the following phase.
 
+### Experiment routes and orchestration facade
+
+The experiment control plane now has an explicit, host-neutral route layer
+under `common/agent/adaptation/flydelta/experiment/`. The existing
+`common_flydelta_orchestrate_search_slice(...)` entry point remains the public
+facade for current callers and delegates to the route selected by the current
+experiment phase:
+
+```text
+common_flydelta_orchestrate_search_slice
+  -> route dispatcher
+     -> Bootstrap route
+     -> Shallow-controls route
+     -> Deep-controls route
+        -> existing UtilityGate
+        -> existing plan-transition helper
+        -> existing typed next_action/result
+```
+
+The routes only assemble the completed-slice control flow. They validate the
+bounded input, call the existing utility and transition contracts, translate
+the result to the existing `next_action`, and return without recursively
+starting another slice. They do not execute a model, construct prompts,
+write lifecycle/review state, create promotion evidence, grant learning
+credit, or change Oracle truth. Model execution remains in the resident
+server-context host and lifecycle persistence remains at the existing host
+seam. The first route extraction is intentionally behavior-preserving; phase
+specific policy changes are outside its scope.
+
 ```text
 Shallow controls
 Deep basis and Deep controls

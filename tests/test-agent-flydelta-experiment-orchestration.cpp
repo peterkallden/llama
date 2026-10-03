@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
+#include "agent/adaptation/flydelta/experiment/flydelta-experiment-routes.h"
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -132,6 +133,21 @@ int main() {
         slice.next_action == common_flydelta_next_action::run_shallow_controls &&
         slice.plan.phase == common_flydelta_experiment_phase::shallow_controls &&
         slice.plan.depth == common_flydelta_search_depth::deep);
+
+    // The facade and the explicit phase route must preserve the exact same
+    // policy result. Routes only select the existing policy seam.
+    common_flydelta_slice_orchestration_result routed_slice;
+    CHECK(common_flydelta_route_experiment_slice(
+        plan, utility_config, {utility}, {}, routed_slice, error));
+    CHECK(routed_slice.next_action == slice.next_action &&
+        routed_slice.plan_advanced == slice.plan_advanced &&
+        routed_slice.plan.phase == slice.plan.phase &&
+        routed_slice.reason == slice.reason);
+    common_flydelta_slice_orchestration_result named_route_slice;
+    CHECK(common_flydelta_route_bootstrap(
+        plan, utility_config, {utility}, {}, named_route_slice, error));
+    CHECK(named_route_slice.next_action == slice.next_action &&
+        named_route_slice.plan.phase == slice.plan.phase);
 
     utility.safe_to_continue = false;
     CHECK(common_flydelta_orchestrate_search_slice(
