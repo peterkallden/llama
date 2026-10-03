@@ -89,6 +89,7 @@ add_library(${TARGET}
     adaptation/flydelta/experiment/flydelta-bootstrap-zoom.cpp
     adaptation/flydelta/experiment/flydelta-coefficient-basis.cpp
     adaptation/flydelta/experiment/flydelta-coefficient-proposals.cpp
+    adaptation/flydelta/experiment/flydelta-coefficient-standard.cpp
     adaptation/flydelta/flydelta-bootstrap-zoom-state-store.cpp adaptation/flydelta/flydelta-bootstrap-zoom-state-store.h
     adaptation/flydelta/flydelta-evaluator.cpp adaptation/flydelta/flydelta-evaluator.h
     adaptation/flydelta/flydelta-causal-diagnostic.cpp adaptation/flydelta/flydelta-causal-diagnostic.h
