@@ -370,6 +370,11 @@ std::shared_ptr<daemon_flydelta_resource_provider> daemon_flydelta_make_resource
         std::shared_ptr<common_learning_lifecycle_store> lifecycle_store,
         std::string & error);
 
+void daemon_flydelta_bind_execution_callbacks(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const std::shared_ptr<common_flydelta_teaching_material_runtime> & teaching_material_runtime,
+        common_agent_server_flydelta_binding & binding);
+
 bool daemon_flydelta_fixture_from_job(
         const common_flydelta_experiment_job & job,
         common_flydelta_experiment_fixture & fixture,
