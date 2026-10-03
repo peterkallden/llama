@@ -26,16 +26,16 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-flydelta.cpp
     ../../tools/agent/daemon/flydelta/concept-capture.cpp
     ../../tools/agent/daemon/flydelta/concept-synthesis.cpp
-    ../../tools/agent/daemon/agent-daemon-flydelta-decision-margin.cpp
-    ../../tools/agent/daemon/agent-daemon-flydelta-provider.cpp
-    ../../tools/agent/daemon/agent-daemon-flydelta-binding.cpp
+    ../../tools/agent/daemon/flydelta/decision-margin.cpp
+    ../../tools/agent/daemon/flydelta/provider.cpp
+    ../../tools/agent/daemon/flydelta/binding.cpp
     ../../tools/agent/runtime/agent-flydelta-server-host.cpp
-    ../../tools/agent/adaptation/agent-flydelta-resource-adapter.cpp
-    ../../tools/agent/adaptation/agent-flydelta-resource-scope.cpp
-    ../../tools/agent/adaptation/agent-flydelta-resource-json.cpp
-    ../../tools/agent/adaptation/agent-flydelta-augmentation-material.cpp
-    ../../tools/agent/adaptation/agent-flydelta-teaching-material.cpp
-    ../../tools/agent/adaptation/agent-flydelta-capture-material.cpp
+    ../../tools/agent/adaptation/flydelta/resource-adapter.cpp
+    ../../tools/agent/adaptation/flydelta/resource-scope.cpp
+    ../../tools/agent/adaptation/flydelta/resource-json.cpp
+    ../../tools/agent/adaptation/flydelta/augmentation-material.cpp
+    ../../tools/agent/adaptation/flydelta/teaching-material.cpp
+    ../../tools/agent/adaptation/flydelta/capture-material.cpp
     ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
     ../../tools/agent/daemon/agent-daemon-service.cpp
     ../../tools/agent/cli/agent-cli-host-adapter.cpp

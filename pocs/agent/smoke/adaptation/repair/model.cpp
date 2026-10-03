@@ -12,7 +12,7 @@
 #include "agent/adaptation/flydelta/flydelta-layer-discovery.h"
 #include "agent/adaptation/flydelta/flydelta-layer-search.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
-#include "agent/adaptation/flydelta/oracles/flydelta-oracle-contracts.h"
+#include "agent/adaptation/flydelta/oracles/contracts.h"
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation.h"
 #include "agent/adaptation/flydelta/flydelta-scale-search.h"
@@ -26,9 +26,9 @@
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/server/server-context.h"
 
-#include "agent-flydelta-dataset-repair-host.h"
-#include "agent-flydelta-repair-smoke-report.h"
-#include "agent-flydelta-repair-smoke-support.h"
+#include "../agent-flydelta-dataset-repair-host.h"
+#include "../agent-flydelta-repair-smoke-report.h"
+#include "../agent-flydelta-repair-smoke-support.h"
 
 #include <algorithm>
 #include <cctype>

@@ -1,6 +1,6 @@
-#include "agent/adaptation/flydelta/oracles/flydelta-dataset-operation-oracle.h"
-#include "agent/adaptation/flydelta/oracles/flydelta-oracle-astar-proposer.h"
-#include "agent/adaptation/flydelta/oracles/flydelta-oracle-suite.h"
+#include "agent/adaptation/flydelta/oracles/dataset-operation.h"
+#include "agent/adaptation/flydelta/oracles/astar-proposer.h"
+#include "agent/adaptation/flydelta/oracles/suite.h"
 
 #include <string>
 

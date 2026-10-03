@@ -11,7 +11,7 @@
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-queue.h"
 #include "agent/adaptation/flydelta/flydelta-sideband-review-store.h"
-#include "agent/adaptation/flydelta/oracles/flydelta-oracle-suite.h"
+#include "agent/adaptation/flydelta/oracles/suite.h"
 
 #include <nlohmann/json.hpp>
 

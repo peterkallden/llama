@@ -1,7 +1,7 @@
-#include "agent-flydelta-dataset-repair-host.h"
+#include "../agent-flydelta-dataset-repair-host.h"
 
 #include "agent/adaptation/flydelta/flydelta-semantic-decision.h"
-#include "agent/adaptation/flydelta/oracles/flydelta-oracle-suite.h"
+#include "agent/adaptation/flydelta/oracles/suite.h"
 
 #include <nlohmann/json.hpp>
 

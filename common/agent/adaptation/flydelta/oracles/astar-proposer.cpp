@@ -1,4 +1,4 @@
-#include "agent/adaptation/flydelta/oracles/flydelta-oracle-astar-proposer.h"
+#include "agent/adaptation/flydelta/oracles/astar-proposer.h"
 
 #include <cmath>
 #include <limits>

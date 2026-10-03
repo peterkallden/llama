@@ -2,7 +2,7 @@
 
 #include "agent-flydelta-dataset-repair-host.h"
 
-#include "agent/adaptation/flydelta/oracles/flydelta-oracle-contracts.h"
+#include "agent/adaptation/flydelta/oracles/contracts.h"
 #include "tools/agent/cli/agent-cli-generation.h"
 
 #include <nlohmann/json.hpp>

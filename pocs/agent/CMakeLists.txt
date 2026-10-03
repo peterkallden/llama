@@ -51,16 +51,16 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-flydelta.cpp
     ../../tools/agent/daemon/flydelta/concept-capture.cpp
     ../../tools/agent/daemon/flydelta/concept-synthesis.cpp
-    ../../tools/agent/daemon/agent-daemon-flydelta-decision-margin.cpp
-    ../../tools/agent/daemon/agent-daemon-flydelta-provider.cpp
-    ../../tools/agent/daemon/agent-daemon-flydelta-binding.cpp
+    ../../tools/agent/daemon/flydelta/decision-margin.cpp
+    ../../tools/agent/daemon/flydelta/provider.cpp
+    ../../tools/agent/daemon/flydelta/binding.cpp
     ../../tools/agent/runtime/agent-flydelta-server-host.cpp
-    ../../tools/agent/adaptation/agent-flydelta-resource-adapter.cpp
-    ../../tools/agent/adaptation/agent-flydelta-resource-scope.cpp
-    ../../tools/agent/adaptation/agent-flydelta-resource-json.cpp
-    ../../tools/agent/adaptation/agent-flydelta-augmentation-material.cpp
-    ../../tools/agent/adaptation/agent-flydelta-teaching-material.cpp
-    ../../tools/agent/adaptation/agent-flydelta-capture-material.cpp
+    ../../tools/agent/adaptation/flydelta/resource-adapter.cpp
+    ../../tools/agent/adaptation/flydelta/resource-scope.cpp
+    ../../tools/agent/adaptation/flydelta/resource-json.cpp
+    ../../tools/agent/adaptation/flydelta/augmentation-material.cpp
+    ../../tools/agent/adaptation/flydelta/teaching-material.cpp
+    ../../tools/agent/adaptation/flydelta/capture-material.cpp
     ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
     ../../tools/agent/daemon/agent-daemon-service.cpp
     ../../tools/agent/cli/agent-cli-host-adapter.cpp
@@ -185,16 +185,16 @@ set(AGENT_DAEMON_SOURCES
     ../../tools/agent/daemon/agent-daemon-flydelta.cpp
     ../../tools/agent/daemon/flydelta/concept-capture.cpp
     ../../tools/agent/daemon/flydelta/concept-synthesis.cpp
-    ../../tools/agent/daemon/agent-daemon-flydelta-decision-margin.cpp
-    ../../tools/agent/daemon/agent-daemon-flydelta-provider.cpp
-    ../../tools/agent/daemon/agent-daemon-flydelta-binding.cpp
+    ../../tools/agent/daemon/flydelta/decision-margin.cpp
+    ../../tools/agent/daemon/flydelta/provider.cpp
+    ../../tools/agent/daemon/flydelta/binding.cpp
     ../../tools/agent/runtime/agent-flydelta-server-host.cpp
-    ../../tools/agent/adaptation/agent-flydelta-resource-adapter.cpp
-    ../../tools/agent/adaptation/agent-flydelta-resource-scope.cpp
-    ../../tools/agent/adaptation/agent-flydelta-resource-json.cpp
-    ../../tools/agent/adaptation/agent-flydelta-augmentation-material.cpp
-    ../../tools/agent/adaptation/agent-flydelta-teaching-material.cpp
-    ../../tools/agent/adaptation/agent-flydelta-capture-material.cpp
+    ../../tools/agent/adaptation/flydelta/resource-adapter.cpp
+    ../../tools/agent/adaptation/flydelta/resource-scope.cpp
+    ../../tools/agent/adaptation/flydelta/resource-json.cpp
+    ../../tools/agent/adaptation/flydelta/augmentation-material.cpp
+    ../../tools/agent/adaptation/flydelta/teaching-material.cpp
+    ../../tools/agent/adaptation/flydelta/capture-material.cpp
     ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
     ../../tools/agent/daemon/agent-daemon-service.cpp
 )
@@ -1011,7 +1011,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # real model's hidden states.
 set(TARGET llama-agent-flydelta-tool-repair-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-tool-repair-smoke.cpp
+    smoke/adaptation/repair/tool.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1024,7 +1024,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # bounded four-arm augmentation control set. Real-model work remains opt-in.
 set(TARGET llama-agent-flydelta-representation-augmentation-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-representation-augmentation-smoke.cpp
+    smoke/adaptation/representation/augmentation.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1039,7 +1039,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # learning credit.
 set(TARGET llama-agent-flydelta-concept-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-concept-smoke.cpp
+    smoke/adaptation/concept/smoke.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1054,7 +1054,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # and the shared Oracle suite; no model output is treated as learning credit.
 set(TARGET llama-agent-flydelta-oracle-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-oracle-smoke.cpp
+    smoke/adaptation/concept/oracle.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1068,7 +1068,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # concept extraction remains covered by the existing concept smoke.
 set(TARGET llama-agent-flydelta-procedure-teaching-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-procedure-teaching-smoke.cpp
+    smoke/adaptation/procedure/teaching.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1082,7 +1082,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # and the synthesis follow-up job.
 set(TARGET llama-agent-flydelta-concept-capture-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-concept-capture-smoke.cpp
+    smoke/adaptation/concept/capture.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1097,7 +1097,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # synthesis grafts its experimental direction back into ordinary search.
 set(TARGET llama-agent-flydelta-concept-synthesis-model-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-concept-synthesis-model-smoke.cpp
+    smoke/adaptation/concept/synthesis-model.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1112,7 +1112,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # when LLAMA_AGENT_MODEL is not supplied, like the existing model smokes.
 set(TARGET llama-agent-flydelta-model-ab-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-model-ab-smoke.cpp
+    smoke/adaptation/execution/model-ab.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1128,7 +1128,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # smoke is skipped unless both a model and the explicit server opt-in exist.
 set(TARGET llama-agent-flydelta-cvec-batch-model-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-cvec-batch-model-smoke.cpp
+    smoke/adaptation/execution/cvec-batch-model.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1143,7 +1143,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # overlay, and larger overlay. It is skipped unless a model is supplied.
 set(TARGET llama-agent-flydelta-runtime-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-runtime-smoke.cpp
+    smoke/adaptation/execution/runtime.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1159,9 +1159,9 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # inference arms. It is skipped when LLAMA_AGENT_MODEL is not supplied.
 set(TARGET llama-agent-flydelta-repair-model-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-repair-model-smoke.cpp
-    smoke/adaptation/agent-flydelta-repair-smoke-support.cpp
-    smoke/adaptation/agent-flydelta-repair-smoke-report.cpp
+    smoke/adaptation/repair/model.cpp
+    smoke/adaptation/repair/support.cpp
+    smoke/adaptation/repair/report.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1177,7 +1177,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # material and a norm-matched random control. It never grants learning credit.
 set(TARGET llama-agent-flydelta-causal-patch-model-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-causal-patch-model-smoke.cpp
+    smoke/adaptation/causal/patch-model.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1194,7 +1194,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # FlyDelta evidence without a separate host verifier.
 set(TARGET llama-agent-flydelta-dataset-question-model-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-dataset-question-model-smoke.cpp
+    smoke/adaptation/dataset/question-model.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1208,7 +1208,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # Always-runnable contract smoke for the checked-in suite and its plans.
 set(TARGET llama-agent-flydelta-dataset-question-contract-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-dataset-question-contract-smoke.cpp
+    smoke/adaptation/dataset/question-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1222,7 +1222,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # zero-margin diagnostic.
 set(TARGET llama-agent-flydelta-teacher-forced-contrast-contract-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-teacher-forced-contrast-contract-smoke.cpp
+    smoke/adaptation/contracts/teacher-forced-contrast.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1235,7 +1235,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # durable learning observation seam without loading a model or a data backend.
 set(TARGET llama-agent-flydelta-repair-echo-replay-smoke)
 add_executable(${TARGET}
-    smoke/adaptation/agent-flydelta-repair-echo-replay-smoke.cpp
+    smoke/adaptation/repair/echo-replay.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1250,7 +1250,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 if (LLAMA_MEMORY_COZO)
     set(TARGET llama-agent-flydelta-dataset-question-repair-contract-smoke)
     add_executable(${TARGET}
-        smoke/adaptation/agent-flydelta-dataset-question-repair-contract-smoke.cpp
+        smoke/adaptation/repair/dataset-question-contract.cpp
     )
     target_include_directories(${TARGET} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1265,7 +1265,7 @@ if (LLAMA_MEMORY_COZO)
     # feeds only host-certified pairs into the existing direction search.
     set(TARGET llama-agent-flydelta-dataset-question-repair-model-smoke)
     add_executable(${TARGET}
-        smoke/adaptation/agent-flydelta-dataset-question-repair-model-smoke.cpp
+        smoke/adaptation/repair/dataset-question-model.cpp
     )
     target_include_directories(${TARGET} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1599,7 +1599,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # emits the trace that proves the end-to-end path.
 set(TARGET llama-agent-daemon-flydelta-admin-smoke)
 add_executable(${TARGET}
-    smoke/daemon/agent-daemon-flydelta-admin-smoke.cpp
+    smoke/daemon/flydelta/admin.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1615,7 +1615,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # reference-backed fixtures, worker persistence, review and canary staging.
 set(TARGET llama-agent-daemon-flydelta-model-smoke)
 add_executable(${TARGET}
-    smoke/daemon/agent-daemon-flydelta-model-smoke.cpp
+    smoke/daemon/flydelta/model.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

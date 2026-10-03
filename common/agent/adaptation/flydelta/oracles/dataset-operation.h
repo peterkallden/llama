@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent/adaptation/flydelta/oracles/flydelta-oracle-contracts.h"
+#include "agent/adaptation/flydelta/oracles/contracts.h"
 
 // Deterministic semantic oracle for the dataset-operation family. It parses
 // model-shaped calls into the shared SemanticDecision IR and never executes a

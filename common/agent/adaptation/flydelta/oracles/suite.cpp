@@ -1,4 +1,4 @@
-#include "agent/adaptation/flydelta/oracles/flydelta-oracle-suite.h"
+#include "agent/adaptation/flydelta/oracles/suite.h"
 
 #include <nlohmann/json.hpp>
 

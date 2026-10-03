@@ -142,7 +142,7 @@ owns, rather than by the callback that first reaches it:
 | Responsibility | Home | Boundary |
 | --- | --- | --- |
 | Arm preparation, batch execution, teacher-forced scoring, capture, generation and verification | `tools/agent/runtime/agent-flydelta-server-host.cpp` | Resident server-context model host |
-| Scoped resource resolution, capture and trajectory materialization, teaching material, composed directions and augmentation material | `tools/agent/adaptation/agent-flydelta-resource-adapter.cpp` | Resource authority and durable refs |
+| Scoped resource resolution, capture and trajectory materialization, teaching material, composed directions and augmentation material | `tools/agent/adaptation/flydelta/resource-adapter.cpp` plus the neighboring `flydelta/` units | Resource authority and durable refs |
 | Concept capture workflow and negative-material admission | `tools/agent/daemon/flydelta/concept-capture.cpp` | Teaching material → batch execution → persisted trajectories |
 | Concept synthesis workflow and candidate construction | `tools/agent/daemon/flydelta/concept-synthesis.cpp` | Persisted trajectories → common synthesis algorithms |
 | Search/evaluation/augmentation workflow callbacks and binding factory | `tools/agent/daemon/agent-daemon-flydelta.cpp` | Daemon lifecycle and worker registration |

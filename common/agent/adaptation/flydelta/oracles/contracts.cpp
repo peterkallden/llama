@@ -1,4 +1,4 @@
-#include "agent/adaptation/flydelta/oracles/flydelta-oracle-contracts.h"
+#include "agent/adaptation/flydelta/oracles/contracts.h"
 
 #include <array>
 #include <utility>

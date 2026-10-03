@@ -140,10 +140,10 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/flydelta-representation-augmentation-state-store.cpp adaptation/flydelta/flydelta-representation-augmentation-state-store.h
     adaptation/flydelta/flydelta-concept.cpp adaptation/flydelta/flydelta-concept.h
     adaptation/flydelta/flydelta-semantic-decision.cpp adaptation/flydelta/flydelta-semantic-decision.h
-    adaptation/flydelta/oracles/flydelta-oracle-contracts.cpp adaptation/flydelta/oracles/flydelta-oracle-contracts.h
-    adaptation/flydelta/oracles/flydelta-oracle-suite.cpp adaptation/flydelta/oracles/flydelta-oracle-suite.h
-    adaptation/flydelta/oracles/flydelta-oracle-astar-proposer.cpp adaptation/flydelta/oracles/flydelta-oracle-astar-proposer.h
-    adaptation/flydelta/oracles/flydelta-dataset-operation-oracle.cpp adaptation/flydelta/oracles/flydelta-dataset-operation-oracle.h
+    adaptation/flydelta/oracles/contracts.cpp adaptation/flydelta/oracles/contracts.h
+    adaptation/flydelta/oracles/suite.cpp adaptation/flydelta/oracles/suite.h
+    adaptation/flydelta/oracles/astar-proposer.cpp adaptation/flydelta/oracles/astar-proposer.h
+    adaptation/flydelta/oracles/dataset-operation.cpp adaptation/flydelta/oracles/dataset-operation.h
     adaptation/flydelta/flydelta-teaching-relation.cpp adaptation/flydelta/flydelta-teaching-relation.h
     adaptation/flydelta/flydelta-teaching-material.cpp adaptation/flydelta/flydelta-teaching-material.h
     adaptation/flydelta/flydelta-concept-capture.cpp adaptation/flydelta/flydelta-concept-capture.h

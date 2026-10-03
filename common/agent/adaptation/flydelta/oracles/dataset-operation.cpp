@@ -1,4 +1,4 @@
-#include "agent/adaptation/flydelta/oracles/flydelta-dataset-operation-oracle.h"
+#include "agent/adaptation/flydelta/oracles/dataset-operation.h"
 
 #include <algorithm>
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent/adaptation/flydelta/oracles/flydelta-oracle-contracts.h"
+#include "agent/adaptation/flydelta/oracles/contracts.h"
 
 #include <functional>
 #include <cstddef>
