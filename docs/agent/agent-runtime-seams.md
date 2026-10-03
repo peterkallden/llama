@@ -98,6 +98,40 @@ Every new helper should answer three questions in its header or documentation:
    projection?
 
 This is deliberately not a single universal validator. Small helpers at the
+correct level are preferable to a central utility that accumulates CLI,
+daemon, provider and persistence policy.
+
+## General responsibility-oriented modularization principle
+
+This is the general refactoring direction for agent components and adjacent
+workflows. A concentrated workflow should be decomposed by responsibility and
+side-effect ownership, not merely by file size:
+
+```text
+stable public facade
+  -> workflow/routes
+  -> typed host-neutral domain algorithms and results
+  -> host/resource/runtime adapters
+  -> external side effects and persistence
+```
+
+The facade preserves existing callers while ownership moves in bounded
+chunks. Routes translate state into the next bounded action; they do not run
+models, write lifecycle state or decide semantic truth. Algorithms propose
+typed results, adapters perform external work, Oracle/evaluator seams
+establish semantic truth, and centralized writer/transition seams decide what
+becomes durable. Test fixtures, trace extraction and reporting remain outside
+the production algorithm modules.
+
+Each refactor must first map
+`contract -> implementation -> registration -> invocation -> persistence ->
+consumer/decision`, record invariants and golden behavior, and then move one
+complete responsibility chunk at a time. The change is verified with focused
+deterministic tests, trace/diff inspection, a correction pass and a local
+commit before the next chunk. This is an incremental,
+hexagonal/ports-and-adapters-inspired structure refactor; it is not a new
+runtime, parallel store/evaluator, microservice split or implicit algorithm,
+policy, evidence or promotion change.
 
 ### FlyDelta daemon host split
 
@@ -120,8 +154,6 @@ configuration facade.
 This is a structural ownership split only: algorithm policy, callback
 signatures, resource formats, diagnostic/full execution, HARMED safety and
 promotion semantics remain unchanged.
-correct level are preferable to a central utility that accumulates CLI,
-daemon, provider and persistence policy.
 
 ## Identity and representation vocabulary
 
