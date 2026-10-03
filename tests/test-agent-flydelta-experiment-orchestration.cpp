@@ -370,5 +370,25 @@ int main() {
     CHECK(common_flydelta_bootstrap_zoom_state_validate(surface_state, error));
     surface_state.parent_surface_revision = surface_state.surface_revision;
     CHECK(!common_flydelta_bootstrap_zoom_state_validate(surface_state, error));
+
+    // Baseline guards for failure transitions that previously had no direct
+    // orchestration contract coverage.  These are deterministic input
+    // rejections and must remain independent of any host/model execution.
+    common_flydelta_slice_orchestration_result invalid_slice;
+    CHECK(!common_flydelta_orchestrate_search_slice(
+        plan, utility_config, {}, {}, invalid_slice, error));
+
+    common_flydelta_evidence_depth_result invalid_depth;
+    common_flydelta_experiment_plan invalid_plan;
+    CHECK(!common_flydelta_plan_search_continuation(
+        continuation, invalid_depth, invalid_plan, error));
+
+    common_flydelta_utility_gate_decision invalid_tfo_decision;
+    invalid_tfo_decision.utility_qualified = true;
+    invalid_tfo_decision.action = common_flydelta_utility_gate_action::allow_tfo_lite;
+    bool invalid_transition_advanced = false;
+    CHECK(!common_flydelta_advance_experiment_plan(
+        bootstrap_plan, invalid_tfo_decision, invalid_plan,
+        invalid_transition_advanced, error));
     return 0;
 }
