@@ -362,6 +362,14 @@ bool daemon_flydelta_run_decision_margin_challenger(
         std::vector<common_flydelta_direction_candidate> & candidates,
         std::string & error);
 
+std::shared_ptr<daemon_flydelta_resource_provider> daemon_flydelta_make_resource_provider(
+        const daemon_options & options,
+        const std::shared_ptr<common_agent_server_context_host> & host,
+        agent_resource_store * resources,
+        const std::shared_ptr<common_flydelta_teaching_material_runtime> & teaching_material_runtime,
+        std::shared_ptr<common_learning_lifecycle_store> lifecycle_store,
+        std::string & error);
+
 bool daemon_flydelta_fixture_from_job(
         const common_flydelta_experiment_job & job,
         common_flydelta_experiment_fixture & fixture,
