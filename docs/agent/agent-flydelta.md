@@ -3344,6 +3344,21 @@ identity, positive/negative references and a typed scope such as
 UtilityGate, augmentation or coefficient search, but it cannot create
 `HELPED`.
 
+### Maintenance note — repair smoke helper boundaries
+
+The model-backed repair smoke keeps its production execution, FlyDelta search,
+frontier selection and lifecycle assertions in the smoke entry point, while
+two smoke-local support modules own the surrounding test mechanics. The
+verification helper parses model tool calls, invokes the existing host
+normalizer/executor and classifies the existing counterfactual outcome. The
+report helper only writes the existing margin and representation-diagnostic
+fields, including both representation and scale geometry. These helpers do
+not create a second evaluator, alter thresholds, or change evidence,
+promotion, activation or runtime contracts. The refactor is covered by the
+full serial FlyDelta CTest suite and the model-free repair/concept smokes;
+model-backed results remain reported separately from deterministic contract
+verification.
+
 The decision-margin candidate descriptor additionally retains
 `strategy_revision`, `decision_pair_ref`, `decision_score_scope` and
 `decision_first_divergence_index`. These fields make the challenger auditable
