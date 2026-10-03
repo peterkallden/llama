@@ -102,6 +102,8 @@ struct common_flydelta_trace {
     std::string next_action_reason;
     std::string graft_direction_ref;
     std::vector<std::string> graft_direction_refs;
+    bool has_selected_candidate = false;
+    common_flydelta_selected_candidate_descriptor selected_candidate;
     bool has_paired_intervention = false;
     common_flydelta_paired_intervention_proposal paired_intervention;
     std::vector<common_flydelta_trace_arm> arms;
@@ -131,6 +133,8 @@ struct common_flydelta_experiment_worker_result {
     std::vector<common_flydelta_direction_candidate> direction_candidates;
     std::vector<common_flydelta_basis_direction> basis_directions;
     std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;
+    bool has_selected_candidate = false;
+    common_flydelta_selected_candidate_descriptor selected_candidate;
     std::vector<common_flydelta_search_continuation> search_continuations;
     std::vector<float> delta_memory_weights;
     common_flydelta_aggregation_snapshot aggregation;
@@ -182,6 +186,8 @@ struct common_flydelta_experiment_worker_report {
     bool has_evaluation_report = false;
     common_flydelta_evaluation_report evaluation_report;
     std::vector<common_flydelta_evaluation_fixture_result> evaluation_fixture_results;
+    bool has_selected_candidate = false;
+    common_flydelta_selected_candidate_descriptor selected_candidate;
     common_flydelta_evidence_depth_result evidence_depth;
     common_flydelta_search_budget search_budget;
     bool has_experiment_plan = false;

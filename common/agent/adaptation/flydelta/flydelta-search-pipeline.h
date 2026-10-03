@@ -96,6 +96,41 @@ struct common_flydelta_search_pipeline_selection {
     float score = 0.0f;
 };
 
+// Immutable provenance for the candidate selected by one completed search
+// slice.  The evaluator creates this descriptor from the already validated
+// pipeline selection; downstream worker/trace/lifecycle consumers must use it
+// instead of reconstructing selection semantics from trial indexes.  It is
+// still a search result, not learning credit or activation authority.
+struct common_flydelta_selected_candidate_descriptor {
+    int schema_version = 1;
+    bool selected = false;
+    size_t pipeline_index = 0;
+    size_t direction_index = 0;
+    bool intervention_region = false;
+    size_t layer_result_index = 0;
+    size_t region_trial_index = 0;
+    common_flydelta_synthesis_strategy strategy =
+        common_flydelta_synthesis_strategy::contrast_repair;
+    common_flydelta_synthesis_estimator estimator =
+        common_flydelta_synthesis_estimator::raw;
+    std::string strategy_revision;
+    common_flydelta_direction_kind direction_kind =
+        common_flydelta_direction_kind::raw_repair;
+    int32_t layer_index = -1;
+    std::string direction_ref;
+    std::string source_material_ref;
+    float selection_score = 0.0f;
+    common_flydelta_counterfactual_outcome outcome =
+        common_flydelta_counterfactual_outcome::unknown;
+    bool host_evaluated = false;
+    bool verifier_known = false;
+    std::string selection_evidence;
+};
+
+bool common_flydelta_selected_candidate_descriptor_validate(
+        const common_flydelta_selected_candidate_descriptor & descriptor,
+        std::string & error);
+
 struct common_flydelta_search_pipeline_result {
     std::vector<common_flydelta_search_pipeline_direction_result> directions;
     common_flydelta_search_pipeline_selection selection;

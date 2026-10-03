@@ -95,6 +95,10 @@ static common_flydelta_search_pipeline_result search_pipeline_result() {
     direction.direction.kind = common_flydelta_direction_kind::token_margin_direction;
     direction.direction.layer_index = 2;
     direction.direction.values = {1.0f, 0.0f};
+    direction.direction.strategy_revision = "decision-output-margin:v1";
+    direction.direction.decision_pair_ref = "decision-pair://evaluator";
+    direction.direction.decision_score_scope = "tool_choice";
+    direction.direction.decision_first_divergence_index = 1;
     direction.direction.source_samples = 1;
     direction.direction.retained_samples = 1;
     direction.direction.median_alignment = 1.0f;
@@ -122,7 +126,16 @@ static common_flydelta_search_pipeline_result search_pipeline_result() {
     trial.margin_comparison.candidate.positive_token_count = 1;
     trial.margin_comparison.candidate.negative_token_count = 1;
     direction.region_trials.push_back(std::move(trial));
+    direction.region_selection.selected = true;
+    direction.region_selection.trial_index = 0;
+    direction.region_selection.score = 0.5f;
     value.directions.push_back(std::move(direction));
+    value.selection.selected = true;
+    value.selection.intervention_region = true;
+    value.selection.direction_index = 0;
+    value.selection.region_trial_index = 0;
+    value.selection.scale = 0.1f;
+    value.selection.score = 0.5f;
     return value;
 }
 
@@ -402,6 +415,18 @@ int main() {
     CHECK(result.has_next_action &&
         result.next_action == common_flydelta_next_action::run_bootstrap &&
         result.next_action_reason.find("Whirlpool") != std::string::npos);
+    CHECK(result.has_selected_candidate);
+    CHECK(result.selected_candidate.selected &&
+        result.selected_candidate.intervention_region &&
+        result.selected_candidate.direction_index == 0 &&
+        result.selected_candidate.region_trial_index == 0 &&
+        result.selected_candidate.layer_index == 24 &&
+        result.selected_candidate.direction_ref == pipeline.seed.candidate_ref &&
+        result.selected_candidate.strategy ==
+            common_flydelta_synthesis_strategy::decision_output_margin &&
+        result.selected_candidate.estimator == common_flydelta_synthesis_estimator::direct &&
+        result.selected_candidate.outcome == common_flydelta_counterfactual_outcome::unknown &&
+        result.selected_candidate.verifier_known);
 
     auto resumable_pipeline = pipeline;
     resumable_pipeline.id = "flydelta://job/search-pipeline-resume";

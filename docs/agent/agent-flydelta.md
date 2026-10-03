@@ -548,7 +548,8 @@ learning/runtime host
   -> bounded full-generation frontier
   -> semantic Oracle per arm
   -> paired baseline/candidate counterfactual
-  -> lifecycle report and typed next_action
+  -> selected-candidate descriptor and lifecycle report
+  -> typed next_action
   -> review/promotion gates
   -> optional activation
 ```
@@ -816,6 +817,7 @@ journal remains the durable evidence boundary.
 | 2026-10-03 | this local coefficient-proposals sweep | Coefficient strategy naming, configuration validation and bounded coordinate/rank-two proposal generation extracted without changing proposal order, bounds or TFO-lite execution | Cozo/Vulkan coefficient target built with three compile threads; eight affected FlyDelta CTests passed serially, including coefficient search | Moved only proposal ownership to `experiment/flydelta-coefficient-proposals.cpp`; TFO-lite and standard/batched/staged execution remain unchanged in the existing facade. |
 | 2026-10-03 | this local coefficient-standard sweep | The scalar standard coefficient-search façade now lives in its own experiment component and delegates to the existing batch core without changing runner order or result semantics | Cozo/Vulkan coefficient target built with three compile threads; eight affected FlyDelta CTests passed serially, including coefficient search | Moved only the standard adapter to `experiment/flydelta-coefficient-standard.cpp`; batch, staged, TFO-lite, dose and lifecycle behavior remain unchanged. |
 | 2026-10-03 | this local coefficient-staged sweep | Diagnostics-first staged coefficient execution and bounded top-K full-generation handoff extracted behind the existing batch core without changing ranking, frontier size or host-selection semantics | Cozo/Vulkan coefficient target built with three compile threads; eight affected FlyDelta CTests passed serially, including staged execution | Moved only staged execution to `experiment/flydelta-coefficient-staged.cpp`; batch core, TFO-lite, dose and lifecycle behavior remain unchanged. |
+| 2026-10-03 | this local evaluator-provenance sweep | Completed search slices now emit one typed selected-candidate descriptor from the validated pipeline selection; worker results and trace carry it through the existing lifecycle boundary | Evaluator, worker, search-pipeline and orchestration CTests passed serially after adding a selected-region contract case | The descriptor contains refs, strategy/estimator, layer, score and host/verifier status. Consumers no longer need to reconstruct the selected arm from trial indexes; no search, Oracle, evidence, lifecycle transition or promotion semantics changed. |
 | 2026-10-03 | this local coefficient-execution sweep | Batch execution, TFO-lite execution and the lifecycle append seam now have explicit ownership behind the existing coefficient-search facade | Cozo/Vulkan coefficient target built with three compile threads; 8/8 affected FlyDelta CTests passed serially after correcting two private helper definitions; no public contract or candidate semantics changed | Batch arm execution and TFO-lite share a private execution contract; lifecycle append remains a separate reference-only seam. No ranking, dose, diagnostic/full boundary, Oracle, evidence or promotion semantics changed. |
 
 ## Natural dataset-question smoke

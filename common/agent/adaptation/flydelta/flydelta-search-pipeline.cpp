@@ -88,6 +88,32 @@ bool common_flydelta_search_status_is_terminal_without_candidate(
     return status != common_flydelta_search_status::candidate_available;
 }
 
+bool common_flydelta_selected_candidate_descriptor_validate(
+        const common_flydelta_selected_candidate_descriptor & descriptor,
+        std::string & error) {
+    error.clear();
+    if (descriptor.schema_version != 1) {
+        error = "FlyDelta selected candidate descriptor has an unsupported schema";
+        return false;
+    }
+    if (!descriptor.selected) return true;
+    if (descriptor.pipeline_index > 64 || descriptor.direction_index > 64 ||
+            descriptor.layer_result_index > 128 || descriptor.region_trial_index > 128 ||
+            descriptor.layer_index < 0 || descriptor.direction_ref.empty() ||
+            descriptor.direction_ref.size() > 512 ||
+            descriptor.source_material_ref.empty() ||
+            descriptor.source_material_ref.size() > 512 ||
+            !common_flydelta_synthesis_strategy_name(descriptor.strategy) ||
+            !common_flydelta_synthesis_estimator_name(descriptor.estimator) ||
+            descriptor.strategy_revision.size() > 128 ||
+            !std::isfinite(descriptor.selection_score) ||
+            descriptor.selection_evidence.empty() || descriptor.selection_evidence.size() > 512) {
+        if (error.empty()) error = "FlyDelta selected candidate descriptor is invalid";
+        return false;
+    }
+    return true;
+}
+
 bool common_flydelta_search_pipeline_config_validate(
         const common_flydelta_search_pipeline_config & config,
         std::string & error) {

@@ -267,6 +267,8 @@ struct common_flydelta_evaluator_result {
     std::vector<common_flydelta_direction_candidate> direction_candidates;
     std::vector<common_flydelta_direction_candidate> decision_margin_challenger_candidates;
     std::vector<common_flydelta_search_pipeline_result> search_pipeline_results;
+    bool has_selected_candidate = false;
+    common_flydelta_selected_candidate_descriptor selected_candidate;
     std::vector<common_flydelta_search_continuation> search_continuations;
     std::vector<float> delta_memory_weights;
     std::vector<common_flydelta_concept_candidate> concept_candidates;

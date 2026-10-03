@@ -166,6 +166,8 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
     trace.next_action_reason = result.next_action_reason;
     trace.graft_direction_ref = result.graft_direction_ref;
     trace.graft_direction_refs = result.graft_direction_refs;
+    trace.has_selected_candidate = result.has_selected_candidate;
+    trace.selected_candidate = result.selected_candidate;
     trace.has_paired_intervention = result.has_paired_intervention;
     trace.paired_intervention = result.paired_intervention;
 
@@ -326,6 +328,9 @@ bool validate_result(
         error = "FlyDelta worker graft direction portfolio exceeds its bound";
         return false;
     }
+    if (result.has_selected_candidate &&
+            !common_flydelta_selected_candidate_descriptor_validate(
+                result.selected_candidate, error)) return false;
     for (const auto & direction_ref : result.graft_direction_refs) {
         if (direction_ref.empty() || direction_ref.size() > 512) {
             error = "FlyDelta worker graft direction portfolio contains an invalid reference";
@@ -518,6 +523,8 @@ bool common_flydelta_experiment_worker_run_once(
     report.bootstrap_zoom_state = std::move(result.bootstrap_zoom_state);
     report.bootstrap_zoom_state_ref = std::move(result.bootstrap_zoom_state_ref);
     report.search_state_ref = std::move(result.search_state_ref);
+    report.has_selected_candidate = result.has_selected_candidate;
+    report.selected_candidate = result.selected_candidate;
     report.has_next_action = result.has_next_action;
     report.next_action = result.next_action;
     report.utility_decision = result.utility_decision;
@@ -552,6 +559,9 @@ bool common_flydelta_trace_validate(
     if (trace.has_paired_intervention &&
             !common_flydelta_paired_intervention_proposal_validate(
                 trace.paired_intervention, error)) return false;
+    if (trace.has_selected_candidate &&
+            !common_flydelta_selected_candidate_descriptor_validate(
+                trace.selected_candidate, error)) return false;
     for (const auto & direction_ref : trace.graft_direction_refs) {
         if (direction_ref.empty() || direction_ref.size() > 512) {
             error = "FlyDelta trace contains an invalid graft direction portfolio reference";
@@ -637,6 +647,29 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
         {"next_action_reason", trace.next_action_reason},
         {"graft_direction_ref", trace.graft_direction_ref},
         {"graft_direction_refs", trace.graft_direction_refs},
+        {"selected_candidate", trace.has_selected_candidate ? json({
+            {"pipeline_index", trace.selected_candidate.pipeline_index},
+            {"direction_index", trace.selected_candidate.direction_index},
+            {"intervention_region", trace.selected_candidate.intervention_region},
+            {"layer_result_index", trace.selected_candidate.layer_result_index},
+            {"region_trial_index", trace.selected_candidate.region_trial_index},
+            {"direction_kind", common_flydelta_direction_kind_name(
+                trace.selected_candidate.direction_kind)},
+            {"strategy", common_flydelta_synthesis_strategy_name(
+                trace.selected_candidate.strategy)},
+            {"estimator", common_flydelta_synthesis_estimator_name(
+                trace.selected_candidate.estimator)},
+            {"strategy_revision", trace.selected_candidate.strategy_revision},
+            {"layer_index", trace.selected_candidate.layer_index},
+            {"direction_ref", trace.selected_candidate.direction_ref},
+            {"source_material_ref", trace.selected_candidate.source_material_ref},
+            {"selection_score", trace.selected_candidate.selection_score},
+            {"outcome", common_flydelta_counterfactual_outcome_name(
+                trace.selected_candidate.outcome)},
+            {"host_evaluated", trace.selected_candidate.host_evaluated},
+            {"verifier_known", trace.selected_candidate.verifier_known},
+            {"selection_evidence", trace.selected_candidate.selection_evidence}
+        }) : json(nullptr)},
         {"paired_intervention", trace.has_paired_intervention ? json({
             {"proposal_id", trace.paired_intervention.proposal_id},
             {"prefer_role", common_flydelta_intervention_component_role_name(
@@ -681,6 +714,8 @@ bool common_flydelta_worker_result_from_evaluator(
     target.direction_candidates = source.direction_candidates;
     target.basis_directions = source.basis_directions;
     target.search_pipeline_results = source.search_pipeline_results;
+    target.has_selected_candidate = source.has_selected_candidate;
+    target.selected_candidate = source.selected_candidate;
     target.search_continuations = source.search_continuations;
     target.delta_memory_weights = source.delta_memory_weights;
     target.aggregation = source.aggregation;

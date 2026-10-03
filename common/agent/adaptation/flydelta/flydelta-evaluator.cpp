@@ -188,6 +188,99 @@ bool validate_search_pipeline_result(
     return true;
 }
 
+bool selected_candidate_from_pipeline(
+        const common_flydelta_experiment_job & job,
+        size_t pipeline_index,
+        const common_flydelta_search_pipeline_result & pipeline,
+        common_flydelta_selected_candidate_descriptor & descriptor,
+        std::string & error) {
+    error.clear();
+    descriptor = {};
+    if (!pipeline.selection.selected) return true;
+    const auto & selection = pipeline.selection;
+    if (selection.direction_index >= pipeline.directions.size()) {
+        error = "FlyDelta selected candidate direction index is out of bounds";
+        return false;
+    }
+    const auto & direction = pipeline.directions[selection.direction_index];
+    const common_flydelta_intervention_region_trial * region_trial = nullptr;
+    const common_flydelta_search_pipeline_layer_result * layer_result = nullptr;
+    if (selection.intervention_region) {
+        if (selection.region_trial_index >= direction.region_trials.size()) {
+            error = "FlyDelta selected candidate region index is out of bounds";
+            return false;
+        }
+        region_trial = &direction.region_trials[selection.region_trial_index];
+    } else {
+        if (selection.layer_result_index >= direction.layer_results.size()) {
+            error = "FlyDelta selected candidate layer index is out of bounds";
+            return false;
+        }
+        layer_result = &direction.layer_results[selection.layer_result_index];
+    }
+    const auto & layers = region_trial != nullptr
+        ? region_trial->candidate.layer_indices : layer_result->candidate.layer_indices;
+    const int32_t layer_index = layers.empty()
+        ? direction.direction.layer_index : static_cast<int32_t>(layers.front());
+    if (layer_index < 0) {
+        error = "FlyDelta selected candidate has no layer identity";
+        return false;
+    }
+    const auto outcome = region_trial != nullptr
+        ? region_trial->outcome : common_flydelta_counterfactual_outcome::unknown;
+    const bool host_evaluated = region_trial != nullptr
+        ? region_trial->host_evaluated : layer_result->representative_trial.host_evaluated;
+    const bool verifier_known = region_trial != nullptr
+        ? region_trial->verifier_known : layer_result->representative_trial.verifier_known;
+    const float score = region_trial != nullptr
+        ? region_trial->search_score : selection.score;
+    descriptor.schema_version = 1;
+    descriptor.selected = true;
+    descriptor.pipeline_index = pipeline_index;
+    descriptor.direction_index = selection.direction_index;
+    descriptor.intervention_region = selection.intervention_region;
+    descriptor.layer_result_index = selection.layer_result_index;
+    descriptor.region_trial_index = selection.region_trial_index;
+    common_flydelta_synthesis_candidate_descriptor identity;
+    identity.candidate_ref = job.seed.candidate_ref;
+    identity.source = job.seed.source;
+    identity.concept_key = job.seed.teaching_key.empty()
+        ? job.seed.behavior_key : job.seed.teaching_key;
+    identity.behavior_key = job.seed.behavior_key;
+    identity.source_ref = job.seed.evidence_ref;
+    identity.oracle_ref = job.seed.verifier_ref;
+    identity.oracle_revision = job.seed.verifier_ref;
+    identity.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+    identity.tokenizer_fingerprint = job.seed.tokenizer_fingerprint;
+    identity.template_fingerprint = job.seed.template_fingerprint;
+    identity.capture_layout_revision = direction.direction.strategy_revision.empty()
+        ? job.seed.execution_context_fingerprint : direction.direction.strategy_revision;
+    identity.scope_fingerprint = scope_fingerprint(job.seed.scope);
+    identity.host_verified = false;
+    identity.experimental_only = direction.direction.experimental_only;
+    common_flydelta_synthesis_candidate_descriptor synthesis;
+    if (!common_flydelta_synthesis_candidate_descriptor_from_direction(
+            direction.direction, identity, synthesis, error)) return false;
+    descriptor.strategy = synthesis.strategy;
+    descriptor.estimator = synthesis.estimator;
+    descriptor.strategy_revision = synthesis.strategy_revision;
+    descriptor.direction_kind = direction.direction.kind;
+    descriptor.layer_index = layer_index;
+    descriptor.direction_ref = job.seed.candidate_ref;
+    descriptor.source_material_ref = direction.direction.extraction_id.empty()
+        ? (direction.direction.origin.empty()
+            ? job.seed.evidence_ref : direction.direction.origin)
+        : direction.direction.extraction_id;
+    descriptor.selection_score = score;
+    descriptor.outcome = outcome;
+    descriptor.host_evaluated = host_evaluated;
+    descriptor.verifier_known = verifier_known;
+    descriptor.selection_evidence = std::string("outcome=") +
+        common_flydelta_counterfactual_outcome_name(outcome) +
+        ";score=" + std::to_string(score);
+    return common_flydelta_selected_candidate_descriptor_validate(descriptor, error);
+}
+
 bool utility_observations_from_pipeline(
         const common_flydelta_search_pipeline_result & pipeline,
         std::vector<common_flydelta_subspace_utility_observation> & observations,
@@ -683,6 +776,12 @@ bool common_flydelta_evaluate_job(
                 common_flydelta_search_continuation continuation;
                 if (!common_flydelta_select_search_continuation(
                         pipeline_result, continuation, error)) return false;
+                if (pipeline_result.selection.selected) {
+                    if (!selected_candidate_from_pipeline(
+                            job, result.search_pipeline_results.size(), pipeline_result,
+                            result.selected_candidate, error)) return false;
+                    result.has_selected_candidate = true;
+                }
                 result.search_pipeline_results.push_back(std::move(pipeline_result));
                 if (!continuation.region.layer_indices.empty()) {
                     result.search_continuations.push_back(std::move(continuation));
@@ -760,6 +859,12 @@ bool common_flydelta_evaluate_job(
             common_flydelta_search_continuation continuation;
             if (!common_flydelta_select_search_continuation(
                     pipeline_result, continuation, error)) return false;
+            if (pipeline_result.selection.selected) {
+                if (!selected_candidate_from_pipeline(
+                        job, result.search_pipeline_results.size(), pipeline_result,
+                        result.selected_candidate, error)) return false;
+                result.has_selected_candidate = true;
+            }
             result.search_pipeline_results.push_back(std::move(pipeline_result));
             if (!continuation.region.layer_indices.empty()) {
                 result.search_continuations.push_back(std::move(continuation));
