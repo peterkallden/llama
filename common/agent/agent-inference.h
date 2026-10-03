@@ -147,6 +147,10 @@ struct common_agent_generation_result {
     struct {
         bool requested = false;
         bool applied = false;
+        // Backend-resident sparse overlay binding. This may be true for one
+        // scalar arm; device_batch remains the narrower multi-sequence
+        // execution provenance.
+        bool sparse_device_binding = false;
         bool device_batch = false;
         bool cache_prompt = true;
         int32_t n_cache_reuse = 0;

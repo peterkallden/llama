@@ -458,6 +458,9 @@ public:
                 if (final_response->generation_params.cvec) {
                     const auto & cvec = *final_response->generation_params.cvec;
                     result.flydelta_runtime.applied = true;
+                    result.flydelta_runtime.sparse_device_binding =
+                        final_response->flydelta_device_batch &&
+                        !cvec.sparse_layer_indices.empty();
                     result.flydelta_runtime.device_batch = final_response->flydelta_device_batch;
                     result.flydelta_runtime.cache_prompt =
                         final_response->generation_params.cache_prompt;

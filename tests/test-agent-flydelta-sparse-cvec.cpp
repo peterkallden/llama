@@ -62,6 +62,18 @@ int main() {
         return 1;
     }
 
+    // A one-row sparse request is a valid device-table input too. The server
+    // uses this to avoid expanding an otherwise sparse scalar overlay into
+    // an all-layer cvec solely because the current ubatch has one sequence.
+    server_task_cvec_batch single;
+    if (!single.add(10, first, error) || !single.has_sparse() || single.size() != 1 ||
+            !single.materialize_sparse(seq_ids, data, data_len, n_embd, layers, error) ||
+            seq_ids != std::vector<llama_seq_id>{10} || data.size() != 1 ||
+            data_len != 8 || n_embd != 4 || layers != std::vector<uint32_t>{2, 4}) {
+        std::cerr << "single sparse row materialization failed: " << error << '\n';
+        return 1;
+    }
+
     auto incompatible = make_cvec("sparse-c", 200);
     incompatible->sparse_layer_indices = {3, 4};
     server_task_cvec_batch rejected;

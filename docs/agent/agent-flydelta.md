@@ -1883,10 +1883,13 @@ fallback.
 
 The core also contains `llama_adapter_cvec_batch`, a small backend-neutral
 reference table behind that hook. It owns one backend-resident F32 row per
-sequence and uses `ggml_get_rows()` to select the row for each token. It is
-not a FlyDelta or server policy object, and it rejects a token shared by
-multiple sequence IDs with different rows instead of silently selecting the
-first ID. The server-side `server_task_cvec_batch` is the matching
+bound sequence plus an explicit zero fallback row, and uses `ggml_get_rows()`
+to select the row for each token. The zero row lets a sparse single-arm
+binding coexist with inactive graph sequences without inheriting another
+request's overlay. A token shared by bound and unbound sequence IDs also uses
+that zero row rather than silently selecting the first ID. This makes a
+one-arm sparse binding safe while retaining the existing dense scalar fallback
+for hosts that do not opt in. The server-side `server_task_cvec_batch` is the matching
 ownership/geometry view: it keeps the immutable request cvecs alive and
 materializes sequence IDs plus payload pointers for a backend. The resident
 server connects this view to the core callback without moving model execution
@@ -2005,6 +2008,11 @@ in `common_flydelta_representation_diagnostics_from_vectors()`. A device
 reduction may return only `cosine`, `progress`, `leakage` and `shift_norm` plus
 the small execution telemetry record. Full capture transfer remains reserved
 for material that will become basis, donor, orthogonal or concept evidence.
+The current daemon server-context path still uses full baseline/overlay
+captures and this CPU oracle. It does **not** set `device_reduction_used`: a
+correct Vulkan implementation must compare paired sequence rows inside the
+same graph and return only scalar reductions. It must not force a serial
+baseline pass or label a post-copy CPU reduction as device work.
 
 Arm results may also carry optional execution telemetry: model, teacher-forced
 and generation time, overlay/capture transfer bytes, and whether device
@@ -2027,7 +2035,10 @@ unlabelled batch callback as `backend_batch`. A concrete host may upgrade that
 label to `device_batch` only when it proves non-CPU per-sequence overlay
 execution. The path is diagnostic provenance only;
 it never changes search utility, evidence depth, host outcome or learning
-credit.
+credit. A `scalar` path may additionally report
+`sparse_device_binding_used=true`: one sparse overlay row was
+backend-resident, while the logical arm count remained one. It is deliberately
+not relabelled `device_batch`.
 
 The arm identity is intentionally narrower than experiment lifecycle identity.
 `job_id`, fixture, intervention, layer mask, scale and baseline-vs-overlay

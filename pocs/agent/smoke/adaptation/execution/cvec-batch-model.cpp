@@ -18,6 +18,7 @@ struct options {
     int n_threads = 3;
     int n_gpu_layers = 0;
     bool scalar = false;
+    bool single_sparse_device = false;
 };
 
 bool parse_args(int argc, char ** argv, options & value) {
@@ -50,6 +51,8 @@ bool parse_args(int argc, char ** argv, options & value) {
             value.n_gpu_layers = std::stoi(value_arg);
         } else if (argument == "--scalar") {
             value.scalar = true;
+        } else if (argument == "--single-sparse-device") {
+            value.single_sparse_device = true;
         } else if (argument == "--help" || argument == "-h") {
             return false;
         } else {
@@ -103,7 +106,8 @@ int main(int argc, char ** argv) {
     options value;
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
-                  << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N] [--scalar]\n";
+                  << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N]"
+                  << " [--scalar] [--single-sparse-device]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -117,8 +121,12 @@ int main(int argc, char ** argv) {
     config.context_key.load_key.model = value.model;
     config.context_key.load_key.n_gpu_layers = value.n_gpu_layers;
     config.context_key.load_key.fit_params = true;
-    config.context_key.n_parallel = value.scalar ? 1 : 2;
-    config.context_key.n_sequences = value.scalar ? 1 : 2;
+    // A single logical arm still runs in the ordinary two-slot resident
+    // context. Sparse scalar binding is an overlay representation choice,
+    // not a reason to impose a separate n_parallel=1 runtime topology.
+    const bool one_slot = value.scalar;
+    config.context_key.n_parallel = one_slot ? 1 : 2;
+    config.context_key.n_sequences = one_slot ? 1 : 2;
     // Keep the direct model smoke on the same bounded resident context as the
     // production runtime smoke.  The batch contract is what this fixture
     // exercises; a larger standalone context is not part of that contract.
@@ -192,14 +200,15 @@ int main(int argc, char ** argv) {
 
     auto model_host = common_agent_server_context_host_make_flydelta_model_host(
         host, std::move(binding), error);
-    if (!model_host || (!value.scalar && !model_host->capabilities.bounded_arm_batch)) {
+    if (!model_host ||
+            (!value.scalar && !value.single_sparse_device && !model_host->capabilities.bounded_arm_batch)) {
         std::cerr << "could not bind production FlyDelta batch host: " << error << '\n';
         return 1;
     }
 
     common_flydelta_arm_batch_request request;
-    request.arms.resize(2);
-    for (size_t index = 0; index < 2; ++index) {
+    request.arms.resize(value.single_sparse_device ? 1 : 2);
+    for (size_t index = 0; index < request.arms.size(); ++index) {
         auto & arm = request.arms[index];
         arm.job_id = "flydelta://job/cvec-batch-smoke";
         arm.arm_id = "flydelta://arm/cvec-batch-smoke/" + std::to_string(index);
@@ -233,8 +242,8 @@ int main(int argc, char ** argv) {
     }
 
     std::cout << "flydelta_cvec_batch_model_smoke=passed\n"
-              << "slots=" << (value.scalar ? 1 : 2) << "\n"
-              << "distinct_overlays=yes\n"
+              << "slots=" << (one_slot ? 1 : 2) << "\n"
+              << "distinct_overlays=" << (value.single_sparse_device ? "not_applicable" : "yes") << "\n"
               << "sparse_overlays=yes\n"
               << "active_layers=1\n"
               << "results=" << result.arms.size() << "\n"
@@ -243,6 +252,8 @@ int main(int argc, char ** argv) {
                   result.arms.front().execution_metrics.execution_path) << "\n"
               << "batched_execution="
               << (result.arms.front().execution_metrics.batched_execution_used ? "yes" : "no") << "\n"
+              << "sparse_device_binding="
+              << (result.arms.front().execution_metrics.sparse_device_binding_used ? "yes" : "no") << "\n"
               << "model_ms=" << result.arms.front().execution_metrics.model_ms << "\n"
               << "overlay_bytes_to_device="
               << result.arms.front().execution_metrics.overlay_bytes_to_device << "\n"

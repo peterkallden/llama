@@ -417,6 +417,7 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
         arm_result.execution_metrics.batched_execution_used =
             request.arms.size() > 1 && native_batch;
         const bool device_batch = generation_results[index].flydelta_device_batch;
+        arm_result.execution_metrics.sparse_device_binding_used = device_batch;
         if (generation_requests[index].flydelta_activation &&
                 generation_requests[index].flydelta_activation->sparse_overlay.enabled) {
             const auto & sparse = generation_requests[index].flydelta_activation->sparse_overlay;

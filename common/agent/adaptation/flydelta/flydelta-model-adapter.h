@@ -65,6 +65,10 @@ struct common_flydelta_arm_execution_metrics {
     size_t overlay_bytes_to_device = 0;
     size_t capture_bytes_to_host = 0;
     size_t diagnostics_bytes_to_host = 0;
+    // True when a sparse overlay, including a single-arm overlay, was bound
+    // through a non-CPU per-sequence device table. This is execution
+    // provenance only: a one-arm request still has execution_path=scalar.
+    bool sparse_device_binding_used = false;
     bool device_reduction_used = false;
     bool batched_execution_used = false;
     // Execution provenance only; this must not affect utility, safety,

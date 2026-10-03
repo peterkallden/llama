@@ -1041,7 +1041,14 @@ private:
             }
         }
 
-        if (!distinct) {
+        // Multiple identical overlays still use the scalar path: there is no
+        // per-sequence information for the device table to preserve. A single
+        // sparse overlay is different. Keeping its sparse layer layout avoids
+        // materialising and uploading a dense, all-layer cvec solely because
+        // this ubatch happens to contain one sequence.
+        const bool single_sparse = slot_ids.size() == 1 &&
+            cvec_batch_request.has_sparse();
+        if (!distinct && !single_sparse) {
             cvec_batch_request.clear();
             return false;
         }
@@ -1076,7 +1083,8 @@ private:
 
         ctx_tgt->set_adapter_cvec_batch(&cvec_batch_device.ref());
         cvec_batch_active = true;
-        SRV_INF("per-sequence cvec batch bound rows=%zu representation=%s layers=%zu\n",
+        SRV_INF("per-sequence cvec %s bound rows=%zu representation=%s layers=%zu\n",
+            single_sparse ? "sparse binding" : "batch",
             seq_ids.size(), sparse ? "sparse" : "dense",
             sparse ? layer_indices.size() : static_cast<size_t>(il_end - il_start + 1));
         return true;
@@ -3303,8 +3311,28 @@ private:
             // apply lora, only need to do it once per batch
             common_set_adapter_lora(ctx_tgt, slot_batched->lora);
 
+            // Prefer the existing backend-resident sparse table whenever it
+            // can represent this exact request. This includes a one-row
+            // sparse binding. The scalar dense bridge remains the CPU and
+            // compatibility fallback.
+            bool sparse_cvec_bound = false;
+            if (cvec_batch_enabled) {
+                std::string cvec_batch_error;
+                if (!prepare_cvec_batch_binding(cvec_batch_error) && !cvec_batch_error.empty()) {
+                    SRV_ERR("failed to prepare per-sequence cvec batch: %s\n", cvec_batch_error.c_str());
+                    abort_all_slots("failed to prepare per-sequence cvec batch: " + cvec_batch_error);
+                    return;
+                }
+                sparse_cvec_bound = cvec_batch_active;
+            }
+
             const auto & cvec = slot_batched->cvec;
-            const auto apply_cvec = [&cvec](llama_context * context) {
+            const auto apply_cvec = [&cvec, sparse_cvec_bound](llama_context * context) {
+                if (sparse_cvec_bound) {
+                    // set_adapter_cvec() intentionally clears cvec_batch, so
+                    // do not invoke it after the device binding is installed.
+                    return 0;
+                }
                 return cvec
                     ? llama_set_adapter_cvec(
                         context,
@@ -3337,15 +3365,6 @@ private:
                     &slot_batched->residual_patch_applied,
                 };
                 llama_set_residual_patch(ctx_tgt, &slot_batched->residual_patch_ref);
-            }
-
-            if (cvec_batch_enabled) {
-                std::string cvec_batch_error;
-                if (!prepare_cvec_batch_binding(cvec_batch_error) && !cvec_batch_error.empty()) {
-                    SRV_ERR("failed to prepare per-sequence cvec batch: %s\n", cvec_batch_error.c_str());
-                    abort_all_slots("failed to prepare per-sequence cvec batch: " + cvec_batch_error);
-                    return;
-                }
             }
 
             // if the lora is temporarily disabled for an alora, re-enable it

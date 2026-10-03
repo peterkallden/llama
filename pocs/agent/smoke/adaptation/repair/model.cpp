@@ -1063,6 +1063,8 @@ int main(int argc, char ** argv) {
                           << " n_cache_reuse=" << generated.flydelta_runtime.n_cache_reuse
                           << " device_batch="
                           << (generated.flydelta_runtime.device_batch ? "yes" : "no")
+                          << " sparse_device_binding="
+                          << (generated.flydelta_runtime.sparse_device_binding ? "yes" : "no")
                           << '\n';
             }
             if (arm_request.apply_overlay && generated.flydelta_capture &&

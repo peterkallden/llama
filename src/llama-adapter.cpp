@@ -193,7 +193,11 @@ bool llama_adapter_cvec_batch::init(
         }
 
         ggml_tensor * tensor = ggml_new_tensor_2d(
-            ctx, GGML_TYPE_F32, n_embd, static_cast<int64_t>(n_seq));
+            // Reserve one backend-zeroed fallback row. A resident server may
+            // build a graph that contains an otherwise inactive sequence;
+            // that sequence must receive no overlay, not another sequence's
+            // sparse row and not a callback failure.
+            ctx, GGML_TYPE_F32, n_embd, static_cast<int64_t>(n_seq + 1));
         tensors[layer] = tensor;
     }
 
@@ -334,11 +338,13 @@ int32_t llama_adapter_cvec_batch::row_for_token(
         const llama_ubatch & ubatch,
         const uint32_t token_index) const {
     int32_t row = -1;
+    bool contains_unbound_sequence = false;
     for (int32_t s = 0; s < ubatch.n_seq_id[token_index]; ++s) {
         const llama_seq_id sequence_id = ubatch.seq_id[token_index][s];
         const auto it = std::find(seq_ids.begin(), seq_ids.end(), sequence_id);
         if (it == seq_ids.end()) {
-            return -1;
+            contains_unbound_sequence = true;
+            continue;
         }
 
         const int32_t candidate = static_cast<int32_t>(it - seq_ids.begin());
@@ -346,11 +352,16 @@ int32_t llama_adapter_cvec_batch::row_for_token(
             // A token shared by multiple sequences cannot receive two
             // different overlays.  The server must split such a batch or
             // provide one shared row instead of silently choosing seq_id[0].
-            return -1;
+            return static_cast<int32_t>(seq_ids.size());
         }
         row = candidate;
     }
-    return row;
+    // A token shared with an unbound sequence is not safe to steer: use the
+    // extra zero row. A wholly unbound token uses that same row. The server
+    // never silently selects another request's cvec.
+    return contains_unbound_sequence || row < 0
+        ? static_cast<int32_t>(seq_ids.size())
+        : row;
 }
 
 ggml_tensor * llama_adapter_cvec_batch::apply_callback(
@@ -422,6 +433,8 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
                 batch->seq_ids.begin(), batch->seq_ids.end(), ubatch.seq_id_unq[i]);
             if (it != batch->seq_ids.end()) {
                 row = static_cast<int32_t>(it - batch->seq_ids.begin());
+            } else {
+                row = static_cast<int32_t>(batch->seq_ids.size());
             }
         }
         if (row < 0) {
