@@ -49,6 +49,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-runtime.cpp
     ../../tools/agent/daemon/agent-daemon-flydelta.cpp
+    ../../tools/agent/daemon/agent-daemon-flydelta-decision-margin.cpp
     ../../tools/agent/runtime/agent-flydelta-server-host.cpp
     ../../tools/agent/adaptation/agent-flydelta-resource-adapter.cpp
     ../../tools/agent/adaptation/agent-flydelta-resource-scope.cpp
@@ -178,6 +179,7 @@ set(AGENT_DAEMON_SOURCES
     ../../tools/agent/daemon/agent-daemon-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-runtime.cpp
     ../../tools/agent/daemon/agent-daemon-flydelta.cpp
+    ../../tools/agent/daemon/agent-daemon-flydelta-decision-margin.cpp
     ../../tools/agent/runtime/agent-flydelta-server-host.cpp
     ../../tools/agent/adaptation/agent-flydelta-resource-adapter.cpp
     ../../tools/agent/adaptation/agent-flydelta-resource-scope.cpp
