@@ -101,6 +101,38 @@ That document is the source of truth for the remaining loader and scheduler
 work; this document only describes how adaptation artifacts become eligible
 profiles.
 
+## General responsibility-oriented modularization principle
+
+This is the general refactoring direction for agent components and adjacent
+workflows. A concentrated workflow should be decomposed by responsibility and
+side-effect ownership, not merely by file size:
+
+```text
+stable public facade
+  -> workflow/routes
+  -> typed host-neutral domain algorithms and results
+  -> host/resource/runtime adapters
+  -> external side effects and persistence
+```
+
+The facade preserves existing callers while ownership moves in bounded
+chunks. Routes translate state into the next bounded action; they do not run
+models, write lifecycle state or decide semantic truth. Algorithms propose
+typed results, adapters perform external work, Oracle/evaluator seams
+establish semantic truth, and centralized writer/transition seams decide what
+becomes durable. Test fixtures, trace extraction and reporting remain outside
+the production algorithm modules.
+
+Each refactor must first map
+`contract -> implementation -> registration -> invocation -> persistence ->
+consumer/decision`, record invariants and golden behavior, and then move one
+complete responsibility chunk at a time. The change is verified with focused
+deterministic tests, trace/diff inspection, a correction pass and a local
+commit before the next chunk. This is an incremental,
+hexagonal/ports-and-adapters-inspired structure refactor; it is not a new
+runtime, parallel store/evaluator, microservice split or implicit algorithm,
+policy, evidence or promotion change.
+
 ## Relation to FlyDelta sideband learning
 
 [FlyDelta sideband learning](agent-flydelta.md) is a separate experimental
