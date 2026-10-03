@@ -390,12 +390,19 @@ boundary, not a second algorithm or runtime path.
 Coefficient search follows the same ownership rule. Basis validation,
 Gram-Schmidt construction, paired-intervention basis construction and strict
 semantic basis resolution are owned by
-`experiment/flydelta-coefficient-basis.cpp`; proposal generation, standard
-execution, batched execution, staged diagnostics/full execution and the
-reference-only lifecycle append are owned by
-`experiment/flydelta-coefficient-proposals.cpp` and the coefficient-search
-facade respectively until their own verified ownership sweeps. The public
-coefficient contracts and the existing TFO-lite boundary are unchanged.
+`experiment/flydelta-coefficient-basis.cpp`; strategy validation and proposal
+generation by `experiment/flydelta-coefficient-proposals.cpp`; the scalar
+standard adapter by `experiment/flydelta-coefficient-standard.cpp`; staged
+diagnostic/full execution by `experiment/flydelta-coefficient-staged.cpp`; and
+the resident batch core by `experiment/flydelta-coefficient-batched.cpp`.
+TFO-lite execution is isolated in `experiment/flydelta-coefficient-tfo.cpp`.
+Those execution components share only the private
+`experiment/flydelta-coefficient-execution-internal.h` contract. The public
+coefficient-search facade remains responsible for the reference-only
+lifecycle append in `flydelta-coefficient-search.cpp`. The public coefficient
+contracts, candidate order, dose behavior, host-selection boundary and
+existing TFO-lite semantics are unchanged; this is a source-ownership split,
+not a second execution or lifecycle path.
 
 ```text
 Shallow controls
@@ -809,6 +816,7 @@ journal remains the durable evidence boundary.
 | 2026-10-03 | this local coefficient-proposals sweep | Coefficient strategy naming, configuration validation and bounded coordinate/rank-two proposal generation extracted without changing proposal order, bounds or TFO-lite execution | Cozo/Vulkan coefficient target built with three compile threads; eight affected FlyDelta CTests passed serially, including coefficient search | Moved only proposal ownership to `experiment/flydelta-coefficient-proposals.cpp`; TFO-lite and standard/batched/staged execution remain unchanged in the existing facade. |
 | 2026-10-03 | this local coefficient-standard sweep | The scalar standard coefficient-search façade now lives in its own experiment component and delegates to the existing batch core without changing runner order or result semantics | Cozo/Vulkan coefficient target built with three compile threads; eight affected FlyDelta CTests passed serially, including coefficient search | Moved only the standard adapter to `experiment/flydelta-coefficient-standard.cpp`; batch, staged, TFO-lite, dose and lifecycle behavior remain unchanged. |
 | 2026-10-03 | this local coefficient-staged sweep | Diagnostics-first staged coefficient execution and bounded top-K full-generation handoff extracted behind the existing batch core without changing ranking, frontier size or host-selection semantics | Cozo/Vulkan coefficient target built with three compile threads; eight affected FlyDelta CTests passed serially, including staged execution | Moved only staged execution to `experiment/flydelta-coefficient-staged.cpp`; batch core, TFO-lite, dose and lifecycle behavior remain unchanged. |
+| 2026-10-03 | this local coefficient-execution sweep | Batch execution, TFO-lite execution and the lifecycle append seam now have explicit ownership behind the existing coefficient-search facade | Cozo/Vulkan coefficient target built with three compile threads; 8/8 affected FlyDelta CTests passed serially after correcting two private helper definitions; no public contract or candidate semantics changed | Batch arm execution and TFO-lite share a private execution contract; lifecycle append remains a separate reference-only seam. No ranking, dose, diagnostic/full boundary, Oracle, evidence or promotion semantics changed. |
 
 ## Natural dataset-question smoke
 
