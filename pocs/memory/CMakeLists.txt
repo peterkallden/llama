@@ -30,6 +30,7 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/adaptation/agent-flydelta-resource-json.cpp
     ../../tools/agent/adaptation/agent-flydelta-augmentation-material.cpp
     ../../tools/agent/adaptation/agent-flydelta-teaching-material.cpp
+    ../../tools/agent/adaptation/agent-flydelta-capture-material.cpp
     ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
     ../../tools/agent/daemon/agent-daemon-service.cpp
     ../../tools/agent/cli/agent-cli-host-adapter.cpp
