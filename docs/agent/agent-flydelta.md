@@ -377,12 +377,15 @@ specific policy changes are outside its scope.
 The host-neutral experiment implementations are being separated behind the
 same orchestration facade in small ownership-preserving steps. Plateau
 detection is owned by `experiment/flydelta-rank1-plateau.cpp`, UtilityGate by
-`experiment/flydelta-utility-gate.cpp`, and orthogonal direction construction
-plus its bounded ridge solve by `experiment/flydelta-orthogonal-search.cpp`.
+`experiment/flydelta-utility-gate.cpp`, orthogonal direction construction plus
+its bounded ridge solve by `experiment/flydelta-orthogonal-search.cpp`, and
+BootstrapZoom validation, selection and proposal construction by
+`experiment/flydelta-bootstrap-zoom.cpp`.
 Their existing public types, callers, thresholds, budgets and result enums
-remain in the facade contract during this migration. BootstrapZoom remains in
-the facade implementation until its own verified extraction; this is a
-temporary source-ownership boundary, not a second algorithm or runtime path.
+remain in the facade contract during this migration. The facade therefore
+continues to provide the compatibility entry points while implementation
+ownership moves into the experiment domain; this is a source-ownership
+boundary, not a second algorithm or runtime path.
 
 ```text
 Shallow controls
@@ -791,6 +794,7 @@ journal remains the durable evidence boundary.
 | 2026-10-01 | this local evaluation-contract sweep | Durable evaluation fixtures can now name the Oracle-aligned classes `paraphrase`, `transfer`, `control` and `competing` in addition to the existing lifecycle gate classes | Contract round-trip checks passed; production daemon mapping preserves the existing intended/holdout/retention/agent-regression gates; no model-backed rerun was needed for this vocabulary-only change | The new names are optional fixture identity only; they do not alter lifecycle gates |
 | 2026-10-01 | this local Oracle-report sweep | Evaluation now emits a separate immutable, redacted Oracle-suite report resource and links it from the lifecycle evaluation report | Cozo/Vulkan build with three compile threads passed; 53 focused FlyDelta CTests passed serially, including Oracle-report and evaluation-provenance round trips; the TinyLlama Cozo/Vulkan daemon smoke traced resource `agent-resource://.../resource-12` through lifecycle-report reference and post-evaluation readback | The report is an audit/diagnostic artifact only. It does not create learning credit, select an overlay or change promotion semantics; no second store or evaluator path was introduced. The smoke's synthetic candidate verifies wiring only, not useful Qwen adaptation. |
 | 2026-10-03 | `196c87648`, `a7209fb9f`, `d058438c7`, `bf7854c15` | Experiment-route facade plus plateau, UtilityGate and orthogonal-search implementation ownership extracted without changing policy | Cozo/Vulkan builds used three compile threads; the seven affected FlyDelta CTests passed serially after each extraction; model-free contract/replay smokes passed; Qwen Instruct resident server-context concept-synthesis and repair smokes completed with tracing | Kept the public orchestration facade, callers, thresholds, budgets, transitions, lifecycle/evidence boundaries and runtime callbacks unchanged. BootstrapZoom remains in the facade for a later isolated extraction; the Qwen results are wiring/evidence diagnostics and produced no learning credit or promotion. |
+| 2026-10-03 | `efc4ddf5f` | BootstrapZoom implementation ownership extracted behind the existing orchestration facade without changing candidate validation, trial selection, budgets or continuation semantics | Cozo/Vulkan build passed with three compile threads; the seven affected FlyDelta CTests and four model-free FlyDelta smokes passed serially (runtime CTest retained its existing skip); Qwen Instruct Vulkan0 server-context smoke passed with 2 relations, 9 candidates, paired intervention and safe `no_useful_utility` termination | Moved only BootstrapZoom helpers and implementations to `experiment/flydelta-bootstrap-zoom.cpp`; no public contract, search policy, lifecycle/evidence boundary or runtime callback changed. Model-backed evidence remains wiring/diagnostic evidence, with no learning credit or promotion. |
 
 ## Natural dataset-question smoke
 
