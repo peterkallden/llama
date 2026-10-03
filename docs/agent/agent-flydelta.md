@@ -392,9 +392,10 @@ Gram-Schmidt construction, paired-intervention basis construction and strict
 semantic basis resolution are owned by
 `experiment/flydelta-coefficient-basis.cpp`; proposal generation, standard
 execution, batched execution, staged diagnostics/full execution and the
-reference-only lifecycle append remain in the coefficient-search facade until
-their own verified ownership sweeps. The public coefficient contracts and the
-existing TFO-lite boundary are unchanged.
+reference-only lifecycle append are owned by
+`experiment/flydelta-coefficient-proposals.cpp` and the coefficient-search
+facade respectively until their own verified ownership sweeps. The public
+coefficient contracts and the existing TFO-lite boundary are unchanged.
 
 ```text
 Shallow controls
@@ -805,6 +806,7 @@ journal remains the durable evidence boundary.
 | 2026-10-03 | `196c87648`, `a7209fb9f`, `d058438c7`, `bf7854c15` | Experiment-route facade plus plateau, UtilityGate and orthogonal-search implementation ownership extracted without changing policy | Cozo/Vulkan builds used three compile threads; the seven affected FlyDelta CTests passed serially after each extraction; model-free contract/replay smokes passed; Qwen Instruct resident server-context concept-synthesis and repair smokes completed with tracing | Kept the public orchestration facade, callers, thresholds, budgets, transitions, lifecycle/evidence boundaries and runtime callbacks unchanged. BootstrapZoom remains in the facade for a later isolated extraction; the Qwen results are wiring/evidence diagnostics and produced no learning credit or promotion. |
 | 2026-10-03 | `efc4ddf5f` | BootstrapZoom implementation ownership extracted behind the existing orchestration facade without changing candidate validation, trial selection, budgets or continuation semantics | Cozo/Vulkan build passed with three compile threads; the seven affected FlyDelta CTests and four model-free FlyDelta smokes passed serially (runtime CTest retained its existing skip); Qwen Instruct Vulkan0 server-context smoke passed with 2 relations, 9 candidates, paired intervention and safe `no_useful_utility` termination | Moved only BootstrapZoom helpers and implementations to `experiment/flydelta-bootstrap-zoom.cpp`; no public contract, search policy, lifecycle/evidence boundary or runtime callback changed. Model-backed evidence remains wiring/diagnostic evidence, with no learning credit or promotion. |
 | 2026-10-03 | this local coefficient-basis sweep | Low-rank basis construction, paired prefer/avoid composition and strict semantic basis resolution extracted behind the existing coefficient-search facade without changing basis order, rank bounds or admission rules | Cozo/Vulkan coefficient target built with three compile threads; eight affected FlyDelta CTests passed serially, including coefficient search | Moved only basis ownership to `experiment/flydelta-coefficient-basis.cpp`; standard, batched, staged and TFO-lite execution remain in the existing facade for later isolated sweeps. |
+| 2026-10-03 | this local coefficient-proposals sweep | Coefficient strategy naming, configuration validation and bounded coordinate/rank-two proposal generation extracted without changing proposal order, bounds or TFO-lite execution | Cozo/Vulkan coefficient target built with three compile threads; eight affected FlyDelta CTests passed serially, including coefficient search | Moved only proposal ownership to `experiment/flydelta-coefficient-proposals.cpp`; TFO-lite and standard/batched/staged execution remain unchanged in the existing facade. |
 
 ## Natural dataset-question smoke
 
