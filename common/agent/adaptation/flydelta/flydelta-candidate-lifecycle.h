@@ -154,6 +154,17 @@ struct common_flydelta_lifecycle_event_context {
     std::string created_at;
 };
 
+// Persists a host-owned orchestration snapshot through the same validated,
+// idempotent lifecycle writer used by FlyDelta results. The snapshot is
+// resumable experiment state only; this helper never grants evidence,
+// promotion or runtime activation authority.
+bool common_flydelta_append_orchestration_state_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const std::string & state_ref,
+        const std::string & payload_json,
+        std::string & error);
+
 bool common_flydelta_append_search_lifecycle(
         common_learning_lifecycle_store & store,
         const common_flydelta_lifecycle_event_context & context,

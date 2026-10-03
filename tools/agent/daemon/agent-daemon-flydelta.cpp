@@ -3456,19 +3456,18 @@ make_daemon_flydelta_resource_binding_factory(
                     plan, history, bootstrap_ref).dump();
                 const auto digest = hash_sha256_hex(payload.data(), payload.size()).substr(0, 32);
                 state_ref = "flydelta://state/orchestration/" + digest;
-                common_learning_lifecycle_record record;
-                record.event_id = "flydelta://event/orchestration/" + digest;
-                record.subject_id = state_ref;
-                record.kind = common_learning_lifecycle_kind::flydelta_experiment;
-                record.status = common_learning_lifecycle_status::running;
-                record.idempotency_key = "flydelta/orchestration/" + digest;
-                record.source_id = "daemon-flydelta";
-                record.namespace_id = provider->authority.namespace_id;
-                record.session_id = provider->authority.session_id;
-                record.content_hash = "sha256:" + hash_sha256_hex(payload.data(), payload.size());
-                record.created_at = "daemon-runtime-v1";
-                record.payload_json = payload;
-                if (!provider->lifecycle_store->append(record, state_error)) return false;
+                common_flydelta_lifecycle_event_context lifecycle_context;
+                lifecycle_context.event_id = "flydelta://event/orchestration/" + digest;
+                lifecycle_context.idempotency_key = "flydelta/orchestration/" + digest;
+                lifecycle_context.source_id = "daemon-flydelta";
+                lifecycle_context.scope.namespace_id = provider->authority.namespace_id;
+                lifecycle_context.scope.project_id = provider->authority.project_id;
+                lifecycle_context.scope.session_id = provider->authority.session_id;
+                lifecycle_context.content_hash = "sha256:" + hash_sha256_hex(payload.data(), payload.size());
+                lifecycle_context.created_at = "daemon-runtime-v1";
+                if (!common_flydelta_append_orchestration_state_lifecycle(
+                        *provider->lifecycle_store, lifecycle_context, state_ref,
+                        payload, state_error)) return false;
                 std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
                 provider->orchestration_states[state_ref] = {plan, history};
                 if (!bootstrap_ref.empty()) {
@@ -3540,20 +3539,18 @@ make_daemon_flydelta_resource_binding_factory(
                     plan, history, bootstrap_ref).dump();
                 const auto digest = hash_sha256_hex(payload.data(), payload.size()).substr(0, 32);
                 state_ref = "flydelta://state/orchestration/" + digest;
-                common_learning_lifecycle_record record;
-                record.event_id = "flydelta://event/orchestration/" + digest;
-                record.subject_id = state_ref;
-                record.kind = common_learning_lifecycle_kind::flydelta_experiment;
-                record.status = common_learning_lifecycle_status::running;
-                record.idempotency_key = "flydelta/orchestration/" + digest;
-                record.source_id = "daemon-flydelta";
-                record.namespace_id = scoped_provider->authority.namespace_id;
-                record.project_id = scoped_provider->authority.project_id;
-                record.session_id = scoped_provider->authority.session_id;
-                record.content_hash = "sha256:" + hash_sha256_hex(payload.data(), payload.size());
-                record.created_at = "daemon-runtime-v1";
-                record.payload_json = payload;
-                if (!scoped_provider->lifecycle_store->append(record, state_error)) return false;
+                common_flydelta_lifecycle_event_context lifecycle_context;
+                lifecycle_context.event_id = "flydelta://event/orchestration/" + digest;
+                lifecycle_context.idempotency_key = "flydelta/orchestration/" + digest;
+                lifecycle_context.source_id = "daemon-flydelta";
+                lifecycle_context.scope.namespace_id = scoped_provider->authority.namespace_id;
+                lifecycle_context.scope.project_id = scoped_provider->authority.project_id;
+                lifecycle_context.scope.session_id = scoped_provider->authority.session_id;
+                lifecycle_context.content_hash = "sha256:" + hash_sha256_hex(payload.data(), payload.size());
+                lifecycle_context.created_at = "daemon-runtime-v1";
+                if (!common_flydelta_append_orchestration_state_lifecycle(
+                        *scoped_provider->lifecycle_store, lifecycle_context, state_ref,
+                        payload, state_error)) return false;
                 std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
                 provider->orchestration_states[state_ref] = {plan, history};
                 if (!bootstrap_ref.empty()) {

@@ -29,6 +29,42 @@ bool lifecycle_context_valid(
 
 } // namespace
 
+bool common_flydelta_append_orchestration_state_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const std::string & state_ref,
+        const std::string & payload_json,
+        std::string & error) {
+    error.clear();
+    if (!lifecycle_context_valid(context, error) ||
+            !nonempty_bounded(state_ref) || payload_json.empty() ||
+            payload_json.size() > 4U * 1024U * 1024U) {
+        if (error.empty()) error = "FlyDelta orchestration lifecycle payload is invalid";
+        return false;
+    }
+
+    const auto payload = nlohmann::ordered_json::parse(payload_json, nullptr, false);
+    if (!payload.is_object()) {
+        error = "FlyDelta orchestration lifecycle payload must be a JSON object";
+        return false;
+    }
+
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = state_ref;
+    record.kind = common_learning_lifecycle_kind::flydelta_experiment;
+    record.status = common_learning_lifecycle_status::running;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
 const char * common_flydelta_search_disposition_name(
         common_flydelta_search_disposition disposition) {
     switch (disposition) {

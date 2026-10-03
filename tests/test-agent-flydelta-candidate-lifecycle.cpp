@@ -145,13 +145,34 @@ int main() {
     CHECK(records.front().payload_json.find("\"search_kind\":\"alpha\"") !=
         std::string::npos);
 
+    common_flydelta_lifecycle_event_context orchestration_context = context;
+    orchestration_context.event_id = "event:orchestration";
+    orchestration_context.idempotency_key = "flydelta:orchestration:state-1";
+    orchestration_context.content_hash = "sha256:orchestration";
+    const std::string orchestration_payload =
+        R"({"schema_version":1,"phase":"bootstrap","next_action":"retain"})";
+    CHECK(common_flydelta_append_orchestration_state_lifecycle(
+        lifecycle, orchestration_context, "flydelta://state/orchestration/state-1",
+        orchestration_payload, error));
+    CHECK(common_flydelta_append_orchestration_state_lifecycle(
+        lifecycle, orchestration_context, "flydelta://state/orchestration/state-1",
+        orchestration_payload, error));
+    records = lifecycle.list(error);
+    CHECK(error.empty() && records.size() == 2);
+    CHECK(records.back().kind == common_learning_lifecycle_kind::flydelta_experiment);
+    CHECK(records.back().status == common_learning_lifecycle_status::running);
+    CHECK(records.back().payload_json.find("bootstrap") != std::string::npos);
+    CHECK(!common_flydelta_append_orchestration_state_lifecycle(
+        lifecycle, orchestration_context, "flydelta://state/orchestration/invalid",
+        "[]", error));
+
     context.event_id = "event:champion-1";
     context.idempotency_key = "flydelta:champion-1";
     context.source_id = "evidence:champion-1";
     CHECK(common_flydelta_append_champion_lifecycle(
         lifecycle, context, current, better, selected, error));
     records = lifecycle.list(error);
-    CHECK(error.empty() && records.size() == 2);
+    CHECK(error.empty() && records.size() == 3);
     CHECK(records.back().payload_json.find("experiment_champion_selection") != std::string::npos);
 
     context.event_id = "event:trace-1";
@@ -163,7 +184,7 @@ int main() {
         R"({"kind":"flydelta_trace","job_id":"flydelta://job/trace-1"})",
         error));
     records = lifecycle.list(error);
-    CHECK(error.empty() && records.size() == 3);
+    CHECK(error.empty() && records.size() == 4);
     CHECK(records.back().kind == common_learning_lifecycle_kind::flydelta_experiment);
     CHECK(records.back().status == common_learning_lifecycle_status::succeeded);
     CHECK(records.back().payload_json.find("flydelta_trace") != std::string::npos);
