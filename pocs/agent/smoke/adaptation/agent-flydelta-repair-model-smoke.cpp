@@ -27,6 +27,7 @@
 #include "tools/server/server-context.h"
 
 #include "agent-flydelta-dataset-repair-host.h"
+#include "agent-flydelta-repair-smoke-report.h"
 #include "agent-flydelta-repair-smoke-support.h"
 
 #include <algorithm>
@@ -153,23 +154,6 @@ bool parse_args(int argc, char ** argv, options & value) {
         }
     }
     return true;
-}
-
-void print_margin(const char * prefix,
-        const common_flydelta_decision_margin & margin,
-        const common_flydelta_decision_margin * baseline = nullptr) {
-    std::cout << ' ' << prefix << "_available=" << (margin.available ? "yes" : "no");
-    if (!margin.available) return;
-    std::cout << ' ' << prefix << "_total_delta=" << margin.total_delta()
-              << ' ' << prefix << "_normalized_delta=" << margin.normalized_delta()
-              << ' ' << prefix << "_positive_logprob=" << margin.positive_total_logprob
-              << ' ' << prefix << "_negative_logprob=" << margin.negative_total_logprob
-              << ' ' << prefix << "_positive_tokens=" << margin.positive_token_count
-              << ' ' << prefix << "_negative_tokens=" << margin.negative_token_count;
-    if (baseline && baseline->available) {
-        std::cout << ' ' << prefix << "_delta_from_baseline="
-                  << margin.normalized_delta() - baseline->normalized_delta();
-    }
 }
 
 bool require_native_batch(
@@ -841,12 +825,9 @@ int main(int argc, char ** argv) {
             if (diagnostic != arm_diagnostics.end() && diagnostic->available) {
                 for (const auto & values : diagnostic->values) {
                     std::cout << "unknown_representation_diagnostics alpha=" << trial.alpha
-                              << " layer=" << values.layer_index
-                              << " cosine=" << values.cosine
-                              << " progress=" << values.progress
-                              << " leakage=" << values.leakage
-                              << " shift_norm=" << values.shift_norm
-                              << " promotion=no next_action=layer_search\n";
+                              << " layer=" << values.layer_index;
+                    print_representation_diagnostics(std::cout, values);
+                    std::cout << " promotion=no next_action=layer_search\n";
                 }
             } else {
                 std::cout << "unknown_representation_diagnostics alpha=" << trial.alpha
@@ -1219,12 +1200,9 @@ int main(int argc, char ** argv) {
                       << " outcome=" << common_flydelta_counterfactual_outcome_name(trial.outcome)
                       << " promising=" << (trial.promising ? "yes" : "no")
                       << " safe_to_continue=" << (trial.safe_to_continue ? "yes" : "no");
-            print_margin("margin", trial.margin);
+            print_margin(std::cout, "margin", trial.margin);
             if (trial.geometry_available) {
-                std::cout << " cosine=" << trial.geometry.cosine
-                          << " progress=" << trial.geometry.progress
-                          << " leakage=" << trial.geometry.leakage
-                          << " shift_norm=" << trial.geometry.shift_norm;
+                print_representation_diagnostics(std::cout, trial.geometry);
             }
             std::cout << '\n';
         }
@@ -1445,12 +1423,9 @@ int main(int argc, char ** argv) {
                           << " opposite_sign_control="
                           << (candidate.opposite_sign_control ? "yes" : "no")
                           << " outcome=" << common_flydelta_counterfactual_outcome_name(outcome);
-                print_margin("margin", margin, &region_baseline_margin);
+                print_margin(std::cout, "margin", margin, &region_baseline_margin);
                 if (diagnostics_available) {
-                    std::cout << " cosine=" << diagnostics.cosine
-                              << " progress=" << diagnostics.progress
-                              << " leakage=" << diagnostics.leakage
-                              << " shift_norm=" << diagnostics.shift_norm;
+                    print_representation_diagnostics(std::cout, diagnostics);
                 }
                 std::cout << '\n';
                 return true;
@@ -1559,12 +1534,9 @@ int main(int argc, char ** argv) {
                           << " opposite_sign_control="
                           << (candidate.opposite_sign_control ? "yes" : "no")
                           << " outcome=" << common_flydelta_counterfactual_outcome_name(outcome);
-                print_margin("margin", margin, &region_baseline_margin);
+                print_margin(std::cout, "margin", margin, &region_baseline_margin);
                 if (diagnostics_available) {
-                    std::cout << " cosine=" << diagnostics.cosine
-                              << " progress=" << diagnostics.progress
-                              << " leakage=" << diagnostics.leakage
-                              << " shift_norm=" << diagnostics.shift_norm;
+                    print_representation_diagnostics(std::cout, diagnostics);
                 }
                 std::cout << '\n';
                 retain_zoom_trial(candidate, outcome, margin, diagnostics, diagnostics_available);
@@ -1619,12 +1591,9 @@ int main(int argc, char ** argv) {
                           << " opposite_sign_control="
                           << (candidate.opposite_sign_control ? "yes" : "no")
                           << " outcome=" << common_flydelta_counterfactual_outcome_name(outcome);
-                print_margin("margin", margin, &region_baseline_margin);
+                print_margin(std::cout, "margin", margin, &region_baseline_margin);
                 if (diagnostics_available) {
-                    std::cout << " cosine=" << diagnostics.cosine
-                              << " progress=" << diagnostics.progress
-                              << " leakage=" << diagnostics.leakage
-                              << " shift_norm=" << diagnostics.shift_norm;
+                    print_representation_diagnostics(std::cout, diagnostics);
                 }
                 std::cout << '\n';
                 retain_zoom_trial(candidate, outcome, margin, diagnostics, diagnostics_available);
@@ -1978,7 +1947,7 @@ int main(int argc, char ** argv) {
                     std::cout << "flydelta_rank2_control label=" << control_labels[control_index]
                               << " outcome=" << common_flydelta_counterfactual_outcome_name(
                                   surface_trials.back().outcome);
-                    print_margin("margin", arm.margin, &region_baseline_margin);
+                    print_margin(std::cout, "margin", arm.margin, &region_baseline_margin);
                     std::cout << " margin_delta=" << surface_trials.back().margin_delta << '\n';
                 }
                 common_flydelta_subspace_utility_observation best_surface_utility;
@@ -2935,10 +2904,7 @@ int main(int argc, char ** argv) {
                               << " safe_to_escalate=" << (trial.safe_to_escalate ? "yes" : "no")
                               << " refinement=" << (trial.refinement ? "yes" : "no");
                     if (trial.geometry_available) {
-                        std::cout << " cosine=" << trial.geometry.cosine
-                                  << " progress=" << trial.geometry.progress
-                                  << " leakage=" << trial.geometry.leakage
-                                  << " shift_norm=" << trial.geometry.shift_norm;
+                        print_representation_diagnostics(std::cout, trial.geometry);
                     }
                     std::cout << '\n';
                 }
@@ -3093,12 +3059,9 @@ int main(int argc, char ** argv) {
                               << " outcome=" << common_flydelta_counterfactual_outcome_name(
                                   trial.outcome)
                               << " host_verified=" << (trial.verifier_known ? "yes" : "no");
-                    print_margin("margin", trial.margin);
+                    print_margin(std::cout, "margin", trial.margin);
                     if (trial.geometry_available) {
-                        std::cout << " cosine=" << trial.geometry.cosine
-                                  << " progress=" << trial.geometry.progress
-                                  << " leakage=" << trial.geometry.leakage
-                                  << " shift_norm=" << trial.geometry.shift_norm;
+                        print_representation_diagnostics(std::cout, trial.geometry);
                     }
                     std::cout << '\n';
                 }

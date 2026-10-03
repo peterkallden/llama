@@ -1157,6 +1157,7 @@ set(TARGET llama-agent-flydelta-repair-model-smoke)
 add_executable(${TARGET}
     smoke/adaptation/agent-flydelta-repair-model-smoke.cpp
     smoke/adaptation/agent-flydelta-repair-smoke-support.cpp
+    smoke/adaptation/agent-flydelta-repair-smoke-report.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
