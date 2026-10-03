@@ -52,6 +52,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/runtime/agent-flydelta-server-host.cpp
     ../../tools/agent/adaptation/agent-flydelta-resource-adapter.cpp
     ../../tools/agent/adaptation/agent-flydelta-resource-scope.cpp
+    ../../tools/agent/adaptation/agent-flydelta-resource-json.cpp
     ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
     ../../tools/agent/daemon/agent-daemon-service.cpp
     ../../tools/agent/cli/agent-cli-host-adapter.cpp
@@ -177,6 +178,7 @@ set(AGENT_DAEMON_SOURCES
     ../../tools/agent/runtime/agent-flydelta-server-host.cpp
     ../../tools/agent/adaptation/agent-flydelta-resource-adapter.cpp
     ../../tools/agent/adaptation/agent-flydelta-resource-scope.cpp
+    ../../tools/agent/adaptation/agent-flydelta-resource-json.cpp
     ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
     ../../tools/agent/daemon/agent-daemon-service.cpp
 )
