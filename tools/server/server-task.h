@@ -164,6 +164,27 @@ struct server_task_capture_result {
     std::string failure_reason;
 };
 
+struct server_task_layer_reduction {
+    bool enabled = false;
+    std::string group_id;
+    std::string baseline_group_id;
+    uint32_t layer = 0;
+    int32_t absolute_position = -1;
+    std::vector<float> direction;
+};
+
+using server_task_layer_reduction_ptr = std::shared_ptr<const server_task_layer_reduction>;
+
+struct server_task_layer_reduction_result {
+    bool available = false;
+    uint32_t layer = 0;
+    float dot_shift_delta = 0.0f;
+    float shift_squared = 0.0f;
+    float delta_squared = 0.0f;
+    float residual_squared = 0.0f;
+    std::string failure_reason;
+};
+
 enum class server_task_residual_patch_operation : uint8_t {
     replace,
     add,
@@ -230,6 +251,7 @@ struct task_params {
     // Internal typed field; deliberately omitted from task_params::to_json().
     server_task_cvec_ptr cvec;
     server_task_capture_request_ptr capture;
+    server_task_layer_reduction_ptr layer_reduction;
     server_task_residual_patch_ptr residual_patch;
 
     std::vector<std::string> antiprompt;
@@ -522,6 +544,7 @@ struct server_task_result_cmpl_final : server_task_result {
 
     // Internal FlyDelta capture, omitted from the public JSON payload.
     server_task_capture_result capture;
+    server_task_layer_reduction_result layer_reduction;
     server_task_residual_patch_observation residual_patch_observation;
 
     // True when this completion used per-sequence overlay rows in a

@@ -25,6 +25,30 @@ struct llama_residual_patch_ref {
     bool * applied = nullptr;
 };
 
+// Request-scoped, backend-neutral compact diagnostics. The graph resolves
+// the two sequence/position rows and computes the scalar reductions while
+// the layer inputs remain device-resident. The caller owns the referenced
+// direction data and receives the scalar results in-place.
+struct llama_layer_reduction_entry {
+    uint32_t layer = 0;
+    llama_seq_id baseline_sequence_id = -1;
+    llama_seq_id overlay_sequence_id = -1;
+    int32_t absolute_position = -1;
+    const float * direction = nullptr;
+    size_t n_embd = 0;
+
+    float dot_shift_delta = 0.0f;
+    float shift_squared = 0.0f;
+    float delta_squared = 0.0f;
+    float residual_squared = 0.0f;
+    bool available = false;
+    std::string failure_reason;
+};
+
+struct llama_layer_reduction_ref {
+    std::vector<llama_layer_reduction_entry> entries;
+};
+
 // Non-owning graph hook for a backend that can apply different control
 // vectors to different sequences in one ubatch. The callback runs while the
 // graph is being built and must return `cur` unchanged when no overlay is

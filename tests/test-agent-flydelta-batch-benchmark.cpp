@@ -106,6 +106,37 @@ int main() {
         return 1;
     }
 
+    // A paired reduction wave deliberately contains a no-op reference arm
+    // and an overlay arm. They must remain one physical batch so the server
+    // can compare their layer rows in one graph; ordinary mixed overlay
+    // waves remain partitioned by the normal compatibility contract.
+    common_flydelta_arm_batch_request paired_request;
+    common_flydelta_arm_request paired_baseline;
+    paired_baseline.arm_id = "flydelta://benchmark/paired/baseline";
+    paired_baseline.context_ref = "context://benchmark/paired";
+    paired_baseline.fixture_ref = "fixture://benchmark/paired";
+    paired_baseline.batch_compatibility_key =
+        paired_baseline.context_ref + "\n" + paired_baseline.fixture_ref;
+    paired_baseline.fresh_context = true;
+    paired_baseline.request_device_diagnostics = true;
+    paired_baseline.layer_indices = {1};
+    paired_baseline.coefficients = {0.0f};
+    common_flydelta_arm_request paired_overlay = paired_baseline;
+    paired_overlay.arm_id = "flydelta://benchmark/paired/overlay";
+    paired_overlay.apply_overlay = true;
+    paired_overlay.request_device_diagnostics = true;
+    paired_overlay.diagnostics_baseline_arm_id = paired_baseline.arm_id;
+    paired_overlay.coefficients = {1.0f};
+    paired_request.arms = {paired_baseline, paired_overlay};
+    common_flydelta_arm_batch_result paired_result;
+    if (!common_flydelta_run_bounded_arm_batch(
+                batch_host, paired_request, paired_result, error) ||
+            paired_result.execution_stats.physical_batch_count != 1 ||
+            paired_result.execution_stats.largest_physical_batch != 2) {
+        std::cerr << "FlyDelta paired device-reduction wave was partitioned: " << error << '\n';
+        return 1;
+    }
+
     const long long scalar_us = measure_us([&]() {
         common_flydelta_arm_batch_result ignored;
         std::string ignored_error;

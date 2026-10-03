@@ -1,4 +1,6 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
+#include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/server/server-context.h"
 
@@ -19,6 +21,7 @@ struct options {
     int n_gpu_layers = 0;
     bool scalar = false;
     bool single_sparse_device = false;
+    bool device_diagnostics = false;
 };
 
 bool parse_args(int argc, char ** argv, options & value) {
@@ -53,6 +56,8 @@ bool parse_args(int argc, char ** argv, options & value) {
             value.scalar = true;
         } else if (argument == "--single-sparse-device") {
             value.single_sparse_device = true;
+        } else if (argument == "--device-diagnostics") {
+            value.device_diagnostics = true;
         } else if (argument == "--help" || argument == "-h") {
             return false;
         } else {
@@ -107,7 +112,7 @@ int main(int argc, char ** argv) {
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N]"
-                  << " [--scalar] [--single-sparse-device]\n";
+                  << " [--scalar] [--single-sparse-device] [--device-diagnostics]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -124,6 +129,10 @@ int main(int argc, char ** argv) {
     // A single logical arm still runs in the ordinary two-slot resident
     // context. Sparse scalar binding is an overlay representation choice,
     // not a reason to impose a separate n_parallel=1 runtime topology.
+    if (value.device_diagnostics && value.scalar) {
+        std::cerr << "device diagnostics require the paired two-slot context\n";
+        return 2;
+    }
     const bool one_slot = value.scalar;
     config.context_key.n_parallel = one_slot ? 1 : 2;
     config.context_key.n_sequences = one_slot ? 1 : 2;
@@ -157,9 +166,6 @@ int main(int argc, char ** argv) {
             const common_flydelta_arm_request & arm,
             common_agent_generation_request & request,
             std::string & prepare_error) {
-        auto activation = make_activation(
-            model, arm.alpha, arm.intervention_ref + "/" + arm.arm_id, prepare_error);
-        if (!activation) return false;
         request = {};
         request.purpose = common_agent_generation_purpose::conversation;
         request.options.n_predict = n_predict;
@@ -168,7 +174,27 @@ int main(int argc, char ** argv) {
             {"system", "Reply with exactly PASS."},
             {"user", "Run isolated FlyDelta arm " + arm.arm_id},
         };
-        request.flydelta_activation = std::move(activation);
+        if (arm.apply_overlay || (arm.request_device_diagnostics && !arm.apply_overlay)) {
+            auto activation = make_activation(
+                model, arm.apply_overlay ? arm.alpha : 0.0f,
+                arm.intervention_ref + "/" + arm.arm_id, prepare_error);
+            if (!activation) return false;
+            request.flydelta_activation = std::move(activation);
+        }
+        if (arm.device_diagnostics && arm.device_diagnostics->enabled) {
+            request.flydelta_device_diagnostics = arm.device_diagnostics;
+        } else if (arm.request_device_diagnostics) {
+            auto reduction = std::make_shared<common_flydelta_device_diagnostics_request>();
+            reduction->enabled = true;
+            reduction->group_id = arm.arm_id;
+            reduction->baseline_group_id = arm.diagnostics_baseline_arm_id;
+            reduction->layer = arm.layer_indices.front();
+            reduction->absolute_position = arm.diagnostics_position;
+            reduction->direction.assign(llama_model_n_embd(model), 0.0f);
+            reduction->direction.front() = 1.0f;
+            request.flydelta_device_diagnostics = std::move(reduction);
+        }
+        if (!arm.request_generation) request.options.n_predict = 0;
         return true;
     };
     callbacks.finalize_arm = [](
@@ -183,6 +209,35 @@ int main(int argc, char ** argv) {
         result.generation_available = true;
         result.quality = static_cast<float>(generation.decoded_tokens);
         result.host_outcome = common_flydelta_counterfactual_outcome::unknown;
+        if (arm.request_device_diagnostics && !arm.diagnostics_baseline_arm_id.empty() &&
+                (!generation.flydelta_device_diagnostics ||
+                 !generation.flydelta_device_diagnostics->available)) {
+            finalize_error = generation.flydelta_device_diagnostics &&
+                    !generation.flydelta_device_diagnostics->failure_reason.empty()
+                ? generation.flydelta_device_diagnostics->failure_reason
+                : "device diagnostics did not return a non-CPU reduction";
+            return false;
+        }
+        if (generation.flydelta_device_diagnostics &&
+                generation.flydelta_device_diagnostics->available) {
+            common_flydelta_representation_diagnostics diagnostics;
+            if (!common_flydelta_representation_diagnostics_from_reductions(
+                    generation.flydelta_device_diagnostics->layer,
+                    generation.flydelta_device_diagnostics->dot_shift_delta,
+                    generation.flydelta_device_diagnostics->shift_squared,
+                    generation.flydelta_device_diagnostics->delta_squared,
+                    generation.flydelta_device_diagnostics->residual_squared,
+                    diagnostics, finalize_error)) return false;
+            result.geometry_available = true;
+            result.cosine = diagnostics.cosine;
+            result.progress = diagnostics.progress;
+            result.leakage = diagnostics.leakage;
+            result.shift_norm = diagnostics.shift_norm;
+            result.execution_metrics.available = true;
+            result.execution_metrics.device_reduction_used = true;
+            result.execution_metrics.diagnostics_bytes_to_host =
+                common_flydelta_compact_geometry_bytes;
+        }
         if (!result.executed && !generation.error_message.empty()) {
             result.provenance_ref = generation.error_message;
         }
@@ -207,7 +262,11 @@ int main(int argc, char ** argv) {
     }
 
     common_flydelta_arm_batch_request request;
-    request.arms.resize(value.single_sparse_device ? 1 : 2);
+    if (value.device_diagnostics) {
+        request.arms.resize(2);
+    } else {
+        request.arms.resize(value.single_sparse_device ? 1 : 2);
+    }
     for (size_t index = 0; index < request.arms.size(); ++index) {
         auto & arm = request.arms[index];
         arm.job_id = "flydelta://job/cvec-batch-smoke";
@@ -221,11 +280,19 @@ int main(int argc, char ** argv) {
         arm.intervention_ref = "flydelta://artifact/cvec-batch-smoke/" + std::to_string(index);
         arm.layer_indices = {1};
         arm.coefficients = {1.0f};
-        arm.alpha = index == 0 ? 0.0001f : 0.0002f;
-        arm.apply_overlay = true;
+        arm.alpha = index == 0 ? 0.0f : 0.0002f;
+        arm.apply_overlay = !value.device_diagnostics || index != 0;
         arm.fresh_context = true;
-        arm.request_generation = true;
+        arm.request_generation = !value.device_diagnostics;
         arm.max_generated_tokens = static_cast<size_t>(value.n_predict);
+        if (value.device_diagnostics) {
+            arm.request_device_diagnostics = true;
+            arm.diagnostics_position = -1;
+            if (index == 1) {
+                arm.diagnostics_baseline_arm_id =
+                    "flydelta://arm/cvec-batch-smoke/0";
+            }
+        }
     }
 
     common_flydelta_arm_batch_result result;
@@ -240,7 +307,15 @@ int main(int argc, char ** argv) {
             return 1;
         }
     }
+    if (value.device_diagnostics &&
+            (result.arms.size() != 2 || !result.arms[1].geometry_available ||
+             !result.arms[1].execution_metrics.device_reduction_used)) {
+        std::cerr << "device diagnostics smoke did not receive a paired non-CPU reduction\n";
+        return 1;
+    }
 
+    const auto & reported_arm = value.device_diagnostics && result.arms.size() > 1
+        ? result.arms[1] : result.arms.front();
     std::cout << "flydelta_cvec_batch_model_smoke=passed\n"
               << "slots=" << (one_slot ? 1 : 2) << "\n"
               << "distinct_overlays=" << (value.single_sparse_device ? "not_applicable" : "yes") << "\n"
@@ -261,6 +336,14 @@ int main(int argc, char ** argv) {
               << result.arms.front().execution_metrics.capture_bytes_to_host << "\n"
               << "mode="
               << common_flydelta_arm_execution_path_name(
-                  result.arms.front().execution_metrics.execution_path) << "\n";
+                  reported_arm.execution_metrics.execution_path) << "\n"
+              << "device_reduction_used="
+              << (reported_arm.execution_metrics.device_reduction_used ? "yes" : "no") << "\n"
+              << "geometry_available="
+              << (reported_arm.geometry_available ? "yes" : "no") << "\n"
+              << "cosine=" << reported_arm.cosine << "\n"
+              << "progress=" << reported_arm.progress << "\n"
+              << "leakage=" << reported_arm.leakage << "\n"
+              << "shift_norm=" << reported_arm.shift_norm << "\n";
     return 0;
 }

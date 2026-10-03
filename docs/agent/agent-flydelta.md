@@ -2005,14 +2005,28 @@ fallback; neither path relaxes the cvec identity rule.
 
 The four compact geometry values in an arm result have a CPU reference oracle
 in `common_flydelta_representation_diagnostics_from_vectors()`. A device
-reduction may return only `cosine`, `progress`, `leakage` and `shift_norm` plus
-the small execution telemetry record. Full capture transfer remains reserved
-for material that will become basis, donor, orthogonal or concept evidence.
-The current daemon server-context path still uses full baseline/overlay
-captures and this CPU oracle. It does **not** set `device_reduction_used`: a
-correct Vulkan implementation must compare paired sequence rows inside the
-same graph and return only scalar reductions. It must not force a serial
-baseline pass or label a post-copy CPU reduction as device work.
+reduction returns the same four scalar inputs (`dot_shift_delta`,
+`shift_squared`, `delta_squared` and `residual_squared`), from which the host
+uses the same CPU-parity conversion to `cosine`, `progress`, `leakage` and
+`shift_norm`. Full capture transfer remains reserved for material that will
+become basis, donor, orthogonal or concept evidence.
+
+The resident server-context path supports a paired diagnostic wave: a
+request-scoped no-op reference row and one or more overlay rows are submitted
+to the same physical per-sequence cvec batch. The graph captures the requested
+layer input for both sequence rows, computes the four reductions on the
+selected non-CPU backend, and returns only the compact scalars. The reference
+row is not expected to produce a reduction of its own; it is the baseline
+operand for the overlay row. If the rows cannot be co-batched, the direction
+or layer is invalid, or the reduction outputs land on the CPU backend, the
+result remains unavailable and the host must use the existing scalar/capture
+fallback rather than claim `device_reduction_used`.
+
+`device_reduction_used` therefore means more than a registered callback: all
+four reduction outputs were assigned to a non-CPU backend and were read back
+as compact values. `capture_bytes_to_host=0` is expected for a geometry-only
+diagnostic wave. This is execution telemetry only; it does not change search,
+Oracle truth, evidence, learning credit or promotion.
 
 Arm results may also carry optional execution telemetry: model, teacher-forced
 and generation time, overlay/capture transfer bytes, and whether device

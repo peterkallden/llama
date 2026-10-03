@@ -13,11 +13,15 @@ namespace {
 bool batch_execution_compatible(
         const common_flydelta_arm_request & left,
         const common_flydelta_arm_request & right) {
+    const bool paired_device_reduction =
+        left.request_device_diagnostics && right.request_device_diagnostics &&
+        (left.diagnostics_baseline_arm_id == right.arm_id ||
+         right.diagnostics_baseline_arm_id == left.arm_id);
     return left.batch_compatibility_key == right.batch_compatibility_key &&
         left.context_ref == right.context_ref &&
         left.fixture_ref == right.fixture_ref &&
         left.fresh_context == right.fresh_context &&
-        left.apply_overlay == right.apply_overlay &&
+        (left.apply_overlay == right.apply_overlay || paired_device_reduction) &&
         left.request_capture == right.request_capture &&
         left.request_teacher_forced_margin == right.request_teacher_forced_margin &&
         left.request_generation == right.request_generation &&

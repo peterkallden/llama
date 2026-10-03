@@ -21,7 +21,13 @@ bool daemon_flydelta_prepare_arm(
     if (!arm.request_generation) {
         request.options.n_predict = 0;
     }
-    if (arm.apply_overlay) {
+    // A paired device-reduction baseline carries an explicit zero overlay so
+    // the server can materialize one per-sequence cvec table for both rows.
+    // The arm remains semantically a baseline (apply_overlay=false); this is
+    // only an execution representation needed for a physical paired batch.
+    const bool zero_diagnostics_overlay =
+        arm.request_device_diagnostics && !arm.apply_overlay;
+    if (arm.apply_overlay || zero_diagnostics_overlay) {
         std::vector<common_flydelta_basis_direction> available;
         if (!daemon_flydelta_parse_directions(*provider, arm.intervention_ref, available, error)) {
             return false;
@@ -64,7 +70,8 @@ bool daemon_flydelta_prepare_arm(
         activation_request.gate_request.basis_available = true;
         activation_request.gate_request.familiarity = 1.0f;
         activation_request.gate_request.novelty = 0.0f;
-        activation_request.gate_request.requested_scale = arm.alpha;
+        activation_request.gate_request.requested_scale = zero_diagnostics_overlay
+            ? 1.0f : arm.alpha;
         common_flydelta_activation_result activation;
         if (!common_flydelta_prepare_activation(
                 gate_config, activation_request, 64U * 1024U * 1024U, activation, error)) {
@@ -79,6 +86,30 @@ bool daemon_flydelta_prepare_arm(
             return false;
         }
         request.residual_patch = arm.residual_patch;
+    }
+    if (arm.device_diagnostics && arm.device_diagnostics->enabled) {
+        request.flydelta_device_diagnostics = arm.device_diagnostics;
+    } else if (arm.request_device_diagnostics) {
+        std::vector<common_flydelta_basis_direction> available;
+        if (!daemon_flydelta_parse_directions(*provider, arm.intervention_ref, available, error)) {
+            return false;
+        }
+        const auto direction = std::find_if(available.begin(), available.end(), [&](const auto & value) {
+            return !arm.layer_indices.empty() &&
+                value.layer_index == static_cast<int32_t>(arm.layer_indices.front());
+        });
+        if (direction == available.end()) {
+            error = "FlyDelta device diagnostics direction is unavailable";
+            return false;
+        }
+        auto reduction = std::make_shared<common_flydelta_device_diagnostics_request>();
+        reduction->enabled = true;
+        reduction->group_id = arm.arm_id;
+        reduction->baseline_group_id = arm.diagnostics_baseline_arm_id;
+        reduction->layer = direction->layer_index;
+        reduction->absolute_position = arm.diagnostics_position;
+        reduction->direction = direction->values;
+        request.flydelta_device_diagnostics = std::move(reduction);
     }
     if (arm.request_capture) {
         auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
@@ -365,6 +396,28 @@ bool daemon_flydelta_finalize_arm(
                 persisted_capture_ref, error)) return false;
         result.capture_ref = persisted_capture_ref;
     }
+    if (generation.flydelta_device_diagnostics &&
+            generation.flydelta_device_diagnostics->available) {
+        common_flydelta_representation_diagnostics diagnostics;
+        if (!common_flydelta_representation_diagnostics_from_reductions(
+                generation.flydelta_device_diagnostics->layer,
+                generation.flydelta_device_diagnostics->dot_shift_delta,
+                generation.flydelta_device_diagnostics->shift_squared,
+                generation.flydelta_device_diagnostics->delta_squared,
+                generation.flydelta_device_diagnostics->residual_squared,
+                diagnostics, error)) {
+            return false;
+        }
+        result.geometry_available = true;
+        result.cosine = diagnostics.cosine;
+        result.progress = diagnostics.progress;
+        result.leakage = diagnostics.leakage;
+        result.shift_norm = diagnostics.shift_norm;
+        result.execution_metrics.available = true;
+        result.execution_metrics.device_reduction_used = true;
+        result.execution_metrics.diagnostics_bytes_to_host =
+            common_flydelta_compact_geometry_bytes;
+    }
     if (!arm.request_host_verification) {
         result.generation_ref = "flydelta://runtime/generation/" + arm.arm_id;
         return common_flydelta_arm_result_validate(result, error);
@@ -527,21 +580,118 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         if (!common_flydelta_arm_request_validate(arm, error)) return false;
         request.arms.push_back(std::move(arm));
     }
+    const common_flydelta_arm_batch_request unpaired_request = request;
+    const bool paired_diagnostics = apply_overlay && !request.arms.empty() && !full_execution;
+    if (paired_diagnostics) {
+        common_flydelta_arm_request baseline = request.arms.front();
+        baseline.arm_id = "flydelta://runtime/" + job.id + "/coefficient/baseline";
+        baseline.apply_overlay = false;
+        baseline.alpha = 0.0f;
+        baseline.coefficients.assign(baseline.layer_indices.size(), 0.0f);
+        baseline.request_capture = false;
+        baseline.request_device_diagnostics = true;
+        baseline.diagnostics_baseline_arm_id.clear();
+        baseline.diagnostics_position = -1;
+        for (auto & arm : request.arms) {
+            arm.request_device_diagnostics = true;
+            arm.diagnostics_baseline_arm_id = baseline.arm_id;
+            arm.diagnostics_position = -1;
+            // The device reduction is the diagnostic material for this
+            // phase. Do not also request the full hidden-state capture; that
+            // would defeat the compact host-transfer contract and would make
+            // the baseline/overlay wave physically incompatible.
+            arm.request_capture = false;
+        }
+        std::vector<common_flydelta_arm_request> paired;
+        paired.reserve(request.arms.size() + 1);
+        paired.push_back(std::move(baseline));
+        for (auto & arm : request.arms) paired.push_back(std::move(arm));
+        request.arms = std::move(paired);
+    }
     common_flydelta_arm_batch_result batch;
     if (!daemon_flydelta_execute_batch(provider, request, batch, error) ||
             batch.arms.size() != request.arms.size()) {
         if (error.empty()) error = "FlyDelta coefficient batch returned incomplete arms";
         return false;
     }
+    if (paired_diagnostics) {
+        bool missing_device_geometry = false;
+        for (size_t index = 1; index < batch.arms.size(); ++index) {
+            if (!batch.arms[index].geometry_available) {
+                missing_device_geometry = true;
+                break;
+            }
+        }
+        if (missing_device_geometry) {
+            // Preserve the old scalar/capture route as a real fallback. The
+            // compact device path is preferred, but an unavailable or CPU
+            // reduction must not silently turn geometry into "missing".
+            common_flydelta_arm_batch_request fallback_request = unpaired_request;
+            common_flydelta_arm_request baseline = fallback_request.arms.front();
+            baseline.arm_id = "flydelta://runtime/" + job.id + "/coefficient/baseline-cpu";
+            baseline.apply_overlay = false;
+            baseline.alpha = 0.0f;
+            baseline.coefficients.assign(baseline.layer_indices.size(), 0.0f);
+            baseline.request_capture = true;
+            baseline.request_device_diagnostics = false;
+            baseline.diagnostics_baseline_arm_id.clear();
+            baseline.diagnostics_position = -1;
+            for (auto & arm : fallback_request.arms) {
+                arm.request_capture = true;
+                arm.request_device_diagnostics = false;
+                arm.diagnostics_baseline_arm_id.clear();
+                arm.diagnostics_position = -1;
+            }
+            std::vector<common_flydelta_arm_request> fallback_arms;
+            fallback_arms.reserve(fallback_request.arms.size() + 1);
+            fallback_arms.push_back(std::move(baseline));
+            for (auto & arm : fallback_request.arms) {
+                fallback_arms.push_back(std::move(arm));
+            }
+            fallback_request.arms = std::move(fallback_arms);
+            common_flydelta_arm_batch_result fallback_batch;
+            if (!daemon_flydelta_execute_batch(
+                        provider, fallback_request, fallback_batch, error) ||
+                    fallback_batch.arms.size() != fallback_request.arms.size()) {
+                if (error.empty()) error = "FlyDelta CPU diagnostics fallback returned incomplete arms";
+                return false;
+            }
+            request = std::move(fallback_request);
+            batch = std::move(fallback_batch);
+        }
+    }
     trials.clear();
     margins.clear();
     geometries.clear();
     geometry_available.clear();
-    for (size_t index = 0; index < batch.arms.size(); ++index) {
-        const auto & arm = batch.arms[index];
+    const size_t result_offset = paired_diagnostics ? 1 : 0;
+    for (size_t index = result_offset; index < batch.arms.size(); ++index) {
+        auto & arm = batch.arms[index];
         if (!arm.executed || arm.arm_id != request.arms[index].arm_id) {
             error = "FlyDelta coefficient batch returned an invalid arm";
             return false;
+        }
+        if (paired_diagnostics && !full_execution && !arm.geometry_available) {
+            common_flydelta_representation_diagnostics cpu_geometry;
+            if (!daemon_flydelta_diagnostics_for_arm(
+                        provider, job, request.arms.front().arm_id,
+                        request.arms[index], static_cast<uint32_t>(basis.layer_index),
+                        cpu_geometry, error)) {
+                return false;
+            }
+            std::shared_ptr<const common_flydelta_hidden_state_capture> baseline_capture;
+            std::shared_ptr<const common_flydelta_hidden_state_capture> overlay_capture;
+            if (daemon_flydelta_capture_for_arm(
+                        provider, request.arms.front().arm_id, baseline_capture) &&
+                    daemon_flydelta_capture_for_arm(
+                        provider, request.arms[index].arm_id, overlay_capture)) {
+                arm.geometry_available = true;
+                arm.cosine = cpu_geometry.cosine;
+                arm.progress = cpu_geometry.progress;
+                arm.leakage = cpu_geometry.leakage;
+                arm.shift_norm = cpu_geometry.shift_norm;
+                arm.execution_metrics.device_reduction_used = false;
+            }
         }
         common_flydelta_counterfactual_trial trial;
         trial.executed = arm.executed;

@@ -751,6 +751,7 @@ struct llm_graph_params {
     const llama_adapter_cvec     * cvec;
     const llama_adapter_cvec_batch_ref * cvec_batch = nullptr;
     const llama_residual_patch_ref * residual_patch = nullptr;
+    llama_layer_reduction_ref * layer_reductions = nullptr;
     const llama_adapter_loras    * loras;
     const llama_memory_context_i * mctx;
     const llama_cross            * cross;
@@ -849,6 +850,7 @@ struct llm_graph_params {
             cvec  == other.cvec  &&
             cvec_batch == other.cvec_batch &&
             residual_patch == other.residual_patch &&
+            layer_reductions == other.layer_reductions &&
             loras == other.loras &&
             cross == other.cross;
     }
@@ -908,6 +910,15 @@ public:
     ggml_tensor * t_h_nextn     = nullptr; // [n_embd, n_outputs] hidden state before final output norm
 
     std::vector<ggml_tensor *> t_layer_inp;
+
+    struct layer_reduction_output {
+        llama_layer_reduction_entry * entry = nullptr;
+        ggml_tensor * dot_shift_delta = nullptr;
+        ggml_tensor * shift_squared = nullptr;
+        ggml_tensor * delta_squared = nullptr;
+        ggml_tensor * residual_squared = nullptr;
+    };
+    std::vector<layer_reduction_output> layer_reduction_outputs;
 
     std::vector<ggml_tensor *> t_sampled;
     std::vector<ggml_tensor *> t_sampled_probs;

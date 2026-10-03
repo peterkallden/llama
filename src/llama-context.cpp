@@ -1342,6 +1342,14 @@ void llama_context::set_residual_patch(const llama_residual_patch_ref * ref) {
     sched_need_reserve = true;
 }
 
+void llama_context::set_layer_reductions(llama_layer_reduction_ref * ref) {
+    if (layer_reductions == ref) {
+        return;
+    }
+    layer_reductions = ref;
+    sched_need_reserve = true;
+}
+
 llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, llm_graph_type gtype, llama_memory_context_i * mctx, ggml_status & ret) {
     if (mctx && !mctx->apply()) {
         LLAMA_LOG_ERROR("%s: failed to apply memory context\n", __func__);
@@ -1408,6 +1416,8 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         ret = status;
         return nullptr;
     }
+
+    extract_layer_reductions(res);
 
     ret = GGML_STATUS_SUCCESS;
 
@@ -2249,6 +2259,56 @@ void llama_context::extract_layer_inputs(const llm_graph_result * res, size_t to
     }
 }
 
+void llama_context::extract_layer_reductions(const llm_graph_result * res) {
+    if (layer_reductions == nullptr) {
+        return;
+    }
+    for (const auto & output : res->layer_reduction_outputs) {
+        if (output.entry == nullptr || output.dot_shift_delta == nullptr ||
+                output.shift_squared == nullptr || output.delta_squared == nullptr ||
+                output.residual_squared == nullptr) {
+            continue;
+        }
+        ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(
+            sched.get(), output.dot_shift_delta);
+        if (backend == nullptr) {
+            output.entry->failure_reason = "layer reduction has no backend";
+            continue;
+        }
+        ggml_tensor * reduction_tensors[] = {
+            output.dot_shift_delta,
+            output.shift_squared,
+            output.delta_squared,
+            output.residual_squared,
+        };
+        bool device_reduction = true;
+        for (ggml_tensor * tensor : reduction_tensors) {
+            ggml_backend_t tensor_backend = ggml_backend_sched_get_tensor_backend(
+                sched.get(), tensor);
+            ggml_backend_dev_t tensor_device = tensor_backend
+                ? ggml_backend_get_device(tensor_backend) : nullptr;
+            if (tensor_device == nullptr ||
+                    ggml_backend_dev_type(tensor_device) == GGML_BACKEND_DEVICE_TYPE_CPU) {
+                device_reduction = false;
+                break;
+            }
+        }
+        if (!device_reduction) {
+            output.entry->failure_reason = "layer reduction executed on CPU backend";
+            continue;
+        }
+        ggml_backend_tensor_get(output.dot_shift_delta,
+            &output.entry->dot_shift_delta, 0, sizeof(float));
+        ggml_backend_tensor_get(output.shift_squared,
+            &output.entry->shift_squared, 0, sizeof(float));
+        ggml_backend_tensor_get(output.delta_squared,
+            &output.entry->delta_squared, 0, sizeof(float));
+        ggml_backend_tensor_get(output.residual_squared,
+            &output.entry->residual_squared, 0, sizeof(float));
+        output.entry->available = true;
+    }
+}
+
 void llama_context::output_reorder() {
     const uint64_t n_vocab     = model.vocab.n_tokens();
     const uint64_t n_embd      = model.hparams.n_embd;
@@ -2494,6 +2554,7 @@ llm_graph_params llama_context::graph_params(
         /*.cvec        =*/ cvec.get(),
         /*.cvec_batch  =*/ cvec_batch,
         /*.residual_patch =*/ residual_patch,
+        /*.layer_reductions =*/ layer_reductions,
         /*.loras       =*/ loras.get(),
         /*.mctx        =*/ mctx,
         /*.cross       =*/ &cross,
@@ -3846,6 +3907,10 @@ float * llama_get_embeddings_layer_inp(llama_context * ctx, uint32_t lid) {
 
 void llama_set_residual_patch(llama_context * ctx, const llama_residual_patch_ref * ref) {
     ctx->set_residual_patch(ref);
+}
+
+void llama_set_layer_reductions(llama_context * ctx, llama_layer_reduction_ref * ref) {
+    ctx->set_layer_reductions(ref);
 }
 
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {

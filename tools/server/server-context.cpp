@@ -308,6 +308,7 @@ struct server_slot {
     bool cvec_batch_enabled = false;
     server_task_capture_request_ptr capture_request;
     server_task_capture_result capture_result;
+    server_task_layer_reduction_result layer_reduction_result;
     int32_t alora_invocation_start = -1;
 
     // sampling
@@ -912,6 +913,7 @@ private:
     bool cvec_batch_active = false;
     server_task_cvec_batch cvec_batch_request;
     llama_adapter_cvec_batch cvec_batch_device;
+    llama_layer_reduction_ref layer_reduction_ref;
 
     server_batch batch;
 
@@ -1938,6 +1940,7 @@ private:
 
         slot.capture_request = task.params.capture;
         slot.capture_result = {};
+        slot.layer_reduction_result = {};
         if (slot.capture_request && slot.capture_request->enabled) {
             const auto & capture = *slot.capture_request;
             if (capture.layer_indices.empty()) {
@@ -1956,6 +1959,24 @@ private:
                 }
                 llama_set_embeddings_layer_inp(slot.ctx_tgt, layer, true);
             }
+        }
+        if (task.params.layer_reduction && task.params.layer_reduction->enabled) {
+            const auto & reduction = *task.params.layer_reduction;
+            const size_t n_layers = static_cast<size_t>(llama_model_n_layer(model_tgt));
+            if (reduction.direction.empty()) {
+                send_error(task, "layer reduction direction is empty", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (reduction.layer >= n_layers) {
+                send_error(task, "layer reduction layer is outside the loaded model", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (reduction.direction.size() != static_cast<size_t>(llama_model_n_embd(model_tgt))) {
+                send_error(task, "layer reduction direction does not match the model embedding width",
+                    ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            llama_set_embeddings_layer_inp(slot.ctx_tgt, reduction.layer, true);
         }
 
         // process per-request lora adapters
@@ -2322,6 +2343,56 @@ private:
         result.captured = true;
     }
 
+    void prepare_layer_reductions() {
+        layer_reduction_ref.entries.clear();
+        llama_set_layer_reductions(ctx_tgt, nullptr);
+
+        const auto in_batch = [this](int32_t id) {
+            return std::any_of(batch.tokens.begin(), batch.tokens.end(),
+                [id](const server_batch::token & token) { return token.id_slot == id; });
+        };
+        for (auto & overlay : slots) {
+            if (!overlay.task || !overlay.task->params.layer_reduction ||
+                    !overlay.task->params.layer_reduction->enabled) {
+                continue;
+            }
+            const auto & request = *overlay.task->params.layer_reduction;
+            overlay.layer_reduction_result = {};
+            overlay.layer_reduction_result.layer = request.layer;
+            if (request.baseline_group_id.empty()) {
+                // This is the paired reference row. It participates in the
+                // graph and cvec batch, but it does not own a reduction of
+                // its own; the overlay row consumes it as baseline.
+                continue;
+            }
+            auto baseline = std::find_if(slots.begin(), slots.end(), [&](const server_slot & candidate) {
+                return candidate.task && candidate.task->params.layer_reduction &&
+                    candidate.task->params.layer_reduction->enabled &&
+                    candidate.task->params.layer_reduction->group_id == request.baseline_group_id;
+            });
+            if (baseline == slots.end() || !in_batch(overlay.id) || !in_batch(baseline->id)) {
+                overlay.layer_reduction_result.failure_reason =
+                    "baseline and overlay are not in the same physical batch";
+                continue;
+            }
+            if (request.direction.empty()) {
+                overlay.layer_reduction_result.failure_reason = "empty reduction direction";
+                continue;
+            }
+            llama_layer_reduction_entry entry;
+            entry.layer = request.layer;
+            entry.baseline_sequence_id = baseline->id;
+            entry.overlay_sequence_id = overlay.id;
+            entry.absolute_position = request.absolute_position;
+            entry.direction = request.direction.data();
+            entry.n_embd = request.direction.size();
+            layer_reduction_ref.entries.push_back(std::move(entry));
+        }
+        if (!layer_reduction_ref.entries.empty()) {
+            llama_set_layer_reductions(ctx_tgt, &layer_reduction_ref);
+        }
+    }
+
     void send_teacher_score(server_slot & slot) {
         auto res = std::make_unique<server_task_result_teacher_score>();
         res->id = slot.task->id;
@@ -2515,6 +2586,22 @@ private:
 
         res->generation_params = slot.task->params; // copy the parameters
         res->capture = std::move(slot.capture_result);
+        for (const auto & entry : layer_reduction_ref.entries) {
+            if (entry.overlay_sequence_id != slot.id) {
+                continue;
+            }
+            res->layer_reduction.available = entry.available;
+            res->layer_reduction.layer = entry.layer;
+            res->layer_reduction.dot_shift_delta = entry.dot_shift_delta;
+            res->layer_reduction.shift_squared = entry.shift_squared;
+            res->layer_reduction.delta_squared = entry.delta_squared;
+            res->layer_reduction.residual_squared = entry.residual_squared;
+            res->layer_reduction.failure_reason = entry.failure_reason;
+        }
+        if (!res->layer_reduction.available &&
+                !slot.layer_reduction_result.failure_reason.empty()) {
+            res->layer_reduction = slot.layer_reduction_result;
+        }
         if (slot.residual_patch) {
             const auto & patch = *slot.residual_patch;
             res->residual_patch_observation.attempted = true;
@@ -3301,6 +3388,8 @@ private:
         }
 
         GGML_ASSERT(batch.slot_batched || batch.size() == 0);
+
+        prepare_layer_reductions();
 
         if (batch.slot_batched) {
             auto & slot_batched      = batch.slot_batched;

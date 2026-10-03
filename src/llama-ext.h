@@ -117,6 +117,10 @@ LLAMA_API void llama_set_residual_patch(
         struct llama_context * ctx,
         const struct llama_residual_patch_ref * ref);
 
+LLAMA_API void llama_set_layer_reductions(
+        struct llama_context * ctx,
+        struct llama_layer_reduction_ref * ref);
+
 LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
 
 //

@@ -11,6 +11,25 @@
 
 struct common_agent_residual_patch_request;
 
+struct common_flydelta_device_diagnostics_request {
+    bool enabled = false;
+    std::string group_id;
+    std::string baseline_group_id;
+    uint32_t layer = 0;
+    int32_t absolute_position = -1;
+    std::vector<float> direction;
+};
+
+struct common_flydelta_device_diagnostics_result {
+    bool available = false;
+    uint32_t layer = 0;
+    float dot_shift_delta = 0.0f;
+    float shift_squared = 0.0f;
+    float delta_squared = 0.0f;
+    float residual_squared = 0.0f;
+    std::string failure_reason;
+};
+
 inline constexpr size_t common_flydelta_compact_geometry_scalar_count = 4;
 inline constexpr size_t common_flydelta_compact_geometry_bytes =
     common_flydelta_compact_geometry_scalar_count * sizeof(float);
@@ -43,11 +62,15 @@ struct common_flydelta_arm_request {
     bool request_teacher_forced_margin = false;
     bool request_generation = false;
     bool request_host_verification = false;
+    bool request_device_diagnostics = false;
+    std::string diagnostics_baseline_arm_id;
+    int32_t diagnostics_position = -1;
     size_t max_capture_bytes = 0;
     size_t max_generated_tokens = 0;
     // In-memory host bridge for causal diagnostics. This is never serialized
     // into a queue job and contains no semantic lifecycle authority.
     std::shared_ptr<const common_agent_residual_patch_request> residual_patch;
+    std::shared_ptr<const common_flydelta_device_diagnostics_request> device_diagnostics;
 };
 
 // Optional backend timing/transfer telemetry. It is deliberately diagnostic:

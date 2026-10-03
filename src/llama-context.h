@@ -135,6 +135,7 @@ struct llama_context {
     // has completed. Passing nullptr restores the scalar cvec path.
     LLAMA_API void set_adapter_cvec_batch(const llama_adapter_cvec_batch_ref * ref);
     LLAMA_API void set_residual_patch(const llama_residual_patch_ref * ref);
+    LLAMA_API void set_layer_reductions(llama_layer_reduction_ref * ref);
 
     // process a single ubatch with a specific graph type
     // if memory_context is provided, it will be applied first to the context's memory
@@ -239,6 +240,7 @@ private:
     // async-copy enabled layer-input tensors (per cparams.output_layer_inp)
     // from backend into host-side embd_layer_inp buffers
     void extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
+    void extract_layer_reductions(const llm_graph_result * res);
 
     //
     // graph
@@ -290,6 +292,7 @@ private:
     llama_adapter_cvec_ptr  cvec;
     const llama_adapter_cvec_batch_ref * cvec_batch = nullptr;
     const llama_residual_patch_ref * residual_patch = nullptr;
+    llama_layer_reduction_ref * layer_reductions = nullptr;
     llama_adapter_loras_ptr loras;
 
     llama_cross cross; // TODO: tmp for handling cross-attention - need something better probably

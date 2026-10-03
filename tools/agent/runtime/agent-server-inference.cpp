@@ -4,11 +4,13 @@
 #include "agent/agent-prepared-generation.h"
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/agent-residual-patch.h"
 #include "server-context.h"
 #include "server-task.h"
 
 #include <algorithm>
+#include <condition_variable>
 #include <cstdio>
 #include <unordered_set>
 #include <cstdlib>
@@ -26,6 +28,41 @@ struct schema_stream_state {
     int first_valid_decoded_tokens = 0;
     server_task_result_ptr final_response;
     common_agent_generation_stop_reason final_stop_reason = common_agent_generation_stop_reason::error;
+};
+
+// A batch caller must enqueue the complete resident wave before any worker
+// starts consuming its response. Without this small host-side gate, a
+// zero-token diagnostic request can finish before its sibling is posted and
+// the server never gets a chance to coalesce the two prompt rows.
+class generation_post_gate {
+public:
+    explicit generation_post_gate(const size_t target) : target(target) {}
+
+    void arrive_and_wait() {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (cancelled) return;
+        if (++arrived == target) {
+            released = true;
+            condition.notify_all();
+            return;
+        }
+        condition.wait(lock, [&]() { return released || cancelled; });
+    }
+
+    void cancel() {
+        std::lock_guard<std::mutex> lock(mutex);
+        cancelled = true;
+        released = true;
+        condition.notify_all();
+    }
+
+private:
+    const size_t target;
+    size_t arrived = 0;
+    bool released = false;
+    bool cancelled = false;
+    std::mutex mutex;
+    std::condition_variable condition;
 };
 
 bool resident_trace_enabled() {
@@ -158,6 +195,25 @@ void apply_server_capture(
     result.flydelta_capture = std::move(capture);
 }
 
+void apply_server_layer_reduction(
+        const server_task_result_cmpl_final & response,
+        const common_agent_generation_request & request,
+        common_agent_generation_result & result) {
+    if (!request.flydelta_device_diagnostics ||
+            !request.flydelta_device_diagnostics->enabled) {
+        return;
+    }
+    auto reduction = std::make_shared<common_flydelta_device_diagnostics_result>();
+    reduction->available = response.layer_reduction.available;
+    reduction->layer = response.layer_reduction.layer;
+    reduction->dot_shift_delta = response.layer_reduction.dot_shift_delta;
+    reduction->shift_squared = response.layer_reduction.shift_squared;
+    reduction->delta_squared = response.layer_reduction.delta_squared;
+    reduction->residual_squared = response.layer_reduction.residual_squared;
+    reduction->failure_reason = response.layer_reduction.failure_reason;
+    result.flydelta_device_diagnostics = std::move(reduction);
+}
+
 void apply_server_residual_patch_observation(
         const server_task_result_cmpl_final & response,
         const common_agent_generation_request & request,
@@ -256,6 +312,14 @@ public:
     bool generate(
             const common_agent_generation_request & request,
             common_agent_generation_result & result) override {
+        return generate_with_gate(request, result, nullptr);
+    }
+
+private:
+    bool generate_with_gate(
+            const common_agent_generation_request & request,
+            common_agent_generation_result & result,
+            generation_post_gate * post_gate) {
         result = {};
 
         try {
@@ -351,6 +415,9 @@ public:
                 prepared,
                 logit_bias_eog);
             reader.post_task(std::move(task));
+            if (post_gate != nullptr) {
+                post_gate->arrive_and_wait();
+            }
 
             // The task parameters are authoritative here.  Diagnostic
             // capture/patch requests deliberately disable streaming in
@@ -451,6 +518,7 @@ public:
             apply_server_success(result, std::move(content), decoded_tokens, stop_reason);
             if (const auto * final_response = dynamic_cast<const server_task_result_cmpl_final *>(response)) {
                 apply_server_capture(*final_response, request, result);
+                apply_server_layer_reduction(*final_response, request, result);
                 apply_server_residual_patch_observation(*final_response, request, result);
                 result.flydelta_device_batch = final_response->flydelta_device_batch;
                 result.flydelta_runtime.requested = request.flydelta_activation &&
@@ -506,6 +574,7 @@ public:
         const size_t max_parallel = static_cast<size_t>(std::max(1, params_base.n_parallel));
         for (size_t start = 0; start < requests.size(); start += max_parallel) {
             const size_t end = std::min(requests.size(), start + max_parallel);
+            generation_post_gate post_gate(end - start);
             // Do not use vector<bool> here. Its bit-packed proxy elements can
             // share a storage word, so concurrent worker completion writes
             // race even when their logical indices differ. Each byte below is
@@ -516,7 +585,12 @@ public:
             workers.reserve(end - start);
             for (size_t index = start; index < end; ++index) {
                 workers.emplace_back([&, index, start]() {
-                    completed[index - start] = generate(requests[index], results[index]) ? 1 : 0;
+                    const bool generated = generate_with_gate(
+                        requests[index], results[index], &post_gate);
+                    if (!generated) {
+                        post_gate.cancel();
+                    }
+                    completed[index - start] = generated ? 1 : 0;
                 });
             }
             for (auto & worker : workers) {

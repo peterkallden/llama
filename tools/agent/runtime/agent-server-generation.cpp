@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/agent-residual-patch.h"
 
 #include "hash/hash.h"
@@ -159,6 +160,17 @@ task_params make_server_task_params_from_prepared_generation(
         patch->observe_applied_vector = source.observe_applied_vector;
         patch->identity = source.identity;
         params.residual_patch = std::move(patch);
+    }
+
+    if (request.flydelta_device_diagnostics && request.flydelta_device_diagnostics->enabled) {
+        auto reduction = std::make_shared<server_task_layer_reduction>();
+        reduction->enabled = true;
+        reduction->group_id = request.flydelta_device_diagnostics->group_id;
+        reduction->baseline_group_id = request.flydelta_device_diagnostics->baseline_group_id;
+        reduction->layer = request.flydelta_device_diagnostics->layer;
+        reduction->absolute_position = request.flydelta_device_diagnostics->absolute_position;
+        reduction->direction = request.flydelta_device_diagnostics->direction;
+        params.layer_reduction = std::move(reduction);
     }
 
     if (request.flydelta_capture && request.flydelta_capture->enabled) {

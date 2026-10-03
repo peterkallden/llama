@@ -1303,6 +1303,7 @@ void llm_graph_result::reset() {
 
     t_layer_inp.resize(LLAMA_MAX_LAYERS + 1);
     std::fill(t_layer_inp.begin(), t_layer_inp.end(), nullptr);
+    layer_reduction_outputs.clear();
 
     t_sampled.clear();
     t_sampled_probs.clear();
@@ -1345,6 +1346,103 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
     }
     if (t_h_nextn != nullptr) {
         ggml_set_output(t_h_nextn);
+    }
+
+    if (params.layer_reductions != nullptr) {
+        class layer_reduction_input final : public llm_graph_input_i {
+        public:
+            layer_reduction_input(llama_layer_reduction_entry & entry, int64_t width)
+                : entry(entry), width(width) {}
+
+            void set_input(const llama_ubatch *) override {
+                if (direction == nullptr || entry.direction == nullptr ||
+                        entry.n_embd != static_cast<size_t>(width)) {
+                    return;
+                }
+                ggml_backend_tensor_set(direction, entry.direction, 0,
+                    static_cast<size_t>(width) * sizeof(float));
+            }
+
+            bool can_reuse(const llm_graph_params & params) override {
+                return params.layer_reductions != nullptr;
+            }
+
+            llama_layer_reduction_entry & entry;
+            int64_t width;
+            ggml_tensor * direction = nullptr;
+        };
+
+        const auto find_row = [&](llama_seq_id sequence_id, int32_t position) -> int64_t {
+            if (sequence_id < 0 || params.ubatch.pos == nullptr ||
+                    params.ubatch.seq_id == nullptr || params.ubatch.n_seq_id == nullptr) {
+                return -1;
+            }
+            int64_t last = -1;
+            for (uint32_t row = 0; row < params.ubatch.n_tokens; ++row) {
+                if ((position >= 0 && params.ubatch.pos[row] != position) ||
+                        params.ubatch.n_seq_id[row] == 0 ||
+                        params.ubatch.seq_id[row][0] != sequence_id) {
+                    continue;
+                }
+                last = static_cast<int64_t>(row);
+                if (position >= 0) return last;
+            }
+            return last;
+        };
+
+        for (auto & entry : params.layer_reductions->entries) {
+            entry.available = false;
+            entry.failure_reason.clear();
+            if (entry.layer >= t_layer_inp.size() || t_layer_inp[entry.layer] == nullptr ||
+                    entry.direction == nullptr || entry.n_embd == 0) {
+                entry.failure_reason = "layer input or direction is unavailable";
+                continue;
+            }
+            ggml_tensor * layer_input = t_layer_inp[entry.layer];
+            if (layer_input->ne[0] != static_cast<int64_t>(entry.n_embd) ||
+                    layer_input->ne[1] <= 0) {
+                entry.failure_reason = "layer input dimensions are not reduction-compatible";
+                continue;
+            }
+            const int64_t baseline_row = find_row(entry.baseline_sequence_id, entry.absolute_position);
+            const int64_t overlay_row = find_row(entry.overlay_sequence_id, entry.absolute_position);
+            if (baseline_row < 0 || overlay_row < 0) {
+                entry.failure_reason = "baseline/overlay rows are not in the same graph batch";
+                continue;
+            }
+
+            auto input = std::make_unique<layer_reduction_input>(entry,
+                static_cast<int64_t>(entry.n_embd));
+            input->direction = ggml_new_tensor_1d(ctx_compute.get(), GGML_TYPE_F32, entry.n_embd);
+            ggml_set_input(input->direction);
+            ggml_tensor * direction = input->direction;
+            add_input(std::move(input));
+
+            const size_t row_bytes = entry.n_embd * sizeof(float);
+            ggml_tensor * baseline = ggml_view_1d(ctx_compute.get(), layer_input,
+                entry.n_embd, static_cast<size_t>(baseline_row) * row_bytes);
+            ggml_tensor * overlay = ggml_view_1d(ctx_compute.get(), layer_input,
+                entry.n_embd, static_cast<size_t>(overlay_row) * row_bytes);
+            ggml_tensor * shift = ggml_sub(ctx_compute.get(), overlay, baseline);
+            ggml_tensor * dot = ggml_sum(ctx_compute.get(), ggml_mul(ctx_compute.get(), shift, direction));
+            ggml_tensor * shift_squared = ggml_sum(ctx_compute.get(), ggml_sqr(ctx_compute.get(), shift));
+            ggml_tensor * delta_squared = ggml_sum(ctx_compute.get(), ggml_sqr(ctx_compute.get(), direction));
+            ggml_tensor * progress = ggml_div(ctx_compute.get(), dot, delta_squared);
+            ggml_tensor * residual = ggml_sub(ctx_compute.get(), shift,
+                ggml_mul(ctx_compute.get(), direction, progress));
+            ggml_tensor * residual_squared = ggml_sum(ctx_compute.get(), ggml_sqr(ctx_compute.get(), residual));
+
+            ggml_build_forward_expand(gf, dot);
+            ggml_build_forward_expand(gf, shift_squared);
+            ggml_build_forward_expand(gf, delta_squared);
+            ggml_build_forward_expand(gf, residual_squared);
+            ggml_set_output(dot);
+            ggml_set_output(shift_squared);
+            ggml_set_output(delta_squared);
+            ggml_set_output(residual_squared);
+            layer_reduction_outputs.push_back({
+                &entry, dot, shift_squared, delta_squared, residual_squared});
+        }
     }
     {
         const auto & embeddings_layer_inp = params.cparams.embeddings_layer_inp;
