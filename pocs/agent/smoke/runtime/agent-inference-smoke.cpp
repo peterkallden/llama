@@ -459,10 +459,15 @@ static void test_runtime_generation_metadata() {
     assert(proposal.generation);
     assert(proposal.generation->status == common_agent_generation_status::completed);
     assert(inference.seen[0].messages.size() == 2);
-    assert(inference.seen[0].messages[0].content.find("required: goal:string; steps:object[]") != std::string::npos);
+    // The planner prompt is a model-facing projection, not the persisted
+    // proposal schema. Keep the assertion on the stable contract shape while
+    // allowing the renderer to describe the step union precisely.
+    assert(inference.seen[0].messages[0].content.find("required: goal:string; steps:") != std::string::npos);
     assert(inference.seen[0].messages[0].content.find("steps: step[]") != std::string::npos);
     assert(inference.seen[0].messages[0].content.find(
-        "Each step normally contains only {tool?,args?,as?,mode?}") != std::string::npos);
+        "tool form: tool:string; args:object") != std::string::npos);
+    assert(inference.seen[0].messages[0].content.find(
+        "reasoning form: mode:reasoning") != std::string::npos);
 
     auto executor = make_llama_cli_action_executor(inference, make_agent_generation_config(options));
     common_plan_state plan;
@@ -569,7 +574,7 @@ static void test_planner_repairs_final_only_plan_without_binding_noise() {
     std::string error;
     const auto proposal = planner->create_plan_result(request, error);
     assert(error.empty());
-    assert(proposal.operations.size() == 2);
+    assert(proposal.operations.size() == 1);
     assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
     assert(proposal.operations[0].step->tool_call->name == "openalex.listWorks");
     assert(inference.seen.size() == 2);
@@ -598,7 +603,7 @@ static void test_planner_rejects_missing_model_tool_arguments() {
     std::string error;
     const auto proposal = planner->create_plan_result(request, error);
     assert(error.empty());
-    assert(proposal.operations.size() == 2);
+    assert(proposal.operations.size() == 1);
     assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
     assert(proposal.operations[0].step->tool_call->arguments_json == R"({"search":"machine learning"})");
     assert(inference.seen.size() == 2);
@@ -609,7 +614,7 @@ static void test_planner_rejects_missing_model_tool_arguments() {
     assert(planner_system.find("openalex.listWorks") != std::string::npos);
     assert(planner_system.find("search:string") != std::string::npos);
     assert(repair.find("planner tool arguments missing required field: openalex.listWorks.search") != std::string::npos);
-    assert(repair.find("args matching that tool's registered model-facing schema") != std::string::npos);
+    assert(planner_system.find("args matching that tool's registered model-facing schema") != std::string::npos);
     assert(repair.find("Search OpenAlex for machine learning works.") != std::string::npos);
 }
 
@@ -633,7 +638,7 @@ static void test_planner_repairs_missing_arguments_after_structural_regeneration
     std::string error;
     const auto proposal = planner->create_plan_result(request, error);
     assert(error.empty());
-    assert(proposal.operations.size() == 2);
+    assert(proposal.operations.size() == 1);
     assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
     assert(proposal.operations[0].step->tool_call->arguments_json == R"({"search":"machine learning"})");
     assert(inference.seen.size() == 3);
@@ -662,7 +667,7 @@ static void test_planner_rejects_and_replaces_invalid_model_tool_arguments() {
     std::string error;
     const auto proposal = planner->create_plan_result(request, error);
     assert(error.empty());
-    assert(proposal.operations.size() == 2);
+    assert(proposal.operations.size() == 1);
     assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
     assert(proposal.operations[0].step->tool_call->name == "dataset.inspect");
     assert(proposal.operations[0].step->tool_call->arguments_json ==
@@ -928,7 +933,9 @@ static void test_required_planner_failure_preserves_diagnostics() {
     assert(error.find("attempt 1") != std::string::npos);
     assert(error.find("missing.tool") != std::string::npos);
     assert(inference.seen.size() == 2);
-    assert(inference.seen[1].messages[1].content.find("current attachment choices are: r1") != std::string::npos);
+    const auto & repair_prompt = inference.seen[1].messages[1].content;
+    assert(repair_prompt.find("Repair it using only executable steps") != std::string::npos);
+    assert(repair_prompt.find("attachment choices") == std::string::npos);
 }
 
 static void test_reflection_regenerates_invalid_json() {

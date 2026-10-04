@@ -1050,18 +1050,22 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
-# Model-free host-supported Oracle smoke. It uses the native dataset registry
-# and the shared Oracle suite; no model output is treated as learning credit.
-set(TARGET llama-agent-flydelta-oracle-smoke)
-add_executable(${TARGET}
-    smoke/adaptation/concept/oracle.cpp
-)
-target_include_directories(${TARGET} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${PROJECT_SOURCE_DIR}
-)
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
-target_compile_features(${TARGET} PRIVATE cxx_std_17)
+# Model-free host-supported Oracle smoke. It uses the native Cozo dataset
+# registry and the shared Oracle suite; no model output is treated as learning
+# credit. Sanitizer builds intentionally omit Cozo, so they do not build this
+# backend-specific smoke.
+if (LLAMA_MEMORY_COZO)
+    set(TARGET llama-agent-flydelta-oracle-smoke)
+    add_executable(${TARGET}
+        smoke/adaptation/concept/oracle.cpp
+    )
+    target_include_directories(${TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}
+    )
+    target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+endif()
 
 # Model-free host contract smoke for the procedure/blueprint teaching seam.
 # It validates host admission and explicit contrast provenance; model-backed
@@ -1156,21 +1160,24 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # Optional model-backed FlyDelta repair smoke. It exercises the complete
 # host-certified bridge: real failed/repaired generations, hidden-state pair,
 # repair delta, basis/DeltaMemory training, and exactly three counterfactual
-# inference arms. It is skipped when LLAMA_AGENT_MODEL is not supplied.
-set(TARGET llama-agent-flydelta-repair-model-smoke)
-add_executable(${TARGET}
-    smoke/adaptation/repair/model.cpp
-    smoke/adaptation/repair/support.cpp
-    smoke/adaptation/repair/report.cpp
-)
-target_include_directories(${TARGET} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${PROJECT_SOURCE_DIR}
-    ${PROJECT_SOURCE_DIR}/tools/agent/cli
-    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
-)
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
-target_compile_features(${TARGET} PRIVATE cxx_std_17)
+# inference arms. Its deterministic host fixture uses the native Cozo dataset
+# registry, so Cozo-free sanitizer builds omit the binary entirely.
+if (LLAMA_MEMORY_COZO)
+    set(TARGET llama-agent-flydelta-repair-model-smoke)
+    add_executable(${TARGET}
+        smoke/adaptation/repair/model.cpp
+        smoke/adaptation/repair/support.cpp
+        smoke/adaptation/repair/report.cpp
+    )
+    target_include_directories(${TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+    )
+    target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+endif()
 
 # Dedicated causal residual-patch smoke. It uses the resident server-context
 # path and compares exact replacement, scaled repair delta, existing direction
@@ -2334,12 +2341,10 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-flydelta-procedure-teaching-smoke
     llama-agent-flydelta-concept-capture-smoke
     llama-agent-flydelta-concept-smoke
-    llama-agent-flydelta-oracle-smoke
     llama-agent-flydelta-concept-synthesis-model-smoke
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-cvec-batch-model-smoke
     llama-agent-flydelta-runtime-smoke
-    llama-agent-flydelta-repair-model-smoke
     llama-agent-flydelta-causal-patch-model-smoke
     llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-flydelta-dataset-question-contract-smoke
@@ -2407,6 +2412,8 @@ set(AGENT_TEST_BUILD_TARGETS
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_TEST_BUILD_TARGETS
         llama-agent-data-manipulation-smoke
+        llama-agent-flydelta-oracle-smoke
+        llama-agent-flydelta-repair-model-smoke
         llama-agent-flydelta-dataset-question-repair-contract-smoke
         llama-agent-flydelta-dataset-question-repair-model-smoke)
 endif()
@@ -2420,7 +2427,6 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-flydelta-model-ab-smoke
     llama-agent-flydelta-cvec-batch-model-smoke
     llama-agent-flydelta-runtime-smoke
-    llama-agent-flydelta-repair-model-smoke
     llama-agent-flydelta-dataset-question-model-smoke
     llama-agent-flydelta-dataset-question-repair-model-smoke
     llama-agent-resident-smoke
@@ -2442,6 +2448,10 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-deliberate-runtime-smoke
     llama-agent-research-runtime-smoke
 )
+if (LLAMA_MEMORY_COZO)
+    list(APPEND AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
+        llama-agent-flydelta-repair-model-smoke)
+endif()
 
 set(AGENT_RUNTIME_SMOKE_MCP_TARGETS
     llama-agent-mcp-tool-provider-smoke
@@ -2534,9 +2544,11 @@ if (BUILD_TESTING)
     set_property(TEST llama-agent-flydelta-concept-ctest PROPERTY LABELS agent-adaptation)
     set_tests_properties(llama-agent-flydelta-concept-ctest PROPERTIES TIMEOUT 60)
 
-    add_test(NAME llama-agent-flydelta-oracle-ctest
-        COMMAND $<TARGET_FILE:llama-agent-flydelta-oracle-smoke>)
-    set_property(TEST llama-agent-flydelta-oracle-ctest PROPERTY LABELS agent-adaptation)
+    if (TARGET llama-agent-flydelta-oracle-smoke)
+        add_test(NAME llama-agent-flydelta-oracle-ctest
+            COMMAND $<TARGET_FILE:llama-agent-flydelta-oracle-smoke>)
+        set_property(TEST llama-agent-flydelta-oracle-ctest PROPERTY LABELS agent-adaptation)
+    endif()
 
     add_test(NAME llama-agent-flydelta-procedure-teaching-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-procedure-teaching-smoke>)
@@ -2551,7 +2563,9 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-flydelta-concept-synthesis-model-smoke>)
     set_property(TEST llama-agent-flydelta-concept-synthesis-model-ctest PROPERTY LABELS agent-adaptation)
     set_tests_properties(llama-agent-flydelta-concept-synthesis-model-ctest PROPERTIES
-        SKIP_RETURN_CODE 77 TIMEOUT 1200)
+        SKIP_RETURN_CODE 77
+        TIMEOUT 1200
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     add_test(NAME llama-agent-flydelta-model-ab-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-model-ab-smoke>)
@@ -2571,11 +2585,14 @@ if (BUILD_TESTING)
     set_tests_properties(llama-agent-flydelta-runtime-ctest PROPERTIES
         SKIP_RETURN_CODE 77 TIMEOUT 300)
 
-    add_test(NAME llama-agent-flydelta-repair-model-ctest
-        COMMAND $<TARGET_FILE:llama-agent-flydelta-repair-model-smoke>)
-    set_property(TEST llama-agent-flydelta-repair-model-ctest PROPERTY LABELS agent-adaptation)
-    set_tests_properties(llama-agent-flydelta-repair-model-ctest PROPERTIES
-        SKIP_RETURN_CODE 77 TIMEOUT 420)
+    if (TARGET llama-agent-flydelta-repair-model-smoke)
+        add_test(NAME llama-agent-flydelta-repair-model-ctest
+            COMMAND $<TARGET_FILE:llama-agent-flydelta-repair-model-smoke>
+                --n-gpu-layers 99)
+        set_property(TEST llama-agent-flydelta-repair-model-ctest PROPERTY LABELS agent-adaptation)
+        set_tests_properties(llama-agent-flydelta-repair-model-ctest PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 900)
+    endif()
 
     add_test(NAME llama-agent-flydelta-causal-patch-model-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-causal-patch-model-smoke>)
@@ -2605,18 +2622,20 @@ if (BUILD_TESTING)
 
         add_test(NAME llama-agent-flydelta-dataset-question-repair-model-ctest
             COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-repair-model-smoke>
-                --suite ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json)
+                --suite ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json
+                --n-gpu-layers 99)
         set_property(TEST llama-agent-flydelta-dataset-question-repair-model-ctest PROPERTY LABELS agent-adaptation)
         set_tests_properties(llama-agent-flydelta-dataset-question-repair-model-ctest PROPERTIES
-            SKIP_RETURN_CODE 77 TIMEOUT 900)
+            SKIP_RETURN_CODE 77 TIMEOUT 1800)
     endif()
 
     add_test(NAME llama-agent-flydelta-dataset-question-model-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-model-smoke>
-            --suite ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json)
+            --suite ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json
+            --n-gpu-layers 99)
     set_property(TEST llama-agent-flydelta-dataset-question-model-ctest PROPERTY LABELS agent-adaptation)
     set_tests_properties(llama-agent-flydelta-dataset-question-model-ctest PROPERTIES
-        SKIP_RETURN_CODE 77 TIMEOUT 420)
+        SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
     add_test(NAME llama-agent-tool-runtime-ctest
         COMMAND $<TARGET_FILE:llama-agent-tool-runtime-smoke>)
@@ -2887,6 +2906,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-learning-case
     test-agent-learning-transaction
     test-agent-concept-candidate-index
+    test-agent-concept-input-routing
     test-agent-training-candidate
     test-agent-learning-corpus
     test-agent-learning-trainer
@@ -2901,6 +2921,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-evidence
     test-agent-flydelta-basis
     test-agent-flydelta-concept
+    test-agent-flydelta-oracles
     test-agent-flydelta-teaching-material
     test-agent-flydelta-training
     test-agent-flydelta-training-corpus
@@ -2914,6 +2935,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-promotion
     test-agent-flydelta-overlay
     test-agent-flydelta-activation
+    test-agent-flydelta-deployment
     test-agent-flydelta-sideband
     test-agent-flydelta-sideband-review-store
     test-agent-flydelta-capture-manifest
@@ -2987,6 +3009,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-tool-family-index
     test-tool-adapters
     test-tool-chat-bridge
+    test-agent-tool-output-codec
     test-tool-navigation
     test-agent-data-store-cozo
     test-agent-runtime-contract

@@ -1055,6 +1055,17 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         return error.empty();
     };
 
+    // Apply the same dependency gate before the first execution slice as on
+    // every later transition. Restored or model-authored plans may contain
+    // more than one active step; a dependent active step must be reset before
+    // reflection or tool execution can observe it.
+    if (!activate_next_ready_step()) {
+        if (result.error.empty()) result.error = error.empty()
+            ? "initial plan dependency scheduling failed"
+            : error;
+        return result;
+    }
+
     std::vector<std::string> guidance;
     std::set<std::string> executed_step_ids;
     common_agent_tool_navigation_context tool_navigation;

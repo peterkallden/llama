@@ -75,7 +75,6 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/tooling/agent-selection-contracts.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-result-json-contracts.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-runtime-adapter.cpp
-        ${LLAMA_SRC}/tools/agent/adaptation/agent-learning-transaction-store-factory.cpp
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-protocol.cpp
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-http-client.cpp
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-http-transport.cpp
@@ -93,10 +92,13 @@ target_include_directories(llama-agent-android-runtime PUBLIC
         ${LLAMA_SRC}/tools/server)
 
 target_compile_features(llama-agent-android-runtime PUBLIC cxx_std_17)
-# This flag excludes only desktop server-context/resident-loader code. It does
-# not disable AgentRuntimeService or its native worker queue.
+# These flags retain the normal agent orchestration while excluding desktop
+# server-context/resident-loader code and all durable adaptation/FlyDelta
+# paths. Android has neither the worker/resource budget nor a supported
+# deployment lifecycle for model overlays.
 target_compile_definitions(llama-agent-android-runtime PRIVATE
-        LLAMA_AGENT_ANDROID_CLI_ONLY=1)
+        LLAMA_AGENT_ANDROID_CLI_ONLY=1
+        LLAMA_AGENT_RUNTIME_DISABLE_ADAPTATION=1)
 target_link_libraries(llama-agent-android-runtime PUBLIC
         llama-agent-core
         llama-agent-tooling

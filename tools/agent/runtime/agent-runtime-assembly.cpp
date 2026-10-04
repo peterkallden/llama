@@ -2,7 +2,9 @@
 
 #include "../cli/agent-cli-runtime.h"
 #include "../tooling/agent-tool-runtime-adapter.h"
+#if !defined(LLAMA_AGENT_RUNTIME_DISABLE_ADAPTATION)
 #include "../adaptation/agent-learning-lifecycle-store.h"
+#endif
 
 #include <algorithm>
 
@@ -84,6 +86,7 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
         assembly.tool_runtime = make_provider_agent_tool_runtime(*tool_view);
     }
 
+#if !defined(LLAMA_AGENT_RUNTIME_DISABLE_ADAPTATION)
     if (runtime_config.enable_adaptation_capture) {
         std::string store_error;
         assembly.adaptation_store = make_agent_learning_transaction_store(
@@ -415,6 +418,13 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                 *assembly.adaptation_store, std::move(adaptation_config));
         }
     }
+#else
+    // Embedded hosts keep the normal planner/executor/repair flow, but do
+    // not own a durable learning store, capture worker, or FlyDelta
+    // deployment budget.  This is a build capability, not a configuration
+    // default: an accidental adaptation flag cannot initialise a partial
+    // lifecycle on a resource-constrained target.
+#endif
 
     assembly.runtime = std::make_unique<common_agent_runtime>(
         plan_store,
