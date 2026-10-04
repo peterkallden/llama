@@ -172,6 +172,10 @@ option(LLAMA_AGENT_SANDBOX "llama-agent: build host sandbox backends" ${LLAMA_AG
 option(LLAMA_AGENT_BUILD_POCS "llama-agent: build agent POC and smoke targets" ${LLAMA_AGENT_RUNTIME})
 option(LLAMA_AGENT_TOOLS_CLANG "llama-agent: enable clang/clangd semantic tool support" OFF)
 
+if (LLAMA_AGENT_BUILD_POCS AND NOT LLAMA_AGENT_RUNTIME)
+    message(FATAL_ERROR "LLAMA_AGENT_BUILD_POCS=ON requires LLAMA_AGENT_RUNTIME=ON")
+endif()
+
 # The agent runtime is defined in terms of persistent memory and planning.
 # Keep the lower-level options for standalone consumers, but make a complete
 # agent build self-contained instead of requiring three switches in every
@@ -341,9 +345,12 @@ if (LLAMA_BUILD_COMMON AND LLAMA_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-# The agent runtime implementation and its model-free tests live in pocs/agent.
-# Keep them independently selectable so mobile/library profiles can consume the
-# common agent runtime without importing host POCs, daemons or smoke programs.
+# The production agent implementation is owned by tools/agent. POCs and
+# model-free tests remain independently selectable under pocs/agent.
+if (LLAMA_BUILD_COMMON AND LLAMA_AGENT_RUNTIME)
+    add_subdirectory(tools/agent)
+endif()
+
 if (LLAMA_BUILD_COMMON AND (LLAMA_BUILD_EXAMPLES OR LLAMA_AGENT_BUILD_POCS))
     add_subdirectory(pocs)
 endif()
