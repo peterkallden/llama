@@ -18,7 +18,11 @@ Usage: agent-config-bootstrap.sh [options]
   --gpu-layers N             GPU layers (default: 0)
   --worker-count N           Scheduler workers (default: 2)
   --enable-adaptation        Enable host adaptation capture/collection (default: off)
-  --enable-flydelta          Enable FlyDelta capture/workers (implies adaptation)
+  --enable-flydelta          Enable FlyDelta capture/workers/canary policy (implies adaptation)
+  --flydelta-canary-mode MODE  disabled, manual or policy (default: policy when enabled)
+  --disable-flydelta-scope-expansion  Disable automatic bounded scope/traffic expansion
+  --disable-flydelta-promotion         Disable automatic active promotion
+  --flydelta-model-profile-fingerprint VALUE  Host-owned model compatibility fingerprint
   --queue-capacity N         Pending request capacity (default: 8)
   --inference-max-active N   Concurrent inference limit (default: 1)
   --default-mode MODE        chat or agent (default: agent)
@@ -83,6 +87,13 @@ gpu_layers=0
 worker_count=2
 enable_adaptation=false
 enable_flydelta=false
+flydelta_canary_mode=disabled
+flydelta_allow_scope_expansion=false
+flydelta_allow_promotion=false
+flydelta_model_profile_fingerprint=
+flydelta_canary_mode_explicit=false
+flydelta_scope_explicit=false
+flydelta_promotion_explicit=false
 queue_capacity=8
 inference_max_active=1
 default_mode=agent
@@ -156,7 +167,9 @@ EOF
 while (($# > 0)); do
     option=$1
     if [[ $option != --help && $option != -h && $option != --list-tools &&
-            $option != --enable-adaptation && $option != --enable-flydelta && $# -lt 2 ]]; then
+            $option != --enable-adaptation && $option != --enable-flydelta &&
+            $option != --disable-flydelta-scope-expansion &&
+            $option != --disable-flydelta-promotion && $# -lt 2 ]]; then
         echo "Missing value for $option" >&2
         exit 2
     fi
@@ -175,7 +188,16 @@ while (($# > 0)); do
         --gpu-layers) gpu_layers=$2 ;;
         --worker-count) worker_count=$2 ;;
         --enable-adaptation) enable_adaptation=true; shift; continue ;;
-        --enable-flydelta) enable_flydelta=true; enable_adaptation=true; shift; continue ;;
+        --enable-flydelta)
+            enable_flydelta=true
+            enable_adaptation=true
+            shift
+            continue
+            ;;
+        --flydelta-canary-mode) flydelta_canary_mode=$2; flydelta_canary_mode_explicit=true ;;
+        --disable-flydelta-scope-expansion) flydelta_allow_scope_expansion=false; flydelta_scope_explicit=true; shift; continue ;;
+        --disable-flydelta-promotion) flydelta_allow_promotion=false; flydelta_promotion_explicit=true; shift; continue ;;
+        --flydelta-model-profile-fingerprint) flydelta_model_profile_fingerprint=$2 ;;
         --queue-capacity) queue_capacity=$2 ;;
         --inference-max-active) inference_max_active=$2 ;;
         --default-mode) default_mode=$2 ;;
@@ -222,12 +244,26 @@ positive --worker-count "$worker_count"
 positive --queue-capacity "$queue_capacity"
 positive --inference-max-active "$inference_max_active"
 [[ $gpu_layers =~ ^[0-9]+$ && $port =~ ^[1-9][0-9]*$ ]] || exit 2
+if [[ $enable_flydelta == true ]]; then
+    [[ $flydelta_canary_mode_explicit == true ]] || flydelta_canary_mode=policy
+    [[ $flydelta_scope_explicit == true ]] || flydelta_allow_scope_expansion=true
+    [[ $flydelta_promotion_explicit == true ]] || flydelta_allow_promotion=true
+else
+    flydelta_canary_mode=disabled
+    flydelta_allow_scope_expansion=false
+    flydelta_allow_promotion=false
+fi
 if [[ $enable_flydelta == true && $worker_count -lt 2 ]]; then
     echo "--enable-flydelta requires --worker-count at least 2 so one agent worker remains available" >&2
     exit 2
 fi
 case $default_mode in chat|agent) ;; *) exit 2 ;; esac
 case $thinking_mode in auto|reflective|deliberate|research) ;; *) exit 2 ;; esac
+case $flydelta_canary_mode in disabled|manual|policy) ;; *)
+    echo "--flydelta-canary-mode must be disabled, manual or policy" >&2
+    exit 2
+    ;;
+esac
 case $sandbox in none|docker|kubernetes|lxc) ;; *) exit 2 ;; esac
 case $transport in stdio|mcp-http|jsonl-tcp|jsonl-unix) ;; *) exit 2 ;; esac
 [[ -n $sandbox_executable && $sandbox_executable != *[[:space:]]* ]] || {
@@ -291,6 +327,7 @@ lxc_image=$(escape_json "$lxc_image")
 lxc_network_mode=$(escape_json "$lxc_network_mode")
 lxc_network_profile=$(escape_json "$lxc_network_profile")
 lxc_network_profile_scope=$(escape_json "$lxc_network_profile_scope")
+flydelta_model_profile_fingerprint=$(escape_json "$flydelta_model_profile_fingerprint")
 pdf_page_image_executable=$(escape_json "$pdf_page_image_executable")
 pdf_page_image_version=$(escape_json "$pdf_page_image_version")
 ocr_tesseract_executable=$(escape_json "$ocr_tesseract_executable")
@@ -411,9 +448,21 @@ cat > "$output" <<EOF
         "capture_candidates":$enable_flydelta,
         "lifecycle_backend":"cozo",
         "lifecycle_path":"$cozo_root/flydelta/lifecycle.cozo",
-        "model_profile_fingerprint":"",
+        "model_profile_fingerprint":"$flydelta_model_profile_fingerprint",
         "capture_layout_revision":"layer-input:generation-boundary:v1",
-        "max_capture_candidates":128
+        "max_capture_candidates":128,
+        "canary": {
+          "mode":"$flydelta_canary_mode",
+          "allow_auto_admission":$enable_flydelta,
+          "allow_scope_expansion":$flydelta_allow_scope_expansion,
+          "allow_promotion":$flydelta_allow_promotion,
+          "auto_close_on_harmed":true,
+          "initial_traffic_basis_points":500,
+          "initial_max_evaluated_observations":6,
+          "initial_expiry_ms":28800000,
+          "traffic_steps_basis_points":[100,500,1000],
+          "scope_step_fingerprints":[]
+        }
       }
     }
   },

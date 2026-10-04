@@ -12,6 +12,11 @@ param(
     [ValidateRange(1, 1048576)] [int]$WorkerCount = 2,
     [switch]$EnableAdaptation,
     [switch]$EnableFlyDelta,
+    [ValidateSet('disabled', 'manual', 'policy')]
+    [string]$FlyDeltaCanaryMode = 'policy',
+    [switch]$DisableFlyDeltaScopeExpansion,
+    [switch]$DisableFlyDeltaPromotion,
+    [string]$FlyDeltaModelProfileFingerprint = '',
     [ValidateRange(1, 1048576)] [int]$QueueCapacity = 8,
     [ValidateRange(1, 1048576)] [int]$InferenceMaxActive = 1,
     [ValidateSet('chat', 'agent')] [string]$DefaultMode = 'agent',
@@ -99,6 +104,9 @@ if ($EnableFlyDelta -and $WorkerCount -lt 2) {
 }
 
 $adaptationEnabled = $EnableAdaptation -or $EnableFlyDelta
+$flyDeltaCanaryMode = if ($EnableFlyDelta) { $FlyDeltaCanaryMode } else { 'disabled' }
+$flyDeltaAllowScopeExpansion = [bool]($EnableFlyDelta -and -not $DisableFlyDeltaScopeExpansion)
+$flyDeltaAllowPromotion = [bool]($EnableFlyDelta -and -not $DisableFlyDeltaPromotion)
 
 $processorPolicies = [ordered]@{}
 if ($PdfPageImageExecution -ne 'disabled') {
@@ -170,8 +178,16 @@ $config = [ordered]@{
                 queue_path = "$CozoRoot/flydelta/queue"; batch_mode = 'auto'; batch_parallelism = 2
                 capture_candidates = [bool]$EnableFlyDelta; lifecycle_backend = 'cozo'
                 lifecycle_path = "$CozoRoot/flydelta/lifecycle.cozo"
-                model_profile_fingerprint = ''; capture_layout_revision = 'layer-input:generation-boundary:v1'
+                model_profile_fingerprint = $FlyDeltaModelProfileFingerprint; capture_layout_revision = 'layer-input:generation-boundary:v1'
                 max_capture_candidates = 128
+                canary = [ordered]@{
+                    mode = $flyDeltaCanaryMode; allow_auto_admission = [bool]$EnableFlyDelta
+                    allow_scope_expansion = $flyDeltaAllowScopeExpansion
+                    allow_promotion = $flyDeltaAllowPromotion; auto_close_on_harmed = $true
+                    initial_traffic_basis_points = 500; initial_max_evaluated_observations = 6
+                    initial_expiry_ms = 28800000; traffic_steps_basis_points = @(100, 500, 1000)
+                    scope_step_fingerprints = @()
+                }
             }
         }
     }

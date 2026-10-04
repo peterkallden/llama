@@ -102,6 +102,18 @@ int main() {
                     {"model_profile_fingerprint", "profile:config-smoke"},
                     {"capture_layout_revision", "flydelta-capture-v1"},
                     {"max_capture_candidates", 32},
+                    {"canary", {
+                        {"mode", "policy"},
+                        {"allow_auto_admission", true},
+                        {"allow_scope_expansion", true},
+                        {"allow_promotion", true},
+                        {"auto_close_on_harmed", true},
+                        {"initial_traffic_basis_points", 500},
+                        {"initial_max_evaluated_observations", 6},
+                        {"initial_expiry_ms", 28800000},
+                        {"traffic_steps_basis_points", nlohmann::ordered_json::array({100U, 500U, 1000U})},
+                        {"scope_step_fingerprints", nlohmann::ordered_json::array()},
+                    }},
                 }},
             }},
         }},
@@ -115,6 +127,12 @@ int main() {
             flydelta_config.adaptation_flydelta_batch_mode != "auto" ||
             flydelta_config.adaptation_flydelta_batch_parallelism != 2 ||
             !flydelta_config.adaptation_flydelta_capture_candidates ||
+            flydelta_config.adaptation_flydelta_canary_policy.mode != common_flydelta_canary_mode::policy ||
+            !flydelta_config.adaptation_flydelta_canary_policy.allow_auto_admission ||
+            !flydelta_config.adaptation_flydelta_canary_policy.allow_scope_expansion ||
+            !flydelta_config.adaptation_flydelta_canary_policy.allow_promotion ||
+            flydelta_config.adaptation_flydelta_canary_policy.initial_traffic_basis_points != 500 ||
+            flydelta_config.adaptation_flydelta_canary_policy.initial_max_evaluated_observations != 6 ||
             flydelta_config.adaptation_flydelta_lifecycle_backend != "jsonl" ||
             flydelta_config.adaptation_flydelta_lifecycle_path != "var/agent/flydelta/lifecycle.jsonl" ||
             flydelta_config.adaptation_flydelta_model_profile_fingerprint != "profile:config-smoke" ||
@@ -134,6 +152,9 @@ int main() {
             flydelta_serialized["runtime"]["adaptation"]["flydelta"]["batch_mode"] != "auto" ||
             flydelta_serialized["runtime"]["adaptation"]["flydelta"]["batch_parallelism"] != 2 ||
             !flydelta_serialized["runtime"]["adaptation"]["flydelta"]["capture_candidates"].get<bool>() ||
+            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["canary"]["mode"] != "policy" ||
+            !flydelta_serialized["runtime"]["adaptation"]["flydelta"]["canary"]["allow_scope_expansion"].get<bool>() ||
+            !flydelta_serialized["runtime"]["adaptation"]["flydelta"]["canary"]["allow_promotion"].get<bool>() ||
             flydelta_serialized["runtime"]["adaptation"]["flydelta"]["max_capture_candidates"] != 32) {
         std::fprintf(stderr, "FlyDelta worker reservation was not serialized\n");
         return 1;
@@ -145,6 +166,8 @@ int main() {
             flydelta_options.adaptation_flydelta_batch_mode != "auto" ||
             flydelta_options.adaptation_flydelta_batch_parallelism != 2 ||
             !flydelta_options.adaptation_flydelta_capture_candidates ||
+            !flydelta_options.adaptation_flydelta_canary_policy.allow_scope_expansion ||
+            !flydelta_options.adaptation_flydelta_canary_policy.allow_promotion ||
             flydelta_options.adaptation_flydelta_lifecycle_path != "var/agent/flydelta/lifecycle.jsonl") {
         std::fprintf(stderr, "FlyDelta worker reservation was not copied to daemon options\n");
         return 1;

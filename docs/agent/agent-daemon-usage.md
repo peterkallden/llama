@@ -102,14 +102,27 @@ learning accidentally. Enable them explicitly when desired:
 ```
 
 `--enable-flydelta` also enables the required adaptation capture and collection
-gates. `--enable-adaptation` enables ordinary adaptation collection without
-starting the FlyDelta worker lane. The generated configuration reserves one
-FlyDelta worker when enabled, keeps `batch_mode` at `auto`, and stores the
-transaction ledger, reference-only queue and lifecycle journal separately
-under the selected Cozo root. `memory_learn` is a separate ordinary memory
-feature and is not changed by these switches.
+gates. It emits an explicit `canary` block with `mode=policy`, bounded initial
+traffic/observation/expiry values, automatic bounded scope/traffic expansion
+and automatic active-promotion permission. These permissions do not bypass
+the existing evidence, compatibility, CAS or Oracle gates: ordinary runtime
+still resolves `active_only`, and the first admitted canary remains
+progress-only until the normal promotion policy succeeds. Use
+`--disable-flydelta-scope-expansion` or `--disable-flydelta-promotion` when a
+generated configuration should retain the stricter behavior. The optional
+`--flydelta-model-profile-fingerprint` is host-owned compatibility metadata;
+the bootstrap script never guesses it from a model filename.
 
-The PowerShell equivalents are `-EnableAdaptation` and `-EnableFlyDelta`.
+`--enable-adaptation` enables ordinary adaptation collection without starting
+the FlyDelta worker lane. The generated configuration reserves one FlyDelta
+worker when enabled, keeps `batch_mode` at `auto`, and stores the transaction
+ledger, reference-only queue and lifecycle journal separately under the
+selected Cozo root. `memory_learn` is a separate ordinary memory feature and
+is not changed by these switches.
+
+The PowerShell equivalents are `-EnableAdaptation`, `-EnableFlyDelta`,
+`-FlyDeltaCanaryMode`, `-DisableFlyDeltaScopeExpansion`,
+`-DisableFlyDeltaPromotion` and `-FlyDeltaModelProfileFingerprint`.
 
 On Linux, LXC/Incus can be selected as the sandbox backend when Docker,
 Podman or Kubernetes is unavailable:
