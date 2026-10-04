@@ -772,9 +772,15 @@ int main(int argc, char ** argv) {
               << " unresolved=" << unresolved
               << " config=" << (value.config.empty() ? "none" : value.config)
               << " selected_scenarios=" << selected_scenarios
+              << " fixture_counterfactual=" << (failures != 0 ? "yes" : "no")
               << " host_certified_repairs=" << repaired
               << " synthetic_repair_observations=" << synthetic_repairs
-              << " repair_echo_failures=" << repair_echo_failures << '\n';
+              << " repair_echo_failures=" << repair_echo_failures
+              << " model_evidence=" <<
+                    ((repaired != 0) ? "host_certified" :
+                     (synthetic_repairs != 0 ? "experimental_only" : "inconclusive"))
+              << " learning_credit=" << (repaired != 0 ? "eligible" : "none")
+              << '\n';
     for (const auto & entry : samples_by_behavior) {
         common_flydelta_direction_search_config direction_config;
         direction_config.dimension = n_embd;

@@ -38,6 +38,119 @@ bool daemon_flydelta_parse_context(
         error = std::string("FlyDelta context messages are invalid: ") + exception.what();
         return false;
     }
+
+    // Context resources cross the daemon/resource seam as model-facing
+    // contracts.  Keep the same native tool representation used by the
+    // ordinary agent path instead of asking a model to reconstruct a tool
+    // schema from prose.  Accept the OpenAI-compatible shape emitted by the
+    // catalog/provider and retain the optional result contract for host-side
+    // consumers.
+    if (parsed.contains("tools")) {
+        const auto & tools = parsed.at("tools");
+        if (!tools.is_array() || tools.empty() || tools.size() > 128) {
+            error = "FlyDelta context tools must be a bounded non-empty array";
+            return false;
+        }
+        std::set<std::string> names;
+        try {
+            for (const auto & item : tools) {
+                if (!item.is_object()) {
+                    error = "FlyDelta context tool must be an object";
+                    return false;
+                }
+                const auto * function = &item;
+                if (item.value("type", "") == "function") {
+                    if (!item.contains("function") || !item.at("function").is_object()) {
+                        error = "FlyDelta context function tool is missing function object";
+                        return false;
+                    }
+                    function = &item.at("function");
+                }
+                if (!function->contains("name") || !function->at("name").is_string()) {
+                    error = "FlyDelta context tool is missing a string name";
+                    return false;
+                }
+                const std::string name = function->at("name").get<std::string>();
+                if (name.empty() || name.size() > 256 || !names.insert(name).second) {
+                    error = "FlyDelta context tool name is empty, too long, or duplicated";
+                    return false;
+                }
+                common_chat_tool tool;
+                tool.name = name;
+                if (function->contains("description")) {
+                    if (!function->at("description").is_string()) {
+                        error = "FlyDelta context tool description must be a string";
+                        return false;
+                    }
+                    tool.description = function->at("description").get<std::string>();
+                }
+                const auto parameters = function->contains("parameters")
+                    ? function->at("parameters") : json::object();
+                if (parameters.is_string()) {
+                    tool.parameters = parameters.get<std::string>();
+                    if (json::parse(tool.parameters, nullptr, false).is_discarded()) {
+                        error = "FlyDelta context tool parameters are not valid JSON";
+                        return false;
+                    }
+                } else if (parameters.is_object()) {
+                    tool.parameters = parameters.dump();
+                } else {
+                    error = "FlyDelta context tool parameters must be an object or JSON string";
+                    return false;
+                }
+                if (function->contains("result_schema")) {
+                    const auto & result_schema = function->at("result_schema");
+                    if (result_schema.is_string()) {
+                        tool.result_schema = result_schema.get<std::string>();
+                        if (json::parse(tool.result_schema, nullptr, false).is_discarded()) {
+                            error = "FlyDelta context tool result_schema is not valid JSON";
+                            return false;
+                        }
+                    } else if (result_schema.is_object()) {
+                        tool.result_schema = result_schema.dump();
+                    } else {
+                        error = "FlyDelta context tool result_schema must be an object or JSON string";
+                        return false;
+                    }
+                }
+                request.tools.push_back(std::move(tool));
+            }
+        } catch (const std::exception & exception) {
+            error = std::string("FlyDelta context tools are invalid: ") + exception.what();
+            return false;
+        }
+    }
+    if (parsed.contains("tool_choice")) {
+        if (!parsed.at("tool_choice").is_string()) {
+            error = "FlyDelta context tool_choice must be a string";
+            return false;
+        }
+        try {
+            request.tool_choice = common_chat_tool_choice_parse_oaicompat(
+                parsed.at("tool_choice").get<std::string>());
+        } catch (const std::exception & exception) {
+            error = std::string("FlyDelta context tool_choice is invalid: ") + exception.what();
+            return false;
+        }
+    }
+    if (parsed.contains("json_schema")) {
+        if (parsed.at("json_schema").is_string()) {
+            request.json_schema = parsed.at("json_schema").get<std::string>();
+        } else if (parsed.at("json_schema").is_object()) {
+            request.json_schema = parsed.at("json_schema").dump();
+        } else {
+            error = "FlyDelta context json_schema must be an object or JSON string";
+            return false;
+        }
+        if (json::parse(request.json_schema, nullptr, false).is_discarded()) {
+            error = "FlyDelta context json_schema is not valid JSON";
+            return false;
+        }
+    }
+    if (!request.tools.empty() && request.tool_choice == COMMON_CHAT_TOOL_CHOICE_NONE) {
+        error = "FlyDelta context tools require an explicit non-none tool_choice";
+        return false;
+    }
     return true;
 }
 

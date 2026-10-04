@@ -4,6 +4,24 @@
 
 namespace agent_daemon_flydelta_internal {
 
+static std::string daemon_flydelta_verifier_input(
+        const common_agent_generation_result & generation) {
+    if (!generation.chat_params || generation.content.empty()) return generation.content;
+    common_chat_parser_params parser_params(*generation.chat_params);
+    parser_params.parse_tool_calls = true;
+    if (!generation.chat_params->parser.empty()) {
+        parser_params.parser.load(generation.chat_params->parser);
+    }
+    const auto assistant = common_chat_parse(generation.content, false, parser_params);
+    if (assistant.tool_calls.empty()) return generation.content;
+    const auto & call = assistant.tool_calls.front();
+    const auto arguments = json::parse(call.arguments, nullptr, false);
+    if (arguments.is_discarded() || !arguments.is_object() || call.name.empty()) {
+        return generation.content;
+    }
+    return json{{"name", call.name}, {"arguments", arguments}}.dump();
+}
+
 bool daemon_flydelta_prepare_arm(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const common_flydelta_arm_request & arm,
@@ -264,8 +282,15 @@ bool daemon_flydelta_verify_generation(
                 generated, observed, observed_status, observed_error)) {
             observed_summary = summarize(observed);
         } else {
+            std::string preview = generated.substr(0, 512);
+            for (char & character : preview) {
+                if (static_cast<unsigned char>(character) < 0x20 || character == 0x7f) {
+                    character = ' ';
+                }
+            }
             observed_summary = "unparsed:" +
-                std::string(common_flydelta_semantic_decision_status_name(observed_status));
+                std::string(common_flydelta_semantic_decision_status_name(observed_status)) +
+                " output=" + preview;
         }
         std::string progress_error;
         (void) common_flydelta_observe_semantic_progress(
@@ -431,8 +456,9 @@ bool daemon_flydelta_finalize_arm(
         result.host_evaluated = true;
         bool verifier_known = false;
         bool passed = false;
+        const std::string verifier_input = daemon_flydelta_verifier_input(generation);
         if (!daemon_flydelta_verify_generation(
-                fixture, generation.content, verifier_known, passed,
+                fixture, verifier_input, verifier_known, passed,
                 result.observed_decision_summary,
                 result.expected_decision_summary,
                 result.verifier_reason,

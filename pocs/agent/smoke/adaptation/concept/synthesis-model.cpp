@@ -132,6 +132,58 @@ void configure_model_catalog(daemon_options & options, const smoke_args & args) 
     options.adaptation_flydelta_model_profile_fingerprint = "profile:" + options.model_profile;
 }
 
+json model_facing_dataset_tools(bool aggregate_only = false, bool describe_only = false) {
+    json tools = json::array({
+        {
+            {"type", "function"},
+            {"function", {
+                {"name", "data.aggregate"},
+                {"description", "Aggregate measures, optionally grouped, from a bounded dataset."},
+                {"parameters", json::parse(R"({"type":"object","additionalProperties":false,"required":["dataset","measures"],"properties":{"dataset":{"type":"string"},"group_by":{"type":"array","items":{"type":"string"}},"measures":{"type":"array","items":{"type":"object","required":["function"],"properties":{"function":{"type":"string","enum":["count","sum","avg","min","max"]},"column":{"type":"string"}}}}}})")}
+            }}
+        },
+        {
+            {"type", "function"},
+            {"function", {
+                {"name", "statistics.describe"},
+                {"description", "Describe selected numeric columns in a bounded dataset."},
+                {"parameters", json::parse(R"({"type":"object","additionalProperties":false,"required":["dataset"],"properties":{"dataset":{"type":"string"},"columns":{"type":"array","items":{"type":"string"}},"group_by":{"type":"array","items":{"type":"string"}}}})")}
+            }}
+        }
+    });
+    if (aggregate_only) tools.erase(tools.begin() + 1);
+    if (describe_only) tools.erase(tools.begin());
+    return tools;
+}
+
+json model_facing_grouped_aggregate_output_schema() {
+    return json{
+        {"type", "object"},
+        {"additionalProperties", false},
+        {"required", {"name", "arguments"}},
+        {"properties", {
+            {"name", {{"type", "string"}, {"enum", {"data.aggregate"}}}},
+            {"arguments", {
+                {"type", "object"},
+                {"additionalProperties", false},
+                {"required", {"dataset", "group_by", "measures"}},
+                {"properties", {
+                    {"dataset", {{"type", "string"}}},
+                    {"group_by", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                    {"measures", {{"type", "array"}, {"minItems", 1}, {"items", {
+                        {"type", "object"},
+                        {"required", {"function", "column"}},
+                        {"properties", {
+                            {"function", {{"type", "string"}, {"enum", {"sum"}}}},
+                            {"column", {{"type", "string"}}}
+                        }}
+                    }}}}
+                }}
+            }}
+        }}
+    };
+}
+
 common_agent_scope smoke_scope() {
     common_agent_scope scope;
     scope.namespace_id = "concept-synthesis-smoke";
@@ -418,6 +470,8 @@ int main(int argc, char ** argv) {
             *runtime.resource_store, scope, "concept-synthesis-baseline.json",
             json{{"prompt",
                 "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. For this baseline attempt, deliberately inspect the dataset instead of computing the grouped total. Return exactly this one JSON object and no prose: {\"name\":\"statistics.describe\",\"arguments\":{\"dataset\":\"dataset://local/sales\"}}."},
+                 {"tools", model_facing_dataset_tools(false, true)},
+                 {"tool_choice", "required"},
                  {"n_predict", 64}}, baseline_ref, error)) {
         return fail("baseline resource: " + error);
     }
@@ -498,7 +552,10 @@ int main(int argc, char ** argv) {
                 "concept-synthesis-conditioned-" + std::to_string(index) + ".json",
                 json{{"prompt", index == 0
                     ? "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. Use the host-required grouped aggregation call. Return exactly this one JSON object and no prose: {\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"group_by\":[\"region\"],\"measures\":[{\"function\":\"sum\",\"column\":\"amount\"}]}}."
-                    : "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. The required operation is grouped aggregation: sum amount grouped by region. Return exactly this one JSON object and no prose: {\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"group_by\":[\"region\"],\"measures\":[{\"function\":\"sum\",\"column\":\"amount\"}]}}."},
+                     : "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. The required operation is grouped aggregation: sum amount grouped by region. Return exactly this one JSON object and no prose: {\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"group_by\":[\"region\"],\"measures\":[{\"function\":\"sum\",\"column\":\"amount\"}]}}."},
+                     {"tools", model_facing_dataset_tools(true, false)},
+                     {"tool_choice", "required"},
+                     {"json_schema", model_facing_grouped_aggregate_output_schema()},
                      {"n_predict", 64}}, conditioned_ref, error)) {
             return fail("conditioned resource: " + error);
         }
@@ -507,6 +564,8 @@ int main(int argc, char ** argv) {
                 *runtime.resource_store, scope,
                 "concept-synthesis-control-" + std::to_string(index) + ".json",
                 json{{"prompt", "You are a dataset tool-calling agent. Acknowledge the request without selecting the requested grouped aggregation. Return exactly this one JSON object and no prose: {\"name\":\"statistics.describe\",\"arguments\":{\"dataset\":\"dataset://local/sales\"}}."},
+                     {"tools", model_facing_dataset_tools(false, true)},
+                     {"tool_choice", "required"},
                      {"n_predict", 32}}, control_ref, error)) {
             return fail("control resource: " + error);
         }

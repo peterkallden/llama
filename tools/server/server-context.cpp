@@ -2700,6 +2700,7 @@ private:
     bool tokenize_cli_input(server_task & task) {
         try {
             auto & prompt = task.cli_prompt;
+            const size_t prompt_bytes = prompt.size();
             if (mctx != nullptr) {
                 if (task.type == SERVER_TASK_TYPE_TEACHER_FORCED_SCORE) {
                     send_error(task, "teacher-forced server scoring does not support multimodal CLI prompts yet",
@@ -2709,6 +2710,20 @@ private:
                 task.tokens = process_mtmd_prompt(mctx, prompt, task.cli_files);
             } else {
                 task.tokens = std::move(tokenize_input_prompts(vocab, mctx, prompt, true, true)[0]);
+            }
+
+            if (prompt_bytes > 0 && task.tokens.empty()) {
+                send_error(task,
+                    "CLI prompt tokenization produced no tokens for non-empty prompt",
+                    ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (prompt_bytes > 0 && getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr) {
+                SRV_INF("agent resident server trace: task=%d cli_prompt_bytes=%zu token_count=%zu capture=%s\n",
+                    task.id,
+                    prompt_bytes,
+                    task.tokens.size(),
+                    task.params.capture && task.params.capture->enabled ? "yes" : "no");
             }
 
             if (task.type == SERVER_TASK_TYPE_TEACHER_FORCED_SCORE) {
@@ -2742,6 +2757,11 @@ private:
             }
             task.cli_prompt.clear();
             task.cli_files.clear();
+            // A task can be deferred when all resident slots are occupied.
+            // Its tokenized prompt must survive that retry; otherwise the
+            // second process_single_task() pass would tokenize the now-empty
+            // cli_prompt and silently replace a valid prompt with zero tokens.
+            task.cli = false;
         } catch (const std::exception & e) {
             send_error(task, std::string("Failed to format input: ") + e.what(), ERROR_TYPE_INVALID_REQUEST);
             return false;
@@ -2898,6 +2918,13 @@ private:
 
                     if (slot == nullptr) {
                         // if no slot is available, we defer this task for processing later
+                        if (getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr) {
+                            SRV_INF("agent resident server trace: defer task=%d cli=%s prompt_bytes=%zu token_count=%zu\n",
+                                id_task,
+                                task.cli ? "yes" : "no",
+                                task.cli_prompt.size(),
+                                task.tokens.size());
+                        }
                         SRV_DBG("no slot is available, defer task, id_task = %d\n", id_task);
                         queue_tasks.defer(std::move(task));
                         break;
@@ -2905,6 +2932,13 @@ private:
 
                     if (slot->is_processing()) {
                         // if requested slot is unavailable, we defer this task for processing later
+                        if (getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr) {
+                            SRV_INF("agent resident server trace: defer-busy task=%d cli=%s prompt_bytes=%zu token_count=%zu\n",
+                                id_task,
+                                task.cli ? "yes" : "no",
+                                task.cli_prompt.size(),
+                                task.tokens.size());
+                        }
                         SRV_DBG("requested slot is unavailable, defer task, id_task = %d\n", id_task);
                         queue_tasks.defer(std::move(task));
                         break;

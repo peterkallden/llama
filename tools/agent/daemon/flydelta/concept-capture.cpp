@@ -165,7 +165,10 @@ bool daemon_flydelta_run_concept_capture(
             if (control_it != provider->captures.end()) control = control_it->second;
         }
         if (!baseline || !conditioned || !control) {
-            error = "FlyDelta concept capture did not retain all hidden-state captures";
+            error = "FlyDelta concept capture did not retain all hidden-state captures"
+                " baseline=" + (baseline ? std::string("yes") : "no")
+                + " conditioned=" + (conditioned ? "yes" : "no")
+                + " control=" + (control ? "yes" : "no");
             return false;
         }
         std::string trajectory_ref;

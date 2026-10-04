@@ -543,7 +543,6 @@ nlohmann::ordered_json make_agent_daemon_jsonl_command_response(
         const common_agent_daemon_command_result & result) {
     auto response = make_agent_daemon_command_response(result);
     response["message_type"] = "response";
-    response.erase("event");
     response.erase("daemon_event_count");
     response.erase("events");
     response.erase("event_count");

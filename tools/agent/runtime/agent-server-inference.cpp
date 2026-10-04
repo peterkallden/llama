@@ -721,7 +721,12 @@ private:
             }
             resident_trace_content(
                 "nonstream-success", requests[index], results[index].content);
-            resident_trace("nonstream-success", requests[index]);
+            std::string capture_detail = "capture_attempted=" +
+                std::string(results[index].flydelta_capture ? "yes" : "no") +
+                " capture_captured=" +
+                std::string(results[index].flydelta_capture &&
+                    results[index].flydelta_capture->captured ? "yes" : "no");
+            resident_trace("nonstream-success", requests[index], capture_detail.c_str());
         }
         return true;
     }
