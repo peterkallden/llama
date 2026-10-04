@@ -249,6 +249,13 @@ private:
 // resident server context.  This is the shared production execution primitive
 // used by the model host and by host-owned evaluator callbacks; it does not
 // resolve semantic references or decide search policy.
+// The execution contract is also exposed as a small pure normalization seam
+// so bindings and model-free tests can verify that diagnostic arms cannot
+// accidentally inherit a caller's ordinary decode budget.
+void common_agent_server_context_host_apply_flydelta_arm_execution_contract(
+        const common_flydelta_arm_request & arm,
+        common_agent_generation_request & request);
+
 bool common_agent_server_context_host_run_flydelta_arm_batch(
         const std::shared_ptr<common_agent_server_context_host> & host,
         const common_agent_server_flydelta_binding & binding,

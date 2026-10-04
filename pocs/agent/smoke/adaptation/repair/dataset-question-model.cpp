@@ -1611,11 +1611,13 @@ int main(int argc, char ** argv) {
 
                 const auto model_runner = common_flydelta_search_pipeline_runner_from_model_host(
                     *model_host, queued_job.id, "context://dataset-question-repair",
-                    "intervention://dataset-question-repair/" + bootstrap_case.id);
+                    "intervention://dataset-question-repair/" + bootstrap_case.id,
+                    true, true, false, false, 64U * 1024U * 1024U, 0);
                 const auto model_batch_runner =
                     common_flydelta_search_pipeline_batch_runner_from_model_host(
                         *model_host, queued_job.id, "context://dataset-question-repair",
-                        "intervention://dataset-question-repair/" + bootstrap_case.id);
+                        "intervention://dataset-question-repair/" + bootstrap_case.id,
+                        true, true, false, false, 64U * 1024U * 1024U, 0);
                 const bool executed = common_flydelta_run_search_pipeline_batched(
                     fixture, pipeline_config, {pipeline_direction}, model_runner,
                     model_batch_runner, pipeline_result, runner_error);

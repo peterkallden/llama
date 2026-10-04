@@ -104,6 +104,29 @@ int main() {
     CHECK(static_cast<bool>(binding.run_decision_margin_challenger));
     CHECK(static_cast<bool>(binding.run_representation_augmentation_with_state));
 
+    common_agent_generation_request diagnostic_request;
+    diagnostic_request.options.n_predict = 96;
+    common_flydelta_arm_request diagnostic_arm;
+    diagnostic_arm.request_generation = false;
+    diagnostic_arm.max_generated_tokens = 0;
+    common_agent_server_context_host_apply_flydelta_arm_execution_contract(
+        diagnostic_arm, diagnostic_request);
+    CHECK(diagnostic_request.options.n_predict == 0);
+
+    common_agent_generation_request bounded_request;
+    common_flydelta_arm_request bounded_arm;
+    bounded_arm.request_generation = true;
+    bounded_arm.max_generated_tokens = 12;
+    common_agent_server_context_host_apply_flydelta_arm_execution_contract(
+        bounded_arm, bounded_request);
+    CHECK(bounded_request.options.n_predict == 12);
+
+    common_agent_generation_request already_bounded_request;
+    already_bounded_request.options.n_predict = 8;
+    common_agent_server_context_host_apply_flydelta_arm_execution_contract(
+        bounded_arm, already_bounded_request);
+    CHECK(already_bounded_request.options.n_predict == 8);
+
     common_flydelta_arm_request arm;
     common_agent_generation_request request;
     std::string error;

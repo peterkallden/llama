@@ -323,6 +323,20 @@ common_agent_server_flydelta_binding_factory_from_callbacks(
     };
 }
 
+void common_agent_server_context_host_apply_flydelta_arm_execution_contract(
+        const common_flydelta_arm_request & arm,
+        common_agent_generation_request & request) {
+    if (!arm.request_generation) {
+        request.options.n_predict = 0;
+    } else if (arm.max_generated_tokens != 0) {
+        const int max_generated_tokens = static_cast<int>(arm.max_generated_tokens);
+        if (request.options.n_predict <= 0 ||
+                request.options.n_predict > max_generated_tokens) {
+            request.options.n_predict = max_generated_tokens;
+        }
+    }
+}
+
 bool common_agent_server_context_host_run_flydelta_arm_batch(
         const std::shared_ptr<common_agent_server_context_host> & host,
         const common_agent_server_flydelta_binding & binding,
@@ -354,6 +368,14 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
             if (error.empty()) error = "resident FlyDelta host failed to prepare an arm";
             return false;
         }
+        // The arm contract is authoritative for execution mode.  Callers
+        // prepare the model-facing context, tools and optional overlay, but
+        // they must not be able to accidentally turn a diagnostic arm into
+        // a decoding request by leaving their ordinary n_predict value in
+        // the request.  Keep this invariant at the shared resident-host
+        // seam so daemon and smoke bindings cannot drift apart.
+        common_agent_server_context_host_apply_flydelta_arm_execution_contract(
+            arm, generation_request);
         generation_requests.push_back(std::move(generation_request));
     }
 

@@ -1024,8 +1024,8 @@ int main(int argc, char ** argv) {
             arm_result.executed = true;
             arm_result.requested_alpha = arm_request.alpha;
             arm_result.executed_alpha = arm_request.alpha;
-            arm_result.generation_available = true;
-            arm_result.host_evaluated = true;
+            arm_result.generation_available = arm_request.request_generation;
+            arm_result.host_evaluated = false;
             if (arm_request.apply_overlay &&
                     (!generated.flydelta_runtime.requested ||
                      !generated.flydelta_runtime.applied ||
@@ -1035,17 +1035,20 @@ int main(int argc, char ** argv) {
                 finalize_error = "server FlyDelta arm was not isolated and applied with its request cvec";
                 return false;
             }
-            host_tool_verdict candidate_verdict;
-            if (!verify_model_tool_contract(
-                    generated, kExpectedTool, expected_tool_arguments, host,
-                    candidate_verdict, finalize_error)) return false;
-            if (!arm_request.apply_overlay) server_baseline_verdict = candidate_verdict;
-            arm_result.verifier_known = candidate_verdict.known;
-            arm_result.host_outcome = arm_request.apply_overlay
-                ? classify_host_verdicts(server_baseline_verdict, candidate_verdict)
-                : common_flydelta_counterfactual_outcome::unknown;
-            arm_result.quality = arm_result.host_outcome ==
-                common_flydelta_counterfactual_outcome::helped ? 1.0f : 0.0f;
+            if (arm_request.request_host_verification) {
+                host_tool_verdict candidate_verdict;
+                if (!verify_model_tool_contract(
+                        generated, kExpectedTool, expected_tool_arguments, host,
+                        candidate_verdict, finalize_error)) return false;
+                if (!arm_request.apply_overlay) server_baseline_verdict = candidate_verdict;
+                arm_result.host_evaluated = true;
+                arm_result.verifier_known = candidate_verdict.known;
+                arm_result.host_outcome = arm_request.apply_overlay
+                    ? classify_host_verdicts(server_baseline_verdict, candidate_verdict)
+                    : common_flydelta_counterfactual_outcome::unknown;
+                arm_result.quality = arm_result.host_outcome ==
+                    common_flydelta_counterfactual_outcome::helped ? 1.0f : 0.0f;
+            }
             arm_result.provenance_ref = arm_request.apply_overlay
                 ? "evidence:flydelta-model-repair-region-overlay"
                 : "evidence:flydelta-model-repair-region-baseline";
@@ -1150,10 +1153,12 @@ int main(int argc, char ** argv) {
         }
         const auto model_runner = common_flydelta_search_pipeline_runner_from_model_host(
             *model_host, "flydelta://job/model-repair-region", "context://model-repair",
-            "intervention://model-repair-region");
+            "intervention://model-repair-region",
+            true, true, false, false, 64U * 1024U * 1024U, 0);
         const auto model_batch_runner = common_flydelta_search_pipeline_batch_runner_from_model_host(
             *model_host, "flydelta://job/model-repair-region", "context://model-repair",
-            "intervention://model-repair-region");
+            "intervention://model-repair-region",
+            true, true, false, false, 64U * 1024U * 1024U, 0);
         common_flydelta_search_pipeline_result pipeline_result;
         if (!common_flydelta_run_search_pipeline_batched(
                 experiment_fixture, pipeline_config, {pipeline_direction}, model_runner,
