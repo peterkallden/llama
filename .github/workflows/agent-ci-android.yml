@@ -66,6 +66,7 @@ jobs:
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
           log-accepted-android-sdk-licenses: false
+          packages: platform-tools
 
       - name: Install Vulkan host headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
@@ -116,6 +117,7 @@ jobs:
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
           log-accepted-android-sdk-licenses: false
+          packages: platform-tools
 
       - name: Install Vulkan host headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
@@ -183,6 +185,7 @@ jobs:
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
           log-accepted-android-sdk-licenses: false
+          packages: platform-tools
 
       - name: Install Vulkan host headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
