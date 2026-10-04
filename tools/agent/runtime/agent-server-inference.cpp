@@ -10,7 +10,6 @@
 #include "server-task.h"
 
 #include <algorithm>
-#include <condition_variable>
 #include <cstdio>
 #include <unordered_set>
 #include <cstdlib>
@@ -28,41 +27,6 @@ struct schema_stream_state {
     int first_valid_decoded_tokens = 0;
     server_task_result_ptr final_response;
     common_agent_generation_stop_reason final_stop_reason = common_agent_generation_stop_reason::error;
-};
-
-// A batch caller must enqueue the complete resident wave before any worker
-// starts consuming its response. Without this small host-side gate, a
-// zero-token diagnostic request can finish before its sibling is posted and
-// the server never gets a chance to coalesce the two prompt rows.
-class generation_post_gate {
-public:
-    explicit generation_post_gate(const size_t target) : target(target) {}
-
-    void arrive_and_wait() {
-        std::unique_lock<std::mutex> lock(mutex);
-        if (cancelled) return;
-        if (++arrived == target) {
-            released = true;
-            condition.notify_all();
-            return;
-        }
-        condition.wait(lock, [&]() { return released || cancelled; });
-    }
-
-    void cancel() {
-        std::lock_guard<std::mutex> lock(mutex);
-        cancelled = true;
-        released = true;
-        condition.notify_all();
-    }
-
-private:
-    const size_t target;
-    size_t arrived = 0;
-    bool released = false;
-    bool cancelled = false;
-    std::mutex mutex;
-    std::condition_variable condition;
 };
 
 bool resident_trace_enabled() {
@@ -312,14 +276,108 @@ public:
     bool generate(
             const common_agent_generation_request & request,
             common_agent_generation_result & result) override {
-        return generate_with_gate(request, result, nullptr);
+        return generate_one(request, result);
     }
 
 private:
-    bool generate_with_gate(
+    bool prepare_completion_task(
             const common_agent_generation_request & request,
-            common_agent_generation_result & result,
-            generation_post_gate * post_gate) {
+            server_response_reader & reader,
+            server_task & task,
+            common_chat_params & chat_params,
+            std::string & error) {
+        error.clear();
+        std::string flydelta_error;
+        if (!server_context_agent_generation_supports_flydelta(request, flydelta_error)) {
+            error = flydelta_error;
+            return false;
+        }
+
+        common_agent_prepared_generation prepared;
+        if (!common_agent_prepare_chat_generation(
+                templates, request, prepared, &chat_params)) {
+            error = "failed to prepare server generation";
+            return false;
+        }
+
+        task = server_task(SERVER_TASK_TYPE_COMPLETION);
+        task.id = reader.get_new_id();
+        task.cli = true;
+        task.cli_prompt = prepared.prompt;
+        for (const auto & resource : request.input_resources) {
+            const auto mime_type = common_normalize_resource_media_type(resource.resource.mime_type);
+            const bool is_image = mime_type.rfind("image/", 0) == 0;
+            const bool is_audio = mime_type.rfind("audio/", 0) == 0;
+            if (!is_image && !is_audio) {
+                continue;
+            }
+            const bool native_supported = is_image ? supports_image : supports_audio;
+            if (!native_supported) {
+                if (is_image && resource.read_text_fallback) {
+                    std::string text;
+                    std::string fallback_error;
+                    const size_t max_text_bytes = resource.resource.size_bytes > 0
+                        ? resource.resource.size_bytes
+                        : 16 * 1024 * 1024;
+                    if (resource.read_text_fallback(max_text_bytes, text, fallback_error)) {
+                        task.cli_prompt += "\n[Extracted image text]\n" + text;
+                        continue;
+                    }
+                    if (resource.required) {
+                        error = "image text fallback failed for " + resource.resource.uri;
+                        if (!fallback_error.empty()) {
+                            error += ": " + fallback_error;
+                        }
+                        return false;
+                    }
+                    continue;
+                }
+                if (resource.required) {
+                    error = (is_image ? "required image" : "required audio") +
+                        std::string(" resource is unsupported by the loaded model: ") +
+                        resource.resource.uri;
+                    return false;
+                }
+                continue;
+            }
+            if (!resource.read_bytes) {
+                if (resource.required) {
+                    error = "required media resource has no host resolver: " + resource.resource.uri;
+                    return false;
+                }
+                continue;
+            }
+            std::string bytes;
+            std::string read_error;
+            const size_t max_bytes = resource.resource.size_bytes > 0
+                ? resource.resource.size_bytes
+                : 64 * 1024 * 1024;
+            if (!resource.read_bytes(max_bytes, bytes, read_error)) {
+                error = "failed to read image resource " + resource.resource.uri;
+                if (!read_error.empty()) {
+                    error += ": " + read_error;
+                }
+                return false;
+            }
+            task.cli_prompt += "\n" + std::string(get_media_marker());
+            task.cli_files.emplace_back(bytes.begin(), bytes.end());
+        }
+        task.params = make_server_task_params_from_prepared_generation(
+            params_base, request, prepared, logit_bias_eog);
+        if (resident_trace_enabled()) {
+            std::fprintf(stderr,
+                "agent resident trace: event=prepared purpose=%s stream=%s prompt_bytes=%zu\n",
+                common_agent_generation_purpose_name(request.purpose),
+                prepared.stream ? "yes" : "no",
+                prepared.prompt.size());
+            std::fflush(stderr);
+        }
+        return true;
+    }
+
+    bool generate_one(
+            const common_agent_generation_request & request,
+            common_agent_generation_result & result) {
         result = {};
 
         try {
@@ -415,9 +473,6 @@ private:
                 prepared,
                 logit_bias_eog);
             reader.post_task(std::move(task));
-            if (post_gate != nullptr) {
-                post_gate->arrive_and_wait();
-            }
 
             // The task parameters are authoritative here.  Diagnostic
             // capture/patch requests deliberately disable streaming in
@@ -561,46 +616,112 @@ private:
             return true;
         }
 
-        // Each request owns a fresh response reader and its own slot state.
-        // Posting them concurrently lets server_context coalesce compatible
-        // slot tokens into one llama batch; the per-sequence cvec binding then
-        // supplies the corresponding sparse overlay row. The scalar generate
-        // implementation remains the single source of request preparation,
-        // capture and result decoding semantics.
-        // Bound host-side concurrency to the number of resident server
-        // sequences. Posting an unbounded number of threads merely increases
-        // queue pressure and can prevent the server from coalescing prompt
-        // tokens into the intended llama batch.
-        const size_t max_parallel = static_cast<size_t>(std::max(1, params_base.n_parallel));
-        for (size_t start = 0; start < requests.size(); start += max_parallel) {
-            const size_t end = std::min(requests.size(), start + max_parallel);
-            generation_post_gate post_gate(end - start);
-            // Do not use vector<bool> here. Its bit-packed proxy elements can
-            // share a storage word, so concurrent worker completion writes
-            // race even when their logical indices differ. Each byte below is
-            // an independent completion cell; worker joins establish the
-            // required happens-before relation before it is inspected.
-            std::vector<uint8_t> completed(end - start, 0);
-            std::vector<std::thread> workers;
-            workers.reserve(end - start);
-            for (size_t index = start; index < end; ++index) {
-                workers.emplace_back([&, index, start]() {
-                    const bool generated = generate_with_gate(
-                        requests[index], results[index], &post_gate);
-                    if (!generated) {
-                        post_gate.cancel();
-                    }
-                    completed[index - start] = generated ? 1 : 0;
-                });
-            }
-            for (auto & worker : workers) {
-                worker.join();
-            }
-            if (!std::all_of(completed.begin(), completed.end(), [](uint8_t value) {
-                    return value != 0;
-                })) {
+        // FlyDelta arm waves are non-streaming. Build every server_task first
+        // and hand the complete vector to server_response_reader::post_tasks().
+        // server_queue inserts that vector under one queue lock, so the
+        // resident server can observe the whole wave before update_slots()
+        // selects and decodes it. This is stronger than a worker-thread gate,
+        // which only controlled when producers waited after posting and could
+        // still let the first task be consumed alone.
+        server_response_reader reader = server.get_response_reader();
+        std::vector<server_task> tasks;
+        tasks.reserve(requests.size());
+        std::vector<common_chat_params> chat_params(requests.size());
+        for (size_t index = 0; index < requests.size(); ++index) {
+            server_task task;
+            std::string error;
+            if (!prepare_completion_task(
+                    requests[index], reader, task, chat_params[index], error)) {
+                results[index].error_message = error;
                 return false;
             }
+            if (task.params.stream) {
+                // The vector response reader cannot preserve the streaming
+                // schema state required by the single-request path. The
+                // production FlyDelta arm contract is non-streaming; fail
+                // explicitly rather than silently reverting to timing-based
+                // posting.
+                results[index].error_message =
+                    "resident arm batch requires non-streaming generation";
+                return false;
+            }
+            tasks.push_back(std::move(task));
+        }
+
+        reader.post_tasks(std::move(tasks));
+        auto responses = reader.wait_for_all([]() { return false; });
+        if (responses.is_terminated || responses.error ||
+                responses.results.size() != requests.size()) {
+            for (auto & result : results) {
+                apply_server_error(
+                    responses.error.get(),
+                    result,
+                    responses.is_terminated
+                        ? common_agent_generation_status::cancelled
+                        : common_agent_generation_status::errored,
+                    responses.is_terminated
+                        ? common_agent_generation_stop_reason::cancelled
+                        : common_agent_generation_stop_reason::error,
+                    responses.is_terminated
+                        ? "server arm batch was terminated"
+                        : "server arm batch returned incomplete results");
+            }
+            return false;
+        }
+
+        for (size_t index = 0; index < requests.size(); ++index) {
+            results[index].chat_params = chat_params[index];
+            auto * response = responses.results[index].get();
+            std::string content;
+            int decoded_tokens = 0;
+            common_agent_generation_stop_reason stop_reason =
+                common_agent_generation_stop_reason::none;
+            if (response == nullptr || !response->is_stop() ||
+                    !extract_completion_json(response, content, decoded_tokens, stop_reason)) {
+                apply_server_error(
+                    response,
+                    results[index],
+                    common_agent_generation_status::errored,
+                    common_agent_generation_stop_reason::error,
+                    "server arm batch returned a non-completion result");
+                return false;
+            }
+            apply_server_success(
+                results[index], std::move(content), decoded_tokens, stop_reason);
+            if (const auto * final_response =
+                    dynamic_cast<const server_task_result_cmpl_final *>(response)) {
+                apply_server_capture(*final_response, requests[index], results[index]);
+                apply_server_layer_reduction(*final_response, requests[index], results[index]);
+                apply_server_residual_patch_observation(
+                    *final_response, requests[index], results[index]);
+                results[index].flydelta_device_batch = final_response->flydelta_device_batch;
+                results[index].flydelta_runtime.requested =
+                    requests[index].flydelta_activation &&
+                    requests[index].flydelta_activation->overlay.enabled;
+                if (final_response->generation_params.cvec) {
+                    const auto & cvec = *final_response->generation_params.cvec;
+                    results[index].flydelta_runtime.applied = true;
+                    results[index].flydelta_runtime.sparse_device_binding =
+                        final_response->flydelta_device_batch &&
+                        !cvec.sparse_layer_indices.empty();
+                    results[index].flydelta_runtime.device_batch =
+                        final_response->flydelta_device_batch;
+                    results[index].flydelta_runtime.cache_prompt =
+                        final_response->generation_params.cache_prompt;
+                    results[index].flydelta_runtime.n_cache_reuse =
+                        final_response->generation_params.n_cache_reuse;
+                    results[index].flydelta_runtime.n_embd = cvec.n_embd;
+                    results[index].flydelta_runtime.il_start = cvec.il_start;
+                    results[index].flydelta_runtime.il_end = cvec.il_end;
+                    results[index].flydelta_runtime.data_bytes =
+                        cvec.data.size() * sizeof(float);
+                    results[index].flydelta_runtime.artifact_id = cvec.identity;
+                    results[index].flydelta_runtime.content_hash = cvec.content_hash;
+                }
+            }
+            resident_trace_content(
+                "nonstream-success", requests[index], results[index].content);
+            resident_trace("nonstream-success", requests[index]);
         }
         return true;
     }

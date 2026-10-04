@@ -29,6 +29,7 @@ struct common_agent_runtime_model_loader_config {
     bool per_sequence_cvec_batch = false;
     bool agent_trace = false;
     bool allow_flydelta_scalar_fallback = true;
+    bool reserve_flydelta_workspace = true;
 };
 
 class common_agent_runtime_cli_model_loader final

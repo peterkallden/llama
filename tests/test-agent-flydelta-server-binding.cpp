@@ -17,6 +17,24 @@ int main() {
     CHECK(host_config.context_key.n_sequences == 2);
     CHECK(host_config.per_sequence_cvec_batch);
 
+    // The project historically used 99 as an "all layers" convenience
+    // value.  Resident FlyDelta contexts must let the existing fit path
+    // choose a safe offload level so arm/cvec workspace keeps its margin.
+    options.n_gpu_layers = 99;
+    options.fit_params = true;
+    options.reserve_flydelta_workspace = true;
+    CHECK(make_agent_server_context_params(options).n_gpu_layers == -1);
+
+    // An explicit smaller layer count remains an explicit caller choice.
+    options.n_gpu_layers = 20;
+    CHECK(make_agent_server_context_params(options).n_gpu_layers == 20);
+
+    // Hosts that deliberately disable the reservation retain the legacy
+    // full-offload request for compatibility.
+    options.n_gpu_layers = 99;
+    options.reserve_flydelta_workspace = false;
+    CHECK(make_agent_server_context_params(options).n_gpu_layers == 99);
+
     common_agent_server_flydelta_binding_callbacks callbacks;
     callbacks.primitives.capture = true;
     callbacks.primitives.generation = true;

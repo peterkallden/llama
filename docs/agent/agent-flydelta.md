@@ -1818,6 +1818,31 @@ field for Shallow/Deep/TFO; zero leaves the limit to the batch callback. The
 field only bounds one device-facing submission and never changes the proposed
 coefficient population, retry order or CPU-side dose/utility decisions.
 
+Resident server-context memory is a separate host concern. The project has
+historically used `n_gpu_layers = 99` as an "all layers" convenience value.
+When `fit_params` and `reserve_flydelta_workspace` are enabled, the resident
+host translates that legacy request to the existing fit path (`-1`) before
+model load. This lets the fit logic choose an offload level with its existing
+device margin instead of treating an explicit 99 as non-adjustable and
+leaving no proven workspace for cvecs, diagnostic reductions or transient arm
+waves. Explicit smaller layer counts remain explicit, and a host may disable
+the reservation for a deliberately full-offload configuration. The trace
+reports requested layers, effective pre-fit layers and whether the workspace
+reservation was applied; this is an execution/resource decision, not a
+FlyDelta search or evidence decision.
+
+Resident FlyDelta arm waves use the server's vector task-posting seam. The
+host prepares and validates every non-streaming completion task first, then
+submits the complete vector through `server_response_reader::post_tasks()`.
+The server queue inserts that vector under one queue lock before waking its
+loop, so the wave is visible as one posting operation before slot selection
+and decode. This replaces the former timing-dependent worker post gate. The
+response vector remains in request order and each result retains its own
+capture, cvec and runtime metadata. Streaming is rejected explicitly for
+this bounded resident-arm path; it never falls back to partially visible
+posting. Hosts without a valid device batch still use the ordinary scalar
+fallback, with the same search, Oracle and lifecycle semantics.
+
 Batch capacity is owned by the registered model host, not by an individual
 search algorithm. The resident server derives `max_arms_per_batch` from its
 validated number of parallel sequences and the common adapter partitions a

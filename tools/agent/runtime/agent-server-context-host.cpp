@@ -31,13 +31,16 @@ void server_context_host_trace(const char * event, const common_agent_server_con
     std::fprintf(stderr, "agent server_context host trace: event=%s", event);
     if (config != nullptr) {
         std::fprintf(stderr,
-            " model=%s n_ctx=%d n_threads=%d n_parallel=%d n_sequences=%d fit_params=%s",
+            " model=%s n_ctx=%d n_threads=%d n_parallel=%d n_sequences=%d"
+            " requested_gpu_layers=%d fit_params=%s reserve_flydelta_workspace=%s",
             config->context_key.load_key.model.c_str(),
             config->context_key.n_ctx,
             config->context_key.n_threads,
             config->context_key.n_parallel,
             config->context_key.n_sequences,
-            config->context_key.load_key.fit_params ? "true" : "false");
+            config->context_key.load_key.n_gpu_layers,
+            config->context_key.load_key.fit_params ? "true" : "false",
+            config->context_key.load_key.reserve_flydelta_workspace ? "true" : "false");
     }
     std::fprintf(stderr, "\n");
     std::fflush(stderr);
@@ -61,6 +64,7 @@ common_agent_server_context_load_key make_agent_server_context_load_key(
         options.n_gpu_layers,
         options.fit_params,
         options.mmproj,
+        options.reserve_flydelta_workspace,
     };
 }
 
@@ -91,8 +95,32 @@ common_params make_agent_server_context_params(
     params.model.path = config.context_key.load_key.model;
     params.mmproj.path = config.context_key.load_key.mmproj;
     params.n_predict = -1;
-    params.n_gpu_layers = config.context_key.load_key.n_gpu_layers;
     params.fit_params = config.context_key.load_key.fit_params;
+    params.n_gpu_layers = config.context_key.load_key.n_gpu_layers;
+    // The project historically used 99 in agent configs as an "all layers"
+    // convenience value.  That is unsafe for resident FlyDelta contexts:
+    // common_fit_params cannot adjust an explicitly set layer count, so a
+    // failed fit would otherwise continue with full offload and no proven
+    // device margin for arm/cvec workspaces.  Re-enter the fit path for this
+    // legacy full-offload request; exact smaller layer counts remain explicit.
+    const bool legacy_full_offload_fit = params.fit_params &&
+            config.context_key.load_key.reserve_flydelta_workspace &&
+            params.n_gpu_layers >= 99;
+    if (legacy_full_offload_fit) {
+        params.n_gpu_layers = -1;
+    }
+    if (server_context_host_trace_enabled()) {
+        std::fprintf(stderr,
+            "agent server_context host trace: event=offload-resolution"
+            " requested_gpu_layers=%d effective_gpu_layers=%d fit_params=%s"
+            " workspace_reservation=%s legacy_full_offload_fit=%s\n",
+            config.context_key.load_key.n_gpu_layers,
+            params.n_gpu_layers,
+            params.fit_params ? "true" : "false",
+            config.context_key.load_key.reserve_flydelta_workspace ? "true" : "false",
+            legacy_full_offload_fit ? "true" : "false");
+        std::fflush(stderr);
+    }
     params.n_parallel = config.context_key.n_parallel;
     params.n_sequences = config.context_key.n_sequences;
     params.n_ctx = config.context_key.n_ctx;

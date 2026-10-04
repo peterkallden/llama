@@ -72,6 +72,7 @@ bool open_daemon_model_residency(
         native_batch,
         options.agent_trace,
         allow_scalar_fallback,
+        true,
     };
     std::unordered_map<std::string,
         std::shared_ptr<common_agent_runtime_model_loader>> loaders;

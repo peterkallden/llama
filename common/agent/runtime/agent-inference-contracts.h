@@ -27,6 +27,11 @@ struct common_agent_inference_options {
     size_t context_size_tokens = 0;
     int n_parallel = 1;
     int n_sequences = 1;
+    // Resident agent contexts must leave a device-memory margin for
+    // FlyDelta overlays, compact diagnostic reductions and transient arm
+    // batches when fit_params is enabled.  This is a host policy seam, not
+    // a search or evidence setting.
+    bool reserve_flydelta_workspace = true;
     // A typed host decision. The server-context host applies this before the
     // resident model is loaded; it does not consult process environment for
     // agent runtime behavior.
