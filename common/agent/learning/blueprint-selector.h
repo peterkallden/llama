@@ -6,6 +6,7 @@
 #include "plan/plan-store.h"
 
 #include <optional>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,16 @@ private:
     std::string logical_id;
 };
 
+enum class common_blueprint_materialization_outcome {
+    not_applicable,
+    applied,
+    failed_safely,
+};
+
+using common_blueprint_instance_materializer = std::function<
+    common_blueprint_materialization_outcome(
+        const common_agent_request &, const common_plan_state &, common_plan_state &, std::string &)>;
+
 struct common_blueprint_selection_config {
     std::string task_plan_id;
     std::string session_id;
@@ -86,6 +97,11 @@ struct common_blueprint_selection_config {
     // this turn. Textual constraints without a host decision remain subject
     // to normal plan validation rather than heuristic native filtering.
     std::vector<std::string> blocked_constraint_ids;
+    // Optional host-owned planner backend. It may replace the freshly
+    // instantiated task with a verified, ordinary task plan before the plan
+    // store sees it. A declined callback leaves the blueprint instance
+    // unchanged; it must never invent a fallback plan itself.
+    common_blueprint_instance_materializer materialize_instance;
 };
 
 enum class common_blueprint_selection_outcome { resumed, declined, failed_safely, instantiated };

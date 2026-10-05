@@ -809,6 +809,56 @@ int main() {
     CHECK(tool_result.known &&
         tool_result.verdict == common_flydelta_oracle_verdict::satisfied);
 
+    common_plan_state blueprint_instance;
+    blueprint_instance.id = "dataset-astar-instance";
+    blueprint_instance.session_id = "session-a";
+    blueprint_instance.namespace_id = "local";
+    blueprint_instance.project_id = "project-a";
+    blueprint_instance.kind = common_plan_kind::task;
+    blueprint_instance.derived_from_plan_id = "bootstrap:local:project:project-a:blueprint:dataset-inspect-summarize";
+    blueprint_instance.goal = "Inspect the dataset and answer from the verified result.";
+    blueprint_instance.success_criteria = "The verified dataset operation is used before answering.";
+    blueprint_instance.created_at = 42;
+    blueprint_instance.updated_at = 42;
+    auto materializer = common_flydelta_make_dataset_blueprint_plan_materializer(
+        [dataset_request](const common_agent_request &, const common_plan_state &,
+                common_flydelta_dataset_blueprint_request & out, std::string & provider_error) {
+            provider_error.clear();
+            out = dataset_request;
+            return true;
+        },
+        [](const common_flydelta_workflow_proposal & candidate, std::string & verifier_error) {
+            verifier_error.clear();
+            return candidate.proposed && candidate.canonical_steps.size() == 2;
+        });
+    common_plan_state materialized;
+    CHECK(materializer(
+        common_agent_request{}, blueprint_instance, materialized, error) ==
+        common_blueprint_materialization_outcome::applied);
+    CHECK(materialized.kind == common_plan_kind::task &&
+        materialized.steps.size() == 3 &&
+        materialized.steps[0].selected_tool &&
+        *materialized.steps[0].selected_tool == "dataset.select" &&
+        materialized.steps[1].selected_tool &&
+        *materialized.steps[1].selected_tool == "data.aggregate" &&
+        materialized.steps[2].mode == common_plan_step_mode::final_response &&
+        materialized.active_step_id == materialized.steps[0].id);
+    auto rejected_materializer = common_flydelta_make_dataset_blueprint_plan_materializer(
+        [dataset_request](const common_agent_request &, const common_plan_state &,
+                common_flydelta_dataset_blueprint_request & out, std::string & provider_error) {
+            provider_error.clear();
+            out = dataset_request;
+            return true;
+        },
+        [](const common_flydelta_workflow_proposal &, std::string & verifier_error) {
+            verifier_error = "test Oracle rejection";
+            return false;
+        });
+    CHECK(rejected_materializer(
+        common_agent_request{}, blueprint_instance, materialized, error) ==
+        common_blueprint_materialization_outcome::failed_safely);
+    CHECK(error == "test Oracle rejection");
+
     common_flydelta_dataset_blueprint_request invalid_dataset_request = dataset_request;
     invalid_dataset_request.terminal_tool = "unknown.tool";
     CHECK(!common_flydelta_propose_dataset_blueprint_workflow(

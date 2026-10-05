@@ -23,6 +23,7 @@ struct common_agent_orchestration_config {
     std::string agent_bootstrap = "none";
     std::string agent_import;
     std::string agent_export;
+    common_blueprint_instance_materializer blueprint_instance_materializer;
 };
 
 struct common_agent_orchestration_build_config {
@@ -32,6 +33,7 @@ struct common_agent_orchestration_build_config {
     std::string agent_bootstrap = "none";
     std::string agent_import;
     std::string agent_export;
+    common_blueprint_instance_materializer blueprint_instance_materializer;
 };
 
 common_agent_orchestration_config make_agent_orchestration_config(

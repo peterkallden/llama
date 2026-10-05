@@ -158,7 +158,12 @@ select -> inspect -> operation when schema is unknown, or
 select -> operation when the host already has a trusted schema. The
 materialized steps are still only a proposal: Tool Contract, Workflow and
 Procedure/Blueprint Oracles must validate them before any proposal can be used
-as contrast material. No ordinary runtime turn invokes this adapter
+as contrast material. The existing blueprint-selection seam now accepts an
+optional host-owned materializer: when the host supplies the task state and a
+successful Oracle gate, the verified proposal can be converted into the
+ordinary `common_plan_state` before `plan_store.create`. Without that callback,
+or when it returns `not_applicable`, the existing blueprint instance and
+planner path are unchanged. No ordinary runtime turn invokes this adapter
 implicitly, and it does not write lifecycle state.
 
 Workflow and procedure direction: the host Workflow Oracle validates the
@@ -3370,9 +3375,10 @@ research result / explicit user relation
         -> existing material, capture and ConceptSynthesis path
 ```
 
-No new model call, Q-learning path or A* search integration is introduced by
-V0. A* remains the existing bounded support component for a later host-owned
-valid-combination proposer.
+No new model call, Q-learning path or implicit A* runtime route is introduced
+by V0. The bounded proposer can now be registered through the existing
+host-owned blueprint materializer seam; ordinary runtime keeps the existing
+planner path unless that callback is explicitly supplied and Oracle-gated.
 
 ### FlyDelta Oracle layer and bounded proposer
 

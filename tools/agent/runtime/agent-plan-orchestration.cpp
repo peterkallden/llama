@@ -43,6 +43,7 @@ common_agent_orchestration_config make_agent_orchestration_config(
     result.agent_bootstrap = std::move(config.agent_bootstrap);
     result.agent_import = std::move(config.agent_import);
     result.agent_export = std::move(config.agent_export);
+    result.blueprint_instance_materializer = std::move(config.blueprint_instance_materializer);
     return result;
 }
 
@@ -114,6 +115,7 @@ bool maybe_install_agent_bootstrap(
         selection_config.session_id = scope.session_id;
         selection_config.scope = scope.plan_scope;
         selection_config.now = bootstrap_config.now;
+        selection_config.materialize_instance = config.blueprint_instance_materializer;
         common_blueprint_selection_result selection;
         common_agent_request selection_request;
         selection_request.prompt = config.prompt;
@@ -246,6 +248,7 @@ bool maybe_auto_select_blueprint(
     selection_config.session_id = context.scope.session_id;
     selection_config.scope = context.scope.plan_scope;
     selection_config.now = std::time(nullptr);
+    selection_config.materialize_instance = context.config.blueprint_instance_materializer;
     if (context.tooling != nullptr && context.tooling->profile_tools_active) {
         selection_config.capabilities_resolved = true;
         for (const auto & tool : context.tooling->capabilities) {

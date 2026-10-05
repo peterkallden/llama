@@ -155,6 +155,76 @@ int main() {
     assert(common_plan_scope_matches(*selected_instance, common_plan_scope::project,
         config.namespace_id, config.session_id, config.project_id, {}));
 
+    // A host may opt a selected dataset blueprint into the bounded A* backend
+    // before persistence. The callback receives host-owned task data, verifies
+    // the proposal, and returns an ordinary task plan; no second plan store or
+    // runtime path is introduced.
+    common_explicit_blueprint_selector dataset_selector("dataset-inspect-summarize");
+    common_blueprint_selection_config dataset_selection_config;
+    dataset_selection_config.task_plan_id = "dataset-astar-instance";
+    dataset_selection_config.session_id = config.session_id;
+    dataset_selection_config.scope = common_plan_scope::project;
+    dataset_selection_config.now = 45;
+    dataset_selection_config.materialize_instance =
+        [](const common_agent_request &, const common_plan_state & instance,
+                common_plan_state & materialized, std::string & materialization_error) {
+            materialization_error.clear();
+            if (!instance.derived_from_plan_id ||
+                    instance.derived_from_plan_id->find("dataset-inspect-summarize") == std::string::npos) {
+                return common_blueprint_materialization_outcome::not_applicable;
+            }
+            materialized = instance;
+            materialized.steps.clear();
+            common_plan_step select;
+            select.id = instance.id + ":host:select";
+            select.title = "Select dataset";
+            select.objective = "Select the host-resolved dataset.";
+            select.mode = common_plan_step_mode::tool;
+            select.status = common_plan_step_status::active;
+            select.selected_tool = "dataset.select";
+            select.tool_call = common_plan_tool_call{"dataset.select", R"({"dataset":"dataset://local/sales"})"};
+            common_plan_step answer;
+            answer.id = instance.id + ":host:answer";
+            answer.title = "Answer";
+            answer.objective = instance.goal;
+            answer.mode = common_plan_step_mode::final_response;
+            answer.depends_on = {select.id};
+            materialized.steps = {select, answer};
+            materialized.active_step_id = select.id;
+            materialized.next_action = select.id;
+            materialized.status = common_plan_status::active;
+            return common_blueprint_materialization_outcome::applied;
+        };
+    dataset_selection_config.task_plan_id = "dataset-astar-instance";
+    assert(common_agent_select_and_instantiate_blueprint(
+        plans, selection_request, dataset_selector,
+        {{"dataset-inspect-summarize", first.installed_blueprint_ids[2], "dataset workflow"}},
+        dataset_selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
+    const auto dataset_instance = plans.get(dataset_selection_config.task_plan_id, error);
+    assert(dataset_instance && dataset_instance->steps.size() == 2);
+    assert(dataset_instance->steps[0].selected_tool &&
+        *dataset_instance->steps[0].selected_tool == "dataset.select");
+    assert(dataset_instance->steps[1].mode == common_plan_step_mode::final_response);
+    assert(dataset_instance->derived_from_plan_id &&
+        *dataset_instance->derived_from_plan_id == first.installed_blueprint_ids[2]);
+
+    common_blueprint_selection_config rejected_selection_config = dataset_selection_config;
+    rejected_selection_config.task_plan_id = "rejected-astar-instance";
+    rejected_selection_config.materialize_instance =
+        [](const common_agent_request &, const common_plan_state &,
+                common_plan_state &, std::string & materialization_error) {
+            materialization_error = "host Oracle rejected the proposal";
+            return common_blueprint_materialization_outcome::failed_safely;
+        };
+    common_explicit_blueprint_selector rejected_selector("repository-change");
+    assert(common_agent_select_and_instantiate_blueprint(
+        plans, selection_request, rejected_selector,
+        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}},
+        rejected_selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::failed_safely);
+    assert(plans.get(rejected_selection_config.task_plan_id, error) == std::nullopt);
+
     selection_config.expected_source_revision = "default@v0";
     selection_config.task_plan_id = "stale-source-instance";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,

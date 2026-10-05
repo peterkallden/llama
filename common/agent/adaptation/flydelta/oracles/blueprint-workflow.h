@@ -1,7 +1,10 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/oracles/workflow-proposal.h"
+#include "agent/learning/blueprint-selector.h"
+#include "plan/plan-types.h"
 
+#include <functional>
 #include <string>
 
 // Host-owned input for the first blueprint/state-graph adapter. The host
@@ -30,3 +33,31 @@ bool common_flydelta_propose_dataset_blueprint_workflow(
         const common_flydelta_dataset_blueprint_request & request,
         common_flydelta_workflow_proposal & result,
         std::string & error);
+
+// Converts a verified host workflow proposal into the ordinary plan shape
+// consumed by the existing runtime. This is a pure materialization step: it
+// does not execute tools, write lifecycle state, or persist a second plan.
+bool common_flydelta_materialize_workflow_proposal_plan(
+        const common_flydelta_workflow_proposal & proposal,
+        const common_plan_state & blueprint_instance,
+        common_plan_state & materialized,
+        std::string & error);
+
+using common_flydelta_dataset_blueprint_request_provider = std::function<bool(
+        const common_agent_request & request,
+        const common_plan_state & blueprint_instance,
+        common_flydelta_dataset_blueprint_request & dataset_request,
+        std::string & error)>;
+
+using common_flydelta_workflow_proposal_verifier = std::function<bool(
+        const common_flydelta_workflow_proposal & proposal,
+        std::string & error)>;
+
+// Creates the generic selector callback used by the existing blueprint
+// selection seam. The host supplies the current task-specific dataset state;
+// without it the callback is not applicable and normal blueprint planning is
+// preserved.
+common_blueprint_instance_materializer
+common_flydelta_make_dataset_blueprint_plan_materializer(
+        common_flydelta_dataset_blueprint_request_provider request_provider,
+        common_flydelta_workflow_proposal_verifier verifier);

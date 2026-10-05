@@ -280,6 +280,36 @@ bool common_agent_select_and_instantiate_blueprint(
     instance.namespace_id = request.namespace_id;
     instance.project_id = request.project_id;
     instance.turn_id = request.turn_id;
+    if (config.materialize_instance) {
+        common_plan_state materialized;
+        std::string materialization_error;
+        const auto materialization = config.materialize_instance(
+            request, instance, materialized, materialization_error);
+        if (materialization == common_blueprint_materialization_outcome::failed_safely) {
+            result.outcome = common_blueprint_selection_outcome::failed_safely;
+            result.reason = materialization_error.empty()
+                ? "host planner backend declined safely"
+                : materialization_error;
+            return true;
+        }
+        if (materialization == common_blueprint_materialization_outcome::applied) {
+            if (materialized.kind != common_plan_kind::task ||
+                    materialized.id != instance.id ||
+                    materialized.session_id != instance.session_id ||
+                    materialized.namespace_id != instance.namespace_id ||
+                    materialized.project_id != instance.project_id ||
+                    materialized.turn_id != instance.turn_id ||
+                    materialized.steps.empty()) {
+                result.outcome = common_blueprint_selection_outcome::failed_safely;
+                result.reason = "host planner backend returned an invalid task instance";
+                return true;
+            }
+            instance = std::move(materialized);
+            result.reason = result.reason.empty()
+                ? "blueprint instantiated by host planner backend"
+                : result.reason + "; host planner backend materialized a verified workflow";
+        }
+    }
     if (!plan_store.create(instance, error)) return false;
     result.outcome = common_blueprint_selection_outcome::instantiated;
     result.logical_id = candidate->logical_id;
