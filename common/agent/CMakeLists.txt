@@ -200,6 +200,30 @@ set(AGENT_TOOLING_SOURCES
 )
 get_target_property(AGENT_CORE_SOURCES ${TARGET} SOURCES)
 list(REMOVE_ITEM AGENT_CORE_SOURCES ${AGENT_TOOLING_SOURCES})
+# FlyDelta remains part of common/agent, but has its own host-neutral target.
+# Keep the dependency one-way: FlyDelta may use stable agent contracts, while
+# the generic core must not depend back on the adaptation implementation.
+set(AGENT_FLYDELTA_SOURCES ${AGENT_CORE_SOURCES})
+list(FILTER AGENT_FLYDELTA_SOURCES INCLUDE REGEX "adaptation/flydelta/")
+list(REMOVE_ITEM AGENT_CORE_SOURCES ${AGENT_FLYDELTA_SOURCES})
+# Concept routing and candidate indexing consume FlyDelta teaching contracts,
+# so keep that complete adaptation seam with the FlyDelta target as well.
+list(REMOVE_ITEM AGENT_CORE_SOURCES
+    adaptation/semantic-teaching.cpp
+    adaptation/semantic-teaching.h
+    adaptation/concept-input-routing.cpp
+    adaptation/concept-input-routing.h
+    adaptation/concept-candidate-index.cpp
+    adaptation/concept-candidate-index.h
+)
+list(APPEND AGENT_FLYDELTA_SOURCES
+    adaptation/semantic-teaching.cpp
+    adaptation/semantic-teaching.h
+    adaptation/concept-input-routing.cpp
+    adaptation/concept-input-routing.h
+    adaptation/concept-candidate-index.cpp
+    adaptation/concept-candidate-index.h
+)
 set_property(TARGET ${TARGET} PROPERTY SOURCES ${AGENT_CORE_SOURCES})
 
 add_library(llama-agent-tooling ${AGENT_TOOLING_SOURCES})
@@ -222,6 +246,20 @@ endif()
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama-agent-tooling PROPERTIES POSITION_INDEPENDENT_CODE ON)
     set_target_properties(llama-agent-tooling PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()
+
+add_library(llama-agent-flydelta ${AGENT_FLYDELTA_SOURCES})
+target_include_directories(llama-agent-flydelta PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(llama-agent-flydelta PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-flydelta
+    PUBLIC llama-agent-core
+    PRIVATE vendor::hash
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-flydelta PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
 endif()
 
 add_library(llama-agent-poc ALIAS ${TARGET})

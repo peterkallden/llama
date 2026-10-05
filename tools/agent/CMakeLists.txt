@@ -348,7 +348,7 @@ target_include_directories(llama-agent-adaptation-storage PUBLIC
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation
 )
 target_compile_features(llama-agent-adaptation-storage PUBLIC cxx_std_17)
-target_link_libraries(llama-agent-adaptation-storage PUBLIC llama-agent-core)
+target_link_libraries(llama-agent-adaptation-storage PUBLIC llama-agent-core llama-agent-flydelta)
 if (LLAMA_MEMORY_COZO)
     target_compile_definitions(llama-agent-adaptation-storage PRIVATE LLAMA_AGENT_ADAPTATION_USE_COZO)
     target_include_directories(llama-agent-adaptation-storage PRIVATE ${COZO_INCLUDE_DIR})
@@ -441,6 +441,7 @@ target_compile_definitions(llama-agent-cli-library
 target_link_libraries(llama-agent-cli-library
     PUBLIC
         llama-agent-core
+        llama-agent-flydelta
         llama-agent-memory
         llama-agent-plan
         llama-common
@@ -473,6 +474,7 @@ target_compile_definitions(llama-agent-runtime-adapters
 target_link_libraries(llama-agent-runtime-adapters
     PUBLIC
         llama-agent-core
+        llama-agent-flydelta
         llama-agent-tooling
         llama-agent-memory
         llama-agent-plan
@@ -563,6 +565,7 @@ target_link_libraries(llama-agent-runtime-engine
         llama-common
         llama
         llama-agent-core
+        llama-agent-flydelta
         llama-agent-resource
         llama-agent-data
         llama-agent-diagnostics
@@ -602,6 +605,7 @@ target_link_libraries(llama-agent-runtime-host
     PUBLIC
         llama-agent-runtime-engine
         llama-agent-adaptation-storage
+        llama-agent-flydelta
         llama-agent-memory
         llama-agent-plan
         llama-common
@@ -655,6 +659,7 @@ target_link_libraries(llama-agent-runtime-support
         llama-common
         llama
         llama-agent-core
+        llama-agent-flydelta
         llama-agent-resource
         llama-agent-data
         llama-agent-diagnostics
@@ -705,6 +710,7 @@ target_compile_definitions(llama-agent-daemon-library
 target_link_libraries(llama-agent-daemon-library
     PUBLIC
         llama-agent-runtime-support
+        llama-agent-flydelta
         Threads::Threads
 )
 if (BUILD_SHARED_LIBS)
@@ -834,6 +840,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-plan
         llama-agent-tooling
         llama-agent-core
+        llama-agent-flydelta
         llama-agent-mcp-core
         llama-agent-mcp-server
         llama-agent-tool-provider

@@ -139,7 +139,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 # Model-free smoke for donor qualification, surface residualization and the
@@ -152,7 +152,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 # Host-taught concept smoke. Offline mode exercises all concept families with
@@ -199,7 +199,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 # Model-free functional smoke for the complete teaching-material capture path:
@@ -213,7 +213,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 # Optional real-model concept capture/synthesis smoke. It uses the same
@@ -342,7 +342,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 # Always-runnable contract smoke for teacher-forced contrast validity. It
@@ -356,7 +356,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 # Deterministic replay of model-facing repair failures. This exercises the
@@ -369,7 +369,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 # The repair contract uses the same native data adapters and Cozo-backed
@@ -917,7 +917,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-deliberate-runtime-smoke)
@@ -927,7 +927,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-research-runtime-smoke)
@@ -937,7 +937,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-resource-store-smoke)
@@ -1089,7 +1089,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if (LLAMA_AGENT_STORAGE_SQLITE)
@@ -1135,7 +1135,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-dataset-importer-smoke)
