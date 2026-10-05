@@ -4,6 +4,7 @@
 #include "agent/adaptation/flydelta/oracles/tool-contract.h"
 #include "agent/adaptation/flydelta/oracles/openapi-operation.h"
 #include "agent/adaptation/flydelta/oracles/workflow.h"
+#include "agent/adaptation/flydelta/oracles/procedure.h"
 #include "agent-openapi-flydelta-oracle.h"
 
 #include <string>
@@ -605,5 +606,46 @@ int main() {
         tool_result, error));
     CHECK(!tool_result.known &&
         tool_result.verdict == common_flydelta_oracle_verdict::unknown);
+
+    common_flydelta_procedure_contract procedure_contract;
+    procedure_contract.procedure_ref = "procedure://dataset/inspect-and-summarize";
+    procedure_contract.procedure_revision = "procedure-v1";
+    procedure_contract.blueprint_ref = "blueprint://dataset-inspect-summarize";
+    procedure_contract.blueprint_revision = "default@v1";
+    procedure_contract.workflow = workflow_contract;
+    common_flydelta_oracle_registry procedure_registry;
+    CHECK(common_flydelta_register_oracle_evaluator(procedure_registry, {
+        common_flydelta_oracle_strength::host_supported,
+        "flydelta://evaluator/procedure",
+        "v1",
+        "procedure_blueprint",
+        "procedure_contract",
+        procedure_contract.procedure_ref,
+        procedure_contract.procedure_revision,
+        common_flydelta_make_procedure_oracle(procedure_contract),
+    }, error));
+    common_flydelta_oracle_request procedure_request;
+    procedure_request.oracle_ref = "oracle://test/procedure";
+    procedure_request.oracle_revision = "v1";
+    procedure_request.semantic_kind = "procedure_blueprint";
+    procedure_request.expected_contract_kind = "procedure_contract";
+    procedure_request.expected_contract_ref = procedure_contract.procedure_ref;
+    procedure_request.expected_contract_revision = procedure_contract.procedure_revision;
+    const std::string procedure_observation =
+        R"({"procedure_ref":"procedure://dataset/inspect-and-summarize","blueprint_ref":"blueprint://dataset-inspect-summarize","stage":"execution","steps":[{"tool":"dataset.select","arguments":"{}"},{"tool":"dataset.inspect","arguments":"{}"}]})";
+    CHECK(common_flydelta_oracle_evaluate(
+        procedure_registry, procedure_request, procedure_observation,
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::satisfied &&
+        tool_result.evaluator_ref == "flydelta://evaluator/procedure");
+    const auto wrong_blueprint =
+        R"({"procedure_ref":"procedure://dataset/inspect-and-summarize","blueprint_ref":"blueprint://other","stage":"execution","steps":[{"tool":"dataset.select","arguments":"{}"},{"tool":"dataset.inspect","arguments":"{}"}]})";
+    CHECK(common_flydelta_oracle_evaluate(
+        procedure_registry, procedure_request, wrong_blueprint,
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::violated &&
+        tool_result.violation_code == "procedure.wrong_blueprint");
     return 0;
 }
