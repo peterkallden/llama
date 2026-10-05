@@ -27,7 +27,18 @@ struct common_flydelta_astar_request {
             std::string & error)> expand;
 };
 
+enum class common_flydelta_astar_status {
+    found,
+    frontier_exhausted,
+    budget_exhausted,
+    invalid_request,
+    expansion_failed,
+};
+
+const char * common_flydelta_astar_status_name(common_flydelta_astar_status status);
+
 struct common_flydelta_astar_result {
+    common_flydelta_astar_status status = common_flydelta_astar_status::frontier_exhausted;
     bool found = false;
     bool exhausted = false;
     size_t expanded = 0;

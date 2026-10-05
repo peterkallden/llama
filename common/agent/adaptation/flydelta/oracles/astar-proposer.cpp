@@ -17,11 +17,26 @@ struct node {
 
 struct node_compare {
     bool operator()(const node & left, const node & right) const {
-        return left.estimate > right.estimate;
+        if (left.estimate != right.estimate) return left.estimate > right.estimate;
+        if (left.cost != right.cost) return left.cost > right.cost;
+        if (left.states.size() != right.states.size()) return left.states.size() > right.states.size();
+        if (left.state != right.state) return left.state > right.state;
+        return left.actions > right.actions;
     }
 };
 
 } // namespace
+
+const char * common_flydelta_astar_status_name(common_flydelta_astar_status status) {
+    switch (status) {
+        case common_flydelta_astar_status::found: return "found";
+        case common_flydelta_astar_status::frontier_exhausted: return "frontier_exhausted";
+        case common_flydelta_astar_status::budget_exhausted: return "budget_exhausted";
+        case common_flydelta_astar_status::invalid_request: return "invalid_request";
+        case common_flydelta_astar_status::expansion_failed: return "expansion_failed";
+    }
+    return "unknown";
+}
 
 bool common_flydelta_astar_propose(
         const common_flydelta_astar_request & request,
@@ -31,10 +46,12 @@ bool common_flydelta_astar_propose(
     result = {};
     if (request.start_state.empty() || !request.expand ||
             (!request.is_goal && request.goal_state.empty())) {
+        result.status = common_flydelta_astar_status::invalid_request;
         error = "A* proposer requires a start, expansion callback and goal";
         return false;
     }
     if (request.max_expansions == 0 || request.max_path_length == 0) {
+        result.status = common_flydelta_astar_status::invalid_request;
         error = "A* proposer bounds must be positive";
         return false;
     }
@@ -56,6 +73,7 @@ bool common_flydelta_astar_propose(
         const auto known = best_cost.find(current.state);
         if (known != best_cost.end() && current.cost > known->second + 1e-6f) continue;
         if (is_goal(current.state)) {
+            result.status = common_flydelta_astar_status::found;
             result.found = true;
             result.total_cost = current.cost;
             result.states = std::move(current.states);
@@ -65,10 +83,14 @@ bool common_flydelta_astar_propose(
         if (current.states.size() >= request.max_path_length) continue;
         ++result.expanded;
         std::vector<common_flydelta_astar_successor> successors;
-        if (!request.expand(current.state, successors, error)) return false;
+        if (!request.expand(current.state, successors, error)) {
+            result.status = common_flydelta_astar_status::expansion_failed;
+            return false;
+        }
         for (const auto & successor : successors) {
             if (successor.state.empty() || successor.cost < 0.0f ||
                     !std::isfinite(successor.cost) || !std::isfinite(successor.heuristic)) {
+                result.status = common_flydelta_astar_status::expansion_failed;
                 error = "A* proposer received an invalid successor";
                 return false;
             }
@@ -88,5 +110,8 @@ bool common_flydelta_astar_propose(
         }
     }
     result.exhausted = result.expanded >= request.max_expansions;
+    result.status = result.exhausted
+        ? common_flydelta_astar_status::budget_exhausted
+        : common_flydelta_astar_status::frontier_exhausted;
     return true;
 }

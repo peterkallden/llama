@@ -250,8 +250,36 @@ int main() {
     };
     common_flydelta_astar_result astar_result;
     CHECK(common_flydelta_astar_propose(astar, astar_result, error));
-    CHECK(astar_result.found && astar_result.states.size() == 3 && astar_result.actions.size() == 2);
+    CHECK(astar_result.status == common_flydelta_astar_status::found && astar_result.found &&
+        astar_result.states.size() == 3 && astar_result.actions.size() == 2);
     CHECK(astar_result.total_cost == 2.0f);
+
+    common_flydelta_astar_request no_path = astar;
+    no_path.goal_state = "missing";
+    no_path.max_expansions = 8;
+    common_flydelta_astar_result no_path_result;
+    CHECK(common_flydelta_astar_propose(no_path, no_path_result, error));
+    CHECK(!no_path_result.found && !no_path_result.exhausted &&
+        no_path_result.status == common_flydelta_astar_status::frontier_exhausted);
+
+    common_flydelta_astar_request budget = astar;
+    budget.max_expansions = 1;
+    common_flydelta_astar_result budget_result;
+    CHECK(common_flydelta_astar_propose(budget, budget_result, error));
+    CHECK(!budget_result.found && budget_result.exhausted &&
+        budget_result.status == common_flydelta_astar_status::budget_exhausted);
+
+    common_flydelta_astar_request invalid_successor = astar;
+    invalid_successor.expand = [](const std::string &,
+            std::vector<common_flydelta_astar_successor> & successors,
+            std::string & astar_error) {
+        astar_error.clear();
+        successors.push_back({"bad", "bad", -1.0f, 0.0f});
+        return true;
+    };
+    common_flydelta_astar_result invalid_successor_result;
+    CHECK(!common_flydelta_astar_propose(invalid_successor, invalid_successor_result, error));
+    CHECK(invalid_successor_result.status == common_flydelta_astar_status::expansion_failed);
 
     common_flydelta_oracle_suite_report durable_report;
     durable_report.id = "flydelta://oracle-suite/test-report";
