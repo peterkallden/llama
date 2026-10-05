@@ -485,5 +485,72 @@ int main() {
     CHECK(tool_result.known &&
         tool_result.verdict == common_flydelta_oracle_verdict::satisfied &&
         tool_result.checks.size() >= 5);
+
+    // Eurostat exercises the same host OpenAPI Oracle through a different
+    // contract shape: the required model-facing value is a path parameter,
+    // while the dataset filters remain optional query parameters. This is a
+    // model-free contract test; the opt-in live smoke remains responsible for
+    // validating the JSON-stat HTTP response.
+    agent_openapi_catalog eurostat_catalog;
+    eurostat_catalog.provider_id = "eurostat-statistics";
+    eurostat_catalog.prefix = "eurostat";
+    agent_openapi_operation eurostat_operation;
+    eurostat_operation.operation_id = "getData";
+    eurostat_operation.method = "GET";
+    eurostat_operation.path = "/data/{datasetCode}";
+    eurostat_operation.input_schema_json =
+        R"({"type":"object","properties":{"datasetCode":{"type":"string"},"lang":{"type":"string"},"geo":{"type":"string"},"time":{"type":"string"}},"required":["datasetCode"]})";
+    eurostat_operation.path_parameters = {"datasetCode"};
+    eurostat_operation.query_parameters = {"lang", "geo", "time"};
+    eurostat_operation.host_required_parameters = {"datasetCode"};
+    eurostat_operation.read_only = true;
+    eurostat_operation.access = agent_openapi_access::read;
+    eurostat_catalog.operations.push_back(eurostat_operation);
+
+    common_flydelta_oracle_registry eurostat_registry;
+    CHECK(register_agent_openapi_flydelta_oracles(
+        eurostat_catalog, eurostat_registry, "openapi-v1", error));
+    CHECK(eurostat_registry.evaluators.size() == 1);
+    common_flydelta_oracle_request eurostat_request;
+    eurostat_request.oracle_ref =
+        "flydelta://evaluator/openapi/eurostat-statistics/getData";
+    eurostat_request.oracle_revision = "openapi-v1";
+    eurostat_request.semantic_kind = "openapi_operation";
+    eurostat_request.expected_contract_kind = "openapi_operation_contract";
+    eurostat_request.expected_contract_ref =
+        "openapi://eurostat-statistics/operation/getData";
+    eurostat_request.expected_contract_revision = "openapi-v1";
+
+    CHECK(common_flydelta_oracle_evaluate(
+        eurostat_registry, eurostat_request,
+        R"({"name":"eurostat.getData","arguments":{"datasetCode":"DEMO_R_D3DENS","lang":"EN","geo":"SE","time":"2020"}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::satisfied &&
+        tool_result.checks.size() >= 5);
+
+    CHECK(common_flydelta_oracle_evaluate(
+        eurostat_registry, eurostat_request,
+        R"({"name":"eurostat.getData","arguments":{"lang":"EN","geo":"SE","time":"2020"}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::violated &&
+        tool_result.violation_code == "openapi.missing_required_parameter");
+
+    CHECK(common_flydelta_oracle_evaluate(
+        eurostat_registry, eurostat_request,
+        R"({"name":"other.getData","arguments":{"datasetCode":"DEMO_R_D3DENS"}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::violated &&
+        tool_result.violation_code == "openapi.wrong_provider");
+
+    CHECK(common_flydelta_oracle_evaluate(
+        eurostat_registry, eurostat_request,
+        R"({"name":"eurostat.listData","arguments":{"datasetCode":"DEMO_R_D3DENS"}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::violated &&
+        tool_result.violation_code == "openapi.wrong_operation");
     return 0;
 }
