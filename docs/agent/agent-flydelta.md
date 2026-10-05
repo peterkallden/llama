@@ -148,6 +148,19 @@ turn evidence
 The host stays authoritative. The model may generate candidates, but it
 cannot certify evidence, write an active sideband, or activate one.
 
+The first concrete blueprint-to-search adapter is
+dataset-inspect-summarize. It compiles a host-resolved dataset task into a
+bounded state graph, delegates path search to the existing A* proposer, and
+returns a proof-carrying workflow proposal. The proposal contains the
+blueprint/graph revisions, ordered state and transition refs, resolved
+dataset binding and a deterministic path fingerprint. It can choose
+select -> inspect -> operation when schema is unknown, or
+select -> operation when the host already has a trusted schema. The
+materialized steps are still only a proposal: Tool Contract, Workflow and
+Procedure/Blueprint Oracles must validate them before any proposal can be used
+as contrast material. No ordinary runtime turn invokes this adapter
+implicitly, and it does not write lifecycle state.
+
 Workflow and procedure direction: the host Workflow Oracle validates the
 model's canonical implementation of a selected workflow; it does not replace
 the procedure or blueprint that supplied the intended pattern. The built-in

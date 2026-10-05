@@ -14,6 +14,8 @@ struct common_flydelta_workflow_contract {
     std::string workflow_revision;
     std::vector<common_tool_workflow> workflows;
     std::vector<std::string> selected_workflow_ids;
+    // Optional host-owned goal check. Empty preserves existing behavior.
+    std::vector<std::string> required_terminal_tools;
     std::string applicability_fingerprint;
 };
 
@@ -24,4 +26,3 @@ struct common_flydelta_workflow_contract {
 // ]}
 common_flydelta_oracle_evaluator common_flydelta_make_workflow_oracle(
         common_flydelta_workflow_contract contract);
-

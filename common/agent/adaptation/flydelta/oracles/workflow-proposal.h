@@ -17,6 +17,7 @@ struct common_flydelta_workflow_proposal_request {
     std::string blueprint_revision;
     std::string workflow_ref;
     std::string workflow_revision;
+    std::string graph_revision;
     std::string start_state;
     std::string goal_state;
     size_t max_expansions = 64;
@@ -42,6 +43,13 @@ struct common_flydelta_workflow_proposal {
     std::string blueprint_revision;
     std::string workflow_ref;
     std::string workflow_revision;
+    std::string graph_revision;
+    std::string start_state;
+    std::string goal_state;
+    std::vector<std::string> state_refs;
+    std::vector<std::string> transition_refs;
+    std::vector<std::string> binding_refs;
+    std::string path_fingerprint;
     common_flydelta_astar_status status = common_flydelta_astar_status::frontier_exhausted;
     bool proposed = false;
     common_flydelta_astar_result search;
@@ -52,4 +60,3 @@ bool common_flydelta_propose_workflow_path(
         const common_flydelta_workflow_proposal_request & request,
         common_flydelta_workflow_proposal & result,
         std::string & error);
-

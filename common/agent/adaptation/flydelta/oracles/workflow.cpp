@@ -56,6 +56,28 @@ bool parse_canonical_steps(
     return true;
 }
 
+bool validate_terminal_goal(
+        const std::vector<common_tool_workflow_step_view> & steps,
+        const std::vector<std::string> & required_terminal_tools,
+        common_tool_workflow_validation_result & result) {
+    if (required_terminal_tools.empty()) return true;
+    if (steps.empty()) {
+        result.status = common_tool_workflow_validation_status::violated;
+        result.violation_code = "workflow.goal_terminal_missing";
+        result.reason = "workflow goal requires a terminal tool";
+        result.checks.push_back({result.violation_code, result.status, {"goal"}});
+        return false;
+    }
+    const auto & terminal = steps.back().tool_name;
+    if (std::find(required_terminal_tools.begin(), required_terminal_tools.end(), terminal) !=
+            required_terminal_tools.end()) return true;
+    result.status = common_tool_workflow_validation_status::violated;
+    result.violation_code = "workflow.goal_terminal_mismatch";
+    result.reason = "workflow terminal step does not satisfy the blueprint goal";
+    result.checks.push_back({result.violation_code, result.status, {"goal", "operation"}});
+    return false;
+}
+
 void copy_checks(
         const common_tool_workflow_validation_result & workflow_result,
         const std::string & evidence_ref,
@@ -128,6 +150,10 @@ common_flydelta_oracle_evaluator common_flydelta_make_workflow_oracle(
             result.verdict = common_flydelta_oracle_verdict::unknown;
             result.reason = error.empty() ? "workflow evaluation failed" : error;
             return true;
+        }
+
+        if (workflow_result.status == common_tool_workflow_validation_status::satisfied) {
+            validate_terminal_goal(steps, contract.required_terminal_tools, workflow_result);
         }
 
         copy_checks(workflow_result, contract.workflow_ref, result);

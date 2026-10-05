@@ -6,7 +6,10 @@
 #include "agent/adaptation/flydelta/oracles/workflow.h"
 #include "agent/adaptation/flydelta/oracles/procedure.h"
 #include "agent/adaptation/flydelta/oracles/workflow-proposal.h"
+#include "agent/adaptation/flydelta/oracles/blueprint-workflow.h"
 #include "agent-openapi-flydelta-oracle.h"
+
+#include <nlohmann/json.hpp>
 
 #include <string>
 
@@ -642,6 +645,8 @@ int main() {
     procedure_contract.blueprint_ref = "blueprint://dataset-inspect-summarize";
     procedure_contract.blueprint_revision = "default@v1";
     procedure_contract.workflow = workflow_contract;
+    procedure_contract.workflow.required_terminal_tools = {
+        "dataset.inspect", "data.aggregate"};
     common_flydelta_oracle_registry procedure_registry;
     CHECK(common_flydelta_register_oracle_evaluator(procedure_registry, {
         common_flydelta_oracle_strength::host_supported,
@@ -717,6 +722,7 @@ int main() {
     CHECK(common_flydelta_propose_workflow_path(proposal_request, proposal, error));
     CHECK(proposal.proposed && proposal.status == common_flydelta_astar_status::found &&
         proposal.search.actions.size() == 2 && proposal.canonical_steps.size() == 2);
+    CHECK(proposal.graph_revision.empty());
     const std::string proposed_observation =
         R"({"procedure_ref":"procedure://dataset/inspect-and-summarize","blueprint_ref":"blueprint://dataset-inspect-summarize","stage":"execution","steps":[{"tool":"dataset.select","arguments":"{}"},{"tool":"dataset.inspect","arguments":"{}"}]})";
     // A* only proposes; the resulting host-canonical view still has to pass
@@ -725,5 +731,88 @@ int main() {
         procedure_registry, procedure_request, proposed_observation,
         tool_result, error));
     CHECK(tool_result.known && tool_result.verdict == common_flydelta_oracle_verdict::satisfied);
+
+    common_flydelta_dataset_blueprint_request dataset_request;
+    dataset_request.proposal_id = "proposal://dataset-inspect-summarize";
+    dataset_request.blueprint_ref = "blueprint://dataset-inspect-summarize";
+    dataset_request.blueprint_revision = "default@v1";
+    dataset_request.graph_revision = "dataset-graph@v1";
+    dataset_request.workflow_ref = workflow_contract.workflow_ref;
+    dataset_request.workflow_revision = workflow_contract.workflow_revision;
+    dataset_request.dataset_ref = "dataset://local/sales";
+    dataset_request.terminal_tool = "data.aggregate";
+    dataset_request.terminal_arguments_json =
+        R"({"dataset":"dataset://local/sales","group_by":["region"],"measure":"amount"})";
+    common_flydelta_workflow_proposal dataset_proposal;
+    CHECK(common_flydelta_propose_dataset_blueprint_workflow(
+        dataset_request, dataset_proposal, error));
+    CHECK(dataset_proposal.proposed && dataset_proposal.state_refs.size() == 4 &&
+        dataset_proposal.transition_refs.size() == 3 &&
+        dataset_proposal.graph_revision == "dataset-graph@v1" &&
+        dataset_proposal.binding_refs == std::vector<std::string>{"dataset://local/sales"} &&
+        !dataset_proposal.path_fingerprint.empty());
+    CHECK(dataset_proposal.canonical_steps.size() == 3 &&
+        dataset_proposal.canonical_steps[0].tool_name == "dataset.select" &&
+        dataset_proposal.canonical_steps[1].tool_name == "dataset.inspect" &&
+        dataset_proposal.canonical_steps[2].tool_name == "data.aggregate");
+
+    dataset_request.schema_known = true;
+    common_flydelta_workflow_proposal cached_schema_proposal;
+    CHECK(common_flydelta_propose_dataset_blueprint_workflow(
+        dataset_request, cached_schema_proposal, error));
+    CHECK(cached_schema_proposal.canonical_steps.size() == 2 &&
+        cached_schema_proposal.canonical_steps[0].tool_name == "dataset.select" &&
+        cached_schema_proposal.canonical_steps[1].tool_name == "data.aggregate");
+    CHECK(cached_schema_proposal.path_fingerprint != dataset_proposal.path_fingerprint);
+
+    const auto validate_step = [&](const common_tool_workflow_step_view & step,
+            const std::string & schema, const std::string & contract_ref) {
+        common_flydelta_model_tool_contract contract;
+        contract.exposed_tool_name = step.tool_name;
+        contract.contract_ref = contract_ref;
+        contract.contract_revision = "v1";
+        contract.model_input_schema_json = schema;
+        common_flydelta_oracle_result step_result;
+        std::string step_error;
+        const auto observed = std::string("{\"name\":\"") + step.tool_name +
+            "\",\"arguments\":" + step.arguments_json + "}";
+        return common_flydelta_validate_model_tool_text(
+            contract, common_agent_tool_output_format::jsonl, observed,
+            step_result, step_error) && step_result.known &&
+            step_result.verdict == common_flydelta_oracle_verdict::satisfied;
+    };
+    CHECK(validate_step(dataset_proposal.canonical_steps[0],
+        R"({"type":"object","required":["dataset"],"properties":{"dataset":{"type":"string"}},"additionalProperties":false})",
+        "tool://dataset.select"));
+    CHECK(validate_step(dataset_proposal.canonical_steps[1],
+        R"({"type":"object","required":["dataset"],"properties":{"dataset":{"type":"string"}},"additionalProperties":false})",
+        "tool://dataset.inspect"));
+    CHECK(validate_step(dataset_proposal.canonical_steps[2],
+        R"({"type":"object","required":["dataset","group_by","measure"],"properties":{"dataset":{"type":"string"},"group_by":{"type":"array","items":{"type":"string"}},"measure":{"type":"string"}},"additionalProperties":false})",
+        "tool://data.aggregate"));
+
+    nlohmann::ordered_json dataset_observation = {
+        {"procedure_ref", procedure_contract.procedure_ref},
+        {"blueprint_ref", procedure_contract.blueprint_ref},
+        {"stage", "execution"},
+        {"steps", nlohmann::ordered_json::array()},
+    };
+    for (const auto & step : dataset_proposal.canonical_steps) {
+        dataset_observation["steps"].push_back({
+            {"tool", step.tool_name},
+            {"arguments", step.arguments_json},
+        });
+    }
+    CHECK(common_flydelta_oracle_evaluate(
+        procedure_registry, procedure_request, dataset_observation.dump(),
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::satisfied);
+
+    common_flydelta_dataset_blueprint_request invalid_dataset_request = dataset_request;
+    invalid_dataset_request.terminal_tool = "unknown.tool";
+    CHECK(!common_flydelta_propose_dataset_blueprint_workflow(
+        invalid_dataset_request, dataset_proposal, error));
+    CHECK(dataset_proposal.status == common_flydelta_astar_status::invalid_request);
     return 0;
 }
