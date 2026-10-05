@@ -820,6 +820,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         result.error = "tool workflow validation failed: " + error;
         return result;
     }
+    // A completed plan can be resumed for another response/learning pass (or
+    // by a bounded continuation).  It has no dependency-ready step, so the
+    // scheduler must not turn that normal replay into an error.  We still run
+    // the ordinary response path below; the completed plan remains the
+    // authoritative evidence surface for that pass.
+    const bool completed_plan_resume = plan.status == common_plan_status::completed;
     turn.plan_store = &store;
     turn.outer_plan = &plan;
     if (request.deliberation_policy.mode == common_agent_thinking_mode::research) {
@@ -1059,7 +1065,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     // every later transition. Restored or model-authored plans may contain
     // more than one active step; a dependent active step must be reset before
     // reflection or tool execution can observe it.
-    if (!activate_next_ready_step()) {
+    if (!completed_plan_resume && !activate_next_ready_step()) {
         if (result.error.empty()) result.error = error.empty()
             ? "initial plan dependency scheduling failed"
             : error;
