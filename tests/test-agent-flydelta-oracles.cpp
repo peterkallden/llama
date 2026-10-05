@@ -5,6 +5,7 @@
 #include "agent/adaptation/flydelta/oracles/openapi-operation.h"
 #include "agent/adaptation/flydelta/oracles/workflow.h"
 #include "agent/adaptation/flydelta/oracles/procedure.h"
+#include "agent/adaptation/flydelta/oracles/workflow-proposal.h"
 #include "agent-openapi-flydelta-oracle.h"
 
 #include <string>
@@ -675,5 +676,54 @@ int main() {
     CHECK(tool_result.known &&
         tool_result.verdict == common_flydelta_oracle_verdict::violated &&
         tool_result.violation_code == "procedure.wrong_blueprint");
+
+    common_flydelta_workflow_proposal_request proposal_request;
+    proposal_request.proposal_id = "proposal://dataset/inspect-v1";
+    proposal_request.blueprint_ref = procedure_contract.blueprint_ref;
+    proposal_request.blueprint_revision = procedure_contract.blueprint_revision;
+    proposal_request.workflow_ref = workflow_contract.workflow_ref;
+    proposal_request.workflow_revision = workflow_contract.workflow_revision;
+    proposal_request.start_state = "source-unselected";
+    proposal_request.goal_state = "source-inspected";
+    proposal_request.max_expansions = 8;
+    proposal_request.max_path_length = 4;
+    proposal_request.expand = [](const std::string & state,
+            std::vector<common_flydelta_astar_successor> & successors,
+            std::string & proposal_error) {
+        proposal_error.clear();
+        if (state == "source-unselected") {
+            successors.push_back({"source-selected", "select-source", 1.0f, 1.0f});
+        } else if (state == "source-selected") {
+            successors.push_back({"source-inspected", "inspect-source", 1.0f, 0.0f});
+        }
+        return true;
+    };
+    proposal_request.materialize = [](const std::vector<std::string> &,
+            const std::vector<std::string> & actions,
+            std::vector<common_tool_workflow_step_view> & steps,
+            std::string & proposal_error) {
+        proposal_error.clear();
+        if (actions == std::vector<std::string>{"select-source", "inspect-source"}) {
+            steps = {
+                {"dataset.select", "{}"},
+                {"dataset.inspect", "{}"},
+            };
+            return true;
+        }
+        proposal_error = "unexpected workflow action path";
+        return false;
+    };
+    common_flydelta_workflow_proposal proposal;
+    CHECK(common_flydelta_propose_workflow_path(proposal_request, proposal, error));
+    CHECK(proposal.proposed && proposal.status == common_flydelta_astar_status::found &&
+        proposal.search.actions.size() == 2 && proposal.canonical_steps.size() == 2);
+    const std::string proposed_observation =
+        R"({"procedure_ref":"procedure://dataset/inspect-and-summarize","blueprint_ref":"blueprint://dataset-inspect-summarize","stage":"execution","steps":[{"tool":"dataset.select","arguments":"{}"},{"tool":"dataset.inspect","arguments":"{}"}]})";
+    // A* only proposes; the resulting host-canonical view still has to pass
+    // the Procedure/Blueprint Oracle before it can become evidence.
+    CHECK(common_flydelta_oracle_evaluate(
+        procedure_registry, procedure_request, proposed_observation,
+        tool_result, error));
+    CHECK(tool_result.known && tool_result.verdict == common_flydelta_oracle_verdict::satisfied);
     return 0;
 }
