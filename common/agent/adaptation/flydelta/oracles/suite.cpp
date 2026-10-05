@@ -55,6 +55,18 @@ bool common_flydelta_oracle_suite_report_validate(
                 !bounded(observation.fixture_ref) ||
                 !bounded(observation.verifier_revision) ||
                 !bounded(observation.outcome) ||
+                (!observation.expected_contract_kind.empty() &&
+                    !bounded(observation.expected_contract_kind)) ||
+                (!observation.expected_contract_ref.empty() &&
+                    !bounded(observation.expected_contract_ref)) ||
+                (!observation.expected_contract_revision.empty() &&
+                    !bounded(observation.expected_contract_revision)) ||
+                (!observation.expected_contract_fingerprint.empty() &&
+                    !bounded(observation.expected_contract_fingerprint)) ||
+                (!observation.baseline_evaluator_ref.empty() &&
+                    !bounded(observation.baseline_evaluator_ref)) ||
+                (!observation.candidate_evaluator_ref.empty() &&
+                    !bounded(observation.candidate_evaluator_ref)) ||
                 (observation.suite_kind != "intended" &&
                  observation.suite_kind != "holdout" &&
                  observation.suite_kind != "retention" &&
@@ -85,11 +97,17 @@ std::string common_flydelta_oracle_suite_report_to_json(
             {"suite_kind", observation.suite_kind},
             {"fixture_ref", observation.fixture_ref},
             {"verifier_revision", observation.verifier_revision},
+            {"expected_contract_kind", observation.expected_contract_kind},
+            {"expected_contract_ref", observation.expected_contract_ref},
+            {"expected_contract_revision", observation.expected_contract_revision},
+            {"expected_contract_fingerprint", observation.expected_contract_fingerprint},
             {"outcome", observation.outcome},
             {"baseline_known", observation.baseline_known},
             {"baseline_passed", observation.baseline_passed},
             {"candidate_known", observation.candidate_known},
             {"candidate_passed", observation.candidate_passed},
+            {"baseline_evaluator_ref", observation.baseline_evaluator_ref},
+            {"candidate_evaluator_ref", observation.candidate_evaluator_ref},
         });
     }
     return json{
@@ -162,11 +180,18 @@ bool common_flydelta_oracle_suite_report_from_json(
             observation.suite_kind = item.value("suite_kind", "");
             observation.fixture_ref = item.value("fixture_ref", "");
             observation.verifier_revision = item.value("verifier_revision", "");
+            observation.expected_contract_kind = item.value("expected_contract_kind", "");
+            observation.expected_contract_ref = item.value("expected_contract_ref", "");
+            observation.expected_contract_revision = item.value("expected_contract_revision", "");
+            observation.expected_contract_fingerprint = item.value(
+                "expected_contract_fingerprint", "");
             observation.outcome = item.value("outcome", "");
             observation.baseline_known = item.value("baseline_known", false);
             observation.baseline_passed = item.value("baseline_passed", false);
             observation.candidate_known = item.value("candidate_known", false);
             observation.candidate_passed = item.value("candidate_passed", false);
+            observation.baseline_evaluator_ref = item.value("baseline_evaluator_ref", "");
+            observation.candidate_evaluator_ref = item.value("candidate_evaluator_ref", "");
             report.observations.push_back(std::move(observation));
         }
     } catch (const std::exception & exception) {
@@ -222,12 +247,25 @@ bool common_flydelta_run_oracle_suite(
             if (error.empty()) error = "oracle suite probe runner failed";
             return false;
         }
-        if (!common_flydelta_oracle_evaluate(
-                request.evaluators, probe.request, baseline_text, observation.baseline, error) ||
-                !common_flydelta_oracle_evaluate(
-                    request.evaluators, probe.request, candidate_text, observation.candidate, error)) {
+        const auto evaluate = [&](const std::string & observed,
+                common_flydelta_oracle_result & evaluated) {
+            if (!request.registry.evaluators.empty()) {
+                return common_flydelta_oracle_evaluate(
+                    request.registry, probe.request, observed, evaluated, error);
+            }
+            return common_flydelta_oracle_evaluate(
+                request.evaluators, probe.request, observed, evaluated, error);
+        };
+        if (!evaluate(baseline_text, observation.baseline) ||
+                !evaluate(candidate_text, observation.candidate)) {
             return false;
         }
+        observation.expected_contract_kind = probe.request.expected_contract_kind;
+        observation.expected_contract_ref = probe.request.expected_contract_ref;
+        observation.expected_contract_revision = probe.request.expected_contract_revision;
+        observation.expected_contract_fingerprint = probe.request.expected_contract_fingerprint;
+        observation.baseline_evaluator_ref = observation.baseline.evaluator_ref;
+        observation.candidate_evaluator_ref = observation.candidate.evaluator_ref;
         if (probe.expected_verdict != common_flydelta_oracle_verdict::unknown) {
             ++baseline_scored;
             ++candidate_scored;

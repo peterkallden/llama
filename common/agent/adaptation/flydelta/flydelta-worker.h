@@ -62,6 +62,7 @@ struct common_flydelta_trace_arm {
     std::string observed_decision_summary;
     std::string expected_decision_summary;
     std::string verifier_reason;
+    std::string verifier_violation_code;
     std::string verifier_violation_kind;
     std::vector<std::string> verifier_violation_dimensions;
     common_flydelta_semantic_progress_observation semantic_progress_observation;

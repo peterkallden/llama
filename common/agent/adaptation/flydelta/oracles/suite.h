@@ -18,8 +18,14 @@ struct common_flydelta_oracle_probe_observation {
     std::string probe_id;
     common_flydelta_oracle_probe_kind kind = common_flydelta_oracle_probe_kind::target;
     common_flydelta_oracle_verdict expected_verdict = common_flydelta_oracle_verdict::unknown;
+    std::string expected_contract_kind;
+    std::string expected_contract_ref;
+    std::string expected_contract_revision;
+    std::string expected_contract_fingerprint;
     common_flydelta_oracle_result baseline;
     common_flydelta_oracle_result candidate;
+    std::string baseline_evaluator_ref;
+    std::string candidate_evaluator_ref;
 };
 
 // The runner is the only model/host boundary. It can invoke an agent/server
@@ -33,6 +39,7 @@ using common_flydelta_oracle_probe_runner = std::function<bool(
 struct common_flydelta_oracle_suite_request {
     std::vector<common_flydelta_oracle_probe> probes;
     common_flydelta_oracle_evaluator_chain evaluators;
+    common_flydelta_oracle_registry registry;
     common_flydelta_oracle_probe_runner runner;
 };
 
@@ -58,11 +65,17 @@ struct common_flydelta_oracle_suite_fixture_observation {
     std::string suite_kind;
     std::string fixture_ref;
     std::string verifier_revision;
+    std::string expected_contract_kind;
+    std::string expected_contract_ref;
+    std::string expected_contract_revision;
+    std::string expected_contract_fingerprint;
     std::string outcome;
     bool baseline_known = false;
     bool baseline_passed = false;
     bool candidate_known = false;
     bool candidate_passed = false;
+    std::string baseline_evaluator_ref;
+    std::string candidate_evaluator_ref;
 };
 
 struct common_flydelta_oracle_suite_report {

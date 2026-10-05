@@ -109,6 +109,7 @@ void append_counterfactual_arm(const common_flydelta_counterfactual_report & rep
     arm.observed_decision_summary = report.candidate.observed_decision_summary;
     arm.expected_decision_summary = report.candidate.expected_decision_summary;
     arm.verifier_reason = report.candidate.verifier_reason;
+    arm.verifier_violation_code = report.candidate.verifier_violation_code;
     arm.verifier_violation_kind = report.candidate.verifier_violation_kind;
     arm.verifier_violation_dimensions = report.candidate.verifier_violation_dimensions;
     arm.semantic_progress_observation = report.candidate.semantic_progress_observation;
@@ -265,6 +266,7 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
         {"observed_decision", arm.observed_decision_summary},
         {"expected_decision", arm.expected_decision_summary},
         {"verifier_reason", arm.verifier_reason},
+        {"verifier_violation_code", arm.verifier_violation_code},
         {"verifier_violation_kind", arm.verifier_violation_kind},
         {"verifier_violation_dimensions", arm.verifier_violation_dimensions},
         {"semantic_progress", {

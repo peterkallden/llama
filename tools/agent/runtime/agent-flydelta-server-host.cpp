@@ -229,6 +229,7 @@ bool daemon_flydelta_verify_generation(
         std::string & observed_summary,
         std::string & expected_summary,
         std::string & verifier_reason,
+        std::string & violation_code,
         std::string & violation_kind,
         std::vector<std::string> & violation_dimensions,
         common_flydelta_semantic_progress_observation & progress_observation,
@@ -239,6 +240,7 @@ bool daemon_flydelta_verify_generation(
     observed_summary.clear();
     expected_summary.clear();
     verifier_reason.clear();
+    violation_code.clear();
     violation_kind = "none";
     violation_dimensions.clear();
     progress_observation = {};
@@ -302,12 +304,21 @@ bool daemon_flydelta_verify_generation(
         oracle_request.policy_revision = fixture.value("oracle_policy_revision", "v1");
         oracle_request.phase = common_flydelta_oracle_phase::concept;
         oracle_request.semantic_kind = fixture.value("semantic_kind", "dataset_operation");
+        oracle_request.expected_contract_kind = fixture.value(
+            "expected_contract_kind", "semantic_decision");
+        oracle_request.expected_contract_ref = fixture.value(
+            "expected_contract_ref", "flydelta://contract/dataset-operation");
+        oracle_request.expected_contract_revision = fixture.value(
+            "expected_contract_revision", "v1");
+        oracle_request.expected_contract_fingerprint = fixture.value(
+            "expected_contract_fingerprint", "");
         oracle_request.verifier_ref = fixture.value("verifier_ref", "");
         oracle_request.expected_decision_available = true;
         oracle_request.expected_decision = expected;
         common_flydelta_oracle_result oracle_result;
-        if (!common_flydelta_dataset_operation_oracle(
-                oracle_request, generated, oracle_result, decision_error)) {
+        const auto oracle_registry = common_flydelta_make_default_oracle_registry();
+        if (!common_flydelta_oracle_evaluate(
+                oracle_registry, oracle_request, generated, oracle_result, decision_error)) {
             error = "FlyDelta normalized_call fixture could not select its oracle: " +
                 decision_error;
             return false;
@@ -315,6 +326,7 @@ bool daemon_flydelta_verify_generation(
         verifier_known = oracle_result.known;
         passed = oracle_result.verdict == common_flydelta_oracle_verdict::satisfied;
         verifier_reason = oracle_result.reason;
+        violation_code = oracle_result.violation_code;
         violation_kind = common_flydelta_oracle_violation_kind_name(
             oracle_result.violation_kind);
         violation_dimensions = oracle_result.violation_dimensions;
@@ -462,6 +474,7 @@ bool daemon_flydelta_finalize_arm(
                 result.observed_decision_summary,
                 result.expected_decision_summary,
                 result.verifier_reason,
+                result.verifier_violation_code,
                 result.verifier_violation_kind,
                 result.verifier_violation_dimensions,
                 result.semantic_progress_observation,

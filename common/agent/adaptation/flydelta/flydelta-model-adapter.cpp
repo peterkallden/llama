@@ -157,6 +157,7 @@ bool common_flydelta_arm_result_validate(
     if (result.observed_decision_summary.size() > 1024 ||
             result.expected_decision_summary.size() > 1024 ||
             result.verifier_reason.size() > 1024 ||
+            result.verifier_violation_code.size() > 128 ||
             result.verifier_violation_kind.size() > 64 ||
             result.verifier_violation_dimensions.size() > 8) {
         error = "FlyDelta arm verifier observation is too long";
@@ -239,6 +240,7 @@ bool common_flydelta_arm_result_replay_equivalent(
             expected.verifier_known != actual.verifier_known ||
             expected.verifier_passed != actual.verifier_passed ||
             expected.host_outcome != actual.host_outcome ||
+            expected.verifier_violation_code != actual.verifier_violation_code ||
             expected.verifier_violation_kind != actual.verifier_violation_kind ||
             expected.verifier_violation_dimensions != actual.verifier_violation_dimensions) {
         error = "FlyDelta replay result flags or identity differ";
@@ -567,6 +569,7 @@ common_flydelta_counterfactual_trial arm_trial_from_result(
     trial.observed_decision_summary = arm.observed_decision_summary;
     trial.expected_decision_summary = arm.expected_decision_summary;
     trial.verifier_reason = arm.verifier_reason;
+    trial.verifier_violation_code = arm.verifier_violation_code;
     trial.verifier_violation_kind = arm.verifier_violation_kind;
     trial.verifier_violation_dimensions = arm.verifier_violation_dimensions;
     trial.semantic_progress_observation = arm.semantic_progress_observation;

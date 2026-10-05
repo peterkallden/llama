@@ -546,6 +546,27 @@ contrast components. The Qwen path now exercises the same admission from an
 observed missing `group_by` violation; this remains wiring and host-verification
 evidence, not evidence that the paired intervention improves the model.
 
+Oracle dispatch now has an explicit host-owned contract identity in addition to
+the existing semantic decision fast path. An Oracle request may carry
+`expected_contract_kind`, `expected_contract_ref`,
+`expected_contract_revision` and an optional contract fingerprint. The common
+registry selects exactly one evaluator by semantic kind and contract identity,
+in deterministic, host-supported, model-supported order; ambiguous ownership
+or an unowned contract fails closed. The default registry currently registers
+the deterministic dataset-operation evaluator. Tool-contract and OpenAPI
+evaluators can register beside it later without changing the suite or runtime
+host boundary.
+
+Each result keeps evaluator reference/revision and bounded structured checks in
+addition to the top-level verdict. Dataset violations also carry a stable
+`violation_code` such as `dataset.missing_required_grouping`, while the older
+violation kind and dimensions remain the coarse admission fields. The Oracle
+suite persists contract identity and evaluator provenance for baseline and
+candidate observations. The server-context FlyDelta host uses this registry
+for `normalized_call` verification and carries the violation code through arm,
+counterfactual, worker and trace JSON. These fields explain host semantics;
+they do not create `HELPED`, learning credit, promotion or activation authority.
+
 Capability reporting must follow the same boundary: a capability is available
 only when its production callback and durable resolver are registered. The
 presence of a common algorithm or model-free smoke callback is not sufficient.

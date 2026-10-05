@@ -16,6 +16,10 @@ common_flydelta_oracle_request aggregate_request(bool applicable = true) {
     request.concept_key = "dataset.grouped_sum";
     request.behavior_key = "dataset.grouped_sum";
     request.semantic_kind = "dataset_operation";
+    request.expected_contract_kind = "semantic_decision";
+    request.expected_contract_ref = "flydelta://contract/dataset-operation";
+    request.expected_contract_revision = "v1";
+    request.expected_contract_fingerprint = "dataset-contract-v1";
     request.applicable = applicable;
     request.expected_decision_available = applicable;
     request.expected_decision.operation = "aggregate";
@@ -39,12 +43,20 @@ int main() {
     CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::satisfied);
     CHECK(result.violation_kind == common_flydelta_oracle_violation_kind::none);
     CHECK(result.oracle_revision == "v1");
+    CHECK(result.evaluator_ref == "flydelta://evaluator/dataset-operation");
+    CHECK(result.evaluator_revision == "v1");
+    CHECK(result.checks.size() == 1 &&
+        result.checks.front().code == "dataset.semantic_decision" &&
+        result.checks.front().verdict == common_flydelta_oracle_verdict::satisfied);
     CHECK(common_flydelta_dataset_operation_oracle(
         request,
         R"({"name":"statistics.describe","arguments":{"dataset":"dataset://local/sales","column":"amount"}})",
         result, error));
     CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::violated);
     CHECK(result.violation_kind == common_flydelta_oracle_violation_kind::wrong_tool);
+    CHECK(result.violation_code == "dataset.wrong_operation");
+    CHECK(result.checks.size() == 1 &&
+        result.checks.front().code == "dataset.wrong_operation");
     // A valid but different dataset operation is still a deterministic
     // violation when it belongs to the semantic-decision IR.
     CHECK(common_flydelta_dataset_operation_oracle(
@@ -61,6 +73,7 @@ int main() {
     CHECK(result.violation_kind == common_flydelta_oracle_violation_kind::missing_required_grouping);
     CHECK(result.violation_dimensions.size() == 1 &&
         result.violation_dimensions.front() == "grouping");
+    CHECK(result.violation_code == "dataset.missing_required_grouping");
     CHECK(common_flydelta_dataset_operation_oracle(
         request, "not valid json", result, error));
     CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::violated);
@@ -69,6 +82,91 @@ int main() {
         aggregate_request(false), "not applicable", result, error));
     CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::not_applicable);
     CHECK(result.violation_kind == common_flydelta_oracle_violation_kind::none);
+
+    const auto default_registry = common_flydelta_make_default_oracle_registry();
+    CHECK(default_registry.evaluators.size() == 1);
+    CHECK(common_flydelta_oracle_evaluate(
+        default_registry, request,
+        R"({"name":"data.aggregate","arguments":{"dataset":"dataset://local/sales","group_by":["region"],"measure":"amount"}})",
+        result, error));
+    CHECK(result.known && result.verdict == common_flydelta_oracle_verdict::satisfied);
+    CHECK(result.evaluator_ref == "flydelta://evaluator/dataset-operation");
+
+    common_flydelta_oracle_registry scoped_registry;
+    CHECK(common_flydelta_register_oracle_evaluator(scoped_registry, {
+        common_flydelta_oracle_strength::host_supported,
+        "flydelta://evaluator/test-host",
+        "v1",
+        "host_dataset",
+        "host_contract",
+        "host://dataset-contract",
+        "v1",
+        [](const common_flydelta_oracle_request & host_request,
+                const std::string & host_observed,
+                common_flydelta_oracle_result & host_result,
+                std::string & host_error) {
+            host_error.clear();
+            if (host_request.semantic_kind != "host_dataset") return false;
+            host_result = {};
+            host_result.known = host_observed == "host-verified";
+            host_result.verdict = host_result.known
+                ? common_flydelta_oracle_verdict::satisfied
+                : common_flydelta_oracle_verdict::unknown;
+            host_result.oracle_ref = "oracle://test/host-dataset";
+            return true;
+        },
+    }, error));
+    common_flydelta_oracle_request scoped_request;
+    scoped_request.semantic_kind = "host_dataset";
+    scoped_request.expected_contract_kind = "host_contract";
+    scoped_request.expected_contract_ref = "host://dataset-contract";
+    scoped_request.expected_contract_revision = "v1";
+    scoped_request.oracle_revision = "v1";
+    CHECK(common_flydelta_oracle_evaluate(
+        scoped_registry, scoped_request, "host-verified", result, error));
+    CHECK(result.known && result.strength == common_flydelta_oracle_strength::host_supported);
+    CHECK(result.evaluator_ref == "flydelta://evaluator/test-host");
+
+    common_flydelta_oracle_request wrong_contract = scoped_request;
+    wrong_contract.expected_contract_ref = "host://other-contract";
+    CHECK(!common_flydelta_oracle_evaluate(
+        scoped_registry, wrong_contract, "host-verified", result, error));
+    CHECK(error.find("no registered Oracle evaluator") != std::string::npos);
+    common_flydelta_oracle_request wrong_contract_revision = scoped_request;
+    wrong_contract_revision.expected_contract_revision = "v2";
+    CHECK(!common_flydelta_oracle_evaluate(
+        scoped_registry, wrong_contract_revision, "host-verified", result, error));
+
+    common_flydelta_oracle_registry ambiguous_registry;
+    const auto host_registration = common_flydelta_oracle_evaluator_registration{
+        common_flydelta_oracle_strength::host_supported,
+        "flydelta://evaluator/ambiguous-a",
+        "v1",
+        "host_dataset",
+        "host_contract",
+        "host://dataset-contract",
+        "v1",
+        [](const common_flydelta_oracle_request &, const std::string &,
+                common_flydelta_oracle_result & host_result, std::string & host_error) {
+            host_error.clear();
+            host_result = {};
+            host_result.known = true;
+            host_result.verdict = common_flydelta_oracle_verdict::satisfied;
+            return true;
+        },
+    };
+    CHECK(common_flydelta_register_oracle_evaluator(
+        ambiguous_registry, host_registration, error));
+    auto second_registration = host_registration;
+    second_registration.evaluator_ref = "flydelta://evaluator/ambiguous-b";
+    second_registration.evaluator_revision = "v2";
+    CHECK(common_flydelta_register_oracle_evaluator(
+        ambiguous_registry, second_registration, error));
+    common_flydelta_oracle_request ambiguous_request = scoped_request;
+    ambiguous_request.oracle_revision.clear();
+    CHECK(!common_flydelta_oracle_evaluate(
+        ambiguous_registry, ambiguous_request, "host-verified", result, error));
+    CHECK(error.find("ambiguous") != std::string::npos);
 
     common_flydelta_oracle_evaluator_chain evaluators;
     evaluators.deterministic = common_flydelta_dataset_operation_oracle;
@@ -107,7 +205,7 @@ int main() {
     control.expected_verdict = common_flydelta_oracle_verdict::not_applicable;
     common_flydelta_oracle_suite_request suite_request;
     suite_request.probes = {target, control};
-    suite_request.evaluators.deterministic = common_flydelta_dataset_operation_oracle;
+    suite_request.registry = common_flydelta_make_default_oracle_registry();
     suite_request.runner = [](
             const common_flydelta_oracle_probe & probe,
             bool candidate,
@@ -127,6 +225,10 @@ int main() {
     CHECK(common_flydelta_run_oracle_suite(suite_request, suite, error));
     CHECK(suite.semantically_helped && suite.safe_to_continue);
     CHECK(suite.intervention_gain > 0.49f && suite.control_retention == 1.0f);
+    CHECK(suite.probes.size() == 2);
+    CHECK(suite.probes.front().baseline.evaluator_ref ==
+        "flydelta://evaluator/dataset-operation");
+    CHECK(suite.probes.front().candidate.evaluator_revision == "v1");
 
     common_flydelta_astar_request astar;
     astar.start_state = "start";
@@ -155,8 +257,11 @@ int main() {
     durable_report.oracle_revision = "v1";
     durable_report.policy_revision = "policy-v1";
     durable_report.observations.push_back({
-        "fixture-report", "intended", "fixture-target", "verifier-v1", "helped",
-        false, false, true, true});
+        "fixture-report", "intended", "fixture-target", "verifier-v1",
+        "semantic_decision", "flydelta://contract/dataset-operation", "v1",
+        "dataset-contract-v1", "helped", false, false, true, true,
+        "flydelta://evaluator/dataset-operation",
+        "flydelta://evaluator/dataset-operation"});
     durable_report.baseline_success_rate = 0.0f;
     durable_report.candidate_success_rate = 1.0f;
     durable_report.intervention_gain = 1.0f;
@@ -171,5 +276,9 @@ int main() {
     CHECK(reloaded_report.id == durable_report.id);
     CHECK(reloaded_report.observations.size() == 1);
     CHECK(reloaded_report.intervention_gain == 1.0f);
+    CHECK(reloaded_report.observations.front().expected_contract_ref ==
+        "flydelta://contract/dataset-operation");
+    CHECK(reloaded_report.observations.front().candidate_evaluator_ref ==
+        "flydelta://evaluator/dataset-operation");
     return 0;
 }
