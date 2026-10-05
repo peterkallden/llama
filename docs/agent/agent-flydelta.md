@@ -553,9 +553,15 @@ the existing semantic decision fast path. An Oracle request may carry
 registry selects exactly one evaluator by semantic kind and contract identity,
 in deterministic, host-supported, model-supported order; ambiguous ownership
 or an unowned contract fails closed. The default registry currently registers
-the deterministic dataset-operation evaluator. Tool-contract and OpenAPI
-evaluators can register beside it later without changing the suite or runtime
-host boundary.
+the deterministic dataset-operation evaluator. Host assemblies may register
+the host-supported `model_facing_tool_contract` and
+`openapi_operation_contract` evaluators beside it. The former validates the
+effective model-facing schema and host policy; the latter validates the
+provider/operation identity on top of the same parser and argument validator.
+Both accept JSONL, compact DSL and the bounded server-context
+`{"name":...,"arguments":...}` observation. The OpenAPI evaluator is an
+operation owner in the existing registry, does not create a second evaluator
+aggregator and does not execute network calls in V0.
 
 Each result keeps evaluator reference/revision and bounded structured checks in
 addition to the top-level verdict. Dataset violations also carry a stable

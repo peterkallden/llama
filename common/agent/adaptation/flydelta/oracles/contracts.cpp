@@ -28,6 +28,8 @@ const char * common_flydelta_oracle_violation_kind_name(
         common_flydelta_oracle_violation_kind value) {
     switch (value) {
         case common_flydelta_oracle_violation_kind::none: return "none";
+        case common_flydelta_oracle_violation_kind::contract_violation:
+            return "contract_violation";
         case common_flydelta_oracle_violation_kind::wrong_tool: return "wrong_tool";
         case common_flydelta_oracle_violation_kind::missing_required_grouping:
             return "missing_required_grouping";

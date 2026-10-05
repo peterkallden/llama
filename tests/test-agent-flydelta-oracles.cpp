@@ -1,6 +1,8 @@
 #include "agent/adaptation/flydelta/oracles/dataset-operation.h"
 #include "agent/adaptation/flydelta/oracles/astar-proposer.h"
 #include "agent/adaptation/flydelta/oracles/suite.h"
+#include "agent/adaptation/flydelta/oracles/tool-contract.h"
+#include "agent/adaptation/flydelta/oracles/openapi-operation.h"
 
 #include <string>
 
@@ -280,5 +282,174 @@ int main() {
         "flydelta://contract/dataset-operation");
     CHECK(reloaded_report.observations.front().candidate_evaluator_ref ==
         "flydelta://evaluator/dataset-operation");
+
+    common_flydelta_model_tool_contract tool_contract;
+    tool_contract.provider_ref = "openapi://openalex";
+    tool_contract.exposed_tool_name = "openalex.listWorks";
+    tool_contract.contract_ref = "tool://openalex/listWorks";
+    tool_contract.contract_revision = "v3";
+    tool_contract.contract_fingerprint = "sha256:model-facing-list-works";
+    tool_contract.model_input_schema_json = R"({
+        "type":"object",
+        "additionalProperties":false,
+        "required":["search","select"],
+        "properties":{
+            "search":{"type":"string","minLength":1},
+            "select":{"type":"string","minLength":1},
+            "per_page":{"type":"integer","minimum":1,"maximum":100}
+        }
+    })";
+    tool_contract.host_input_schema_json = tool_contract.model_input_schema_json;
+
+    common_flydelta_oracle_result tool_result;
+    CHECK(common_flydelta_validate_model_tool_text(
+        tool_contract,
+        common_agent_tool_output_format::jsonl,
+        R"({"tool":"openalex.listWorks","arguments":{"search":"machine learning","select":"id, display_name","per_page":1}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::satisfied);
+    CHECK(tool_result.normalized_arguments_json.find("machine learning") != std::string::npos);
+
+    CHECK(common_flydelta_validate_model_tool_text(
+        tool_contract,
+        common_agent_tool_output_format::compact_dsl,
+        R"(open! openalex.listWorks search="machine learning" select="id, display_name" per_page=1)",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::satisfied);
+
+    CHECK(common_flydelta_validate_model_tool_text(
+        tool_contract,
+        common_agent_tool_output_format::jsonl,
+        R"({"tool":"openalex.listWorks","arguments":{"search":"machine learning"}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::violated &&
+        tool_result.violation_code == "tool.missing_required_parameter");
+
+    CHECK(common_flydelta_validate_model_tool_text(
+        tool_contract,
+        common_agent_tool_output_format::jsonl,
+        R"({"tool":"openalex.listWorks","arguments":{"search":"machine learning","select":"id","unexpected":true}})",
+        tool_result, error));
+    CHECK(tool_result.violation_code == "tool.unknown_argument");
+
+    CHECK(common_flydelta_validate_model_tool_text(
+        tool_contract,
+        common_agent_tool_output_format::jsonl,
+        R"({"tool":"openalex.getAuthor","arguments":{"search":"machine learning","select":"id"}})",
+        tool_result, error));
+    CHECK(tool_result.violation_code == "tool.unknown_tool");
+
+    CHECK(common_flydelta_validate_model_tool_text(
+        tool_contract,
+        common_agent_tool_output_format::compact_dsl,
+        "open! openalex.listWorks search=",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.violation_code == "tool.malformed_call");
+
+    common_flydelta_oracle_registry tool_registry;
+    CHECK(common_flydelta_register_oracle_evaluator(tool_registry, {
+        common_flydelta_oracle_strength::host_supported,
+        "flydelta://evaluator/tool-contract",
+        "v1",
+        "tool_contract",
+        "model_facing_tool_contract",
+        tool_contract.contract_ref,
+        tool_contract.contract_revision,
+        common_flydelta_make_tool_contract_oracle(tool_contract),
+    }, error));
+    common_flydelta_oracle_request tool_request;
+    tool_request.oracle_ref = "oracle://test/tool-contract";
+    tool_request.oracle_revision = "v1";
+    tool_request.semantic_kind = "tool_contract";
+    tool_request.expected_contract_kind = "model_facing_tool_contract";
+    tool_request.expected_contract_ref = tool_contract.contract_ref;
+    tool_request.expected_contract_revision = tool_contract.contract_revision;
+    tool_request.observed_format = "compact_dsl";
+    CHECK(common_flydelta_oracle_evaluate(
+        tool_registry,
+        tool_request,
+        R"(open! openalex.listWorks search="machine learning" select="id, display_name" per_page=1)",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::satisfied &&
+        tool_result.evaluator_ref == "flydelta://evaluator/tool-contract");
+
+    common_flydelta_openapi_operation_contract openapi_contract;
+    openapi_contract.tool = tool_contract;
+    openapi_contract.tool.contract_ref = "openapi://openalex/v1/operation/listWorks";
+    openapi_contract.tool.contract_revision = "openapi-v1";
+    openapi_contract.provider_id = "openalex";
+    openapi_contract.operation_id = "listWorks";
+    openapi_contract.method = "get";
+    openapi_contract.path = "/works";
+    openapi_contract.query_parameters = {"search", "select", "per_page"};
+    openapi_contract.host_required_parameters = {"search", "select"};
+
+    common_flydelta_oracle_registry openapi_registry;
+    CHECK(common_flydelta_register_oracle_evaluator(openapi_registry, {
+        common_flydelta_oracle_strength::host_supported,
+        "flydelta://evaluator/openapi-operation",
+        "v1",
+        "openapi_operation",
+        "openapi_operation_contract",
+        openapi_contract.tool.contract_ref,
+        openapi_contract.tool.contract_revision,
+        common_flydelta_make_openapi_operation_oracle(openapi_contract),
+    }, error));
+    common_flydelta_oracle_request openapi_request;
+    openapi_request.oracle_ref = "oracle://test/openapi-operation";
+    openapi_request.oracle_revision = "v1";
+    openapi_request.semantic_kind = "openapi_operation";
+    openapi_request.expected_contract_kind = "openapi_operation_contract";
+    openapi_request.expected_contract_ref = openapi_contract.tool.contract_ref;
+    openapi_request.expected_contract_revision = openapi_contract.tool.contract_revision;
+    openapi_request.observed_format = "jsonl";
+    CHECK(common_flydelta_oracle_evaluate(
+        openapi_registry,
+        openapi_request,
+        R"({"tool":"openalex.listWorks","arguments":{"search":"machine learning","select":"id, display_name","per_page":1}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::satisfied &&
+        tool_result.checks.size() >= 5);
+
+    CHECK(common_flydelta_oracle_evaluate(
+        openapi_registry,
+        openapi_request,
+        R"({"name":"openalex.listWorks","arguments":{"search":"machine learning","select":"id, display_name","per_page":1}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::satisfied);
+
+    CHECK(common_flydelta_oracle_evaluate(
+        openapi_registry,
+        openapi_request,
+        R"({"tool":"openalex.getAuthor","arguments":{"search":"machine learning","select":"id"}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::violated &&
+        tool_result.violation_code == "openapi.wrong_operation");
+
+    CHECK(common_flydelta_oracle_evaluate(
+        openapi_registry,
+        openapi_request,
+        R"({"tool":"other.listWorks","arguments":{"search":"machine learning","select":"id"}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::violated &&
+        tool_result.violation_code == "openapi.wrong_provider");
+
+    CHECK(common_flydelta_oracle_evaluate(
+        openapi_registry,
+        openapi_request,
+        R"({"tool":"openalex.listWorks","arguments":{"search":"machine learning"}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::violated &&
+        tool_result.violation_code == "openapi.missing_required_parameter");
     return 0;
 }

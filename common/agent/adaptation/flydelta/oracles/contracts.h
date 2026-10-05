@@ -28,6 +28,7 @@ enum class common_flydelta_oracle_verdict {
 // avoid_support material.
 enum class common_flydelta_oracle_violation_kind {
     none,
+    contract_violation,
     wrong_tool,
     missing_required_grouping,
     wrong_grouping_field,
@@ -85,6 +86,10 @@ struct common_flydelta_oracle_request {
     std::string expected_contract_ref;
     std::string expected_contract_revision;
     std::string expected_contract_fingerprint;
+    // Model-facing text uses the shared output codec. Native callers pass a
+    // pre-parsed call through the direct validator; registry evaluators use
+    // jsonl or compact_dsl here.
+    std::string observed_format = "jsonl";
     std::string task_ref;
     std::string execution_ref;
     std::string verifier_ref;
@@ -107,6 +112,7 @@ struct common_flydelta_oracle_result {
     std::string evidence_ref;
     std::string reason;
     std::string violation_code;
+    std::string normalized_arguments_json;
     common_flydelta_oracle_violation_kind violation_kind =
         common_flydelta_oracle_violation_kind::none;
     std::vector<std::string> violation_dimensions;

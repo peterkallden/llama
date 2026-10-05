@@ -144,6 +144,8 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/oracles/suite.cpp adaptation/flydelta/oracles/suite.h
     adaptation/flydelta/oracles/astar-proposer.cpp adaptation/flydelta/oracles/astar-proposer.h
     adaptation/flydelta/oracles/dataset-operation.cpp adaptation/flydelta/oracles/dataset-operation.h
+    adaptation/flydelta/oracles/tool-contract.cpp adaptation/flydelta/oracles/tool-contract.h
+    adaptation/flydelta/oracles/openapi-operation.cpp adaptation/flydelta/oracles/openapi-operation.h
     adaptation/flydelta/flydelta-teaching-relation.cpp adaptation/flydelta/flydelta-teaching-relation.h
     adaptation/flydelta/flydelta-teaching-material.cpp adaptation/flydelta/flydelta-teaching-material.h
     adaptation/flydelta/flydelta-concept-capture.cpp adaptation/flydelta/flydelta-concept-capture.h
@@ -253,7 +255,7 @@ target_include_directories(llama-agent-flydelta PUBLIC ${CMAKE_CURRENT_SOURCE_DI
 target_compile_features(llama-agent-flydelta PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-flydelta
     PUBLIC llama-agent-core
-    PRIVATE vendor::hash
+    PRIVATE vendor::hash llama-agent-tooling
 )
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama-agent-flydelta PROPERTIES
