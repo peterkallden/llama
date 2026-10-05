@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/oracles/suite.h"
 #include "agent/adaptation/flydelta/oracles/tool-contract.h"
 #include "agent/adaptation/flydelta/oracles/openapi-operation.h"
+#include "agent/adaptation/flydelta/oracles/workflow.h"
 #include "agent-openapi-flydelta-oracle.h"
 
 #include <string>
@@ -552,5 +553,57 @@ int main() {
     CHECK(tool_result.known &&
         tool_result.verdict == common_flydelta_oracle_verdict::violated &&
         tool_result.violation_code == "openapi.wrong_operation");
+
+    common_flydelta_workflow_contract workflow_contract;
+    workflow_contract.workflow_ref = "workflow://dataset/inspect_named";
+    workflow_contract.workflow_revision = "workflow-v1";
+    workflow_contract.workflows = common_generate_tool_workflow_index();
+    workflow_contract.selected_workflow_ids = {"dataset.inspect_named"};
+    workflow_contract.applicability_fingerprint = "dataset-tools-v1";
+    common_flydelta_oracle_registry workflow_registry;
+    CHECK(common_flydelta_register_oracle_evaluator(workflow_registry, {
+        common_flydelta_oracle_strength::deterministic,
+        "flydelta://evaluator/workflow",
+        "v1",
+        "tool_workflow",
+        "tool_workflow_contract",
+        workflow_contract.workflow_ref,
+        workflow_contract.workflow_revision,
+        common_flydelta_make_workflow_oracle(workflow_contract),
+    }, error));
+    common_flydelta_oracle_request workflow_request;
+    workflow_request.oracle_ref = "oracle://test/workflow";
+    workflow_request.oracle_revision = "v1";
+    workflow_request.semantic_kind = "tool_workflow";
+    workflow_request.expected_contract_kind = "tool_workflow_contract";
+    workflow_request.expected_contract_ref = workflow_contract.workflow_ref;
+    workflow_request.expected_contract_revision = workflow_contract.workflow_revision;
+
+    CHECK(common_flydelta_oracle_evaluate(
+        workflow_registry, workflow_request,
+        R"({"stage":"plan","steps":[{"tool":"dataset.select","arguments":"{\"name\":\"sales\"}"},{"tool":"dataset.inspect","arguments":"{\"dataset\":\"$source.dataset\"}"}]})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::satisfied);
+
+    CHECK(common_flydelta_oracle_evaluate(
+        workflow_registry, workflow_request,
+        R"({"stage":"plan","steps":[{"tool":"dataset.inspect","arguments":"{\"dataset\":\"$source.dataset\"}"},{"tool":"dataset.select","arguments":"{\"name\":\"sales\"}"}]})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::violated &&
+        tool_result.violation_code == "workflow.required_producer_missing");
+
+    common_tool_workflow_validation_result workflow_not_applicable;
+    CHECK(common_evaluate_tool_workflow_plan(
+        workflow_contract.workflows, {}, {}, workflow_not_applicable, error));
+    CHECK(workflow_not_applicable.status ==
+        common_tool_workflow_validation_status::not_applicable);
+
+    CHECK(common_flydelta_oracle_evaluate(
+        workflow_registry, workflow_request, "not canonical workflow json",
+        tool_result, error));
+    CHECK(!tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::unknown);
     return 0;
 }

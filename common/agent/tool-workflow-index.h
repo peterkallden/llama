@@ -25,6 +25,31 @@ struct common_tool_workflow_step_view {
     std::string arguments_json;
 };
 
+enum class common_tool_workflow_validation_status {
+    satisfied,
+    violated,
+    not_applicable,
+    unknown,
+};
+
+const char * common_tool_workflow_validation_status_name(
+        common_tool_workflow_validation_status status);
+
+struct common_tool_workflow_validation_check {
+    std::string code;
+    common_tool_workflow_validation_status status =
+        common_tool_workflow_validation_status::unknown;
+    std::vector<std::string> dimensions;
+};
+
+struct common_tool_workflow_validation_result {
+    common_tool_workflow_validation_status status =
+        common_tool_workflow_validation_status::unknown;
+    std::string violation_code;
+    std::string reason;
+    std::vector<common_tool_workflow_validation_check> checks;
+};
+
 // Host-owned execution slot. The model fills only arguments not present in
 // fixed_arguments; tool name, ordering and aliases belong to the host.
 struct common_tool_workflow_slot {
@@ -56,6 +81,16 @@ std::string common_tool_workflow_selection_schema();
 bool common_parse_tool_workflow_selection(
         const std::string & json_text,
         common_tool_workflow_selection & selection,
+        std::string & error);
+
+// Evaluate the existing host-owned workflow rules without rewriting the plan.
+// The typed result is the shared seam for Workflow Oracle and the legacy bool
+// validator below; it does not create lifecycle or learning outcomes.
+bool common_evaluate_tool_workflow_plan(
+        const std::vector<common_tool_workflow> & workflows,
+        const std::vector<std::string> & workflow_ids,
+        const std::vector<common_tool_workflow_step_view> & steps,
+        common_tool_workflow_validation_result & result,
         std::string & error);
 
 // Validate host-visible ordering constraints without rewriting the model plan.

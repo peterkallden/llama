@@ -146,6 +146,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/oracles/dataset-operation.cpp adaptation/flydelta/oracles/dataset-operation.h
     adaptation/flydelta/oracles/tool-contract.cpp adaptation/flydelta/oracles/tool-contract.h
     adaptation/flydelta/oracles/openapi-operation.cpp adaptation/flydelta/oracles/openapi-operation.h
+    adaptation/flydelta/oracles/workflow.cpp adaptation/flydelta/oracles/workflow.h
     adaptation/flydelta/flydelta-teaching-relation.cpp adaptation/flydelta/flydelta-teaching-relation.h
     adaptation/flydelta/flydelta-teaching-material.cpp adaptation/flydelta/flydelta-teaching-material.h
     adaptation/flydelta/flydelta-concept-capture.cpp adaptation/flydelta/flydelta-concept-capture.h

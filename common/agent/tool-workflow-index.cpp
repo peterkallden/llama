@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <set>
 #include <sstream>
+#include <utility>
 
 namespace {
 
@@ -191,11 +192,33 @@ bool common_parse_tool_workflow_selection(
     return true;
 }
 
-bool common_validate_tool_workflow_plan(
+const char * common_tool_workflow_validation_status_name(
+        common_tool_workflow_validation_status status) {
+    switch (status) {
+        case common_tool_workflow_validation_status::satisfied: return "satisfied";
+        case common_tool_workflow_validation_status::violated: return "violated";
+        case common_tool_workflow_validation_status::not_applicable: return "not_applicable";
+        case common_tool_workflow_validation_status::unknown: return "unknown";
+    }
+    return "unknown";
+}
+
+bool common_evaluate_tool_workflow_plan(
         const std::vector<common_tool_workflow> & workflows,
         const std::vector<std::string> & workflow_ids,
         const std::vector<common_tool_workflow_step_view> & steps,
+        common_tool_workflow_validation_result & result,
         std::string & error) {
+    result = {};
+    error.clear();
+    if (workflow_ids.empty()) {
+        result.status = common_tool_workflow_validation_status::not_applicable;
+        result.reason = "no workflow was selected for this plan";
+        result.checks.push_back({
+            "workflow.selection", common_tool_workflow_validation_status::not_applicable, {}});
+        return true;
+    }
+
     auto first_index = [&](const std::string & tool, size_t start = 0U) -> size_t {
         for (size_t i = start; i < steps.size(); ++i) {
             if (steps[i].tool_name == tool) return i;
@@ -206,20 +229,30 @@ bool common_validate_tool_workflow_plan(
         return std::find(workflow_ids.begin(), workflow_ids.end(), id) != workflow_ids.end();
     };
 
+    const auto violation = [&](const std::string & code,
+            const std::string & reason, std::vector<std::string> dimensions = {}) {
+        result.status = common_tool_workflow_validation_status::violated;
+        result.violation_code = code;
+        result.reason = reason;
+        result.checks.push_back({code, result.status, std::move(dimensions)});
+    };
+
     if (selected("dataset.discover")) {
         const size_t list = first_index("dataset.list");
         const size_t select = first_index("dataset.select");
         if (list == steps.size() || select == steps.size() || list > select) {
-            error = "workflow.required_producer_missing: dataset.discover requires dataset.list before dataset.select";
-            return false;
+            violation("workflow.required_producer_missing",
+                "dataset.discover requires dataset.list before dataset.select", {"producer"});
+            return true;
         }
     }
     if (selected("dataset.inspect_named")) {
         const size_t select = first_index("dataset.select");
         const size_t inspect = first_index("dataset.inspect");
         if (select == steps.size() || inspect == steps.size() || select > inspect) {
-            error = "workflow.required_producer_missing: dataset.inspect_named requires dataset.select before dataset.inspect";
-            return false;
+            violation("workflow.required_producer_missing",
+                "dataset.inspect_named requires dataset.select before dataset.inspect", {"producer"});
+            return true;
         }
     }
     if (selected("dataset.join")) {
@@ -228,8 +261,9 @@ bool common_validate_tool_workflow_plan(
         const size_t second_select = first_select == steps.size()
             ? steps.size() : first_index("dataset.select", first_select + 1);
         if (join == steps.size()) {
-            error = "workflow.required_consumer_missing: dataset.join requires data.join";
-            return false;
+            violation("workflow.required_consumer_missing",
+                "dataset.join requires data.join", {"consumer"});
+            return true;
         }
         // Direct dataset identifiers can satisfy a join without select slots.
         // Model references require the two semantic source slots first.
@@ -239,11 +273,35 @@ bool common_validate_tool_workflow_plan(
             });
         if (has_model_reference &&
                 (first_select == steps.size() || second_select == steps.size() || second_select > join)) {
-            error = "workflow.required_producer_missing: dataset.join requires two dataset.select steps before data.join, unless direct dataset references were supplied";
-            return false;
+            violation("workflow.required_producer_missing",
+                "dataset.join requires two dataset.select steps before data.join, unless direct dataset references were supplied",
+                {"producer", "dataflow"});
+            return true;
         }
     }
     (void) workflows;
+    error.clear();
+    result.status = common_tool_workflow_validation_status::satisfied;
+    result.reason = "selected workflow rules are satisfied";
+    result.checks.push_back({
+        "workflow.plan", common_tool_workflow_validation_status::satisfied, {}});
+    return true;
+}
+
+bool common_validate_tool_workflow_plan(
+        const std::vector<common_tool_workflow> & workflows,
+        const std::vector<std::string> & workflow_ids,
+        const std::vector<common_tool_workflow_step_view> & steps,
+        std::string & error) {
+    common_tool_workflow_validation_result result;
+    if (!common_evaluate_tool_workflow_plan(
+            workflows, workflow_ids, steps, result, error)) {
+        return false;
+    }
+    if (result.status == common_tool_workflow_validation_status::violated) {
+        error = result.violation_code + ": " + result.reason;
+        return false;
+    }
     error.clear();
     return true;
 }
