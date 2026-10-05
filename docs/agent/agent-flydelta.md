@@ -153,10 +153,13 @@ model's canonical implementation of a selected workflow; it does not replace
 the procedure or blueprint that supplied the intended pattern. The built-in
 bootstrap package now includes bounded dataset-inspection and OpenAPI-paged
 retrieval blueprints, so the tool-aware library has a first deterministic
-baseline. The existing bounded A* proposer remains a support component and is
-the next activity after this first blueprint library: it may propose a bounded
-workflow/contrast path, but the Workflow/Procedure Oracle must still validate
-the resulting endpoints and semantic truth. A* never creates evidence or
+baseline. The existing bounded A* proposer and its Workflow/Blueprint proposal
+adapter now provide the next support layer: they may propose a bounded
+workflow/contrast path when a host supplies the transition graph and
+canonicalizer. The adapter is not an implicit runtime route; the existing
+host-owned contrast provider must register those callbacks for a concrete
+blueprint case. The Workflow/Procedure Oracle must still validate the
+resulting endpoints and semantic truth. A* never creates evidence or
 lifecycle state by itself.
 
 ```text
@@ -3407,7 +3410,9 @@ activation authority remain in their existing seams.
 
 A bounded generic A* proposer lives beside the shared Oracle contracts. It
 operates only on opaque state fingerprints, successor costs, heuristic values,
-and explicit expansion/goal callbacks. That makes it reusable for deterministic
+and explicit expansion/goal callbacks. The Workflow/Blueprint adapter wraps
+that result as a bounded proposal with host-canonical steps; it does not
+evaluate or persist the proposal. That makes it reusable for deterministic
 case construction, host-supported valid-combination search and later
 model-supported probe proposal. Its expansion and path bounds are mandatory,
 so it is a cheap proposer rather than a replacement for FlyDelta's layer,
