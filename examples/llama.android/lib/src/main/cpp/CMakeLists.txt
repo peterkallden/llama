@@ -101,6 +101,11 @@ target_compile_definitions(llama-agent-android-runtime PRIVATE
         LLAMA_AGENT_RUNTIME_DISABLE_ADAPTATION=1)
 target_link_libraries(llama-agent-android-runtime PUBLIC
         llama-agent-core
+        # The embedded runtime keeps adaptation disabled, but its shared
+        # inference/contract sources still validate optional FlyDelta request
+        # objects. Link the existing common library for those validators; this
+        # does not enable capture, search, deployment, or lifecycle paths.
+        llama-agent-flydelta
         llama-agent-tooling
         llama-agent-memory
         llama-agent-plan

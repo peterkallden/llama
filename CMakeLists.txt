@@ -347,7 +347,7 @@ endif()
 
 # The production agent implementation is owned by tools/agent. POCs and
 # model-free tests remain independently selectable under pocs/agent.
-if (LLAMA_BUILD_COMMON AND LLAMA_AGENT_RUNTIME)
+if (LLAMA_BUILD_COMMON AND LLAMA_AGENT_RUNTIME AND NOT ANDROID)
     add_subdirectory(tools/agent)
 endif()
 
