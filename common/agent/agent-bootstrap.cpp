@@ -61,6 +61,53 @@ common_agent_bootstrap_blueprint agent_regression_blueprint() {
     return plan;
 }
 
+common_agent_bootstrap_blueprint dataset_inspect_summarize_blueprint() {
+    common_agent_bootstrap_blueprint plan;
+    plan.id = "dataset-inspect-summarize";
+    plan.selection_description = "Inspect a selected dataset and produce a validated summary using the host dataset workflow.";
+    plan.purpose = "Use a host-selected dataset workflow without guessing tool arguments or skipping validation.";
+    plan.goal = "Inspect a dataset and produce a grounded summary";
+    plan.success_criteria = "The dataset is selected, inspected, operated on with a valid contract, and the result is checked before answering.";
+    plan.steps = {
+        step("select-source", "Select source", "Resolve the dataset source through the host tool catalog and preserve its identity."),
+        step("inspect-source", "Inspect source", "Inspect the selected dataset so available fields and types are known.", {"select-source"}),
+        step("choose-operation", "Choose operation", "Choose the smallest operation that answers the request and keep semantic intent separate from serialization.", {"inspect-source"}),
+        step("execute-operation", "Execute operation", "Submit the host-validated operation and retain its result as evidence.", {"choose-operation"}),
+        step("verify-result", "Verify result", "Check that the result matches the requested operation and required scope.", {"execute-operation"}),
+        step("answer", "Answer", "Answer from the verified result and state material limitations.", {"verify-result"}, common_plan_step_mode::final_response),
+    };
+    plan.required_capabilities = {"tool.dataset", "workflow.dataset"};
+    plan.constraints.push_back({"host-tool-contract", "Use the host-resolved dataset contract; do not invent tool names or required arguments.", true});
+    plan.constraints.push_back({"evidence-before-answer", "Do not present an unverified tool result as a completed answer.", true});
+    plan.assumptions.push_back({"dataset-access", "The host exposes at least one applicable dataset operation.", 0.8f, true, {}});
+    plan.next_action = "select-source";
+    return plan;
+}
+
+common_agent_bootstrap_blueprint openapi_paged_retrieval_blueprint() {
+    common_agent_bootstrap_blueprint plan;
+    plan.id = "openapi-paged-retrieval";
+    plan.selection_description = "Retrieve OpenAPI data with required parameters, bounded pagination, and response validation.";
+    plan.purpose = "Use a host-generated OpenAPI operation contract and keep paged retrieval bounded and auditable.";
+    plan.goal = "Retrieve and summarize a paged OpenAPI result";
+    plan.success_criteria = "The operation and required parameters are validated, pages stay within the host budget, and the response shape is checked before answering.";
+    plan.steps = {
+        step("resolve-operation", "Resolve operation", "Select the host-approved OpenAPI operation for the request."),
+        step("validate-arguments", "Validate arguments", "Fill and validate all host-required parameters before execution.", {"resolve-operation"}),
+        step("fetch-first-page", "Fetch first page", "Execute the first bounded page and retain the response metadata.", {"validate-arguments"}),
+        step("continue-pages", "Continue pages", "Continue only when the response exposes a valid continuation and the host page budget allows it.", {"fetch-first-page"}),
+        step("verify-response", "Verify response", "Validate the response contract and distinguish an empty result from an invalid response.", {"continue-pages"}),
+        step("answer", "Answer", "Summarize the verified result and report pagination or coverage limits.", {"verify-response"}, common_plan_step_mode::final_response),
+    };
+    plan.required_capabilities = {"tool.openapi", "workflow.openapi", "pagination"};
+    plan.constraints.push_back({"required-parameters", "Host-required parameters must be present before the operation is executed.", true});
+    plan.constraints.push_back({"bounded-pagination", "Never continue beyond the host-provided page and observation budget.", true});
+    plan.constraints.push_back({"response-contract", "Treat response validation as separate evidence from operation selection.", true});
+    plan.assumptions.push_back({"openapi-catalog", "The host exposes an OpenAPI operation with a generated model-facing contract.", 0.85f, true, {}});
+    plan.next_action = "resolve-operation";
+    return plan;
+}
+
 common_agent_bootstrap_package make_default_package() {
     common_agent_bootstrap_package package;
     package.name = "default";
@@ -75,7 +122,14 @@ common_agent_bootstrap_package make_default_package() {
     repository_change.selection_description = "Implement or modify code in a repository and verify the result.";
     auto agent_regression = agent_regression_blueprint();
     agent_regression.selection_description = "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary.";
-    package.blueprints = {std::move(repository_change), std::move(agent_regression)};
+    auto dataset_inspect = dataset_inspect_summarize_blueprint();
+    auto openapi_paged = openapi_paged_retrieval_blueprint();
+    package.blueprints = {
+        std::move(repository_change),
+        std::move(agent_regression),
+        std::move(dataset_inspect),
+        std::move(openapi_paged),
+    };
     return package;
 }
 

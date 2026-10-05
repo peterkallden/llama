@@ -148,6 +148,17 @@ turn evidence
 The host stays authoritative. The model may generate candidates, but it
 cannot certify evidence, write an active sideband, or activate one.
 
+Workflow and procedure direction: the host Workflow Oracle validates the
+model's canonical implementation of a selected workflow; it does not replace
+the procedure or blueprint that supplied the intended pattern. The built-in
+bootstrap package now includes bounded dataset-inspection and OpenAPI-paged
+retrieval blueprints, so the tool-aware library has a first deterministic
+baseline. The existing bounded A* proposer remains a support component and is
+the next activity after this first blueprint library: it may propose a bounded
+workflow/contrast path, but the Workflow/Procedure Oracle must still validate
+the resulting endpoints and semantic truth. A* never creates evidence or
+lifecycle state by itself.
+
 ```text
 generation != evidence
 evidence   != learning update

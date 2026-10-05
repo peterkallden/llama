@@ -62,7 +62,7 @@ int main() {
     common_agent_bootstrap_result first;
     assert(common_agent_install_default_bootstrap(memory, plans, config, embed, first, error));
     assert(first.installed_memory_ids.size() == 4);
-    assert(first.installed_blueprint_ids.size() == 2);
+    assert(first.installed_blueprint_ids.size() == 4);
     const auto procedure = memory.get(first.installed_memory_ids.front(), error);
     assert(procedure && procedure->kind == common_memory_kind::procedure);
     assert(procedure->scope == common_memory_scope::project);
@@ -105,10 +105,13 @@ int main() {
     common_agent_bootstrap_result second;
     assert(common_agent_install_default_bootstrap(memory, plans, config, embed, second, error));
     assert(second.installed_memory_ids.empty() && second.installed_blueprint_ids.empty());
-    assert(second.existing_memory_ids.size() == 4 && second.existing_blueprint_ids.size() == 2);
+    assert(second.existing_memory_ids.size() == 4 && second.existing_blueprint_ids.size() == 4);
 
     std::string package_json;
     const auto default_package = common_agent_default_bootstrap_package();
+    assert(default_package.blueprints.size() == 4);
+    assert(default_package.blueprints[2].id == "dataset-inspect-summarize");
+    assert(default_package.blueprints[3].id == "openapi-paged-retrieval");
     assert(common_agent_package_to_json(default_package, package_json, error));
     common_agent_bootstrap_package parsed_package;
     assert(common_agent_package_parse_json(package_json, parsed_package, error));
