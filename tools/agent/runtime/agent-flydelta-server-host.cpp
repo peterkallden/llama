@@ -222,6 +222,7 @@ bool daemon_flydelta_score_teacher_forced_margin_batch(
 }
 
 bool daemon_flydelta_verify_generation(
+        const common_flydelta_oracle_registry & oracle_registry,
         const json & fixture,
         const std::string & generated,
         bool & verifier_known,
@@ -316,7 +317,6 @@ bool daemon_flydelta_verify_generation(
         oracle_request.expected_decision_available = true;
         oracle_request.expected_decision = expected;
         common_flydelta_oracle_result oracle_result;
-        const auto oracle_registry = common_flydelta_make_default_oracle_registry();
         if (!common_flydelta_oracle_evaluate(
                 oracle_registry, oracle_request, generated, oracle_result, decision_error)) {
             error = "FlyDelta normalized_call fixture could not select its oracle: " +
@@ -470,6 +470,7 @@ bool daemon_flydelta_finalize_arm(
         bool passed = false;
         const std::string verifier_input = daemon_flydelta_verifier_input(generation);
         if (!daemon_flydelta_verify_generation(
+                provider->oracle_registry,
                 fixture, verifier_input, verifier_known, passed,
                 result.observed_decision_summary,
                 result.expected_decision_summary,

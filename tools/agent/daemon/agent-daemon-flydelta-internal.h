@@ -77,6 +77,10 @@ struct daemon_flydelta_resource_provider {
     int n_threads = 0;
     size_t model_n_embd = 0;
     size_t model_n_layers = 0;
+    // Host-owned semantic dispatch for the existing verification seam. It is
+    // built from the same configured provider contracts as runtime tools; it
+    // is not a second evaluator store or an execution path.
+    common_flydelta_oracle_registry oracle_registry;
     // The lifecycle journal is the daemon-owned durable state seam. Captures
     // are kept in memory for the active bounded wave and mirrored to the
     // existing resource store when a later resume/materialization step needs
@@ -317,6 +321,7 @@ bool daemon_flydelta_persist_concept_trajectory(
         std::string & error);
 
 bool daemon_flydelta_verify_generation(
+        const common_flydelta_oracle_registry & oracle_registry,
         const json & fixture,
         const std::string & generated,
         bool & verifier_known,
