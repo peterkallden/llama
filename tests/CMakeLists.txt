@@ -466,6 +466,13 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME MATCHES "flydelta|concept-candidate-index|concept-input-routing")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
         endif()
+        if (TEST_NAME STREQUAL "test-agent-flydelta-oracles")
+            target_include_directories(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/openapi)
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-catalog.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-flydelta-oracle.cpp)
+        endif()
         if (TEST_NAME STREQUAL "test-agent-continuation")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
         endif()

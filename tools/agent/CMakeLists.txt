@@ -20,6 +20,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-catalog.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-provider.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-http.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-flydelta-oracle.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-sandbox-assembly.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/mcp/agent-mcp-http-client.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/mcp/agent-mcp-http-transport.cpp

@@ -563,6 +563,14 @@ Both accept JSONL, compact DSL and the bounded server-context
 operation owner in the existing registry, does not create a second evaluator
 aggregator and does not execute network calls in V0.
 
+The production OpenAPI adapter is
+`tools/agent/openapi/agent-openapi-flydelta-oracle.{h,cpp}`. It projects each
+operation from the same filtered catalog used by the OpenAPI provider, applies
+the same model-facing required-parameter projection, and registers one
+host-owned evaluator per operation. It is a registry adapter only: HTTP
+execution remains in the existing OpenAPI executor and Oracle dispatch
+remains request-scoped.
+
 Each result keeps evaluator reference/revision and bounded structured checks in
 addition to the top-level verdict. Dataset violations also carry a stable
 `violation_code` such as `dataset.missing_required_grouping`, while the older

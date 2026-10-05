@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/oracles/suite.h"
 #include "agent/adaptation/flydelta/oracles/tool-contract.h"
 #include "agent/adaptation/flydelta/oracles/openapi-operation.h"
+#include "agent-openapi-flydelta-oracle.h"
 
 #include <string>
 
@@ -451,5 +452,38 @@ int main() {
     CHECK(tool_result.known &&
         tool_result.verdict == common_flydelta_oracle_verdict::violated &&
         tool_result.violation_code == "openapi.missing_required_parameter");
+
+    agent_openapi_catalog catalog;
+    catalog.provider_id = "openalex";
+    catalog.prefix = "openalex";
+    agent_openapi_operation catalog_operation;
+    catalog_operation.operation_id = "listWorks";
+    catalog_operation.method = "GET";
+    catalog_operation.path = "/works";
+    catalog_operation.input_schema_json =
+        R"({"type":"object","properties":{"search":{"type":"string"},"select":{"type":"string"}},"required":["search"]})";
+    catalog_operation.host_required_parameters = {"search"};
+    catalog.operations.push_back(catalog_operation);
+
+    common_flydelta_oracle_registry catalog_registry;
+    CHECK(register_agent_openapi_flydelta_oracles(
+        catalog, catalog_registry, "openapi-v1", error));
+    CHECK(catalog_registry.evaluators.size() == 1);
+    common_flydelta_oracle_request catalog_request;
+    catalog_request.oracle_ref =
+        "flydelta://evaluator/openapi/openalex/listWorks";
+    catalog_request.oracle_revision = "openapi-v1";
+    catalog_request.semantic_kind = "openapi_operation";
+    catalog_request.expected_contract_kind = "openapi_operation_contract";
+    catalog_request.expected_contract_ref =
+        "openapi://openalex/operation/listWorks";
+    catalog_request.expected_contract_revision = "openapi-v1";
+    CHECK(common_flydelta_oracle_evaluate(
+        catalog_registry, catalog_request,
+        R"({"name":"openalex.listWorks","arguments":{"search":"climate"}})",
+        tool_result, error));
+    CHECK(tool_result.known &&
+        tool_result.verdict == common_flydelta_oracle_verdict::satisfied &&
+        tool_result.checks.size() >= 5);
     return 0;
 }
