@@ -31,5 +31,5 @@ bool common_tool_dispatch_chat_calls(
     const common_tool_registry & registry,
     size_t max_calls,
     common_tool_chat_dispatch_result & result,
-    std::string & error);
-
+    std::string & error,
+    bool allow_policy_gated_writes = false);

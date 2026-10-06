@@ -830,7 +830,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 const auto mime = arguments.value("mime_type", std::string("text/plain"));
                 if (!persist_tool_resource(bindings, arguments["name"].get<std::string>(), "Exported tool artifact", mime, arguments["content"].get<std::string>(), "artifact.export", make_tool_resource_metadata("artifact", "Exported tool result", "Read as an artifact resource", "Bounded host-owned export"), resource, err)) return tool_execution_failure("tool.artifact.export.failed", std::move(err), "Artifact export failed.");
                 return tool_success_json({{"resource", resource.uri}, {"name", resource.name}, {"mime_type", resource.mime_type}});
-            }, error);
+            }, error, false, true);
         } else if ((definition.executor_id == "sandbox.development.build" || definition.executor_id == "sandbox.development.test") && bindings.sandbox_execute) {
             installed = register_definition(definition, registry, [bindings, tool_name = definition.name](const std::string & input) {
                 common_agent_sandbox_request request;

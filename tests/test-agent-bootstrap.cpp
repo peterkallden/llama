@@ -226,7 +226,7 @@ int main() {
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v2");
+        checked_in_starter.version == "v3");
     assert(checked_in_starter.procedures.size() == 8 &&
         checked_in_starter.blueprints.size() == 7);
     assert(checked_in_starter.workflows.size() == 8);
@@ -236,6 +236,18 @@ int main() {
         std::vector<std::string>({"dataset.resolve", "dataset.inspect", "data.query",
             "data.filter", "data.aggregate", "data.transform", "statistics.describe",
             "statistics.outliers", "statistics.value_counts"}));
+    assert(checked_in_starter.workflows[0].definition.workflow_revision == "v2");
+    assert(checked_in_starter.workflows[0].definition.optional_capabilities ==
+        std::vector<std::string>({"artifact.export"}));
+    for (const auto & workflow : checked_in_starter.workflows) {
+        if (workflow.definition.family == "dataset" ||
+                workflow.definition.family == "resource" ||
+                workflow.definition.family == "web") {
+            assert(std::find(workflow.definition.optional_capabilities.begin(),
+                workflow.definition.optional_capabilities.end(), "artifact.export") !=
+                workflow.definition.optional_capabilities.end());
+        }
+    }
     const auto resource_workflow = std::find_if(checked_in_starter.workflows.begin(),
         checked_in_starter.workflows.end(), [](const auto & workflow) {
             return workflow.definition.workflow_ref == "workflow://resource/document-analysis";
@@ -245,14 +257,23 @@ int main() {
         std::vector<std::string>({"resource.inspect", "resource.read", "document.inspect", "data.query"}));
     assert(resource_workflow->definition.optional_capabilities ==
         std::vector<std::string>({"data.filter", "data.aggregate", "data.transform",
-            "statistics.describe", "statistics.outliers", "statistics.value_counts"}));
-    assert(resource_workflow->definition.workflow_revision == "v2");
+            "statistics.describe", "statistics.outliers", "statistics.value_counts",
+            "artifact.export"}));
+    assert(resource_workflow->definition.workflow_revision == "v3");
+    const auto web_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://web/research";
+        });
+    assert(web_workflow != checked_in_starter.workflows.end());
+    assert(web_workflow->definition.workflow_revision == "v2");
+    assert(web_workflow->definition.optional_capabilities ==
+        std::vector<std::string>({"artifact.export"}));
     assert(checked_in_starter.workflows[0].definition.required_context ==
         std::vector<std::string>({"context.dataset.available"}));
     assert(checked_in_starter.blueprints[3].workflow_bindings.size() == 3);
-    assert(checked_in_starter.blueprints[3].id == "dataset-analysis-v1");
+    assert(checked_in_starter.blueprints[3].id == "dataset-analysis-v2");
     assert(checked_in_starter.blueprints[3].source_revision ==
-        "agent-workflows-starter@v1");
+        "agent-workflows-starter@v3");
 
     common_memory_in_memory_store checked_in_memory;
     common_plan_in_memory_store checked_in_plans;
@@ -266,17 +287,17 @@ int main() {
         checked_in_import.installed_blueprint_ids.size() == 7);
     assert(checked_in_import.installed_workflow_ids.size() == 8);
     const auto checked_in_dataset = checked_in_plans.get(
-        "bootstrap:local:project:project-a:blueprint:dataset-analysis-v1", error);
+        "bootstrap:local:project:project-a:blueprint:dataset-analysis-v2", error);
     assert(checked_in_dataset &&
-        checked_in_dataset->source_revision == "agent-workflows-starter@v1");
+        checked_in_dataset->source_revision == "agent-workflows-starter@v3");
     assert(checked_in_dataset->selection_description ==
         "Analyse a dataset through a host-resolved workflow and verified result.");
     assert(checked_in_dataset->workflow_bindings.size() == 3);
     const auto checked_in_workflow = checked_in_plans.get(
-        "bootstrap:local:project:project-a:workflow:dataset-analysis-path-v1", error);
+        "bootstrap:local:project:project-a:workflow:dataset-analysis-path-v2", error);
     assert(checked_in_workflow && checked_in_workflow->kind == common_plan_kind::workflow &&
         checked_in_workflow->workflow_definition &&
-        checked_in_workflow->workflow_definition->workflow_revision == "v1" &&
+        checked_in_workflow->workflow_definition->workflow_revision == "v2" &&
         checked_in_workflow->workflow_definition->required_capabilities ==
             checked_in_starter.workflows[0].definition.required_capabilities &&
         checked_in_workflow->workflow_definition->optional_capabilities ==
@@ -310,7 +331,7 @@ int main() {
         partial_import, error));
     assert(partial_import.installed_blueprint_ids.size() == 6 &&
         partial_import.rejected_items.size() == 1 &&
-        partial_import.rejected_items.front().id == "dataset-analysis-v1");
+        partial_import.rejected_items.front().id == "dataset-analysis-v2");
 
     fixed_selector selector;
     common_blueprint_selection_config selection_config;

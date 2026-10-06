@@ -93,6 +93,8 @@ int main() {
     const auto * value_counts = catalog.find_definition("statistics.value_counts");
     const auto * native_crash = catalog.find_definition("diagnostics.native_crash");
     assert(document_tables && document_table && data_aggregate && dataset_schema && dataset_sample && dataset_validate && artifact_export && value_counts && native_crash);
+    assert(artifact_export->risk_class == common_tool_risk_class::artifact_write);
+    assert(artifact_export->requires_confirmation);
     const auto native_crash_input = nlohmann::json::parse(native_crash->input_schema_json);
     const auto native_crash_model_result = nlohmann::json::parse(native_crash->result_schema_json);
     assert(native_crash_input["required"].size() == 2);
@@ -280,19 +282,41 @@ int main() {
     bool analysis_has_dataset_schema = false;
     bool analysis_has_document_tables = false;
     bool analysis_has_web_fetch = false;
+    bool analysis_has_artifact_export = false;
     for (const auto & definition : analysis) {
         analysis_has_dataset_schema = analysis_has_dataset_schema || definition.name == "dataset.schema";
         analysis_has_document_tables = analysis_has_document_tables || definition.name == "document.tables";
         analysis_has_web_fetch = analysis_has_web_fetch || definition.name == "web.fetch";
+        analysis_has_artifact_export = analysis_has_artifact_export || definition.name == "artifact.export";
         if (definition.name == "data.join") {
             assert(std::find(definition.capabilities.begin(), definition.capabilities.end(), "data.join") !=
                 definition.capabilities.end());
         }
-        assert(!definition.requires_confirmation);
+        if (definition.name == "artifact.export") {
+            assert(definition.risk_class == common_tool_risk_class::artifact_write);
+            assert(definition.requires_confirmation);
+            assert(std::find(definition.capabilities.begin(), definition.capabilities.end(),
+                "artifact.export") != definition.capabilities.end());
+        } else {
+            assert(!definition.requires_confirmation);
+        }
         assert(definition.name != "memory_remember");
         assert(definition.name != "development.build");
     }
-    assert(analysis_has_dataset_schema && analysis_has_document_tables && analysis_has_web_fetch);
+    assert(analysis_has_dataset_schema && analysis_has_document_tables && analysis_has_web_fetch &&
+        analysis_has_artifact_export);
+    const auto * analysis_profile = catalog.find_profile("analysis");
+    assert(analysis_profile && analysis_profile->allow_policy_gated_writes == true);
+    const auto research = catalog.load_profile("research", error);
+    assert(error.empty());
+    assert(std::any_of(research.begin(), research.end(), [](const auto & definition) {
+        return definition.name == "artifact.export";
+    }));
+    const auto developer_read = catalog.load_profile("developer-read", error);
+    assert(error.empty());
+    assert(std::none_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
+        return definition.name == "artifact.export";
+    }));
 
     common_tool_bootstrap_result second;
     assert(catalog.bootstrap("memory", second, error));

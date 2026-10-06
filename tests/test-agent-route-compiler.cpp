@@ -19,7 +19,7 @@ common_plan_state make_workflow() {
         "workflow://dataset/analysis", "v1", "dataset", "graph-v1", {},
         {"dataset.resolve", "dataset.inspect", "data.query"},
         {"data.filter", "data.aggregate", "data.join", "data.transform",
-            "statistics.describe"},
+            "statistics.describe", "artifact.export"},
         {"context.dataset.available"}};
     return workflow;
 }
@@ -78,7 +78,8 @@ int main() {
     // configured semantic capability ids.  Route eligibility must derive the
     // stable built-in dataset capability from that host-owned tool view.
     tooling.capabilities = {"dataset.resolve", "dataset.inspect", "statistics.describe",
-        "data.query", "data.filter", "data.aggregate", "data.join", "data.transform"};
+        "data.query", "data.filter", "data.aggregate", "data.join", "data.transform",
+        "artifact.export"};
     tooling.available_context = {"context.dataset.available"};
     tooling.capability_tools = {
         {"dataset.resolve", {"dataset.select"}},
@@ -89,6 +90,7 @@ int main() {
         {"data.aggregate", {"data.aggregate"}},
         {"data.join", {"data.join"}},
         {"data.transform", {"data.transform"}},
+        {"artifact.export", {"artifact.export"}},
     };
     tooling.tools = {
         {"dataset.select", "select", R"({"type":"object"})"},
@@ -99,6 +101,7 @@ int main() {
         {"data.aggregate", "aggregate", R"({"type":"object"})"},
         {"data.join", "join", R"({"type":"object"})"},
         {"data.transform", "transform", R"({"type":"object"})"},
+        {"artifact.export", "export", R"({"type":"object"})"},
         {"web.fetch", "fetch", R"({"type":"object"})"},
     };
     common_agent_dataset_descriptor dataset;
@@ -111,7 +114,7 @@ int main() {
     assert(catalog.candidates.size() == 2);
     assert(catalog.candidates[0].id == "normal-plan");
     assert(catalog.candidates[1].kind == common_agent_route_kind::blueprint_workflow);
-    assert(catalog.candidates[1].resolved_optional_capabilities.size() == 5);
+    assert(catalog.candidates[1].resolved_optional_capabilities.size() == 6);
     common_agent_execution_envelope envelope;
     assert(build_agent_execution_envelope(catalog.candidates[1], tooling, envelope, error));
     assert(envelope.workflow_ref == "workflow://dataset/analysis");
@@ -125,6 +128,8 @@ int main() {
     assert(!common_agent_execution_envelope_allows(
         envelope, common_agent_execution_phase::normal, "web.fetch"));
     assert(common_agent_execution_envelope_allows(
+        envelope, common_agent_execution_phase::normal, "artifact.export"));
+    assert(common_agent_execution_envelope_allows(
         envelope, common_agent_execution_phase::research, "web.fetch"));
     assert(!envelope.fingerprint.empty());
 
@@ -132,6 +137,9 @@ int main() {
     reduced_tooling.tools.erase(std::remove_if(reduced_tooling.tools.begin(), reduced_tooling.tools.end(),
         [](const auto & tool) { return tool.name == "data.aggregate"; }), reduced_tooling.tools.end());
     reduced_tooling.capability_tools.erase("data.aggregate");
+    reduced_tooling.tools.erase(std::remove_if(reduced_tooling.tools.begin(), reduced_tooling.tools.end(),
+        [](const auto & tool) { return tool.name == "artifact.export"; }), reduced_tooling.tools.end());
+    reduced_tooling.capability_tools.erase("artifact.export");
     assert(compile_agent_route_catalog(request, store, scope, {make_candidate()},
         reduced_tooling, "", catalog, error));
     assert(catalog.candidates.size() == 2);
@@ -143,6 +151,8 @@ int main() {
         reduced_envelope, error));
     assert(!common_agent_execution_envelope_allows(
         reduced_envelope, common_agent_execution_phase::normal, "data.aggregate"));
+    assert(!common_agent_execution_envelope_allows(
+        reduced_envelope, common_agent_execution_phase::normal, "artifact.export"));
 
     tooling.available_datasets.clear();
     tooling.available_context.clear();

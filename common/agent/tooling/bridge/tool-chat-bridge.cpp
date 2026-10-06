@@ -5,14 +5,19 @@
 bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, const std::string & profile_id,
         const common_tool_registry & registry, std::vector<common_chat_tool> & tools, std::string & error) {
     tools.clear();
+    const auto * profile = catalog.find_profile(profile_id);
     const auto definitions = catalog.load_profile(profile_id, error);
     if (!error.empty()) return false;
     for (const auto & definition : definitions) {
         if (!definition.enabled || !registry.matches_binding(definition.name, definition.version, definition.executor_id)) continue;
         const bool read_only = definition.risk_class == common_tool_risk_class::local_read && registry.is_read_only(definition.name);
         const bool proposal = definition.risk_class == common_tool_risk_class::memory_proposal && definition.requires_confirmation && registry.is_policy_gated(definition.name);
+        const bool artifact_write = profile != nullptr &&
+            profile->allow_policy_gated_writes.value_or(false) &&
+            definition.risk_class == common_tool_risk_class::artifact_write &&
+            definition.requires_confirmation && registry.is_policy_gated(definition.name);
         const bool sandbox = definition.risk_class == common_tool_risk_class::sandbox_execution && definition.requires_confirmation && registry.is_policy_gated(definition.name);
-        if (!read_only && !proposal && !sandbox) continue;
+        if (!read_only && !proposal && !artifact_write && !sandbox) continue;
         std::string compact_error;
         const auto model_description = common_render_compact_tool_description(
             definition.name,
@@ -33,7 +38,8 @@ bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, cons
 }
 
 bool common_tool_dispatch_chat_calls(common_chat_msg & assistant_message, const common_tool_registry & registry,
-        size_t max_calls, common_tool_chat_dispatch_result & result, std::string & error) {
+        size_t max_calls, common_tool_chat_dispatch_result & result, std::string & error,
+        bool allow_policy_gated_writes) {
     result = {};
     if (assistant_message.role != "assistant") { error = "only assistant messages may contain tool calls"; return false; }
     if (assistant_message.tool_calls.size() > max_calls) { error = "tool call batch exceeds configured limit"; return false; }
@@ -50,7 +56,8 @@ bool common_tool_dispatch_chat_calls(common_chat_msg & assistant_message, const 
                 "tool is not registered",
                 false,
                 common_tool_failure_class::not_found).dump();
-        } else if (!registry.is_read_only(call.name) && !registry.is_policy_gated(call.name)) {
+        } else if (!registry.is_read_only(call.name) &&
+                (!registry.is_policy_gated(call.name) || !allow_policy_gated_writes)) {
             tool_message.content = common_tool_chat_failure_payload_to_json(
                 "tool_not_read_only",
                 "tool is not available in a read-only batch",

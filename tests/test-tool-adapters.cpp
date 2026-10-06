@@ -1,7 +1,9 @@
 #include "agent/tooling/adapters/tool-adapters.h"
+#include "agent/tooling/bridge/tool-chat-bridge.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdlib>
 #include <filesystem>
@@ -347,6 +349,26 @@ int main() {
     if (!common_register_native_tool_adapters(
             data_catalog, "analysis", foundation_bindings, data_registry,
             data_adapters, error) || !data_registry.contains("data.join")) return 1;
+    assert(data_registry.contains("artifact.export"));
+    assert(!data_registry.is_read_only("artifact.export"));
+    assert(data_registry.is_policy_gated("artifact.export"));
+    std::vector<common_chat_tool> data_chat_tools;
+    assert(common_tool_profile_to_chat_tools(
+        data_catalog, "analysis", data_registry, data_chat_tools, error));
+    assert(std::any_of(data_chat_tools.begin(), data_chat_tools.end(), [](const auto & tool) {
+        return tool.name == "artifact.export";
+    }));
+    common_chat_msg unapproved_export;
+    unapproved_export.role = "assistant";
+    unapproved_export.tool_calls.push_back({
+        "artifact.export", R"({"name":"unapproved.txt","content":"not authorized"})", ""});
+    common_tool_chat_dispatch_result unapproved_dispatch;
+    assert(common_tool_dispatch_chat_calls(
+        unapproved_export, data_registry, 1, unapproved_dispatch, error));
+    assert(unapproved_dispatch.executed == 0);
+    assert(data_registry.contains("artifact.export"));
+    assert(!data_registry.is_read_only("artifact.export"));
+    assert(data_registry.is_policy_gated("artifact.export"));
     foundation_data.stored_descriptor.origin.kind = "derived";
     foundation_data.stored_descriptor.ref.uri = "dataset://agent/turn/turn-1/step-1";
     result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://agent/turn/turn-1/step-1"})"});

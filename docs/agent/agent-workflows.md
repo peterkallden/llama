@@ -45,6 +45,11 @@ requirements generically. The starter library covers these host-tool domains:
 - Web research, gated by the host's network policy and limited to the safe
   search/fetch tools.
 
+Dataset analysis/quality/join, resource/document analysis and web research
+declare `artifact.export` as an optional capability. The route receives it only
+when the selected tool profile exposes the host-backed exporter. Export remains
+an explicit user-requested action; it is not an automatic terminal step.
+
 The dataset A* adapter accepts every data operation above when explicit
 host-bound operation arguments are available. It does not invent predicates,
 aggregate measures, transforms, or join keys. If those semantic arguments are

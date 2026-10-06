@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "agent-workflows-starter",
-  "version": "v2",
+  "version": "v3",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -62,33 +62,36 @@
   ],
   "workflows": [
     {
-      "id": "dataset-analysis-path-v1",
-      "source_revision": "agent-workflows-starter@v1",
+      "id": "dataset-analysis-path-v2",
+      "source_revision": "agent-workflows-starter@v3",
       "workflow_ref": "workflow://dataset/analysis",
-      "workflow_revision": "v1",
+      "workflow_revision": "v2",
       "family": "dataset",
-      "graph_revision": "dataset-analysis-graph@v1",
+      "graph_revision": "dataset-analysis-graph@v2",
       "required_capabilities": ["dataset.resolve", "dataset.inspect", "data.query", "data.filter", "data.aggregate", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts"],
+      "optional_capabilities": ["artifact.export"],
       "required_context": ["context.dataset.available"]
     },
     {
-      "id": "dataset-quality-path-v1",
-      "source_revision": "agent-workflows-starter@v1",
+      "id": "dataset-quality-path-v2",
+      "source_revision": "agent-workflows-starter@v3",
       "workflow_ref": "workflow://dataset/quality",
-      "workflow_revision": "v1",
+      "workflow_revision": "v2",
       "family": "dataset",
-      "graph_revision": "dataset-quality-graph@v1",
+      "graph_revision": "dataset-quality-graph@v2",
       "required_capabilities": ["dataset.resolve", "dataset.inspect", "dataset.schema", "dataset.validate", "data.aggregate", "data.filter", "statistics.describe", "statistics.outliers", "statistics.value_counts"],
+      "optional_capabilities": ["artifact.export"],
       "required_context": ["context.dataset.available"]
     },
     {
-      "id": "dataset-join-path-v1",
-      "source_revision": "agent-workflows-starter@v1",
+      "id": "dataset-join-path-v2",
+      "source_revision": "agent-workflows-starter@v3",
       "workflow_ref": "workflow://dataset/join",
-      "workflow_revision": "v1",
+      "workflow_revision": "v2",
       "family": "dataset",
-      "graph_revision": "dataset-join-graph@v1",
+      "graph_revision": "dataset-join-graph@v2",
       "required_capabilities": ["dataset.resolve", "dataset.inspect", "data.join"],
+      "optional_capabilities": ["artifact.export"],
       "required_context": ["context.dataset.multiple_available"]
     },
     {
@@ -112,24 +115,25 @@
       "required_context": ["context.repository.available"]
     },
     {
-      "id": "resource-document-analysis-path-v2",
-      "source_revision": "agent-workflows-starter@v2",
+      "id": "resource-document-analysis-path-v3",
+      "source_revision": "agent-workflows-starter@v3",
       "workflow_ref": "workflow://resource/document-analysis",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "resource",
-      "graph_revision": "resource-document-analysis-graph@v2",
+      "graph_revision": "resource-document-analysis-graph@v3",
       "required_capabilities": ["resource.inspect", "resource.read", "document.inspect", "data.query"],
-      "optional_capabilities": ["data.filter", "data.aggregate", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts"],
+      "optional_capabilities": ["data.filter", "data.aggregate", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts", "artifact.export"],
       "required_context": ["context.resource.available"]
     },
     {
-      "id": "web-research-path-v1",
-      "source_revision": "agent-workflows-starter@v1",
+      "id": "web-research-path-v2",
+      "source_revision": "agent-workflows-starter@v3",
       "workflow_ref": "workflow://web/research",
-      "workflow_revision": "v1",
+      "workflow_revision": "v2",
       "family": "web",
-      "graph_revision": "web-research-graph@v1",
+      "graph_revision": "web-research-graph@v2",
       "required_capabilities": ["web.search", "web.fetch"],
+      "optional_capabilities": ["artifact.export"],
       "required_context": ["context.network.allowed"]
     },
     {
@@ -229,8 +233,8 @@
       ]
     },
     {
-      "id": "dataset-analysis-v1",
-      "source_revision": "agent-workflows-starter@v1",
+      "id": "dataset-analysis-v2",
+      "source_revision": "agent-workflows-starter@v3",
       "selection_description": "Analyse a dataset through a host-resolved workflow and verified result.",
       "purpose": "Answer a bounded analytical question without guessing dataset identity or tool arguments.",
       "goal": "Analyse a resolved dataset and explain the verified result.",
@@ -239,9 +243,9 @@
       "workflow_policy": "preferred",
       "procedure_refs": ["data-understanding-v1", "choose-data-operation-v1", "analysis-evidence-v1"],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v1"},
-        {"workflow_ref": "workflow://dataset/quality", "workflow_revision": "v1"},
-        {"workflow_ref": "workflow://dataset/join", "workflow_revision": "v1"}
+        {"workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v2"},
+        {"workflow_ref": "workflow://dataset/quality", "workflow_revision": "v2"},
+        {"workflow_ref": "workflow://dataset/join", "workflow_revision": "v2"}
       ],
       "next_action": "resolve-dataset",
       "constraints": [
@@ -261,8 +265,8 @@
       ]
     },
     {
-      "id": "dataset-quality-v1",
-      "source_revision": "agent-workflows-starter@v1",
+      "id": "dataset-quality-v2",
+      "source_revision": "agent-workflows-starter@v3",
       "selection_description": "Assess dataset quality through bounded validation, profiling and anomaly evidence.",
       "purpose": "Separate declared data-quality violations from descriptive observations.",
       "goal": "Assess relevant quality properties of a resolved dataset.",
@@ -271,8 +275,8 @@
       "workflow_policy": "preferred",
       "procedure_refs": ["data-understanding-v1", "analysis-evidence-v1"],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://dataset/quality", "workflow_revision": "v1"},
-        {"workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v1"}
+        {"workflow_ref": "workflow://dataset/quality", "workflow_revision": "v2"},
+        {"workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v2"}
       ],
       "next_action": "resolve-dataset",
       "constraints": [
@@ -293,8 +297,8 @@
       ]
     },
     {
-      "id": "resource-document-analysis-v2",
-      "source_revision": "agent-workflows-starter@v2",
+      "id": "resource-document-analysis-v3",
+      "source_revision": "agent-workflows-starter@v3",
       "selection_description": "Analyse a supplied document or resource using host-resolved representations.",
       "purpose": "Answer a document question from bounded resource content or structured tables.",
       "goal": "Establish and explain evidence from the supplied resource.",
@@ -303,7 +307,7 @@
       "workflow_policy": "preferred",
       "procedure_refs": ["document-table-analysis-v1", "data-understanding-v1", "analysis-evidence-v1"],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://resource/document-analysis", "workflow_revision": "v2"}
+        {"workflow_ref": "workflow://resource/document-analysis", "workflow_revision": "v3"}
       ],
       "constraints": [
         {"id": "resource-identity", "description": "Use only host-provided resource references and representations.", "hard": true},
@@ -318,8 +322,8 @@
       ]
     },
     {
-      "id": "web-research-v1",
-      "source_revision": "agent-workflows-starter@v1",
+      "id": "web-research-v2",
+      "source_revision": "agent-workflows-starter@v3",
       "selection_description": "Research a question using bounded search and source retrieval.",
       "purpose": "Build a traceable answer from sources that directly support its claims.",
       "goal": "Answer the research question from retrieved source evidence.",
@@ -328,7 +332,7 @@
       "workflow_policy": "preferred",
       "procedure_refs": ["web-source-evidence-v1", "analysis-evidence-v1"],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://web/research", "workflow_revision": "v1"}
+        {"workflow_ref": "workflow://web/research", "workflow_revision": "v2"}
       ],
       "constraints": [
         {"id": "source-grounding", "description": "Do not state material web claims without retrieved source evidence.", "hard": true},
