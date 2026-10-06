@@ -124,7 +124,18 @@ mode. Agent turns start at `reflective` and may escalate to `deliberate` or
 ```text
 runtime mode:  chat | agent
 thinking mode: reflective | deliberate | research
+cognitive mode: explore | frame | execute | reflect
 ```
+
+Cognitive mode is a per-turn activity label, separate from thinking mode and
+the route execution envelope. The host/runtime supplies a short mode-specific
+instruction to model calls and traces each transition. The allowed progression
+is `frame -> execute`, `frame -> explore` for initial research, `execute ->
+reflect`, `reflect -> execute|frame|explore`, and `explore -> frame` after
+bounded evidence completion. Reflection uses the existing repair, replan and
+research-escalation signals; it does not receive a new mode-changing operation.
+Mode does not grant tool authority or replace the host-authorized route
+transition. It is turn-local and is not persisted in plans or workflows.
 
 `reflective` is the minimum assurance loop:
 

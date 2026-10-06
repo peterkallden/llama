@@ -50,6 +50,11 @@ common_agent_generation_request make_agent_cli_generation_request(
         tool_choice,
         request.flydelta_activation,
         request.flydelta_capture);
+    common_chat_msg cognitive_mode;
+    cognitive_mode.role = "system";
+    cognitive_mode.content = common_agent_cognitive_mode_instruction(
+        request.cognitive_state.mode);
+    generation.messages.insert(generation.messages.begin(), std::move(cognitive_mode));
     generation.input_resources.reserve(request.input_resources.size());
     for (const auto & input : request.input_resources) {
         generation.input_resources.push_back({input.resource, input.role, input.required});

@@ -146,6 +146,7 @@ struct common_agent_runtime_driver_execution {
     // by the agent driver.
     std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
     std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
+    common_agent_cognitive_state cognitive_state;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

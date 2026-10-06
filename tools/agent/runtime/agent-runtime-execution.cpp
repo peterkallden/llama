@@ -18,6 +18,32 @@
 
 namespace {
 
+bool transition_driver_cognitive_mode(
+        common_agent_runtime_driver_execution & execution,
+        common_agent_cognitive_mode to,
+        const std::string & reason,
+        const std::string & source) {
+    auto & state = execution.cognitive_state;
+    if (state.mode == to) return true;
+    const auto from = state.mode;
+    const bool allowed = common_agent_cognitive_transition(state, to, reason);
+    const auto detail = nlohmann::ordered_json{
+        {"type", "cognitive_mode_transition"},
+        {"from", common_agent_cognitive_mode_name(from)},
+        {"to", common_agent_cognitive_mode_name(to)},
+        {"reason", reason},
+        {"source", source},
+        {"allowed", allowed},
+    }.dump();
+    execution.pre_turn_trace.push_back({
+        common_runtime_trace_stage::plan,
+        allowed ? common_runtime_trace_kind::updated : common_runtime_trace_kind::failed,
+        detail,
+        execution.current_plan_id,
+        {}, {}, {}, {}});
+    return allowed;
+}
+
 bool tool_has_no_required_arguments(const common_chat_tool & tool) {
     const auto schema = nlohmann::ordered_json::parse(tool.parameters, nullptr, false);
     if (schema.is_discarded() || !schema.is_object()) return false;
@@ -114,6 +140,13 @@ bool restore_and_validate_bound_route(
         common_agent_event_type::route_selection_evaluated,
         "resumed existing route after deterministic envelope validation",
         {}, execution.current_plan_id});
+    if (execution.policy.deliberation_policy.mode != common_agent_thinking_mode::research &&
+            !transition_driver_cognitive_mode(execution,
+                common_agent_cognitive_mode::execute,
+                "resume after deterministic route revalidation", "host")) {
+        error = "invalid cognitive-mode transition while resuming a route";
+        return false;
+    }
     return true;
 }
 
@@ -795,6 +828,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.require_tool_execution = execution.require_tool_execution;
     request.allow_policy_gated_tool_proposals = execution.policy.allow_policy_gated_tool_proposals;
     request.deliberation_policy = execution.policy.deliberation_policy;
+    request.cognitive_state = execution.cognitive_state;
     request.research_should_stop = execution.research_should_stop;
     request.research_stop_reason = execution.research_stop_reason;
     request.explicit_memory_candidate = execution.explicit_memory_candidate;
@@ -849,6 +883,17 @@ bool run_agent_runtime_driver(
         std::string & error) {
     execution.pre_turn_events.clear();
     execution.pre_turn_trace.clear();
+    execution.pre_turn_trace.push_back({
+        common_runtime_trace_stage::plan,
+        common_runtime_trace_kind::started,
+        nlohmann::ordered_json{
+            {"type", "cognitive_mode_initialized"},
+            {"mode", common_agent_cognitive_mode_name(execution.cognitive_state.mode)},
+            {"reason", execution.cognitive_state.reason},
+            {"source", "host"},
+        }.dump(),
+        execution.current_plan_id,
+        {}, {}, {}, {}});
     if (execution.tooling.profile_tools_active && execution.tooling.tool_view == nullptr) {
         error = "profile tool execution requires a resolved tool view";
         return false;

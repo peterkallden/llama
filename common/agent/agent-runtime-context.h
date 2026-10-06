@@ -44,6 +44,13 @@ struct common_agent_runtime_turn_context {
     common_plan_state * outer_plan = nullptr;
 };
 
+bool common_agent_runtime_transition_cognitive_mode(
+        common_agent_runtime_turn_context & context,
+        common_agent_cognitive_mode to,
+        const std::string & reason,
+        const std::string & source,
+        common_runtime_trace_stage trace_stage);
+
 bool run_common_agent_research_phase(
         common_agent_runtime_turn_context & context);
 

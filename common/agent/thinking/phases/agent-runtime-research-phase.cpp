@@ -155,6 +155,17 @@ bool run_common_agent_research_phase(
         context.result.error = context.error;
         return false;
     }
+    const std::string transition_source =
+        context.request.cognitive_state.mode == common_agent_cognitive_mode::reflect
+        ? "reflection" : "host";
+    if (!common_agent_runtime_transition_cognitive_mode(
+            context, common_agent_cognitive_mode::explore,
+            "bounded research evidence acquisition", transition_source,
+            common_runtime_trace_stage::research)) {
+        context.error = "invalid cognitive-mode transition into exploration";
+        context.result.error = context.error;
+        return false;
+    }
 
     context.research_workspace.emplace();
     if (!common_agent_research_create_workspace(
@@ -266,6 +277,14 @@ bool run_common_agent_research_phase(
         context.research_workspace->workspace_id);
     context.research_synthesis_context = research_result.synthesis_context;
     if (!bridge_research_result_to_plan(context, research_result)) {
+        context.result.error = context.error;
+        return false;
+    }
+    if (!common_agent_runtime_transition_cognitive_mode(
+            context, common_agent_cognitive_mode::frame,
+            "research evidence met the bounded completion criteria", "host",
+            common_runtime_trace_stage::research)) {
+        context.error = "invalid cognitive-mode transition after research";
         context.result.error = context.error;
         return false;
     }

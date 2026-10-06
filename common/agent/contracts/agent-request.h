@@ -8,6 +8,7 @@
 #include "agent/contracts/agent-events.h"
 #include "agent/contracts/agent-learning.h"
 #include "agent/thinking/deliberation-policy.h"
+#include "agent/thinking/cognitive-mode.h"
 #include "agent/thinking/research/research-contract.h"
 #include "agent/tooling/contracts/tool-runtime-contract.h"
 #include "agent/tooling/schema/tool-output-codec.h"
@@ -115,6 +116,9 @@ struct common_agent_request {
     bool allow_policy_gated_tool_proposals = false;
     std::function<bool()> research_should_stop;
     std::function<common_agent_research_stop_reason()> research_stop_reason;
+    // Per-turn activity label supplied and transitioned by the host/runtime.
+    // It is prompt/trace context, not durable plan state or tool authority.
+    common_agent_cognitive_state cognitive_state;
 };
 
 inline common_agent_scope common_agent_scope_from_request(const common_agent_request & request) {

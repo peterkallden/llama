@@ -744,6 +744,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
             "memory supplied to runtime", {}, {}, {}, hit.memory.id);
     }
+    bool resumed_existing_plan = false;
     if (request.plan_id && !request.plan_id->empty()) {
         const auto existing = store.get(*request.plan_id, error);
         if (!error.empty()) { result.error = error; return result; }
@@ -753,6 +754,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 return result;
             }
             plan = *existing;
+            resumed_existing_plan = true;
             append_event(result, request, common_agent_event_type::plan_updated, "existing plan resumed", {}, plan.id);
             append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
                 "existing plan resumed", plan.id);
@@ -818,6 +820,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     }
     if (tools && !tools->validate_plan(plan, error)) {
         result.error = "tool workflow validation failed: " + error;
+        return result;
+    }
+    if (resumed_existing_plan &&
+            request.deliberation_policy.mode != common_agent_thinking_mode::research &&
+            !common_agent_runtime_transition_cognitive_mode(
+                turn, common_agent_cognitive_mode::execute,
+                "resume existing plan after validation", "host", common_runtime_trace_stage::plan)) {
+        result.error = "invalid cognitive-mode transition while resuming a plan";
         return result;
     }
     // A completed plan can be resumed for another response/learning pass (or
@@ -1065,6 +1075,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     // every later transition. Restored or model-authored plans may contain
     // more than one active step; a dependent active step must be reset before
     // reflection or tool execution can observe it.
+    if (request.cognitive_state.mode != common_agent_cognitive_mode::execute &&
+            !common_agent_runtime_transition_cognitive_mode(
+                turn, common_agent_cognitive_mode::execute,
+                "validated plan ready for execution", "host", common_runtime_trace_stage::plan)) {
+        result.error = "invalid cognitive-mode transition before plan execution";
+        return result;
+    }
     if (!completed_plan_resume && !activate_next_ready_step()) {
         if (result.error.empty()) result.error = error.empty()
             ? "initial plan dependency scheduling failed"
@@ -1080,6 +1097,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     size_t plan_revision_count = 0;
     size_t runtime_iteration_limit = request.max_iterations;
     for (size_t iteration = 0; iteration < runtime_iteration_limit; ++iteration) {
+        if (request.cognitive_state.mode != common_agent_cognitive_mode::execute &&
+                !common_agent_runtime_transition_cognitive_mode(
+                    turn, common_agent_cognitive_mode::execute,
+                    "resume validated plan work", "host", common_runtime_trace_stage::plan)) {
+            result.error = "invalid cognitive-mode transition before plan work";
+            return result;
+        }
         size_t tool_batches = 0;
         bool defer_draft_for_required_tools = false;
         // Execute the contiguous, dependency-ready tool chain before drafting.
@@ -1794,6 +1818,33 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 "deliberation requested a plan revision", {}, plan.id});
             ++plan_revision_count;
         }
+        const bool requests_reframe =
+            reflection.decision == common_reflection_decision::replan ||
+            reflection.next_action == common_agent_reflection_next_action::revise_plan ||
+            std::any_of(reflection.proposed_plan_operations.begin(),
+                reflection.proposed_plan_operations.end(), [](const auto & operation) {
+                    switch (operation.kind) {
+                        case common_plan_operation_kind::revise_goal:
+                        case common_plan_operation_kind::add_step:
+                        case common_plan_operation_kind::revise_step:
+                        case common_plan_operation_kind::replace_step:
+                        case common_plan_operation_kind::remove_step:
+                        case common_plan_operation_kind::add_dependency:
+                        case common_plan_operation_kind::remove_dependency:
+                        case common_plan_operation_kind::request_replan:
+                            return true;
+                        default:
+                            return false;
+                    }
+                });
+    if (requests_reframe && request.cognitive_state.mode == common_agent_cognitive_mode::reflect &&
+            !common_agent_runtime_transition_cognitive_mode(
+                    turn, common_agent_cognitive_mode::frame,
+                    "reflection requested same-route plan restructuring", "reflection",
+                    common_runtime_trace_stage::reflection)) {
+            result.error = "invalid cognitive-mode transition for reflection replan";
+            return result;
+        }
         std::vector<std::string> reflection_work_step_ids;
         for (const auto & op : reflection.proposed_plan_operations) {
             const common_plan_step * step = nullptr;
@@ -1927,6 +1978,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::reflection,
                 common_runtime_trace_kind::decided,
                 "reflection scheduled repair before accepting response", plan.id);
+            if (request.cognitive_state.mode == common_agent_cognitive_mode::reflect &&
+                    !common_agent_runtime_transition_cognitive_mode(
+                        turn, common_agent_cognitive_mode::execute,
+                        "execute reflection-scheduled local repair", "reflection",
+                        common_runtime_trace_stage::reflection)) {
+                result.error = "invalid cognitive-mode transition for local repair";
+                return result;
+            }
             continue;
         }
         if (!reflection_escalation_denied &&
@@ -1963,6 +2022,17 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         append_event(result, request, {common_agent_event_type::response_revised, "reflection requested revision", {}, plan.id});
         append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::decided,
             "reflection requested response revision", plan.id);
+        if (request.cognitive_state.mode == common_agent_cognitive_mode::reflect &&
+                !common_agent_runtime_transition_cognitive_mode(
+                    turn,
+                    requests_reframe ? common_agent_cognitive_mode::frame
+                        : common_agent_cognitive_mode::execute,
+                    requests_reframe ? "continue same-route plan reframing"
+                        : "continue with local response or plan repair",
+                    "reflection", common_runtime_trace_stage::reflection)) {
+            result.error = "invalid cognitive-mode transition after reflection";
+            return result;
+        }
     }
     if (result.response.empty() && result.error.empty() && !result.limit_reached) {
         result.error = "agent loop reached its iteration limit";

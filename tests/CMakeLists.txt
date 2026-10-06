@@ -357,6 +357,7 @@ endif()
 if (LLAMA_AGENT_RUNTIME)
     foreach(TEST_SOURCE
         test-agent-contract.cpp
+        test-agent-cognitive-mode.cpp
         test-agent-prepared-generation.cpp
         test-agent-model-profile.cpp
         test-agent-model-catalog.cpp
@@ -468,7 +469,7 @@ test-agent-flydelta-alpha-response-search.cpp
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
         # These contract tests use assert() for both checks and setup. Keep
         # assertions enabled even when the surrounding build is RelWithDebInfo.
-        if (TEST_NAME MATCHES "^test-(agent-route-compiler|agent-execution-envelope|agent-bootstrap|plan-cozo|tool-catalog)$")
+        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-route-compiler|agent-execution-envelope|agent-bootstrap|plan-cozo|tool-catalog)$")
             if (MSVC)
                 target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
             else()

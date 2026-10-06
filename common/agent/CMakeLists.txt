@@ -57,7 +57,9 @@ add_library(${TARGET}
     learning/blueprint-selector.cpp learning/blueprint-selector.h
     tooling/catalog/model-projection.cpp tooling/catalog/model-projection.h
     thinking/deliberation-policy.cpp thinking/deliberation-policy.h
+    thinking/cognitive-mode.cpp thinking/cognitive-mode.h
     agent-runtime-context.h
+    agent-runtime-context.cpp
     thinking/phases/agent-runtime-reflection-phase.cpp
     thinking/phases/agent-runtime-research-phase.cpp
     agent-runtime.cpp agent-runtime.h

@@ -11,6 +11,12 @@ bool evaluate_common_agent_reflection_phase(
         context.error = "reflection phase is not permitted by the route execution envelope";
         return false;
     }
+    if (!common_agent_runtime_transition_cognitive_mode(
+            context, common_agent_cognitive_mode::reflect,
+            "review execution result", "host", common_runtime_trace_stage::reflection)) {
+        context.error = "invalid cognitive-mode transition into reflection";
+        return false;
+    }
     reflection = context.reflector.evaluate_result(
         context.request, plan, draft, context.error);
     if (!context.error.empty()) return false;
