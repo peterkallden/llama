@@ -25,6 +25,8 @@
 #include <string>
 #include <vector>
 
+struct common_agent_execution_envelope;
+
 struct common_agent_inference_capabilities {
     bool text = true;
     bool image = false;
@@ -200,4 +202,6 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
     common_agent_inference & inference,
     const common_agent_runtime_config & runtime_config,
     const std::vector<common_chat_tool> & tools,
-    agent_tool_view * tool_view);
+    agent_tool_view * tool_view,
+    const common_agent_execution_envelope * execution_envelope = nullptr,
+    common_agent_execution_phase initial_phase = common_agent_execution_phase::normal);

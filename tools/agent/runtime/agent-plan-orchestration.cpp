@@ -3,13 +3,16 @@
 #include "../cli/agent-cli-selection.h"
 #include "../tooling/agent-tool-provider.h"
 #include "tools/agent/cli/agent-cli-scope.h"
+#include "agent-dataset-workflow-adapter.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/learning/blueprint-selector.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <ctime>
 #include <sstream>
+#include <nlohmann/json.hpp>
 
 namespace {
 
@@ -93,6 +96,9 @@ bool maybe_install_agent_bootstrap(
             candidate.goal = blueprint.goal;
             candidate.success_criteria = blueprint.success_criteria;
             candidate.required_capabilities = blueprint.required_capabilities;
+            candidate.workflow_policy = blueprint.workflow_policy;
+            candidate.procedure_refs = blueprint.procedure_refs;
+            candidate.workflow_bindings = blueprint.workflow_bindings;
             candidate.constraints = blueprint.constraints;
             candidate.assumptions = blueprint.assumptions;
             for (const auto & step : blueprint.steps) {
@@ -107,32 +113,10 @@ bool maybe_install_agent_bootstrap(
         bootstrap_result.installed_memory_ids.size(), bootstrap_result.existing_memory_ids.size(),
         bootstrap_result.installed_blueprint_ids.size(), bootstrap_result.existing_blueprint_ids.size());
 
-    if (!config.agent_blueprint.empty() &&
-            config.agent_blueprint != "off" && config.agent_blueprint != "auto") {
-        common_explicit_blueprint_selector selector(config.agent_blueprint);
-        common_blueprint_selection_config selection_config;
-        selection_config.task_plan_id = current_plan_id;
-        selection_config.session_id = scope.session_id;
-        selection_config.scope = scope.plan_scope;
-        selection_config.now = bootstrap_config.now;
-        selection_config.materialize_instance = config.blueprint_instance_materializer;
-        common_blueprint_selection_result selection;
-        common_agent_request selection_request;
-        selection_request.prompt = config.prompt;
-        common_agent_scope_apply(scope, selection_request);
-        if (!common_agent_select_and_instantiate_blueprint(plan_store, selection_request, selector, installed_blueprint_candidates, selection_config, selection, error)) {
-            error = "agent blueprint selection failed: " + error;
-            return false;
-        }
-        if (selection.outcome != common_blueprint_selection_outcome::instantiated &&
-                selection.outcome != common_blueprint_selection_outcome::resumed) {
-            error = "agent blueprint selection failed safely: " + selection.reason;
-            return false;
-        }
-        fprintf(stderr, "agent blueprint %s: %s\n",
-            selection.outcome == common_blueprint_selection_outcome::instantiated ? "instantiated" : "resumed",
-            current_plan_id.c_str());
-    }
+    // Blueprint selection is deliberately deferred to maybe_select_agent_route.
+    // This keeps explicit and automatic selection on the same host-owned route
+    // catalog and lets resume win before either path creates a new plan.
+    (void) current_plan_id;
 
     error.clear();
     return true;
@@ -248,7 +232,9 @@ bool maybe_auto_select_blueprint(
     selection_config.session_id = context.scope.session_id;
     selection_config.scope = context.scope.plan_scope;
     selection_config.now = std::time(nullptr);
-    selection_config.materialize_instance = context.config.blueprint_instance_materializer;
+    selection_config.materialize_instance = context.config.blueprint_instance_materializer
+        ? context.config.blueprint_instance_materializer
+        : make_agent_dataset_workflow_materializer(context.plan_store, context.tooling);
     if (context.tooling != nullptr && context.tooling->profile_tools_active) {
         selection_config.capabilities_resolved = true;
         for (const auto & tool : context.tooling->capabilities) {
@@ -319,5 +305,213 @@ bool maybe_auto_select_blueprint(
     }
 
     error.clear();
+    return true;
+}
+
+bool maybe_select_agent_route(
+        const common_agent_orchestration_runtime_context & context,
+        common_agent_route_candidate & selected_route,
+        bool & route_selected,
+        std::string & error) {
+    selected_route = {};
+    route_selected = false;
+    error.clear();
+    if (!context.current_plan_id.empty() || context.config.agent_blueprint == "off" ||
+            context.scope.session_id.empty() || context.tooling == nullptr) return true;
+
+    common_agent_route_catalog catalog;
+    if (!compile_agent_route_catalog(
+            make_orchestration_selection_request(context.config, context.scope),
+            context.plan_store, context.scope, context.installed_blueprint_candidates,
+            *context.tooling,
+            context.config.agent_blueprint == "auto" ? std::string{} : context.config.agent_blueprint,
+            catalog, error)) {
+        error = "route compilation failed: " + error;
+        return false;
+    }
+
+    const auto is_normal = [](const auto & candidate) {
+        return candidate.kind == common_agent_route_kind::normal_plan;
+    };
+    std::optional<common_agent_route_candidate> chosen;
+    std::string selection_mode = "deterministic";
+    float confidence = 1.0f;
+    std::string reason;
+    if (context.config.agent_blueprint != "auto") {
+        const auto found = std::find_if(catalog.candidates.begin(), catalog.candidates.end(),
+            [&](const auto & candidate) {
+                return !is_normal(candidate) && candidate.blueprint_logical_id == context.config.agent_blueprint;
+            });
+        if (found == catalog.candidates.end()) {
+            error = "explicit blueprint is not eligible in the current host context";
+            for (const auto & rejection : catalog.rejections) {
+                if (rejection.blueprint_logical_id == context.config.agent_blueprint) {
+                    error += ": " + rejection.reason;
+                    if (!rejection.workflow_ref.empty()) error += " (" + rejection.workflow_ref + ")";
+                    break;
+                }
+            }
+            return false;
+        }
+        chosen = *found;
+        reason = "explicit blueprint route";
+    } else if (catalog.candidates.size() == 1) {
+        chosen = catalog.candidates.front();
+        reason = "single host-compiled route";
+    } else {
+        std::string selection_error;
+        const auto route_choice = select_llama_cli_route(
+            context.inference, context.generation_config,
+            make_orchestration_selection_request(context.config, context.scope),
+            catalog, selection_error);
+        if (route_choice.route_id) {
+            const auto found = std::find_if(catalog.candidates.begin(), catalog.candidates.end(),
+                [&](const auto & candidate) { return candidate.id == *route_choice.route_id; });
+            if (found != catalog.candidates.end()) chosen = *found;
+            selection_mode = "model";
+            confidence = route_choice.confidence;
+            reason = route_choice.reason;
+        } else {
+            chosen = *std::find_if(catalog.candidates.begin(), catalog.candidates.end(), is_normal);
+            selection_mode = "fallback";
+            confidence = 0.0f;
+            reason = selection_error.empty() ? "route selector declined" : selection_error;
+        }
+    }
+    if (!chosen) {
+        error = "route catalog did not produce a safe fallback";
+        return false;
+    }
+    selected_route = *chosen;
+    route_selected = true;
+
+    const auto detail = nlohmann::ordered_json{
+        {"context_fingerprint", catalog.context_fingerprint},
+        {"catalog_fingerprint", catalog.catalog_fingerprint},
+        {"candidate_count", catalog.candidates.size()},
+        {"rejected_count", catalog.rejections.size()},
+        {"selected_route_id", selected_route.id},
+        {"selection_mode", selection_mode},
+        {"confidence", confidence},
+        {"reason", reason},
+    }.dump();
+    context.pre_turn_events.push_back({
+        common_agent_event_type::route_selection_evaluated,
+        detail, {}, context.current_plan_id.empty()
+            ? std::nullopt : std::optional<std::string>(context.current_plan_id)});
+    context.pre_turn_trace.push_back({
+        common_runtime_trace_stage::plan,
+        common_runtime_trace_kind::decided,
+        detail,
+        context.current_plan_id,
+        {}, {}, {}, selected_route.id});
+
+    context.route_procedure_memories.clear();
+    if (!selected_route.procedure_refs.empty()) {
+        common_memory_query query;
+        query.kind = common_memory_kind::procedure;
+        query.scope = context.scope.project_id.empty()
+            ? common_memory_scope::session : common_memory_scope::project;
+        query.namespace_id = context.scope.namespace_id;
+        query.session_id = context.scope.session_id;
+        query.project_id = context.scope.project_id;
+        query.turn_id = context.scope.turn_id;
+        query.limit = 64;
+        std::string procedure_error;
+        const auto procedures = context.memory_store.list(query, procedure_error);
+        if (procedure_error.empty()) {
+            for (const auto & procedure_ref : selected_route.procedure_refs) {
+                const auto found = std::find_if(procedures.begin(), procedures.end(),
+                    [&](const auto & procedure) {
+                        return procedure.id == procedure_ref ||
+                            procedure.id.size() > procedure_ref.size() + 1 &&
+                            procedure.id.compare(procedure.id.size() - procedure_ref.size(),
+                                procedure_ref.size(), procedure_ref) == 0 &&
+                            procedure.id[procedure.id.size() - procedure_ref.size() - 1] == ':';
+                    });
+                if (found != procedures.end()) {
+                    common_memory_hit hit;
+                    hit.memory = *found;
+                    hit.provenance = "blueprint procedure ref";
+                    hit.final_score = 1.0f;
+                    context.route_procedure_memories.push_back(std::move(hit));
+                }
+            }
+        }
+    }
+
+    if (selected_route.kind == common_agent_route_kind::normal_plan) return true;
+    if (context.current_plan_id.empty()) context.current_plan_id = make_automatic_blueprint_plan_id(context.scope);
+
+    const auto blueprint_candidate = std::find_if(
+        context.installed_blueprint_candidates.begin(), context.installed_blueprint_candidates.end(),
+        [&](const auto & candidate) { return candidate.logical_id == selected_route.blueprint_logical_id; });
+    if (blueprint_candidate == context.installed_blueprint_candidates.end()) {
+        error = "selected route does not map to an installed blueprint";
+        return false;
+    }
+    common_explicit_blueprint_selector selector(selected_route.blueprint_logical_id);
+    common_blueprint_selection_config selection_config;
+    selection_config.task_plan_id = context.current_plan_id;
+    selection_config.session_id = context.scope.session_id;
+    selection_config.scope = context.scope.plan_scope;
+    selection_config.now = std::time(nullptr);
+    selection_config.selected_workflow = selected_route.workflow;
+    common_agent_execution_envelope route_envelope;
+    if (!build_agent_execution_envelope(
+            selected_route, *context.tooling, route_envelope, error)) {
+        error = "selected route envelope failed: " + error;
+        return false;
+    }
+    common_plan_route_binding route_binding;
+    route_binding.route_id = selected_route.id;
+    route_binding.blueprint_ref = selected_route.blueprint_logical_id;
+    route_binding.blueprint_revision = selected_route.blueprint_revision;
+    route_binding.graph_revision = selected_route.graph_revision;
+    route_binding.execution_envelope_fingerprint = route_envelope.fingerprint;
+    route_binding.policy_revision = route_envelope.policy_revision;
+    if (selected_route.workflow) {
+        route_binding.workflow_ref = selected_route.workflow->workflow_ref;
+        route_binding.workflow_revision = selected_route.workflow->workflow_revision;
+    }
+    selection_config.route_binding = route_binding;
+    if (context.config.blueprint_instance_materializer) {
+        selection_config.materialize_instance = context.config.blueprint_instance_materializer;
+    } else if (selected_route.kind == common_agent_route_kind::blueprint_workflow) {
+        selection_config.materialize_instance = make_agent_dataset_workflow_materializer(
+            context.plan_store, context.tooling);
+    }
+    if (context.tooling->profile_tools_active) {
+        selection_config.capabilities_resolved = true;
+        selection_config.available_capabilities = context.tooling->capabilities;
+        // The route compiler has already validated semantic built-in
+        // capabilities derived from the concrete tool view and the selected
+        // workflow family.  Carry that same host-owned snapshot into the
+        // selector's structural eligibility check; otherwise a valid route
+        // would be rejected by the older selector because it only knows the
+        // raw configured capability ids.
+        for (const auto & capability : selected_route.required_capabilities) {
+            if (std::find(selection_config.available_capabilities.begin(),
+                    selection_config.available_capabilities.end(), capability) ==
+                    selection_config.available_capabilities.end()) {
+                selection_config.available_capabilities.push_back(capability);
+            }
+        }
+        selection_config.blocked_constraint_ids = context.tooling->blocked_constraint_ids;
+    }
+    common_blueprint_selection_result selection;
+    auto request = make_orchestration_selection_request(context.config, context.scope);
+    if (context.policy_pack != nullptr) request.policy_pack = *context.policy_pack;
+    if (!common_agent_select_and_instantiate_blueprint(
+            context.plan_store, request, selector, {*blueprint_candidate}, selection_config,
+            selection, error)) {
+        error = "route blueprint instantiation failed: " + error;
+        return false;
+    }
+    if (selection.outcome != common_blueprint_selection_outcome::instantiated &&
+            selection.outcome != common_blueprint_selection_outcome::resumed) {
+        error = "selected route failed safely: " + selection.reason;
+        return false;
+    }
     return true;
 }

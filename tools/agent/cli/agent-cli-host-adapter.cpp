@@ -329,6 +329,15 @@ bool resolve_agent_host_tool_selection(
         for (const auto & definition : profile_snapshot->tools) {
             selection.tooling.capabilities.insert(selection.tooling.capabilities.end(),
                 definition.capabilities.begin(), definition.capabilities.end());
+            for (const auto & capability : definition.capabilities) {
+                selection.tooling.capability_tools[capability].push_back(definition.name);
+            }
+        }
+        if (!selection.tooling.available_datasets.empty()) {
+            selection.tooling.available_context.push_back("context.dataset.available");
+        }
+        if (selection.tooling.available_datasets.size() > 1) {
+            selection.tooling.available_context.push_back("context.dataset.multiple_available");
         }
         std::sort(selection.tooling.capabilities.begin(), selection.tooling.capabilities.end());
         selection.tooling.capabilities.erase(std::unique(selection.tooling.capabilities.begin(), selection.tooling.capabilities.end()), selection.tooling.capabilities.end());
@@ -342,6 +351,14 @@ bool resolve_agent_host_tool_selection(
                 agent_tool_context_apply_policy_gated_writes(
                     resolved_tool_context, *resolved_profile->allow_policy_gated_writes);
             }
+        }
+        const auto & repository_root = request.repository_root.empty()
+            ? resolved_tool_context.repository_root : request.repository_root;
+        if (!repository_root.empty()) {
+            selection.tooling.available_context.push_back("context.repository.available");
+        }
+        if (resolved_tool_context.allow_network) {
+            selection.tooling.available_context.push_back("context.network.allowed");
         }
 
         common_native_tool_bindings bindings;
@@ -973,18 +990,23 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
     turn_request.request.input_resources = std::move(input_resources);
     turn_request.request.require_tool_execution = options.require_tool_execution;
     turn_request.scope = scope;
-    turn_request.inference_options = make_agent_inference_options({
-        options.model,
-        options.n_predict,
-        options.n_gpu_layers,
-        true,
-        options.n_threads,
-        0,
-        1,
-        1,
-        false,
-        options.agent_trace,
-    });
+    // Keep the resident-host policy fields explicit.  This used to be a
+    // positional aggregate; after reserve_flydelta_workspace was added to
+    // the contract, that silently disabled the 99 -> auto-fit translation
+    // and shifted agent_trace into the cvec-batch field for CLI runtime turns.
+    common_agent_inference_options inference_options;
+    inference_options.model = options.model;
+    inference_options.n_predict = options.n_predict;
+    inference_options.n_gpu_layers = options.n_gpu_layers;
+    inference_options.fit_params = true;
+    inference_options.n_threads = options.n_threads;
+    inference_options.context_size_tokens = static_cast<size_t>(std::max(0, options.context_size));
+    inference_options.n_parallel = 1;
+    inference_options.n_sequences = 1;
+    inference_options.reserve_flydelta_workspace = true;
+    inference_options.per_sequence_cvec_batch = false;
+    inference_options.agent_trace = options.agent_trace;
+    turn_request.inference_options = make_agent_inference_options(std::move(inference_options));
     turn_request.inference_options.n_threads = options.n_threads;
     turn_request.inference_options.context_size_tokens = static_cast<size_t>(std::max(0, options.context_size));
     turn_request.policy = make_agent_runtime_policy({

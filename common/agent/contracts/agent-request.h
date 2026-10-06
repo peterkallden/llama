@@ -51,6 +51,13 @@ struct common_agent_tool_argument_binding {
     bool model_visible = true;
 };
 
+using common_agent_workflow_continuation_provider = std::function<bool(
+    const common_plan_state & plan,
+    const std::string & completed_step_id,
+    const common_plan_observation & observation,
+    std::vector<common_plan_step> & continuation_steps,
+    std::string & error)>;
+
 struct common_agent_request {
     std::vector<common_chat_msg> messages;
     common_memory_scope memory_scope = common_memory_scope::session;
@@ -79,6 +86,9 @@ struct common_agent_request {
     // Structured arguments supplied by the host for a selected tool. These
     // are merged before planner/tool validation and execution.
     std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
+    // Optional host-owned A* continuation for a selected workflow. It may
+    // append only steps within the already selected route contract.
+    common_agent_workflow_continuation_provider workflow_continuation;
     // Host-owned, scoped dataset inventory captured for this turn. These are
     // lookup candidates, not model-created plan aliases.
     std::vector<common_agent_dataset_descriptor> available_datasets;

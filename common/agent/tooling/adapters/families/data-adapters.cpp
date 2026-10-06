@@ -143,6 +143,12 @@ bool validate_dataset_descriptor_scope(
             "The derived dataset is outside the current host turn scope.");
         return false;
     }
+    // A descriptor registered in the active structured-data backend is already
+    // host-owned input for this runtime.  Its source resource may be a durable
+    // backend seed or an external ingestion record rather than an object in
+    // the current-turn resource store, so requiring a second resource lookup
+    // would incorrectly reject valid registered datasets.
+    if (bindings.data_store != nullptr) return true;
     if (bindings.resource_runtime.store == nullptr) {
         return true;
     }

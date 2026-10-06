@@ -12,6 +12,8 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <utility>
+#include <vector>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -740,6 +742,7 @@ int main() {
     dataset_request.workflow_ref = workflow_contract.workflow_ref;
     dataset_request.workflow_revision = workflow_contract.workflow_revision;
     dataset_request.dataset_ref = "dataset://local/sales";
+    dataset_request.dataset_name = "sales";
     dataset_request.terminal_tool = "data.aggregate";
     dataset_request.terminal_arguments_json =
         R"({"dataset":"dataset://local/sales","group_by":["region"],"measure":"amount"})";
@@ -765,6 +768,44 @@ int main() {
         cached_schema_proposal.canonical_steps[1].tool_name == "data.aggregate");
     CHECK(cached_schema_proposal.path_fingerprint != dataset_proposal.path_fingerprint);
 
+    const std::vector<std::pair<std::string, std::string>> data_operations = {
+        {"data.query", R"({"dataset":"dataset://local/sales","select":["region"]})"},
+        {"data.filter", R"({"dataset":"dataset://local/sales","conditions":[{"column":"region","op":"eq","value":"west"}]})"},
+        {"data.aggregate", R"({"dataset":"dataset://local/sales","group_by":["region"],"measures":[{"function":"sum","column":"amount"}]})"},
+        {"data.join", R"({"left":"dataset://local/sales","right":"dataset://local/targets","on":[{"left":"region","right":"region"}]})"},
+        {"data.transform", R"({"dataset":"dataset://local/sales","operations":[{"type":"rename","from":"region","to":"sales_region"}]})"},
+    };
+    for (const auto & operation : data_operations) {
+        auto operation_request = dataset_request;
+        operation_request.terminal_tool = operation.first;
+        operation_request.terminal_arguments_json = operation.second;
+        if (operation.first == "data.join") {
+            operation_request.second_dataset_ref = "dataset://local/targets";
+            operation_request.second_dataset_name = "targets";
+            operation_request.second_schema_known = true;
+        }
+        common_flydelta_workflow_proposal operation_proposal;
+        CHECK(common_flydelta_propose_dataset_blueprint_workflow(
+            operation_request, operation_proposal, error));
+        CHECK(operation_proposal.proposed && !operation_proposal.canonical_steps.empty() &&
+            operation_proposal.canonical_steps.back().tool_name == operation.first);
+        if (operation.first == "data.join") {
+            CHECK(operation_proposal.binding_refs == std::vector<std::string>({
+                "dataset://local/sales", "dataset://local/targets"}));
+            operation_request.schema_known = false;
+            operation_request.second_schema_known = false;
+            operation_request.max_path_length = 8;
+            common_flydelta_workflow_proposal inspect_both_proposal;
+            CHECK(common_flydelta_propose_dataset_blueprint_workflow(
+                operation_request, inspect_both_proposal, error));
+            CHECK(inspect_both_proposal.proposed &&
+                inspect_both_proposal.canonical_steps.size() == 5 &&
+                inspect_both_proposal.canonical_steps[2].tool_name == "dataset.inspect" &&
+                inspect_both_proposal.canonical_steps[3].tool_name == "dataset.inspect" &&
+                inspect_both_proposal.canonical_steps[4].tool_name == "data.join");
+        }
+    }
+
     const auto validate_step = [&](const common_tool_workflow_step_view & step,
             const std::string & schema, const std::string & contract_ref) {
         common_flydelta_model_tool_contract contract;
@@ -782,7 +823,7 @@ int main() {
             step_result.verdict == common_flydelta_oracle_verdict::satisfied;
     };
     CHECK(validate_step(dataset_proposal.canonical_steps[0],
-        R"({"type":"object","required":["dataset"],"properties":{"dataset":{"type":"string"}},"additionalProperties":false})",
+        R"({"type":"object","required":["name"],"properties":{"name":{"type":"string"}},"additionalProperties":false})",
         "tool://dataset.select"));
     CHECK(validate_step(dataset_proposal.canonical_steps[1],
         R"({"type":"object","required":["dataset"],"properties":{"dataset":{"type":"string"}},"additionalProperties":false})",

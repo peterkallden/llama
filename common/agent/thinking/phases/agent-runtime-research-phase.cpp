@@ -149,6 +149,12 @@ bool run_common_agent_research_phase(
         context.result.error = "research mode requires a host-approved tool runtime";
         return false;
     }
+    if (context.tools->has_execution_envelope() &&
+            !context.tools->set_execution_phase(common_agent_execution_phase::research)) {
+        context.error = "research phase is not permitted by the route execution envelope";
+        context.result.error = context.error;
+        return false;
+    }
 
     context.research_workspace.emplace();
     if (!common_agent_research_create_workspace(

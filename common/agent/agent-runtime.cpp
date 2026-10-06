@@ -1372,6 +1372,60 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 append_event(result, request, {common_agent_event_type::plan_updated, "tool step completed", {}, plan.id});
                 append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::completed,
                     "tool step completed", plan.id, tool_step_id, tool_call->name);
+                if (request.workflow_continuation && plan.route_binding && plan.workflow_definition) {
+                    std::vector<common_plan_step> continuation_steps;
+                    if (!request.workflow_continuation(
+                            plan, tool_step_id, *observed.observation,
+                            continuation_steps, error)) {
+                        result.error = "workflow continuation failed: " + error;
+                        return result;
+                    }
+                    std::string previous_step_id = tool_step_id;
+                    for (auto & continuation_step : continuation_steps) {
+                        if (continuation_step.id.empty() || !continuation_step.tool_call ||
+                                std::any_of(plan.steps.begin(), plan.steps.end(), [&](const auto & step) {
+                                    return step.id == continuation_step.id;
+                                })) {
+                            result.error = "workflow continuation returned an invalid or duplicate step";
+                            return result;
+                        }
+                        if (continuation_step.depends_on.empty()) {
+                            continuation_step.depends_on.push_back(previous_step_id);
+                        }
+                        common_plan_operation add;
+                        add.kind = common_plan_operation_kind::add_step;
+                        add.plan_id = plan.id;
+                        add.expected_version = plan.version;
+                        add.step = continuation_step;
+                        add.reason_summary = "host-verified workflow continuation added";
+                        if (!store.apply(add, plan, error)) { result.error = error; return result; }
+                        previous_step_id = continuation_step.id;
+                        append_trace(result, common_runtime_trace_stage::plan,
+                            common_runtime_trace_kind::updated,
+                            "A* workflow continuation materialized", plan.id,
+                            continuation_step.id,
+                            continuation_step.tool_call->name);
+                    }
+                    if (!continuation_steps.empty()) {
+                        for (const auto & step : plan.steps) {
+                            if (common_plan_step_effective_mode(step) != common_plan_step_mode::final_response ||
+                                    step.status == common_plan_step_status::completed ||
+                                    step.status == common_plan_step_status::skipped) continue;
+                            common_plan_operation dependency;
+                            dependency.kind = common_plan_operation_kind::add_dependency;
+                            dependency.plan_id = plan.id;
+                            dependency.expected_version = plan.version;
+                            dependency.step_id = step.id;
+                            dependency.target_id = previous_step_id;
+                            dependency.reason_summary = "final answer waits for workflow continuation";
+                            if (!store.apply(dependency, plan, error)) { result.error = error; return result; }
+                        }
+                        if (tools && !tools->validate_plan(plan, error)) {
+                            result.error = "workflow continuation violates the route envelope: " + error;
+                            return result;
+                        }
+                    }
+                }
                 activate_next_ready_step();
                 if (!error.empty()) { result.error = error; return result; }
             }

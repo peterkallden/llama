@@ -25,6 +25,10 @@ struct common_agent_bootstrap_result {
     std::vector<std::string> existing_memory_ids;
     std::vector<std::string> installed_blueprint_ids;
     std::vector<std::string> existing_blueprint_ids;
+    std::vector<std::string> installed_workflow_ids;
+    std::vector<std::string> existing_workflow_ids;
+    struct rejected_item { std::string kind; std::string id; std::string reason; };
+    std::vector<rejected_item> rejected_items;
 };
 
 struct common_agent_bootstrap_procedure {
@@ -52,7 +56,16 @@ struct common_agent_bootstrap_blueprint {
     std::vector<std::string> required_capabilities;
     std::vector<common_plan_constraint> constraints;
     std::vector<common_plan_assumption> assumptions;
+    common_plan_workflow_policy workflow_policy = common_plan_workflow_policy::preferred;
+    std::vector<std::string> procedure_refs;
     std::optional<std::string> next_action;
+    std::vector<common_plan_workflow_binding> workflow_bindings;
+};
+
+struct common_agent_bootstrap_workflow {
+    std::string id;
+    std::string source_revision;
+    common_plan_workflow_definition definition;
 };
 
 struct common_agent_bootstrap_package {
@@ -60,6 +73,7 @@ struct common_agent_bootstrap_package {
     std::string version;
     std::vector<common_agent_bootstrap_procedure> procedures;
     std::vector<common_agent_bootstrap_blueprint> blueprints;
+    std::vector<common_agent_bootstrap_workflow> workflows;
 };
 
 // The built-in package is a fallback. Callers may install a file/package using

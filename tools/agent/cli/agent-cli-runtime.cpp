@@ -922,7 +922,8 @@ bool normalize_planner_host_dataset_references(
                 auto & step = document["steps"][index];
                 if (step.is_object() && is_materializable_data_tool(step.value("tool", std::string())) &&
                         step.contains("args") && step["args"].is_object() &&
-                        step["args"].value("mode", std::string()) == "tool") {
+                        step["args"].contains("mode") && step["args"]["mode"].is_string() &&
+                        step["args"]["mode"] == "tool") {
                     // Compact models occasionally leak the step-level mode
                     // into a data tool's argument object. It is structural
                     // plan metadata, not a data.query/data.join parameter;
@@ -933,7 +934,8 @@ bool normalize_planner_host_dataset_references(
                 }
                 if (step.is_object() && step.value("tool", std::string()) == "data.query" &&
                         step.contains("args") && step["args"].is_object() &&
-                        step["args"].value("where", std::string()) == "true") {
+                        step["args"].contains("where") && step["args"]["where"].is_string() &&
+                        step["args"]["where"] == "true") {
                     // "where: true" is the common compact-model spelling
                     // for an unfiltered query. The data contract expresses
                     // that case by omitting where entirely.

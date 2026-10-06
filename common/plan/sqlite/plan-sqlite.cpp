@@ -10,8 +10,10 @@ namespace {
 
 const char * scope_name(common_plan_scope value) { return value == common_plan_scope::session ? "session" : value == common_plan_scope::project ? "project" : value == common_plan_scope::global ? "global" : "turn"; }
 common_plan_scope parse_scope(const std::string & value) { return value == "session" ? common_plan_scope::session : value == "project" ? common_plan_scope::project : value == "global" ? common_plan_scope::global : common_plan_scope::turn; }
-const char * kind_name(common_plan_kind value) { return value == common_plan_kind::blueprint ? "blueprint" : "task"; }
-common_plan_kind parse_kind(const std::string & value) { return value == "blueprint" ? common_plan_kind::blueprint : common_plan_kind::task; }
+const char * kind_name(common_plan_kind value) { return value == common_plan_kind::blueprint ? "blueprint" : value == common_plan_kind::workflow ? "workflow" : "task"; }
+common_plan_kind parse_kind(const std::string & value) { return value == "blueprint" ? common_plan_kind::blueprint : value == "workflow" ? common_plan_kind::workflow : common_plan_kind::task; }
+const char * workflow_policy_name(common_plan_workflow_policy value) { return value == common_plan_workflow_policy::required ? "required" : "preferred"; }
+common_plan_workflow_policy parse_workflow_policy(const std::string & value) { return value == "required" ? common_plan_workflow_policy::required : common_plan_workflow_policy::preferred; }
 const char * status_name(common_plan_status value) { switch (value) { case common_plan_status::proposed: return "proposed"; case common_plan_status::active: return "active"; case common_plan_status::completed: return "completed"; case common_plan_status::blocked: return "blocked"; case common_plan_status::failed: return "failed"; case common_plan_status::cancelled: return "cancelled"; } return "proposed"; }
 common_plan_status parse_status(const std::string & value) { if (value == "active") return common_plan_status::active; if (value == "completed") return common_plan_status::completed; if (value == "blocked") return common_plan_status::blocked; if (value == "failed") return common_plan_status::failed; if (value == "cancelled") return common_plan_status::cancelled; return common_plan_status::proposed; }
 const char * step_status_name(common_plan_step_status value) { switch (value) { case common_plan_step_status::pending: return "pending"; case common_plan_step_status::active: return "active"; case common_plan_step_status::completed: return "completed"; case common_plan_step_status::blocked: return "blocked"; case common_plan_step_status::skipped: return "skipped"; case common_plan_step_status::failed: return "failed"; } return "pending"; }
@@ -31,6 +33,7 @@ common_plan_operation_kind parse_operation_kind(const std::string & value) {
         common_plan_operation_kind::add_assumption, common_plan_operation_kind::invalidate_assumption,
         common_plan_operation_kind::record_observation, common_plan_operation_kind::set_next_action,
         common_plan_operation_kind::request_replan, common_plan_operation_kind::complete_plan,
+        common_plan_operation_kind::request_route_transition,
         common_plan_operation_kind::fail_plan,
     };
     for (const auto candidate : values) if (value == common_plan_operation_kind_name(candidate)) return candidate;
@@ -62,7 +65,22 @@ json serialize_plan(const common_plan_state & plan) {
     for (const auto & value : plan.assumptions) assumptions.push_back({{"id", value.id}, {"statement", value.statement}, {"confidence", value.confidence}, {"valid", value.valid}, {"evidence_ids", value.evidence_ids}});
     json observations = json::array();
     for (const auto & value : plan.observations) observations.push_back({{"id", value.id}, {"source", value.source}, {"summary", value.summary}, {"confidence", value.confidence}, {"evidence_ids", value.evidence_ids}, {"created_at", value.created_at}});
-    return {{"id", plan.id}, {"namespace_id", plan.namespace_id}, {"session_id", plan.session_id}, {"project_id", plan.project_id}, {"turn_id", plan.turn_id}, {"source_revision", plan.source_revision}, {"kind", kind_name(plan.kind)}, {"derived_from_plan_id", plan.derived_from_plan_id}, {"scope", scope_name(plan.scope)}, {"status", status_name(plan.status)}, {"purpose", plan.purpose}, {"goal", plan.goal}, {"success_criteria", plan.success_criteria}, {"required_capabilities", plan.required_capabilities}, {"steps", steps}, {"constraints", constraints}, {"assumptions", assumptions}, {"observations", observations}, {"active_step_id", plan.active_step_id}, {"next_action", plan.next_action}, {"version", plan.version}, {"created_at", plan.created_at}, {"updated_at", plan.updated_at}};
+    json bindings = json::array();
+    for (const auto & binding : plan.workflow_bindings) bindings.push_back({{"workflow_ref", binding.workflow_ref}, {"workflow_revision", binding.workflow_revision}});
+    json procedures = plan.procedure_refs;
+    json value = {{"id", plan.id}, {"namespace_id", plan.namespace_id}, {"session_id", plan.session_id}, {"project_id", plan.project_id}, {"turn_id", plan.turn_id}, {"source_revision", plan.source_revision}, {"selection_description", plan.selection_description}, {"kind", kind_name(plan.kind)}, {"derived_from_plan_id", plan.derived_from_plan_id}, {"scope", scope_name(plan.scope)}, {"status", status_name(plan.status)}, {"purpose", plan.purpose}, {"goal", plan.goal}, {"success_criteria", plan.success_criteria}, {"required_capabilities", plan.required_capabilities}, {"workflow_policy", workflow_policy_name(plan.workflow_policy)}, {"procedure_refs", procedures}, {"steps", steps}, {"constraints", constraints}, {"assumptions", assumptions}, {"observations", observations}, {"workflow_bindings", bindings}, {"selected_workflow", plan.selected_workflow}, {"active_step_id", plan.active_step_id}, {"next_action", plan.next_action}, {"version", plan.version}, {"created_at", plan.created_at}, {"updated_at", plan.updated_at}};
+    if (plan.workflow_definition) value["workflow_definition"] = {{"workflow_ref", plan.workflow_definition->workflow_ref}, {"workflow_revision", plan.workflow_definition->workflow_revision}, {"family", plan.workflow_definition->family}, {"graph_revision", plan.workflow_definition->graph_revision}, {"allowed_tools", plan.workflow_definition->allowed_tools}, {"required_capabilities", plan.workflow_definition->required_capabilities}, {"optional_capabilities", plan.workflow_definition->optional_capabilities}, {"required_context", plan.workflow_definition->required_context}};
+    if (plan.route_binding) value["route_binding"] = {
+        {"route_id", plan.route_binding->route_id},
+        {"blueprint_ref", plan.route_binding->blueprint_ref},
+        {"blueprint_revision", plan.route_binding->blueprint_revision},
+        {"workflow_ref", plan.route_binding->workflow_ref},
+        {"workflow_revision", plan.route_binding->workflow_revision},
+        {"graph_revision", plan.route_binding->graph_revision},
+        {"execution_envelope_fingerprint", plan.route_binding->execution_envelope_fingerprint},
+        {"policy_revision", plan.route_binding->policy_revision},
+    };
+    return value;
 }
 
 bool deserialize_plan(const std::string & text, common_plan_state & plan) {
@@ -75,6 +93,7 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
     plan.project_id = value.value("project_id", std::string{});
     plan.turn_id = value.value("turn_id", std::string{});
     plan.source_revision = value.value("source_revision", std::string{});
+    plan.selection_description = value.value("selection_description", std::string{});
     plan.kind = parse_kind(value.value("kind", std::string("task")));
     plan.scope = parse_scope(value.value("scope", std::string("turn")));
     plan.status = parse_status(value.value("status", std::string("proposed")));
@@ -82,6 +101,12 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
     plan.goal = value.value("goal", std::string{});
     plan.success_criteria = value.value("success_criteria", std::string{});
     plan.required_capabilities = value.value("required_capabilities", std::vector<std::string>{});
+    plan.workflow_policy = parse_workflow_policy(value.value("workflow_policy", std::string("preferred")));
+    plan.procedure_refs = value.value("procedure_refs", std::vector<std::string>{});
+    for (const auto & binding : value.value("workflow_bindings", json::array())) plan.workflow_bindings.push_back({binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{})});
+    if (value.contains("selected_workflow") && value["selected_workflow"].is_object()) plan.selected_workflow = common_plan_workflow_binding{value["selected_workflow"].value("workflow_ref", std::string{}), value["selected_workflow"].value("workflow_revision", std::string{})};
+    if (value.contains("workflow_definition") && value["workflow_definition"].is_object()) { const auto & definition = value["workflow_definition"]; plan.workflow_definition = common_plan_workflow_definition{definition.value("workflow_ref", std::string{}), definition.value("workflow_revision", std::string{}), definition.value("family", std::string{}), definition.value("graph_revision", std::string{}), definition.value("allowed_tools", std::vector<std::string>{}), definition.value("required_capabilities", std::vector<std::string>{}), definition.value("optional_capabilities", std::vector<std::string>{}), definition.value("required_context", std::vector<std::string>{})}; }
+    if (value.contains("route_binding") && value["route_binding"].is_object()) { const auto & binding = value["route_binding"]; plan.route_binding = common_plan_route_binding{binding.value("route_id", std::string{}), binding.value("blueprint_ref", std::string{}), binding.value("blueprint_revision", std::string{}), binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{}), binding.value("graph_revision", std::string{}), binding.value("execution_envelope_fingerprint", std::string{}), binding.value("policy_revision", std::string{})}; }
     plan.version = value.value("version", uint64_t(0));
     plan.created_at = value.value("created_at", int64_t(0));
     plan.updated_at = value.value("updated_at", int64_t(0));
@@ -105,7 +130,9 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
 }
 
 json serialize_event(const common_plan_event & event, const common_plan_operation & operation) {
-    return {{"sequence", event.sequence}, {"prior_version", event.prior_version}, {"new_version", event.new_version}, {"accepted", event.accepted}, {"reason_summary", event.reason_summary}, {"created_at", event.created_at}, {"operation", common_plan_operation_kind_name(operation.kind)}, {"plan_id", operation.plan_id}, {"expected_version", operation.expected_version}, {"step_id", operation.step_id}, {"target_id", operation.target_id}, {"value", operation.value}, {"evidence_ids", operation.evidence_ids}};
+    json result = {{"sequence", event.sequence}, {"prior_version", event.prior_version}, {"new_version", event.new_version}, {"accepted", event.accepted}, {"reason_summary", event.reason_summary}, {"created_at", event.created_at}, {"operation", common_plan_operation_kind_name(operation.kind)}, {"plan_id", operation.plan_id}, {"expected_version", operation.expected_version}, {"step_id", operation.step_id}, {"target_id", operation.target_id}, {"value", operation.value}, {"evidence_ids", operation.evidence_ids}, {"host_authorized", operation.host_authorized}};
+    if (operation.route_binding) result["route_binding"] = {{"route_id", operation.route_binding->route_id}, {"blueprint_ref", operation.route_binding->blueprint_ref}, {"blueprint_revision", operation.route_binding->blueprint_revision}, {"workflow_ref", operation.route_binding->workflow_ref}, {"workflow_revision", operation.route_binding->workflow_revision}, {"graph_revision", operation.route_binding->graph_revision}, {"execution_envelope_fingerprint", operation.route_binding->execution_envelope_fingerprint}, {"policy_revision", operation.route_binding->policy_revision}};
+    return result;
 }
 
 }
@@ -153,6 +180,8 @@ bool common_plan_sqlite_store::load_cache(std::string & error) {
         if (value.contains("value") && value["value"].is_string()) event.operation.value = value["value"].get<std::string>();
         event.operation.reason_summary = event.reason_summary;
         event.operation.evidence_ids = value.value("evidence_ids", std::vector<std::string>{});
+        event.operation.host_authorized = value.value("host_authorized", false);
+        if (value.contains("route_binding") && value["route_binding"].is_object()) { const auto & binding = value["route_binding"]; event.operation.route_binding = common_plan_route_binding{binding.value("route_id", std::string{}), binding.value("blueprint_ref", std::string{}), binding.value("blueprint_revision", std::string{}), binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{}), binding.value("graph_revision", std::string{}), binding.value("execution_envelope_fingerprint", std::string{}), binding.value("policy_revision", std::string{})}; }
         histories[plan_id].push_back(std::move(event));
     }
     if (!error.empty()) return false;

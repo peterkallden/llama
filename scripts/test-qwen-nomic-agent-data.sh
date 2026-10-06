@@ -10,12 +10,19 @@ orders="$work_dir/orders.csv"; customers="$work_dir/customers.csv"; data_db="$wo
 printf '%s\n' 'order_id,customer_id,amount' '1,10,12' '2,10,8' '3,11,20' > "$orders"
 printf '%s\n' 'customer_id,segment' '10,enterprise' '11,consumer' > "$customers"
 seed_log="$work_dir/seed.log"; agent_log="$work_dir/data-research.log"
+gpu_layers="${LLAMA_AGENT_GPU_LAYERS:-99}"
 agent_smoke_run_logged "$seed_log" "$seed_bin" --db "$data_db" --orders "$orders" --customers "$customers"
 grep -Eq 'seeded_orders=[1-9]' "$seed_log"; grep -Eq 'seeded_customers=[1-9]' "$seed_log"
 prompt='Use the data and statistics tool families. Discover and inspect the two CSV datasets, join orders and customers on customer_id, aggregate joined rows by segment summing amount as total_amount, independently describe amount on the joined dataset, and report the exact total 40 with tools/results. Do not guess.'
 # The planner reserves at least 512 tokens and reflection reserves 384.  Keep
-# enough draft/context/time budget for the CPU smoke to complete after the
+# enough draft/context/time budget for the model smoke to complete after the
 # tool chain, especially when tracing is enabled.
-LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-900}" agent_smoke_run_logged "$agent_log" "$agent_bin" run --backend cozo --memory-db "$work_dir/memory.cozo" --plan-backend cozo --plan-db "$work_dir/plan.cozo" --data-backend cozo --data-db "$data_db" --model "$model" --embedding-model "$embedding_model" --agent-profile research --tool-profile analysis --thinking-mode "${LLAMA_AGENT_THINKING_MODE:-reflective}" --max-reflection-rounds 2 --max-research-iterations 1 --max-plan-revisions 3 --repository-root "$work_dir" --max-tool-rounds 16 --memory-project qwen-nomic-data --plan-scope project --agent-trace --generation-trace --require-tool-execution --plan-show-summary --prompt "$prompt" --n-predict "${LLAMA_AGENT_N_PREDICT:-256}" --context-size "${LLAMA_AGENT_CONTEXT_SIZE:-4096}" --threads "${LLAMA_AGENT_THREADS:-4}" -ngl "${LLAMA_AGENT_GPU_LAYERS:-0}"
+LLAMA_AGENT_RESIDENT_TRACE="${LLAMA_AGENT_RESIDENT_TRACE:-1}" LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-900}" agent_smoke_run_logged "$agent_log" "$agent_bin" run --backend cozo --memory-db "$work_dir/memory.cozo" --plan-backend cozo --plan-db "$work_dir/plan.cozo" --data-backend cozo --data-db "$data_db" --model "$model" --embedding-model "$embedding_model" --agent-profile research --tool-profile analysis --thinking-mode "${LLAMA_AGENT_THINKING_MODE:-reflective}" --max-reflection-rounds 2 --max-research-iterations 1 --max-plan-revisions 3 --repository-root "$work_dir" --max-tool-rounds 16 --memory-project qwen-nomic-data --plan-scope project --agent-bootstrap none --agent-import "$repo_root/docs/examples/agent-bootstrap-workflows-v1.json" --agent-trace --generation-trace --require-tool-execution --plan-show-summary --agent-inference-backend server-context --prompt "$prompt" --n-predict "${LLAMA_AGENT_N_PREDICT:-256}" --context-size "${LLAMA_AGENT_CONTEXT_SIZE:-4096}" --threads "${LLAMA_AGENT_THREADS:-4}" -ngl "$gpu_layers"
+if [[ "$gpu_layers" =~ ^[0-9]+$ ]] && (( gpu_layers >= 99 )); then
+    grep -Fq "requested_gpu_layers=$gpu_layers effective_gpu_layers=-1 fit_params=true workspace_reservation=true legacy_full_offload_fit=true" "$agent_log" || {
+        echo "model smoke did not prove the resident GPU auto-fit path" >&2
+        exit 1
+    }
+fi
 grep -Eq 'stage=tool kind=succeeded .*tool=data.join' "$agent_log"; grep -Eq 'stage=tool kind=succeeded .*tool=data.aggregate' "$agent_log"; grep -Fq '40' "$agent_log"
 echo "qwen_nomic_data=passed"; echo "log=${agent_log}"

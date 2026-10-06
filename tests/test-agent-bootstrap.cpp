@@ -8,7 +8,10 @@
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
+#include <algorithm>
 #include <cassert>
+#include <fstream>
+#include <sstream>
 
 class fixed_selector final : public common_blueprint_selector {
 public:
@@ -125,6 +128,189 @@ int main() {
     versioned_package.blueprints.front().source_revision.assign(129, 'x');
     assert(!common_agent_package_to_json(versioned_package, package_json, error));
     assert(common_agent_package_parse_json(R"({"schema_version":1,"name":"forward-compatible","version":"v1","procedures":[],"blueprints":[],"future_section":{"ignored":true}})", parsed_package, error));
+
+    // The import format is the portable starter-library boundary.  Keep this
+    // fixture deliberately outside the built-in package so operators can
+    // install a versioned code/data library without changing native defaults.
+    const std::string starter_package_json = R"json(
+{
+  "schema_version": 1,
+  "name": "agent-workflows-starter",
+  "version": "v1",
+  "procedures": [
+    {"id":"code-orientation-v1","summary":"code orientation","content":"Before modifying repository code, identify the relevant contract, implementation, direct callers, tests and execution seam. Prefer semantic symbol/reference diagnostics when available; otherwise use bounded repository search and reads.","importance":0.9,"confidence":1.0},
+    {"id":"verification-ladder-v1","summary":"verification ladder","content":"Verify at the narrowest authoritative level first: contract or unit test, then functional smoke, then broader affected tests. Do not claim model-backed verification unless that run completed.","importance":0.9,"confidence":1.0},
+    {"id":"data-understanding-v1","summary":"data understanding","content":"Before analysing an unfamiliar dataset, establish its identity and the fields needed by the question. Inspect schema or sample only as far as necessary; a host-trusted schema may satisfy this requirement.","importance":0.85,"confidence":1.0}
+  ],
+  "blueprints": [
+    {
+      "id":"repository-investigation-v1",
+      "source_revision":"agent-workflows-starter@v1",
+      "selection_description":"Investigate a repository question without modifying the workspace.",
+      "purpose":"Establish repository evidence before proposing a change.",
+      "goal":"Answer a repository investigation from inspected contracts, callers and tests.",
+      "success_criteria":"Relevant implementation, dependencies and evidence are identified without modifying the workspace.",
+      "required_capabilities":["tool.repository"],
+      "next_action":"orient",
+      "constraints":[{"id":"read-only","description":"Do not modify the workspace during investigation.","hard":true}],
+      "assumptions":[{"id":"workspace","statement":"A controlled repository workspace is available.","confidence":0.9}],
+      "steps":[
+        {"id":"orient","title":"Orient","objective":"Identify the relevant repository area and available evidence."},
+        {"id":"trace","title":"Trace contract","objective":"Inspect the contract, implementation, direct callers and relevant tests.","depends_on":["orient"]},
+        {"id":"establish-evidence","title":"Establish evidence","objective":"Distinguish observed behavior from unverified inference.","depends_on":["trace"]},
+        {"id":"answer","title":"Answer","objective":"Answer from the established evidence.","depends_on":["establish-evidence"]}
+      ]
+    },
+    {
+      "id":"dataset-analysis-v1",
+      "source_revision":"agent-workflows-starter@v1",
+      "selection_description":"Analyse a dataset through a host-resolved workflow and verified result.",
+      "purpose":"Answer a bounded analytical question without guessing dataset identity or tool arguments.",
+      "goal":"Analyse a resolved dataset and explain the verified result.",
+      "success_criteria":"Dataset identity, sufficient data understanding, semantic operation and result verification are established before answering.",
+      "required_capabilities":["tool.dataset","workflow.dataset"],
+      "next_action":"resolve-dataset",
+      "constraints":[{"id":"host-tool-contract","description":"Use host-resolved dataset contracts; do not invent tool names or arguments.","hard":true},{"id":"evidence-before-answer","description":"Do not present an unverified tool result as a completed answer.","hard":true}],
+      "assumptions":[{"id":"dataset-access","statement":"The host exposes an applicable dataset operation.","confidence":0.8}],
+      "steps":[
+        {"id":"resolve-dataset","title":"Resolve dataset","objective":"Resolve the dataset through host-owned resource and dataset authority."},
+        {"id":"understand-data","title":"Establish data understanding","objective":"Establish the fields needed by the question, using trusted schema or bounded inspection.","depends_on":["resolve-dataset"]},
+        {"id":"choose-operation","title":"Choose operation","objective":"Choose the smallest semantic operation that answers the question.","depends_on":["understand-data"]},
+        {"id":"execute-analysis","title":"Execute analysis","objective":"Execute the host-validated operation and retain its result as evidence.","depends_on":["choose-operation"]},
+        {"id":"verify-result","title":"Verify result","objective":"Check that the result matches the requested dataset and operation.","depends_on":["execute-analysis"]},
+        {"id":"answer","title":"Answer","objective":"Explain the verified result and its material limitations.","depends_on":["verify-result"]}
+      ]
+    }
+  ]
+}
+)json";
+    common_agent_bootstrap_package starter_package;
+    assert(common_agent_package_parse_json(starter_package_json, starter_package, error));
+    assert(starter_package.name == "agent-workflows-starter" && starter_package.version == "v1");
+    assert(starter_package.procedures.size() == 3 && starter_package.blueprints.size() == 2);
+    assert(starter_package.blueprints[1].selection_description ==
+        "Analyse a dataset through a host-resolved workflow and verified result.");
+    assert(starter_package.blueprints[1].source_revision == "agent-workflows-starter@v1");
+
+    common_memory_in_memory_store starter_memory;
+    common_plan_in_memory_store starter_plans;
+    assert(starter_memory.open("", error));
+    assert(starter_plans.open("", error));
+    common_agent_bootstrap_result starter_import;
+    assert(common_agent_install_bootstrap_package(
+        starter_memory, starter_plans, config, starter_package, embed,
+        starter_import, error));
+    assert(starter_import.installed_memory_ids.size() == 3);
+    assert(starter_import.installed_blueprint_ids.size() == 2);
+    const auto imported_dataset_blueprint = starter_plans.get(
+        "bootstrap:local:project:project-a:blueprint:dataset-analysis-v1", error);
+    assert(imported_dataset_blueprint);
+    assert(imported_dataset_blueprint->source_revision == "agent-workflows-starter@v1");
+    assert(imported_dataset_blueprint->required_capabilities.size() == 2);
+
+    common_agent_bootstrap_result starter_repeat;
+    assert(common_agent_install_bootstrap_package(
+        starter_memory, starter_plans, config, starter_package, embed,
+        starter_repeat, error));
+    assert(starter_repeat.installed_memory_ids.empty() && starter_repeat.installed_blueprint_ids.empty());
+    assert(starter_repeat.existing_memory_ids.size() == 3 && starter_repeat.existing_blueprint_ids.size() == 2);
+
+    // The checked-in package is the operator-facing import artifact. Parse and
+    // install that exact file rather than relying only on the smaller inline
+    // fixture above.
+    std::ifstream starter_file(std::string(LLAMA_AGENT_SOURCE_DIR) +
+        "/docs/examples/agent-bootstrap-workflows-v1.json");
+    assert(starter_file);
+    std::stringstream starter_file_text;
+    starter_file_text << starter_file.rdbuf();
+    common_agent_bootstrap_package checked_in_starter;
+    assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
+    assert(checked_in_starter.name == "agent-workflows-starter" &&
+        checked_in_starter.version == "v2");
+    assert(checked_in_starter.procedures.size() == 8 &&
+        checked_in_starter.blueprints.size() == 7);
+    assert(checked_in_starter.workflows.size() == 8);
+    assert(checked_in_starter.workflows[0].definition.workflow_ref ==
+        "workflow://dataset/analysis");
+    assert(checked_in_starter.workflows[0].definition.required_capabilities ==
+        std::vector<std::string>({"dataset.resolve", "dataset.inspect", "data.query",
+            "data.filter", "data.aggregate", "data.transform", "statistics.describe",
+            "statistics.outliers", "statistics.value_counts"}));
+    const auto resource_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://resource/document-analysis";
+        });
+    assert(resource_workflow != checked_in_starter.workflows.end());
+    assert(resource_workflow->definition.required_capabilities ==
+        std::vector<std::string>({"resource.inspect", "resource.read", "document.inspect", "data.query"}));
+    assert(resource_workflow->definition.optional_capabilities ==
+        std::vector<std::string>({"data.filter", "data.aggregate", "data.transform",
+            "statistics.describe", "statistics.outliers", "statistics.value_counts"}));
+    assert(resource_workflow->definition.workflow_revision == "v2");
+    assert(checked_in_starter.workflows[0].definition.required_context ==
+        std::vector<std::string>({"context.dataset.available"}));
+    assert(checked_in_starter.blueprints[3].workflow_bindings.size() == 3);
+    assert(checked_in_starter.blueprints[3].id == "dataset-analysis-v1");
+    assert(checked_in_starter.blueprints[3].source_revision ==
+        "agent-workflows-starter@v1");
+
+    common_memory_in_memory_store checked_in_memory;
+    common_plan_in_memory_store checked_in_plans;
+    assert(checked_in_memory.open("", error));
+    assert(checked_in_plans.open("", error));
+    common_agent_bootstrap_result checked_in_import;
+    assert(common_agent_install_bootstrap_package(
+        checked_in_memory, checked_in_plans, config, checked_in_starter, embed,
+        checked_in_import, error));
+    assert(checked_in_import.installed_memory_ids.size() == 8 &&
+        checked_in_import.installed_blueprint_ids.size() == 7);
+    assert(checked_in_import.installed_workflow_ids.size() == 8);
+    const auto checked_in_dataset = checked_in_plans.get(
+        "bootstrap:local:project:project-a:blueprint:dataset-analysis-v1", error);
+    assert(checked_in_dataset &&
+        checked_in_dataset->source_revision == "agent-workflows-starter@v1");
+    assert(checked_in_dataset->selection_description ==
+        "Analyse a dataset through a host-resolved workflow and verified result.");
+    assert(checked_in_dataset->workflow_bindings.size() == 3);
+    const auto checked_in_workflow = checked_in_plans.get(
+        "bootstrap:local:project:project-a:workflow:dataset-analysis-path-v1", error);
+    assert(checked_in_workflow && checked_in_workflow->kind == common_plan_kind::workflow &&
+        checked_in_workflow->workflow_definition &&
+        checked_in_workflow->workflow_definition->workflow_revision == "v1" &&
+        checked_in_workflow->workflow_definition->required_capabilities ==
+            checked_in_starter.workflows[0].definition.required_capabilities &&
+        checked_in_workflow->workflow_definition->optional_capabilities ==
+            checked_in_starter.workflows[0].definition.optional_capabilities &&
+        checked_in_workflow->workflow_definition->required_context ==
+            checked_in_starter.workflows[0].definition.required_context);
+    std::string checked_in_round_trip;
+    assert(common_agent_package_to_json(checked_in_starter, checked_in_round_trip, error));
+    common_agent_bootstrap_package reparsed_starter;
+    assert(common_agent_package_parse_json(checked_in_round_trip, reparsed_starter, error));
+    assert(reparsed_starter.blueprints[3].selection_description ==
+        checked_in_starter.blueprints[3].selection_description);
+    assert(reparsed_starter.workflows.size() == 8 &&
+        reparsed_starter.blueprints[3].workflow_bindings.size() == 3 &&
+        reparsed_starter.workflows[0].definition.required_capabilities ==
+            checked_in_starter.workflows[0].definition.required_capabilities &&
+        reparsed_starter.workflows[5].definition.optional_capabilities ==
+            checked_in_starter.workflows[5].definition.optional_capabilities &&
+        reparsed_starter.workflows[0].definition.required_context ==
+            checked_in_starter.workflows[0].definition.required_context);
+
+    auto partial_package = checked_in_starter;
+    partial_package.blueprints[3].workflow_bindings.push_back({"workflow://missing", "v1"});
+    common_memory_in_memory_store partial_memory;
+    common_plan_in_memory_store partial_plans;
+    assert(partial_memory.open("", error));
+    assert(partial_plans.open("", error));
+    common_agent_bootstrap_result partial_import;
+    assert(common_agent_install_bootstrap_package(
+        partial_memory, partial_plans, config, partial_package, embed,
+        partial_import, error));
+    assert(partial_import.installed_blueprint_ids.size() == 6 &&
+        partial_import.rejected_items.size() == 1 &&
+        partial_import.rejected_items.front().id == "dataset-analysis-v1");
 
     fixed_selector selector;
     common_blueprint_selection_config selection_config;

@@ -34,6 +34,19 @@ bool common_plan_validate_blueprint(
         error = "blueprint source revision exceeds bounds";
         return false;
     }
+    if (!bounded_text(blueprint.selection_description, config.maximum_text_bytes)) {
+        error = "blueprint selection description exceeds bounds";
+        return false;
+    }
+    std::unordered_set<std::string> workflow_refs;
+    for (const auto & binding : blueprint.workflow_bindings) {
+        if (binding.workflow_ref.empty() || binding.workflow_ref.size() > 256 ||
+                binding.workflow_revision.empty() || binding.workflow_revision.size() > 128 ||
+                !workflow_refs.insert(binding.workflow_ref + "@" + binding.workflow_revision).second) {
+            error = "blueprint contains an invalid or duplicate workflow binding";
+            return false;
+        }
+    }
     if (blueprint.steps.empty() || blueprint.steps.size() > config.maximum_steps) {
         error = "blueprint step count is outside bounds";
         return false;
@@ -44,6 +57,12 @@ bool common_plan_validate_blueprint(
             (blueprint.next_action && !bounded_text(*blueprint.next_action, config.maximum_text_bytes))) {
         error = "blueprint text exceeds bounds";
         return false;
+    }
+    for (const auto & procedure_ref : blueprint.procedure_refs) {
+        if (procedure_ref.empty() || procedure_ref.size() > config.maximum_text_bytes) {
+            error = "blueprint contains an invalid procedure reference";
+            return false;
+        }
     }
 
     std::unordered_set<std::string> step_ids;
@@ -126,6 +145,7 @@ bool common_plan_instantiate_blueprint(
     out.id = instance_id;
     out.session_id = session_id;
     out.source_revision = blueprint.source_revision;
+    out.selection_description = blueprint.selection_description;
     out.kind = common_plan_kind::task;
     out.derived_from_plan_id = blueprint.id;
     out.scope = scope;
@@ -135,6 +155,9 @@ bool common_plan_instantiate_blueprint(
     out.required_capabilities = blueprint.required_capabilities;
     out.constraints = blueprint.constraints;
     out.assumptions = blueprint.assumptions;
+    out.workflow_policy = blueprint.workflow_policy;
+    out.procedure_refs = blueprint.procedure_refs;
+    out.workflow_bindings = blueprint.workflow_bindings;
     out.next_action = blueprint.next_action;
     out.created_at = now;
     out.updated_at = now;

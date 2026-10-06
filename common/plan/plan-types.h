@@ -11,7 +11,8 @@
 #include <vector>
 
 enum class common_plan_scope { turn, session, project, global };
-enum class common_plan_kind { task, blueprint };
+enum class common_plan_kind { task, blueprint, workflow };
+enum class common_plan_workflow_policy { preferred, required };
 enum class common_plan_status { proposed, active, completed, blocked, failed, cancelled };
 enum class common_plan_step_status { pending, active, completed, blocked, skipped, failed };
 // A plan step either invokes one registered tool, asks the model for a bounded
@@ -123,6 +124,47 @@ inline bool common_plan_chunk_synthesis_from_observations(
 }
 // Data proposed by a plan; execution is owned by the agent tool registry.
 struct common_plan_tool_call { std::string name; std::string arguments_json = "{}"; };
+// A blueprint binds only to immutable workflow identities.  The host resolves
+// these against the current scope before it materializes any executable plan.
+struct common_plan_workflow_binding {
+    std::string workflow_ref;
+    std::string workflow_revision;
+};
+
+// Workflow definitions describe a host-validated family of work. They never
+// contain request-specific resource ids or tool arguments.
+struct common_plan_workflow_definition {
+    std::string workflow_ref;
+    std::string workflow_revision;
+    std::string family;
+    std::string graph_revision;
+    // Compatibility ceiling for v1 packages. New definitions should use
+    // required_capabilities and let the host resolve concrete tools.
+    std::vector<std::string> allowed_tools;
+    // Stable semantic requirements are the primary workflow contract. The
+    // host resolves them against the active tool view; these are not tool ids.
+    std::vector<std::string> required_capabilities;
+    // Optional capabilities are resolved when the route is compiled. Missing
+    // optional capabilities do not make the workflow ineligible.
+    std::vector<std::string> optional_capabilities;
+    // Host facts required before this workflow can be materialized, e.g.
+    // "dataset.available". They are checked independently of tool authority.
+    std::vector<std::string> required_context;
+};
+
+// Host-owned route provenance for a concrete task plan.  This is deliberately
+// smaller than the route catalog: it records the frame that was actually
+// selected, not every route that happened to be eligible for the turn.
+struct common_plan_route_binding {
+    std::string route_id;
+    std::string blueprint_ref;
+    std::string blueprint_revision;
+    std::string workflow_ref;
+    std::string workflow_revision;
+    std::string graph_revision;
+    std::string execution_envelope_fingerprint;
+    std::string policy_revision;
+};
 struct common_plan_step {
     std::string id, title, objective, intended_contribution;
     common_plan_step_status status = common_plan_step_status::pending;
@@ -149,6 +191,9 @@ struct common_plan_state {
     // instantiated from a blueprint retains it for audit and stale-source
     // detection. Empty is valid for legacy plans.
     std::string source_revision;
+    // Retained with the blueprint so package export does not lose the bounded
+    // selection text that was used to build a candidate projection.
+    std::string selection_description;
     common_plan_kind kind = common_plan_kind::task;
     std::optional<std::string> derived_from_plan_id;
     common_plan_scope scope = common_plan_scope::turn;
@@ -162,6 +207,15 @@ struct common_plan_state {
     std::vector<std::string> required_capabilities;
     std::vector<common_plan_constraint> constraints;
     std::vector<common_plan_assumption> assumptions;
+    common_plan_workflow_policy workflow_policy = common_plan_workflow_policy::preferred;
+    std::vector<std::string> procedure_refs;
+    std::vector<common_plan_workflow_binding> workflow_bindings;
+    // The binding selected for this concrete task instance. Blueprint
+    // bindings remain the supported set; this field records the host route
+    // decision without making the route catalog durable.
+    std::optional<common_plan_workflow_binding> selected_workflow;
+    std::optional<common_plan_workflow_definition> workflow_definition;
+    std::optional<common_plan_route_binding> route_binding;
     std::vector<common_plan_observation> observations;
     std::optional<std::string> active_step_id, next_action;
     uint64_t version = 0;
@@ -216,7 +270,7 @@ inline common_agent_state_descriptor describe_common_plan(
     descriptor.source_of_truth = "plan store";
     return descriptor;
 }
-enum class common_plan_operation_kind { create_plan, revise_goal, add_step, revise_step, replace_step, remove_step, activate_step, reset_step, complete_step, block_step, unblock_step, fail_step, skip_step, add_dependency, remove_dependency, add_constraint, add_assumption, invalidate_assumption, record_observation, set_next_action, request_replan, complete_plan, fail_plan };
+enum class common_plan_operation_kind { create_plan, revise_goal, add_step, revise_step, replace_step, remove_step, activate_step, reset_step, complete_step, block_step, unblock_step, fail_step, skip_step, add_dependency, remove_dependency, add_constraint, add_assumption, invalidate_assumption, record_observation, set_next_action, request_replan, request_route_transition, complete_plan, fail_plan };
 struct common_plan_operation {
     common_plan_operation_kind kind = common_plan_operation_kind::add_step;
     std::string plan_id;
@@ -228,6 +282,10 @@ struct common_plan_operation {
     std::optional<common_plan_observation> observation;
     std::string reason_summary;
     std::vector<std::string> evidence_ids;
+    // Host-only route migration. Model-facing proposal parsing never sets
+    // this flag; the plan store policy requires it for rebinding.
+    std::optional<common_plan_route_binding> route_binding;
+    bool host_authorized = false;
 };
 struct common_plan_event { uint64_t sequence = 0, prior_version = 0, new_version = 0; common_plan_operation operation; bool accepted = false; std::string reason_summary; int64_t created_at = 0; };
 

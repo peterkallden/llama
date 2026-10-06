@@ -19,7 +19,13 @@ struct common_flydelta_dataset_blueprint_request {
     std::string workflow_ref;
     std::string workflow_revision;
     std::string dataset_ref;
+    std::string dataset_name;
+    // Join workflows bind both inputs by host-resolved identity; a model-supplied
+    // path or unregistered dataset name is never promoted to a dataset ref.
+    std::string second_dataset_ref;
+    std::string second_dataset_name;
     bool schema_known = false;
+    bool second_schema_known = false;
     std::string terminal_tool;
     std::string terminal_arguments_json;
     size_t max_expansions = 16;

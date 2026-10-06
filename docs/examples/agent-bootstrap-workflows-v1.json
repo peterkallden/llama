@@ -1,0 +1,346 @@
+{
+  "schema_version": 1,
+  "name": "agent-workflows-starter",
+  "version": "v2",
+  "procedures": [
+    {
+      "id": "code-orientation-v1",
+      "summary": "code orientation",
+      "content": "Before modifying repository code, identify the relevant contract, implementation, direct callers, tests and execution seam. Prefer semantic symbol/reference diagnostics when available; otherwise use bounded repository search and reads.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "small-coherent-change-v1",
+      "summary": "small coherent change",
+      "content": "Prefer one coherent behavioral change at a time. Separate unrelated refactoring from behavior changes, preserve existing abstractions when they already express the needed contract, and verify the change in the same sweep.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "verification-ladder-v1",
+      "summary": "verification ladder",
+      "content": "Verify at the narrowest authoritative level first: contract or unit test, then functional smoke, then broader affected tests. Do not claim model-backed verification unless that run completed.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "data-understanding-v1",
+      "summary": "data understanding",
+      "content": "Before analysing an unfamiliar dataset, establish its identity and the fields needed by the question. Inspect schema or sample only as far as necessary; a host-trusted schema may satisfy this requirement.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "choose-data-operation-v1",
+      "summary": "choose data operation",
+      "content": "Use aggregation for measures such as sum, count, average, minimum or maximum. Use describe for numeric properties, filter for row selection, query for bounded projection or retrieval, value counts for category frequency, and outliers only when anomaly detection is part of the question.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "analysis-evidence-v1",
+      "summary": "analysis evidence",
+      "content": "Distinguish dataset facts from interpretation. A successful tool operation is evidence about the selected dataset; conclusions beyond that result must be identified as inference rather than directly observed data.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "document-table-analysis-v1",
+      "summary": "document table analysis",
+      "content": "Resolve the host resource first, enumerate exposed tables, select a table by its unique host identity, and use the returned dataset handle for bounded analysis. Do not invent resource URIs, table node IDs or dataset references.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "web-source-evidence-v1",
+      "summary": "web source evidence",
+      "content": "Use search results for discovery, then fetch the source that directly supports each material claim. Prefer primary sources, check publication or update dates when relevant, and separate retrieved facts from inference.",
+      "importance": 0.85,
+      "confidence": 1.0
+    }
+  ],
+  "workflows": [
+    {
+      "id": "dataset-analysis-path-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "workflow_ref": "workflow://dataset/analysis",
+      "workflow_revision": "v1",
+      "family": "dataset",
+      "graph_revision": "dataset-analysis-graph@v1",
+      "required_capabilities": ["dataset.resolve", "dataset.inspect", "data.query", "data.filter", "data.aggregate", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts"],
+      "required_context": ["context.dataset.available"]
+    },
+    {
+      "id": "dataset-quality-path-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "workflow_ref": "workflow://dataset/quality",
+      "workflow_revision": "v1",
+      "family": "dataset",
+      "graph_revision": "dataset-quality-graph@v1",
+      "required_capabilities": ["dataset.resolve", "dataset.inspect", "dataset.schema", "dataset.validate", "data.aggregate", "data.filter", "statistics.describe", "statistics.outliers", "statistics.value_counts"],
+      "required_context": ["context.dataset.available"]
+    },
+    {
+      "id": "dataset-join-path-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "workflow_ref": "workflow://dataset/join",
+      "workflow_revision": "v1",
+      "family": "dataset",
+      "graph_revision": "dataset-join-graph@v1",
+      "required_capabilities": ["dataset.resolve", "dataset.inspect", "data.join"],
+      "required_context": ["context.dataset.multiple_available"]
+    },
+    {
+      "id": "repository-inspection-path-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "workflow_ref": "workflow://repository/inspection",
+      "workflow_revision": "v1",
+      "family": "repository",
+      "graph_revision": "repository-inspection-graph@v1",
+      "required_capabilities": ["repository.list", "repository.search", "repository.read"],
+      "required_context": ["context.repository.available"]
+    },
+    {
+      "id": "repository-change-path-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "workflow_ref": "workflow://repository/change",
+      "workflow_revision": "v1",
+      "family": "repository",
+      "graph_revision": "repository-change-graph@v1",
+      "required_capabilities": ["repository.search", "repository.read", "workspace.read", "workspace.modify", "development.build", "development.test"],
+      "required_context": ["context.repository.available"]
+    },
+    {
+      "id": "resource-document-analysis-path-v2",
+      "source_revision": "agent-workflows-starter@v2",
+      "workflow_ref": "workflow://resource/document-analysis",
+      "workflow_revision": "v2",
+      "family": "resource",
+      "graph_revision": "resource-document-analysis-graph@v2",
+      "required_capabilities": ["resource.inspect", "resource.read", "document.inspect", "data.query"],
+      "optional_capabilities": ["data.filter", "data.aggregate", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts"],
+      "required_context": ["context.resource.available"]
+    },
+    {
+      "id": "web-research-path-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "workflow_ref": "workflow://web/research",
+      "workflow_revision": "v1",
+      "family": "web",
+      "graph_revision": "web-research-graph@v1",
+      "required_capabilities": ["web.search", "web.fetch"],
+      "required_context": ["context.network.allowed"]
+    },
+    {
+      "id": "repository-regression-repair-path-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "workflow_ref": "workflow://development/regression-repair",
+      "workflow_revision": "v1",
+      "family": "development",
+      "graph_revision": "development-regression-repair-graph@v1",
+      "required_capabilities": ["repository.search", "repository.read", "workspace.modify", "development.build", "development.test", "diagnostics.compile", "diagnostics.test_failures"],
+      "required_context": ["context.repository.available"]
+    }
+  ],
+  "blueprints": [
+    {
+      "id": "repository-investigation-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "selection_description": "Investigate a repository question without modifying the workspace.",
+      "purpose": "Establish repository evidence before proposing a change.",
+      "goal": "Answer a repository investigation from inspected contracts, callers and tests.",
+      "success_criteria": "Relevant implementation, dependencies and evidence are identified without modifying the workspace.",
+      "required_capabilities": ["tool.repository"],
+      "workflow_policy": "preferred",
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://repository/inspection", "workflow_revision": "v1"}
+      ],
+      "next_action": "orient",
+      "constraints": [
+        {"id": "read-only", "description": "Do not modify the workspace during investigation.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "workspace", "statement": "A controlled repository workspace is available.", "confidence": 0.9}
+      ],
+      "steps": [
+        {"id": "orient", "title": "Orient", "objective": "Identify the relevant repository area and available evidence."},
+        {"id": "trace", "title": "Trace contract", "objective": "Inspect the contract, implementation, direct callers and relevant tests.", "depends_on": ["orient"]},
+        {"id": "establish-evidence", "title": "Establish evidence", "objective": "Distinguish observed behavior from unverified inference.", "depends_on": ["trace"]},
+        {"id": "answer", "title": "Answer", "objective": "Answer from the established evidence.", "depends_on": ["establish-evidence"]}
+      ]
+    },
+    {
+      "id": "repository-change-v2",
+      "source_revision": "agent-workflows-starter@v1",
+      "selection_description": "Implement a scoped repository change and verify the result.",
+      "purpose": "Change repository behavior through a bounded, evidence-led workflow.",
+      "goal": "Implement the requested repository change safely.",
+      "success_criteria": "The contract and execution seam are identified, the smallest coherent change is verified, and the resulting diff is inspected.",
+      "required_capabilities": ["tool.repository", "tool.workspace"],
+      "workflow_policy": "preferred",
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://repository/change", "workflow_revision": "v1"}
+      ],
+      "next_action": "orient",
+      "constraints": [
+        {"id": "minimal-scope", "description": "Keep the change within the requested scope.", "hard": true},
+        {"id": "evidence", "description": "Do not claim verification without test or inspection evidence.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "workspace", "statement": "A controlled repository workspace is available.", "confidence": 0.9}
+      ],
+      "steps": [
+        {"id": "orient", "title": "Orient", "objective": "Identify affected code, contracts and relevant tests."},
+        {"id": "design", "title": "Design", "objective": "Choose the smallest coherent change that satisfies the request.", "depends_on": ["orient"]},
+        {"id": "implement", "title": "Implement", "objective": "Apply the scoped implementation change.", "depends_on": ["design"]},
+        {"id": "verify", "title": "Verify", "objective": "Run focused verification and retain the evidence.", "depends_on": ["implement"]},
+        {"id": "inspect-diff", "title": "Inspect diff", "objective": "Inspect the resulting diff for scope and unintended changes.", "depends_on": ["verify"]},
+        {"id": "answer", "title": "Answer", "objective": "Report the verified outcome and remaining limits.", "depends_on": ["inspect-diff"]}
+      ]
+    },
+    {
+      "id": "regression-repair-v2",
+      "source_revision": "agent-workflows-starter@v1",
+      "selection_description": "Reproduce, isolate and repair a regression with a focused guard.",
+      "purpose": "Repair a regression while preserving the responsible trust boundary.",
+      "goal": "Diagnose and correct the reported regression.",
+      "success_criteria": "The failure is reproduced or bounded by evidence, the responsible boundary is isolated, a focused guard exists, and adjacent verification passes.",
+      "required_capabilities": ["tool.repository", "tool.workspace"],
+      "workflow_policy": "preferred",
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://development/regression-repair", "workflow_revision": "v1"}
+      ],
+      "next_action": "reproduce",
+      "constraints": [
+        {"id": "trust-boundary", "description": "Do not broaden model authority while correcting the regression.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "reproducible", "statement": "A bounded failing scenario can be reproduced or inspected.", "confidence": 0.8}
+      ],
+      "steps": [
+        {"id": "reproduce", "title": "Reproduce", "objective": "Establish a minimal failing scenario and capture its evidence."},
+        {"id": "classify", "title": "Classify", "objective": "Classify the failure and establish expected behavior.", "depends_on": ["reproduce"]},
+        {"id": "isolate", "title": "Isolate boundary", "objective": "Locate the responsible contract, implementation and execution boundary.", "depends_on": ["classify"]},
+        {"id": "guard", "title": "Establish guard", "objective": "Add or identify a focused regression guard before the repair.", "depends_on": ["isolate"]},
+        {"id": "repair", "title": "Repair", "objective": "Make the smallest correction at the responsible boundary.", "depends_on": ["guard"]},
+        {"id": "verify", "title": "Verify", "objective": "Run the focused guard and adjacent affected verification.", "depends_on": ["repair"]},
+        {"id": "answer", "title": "Answer", "objective": "Report diagnosis, correction and verification evidence.", "depends_on": ["verify"]}
+      ]
+    },
+    {
+      "id": "dataset-analysis-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "selection_description": "Analyse a dataset through a host-resolved workflow and verified result.",
+      "purpose": "Answer a bounded analytical question without guessing dataset identity or tool arguments.",
+      "goal": "Analyse a resolved dataset and explain the verified result.",
+      "success_criteria": "Dataset identity, sufficient data understanding, semantic operation and result verification are established before answering.",
+      "required_capabilities": ["tool.dataset", "workflow.dataset"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["data-understanding-v1", "choose-data-operation-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v1"},
+        {"workflow_ref": "workflow://dataset/quality", "workflow_revision": "v1"},
+        {"workflow_ref": "workflow://dataset/join", "workflow_revision": "v1"}
+      ],
+      "next_action": "resolve-dataset",
+      "constraints": [
+        {"id": "host-tool-contract", "description": "Use host-resolved dataset contracts; do not invent tool names or arguments.", "hard": true},
+        {"id": "evidence-before-answer", "description": "Do not present an unverified tool result as a completed answer.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "dataset-access", "statement": "The host exposes an applicable dataset operation.", "confidence": 0.8}
+      ],
+      "steps": [
+        {"id": "resolve-dataset", "title": "Resolve dataset", "objective": "Resolve the dataset through host-owned resource and dataset authority."},
+        {"id": "understand-data", "title": "Establish data understanding", "objective": "Establish the fields needed by the question, using trusted schema or bounded inspection.", "depends_on": ["resolve-dataset"]},
+        {"id": "choose-operation", "title": "Choose operation", "objective": "Choose the smallest semantic operation that answers the question.", "depends_on": ["understand-data"]},
+        {"id": "execute-analysis", "title": "Execute analysis", "objective": "Execute the host-validated operation and retain its result as evidence.", "depends_on": ["choose-operation"]},
+        {"id": "verify-result", "title": "Verify result", "objective": "Check that the result matches the requested dataset and operation.", "depends_on": ["execute-analysis"]},
+        {"id": "answer", "title": "Answer", "objective": "Explain the verified result and its material limitations.", "depends_on": ["verify-result"]}
+      ]
+    },
+    {
+      "id": "dataset-quality-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "selection_description": "Assess dataset quality through bounded validation, profiling and anomaly evidence.",
+      "purpose": "Separate declared data-quality violations from descriptive observations.",
+      "goal": "Assess relevant quality properties of a resolved dataset.",
+      "success_criteria": "Schema, explicit validation rules, bounded profile checks and relevant anomaly observations are evaluated before findings are summarized.",
+      "required_capabilities": ["tool.dataset", "workflow.dataset"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["data-understanding-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://dataset/quality", "workflow_revision": "v1"},
+        {"workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v1"}
+      ],
+      "next_action": "resolve-dataset",
+      "constraints": [
+        {"id": "violations-versus-observations", "description": "Do not present an outlier or descriptive observation as a data-quality violation without an explicit rule.", "hard": true},
+        {"id": "bounded-analysis", "description": "Keep validation, profiling and anomaly checks within host-provided bounds.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "dataset-access", "statement": "The host exposes applicable dataset validation or profiling operations.", "confidence": 0.8}
+      ],
+      "steps": [
+        {"id": "resolve-dataset", "title": "Resolve dataset", "objective": "Resolve the dataset through host-owned authority."},
+        {"id": "establish-schema", "title": "Establish schema", "objective": "Establish the relevant schema and field semantics.", "depends_on": ["resolve-dataset"]},
+        {"id": "validate-rules", "title": "Validate rules", "objective": "Evaluate explicit data-quality rules when available.", "depends_on": ["establish-schema"]},
+        {"id": "profile-data", "title": "Profile data", "objective": "Profile relevant missingness, distributions or cardinality within bounds.", "depends_on": ["validate-rules"]},
+        {"id": "inspect-anomalies", "title": "Inspect anomalies", "objective": "Inspect relevant anomalies without treating them as violations by default.", "depends_on": ["profile-data"]},
+        {"id": "verify-findings", "title": "Verify findings", "objective": "Separate verified violations from descriptive observations.", "depends_on": ["inspect-anomalies"]},
+        {"id": "answer", "title": "Answer", "objective": "Summarize verified quality findings and limitations.", "depends_on": ["verify-findings"]}
+      ]
+    },
+    {
+      "id": "resource-document-analysis-v2",
+      "source_revision": "agent-workflows-starter@v2",
+      "selection_description": "Analyse a supplied document or resource using host-resolved representations.",
+      "purpose": "Answer a document question from bounded resource content or structured tables.",
+      "goal": "Establish and explain evidence from the supplied resource.",
+      "success_criteria": "Resource identity is host-resolved, relevant text or table evidence is inspected, and claims are grounded in the returned content.",
+      "required_capabilities": ["resource.read", "document.inspect", "data.query"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["document-table-analysis-v1", "data-understanding-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://resource/document-analysis", "workflow_revision": "v2"}
+      ],
+      "constraints": [
+        {"id": "resource-identity", "description": "Use only host-provided resource references and representations.", "hard": true},
+        {"id": "bounded-inspection", "description": "Keep resource reads and table analysis within host-provided bounds.", "hard": true}
+      ],
+      "steps": [
+        {"id": "resolve-resource", "title": "Resolve resource", "objective": "Use the host-provided resource identity."},
+        {"id": "inspect-resource", "title": "Inspect resource", "objective": "Inspect available representations and relevant structure.", "depends_on": ["resolve-resource"]},
+        {"id": "inspect-tables", "title": "Inspect tables", "objective": "If structured tables are present, resolve one through its host identity.", "depends_on": ["inspect-resource"]},
+        {"id": "establish-evidence", "title": "Establish evidence", "objective": "Ground the answer in returned text or bounded table results.", "depends_on": ["inspect-resource", "inspect-tables"]},
+        {"id": "answer", "title": "Answer", "objective": "Answer with resource-grounded evidence and limitations.", "depends_on": ["establish-evidence"]}
+      ]
+    },
+    {
+      "id": "web-research-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "selection_description": "Research a question using bounded search and source retrieval.",
+      "purpose": "Build a traceable answer from sources that directly support its claims.",
+      "goal": "Answer the research question from retrieved source evidence.",
+      "success_criteria": "Material claims are supported by fetched sources, time-sensitive details are checked, and inference is distinguished from retrieved fact.",
+      "required_capabilities": ["web.search", "web.fetch"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["web-source-evidence-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://web/research", "workflow_revision": "v1"}
+      ],
+      "constraints": [
+        {"id": "source-grounding", "description": "Do not state material web claims without retrieved source evidence.", "hard": true},
+        {"id": "safe-fetch", "description": "Use only host-authorized safe HTTPS search and fetch tools.", "hard": true}
+      ],
+      "steps": [
+        {"id": "scope-question", "title": "Scope question", "objective": "Identify what evidence would answer the request."},
+        {"id": "discover-sources", "title": "Discover sources", "objective": "Search for relevant sources, favoring primary authorities.", "depends_on": ["scope-question"]},
+        {"id": "retrieve-evidence", "title": "Retrieve evidence", "objective": "Fetch candidate sources and inspect the supporting content.", "depends_on": ["discover-sources"]},
+        {"id": "verify-claims", "title": "Verify claims", "objective": "Match material claims to retrieved evidence and note dates or uncertainty.", "depends_on": ["retrieve-evidence"]},
+        {"id": "answer", "title": "Answer", "objective": "Provide a sourced answer and distinguish any inference.", "depends_on": ["verify-claims"]}
+      ]
+    }
+  ]
+}

@@ -3,6 +3,8 @@
 #include "memory/memory-types.h"
 #include "plan/plan-types.h"
 
+#include <algorithm>
+#include <set>
 #include <utility>
 
 namespace {
@@ -211,6 +213,57 @@ bool common_agent_install_bootstrap_package(
     }
 
     if (config.install_blueprints) {
+        // Workflows are durable plan-store records. Install them before
+        // blueprints so a blueprint can be admitted only when all of its
+        // declared references are present in this package or store.
+        for (const auto & definition : package.workflows) {
+            if (definition.id.empty() || definition.definition.workflow_ref.empty() ||
+                    definition.definition.workflow_revision.empty() || definition.definition.family.empty() ||
+                    definition.definition.graph_revision.empty() ||
+                    (definition.definition.allowed_tools.empty() &&
+                     definition.definition.required_capabilities.empty() &&
+                     definition.definition.optional_capabilities.empty())) {
+                error = "bootstrap workflow has incomplete identity or definition";
+                return false;
+            }
+            const auto valid_unique_refs = [](const std::vector<std::string> & refs) {
+                std::set<std::string> unique;
+                return std::all_of(refs.begin(), refs.end(), [&](const auto & ref) {
+                    return !ref.empty() && ref.size() <= 128 && unique.insert(ref).second;
+                });
+            };
+            if (!valid_unique_refs(definition.definition.allowed_tools) ||
+                    !valid_unique_refs(definition.definition.required_capabilities) ||
+                    !valid_unique_refs(definition.definition.optional_capabilities) ||
+                    !valid_unique_refs(definition.definition.required_context)) {
+                error = "bootstrap workflow contains invalid or duplicate authority requirements";
+                return false;
+            }
+            common_plan_state workflow;
+            workflow.id = prefix + "workflow:" + definition.id;
+            workflow.namespace_id = config.namespace_id;
+            workflow.session_id = config.session_id;
+            workflow.project_id = config.project_id;
+            workflow.source_revision = definition.source_revision.empty()
+                ? package.name + "@" + package.version : definition.source_revision;
+            workflow.kind = common_plan_kind::workflow;
+            workflow.scope = config.project_id.empty() ? common_plan_scope::session : common_plan_scope::project;
+            workflow.purpose = "Host-validated " + definition.definition.family + " workflow.";
+            workflow.goal = definition.definition.workflow_ref;
+            workflow.success_criteria = "Workflow revision remains host-valid before materialization.";
+            workflow.workflow_definition = definition.definition;
+            workflow.created_at = config.now;
+            workflow.updated_at = config.now;
+            const auto existing = plan_store.get(workflow.id, error);
+            if (!error.empty()) return false;
+            if (existing) {
+                result.existing_workflow_ids.push_back(workflow.id);
+                continue;
+            }
+            if (!plan_store.create(workflow, error)) return false;
+            result.installed_workflow_ids.push_back(workflow.id);
+        }
+
         for (const auto & definition : package.blueprints) {
             if (definition.id.empty() || definition.goal.empty() || definition.success_criteria.empty() ||
                     definition.steps.empty() || definition.source_revision.size() > 128) {
@@ -233,6 +286,10 @@ bool common_agent_install_bootstrap_package(
             blueprint.required_capabilities = definition.required_capabilities;
             blueprint.constraints = definition.constraints;
             blueprint.assumptions = definition.assumptions;
+            blueprint.workflow_policy = definition.workflow_policy;
+            blueprint.procedure_refs = definition.procedure_refs;
+            blueprint.selection_description = definition.selection_description;
+            blueprint.workflow_bindings = definition.workflow_bindings;
             blueprint.next_action = definition.next_action;
             blueprint.created_at = config.now;
             blueprint.updated_at = config.now;
@@ -240,6 +297,27 @@ bool common_agent_install_bootstrap_package(
                 error = "bootstrap blueprints must not contain tool bindings";
                 return false;
             }
+            bool workflow_bindings_valid = true;
+            for (const auto & binding : blueprint.workflow_bindings) {
+                bool found = false;
+                const auto workflows = plan_store.list(error);
+                if (!error.empty()) return false;
+                for (const auto & workflow : workflows) {
+                    if (workflow.kind != common_plan_kind::workflow || !workflow.workflow_definition ||
+                            !common_plan_scope_matches(workflow, blueprint.scope, blueprint.namespace_id,
+                                blueprint.session_id, blueprint.project_id, blueprint.turn_id)) continue;
+                    const auto & candidate = *workflow.workflow_definition;
+                    if (candidate.workflow_ref == binding.workflow_ref &&
+                            candidate.workflow_revision == binding.workflow_revision) { found = true; break; }
+                }
+                if (!found) {
+                    result.rejected_items.push_back({"blueprint", definition.id,
+                        "workflow binding is unavailable in the package scope: " + binding.workflow_ref + "@" + binding.workflow_revision});
+                    workflow_bindings_valid = false;
+                    break;
+                }
+            }
+            if (!workflow_bindings_valid) continue;
             const auto existing = plan_store.get(blueprint.id, error);
             if (!error.empty()) return false;
             if (existing) {

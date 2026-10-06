@@ -17,7 +17,7 @@ enum class common_agent_event_type {
     plan_revision_limit_reached, research_started, research_reopened,
     thinking_mode_resolved, thinking_escalation_allowed,
     thinking_escalation_denied, thinking_escalation_requested,
-    blueprint_selection_evaluated, research_gap_opened, research_task_scheduled,
+    blueprint_selection_evaluated, route_selection_evaluated, research_gap_opened, research_task_scheduled,
     research_task_started, research_task_completed, research_task_failed,
     research_iteration_completed, research_sources_compared,
     research_source_recorded, research_evidence_recorded, research_completed,
@@ -61,6 +61,7 @@ inline const char * common_agent_event_type_name(common_agent_event_type type) {
         case common_agent_event_type::thinking_escalation_denied: return "thinking_escalation_denied";
         case common_agent_event_type::thinking_escalation_requested: return "thinking_escalation_requested";
         case common_agent_event_type::blueprint_selection_evaluated: return "blueprint_selection_evaluated";
+        case common_agent_event_type::route_selection_evaluated: return "route_selection_evaluated";
         case common_agent_event_type::research_gap_opened: return "research_gap_opened";
         case common_agent_event_type::research_task_scheduled: return "research_task_scheduled";
         case common_agent_event_type::research_task_started: return "research_task_started";

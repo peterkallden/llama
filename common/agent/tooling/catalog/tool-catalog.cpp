@@ -94,6 +94,54 @@ std::vector<common_tool_definition> builtin_definitions() {
         tool("web.fetch", "Fetch a public HTTPS URL through the native safe HTTP client.", R"({"type":"object","additionalProperties":false,"required":["url"],"properties":{"url":{"type":"string","minLength":9,"maxLength":2048},"max_bytes":{"type":"integer","minimum":1,"maximum":500000},"extract":{"type":"string","enum":["text"]}}})", object, "builtin.web_fetch", common_tool_risk_class::network_read, false, 10000, 65536, R"({"https_only":true,"max_redirects":3,"block_private_networks":true})"),
     };
 
+    const auto bind_capability = [&](const char * capability,
+            std::initializer_list<const char *> names) {
+        for (auto & definition : definitions) {
+            if (std::find(names.begin(), names.end(), definition.name) != names.end()) {
+                definition.capabilities.emplace_back(capability);
+            }
+        }
+    };
+    bind_capability("dataset.resolve", {"dataset.select"});
+    bind_capability("dataset.inspect", {"dataset.inspect"});
+    bind_capability("dataset.schema", {"dataset.schema"});
+    bind_capability("dataset.sample", {"dataset.sample"});
+    bind_capability("dataset.validate", {"dataset.validate"});
+    bind_capability("data.query", {"data.query"});
+    bind_capability("data.filter", {"data.filter"});
+    bind_capability("data.aggregate", {"data.aggregate"});
+    bind_capability("data.join", {"data.join"});
+    bind_capability("data.transform", {"data.transform"});
+    bind_capability("statistics.describe", {"statistics.describe"});
+    bind_capability("statistics.outliers", {"statistics.outliers"});
+    bind_capability("statistics.value_counts", {"statistics.value_counts"});
+    bind_capability("repository.list", {"repository.list"});
+    bind_capability("repository.search", {"repository.search"});
+    bind_capability("repository.read", {"repository.read"});
+    bind_capability("repository.diff", {"repository.diff"});
+    bind_capability("repository.log", {"repository.log"});
+    bind_capability("repository.status", {"repository.status"});
+    bind_capability("repository.changed_files", {"repository.changed_files"});
+    bind_capability("workspace.list", {"workspace.list"});
+    bind_capability("workspace.read", {"workspace.read"});
+    bind_capability("workspace.search", {"workspace.search"});
+    bind_capability("workspace.modify", {"workspace.patch"});
+    bind_capability("resource.inspect", {"resource.inspect"});
+    bind_capability("resource.read", {"resource.read"});
+    bind_capability("document.inspect", {"document.tables", "document.table"});
+    bind_capability("web.search", {"web.search"});
+    bind_capability("web.fetch", {"web.fetch"});
+    bind_capability("development.build", {"development.build"});
+    bind_capability("development.test", {"development.test"});
+    bind_capability("diagnostics.compile", {"diagnostics.compile"});
+    bind_capability("diagnostics.symbol", {"diagnostics.symbol"});
+    bind_capability("diagnostics.references", {"diagnostics.references"});
+    bind_capability("diagnostics.call_hierarchy", {"diagnostics.call_hierarchy"});
+    bind_capability("diagnostics.test_failures", {"diagnostics.test_failures"});
+    bind_capability("diagnostics.format", {"diagnostics.format"});
+    bind_capability("diagnostics.include_graph", {"diagnostics.include_graph"});
+    bind_capability("diagnostics.native_crash", {"diagnostics.native_crash"});
+
     const auto set_model_schema = [&](const char * name, const char * schema) {
         for (auto & definition : definitions) {
             if (definition.name == name) {
@@ -422,6 +470,18 @@ bool common_tool_catalog::resolve_profile(
         loaded.erase(std::remove_if(loaded.begin(), loaded.end(), [&excluded_names](const common_tool_definition & definition) {
             return excluded_names.count(definition.name) != 0;
         }), loaded.end());
+    }
+    for (auto & definition : loaded) {
+        for (const auto & capability : capabilities) {
+            if (std::find(capability.second.begin(), capability.second.end(), definition.name) !=
+                    capability.second.end()) {
+                definition.capabilities.push_back(capability.first);
+            }
+        }
+        std::sort(definition.capabilities.begin(), definition.capabilities.end());
+        definition.capabilities.erase(std::unique(
+            definition.capabilities.begin(), definition.capabilities.end()),
+            definition.capabilities.end());
     }
     error.clear();
     snapshot.tools = std::move(loaded);

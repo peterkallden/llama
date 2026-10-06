@@ -4,6 +4,7 @@
 #include "agent/learning/blueprint-selector.h"
 #include "tools/agent/cli/agent-cli-options.h"
 #include "tools/agent/runtime/agent-runtime-package-io.h"
+#include "tools/agent/runtime/agent-route-compiler.h"
 
 #include <memory>
 #include <optional>
@@ -12,6 +13,33 @@
 
 struct common_agent_generation_config;
 class agent_tool_view;
+
+struct common_agent_workflow_selection_result {
+    std::optional<common_plan_workflow_binding> binding;
+    std::string reason;
+    std::optional<common_agent_generated_text_result> generation;
+};
+
+struct common_agent_route_selection_result {
+    std::optional<std::string> route_id;
+    float confidence = 0.0f;
+    std::string reason;
+    std::optional<common_agent_generated_text_result> generation;
+};
+
+common_agent_route_selection_result select_llama_cli_route(
+    common_agent_inference & inference,
+    const common_agent_generation_config & generation_config,
+    const common_agent_request & request,
+    const common_agent_route_catalog & catalog,
+    std::string & error);
+
+common_agent_workflow_selection_result select_llama_cli_blueprint_workflow(
+    common_agent_inference & inference,
+    const common_agent_generation_config & generation_config,
+    const common_agent_request & request,
+    const std::vector<common_plan_workflow_binding> & bindings,
+    std::string & error);
 
 std::unique_ptr<common_blueprint_selector> make_llama_cli_blueprint_selector(
     common_agent_inference & inference,

@@ -6,6 +6,7 @@
 #include "agent/contracts/agent-events.h"
 #include "agent/agent-inference.h"
 #include "agent/learning/blueprint-selector.h"
+#include "agent-route-compiler.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
 #include "runtime/runtime-trace.h"
@@ -65,12 +66,16 @@ struct common_agent_orchestration_runtime_context {
     common_agent_inference & inference;
     const common_agent_generation_config & generation_config;
     const common_agent_orchestration_config & config;
+    common_memory_store & memory_store;
     std::string & current_plan_id;
     const common_agent_scope & scope;
     common_plan_store & plan_store;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
     const std::optional<common_memory_policy_pack> * policy_pack = nullptr;
     const common_agent_runtime_tooling * tooling = nullptr;
+    common_agent_route_candidate & selected_route;
+    bool & route_selected;
+    std::vector<common_memory_hit> & route_procedure_memories;
     std::vector<common_agent_event> & pre_turn_events;
     std::vector<common_runtime_trace_entry> & pre_turn_trace;
 };
@@ -81,4 +86,10 @@ bool maybe_auto_select_plan(
 
 bool maybe_auto_select_blueprint(
     const common_agent_orchestration_runtime_context & context,
+    std::string & error);
+
+bool maybe_select_agent_route(
+    const common_agent_orchestration_runtime_context & context,
+    common_agent_route_candidate & selected_route,
+    bool & route_selected,
     std::string & error);

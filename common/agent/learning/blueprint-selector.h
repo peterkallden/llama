@@ -25,6 +25,9 @@ struct common_blueprint_candidate {
     std::vector<common_plan_assumption> assumptions;
     std::vector<std::string> contributions;
     std::vector<std::string> required_capabilities;
+    common_plan_workflow_policy workflow_policy = common_plan_workflow_policy::preferred;
+    std::vector<std::string> procedure_refs;
+    std::vector<common_plan_workflow_binding> workflow_bindings;
     std::string source_revision;
 };
 
@@ -97,6 +100,13 @@ struct common_blueprint_selection_config {
     // this turn. Textual constraints without a host decision remain subject
     // to normal plan validation rather than heuristic native filtering.
     std::vector<std::string> blocked_constraint_ids;
+    // Route compiler output. The selector may instantiate only the already
+    // host-approved workflow binding; it never resolves a new identity.
+    std::optional<common_plan_workflow_binding> selected_workflow;
+    // Host-computed provenance for the selected route. The selector copies it
+    // into the concrete task instance; model output cannot create or replace
+    // this binding.
+    std::optional<common_plan_route_binding> route_binding;
     // Optional host-owned planner backend. It may replace the freshly
     // instantiated task with a verified, ordinary task plan before the plan
     // store sees it. A declined callback leaves the blueprint instance

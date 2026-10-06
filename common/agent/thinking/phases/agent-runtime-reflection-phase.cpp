@@ -6,6 +6,11 @@ bool evaluate_common_agent_reflection_phase(
         const std::string & draft,
         const std::set<std::string> & executed_step_ids,
         common_reflection_result & reflection) {
+    if (context.tools != nullptr && context.tools->has_execution_envelope() &&
+            !context.tools->set_execution_phase(common_agent_execution_phase::reflection)) {
+        context.error = "reflection phase is not permitted by the route execution envelope";
+        return false;
+    }
     reflection = context.reflector.evaluate_result(
         context.request, plan, draft, context.error);
     if (!context.error.empty()) return false;
@@ -100,6 +105,18 @@ common_agent_reflection_escalation_result handle_common_agent_reflection_escalat
 
     context.request.deliberation_policy = context.policy_after_escalation(
         context.request.deliberation_policy, escalation.to_mode);
+    if (context.tools != nullptr && context.tools->has_execution_envelope()) {
+        const auto phase = escalation.to_mode == common_agent_thinking_mode::research
+            ? common_agent_execution_phase::research
+            : common_agent_execution_phase::deliberate;
+        if (!context.tools->set_execution_phase(phase)) {
+            outcome.denied = true;
+            context.emit_full_event({
+                common_agent_event_type::thinking_escalation_denied,
+                "route execution envelope denied phase escalation", {}, plan.id});
+            return outcome;
+        }
+    }
     context.request.max_reflection_rounds = std::max<size_t>(
         context.request.max_reflection_rounds,
         static_cast<size_t>(context.request.deliberation_policy.max_reflection_rounds));

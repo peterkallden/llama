@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <map>
+#include <string>
 #include <vector>
 
 class agent_tool_view;
@@ -17,6 +18,12 @@ struct common_agent_runtime_tooling {
     std::map<std::string, std::string> family_descriptions;
     // Host-resolved semantic capabilities used for pre-selection eligibility.
     std::vector<std::string> capabilities;
+    // Host facts that workflows may require for materialization. Unlike
+    // capabilities, these do not resolve to tools or grant execution rights.
+    std::vector<std::string> available_context;
+    // Host-resolved capability-to-tool bindings. Workflow definitions request
+    // semantic capabilities; only tools in this active view can satisfy them.
+    std::map<std::string, std::vector<std::string>> capability_tools;
     // Host-resolved hard constraints that are unavailable for the active turn.
     std::vector<std::string> blocked_constraint_ids;
     bool profile_tools_active = false;

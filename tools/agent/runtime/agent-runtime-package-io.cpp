@@ -80,20 +80,35 @@ bool export_agent_package(
     }
 
     const std::string blueprint_prefix = prefix + "blueprint:";
+    const std::string workflow_prefix = prefix + "workflow:";
+    for (const auto & plan : plans) {
+        if (plan.kind != common_plan_kind::workflow || plan.id.rfind(workflow_prefix, 0) != 0 ||
+                !plan.workflow_definition) continue;
+        common_agent_bootstrap_workflow workflow;
+        workflow.id = plan.id.substr(workflow_prefix.size());
+        workflow.source_revision = plan.source_revision;
+        workflow.definition = *plan.workflow_definition;
+        package.workflows.push_back(std::move(workflow));
+    }
     for (const auto & plan : plans) {
         if (plan.kind != common_plan_kind::blueprint || plan.id.rfind(blueprint_prefix, 0) != 0) {
             continue;
         }
         common_agent_bootstrap_blueprint blueprint;
         blueprint.id = plan.id.substr(blueprint_prefix.size());
+        blueprint.source_revision = plan.source_revision;
+        blueprint.selection_description = plan.selection_description;
         blueprint.purpose = plan.purpose;
         blueprint.goal = plan.goal;
         blueprint.success_criteria = plan.success_criteria;
         blueprint.required_capabilities = plan.required_capabilities;
+        blueprint.workflow_policy = plan.workflow_policy;
+        blueprint.procedure_refs = plan.procedure_refs;
         blueprint.steps = plan.steps;
         blueprint.constraints = plan.constraints;
         blueprint.assumptions = plan.assumptions;
         blueprint.next_action = plan.next_action;
+        blueprint.workflow_bindings = plan.workflow_bindings;
         package.blueprints.push_back(std::move(blueprint));
     }
 

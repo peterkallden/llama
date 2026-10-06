@@ -3,6 +3,8 @@
 #include "agent/input-resources.h"
 #include "agent/tool-family-index.h"
 #include "../runtime/agent-runtime-chat-driver.h"
+#include "../runtime/agent-route-compiler.h"
+#include "agent-dataset-workflow-adapter.h"
 
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
@@ -21,6 +23,98 @@ bool tool_has_no_required_arguments(const common_chat_tool & tool) {
     if (schema.is_discarded() || !schema.is_object()) return false;
     if (!schema.contains("required")) return true;
     return schema["required"].is_array() && schema["required"].empty();
+}
+
+bool restore_and_validate_bound_route(
+        common_agent_runtime_driver_execution & execution,
+        std::string & error) {
+    if (execution.current_plan_id.empty()) return true;
+    std::string plan_error;
+    const auto plan = execution.plan_store.get(execution.current_plan_id, plan_error);
+    if (!plan_error.empty()) { error = "resume route validation failed: " + plan_error; return false; }
+    if (!plan || !plan->route_binding) return true; // legacy plans remain unbound.
+
+    common_agent_route_candidate route;
+    route.id = plan->route_binding->route_id;
+    route.blueprint_logical_id = plan->route_binding->blueprint_ref;
+    route.blueprint_revision = plan->route_binding->blueprint_revision;
+    route.graph_revision = plan->route_binding->graph_revision;
+    route.required_capabilities = plan->required_capabilities;
+    if (!plan->route_binding->workflow_ref.empty()) {
+        route.kind = common_agent_route_kind::blueprint_workflow;
+        route.workflow = common_plan_workflow_binding{
+            plan->route_binding->workflow_ref,
+            plan->route_binding->workflow_revision};
+        if (!plan->workflow_definition ||
+                plan->workflow_definition->workflow_ref != route.workflow->workflow_ref ||
+                plan->workflow_definition->workflow_revision != route.workflow->workflow_revision ||
+                plan->workflow_definition->graph_revision != route.graph_revision) {
+            error = "route binding is stale: persisted workflow identity changed";
+            return false;
+        }
+        for (const auto & capability : plan->workflow_definition->required_capabilities) {
+            if (std::find(route.required_capabilities.begin(), route.required_capabilities.end(),
+                    capability) == route.required_capabilities.end()) {
+                route.required_capabilities.push_back(capability);
+            }
+        }
+        for (const auto & requirement : plan->workflow_definition->required_context) {
+            const bool resource_context_available = requirement == "context.resource.available" &&
+                std::any_of(execution.input_resources.begin(), execution.input_resources.end(),
+                    [](const auto & resource) { return !resource.resource.uri.empty(); });
+            if (!resource_context_available &&
+                    std::find(execution.tooling.available_context.begin(), execution.tooling.available_context.end(),
+                        requirement) == execution.tooling.available_context.end()) {
+                error = "route binding is stale: required workflow context is unavailable: " + requirement;
+                return false;
+            }
+            route.required_context.push_back(requirement);
+        }
+        std::string resolution_reason;
+        std::vector<std::string> resolved_optional_capabilities;
+        if (!common_agent_resolve_workflow_tools(
+                *plan->workflow_definition, execution.tooling,
+                route.resolved_tools, resolved_optional_capabilities, resolution_reason)) {
+            error = "route binding is stale: " + resolution_reason;
+            return false;
+        }
+        route.resolved_optional_capabilities = std::move(resolved_optional_capabilities);
+    } else if (!route.blueprint_logical_id.empty()) {
+        route.kind = common_agent_route_kind::blueprint;
+    } else {
+        route.kind = common_agent_route_kind::normal_plan;
+    }
+
+    common_agent_execution_envelope envelope;
+    if (!build_agent_execution_envelope(route, execution.tooling, envelope, error)) {
+        error = "route binding is stale: " + error;
+        return false;
+    }
+    const auto & binding = *plan->route_binding;
+    if (binding.blueprint_revision != envelope.blueprint_revision ||
+            binding.workflow_revision != envelope.workflow_revision ||
+            binding.graph_revision != envelope.graph_revision ||
+            binding.policy_revision != envelope.policy_revision ||
+            binding.execution_envelope_fingerprint != envelope.fingerprint) {
+        error = "route binding is stale: execution envelope or policy revision changed";
+        return false;
+    }
+    for (const auto & capability : plan->required_capabilities) {
+        if (std::find(execution.tooling.capabilities.begin(), execution.tooling.capabilities.end(), capability) ==
+                execution.tooling.capabilities.end()) {
+            error = "route binding is stale: required capability is unavailable: " + capability;
+            return false;
+        }
+    }
+    execution.selected_route = std::move(route);
+    execution.route_selected = true;
+    execution.execution_envelope = std::move(envelope);
+    execution.execution_envelope_ready = true;
+    execution.pre_turn_events.push_back({
+        common_agent_event_type::route_selection_evaluated,
+        "resumed existing route after deterministic envelope validation",
+        {}, execution.current_plan_id});
+    return true;
 }
 
 bool select_model_tool_families(
@@ -660,6 +754,11 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         inputs.explicit_memory_confirmed,
         {},
         {},
+        {},
+        false,
+        {},
+        false,
+        {},
         inputs.execution_control,
     };
     execution.require_tool_execution = inputs.require_tool_execution;
@@ -673,6 +772,8 @@ common_agent_request make_agent_runtime_driver_request(
     const common_agent_runtime_driver_execution & execution) {
     common_agent_request request;
     request.memories = execution.memories;
+    request.memories.insert(request.memories.end(), execution.route_procedure_memories.begin(),
+        execution.route_procedure_memories.end());
     request.enable_memory = execution.memory_enabled;
     request.enable_planning = true;
     request.enable_reflection = execution.policy.enable_reflection;
@@ -701,6 +802,12 @@ common_agent_request make_agent_runtime_driver_request(
     request.flydelta_activation = execution.flydelta_activation;
     request.flydelta_capture = execution.flydelta_capture;
     request.tool_argument_bindings = execution.tool_argument_bindings;
+    if (execution.route_selected && execution.selected_route.workflow &&
+            execution.selected_route.workflow->workflow_ref ==
+                "workflow://resource/document-analysis") {
+        request.workflow_continuation = make_agent_resource_document_workflow_continuation(
+            execution.selected_route, execution.tool_argument_bindings);
+    }
     apply_explicit_deliberation_policy(request.deliberation_policy, request);
     return request;
 }
@@ -751,12 +858,16 @@ bool run_agent_runtime_driver(
         execution.inference,
         execution.runtime_config.generation_config,
         execution.orchestration_config,
+        execution.memory_store,
         execution.current_plan_id,
         execution.scope,
         execution.plan_store,
         execution.installed_blueprint_candidates,
         &execution.policy_pack,
         &execution.tooling,
+        execution.selected_route,
+        execution.route_selected,
+        execution.route_procedure_memories,
         execution.pre_turn_events,
         execution.pre_turn_trace,
     };
@@ -774,35 +885,57 @@ bool run_agent_runtime_driver(
         return false;
     };
 
-    // Family preflight is a host-owned decision about the original request.
-    // It must precede an automatic plan: an auto-created plan otherwise
-    // makes current_plan_id non-empty and suppresses this gate, allowing a
-    // malformed planner fallback to degrade a tool-required task to answer
-    // only. Explicit caller-owned plans still preserve the existing skip in
-    // select_model_tool_families().
     prepare_available_resources(execution);
-    const common_agent_request initial_request = make_agent_runtime_driver_request(execution);
     if (execution.execution_control.should_stop()) {
         return stop_for_execution_control();
     }
-    if (!select_model_tool_families(execution, initial_request, error)) {
-        return false;
-    }
-    if (execution.execution_control.should_stop()) {
-        return stop_for_execution_control();
-    }
-    if (execution.family_chat_routed) {
-        result = std::move(execution.family_chat_result);
-        error.clear();
-        return true;
-    }
-
     if (!maybe_auto_select_plan(orchestration_context, error)) {
         return false;
     }
+    if (execution.execution_control.should_stop()) {
+        return stop_for_execution_control();
+    }
 
-    if (!maybe_auto_select_blueprint(orchestration_context, error)) {
+    if (!restore_and_validate_bound_route(execution, error)) return false;
+
+    if (!maybe_select_agent_route(orchestration_context, execution.selected_route,
+            execution.route_selected, error)) {
         return false;
+    }
+
+    if (execution.route_selected) {
+        if (!build_agent_execution_envelope(
+                execution.selected_route, execution.tooling,
+                execution.execution_envelope, error)) {
+            error = "execution envelope construction failed: " + error;
+            return false;
+        }
+        execution.execution_envelope_ready = true;
+    }
+
+    if (execution.route_selected &&
+            execution.selected_route.kind == common_agent_route_kind::blueprint_workflow) {
+        execution.model_tools.clear();
+        for (const auto & tool : execution.tooling.tools) {
+            if (std::find(execution.selected_route.resolved_tools.begin(),
+                    execution.selected_route.resolved_tools.end(), tool.name) !=
+                    execution.selected_route.resolved_tools.end()) {
+                execution.model_tools.push_back(tool);
+            }
+        }
+    }
+
+    if (!execution.route_selected ||
+            execution.selected_route.kind == common_agent_route_kind::normal_plan) {
+        const common_agent_request routed_request = make_agent_runtime_driver_request(execution);
+        if (!select_model_tool_families(execution, routed_request, error)) {
+            return false;
+        }
+        if (execution.family_chat_routed) {
+            result = std::move(execution.family_chat_result);
+            error.clear();
+            return true;
+        }
     }
 
     if (!prepare_resource_chunk_observations(execution, error)) {
@@ -821,7 +954,13 @@ bool run_agent_runtime_driver(
             execution.inference,
             execution.runtime_config,
             model_tools,
-            execution.tooling.tool_view);
+            execution.tooling.tool_view,
+            execution.execution_envelope_ready ? &execution.execution_envelope : nullptr,
+            execution.policy.deliberation_policy.mode == common_agent_thinking_mode::research
+                ? common_agent_execution_phase::research
+                : execution.policy.deliberation_policy.mode == common_agent_thinking_mode::deliberate
+                    ? common_agent_execution_phase::deliberate
+                    : common_agent_execution_phase::normal);
 
         const auto slice = assembly.runtime->run(request);
         if (!slice.error.empty()) {

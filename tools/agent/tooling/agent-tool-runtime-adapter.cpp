@@ -199,9 +199,163 @@ private:
     agent_tool_view & tool_view;
 };
 
+class scoped_agent_tool_runtime final : public common_agent_tool_runtime {
+public:
+    scoped_agent_tool_runtime(
+            std::unique_ptr<common_agent_tool_runtime> provider,
+            common_agent_execution_envelope envelope,
+            common_agent_execution_phase phase)
+        : provider(std::move(provider)), envelope(std::move(envelope)), phase(phase) {}
+
+    bool is_read_only(const std::string & tool_name) const override {
+        return allowed(tool_name) && provider->is_read_only(tool_name);
+    }
+
+    bool is_policy_gated(const std::string & tool_name) const override {
+        return allowed(tool_name) && provider->is_policy_gated(tool_name);
+    }
+
+    bool describe_tool_dataflow(
+            const std::string & tool_name,
+            common_plan_tool_dataflow_contract & contract,
+            std::string & error) const override {
+        if (!require(tool_name, error)) return false;
+        return provider->describe_tool_dataflow(tool_name, contract, error);
+    }
+
+    bool validate_plan(const common_plan_state & plan, std::string & error) const override {
+        if (!provider->validate_plan(plan, error)) return false;
+        for (const auto & step : plan.steps) {
+            const auto name = step.tool_call ? step.tool_call->name :
+                (step.selected_tool ? *step.selected_tool : std::string());
+            if (!name.empty() && !allowed(name)) {
+                error = "route execution envelope denies tool in plan: " + name;
+                return false;
+            }
+        }
+        error.clear();
+        return true;
+    }
+
+    bool is_available(const std::string & tool_name) const override {
+        return allowed(tool_name) && provider->is_available(tool_name);
+    }
+
+    bool resolve_tool_name(
+            const std::string & requested,
+            std::string & resolved,
+            std::vector<std::string> & candidates) const override {
+        candidates.clear();
+        if (allowed(requested) && provider->is_available(requested)) {
+            resolved = requested;
+            return true;
+        }
+        std::vector<std::string> provider_candidates;
+        if (!provider->resolve_tool_name(requested, resolved, provider_candidates)) return false;
+        if (!allowed(resolved)) return false;
+        for (const auto & candidate : provider_candidates) if (allowed(candidate)) {
+            candidates.push_back(candidate);
+        }
+        return true;
+    }
+
+    common_agent_tool_repair_context make_repair_context(
+            const common_agent_tool_call & call,
+            const std::string & validation_error) const override {
+        if (!allowed(call.name)) {
+            return {call.name, "tool is outside the route execution envelope", {}, {}, {}, call.arguments_json, false, {}};
+        }
+        auto result = provider->make_repair_context(call, validation_error);
+        result.available_tools.erase(std::remove_if(result.available_tools.begin(), result.available_tools.end(),
+            [&](const auto & name) { return !allowed(name); }), result.available_tools.end());
+        result.candidate_tools.erase(std::remove_if(result.candidate_tools.begin(), result.candidate_tools.end(),
+            [&](const auto & name) { return !allowed(name); }), result.candidate_tools.end());
+        return result;
+    }
+
+    bool validate(const common_agent_tool_call & call, std::string & error) const override {
+        if (!require(call.name, error)) return false;
+        return provider->validate(call, error);
+    }
+
+    common_tool_execution_result execute(const common_agent_tool_call & call) const override {
+        std::string error;
+        if (!require(call.name, error)) {
+            return common_tool_execution_result::failure(
+                "tool.outside_execution_envelope",
+                common_tool_failure_class::policy,
+                false,
+                "The selected route does not permit this tool.",
+                error);
+        }
+        return provider->execute(call);
+    }
+
+    bool supports_async(const common_agent_tool_call & call) const override {
+        return allowed(call.name) && provider->supports_async(call);
+    }
+
+    bool begin_async(
+            const common_agent_tool_call & call,
+            common_runtime_operation_ref & pending,
+            std::string & error) const override {
+        if (!require(call.name, error)) return false;
+        return provider->begin_async(call, pending, error);
+    }
+
+    bool poll_async(
+            const common_runtime_operation_ref & pending,
+            bool & ready,
+            common_tool_execution_result & output,
+            std::string & error) const override {
+        return provider->poll_async(pending, ready, output, error);
+    }
+
+    bool cancel_async(
+            const common_runtime_operation_ref & pending,
+            std::string & error) const override {
+        return provider->cancel_async(pending, error);
+    }
+
+    bool set_execution_phase(common_agent_execution_phase next) const override {
+        if (common_agent_execution_phase_policy_for(envelope, next) == nullptr) return false;
+        phase = next;
+        return true;
+    }
+
+    bool has_execution_envelope() const override { return true; }
+
+private:
+    bool allowed(const std::string & name) const {
+        return common_agent_execution_envelope_allows(envelope, phase, name);
+    }
+
+    bool require(const std::string & name, std::string & error) const {
+        if (allowed(name)) {
+            error.clear();
+            return true;
+        }
+        error = "tool outside route execution envelope: " + name +
+            " phase=" + common_agent_execution_phase_name(phase);
+        return false;
+    }
+
+    std::unique_ptr<common_agent_tool_runtime> provider;
+    common_agent_execution_envelope envelope;
+    mutable common_agent_execution_phase phase;
+};
+
 } // namespace
 
 std::unique_ptr<common_agent_tool_runtime> make_provider_agent_tool_runtime(
         agent_tool_view & tool_view) {
     return std::make_unique<provider_agent_tool_runtime>(tool_view);
+}
+
+std::unique_ptr<common_agent_tool_runtime> make_scoped_agent_tool_runtime(
+        std::unique_ptr<common_agent_tool_runtime> provider_runtime,
+        common_agent_execution_envelope envelope,
+        common_agent_execution_phase initial_phase) {
+    return std::make_unique<scoped_agent_tool_runtime>(
+        std::move(provider_runtime), std::move(envelope), initial_phase);
 }

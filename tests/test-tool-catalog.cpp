@@ -2,6 +2,7 @@
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "plan/plan-contract.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <nlohmann/json.hpp>
@@ -64,13 +65,23 @@ int main() {
     const auto * calculator = catalog.find_definition("math.calculate");
     const auto * calculator_legacy = catalog.find_definition("calculator");
     const auto * data_query = catalog.find_definition("data.query");
-    assert(calculator && calculator_legacy && calculator_legacy->name == "math.calculate" && data_query);
+    const auto * data_join = catalog.find_definition("data.join");
+    assert(calculator && calculator_legacy && calculator_legacy->name == "math.calculate" && data_query && data_join);
+    assert(std::find(data_join->capabilities.begin(), data_join->capabilities.end(), "data.join") !=
+        data_join->capabilities.end());
     const auto calculator_model = nlohmann::json::parse(calculator->model_input_schema_json);
     const auto data_query_model = nlohmann::json::parse(data_query->model_input_schema_json);
     assert(calculator_model["properties"].contains("expression"));
     assert(data_query_model["properties"].contains("dataset"));
     assert(!data_query_model["properties"].contains("max_scan_rows"));
     assert(!data_query_model["properties"].contains("materialize"));
+    for (const auto * operation : {"data.query", "data.filter", "data.aggregate",
+            "data.join", "data.transform"}) {
+        const auto * definition = catalog.find_definition(operation);
+        assert(definition);
+        assert(std::find(definition->capabilities.begin(), definition->capabilities.end(), operation) !=
+            definition->capabilities.end());
+    }
 
     const auto * document_tables = catalog.find_definition("document.tables");
     const auto * document_table = catalog.find_definition("document.table");
@@ -174,6 +185,19 @@ int main() {
     assert(build->requires_confirmation && test->requires_confirmation);
     assert(build->input_schema_json.find("required\":[\"target\"]") != std::string::npos);
     assert(test->input_schema_json.find("required\":[\"target\"]") != std::string::npos);
+    for (const auto * name : {"resource.inspect", "resource.read", "web.search",
+            "web.fetch", "diagnostics.compile", "diagnostics.test_failures"}) {
+        const auto * definition = catalog.find_definition(name);
+        assert(definition);
+        assert(std::find(definition->capabilities.begin(), definition->capabilities.end(), name) !=
+            definition->capabilities.end());
+    }
+    for (const auto * name : {"document.tables", "document.table"}) {
+        const auto * definition = catalog.find_definition(name);
+        assert(definition);
+        assert(std::find(definition->capabilities.begin(), definition->capabilities.end(),
+            "document.inspect") != definition->capabilities.end());
+    }
 
     const auto * resource_read = catalog.find_definition("resource.read");
     assert(resource_read);
@@ -260,6 +284,10 @@ int main() {
         analysis_has_dataset_schema = analysis_has_dataset_schema || definition.name == "dataset.schema";
         analysis_has_document_tables = analysis_has_document_tables || definition.name == "document.tables";
         analysis_has_web_fetch = analysis_has_web_fetch || definition.name == "web.fetch";
+        if (definition.name == "data.join") {
+            assert(std::find(definition.capabilities.begin(), definition.capabilities.end(), "data.join") !=
+                definition.capabilities.end());
+        }
         assert(!definition.requires_confirmation);
         assert(definition.name != "memory_remember");
         assert(definition.name != "development.build");

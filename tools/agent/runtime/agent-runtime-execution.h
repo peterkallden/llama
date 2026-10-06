@@ -115,6 +115,11 @@ struct common_agent_runtime_driver_execution {
     bool explicit_memory_confirmed = false;
     std::vector<common_agent_event> pre_turn_events;
     std::vector<common_runtime_trace_entry> pre_turn_trace;
+    common_agent_route_candidate selected_route;
+    bool route_selected = false;
+    common_agent_execution_envelope execution_envelope;
+    bool execution_envelope_ready = false;
+    std::vector<common_memory_hit> route_procedure_memories;
     common_agent_runtime_execution_control execution_control;
     std::vector<agent_resource_chunk_plan> resource_chunk_plans;
     // Keep the authoritative input view so the lane can restore it for the

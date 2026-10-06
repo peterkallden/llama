@@ -445,6 +445,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-plan-context.cpp
         test-plan-json.cpp
         test-plan-store.cpp
+        test-plan-cozo.cpp
         test-reflection-json.cpp
         test-tool-adapters.cpp
         test-tool-catalog.cpp
@@ -458,11 +459,22 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-native-crash-cdb-smoke.cpp
         test-agent-config-bootstrap.cpp
         test-agent-bootstrap.cpp
+        test-agent-route-compiler.cpp
+        test-agent-execution-envelope.cpp
         test-agent-daemon-scope.cpp
     )
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
+        # These contract tests use assert() for both checks and setup. Keep
+        # assertions enabled even when the surrounding build is RelWithDebInfo.
+        if (TEST_NAME MATCHES "^test-(agent-route-compiler|agent-execution-envelope|agent-bootstrap|plan-cozo|tool-catalog)$")
+            if (MSVC)
+                target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
+            else()
+                target_compile_options(${TEST_NAME} PRIVATE -UNDEBUG)
+            endif()
+        endif()
         if (TEST_NAME MATCHES "flydelta|concept-candidate-index|concept-input-routing")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
         endif()
@@ -478,6 +490,24 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         if (TEST_NAME STREQUAL "test-agent-daemon-scope")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-bootstrap")
+            target_compile_definitions(${TEST_NAME} PRIVATE
+                LLAMA_AGENT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-route-compiler")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-route-compiler.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp)
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-execution-envelope")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-tool-runtime-adapter.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-route-compiler.cpp)
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-tooling)
         endif()
         if (TEST_NAME STREQUAL "test-agent-prepared-generation")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime)

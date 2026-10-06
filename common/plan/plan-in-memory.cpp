@@ -44,6 +44,7 @@ bool common_plan_in_memory_store::apply(const common_plan_operation & op, common
         case common_plan_operation_kind::fail_step: find(*op.step_id)->status = common_plan_step_status::failed; if (next.active_step_id == op.step_id) next.active_step_id.reset(); break;
         case common_plan_operation_kind::skip_step: find(*op.step_id)->status = common_plan_step_status::skipped; break;
         case common_plan_operation_kind::complete_plan: next.status = common_plan_status::completed; break;
+        case common_plan_operation_kind::request_route_transition: next.route_binding = op.route_binding; next.status = common_plan_status::active; break;
         case common_plan_operation_kind::fail_plan: next.status = common_plan_status::failed; break;
         default: break;
     }

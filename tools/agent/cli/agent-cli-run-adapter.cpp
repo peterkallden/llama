@@ -113,17 +113,10 @@ bool prepare_agent_cli_args(args & options, std::string & error) {
     }
     const bool blueprint_selection_enabled = options.agent_runtime &&
         !options.agent_blueprint.empty() && options.agent_blueprint != "off";
-    const bool explicit_blueprint_requested = blueprint_selection_enabled &&
-        options.agent_blueprint != "auto";
-    // An explicit blueprint needs a stable task identity before bootstrap can
-    // instantiate it.  An automatic blueprint must not reserve plan_id here:
-    // that value is otherwise indistinguishable from a caller-owned active
-    // plan and suppresses the runtime's family preflight.  Runtime reserves
-    // its identity only after that preflight and automatic plan selection.
-    if (bootstrap_enabled && explicit_blueprint_requested && options.plan_id.empty()) {
-        options.plan_id = "agent-blueprint:" + options.memory_session + ":" +
-            (options.memory_turn.empty() ? std::string("turn") : options.memory_turn);
-    }
+    // Route compilation owns the synthetic task identity for both automatic
+    // and explicit blueprint selection.  Reserving an id here would make the
+    // runtime mistake that reservation for an already-active plan and skip
+    // route compilation, including execution-envelope binding.
     // Host configuration uses the explicit value "off" for a disabled
     // blueprint selector. Treat it like the CLI default (empty), rather than
     // as a literal blueprint id that would require bootstrap and a plan.

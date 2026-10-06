@@ -17,7 +17,7 @@ const char * common_plan_operation_kind_name(common_plan_operation_kind kind) {
         case common_plan_operation_kind::remove_dependency: return "remove_dependency"; case common_plan_operation_kind::add_constraint: return "add_constraint";
         case common_plan_operation_kind::add_assumption: return "add_assumption"; case common_plan_operation_kind::invalidate_assumption: return "invalidate_assumption";
         case common_plan_operation_kind::record_observation: return "record_observation"; case common_plan_operation_kind::set_next_action: return "set_next_action";
-        case common_plan_operation_kind::request_replan: return "request_replan"; case common_plan_operation_kind::complete_plan: return "complete_plan";
+        case common_plan_operation_kind::request_replan: return "request_replan"; case common_plan_operation_kind::request_route_transition: return "request_route_transition"; case common_plan_operation_kind::complete_plan: return "complete_plan";
         case common_plan_operation_kind::fail_plan: return "fail_plan";
     } return "unknown";
 }
@@ -136,5 +136,9 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
     if (op.kind == common_plan_operation_kind::complete_plan) { if (!plan_transition(plan.status, common_plan_status::completed)) return deny("illegal plan state transition"); for (const auto & step : plan.steps) if (!step.optional && step.status != common_plan_step_status::completed && step.status != common_plan_step_status::skipped) return deny("mandatory steps remain incomplete"); }
     if (op.kind == common_plan_operation_kind::fail_plan && !plan_transition(plan.status, common_plan_status::failed)) return deny("illegal plan state transition");
     if (op.kind == common_plan_operation_kind::record_observation && (!op.observation || plan.observations.size() >= config.max_observations)) return deny("invalid or excessive observation");
+    if (op.kind == common_plan_operation_kind::request_route_transition) {
+        if (!op.host_authorized || !op.route_binding) return deny("route transition is host-authorized only");
+        if (op.route_binding->route_id.empty() || op.route_binding->policy_revision.empty()) return deny("route transition requires a complete route binding");
+    }
     return {true, {}};
 }

@@ -89,6 +89,7 @@ args=(
     --thinking-mode deliberate
     --max-tool-rounds 4
     --require-tool-execution --agent-trace --generation-trace
+    --agent-inference-backend server-context
     --prompt "$prompt"
     --n-predict "${LLAMA_AGENT_N_PREDICT:-256}"
     --context-size "${LLAMA_AGENT_CONTEXT_SIZE:-4096}"

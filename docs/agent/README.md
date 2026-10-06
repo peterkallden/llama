@@ -34,6 +34,10 @@ Workflow badges show the latest workflow result for the selected ref. The
 evidence-based milestone record is maintained in
 [Agent Assurance](agent-assurance.md).
 
+Runtime blueprints, workflow contracts, route compilation and domain-adapter
+boundaries are documented in [Agent Workflows](agent-workflows.md); these are
+separate from the CI workflows listed above.
+
 The Android development workflow currently validates the Android example, the
 arm64 native build and an emulator smoke for the native SQLite memory/plan
 stores on the agent branch. The SQLite store remains optional; the Android
@@ -213,6 +217,7 @@ Copyable configurations and protocol fixtures are available in
 [`docs/examples`](../examples):
 
 - [`agent-config.example.json`](../examples/agent-config.example.json)
+- [`agent-bootstrap-workflows-v1.json`](../examples/agent-bootstrap-workflows-v1.json)
 - [`agent-host-config-sqlite.json`](../examples/agent-host-config-sqlite.json)
 - [`agent-host-config-capabilities.json`](../examples/agent-host-config-capabilities.json)
 - [`agent-host-config-remote-http.json`](../examples/agent-host-config-remote-http.json)

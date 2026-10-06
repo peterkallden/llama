@@ -4,6 +4,7 @@
 #include "test-tool-runtime-registry-adapter.h"
 
 #include <cassert>
+#include <algorithm>
 
 class repair_test_runtime final : public test_tool_runtime_registry_adapter {
 public:
@@ -50,6 +51,33 @@ public:
         answer.depends_on = {"second"};
         proposal.plan.steps = {first, second, answer};
         proposal.plan.active_step_id = "first";
+        proposal.plan.status = common_plan_status::active;
+        return proposal;
+    }
+};
+
+class one_lookup_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "workflow-continuation";
+        proposal.plan.goal = "Continue a selected workflow after evidence arrives";
+        proposal.plan.selected_workflow = common_plan_workflow_binding{"workflow://resource/document-analysis", "v1"};
+        proposal.plan.workflow_definition = common_plan_workflow_definition{
+            "workflow://resource/document-analysis", "v1", "resource", "graph-v1", {},
+            {"document.inspect"}, {}, {"context.resource.available"}};
+        proposal.plan.route_binding = common_plan_route_binding{
+            "route:document-analysis", "document-analysis", "bp-v1",
+            "workflow://resource/document-analysis", "v1", "graph-v1", "env-v1", "policy-v1"};
+        common_plan_step lookup{"lookup", "Inspect document", "Inspect the selected table"};
+        lookup.status = common_plan_step_status::active;
+        lookup.selected_tool = "lookup";
+        lookup.tool_call = common_plan_tool_call{"lookup", R"({"id":"first"})"};
+        common_plan_step answer{"answer", "Answer", "Return the verified result"};
+        answer.depends_on = {"lookup"};
+        proposal.plan.steps = {lookup, answer};
+        proposal.plan.active_step_id = "lookup";
         proposal.plan.status = common_plan_status::active;
         return proposal;
     }
@@ -121,6 +149,47 @@ int main() {
     assert(result.response == "observations=2");
     auto plan = store.get("two-rounds", error);
     assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2 && plan->steps[0].status == common_plan_step_status::completed && plan->steps[1].status == common_plan_step_status::completed && plan->steps[2].status == common_plan_step_status::completed);
+
+    common_plan_in_memory_store continuation_store;
+    assert(continuation_store.open("", error));
+    one_lookup_planner continuation_plan;
+    executor continuation_executor;
+    common_agent_runtime continuation_runtime(
+        continuation_store, continuation_plan, continuation_executor, r, &tool_runtime);
+    common_agent_request continuation_request;
+    continuation_request.prompt = "continue the document analysis";
+    continuation_request.max_iterations = 2;
+    continuation_request.max_reflection_rounds = 1;
+    continuation_request.max_tool_batches = 2;
+    size_t continuation_calls = 0;
+    continuation_request.workflow_continuation = [&continuation_calls](
+            const common_plan_state &, const std::string & completed_step_id,
+            const common_plan_observation &, std::vector<common_plan_step> & steps,
+            std::string & continuation_error) {
+        continuation_error.clear();
+        ++continuation_calls;
+        if (completed_step_id == "lookup") {
+            common_plan_step step{"aggregate", "Aggregate table", "Run the host-bound aggregate"};
+            step.selected_tool = "lookup";
+            step.tool_call = common_plan_tool_call{"lookup", R"({"id":"second"})"};
+            steps.push_back(std::move(step));
+        }
+        return true;
+    };
+    const auto continuation_result = continuation_runtime.run(continuation_request);
+    assert(continuation_result.error.empty());
+    assert(continuation_calls == 2);
+    const auto continued_plan = continuation_store.get("workflow-continuation", error);
+    assert(continued_plan && continued_plan->status == common_plan_status::completed);
+    assert(continued_plan->steps.size() == 3);
+    assert(continued_plan->steps[1].id == "answer" &&
+        continued_plan->steps[1].status == common_plan_step_status::completed &&
+        std::find(continued_plan->steps[1].depends_on.begin(),
+            continued_plan->steps[1].depends_on.end(), "aggregate") !=
+            continued_plan->steps[1].depends_on.end());
+    assert(continued_plan->steps[2].id == "aggregate" &&
+        continued_plan->steps[2].status == common_plan_step_status::completed &&
+        continued_plan->steps[2].depends_on == std::vector<std::string>{"lookup"});
 
     // A caller that requires tool execution must never receive a plain draft
     // when the runtime has no tool budget left to execute the planned step.

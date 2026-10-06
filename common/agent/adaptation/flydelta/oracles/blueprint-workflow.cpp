@@ -9,17 +9,21 @@ using json = nlohmann::ordered_json;
 namespace {
 
 bool valid_terminal(const std::string & tool) {
-    return tool == "data.aggregate" || tool == "data.filter" ||
-        tool == "statistics.describe";
+    return tool == "data.query" || tool == "data.filter" ||
+        tool == "data.aggregate" || tool == "data.join" ||
+        tool == "data.transform" || tool == "statistics.describe" ||
+        tool == "statistics.outliers" || tool == "statistics.value_counts";
 }
 
 bool valid_request(const common_flydelta_dataset_blueprint_request & request) {
-    return request.schema_version == 1 &&
-        request.proposal_id == "proposal://dataset-inspect-summarize" &&
-        request.blueprint_ref == "blueprint://dataset-inspect-summarize" &&
+    return request.schema_version == 1 && !request.proposal_id.empty() &&
+        request.blueprint_ref.rfind("blueprint://dataset-", 0) == 0 &&
         !request.blueprint_revision.empty() && !request.graph_revision.empty() &&
         !request.workflow_ref.empty() && !request.workflow_revision.empty() &&
-        !request.dataset_ref.empty() && valid_terminal(request.terminal_tool) &&
+        !request.dataset_ref.empty() && !request.dataset_name.empty() &&
+        (request.terminal_tool != "data.join" ||
+            (!request.second_dataset_ref.empty() && !request.second_dataset_name.empty())) &&
+        valid_terminal(request.terminal_tool) &&
         !request.terminal_arguments_json.empty() && request.max_expansions > 0 &&
         request.max_path_length >= 2 && request.max_path_length <= 8;
 }
@@ -65,11 +69,29 @@ bool common_flydelta_propose_dataset_blueprint_workflow(
         if (state == "source-unselected") {
             successors.push_back({"source-selected", "select-dataset", 1.0f, 0.0f});
         } else if (state == "source-selected") {
-            if (request.schema_known) {
+            if (request.terminal_tool == "data.join") {
+                successors.push_back({"second-source-selected", "select-second-dataset", 1.0f, 0.0f});
+            } else if (request.schema_known) {
                 successors.push_back({"operation-resolved", "execute-operation", 1.0f, 0.0f});
             } else {
                 successors.push_back({"schema-known", "inspect-dataset", 1.0f, 0.0f});
             }
+        } else if (state == "second-source-selected") {
+            if (request.schema_known && request.second_schema_known) {
+                successors.push_back({"operation-resolved", "execute-operation", 1.0f, 0.0f});
+            } else if (!request.schema_known) {
+                successors.push_back({"left-schema-known", "inspect-dataset", 1.0f, 0.0f});
+            } else {
+                successors.push_back({"both-schemas-known", "inspect-second-dataset", 1.0f, 0.0f});
+            }
+        } else if (state == "left-schema-known") {
+            if (request.second_schema_known) {
+                successors.push_back({"operation-resolved", "execute-operation", 1.0f, 0.0f});
+            } else {
+                successors.push_back({"both-schemas-known", "inspect-second-dataset", 1.0f, 0.0f});
+            }
+        } else if (state == "both-schemas-known") {
+            successors.push_back({"operation-resolved", "execute-operation", 1.0f, 0.0f});
         } else if (state == "schema-known") {
             successors.push_back({"operation-resolved", "execute-operation", 1.0f, 0.0f});
         }
@@ -84,9 +106,13 @@ bool common_flydelta_propose_dataset_blueprint_workflow(
         materialize_error.clear();
         for (const auto & action : actions) {
             if (action == "select-dataset") {
-                steps.push_back({"dataset.select", json{{"dataset", request.dataset_ref}}.dump()});
+                steps.push_back({"dataset.select", json{{"name", request.dataset_name}}.dump()});
             } else if (action == "inspect-dataset") {
                 steps.push_back({"dataset.inspect", json{{"dataset", request.dataset_ref}}.dump()});
+            } else if (action == "select-second-dataset") {
+                steps.push_back({"dataset.select", json{{"name", request.second_dataset_name}}.dump()});
+            } else if (action == "inspect-second-dataset") {
+                steps.push_back({"dataset.inspect", json{{"dataset", request.second_dataset_ref}}.dump()});
             } else if (action == "execute-operation") {
                 steps.push_back({request.terminal_tool, request.terminal_arguments_json});
             } else {
@@ -100,7 +126,12 @@ bool common_flydelta_propose_dataset_blueprint_workflow(
     if (!common_flydelta_propose_workflow_path(proposal_request, result, error)) {
         return false;
     }
-    if (result.proposed) result.binding_refs = {request.dataset_ref};
+    if (result.proposed) {
+        result.binding_refs = {request.dataset_ref};
+        if (request.terminal_tool == "data.join") {
+            result.binding_refs.push_back(request.second_dataset_ref);
+        }
+    }
     return true;
 }
 

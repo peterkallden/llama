@@ -66,7 +66,9 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
     common_agent_inference & inference,
     const common_agent_runtime_config & runtime_config,
     const std::vector<common_chat_tool> & tools,
-    agent_tool_view * tool_view) {
+    agent_tool_view * tool_view,
+    const common_agent_execution_envelope * execution_envelope,
+    common_agent_execution_phase initial_phase) {
     common_agent_runtime_assembly assembly;
     assembly.planner = make_llama_cli_planner(inference, runtime_config.generation_config, tools);
     assembly.executor = make_llama_cli_action_executor(inference, runtime_config.generation_config);
@@ -84,6 +86,10 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
 
     if (tool_view != nullptr) {
         assembly.tool_runtime = make_provider_agent_tool_runtime(*tool_view);
+        if (execution_envelope != nullptr) {
+            assembly.tool_runtime = make_scoped_agent_tool_runtime(
+                std::move(assembly.tool_runtime), *execution_envelope, initial_phase);
+        }
     }
 
 #if !defined(LLAMA_AGENT_RUNTIME_DISABLE_ADAPTATION)

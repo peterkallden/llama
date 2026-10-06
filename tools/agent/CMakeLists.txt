@@ -72,6 +72,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-host-adapter.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-inference.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-plan-orchestration.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-route-compiler.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-host.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-resident.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-session-host.cpp
@@ -129,6 +130,7 @@ set(AGENT_RUNTIME_HOST_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-session-manager.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-execution.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-assembly.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-plan-orchestration.cpp
 )
 
@@ -161,6 +163,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
 )
 
 set(AGENT_TOOL_PROVIDER_SOURCES
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-route-compiler.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-tool-provider.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-tool-result-json-contracts.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-tool-runtime-adapter.cpp
@@ -1025,6 +1028,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite-incremental-v2.json)
     install(FILES
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-config.example.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-bootstrap-workflows-v1.json
         ${AGENT_HOST_CONFIG_EXAMPLES}
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-daemon-requests.jsonl
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-runtime-context-budgets.json

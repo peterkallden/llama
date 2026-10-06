@@ -280,6 +280,42 @@ bool common_agent_select_and_instantiate_blueprint(
     instance.namespace_id = request.namespace_id;
     instance.project_id = request.project_id;
     instance.turn_id = request.turn_id;
+    if (config.selected_workflow) {
+        const auto found = std::find_if(instance.workflow_bindings.begin(), instance.workflow_bindings.end(),
+            [&](const auto & binding) { return binding.workflow_ref == config.selected_workflow->workflow_ref &&
+                binding.workflow_revision == config.selected_workflow->workflow_revision; });
+        if (found == instance.workflow_bindings.end()) {
+            result.outcome = common_blueprint_selection_outcome::failed_safely;
+            result.reason = "route selected a workflow not bound by the blueprint";
+            return true;
+        }
+        instance.selected_workflow = *config.selected_workflow;
+        const auto workflows = plan_store.list(error);
+        if (!error.empty()) return false;
+        const auto workflow = std::find_if(workflows.begin(), workflows.end(), [&](const auto & plan) {
+            return plan.kind == common_plan_kind::workflow && plan.workflow_definition &&
+                common_plan_scope_matches(plan, config.scope, request.namespace_id,
+                    request.session_id, request.project_id, request.turn_id) &&
+                plan.workflow_definition->workflow_ref == config.selected_workflow->workflow_ref &&
+                plan.workflow_definition->workflow_revision == config.selected_workflow->workflow_revision;
+        });
+        if (workflow == workflows.end()) {
+            result.outcome = common_blueprint_selection_outcome::failed_safely;
+            result.reason = "selected workflow definition is unavailable in the blueprint scope";
+            return true;
+        }
+        instance.workflow_definition = workflow->workflow_definition;
+        const auto append_requirement = [&](const std::string & requirement) {
+            if (std::find(instance.required_capabilities.begin(), instance.required_capabilities.end(),
+                    requirement) == instance.required_capabilities.end()) {
+                instance.required_capabilities.push_back(requirement);
+            }
+        };
+        for (const auto & capability : instance.workflow_definition->required_capabilities) {
+            append_requirement(capability);
+        }
+    }
+    if (config.route_binding) instance.route_binding = *config.route_binding;
     if (config.materialize_instance) {
         common_plan_state materialized;
         std::string materialization_error;
@@ -305,6 +341,7 @@ bool common_agent_select_and_instantiate_blueprint(
                 return true;
             }
             instance = std::move(materialized);
+            if (config.route_binding) instance.route_binding = *config.route_binding;
             result.reason = result.reason.empty()
                 ? "blueprint instantiated by host planner backend"
                 : result.reason + "; host planner backend materialized a verified workflow";
