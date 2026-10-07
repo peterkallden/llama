@@ -114,7 +114,13 @@ struct common_blueprint_selection_config {
     common_blueprint_instance_materializer materialize_instance;
 };
 
-enum class common_blueprint_selection_outcome { resumed, declined, failed_safely, instantiated };
+enum class common_blueprint_selection_outcome {
+    resumed,
+    declined,
+    failed_safely,
+    instantiated,
+    deferred_to_planner,
+};
 
 struct common_blueprint_selection_rejection {
     std::string logical_id;

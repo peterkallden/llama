@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cmath>
 #include <map>
+#include <set>
 #include <sstream>
 
 using json = nlohmann::ordered_json;
@@ -63,13 +64,102 @@ bool parse_quoted(const std::string & text, size_t & position, json & value, std
     return false;
 }
 
-bool parse_value(const std::string & text, size_t & position, json & value, std::string & error) {
+bool parse_value(const std::string & text, size_t & position, json & value, std::string & error, size_t depth = 0);
+
+bool parse_value_object(const std::string & text, size_t & position, json & value, std::string & error, size_t depth) {
+    if (depth >= 12) {
+        error = "compact DSL value nesting exceeds the supported depth";
+        return false;
+    }
+    ++position; // {
+    value = json::object();
+    while (position < text.size()) {
+        while (position < text.size() && std::isspace(static_cast<unsigned char>(text[position]))) ++position;
+        if (position < text.size() && text[position] == '}') {
+            ++position;
+            return true;
+        }
+        std::string key;
+        if (!parse_identifier(text, position, key)) {
+            error = "compact DSL object key is invalid";
+            return false;
+        }
+        while (position < text.size() && std::isspace(static_cast<unsigned char>(text[position]))) ++position;
+        if (position >= text.size() || text[position] != '=') {
+            error = "compact DSL object field must be key=value";
+            return false;
+        }
+        ++position;
+        while (position < text.size() && std::isspace(static_cast<unsigned char>(text[position]))) ++position;
+        json field;
+        if (!parse_value(text, position, field, error, depth + 1)) return false;
+        if (value.contains(key)) {
+            error = "compact DSL object repeats field: " + key;
+            return false;
+        }
+        value[key] = std::move(field);
+        while (position < text.size() && std::isspace(static_cast<unsigned char>(text[position]))) ++position;
+        if (position < text.size() && text[position] == ';') {
+            ++position;
+            continue;
+        }
+        if (position < text.size() && text[position] == '}') {
+            ++position;
+            return true;
+        }
+        error = "compact DSL object fields must be separated by semicolons";
+        return false;
+    }
+    error = "compact DSL object is unterminated";
+    return false;
+}
+
+bool parse_value_array(const std::string & text, size_t & position, json & value, std::string & error, size_t depth) {
+    if (depth >= 12) {
+        error = "compact DSL value nesting exceeds the supported depth";
+        return false;
+    }
+    ++position; // [
+    value = json::array();
+    while (position < text.size()) {
+        while (position < text.size() && std::isspace(static_cast<unsigned char>(text[position]))) ++position;
+        if (position < text.size() && text[position] == ']') {
+            ++position;
+            return true;
+        }
+        json item;
+        if (!parse_value(text, position, item, error, depth + 1)) return false;
+        value.push_back(std::move(item));
+        while (position < text.size() && std::isspace(static_cast<unsigned char>(text[position]))) ++position;
+        if (position < text.size() && text[position] == ',') {
+            ++position;
+            continue;
+        }
+        if (position < text.size() && text[position] == ']') {
+            ++position;
+            return true;
+        }
+        error = "compact DSL array values must be comma-separated";
+        return false;
+    }
+    error = "compact DSL array is unterminated";
+    return false;
+}
+
+bool parse_value(const std::string & text, size_t & position, json & value, std::string & error, size_t depth) {
     if (position < text.size() && text[position] == '"') {
         return parse_quoted(text, position, value, error);
     }
+    if (position < text.size() && text[position] == '{') {
+        return parse_value_object(text, position, value, error, depth);
+    }
+    if (position < text.size() && text[position] == '[') {
+        return parse_value_array(text, position, value, error, depth);
+    }
     const size_t start = position;
     while (position < text.size() && !std::isspace(static_cast<unsigned char>(text[position])) &&
-            text[position] != ',' && text[position] != ')') {
+            text[position] != ',' && text[position] != ')' && text[position] != ']' &&
+            text[position] != '}' && text[position] != ';') {
         ++position;
     }
     if (position == start) {
@@ -81,12 +171,16 @@ bool parse_value(const std::string & text, size_t & position, json & value, std:
         value = token == "true";
         return true;
     }
+    if (token == "null") {
+        value = nullptr;
+        return true;
+    }
     const auto number = json::parse(token, nullptr, false);
     if (!number.is_discarded() && number.is_number()) {
         value = number;
         return true;
     }
-    if (token.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:-") != std::string::npos) {
+    if (token.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:-$") != std::string::npos) {
         error = "compact DSL value must be quoted, boolean, number or identifier";
         return false;
     }
@@ -182,9 +276,13 @@ bool parse_compact(const std::string & input, common_agent_tool_call & call, std
     return true;
 }
 
-bool scalar_schema(const json & schema, std::string & reason) {
+bool compact_value_schema(const json & schema, std::string & reason, size_t depth = 0) {
     if (!schema.is_object()) {
-        reason = "schema property is not an object";
+        reason = "schema value is not an object";
+        return false;
+    }
+    if (depth >= 12) {
+        reason = "schema nesting exceeds the supported compact DSL depth";
         return false;
     }
     if (schema.contains("enum")) {
@@ -201,8 +299,31 @@ bool scalar_schema(const json & schema, std::string & reason) {
         return true;
     }
     const auto type = schema.value("type", std::string{});
-    if (type == "string" || type == "integer" || type == "number" || type == "boolean") return true;
-    reason = type.empty() ? "schema property has no scalar type" : "unsupported compact DSL type: " + type;
+    if (type == "string" || type == "integer" || type == "number" || type == "boolean" || type == "null") return true;
+    if (type == "array") {
+        if (!schema.contains("items")) {
+            reason = "array schema has no items definition";
+            return false;
+        }
+        return compact_value_schema(schema["items"], reason, depth + 1);
+    }
+    if (type == "object") {
+        const auto properties = schema.value("properties", json::object());
+        if (!properties.is_object()) {
+            reason = "object schema properties are invalid";
+            return false;
+        }
+        for (const auto & property : properties.items()) {
+            if (property.key().empty() || property.key().find_first_not_of(
+                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != std::string::npos) {
+                reason = "object schema property name is not an identifier: " + property.key();
+                return false;
+            }
+            if (!compact_value_schema(property.value(), reason, depth + 1)) return false;
+        }
+        return true;
+    }
+    reason = type.empty() ? "schema value has no supported type" : "unsupported compact DSL type: " + type;
     return false;
 }
 
@@ -210,20 +331,20 @@ bool scalar_schema(const json & schema, std::string & reason) {
 
 const char * common_agent_tool_output_format_name(common_agent_tool_output_format format) {
     switch (format) {
-        case common_agent_tool_output_format::native: return "native";
+        case common_agent_tool_output_format::native: return "json";
         case common_agent_tool_output_format::jsonl: return "jsonl";
-        case common_agent_tool_output_format::compact_dsl: return "compact_dsl";
+        case common_agent_tool_output_format::compact_dsl: return "dsl";
     }
-    return "native";
+    return "json";
 }
 
 bool common_parse_agent_tool_output_format(
         const std::string & value,
         common_agent_tool_output_format & format,
         std::string & error) {
-    if (value == "native") format = common_agent_tool_output_format::native;
+    if (value == "json" || value == "native") format = common_agent_tool_output_format::native;
     else if (value == "jsonl") format = common_agent_tool_output_format::jsonl;
-    else if (value == "compact_dsl") format = common_agent_tool_output_format::compact_dsl;
+    else if (value == "dsl" || value == "compact_dsl") format = common_agent_tool_output_format::compact_dsl;
     else {
         error = "unsupported model tool output format: " + value;
         return false;
@@ -255,7 +376,7 @@ bool common_compact_dsl_schema_supported(const std::string & schema_json, std::s
                 return false;
             }
         }
-        if (!scalar_schema(item.value(), reason)) return false;
+        if (!compact_value_schema(item.value(), reason)) return false;
     }
     return true;
 }
@@ -292,6 +413,103 @@ bool common_parse_model_tool_call(
         return false;
     }
     error.clear();
+    return true;
+}
+
+bool common_parse_compact_dsl_plan(
+        const std::string & text,
+        std::string & proposal_json,
+        std::string & error) {
+    proposal_json.clear();
+    error.clear();
+    std::vector<std::string> lines;
+    std::istringstream input(text);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        line = trim(line);
+        if (!line.empty()) lines.push_back(std::move(line));
+    }
+    if (lines.size() < 2 || lines.size() > 7) {
+        error = "compact DSL plan requires a goal and between one and six steps";
+        return false;
+    }
+    const std::string header = lines.front();
+    if (header.rfind("plan", 0) != 0 || (header.size() > 4 && !std::isspace(static_cast<unsigned char>(header[4])))) {
+        error = "compact DSL plan must start with `plan goal=\"...\"`";
+        return false;
+    }
+    size_t header_position = 4;
+    while (header_position < header.size() && std::isspace(static_cast<unsigned char>(header[header_position]))) ++header_position;
+    std::string goal_key;
+    if (!parse_identifier(header, header_position, goal_key) || goal_key != "goal") {
+        error = "compact DSL plan header requires a goal field";
+        return false;
+    }
+    while (header_position < header.size() && std::isspace(static_cast<unsigned char>(header[header_position]))) ++header_position;
+    if (header_position >= header.size() || header[header_position++] != '=') {
+        error = "compact DSL plan goal must use goal=\"...\"";
+        return false;
+    }
+    while (header_position < header.size() && std::isspace(static_cast<unsigned char>(header[header_position]))) ++header_position;
+    json goal_value;
+    if (!parse_value(header, header_position, goal_value, error) || !goal_value.is_string()) {
+        if (error.empty()) error = "compact DSL plan goal must be a quoted string";
+        return false;
+    }
+    while (header_position < header.size() && std::isspace(static_cast<unsigned char>(header[header_position]))) ++header_position;
+    if (header_position != header.size() || goal_value.get<std::string>().empty() || goal_value.get<std::string>().size() > 256) {
+        error = "compact DSL plan goal is empty, too long, or followed by extra content";
+        return false;
+    }
+
+    json steps = json::array();
+    std::set<std::string> aliases;
+    for (size_t index = 1; index < lines.size(); ++index) {
+        const std::string & step_line = lines[index];
+        if (step_line.rfind("step ", 0) != 0) {
+            error = "compact DSL plan step must start with `step`";
+            return false;
+        }
+        const size_t separator = step_line.find(" | ", 5);
+        if (separator == std::string::npos) {
+            error = "compact DSL plan step requires ` | open! TOOL ...`";
+            return false;
+        }
+        std::string metadata = step_line.substr(5, separator - 5);
+        std::string alias;
+        size_t meta_position = 0;
+        while (meta_position < metadata.size()) {
+            while (meta_position < metadata.size() && std::isspace(static_cast<unsigned char>(metadata[meta_position]))) ++meta_position;
+            if (meta_position >= metadata.size()) break;
+            std::string key;
+            std::string value;
+            if (!parse_identifier(metadata, meta_position, key) || key != "as") {
+                error = "compact DSL plan step metadata supports only `as=alias`";
+                return false;
+            }
+            while (meta_position < metadata.size() && std::isspace(static_cast<unsigned char>(metadata[meta_position]))) ++meta_position;
+            if (meta_position >= metadata.size() || metadata[meta_position++] != '=') {
+                error = "compact DSL plan alias must use as=alias";
+                return false;
+            }
+            if (!parse_identifier(metadata, meta_position, value) || value == "previous" || value.size() > 64 || !alias.empty()) {
+                error = "compact DSL plan alias is invalid, reserved, or repeated";
+                return false;
+            }
+            alias = std::move(value);
+        }
+        if (!alias.empty() && !aliases.insert(alias).second) {
+            error = "compact DSL plan repeats alias: " + alias;
+            return false;
+        }
+        common_agent_tool_call call;
+        if (!parse_compact(step_line.substr(separator + 3), call, error)) return false;
+        json step = {{"tool", call.name}, {"args", json::parse(call.arguments_json)}};
+        if (!alias.empty()) step["as"] = alias;
+        steps.push_back(std::move(step));
+    }
+    proposal_json = json{{"goal", goal_value}, {"steps", std::move(steps)}}.dump();
     return true;
 }
 

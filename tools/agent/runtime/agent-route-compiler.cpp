@@ -456,6 +456,7 @@ bool compile_agent_route_catalog(
             route.blueprint_logical_id = candidate.logical_id;
             route.blueprint_persisted_id = candidate.persisted_id;
             route.workflow = binding;
+            route.workflow_definition = definition;
             route.description = candidate.description.empty() ? blueprint->goal : candidate.description;
             route.blueprint_revision = blueprint->source_revision;
             route.workflow_revision = definition.workflow_revision;

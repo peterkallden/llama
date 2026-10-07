@@ -75,9 +75,10 @@ projection when they have equivalent host-owned requirements.
 
 ### Model-facing output dialects
 
-The host may select the model-facing tool output format per model profile. The
-legacy `native` value keeps the chat-template tool-call path. The explicit
-textual formats are `jsonl` and `compact_dsl`:
+The host may select the model-facing tool output format per model profile.
+Public choices are `json` and `dsl`. `json` maps to the internal native
+structured-output path. The older textual `jsonl` dialect remains available
+when loading legacy configurations:
 
 ```json
 {"tool":"openalex.listWorks","arguments":{"search":"machine learning","per_page":1}}
@@ -96,12 +97,33 @@ openalex.listWorks(search="machine learning", per_page=1)
 ```
 
 Both forms normalize to the same canonical `{tool,args}` call before ordinary
-host validation. The compact V1 projection supports scalar strings, numbers,
-booleans and scalar enums. Nested objects, arrays and unions are not rendered
-as an approximate contract; tools requiring them are omitted from a compact
-DSL model profile and remain available through a profile using JSONL/native
-output. These deferred types are an explicit extension point, not a repair
-fallback.
+host validation. Compact DSL supports bounded nested objects and arrays in
+addition to strings, numbers, booleans, null and scalar enums. Object fields
+use `{field=value; other=value}` and arrays use `[value, value]`; quoted
+strings use JSON string escaping. Schemas outside this value grammar remain
+available through JSON/native profiles.
+
+The planner also accepts Compact DSL for a complete multi-step plan:
+
+```text
+plan goal="Aggregate selected rows"
+step as=inspect | open! dataset.inspect resource=r1
+step as=summary | open! data.aggregate dataset=$inspect.dataset measures=[{function=sum; field=amount}]
+```
+
+The header is followed by one `step` line per tool call. Steps execute in
+sequence; optional `as=alias` names a prior result for `$alias.field`
+references. The planner decodes this form into its ordinary bounded plan
+proposal, then runs the same host argument, binding, route-envelope and
+execution checks as JSON plans. JSON remains a valid planner format and is
+selected whenever the model profile uses `json` or legacy `jsonl`; Compact DSL is
+selected explicitly with `tool_output_format: "dsl"`. It does not
+replace or bypass host policy.
+The foreground CLI exposes the same explicit choice through
+`--tool-output-format json|dsl`; its default is `dsl`. The legacy values
+`native`, `jsonl` and `compact_dsl` are still accepted when reading older
+configurations and invocations. Internally, `json` maps to the native tool
+output mode and `dsl` maps to the compact DSL codec.
 
 The output dialect changes only serialization and parsing. Tool identity,
 provider authority, host-required arguments, schema normalization, policy,

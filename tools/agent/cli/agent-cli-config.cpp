@@ -13,7 +13,7 @@ void print_agent_usage(const char * argv0, const char * command_name) {
     fprintf(stderr,
         "usage:\n"
         "  %s %s --model MODEL --prompt TEXT [--backend auto|in-memory|cozo] [--memory-db PATH] [--config PATH] [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static]\n"
-        "         [--tool-profile NAME] [--thinking-mode auto|reflective|deliberate|research]\n"
+        "         [--tool-profile NAME] [--tool-output-format json|dsl] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--max-reflection-rounds N] [--max-plan-revisions N] [--max-research-iterations N]\n"
         "         [--max-tool-rounds N] [--n-predict N] [--planner-n-predict N] [--memory-learning-n-predict N] [--context-size N] [--threads N] [-ngl N]\n"
         "         [--inference-step-timeout-ms N] [--generation-trace] [--require-tool-execution]\n"
@@ -161,6 +161,13 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.mmproj = v;
         } else if (strcmp(argv[i], "--tool-profile") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.tool_profile = v; out.tool_profile_explicit = true;
+        } else if (strcmp(argv[i], "--tool-output-format") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false;
+            std::string format_error;
+            if (!common_parse_agent_tool_output_format(v, out.tool_output_format, format_error)) {
+                fprintf(stderr, "%s\n", format_error.c_str());
+                return false;
+            }
         } else if (strcmp(argv[i], "--mcp-tool-command") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.mcp_tool_command = v;
         } else if (strcmp(argv[i], "--mcp-tool-arg") == 0) {

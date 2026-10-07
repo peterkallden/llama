@@ -989,6 +989,7 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
     turn_request.request = std::move(request);
     turn_request.request.input_resources = std::move(input_resources);
     turn_request.request.require_tool_execution = options.require_tool_execution;
+    turn_request.request.tool_output_format = options.tool_output_format;
     turn_request.scope = scope;
     // Keep the resident-host policy fields explicit.  This used to be a
     // positional aggregate; after reserve_flydelta_workspace was added to

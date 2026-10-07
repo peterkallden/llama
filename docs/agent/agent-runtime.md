@@ -1302,6 +1302,22 @@ data.aggregate
   -> rows
 ```
 
+Compact contracts are rendered from each selected tool's model-input schema.
+Field descriptions (including nested object fields), required/optional markers,
+enums and alternatives are preserved in the DSL; bounded `x-agent-examples`
+and `x-agent-rules` annotations add concrete argument examples and constraints.
+This also applies to query predicates, filter conditions, join-key mappings,
+transform operations, validation rules, statistics arguments and artifact
+export. For workflow-backed routes, the planner receives these richer
+descriptions only for the tools already admitted by that route. The same
+renderer is used when repairing arguments for a selected tool.
+
+For example, a filter contract shows the predicate shape and valid operators,
+while a transform contract distinguishes the fields used by `rename` and
+`drop`. Artifact export describes the mutually exclusive text and dataset
+export forms. These hints improve model guidance; the host-side schema and
+runtime validation remain authoritative.
+
 During bounded repair the host may normalize an unambiguous expression such
 as `select: "sum(amount)"` into
 `measures: [{function: sum, column: amount}]`. It does not silently turn bare

@@ -43,5 +43,5 @@ struct common_agent_runtime_resident_request_config {
     size_t context_size_tokens = 0;
     std::string mmproj;
     std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
-    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
 };

@@ -1,4 +1,6 @@
 #include "agent/tooling/schema/tool-output-codec.h"
+#include "agent/contracts/agent-request.h"
+#include "plan/plan-json.h"
 
 #include <cassert>
 #include <string>
@@ -24,7 +26,20 @@ void test_formats() {
     assert(format == common_agent_tool_output_format::compact_dsl);
     assert(common_parse_agent_tool_output_format("native", format, error));
     assert(format == common_agent_tool_output_format::native);
+    assert(common_parse_agent_tool_output_format("json", format, error));
+    assert(format == common_agent_tool_output_format::native);
+    assert(common_agent_tool_output_format_name(format) == std::string("json"));
+    assert(common_parse_agent_tool_output_format("dsl", format, error));
+    assert(format == common_agent_tool_output_format::compact_dsl);
+    assert(common_agent_tool_output_format_name(format) == std::string("dsl"));
+    assert(common_parse_agent_tool_output_format("compact_dsl", format, error));
+    assert(format == common_agent_tool_output_format::compact_dsl);
     assert(!common_parse_agent_tool_output_format("xml", format, error));
+}
+
+void test_request_default_is_dsl() {
+    common_agent_request request;
+    assert(request.tool_output_format == common_agent_tool_output_format::compact_dsl);
 }
 
 void test_compact_variants_normalize_identically() {
@@ -68,21 +83,57 @@ void test_jsonl_normalization() {
 void test_v1_schema_boundary_and_rendering() {
     std::string reason;
     assert(common_compact_dsl_schema_supported(list_works_tool().parameters, reason));
-    assert(!common_compact_dsl_schema_supported(
-        R"json({"type":"object","properties":{"filters":{"type":"array","items":{"type":"object"}}}})json",
+    assert(common_compact_dsl_schema_supported(
+        R"json({"type":"object","properties":{"filters":{"type":"array","items":{"type":"object","properties":{"field":{"type":"string"},"op":{"type":"string"}}}}}})json",
         reason));
 
     std::vector<std::string> unsupported;
     std::string error;
     const auto instructions = common_render_model_tool_output_instructions(
         common_agent_tool_output_format::compact_dsl,
-        {list_works_tool(), {"complex", "Complex", R"json({"type":"object","properties":{"x":{"type":"object"}}})json", "{}"}},
+        {list_works_tool(), {"complex", "Complex", R"json({"type":"object","properties":{"x":{"type":"object","properties":{"a":{"type":"string"}}}}})json", "{}"}},
         &unsupported,
         error);
     assert(!instructions.empty());
-    assert(unsupported.size() == 1 && unsupported.front() == "complex");
+    assert(unsupported.empty());
     assert(instructions.find("openalex.listWorks") != std::string::npos);
-    assert(instructions.find("complex") == std::string::npos);
+    assert(instructions.find("complex") != std::string::npos);
+}
+
+void test_nested_arguments_and_multistep_plan() {
+    const std::string call_text =
+        R"(open! data.aggregate dataset=$inspect.dataset measures=[{function=sum; field="amount"}, {function=count; field="region"}] filter={field=region; op=eq; value="north"})";
+    common_agent_tool_call call;
+    std::string error;
+    assert(common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl, call_text, call, error));
+    assert(call.name == "data.aggregate");
+    assert(call.arguments_json.find("\"function\":\"sum\"") != std::string::npos);
+    assert(call.arguments_json.find("\"dataset\":\"$inspect.dataset\"") != std::string::npos);
+
+    const std::string dsl =
+        "plan goal=\"Aggregate selected rows\"\n"
+        "step as=inspect | open! dataset.inspect resource=r1\n"
+        "step as=result | open! data.aggregate dataset=$inspect.dataset measures=[{function=sum; field=amount}]";
+    std::string proposal;
+    assert(common_parse_compact_dsl_plan(dsl, proposal, error));
+    assert(proposal.find("\"goal\":\"Aggregate selected rows\"") != std::string::npos);
+    assert(proposal.find("\"as\":\"inspect\"") != std::string::npos);
+    assert(proposal.find("\"$inspect.dataset\"") != std::string::npos);
+    common_plan_state plan;
+    std::vector<common_plan_operation> operations;
+    assert(common_plan_parse_proposal_json(proposal, plan, operations, error, 6));
+    assert(operations.size() >= 2);
+    assert(operations[0].step->tool_call->name == "dataset.inspect");
+    assert(operations[1].step->tool_call->name == "data.aggregate");
+    assert(operations[0].step->semantic_alias && *operations[0].step->semantic_alias == "inspect");
+    const auto aggregate_args = nlohmann::json::parse(
+        operations[1].step->tool_call->arguments_json, nullptr, false);
+    assert(aggregate_args["dataset"].value("$from_step", "") == "step_1");
+    assert(aggregate_args["dataset"].value("$json_pointer", "") == "/dataset");
+    assert(!common_parse_compact_dsl_plan(
+        "plan goal=\"test\"\nstep | open! tool a=1\nstep | open! tool a=2\nstep | open! tool a=3\nstep | open! tool a=4\nstep | open! tool a=5\nstep | open! tool a=6\nstep | open! tool a=7\nstep | open! tool a=8\nstep | open! tool a=9",
+        proposal, error));
 }
 
 void test_invalid_compact_output() {
@@ -100,9 +151,11 @@ void test_invalid_compact_output() {
 
 int main() {
     test_formats();
+    test_request_default_is_dsl();
     test_compact_variants_normalize_identically();
     test_jsonl_normalization();
     test_v1_schema_boundary_and_rendering();
+    test_nested_arguments_and_multistep_plan();
     test_invalid_compact_output();
     return 0;
 }

@@ -1251,6 +1251,14 @@ runnable profile, and host-owned routing. The adapter registry owns artifact
 paths and validation; production profile configuration should reference
 adapter ids, not arbitrary paths.
 
+Model profiles may set `tool_output_format` to `json` or `dsl`. `json` maps to
+the runtime's native structured-output mode; `dsl` selects Compact DSL. If the
+field is omitted, the selected model profile does not override the turn's
+`tool_output_format` (including `--tool-output-format`); the turn default is
+`dsl`. Explicit profile values take precedence. The older values `native`,
+`jsonl`, and `compact_dsl`
+remain accepted for compatibility.
+
 The complete target boundary is recorded in
 [Agent model residency and multi-model scheduling](agent-model-residency.md).
 In particular, the adaptation path must not own model loading: it supplies a

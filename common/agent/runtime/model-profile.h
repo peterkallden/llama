@@ -40,6 +40,7 @@ struct common_agent_model_profile {
     std::vector<common_agent_adapter_overlay> adapters;
     std::vector<common_agent_flydelta_sideband_overlay> sidebands;
     common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
+    bool tool_output_format_configured = false;
 };
 
 bool common_agent_validate_model_profile(

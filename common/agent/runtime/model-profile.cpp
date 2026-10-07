@@ -118,7 +118,10 @@ std::string common_agent_model_profile_cache_key(
         key << "flydelta:" << sideband.sideband_id << ':' << sideband.binding_key << ':' <<
             sideband.scale << '\n';
     }
-    key << "tool-output:" << common_agent_tool_output_format_name(profile.tool_output_format) << '\n';
+    key << "tool-output-configured:" << (profile.tool_output_format_configured ? "yes" : "no") << '\n';
+    if (profile.tool_output_format_configured) {
+        key << "tool-output:" << common_agent_tool_output_format_name(profile.tool_output_format) << '\n';
+    }
     return key.str();
 }
 
@@ -133,7 +136,7 @@ std::string common_agent_model_profile_to_json(
         sidebands.push_back({{"sideband_id", sideband.sideband_id},
             {"binding_key", sideband.binding_key}, {"scale", sideband.scale}});
     }
-    return json{
+    json value = {
         {"schema_version", profile.schema_version},
         {"id", profile.id},
         {"base_model_id", profile.base_model_id},
@@ -144,10 +147,13 @@ std::string common_agent_model_profile_to_json(
         {"n_parallel", profile.n_parallel},
         {"n_sequences", profile.n_sequences},
         {"load_policy", profile.load_policy},
-        {"tool_output_format", common_agent_tool_output_format_name(profile.tool_output_format)},
         {"adapters", adapters},
         {"sidebands", sidebands},
-    }.dump();
+    };
+    if (profile.tool_output_format_configured) {
+        value["tool_output_format"] = common_agent_tool_output_format_name(profile.tool_output_format);
+    }
+    return value.dump();
 }
 
 bool common_agent_model_profile_from_json(
@@ -186,6 +192,7 @@ bool common_agent_model_profile_from_json(
                 if (error.empty()) error = "model profile tool output format is invalid";
                 return false;
             }
+            profile.tool_output_format_configured = true;
         }
         for (const auto & item : value.at("adapters")) {
             if (!item.is_object() || !item.contains("adapter_id") ||

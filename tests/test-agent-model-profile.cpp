@@ -14,6 +14,7 @@ static common_agent_model_profile profile() {
     value.n_sequences = 3;
     value.load_policy = "resident";
     value.tool_output_format = common_agent_tool_output_format::compact_dsl;
+    value.tool_output_format_configured = true;
     value.adapters.push_back({"adapter-v1", 0.75});
     return value;
 }
@@ -30,6 +31,18 @@ int main() {
     assert(parsed.n_parallel == 2);
     assert(parsed.n_sequences == 3);
     assert(parsed.tool_output_format == common_agent_tool_output_format::compact_dsl);
+    assert(parsed.tool_output_format_configured);
+    assert(text.find("\"tool_output_format\":\"dsl\"") != std::string::npos);
+
+    auto unspecified = profile();
+    unspecified.tool_output_format_configured = false;
+    const auto unspecified_text = common_agent_model_profile_to_json(unspecified);
+    assert(unspecified_text.find("tool_output_format") == std::string::npos);
+    common_agent_model_profile unspecified_parsed;
+    assert(common_agent_model_profile_from_json(unspecified_text, unspecified_parsed, error));
+    assert(!unspecified_parsed.tool_output_format_configured);
+    assert(common_agent_model_profile_cache_key(unspecified_parsed) !=
+        common_agent_model_profile_cache_key(value));
 
     value.sidebands.push_back({"", 0.5, "flydelta://binding/tool-repair"});
     assert(common_agent_validate_model_profile(value, error));

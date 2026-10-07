@@ -469,7 +469,7 @@ test-agent-flydelta-alpha-response-search.cpp
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
         # These contract tests use assert() for both checks and setup. Keep
         # assertions enabled even when the surrounding build is RelWithDebInfo.
-        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-route-compiler|agent-execution-envelope|agent-bootstrap|plan-cozo|tool-catalog)$")
+        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-route-compiler|agent-execution-envelope|agent-bootstrap|plan-cozo|tool-catalog|agent-tool-output-codec)$")
             if (MSVC)
                 target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
             else()

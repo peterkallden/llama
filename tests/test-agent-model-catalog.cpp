@@ -73,6 +73,7 @@ bool test_parse_and_resolve() {
         profile.sidebands.front().sideband_id == "flydelta://sideband/tool-repair-v1" &&
         profile.load_policy == "resident")) return false;
     if (profile.tool_output_format != common_agent_tool_output_format::jsonl) return false;
+    if (!profile.tool_output_format_configured) return false;
 
     common_agent_model_selection selection;
     if (!common_agent_model_catalog_resolve_profile(catalog, {}, selection, error)) return false;
@@ -82,7 +83,62 @@ bool test_parse_and_resolve() {
         selection.mmproj.empty() && selection.context_size_tokens == 4096 &&
         selection.n_parallel == 2 && selection.n_sequences == 3 &&
         selection.tool_output_format == common_agent_tool_output_format::jsonl &&
+        selection.tool_output_format_configured &&
         selection.adapters.size() == 1 && selection.sidebands.size() == 1;
+}
+
+bool test_tool_output_format_is_optional_in_profile_config() {
+    const auto catalog_text = R"json({
+      "schema_version": 1,
+      "directory": "/models",
+      "bases": {"small": {"kind":"generation", "path":"qwen.gguf"}},
+      "profiles": {"agent-default": {"base":"small", "context_size":4096}},
+      "routing": {"default_profile":"agent-default"},
+      "limits": {}
+    })json";
+    common_agent_model_catalog catalog;
+    std::string error;
+    if (!common_agent_model_catalog_from_json(catalog_text, catalog, error)) return false;
+    if (catalog.profiles.at("agent-default").tool_output_format_configured) return false;
+
+    const auto roundtrip = common_agent_model_catalog_to_json(catalog);
+    common_agent_model_catalog decoded;
+    if (!common_agent_model_catalog_from_json(roundtrip, decoded, error)) return false;
+    if (decoded.profiles.at("agent-default").tool_output_format_configured) return false;
+
+    common_agent_model_selection selection;
+    if (!common_agent_model_catalog_resolve_profile(decoded, {}, selection, error)) return false;
+    if (selection.tool_output_format_configured ||
+            common_agent_model_selection_effective_tool_output_format(
+                selection, common_agent_tool_output_format::compact_dsl) !=
+                common_agent_tool_output_format::compact_dsl) return false;
+
+    std::string explicit_native = catalog_text;
+    const std::string format_field = "\"context_size\":4096";
+    const auto position = explicit_native.find(format_field);
+    if (position == std::string::npos) return false;
+    explicit_native.replace(position, format_field.size(),
+        "\"context_size\":4096, \"tool_output_format\":\"json\"");
+    if (!common_agent_model_catalog_from_json(explicit_native, decoded, error)) return false;
+    if (!decoded.profiles.at("agent-default").tool_output_format_configured ||
+            decoded.profiles.at("agent-default").tool_output_format != common_agent_tool_output_format::native ||
+            common_agent_model_catalog_to_json(decoded).find("\"tool_output_format\":\"json\"") == std::string::npos) {
+        return false;
+    }
+    if (!common_agent_model_catalog_resolve_profile(decoded, {}, selection, error)) return false;
+    if (!(selection.tool_output_format_configured &&
+        decoded.profiles.at("agent-default").tool_output_format == common_agent_tool_output_format::native &&
+        common_agent_model_selection_effective_tool_output_format(
+            selection, common_agent_tool_output_format::compact_dsl) == common_agent_tool_output_format::native)) {
+        return false;
+    }
+    const auto json_field = explicit_native.find("\"json\"");
+    if (json_field == std::string::npos) return false;
+    explicit_native.replace(json_field, std::string("\"json\"").size(), "\"dsl\"");
+    if (!common_agent_model_catalog_from_json(explicit_native, decoded, error) ||
+            !common_agent_model_catalog_resolve_profile(decoded, {}, selection, error)) return false;
+    return common_agent_model_selection_effective_tool_output_format(
+        selection, common_agent_tool_output_format::native) == common_agent_tool_output_format::compact_dsl;
 }
 
 bool test_rejects_invalid_catalogs() {
@@ -177,6 +233,7 @@ bool test_profile_router() {
 } // namespace
 
 int main() {
-    return test_parse_and_resolve() && test_rejects_invalid_catalogs() &&
+    return test_parse_and_resolve() && test_tool_output_format_is_optional_in_profile_config() &&
+        test_rejects_invalid_catalogs() &&
         test_profile_router() ? 0 : 1;
 }

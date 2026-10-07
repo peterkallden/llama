@@ -517,6 +517,7 @@ make_daemon_flydelta_deployment_resolver(
         profile.adapters = model_handle->selection.adapters;
         profile.sidebands = model_handle->selection.sidebands;
         profile.tool_output_format = model_handle->selection.tool_output_format;
+        profile.tool_output_format_configured = model_handle->selection.tool_output_format_configured;
 
         common_flydelta_deployment_request deployment_request;
         deployment_request.profile = std::move(profile);

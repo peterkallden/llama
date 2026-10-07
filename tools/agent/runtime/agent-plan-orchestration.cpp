@@ -509,6 +509,7 @@ bool maybe_select_agent_route(
         return false;
     }
     if (selection.outcome != common_blueprint_selection_outcome::instantiated &&
+            selection.outcome != common_blueprint_selection_outcome::deferred_to_planner &&
             selection.outcome != common_blueprint_selection_outcome::resumed) {
         error = "selected route failed safely: " + selection.reason;
         return false;

@@ -243,7 +243,58 @@ int main() {
     assert(aggregate_compact.find("materialized") == std::string::npos);
     assert(aggregate_compact.find("scan_truncated") == std::string::npos);
     assert(aggregate_compact.find("returns: rows:object[], dataset:dataset_ref") != std::string::npos);
-    assert(aggregate_compact.find("example: args:{dataset:$joined.dataset; measures:[{function:sum; column:amount}]}") != std::string::npos);
+    assert(aggregate_compact.find("example: args:{dataset=$orders.dataset; measures=[{function=\"sum\"; column=\"amount\"; as=\"total_amount\"") != std::string::npos);
+
+    const auto * data_filter = catalog.find_definition("data.filter");
+    const auto * data_transform = catalog.find_definition("data.transform");
+    assert(data_filter && data_transform);
+    const auto filter_compact = common_render_compact_tool_description(
+        data_filter->name,
+        data_filter->description,
+        data_filter->model_input_schema_json,
+        common_tool_model_result_schema(*data_filter),
+        compact_error);
+    assert(compact_error.empty());
+    assert(filter_compact.find("conditions:{field:string") != std::string::npos);
+    assert(filter_compact.find("Comparison operator. Null checks do not need value.") != std::string::npos);
+    assert(filter_compact.find("example: args:{dataset=$orders.dataset; conditions=[{field=\"status\"; operator=\"=\"; value=\"paid\"") != std::string::npos);
+    const auto join_compact = common_render_compact_tool_description(
+        data_join->name,
+        data_join->description,
+        data_join->model_input_schema_json,
+        common_tool_model_result_schema(*data_join),
+        compact_error);
+    assert(compact_error.empty());
+    assert(join_compact.find("on:{left:string (Join-key column in the left dataset.)") != std::string::npos);
+    assert(join_compact.find("example: args:{left=$orders.dataset; right=$customers.dataset; type=\"left\"") != std::string::npos);
+    const auto transform_compact = common_render_compact_tool_description(
+        data_transform->name,
+        data_transform->description,
+        data_transform->model_input_schema_json,
+        common_tool_model_result_schema(*data_transform),
+        compact_error);
+    assert(compact_error.empty());
+    assert(transform_compact.find("type:rename|drop") != std::string::npos);
+    assert(transform_compact.find("rename requires from and to; drop requires column.") != std::string::npos);
+    assert(transform_compact.find("example: args:{dataset=$orders.dataset; operations=[{type=\"rename\"; from=\"amount\"; to=\"order_amount\"") != std::string::npos);
+    const auto value_counts_compact = common_render_compact_tool_description(
+        value_counts->name,
+        value_counts->description,
+        value_counts->model_input_schema_json,
+        common_tool_model_result_schema(*value_counts),
+        compact_error);
+    assert(compact_error.empty());
+    assert(value_counts_compact.find("Exact column name from the selected dataset schema.") != std::string::npos);
+    assert(value_counts_compact.find("example: args:{dataset=$orders.dataset; column=\"status\"; limit=20}") != std::string::npos);
+    const auto artifact_compact = common_render_compact_tool_description(
+        artifact_export->name,
+        artifact_export->description,
+        artifact_export->model_input_schema_json,
+        common_tool_model_result_schema(*artifact_export),
+        compact_error);
+    assert(compact_error.empty());
+    assert(artifact_compact.find("rule: Choose one export mode: provide name and content for text, or source_dataset for CSV.") != std::string::npos);
+    assert(artifact_compact.find("example: args:{name=\"summary.txt\"; content=\"Total orders: 42\"") != std::string::npos);
 
     std::vector<common_plan_schema_field> extracted_fields;
     std::string extraction_error;

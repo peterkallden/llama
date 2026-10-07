@@ -130,7 +130,10 @@ bool common_agent_runtime_resident_runtime::prepare_model(std::string & error) {
         base_turn_request.inference_options.context_size_tokens =
             resident_model_handle.selection.context_size_tokens;
         base_turn_request.policy.agent_inference_backend = resident_model_handle.selection.backend;
-        base_turn_request.request.tool_output_format = resident_model_handle.selection.tool_output_format;
+        base_turn_request.request.tool_output_format =
+            common_agent_model_selection_effective_tool_output_format(
+                resident_model_handle.selection,
+                base_turn_request.request.tool_output_format);
         agent_inference_backend backend;
         if (!parse_agent_inference_backend(
                 base_turn_request.policy.agent_inference_backend, backend) ||

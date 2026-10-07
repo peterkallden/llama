@@ -797,6 +797,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         if (proposal.plan.session_id.empty()) proposal.plan.session_id = request.session_id;
         proposal.plan.project_id = request.project_id;
         proposal.plan.turn_id = request.turn_id;
+        if (request.route_binding) proposal.plan.route_binding = *request.route_binding;
+        if (request.blueprint_plan_id) proposal.plan.derived_from_plan_id = *request.blueprint_plan_id;
+        if (request.selected_workflow) proposal.plan.selected_workflow = *request.selected_workflow;
+        if (request.workflow_definition) proposal.plan.workflow_definition = *request.workflow_definition;
         if (!store.create(proposal.plan, error)) { result.error = error; return result; }
         plan = proposal.plan;
         append_event(result, request, common_agent_event_type::plan_created, "plan created", {}, plan.id);

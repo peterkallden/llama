@@ -56,6 +56,12 @@ aggregate measures, transforms, or join keys. If those semantic arguments are
 not already bound, materialization yields to the ordinary planner, which can
 select among all operations allowed by the route envelope. Join materialization
 adds separate host-resolved left/right dataset selections and schema checks.
+In this case the selector does not persist the blueprint's generic template as
+a task. It defers plan creation to the ordinary planner and carries the selected
+route binding into that new plan, while the route-scoped tool view remains the
+authority for both model-visible tools and execution. The plan also retains the
+selected workflow definition and blueprint ancestry so route revalidation and
+workflow continuation remain available after the fallback.
 
 The resource/document workflow keeps table discovery and materialization
 host-owned. After successful tool results, its A* continuation may append a

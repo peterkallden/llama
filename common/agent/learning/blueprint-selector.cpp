@@ -345,6 +345,17 @@ bool common_agent_select_and_instantiate_blueprint(
             result.reason = result.reason.empty()
                 ? "blueprint instantiated by host planner backend"
                 : result.reason + "; host planner backend materialized a verified workflow";
+        } else if (materialization == common_blueprint_materialization_outcome::not_applicable &&
+                config.selected_workflow) {
+            // A selected workflow route may require semantic arguments that
+            // are not host-bound. Do not persist the generic blueprint
+            // template as if it were an executable plan: the ordinary
+            // planner must create the task inside the already selected route
+            // envelope instead.
+            result.outcome = common_blueprint_selection_outcome::deferred_to_planner;
+            result.logical_id = candidate->logical_id;
+            result.reason = "selected workflow needs ordinary planner materialization";
+            return true;
         }
     }
     if (!plan_store.create(instance, error)) return false;

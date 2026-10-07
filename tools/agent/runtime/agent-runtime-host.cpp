@@ -190,6 +190,7 @@ bool run_agent_runtime_host(
             driver_execution.explicit_memory_candidate = execution.turn_request.request.explicit_memory_candidate;
             driver_execution.explicit_memory_confirmed = execution.turn_request.request.explicit_memory_confirmed;
             driver_execution.require_tool_execution = execution.turn_request.request.require_tool_execution;
+            driver_execution.tool_output_format = execution.turn_request.request.tool_output_format;
             driver_execution.flydelta_activation = execution.turn_request.request.flydelta_activation;
             driver_execution.flydelta_capture = execution.turn_request.request.flydelta_capture;
             driver_execution.tool_argument_bindings = execution.turn_request.request.tool_argument_bindings;

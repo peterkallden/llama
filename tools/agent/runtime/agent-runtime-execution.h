@@ -73,6 +73,7 @@ struct common_agent_runtime_driver_inputs {
     // Explicit caller requirement; family preflight may strengthen but never
     // weaken it when producing the runtime request.
     bool require_tool_execution = false;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
     common_agent_runtime_execution_control execution_control;
     // Optional host-prepared activation for callers that construct the
     // generic driver input path directly instead of using session-host.
@@ -135,6 +136,7 @@ struct common_agent_runtime_driver_execution {
     // A successful family preflight makes ordinary answer-only fallback
     // invalid until at least one selected tool has completed.
     bool require_tool_execution = false;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
     // Bounded host-side resource.list result. Current-turn attachments remain
     // in input_resources and are always rendered as rN handles.
     std::vector<common_agent_input_resource> available_resources;

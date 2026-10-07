@@ -66,6 +66,7 @@ bool parse_profile(const std::string & id, const json & value,
             if (error.empty()) error = "model profile tool output format is invalid: " + id;
             return false;
         }
+        profile.tool_output_format_configured = true;
     }
     const auto adapters = value.value("adapters", json::array());
     if (!adapters.is_array()) { error = "model profile adapters must be an array: " + id; return false; }
@@ -232,8 +233,11 @@ std::string common_agent_model_catalog_to_json(
             {"n_parallel", entry.second.n_parallel},
             {"n_sequences", entry.second.n_sequences},
             {"load", entry.second.load_policy},
-            {"tool_output_format", common_agent_tool_output_format_name(entry.second.tool_output_format)},
         };
+        if (entry.second.tool_output_format_configured) {
+            profiles[entry.first]["tool_output_format"] =
+                common_agent_tool_output_format_name(entry.second.tool_output_format);
+        }
     }
     return json{
         {"schema_version", catalog.schema_version},
@@ -319,6 +323,7 @@ bool common_agent_model_catalog_make_profile(
     profile.adapters = selected->second.adapters;
     profile.sidebands = selected->second.sidebands;
     profile.tool_output_format = selected->second.tool_output_format;
+    profile.tool_output_format_configured = selected->second.tool_output_format_configured;
     if (!common_agent_validate_model_profile(profile, error)) return false;
     return true;
 }
@@ -356,8 +361,15 @@ bool common_agent_model_catalog_resolve_profile(
     selection.adapters = selected->second.adapters;
     selection.sidebands = selected->second.sidebands;
     selection.tool_output_format = selected->second.tool_output_format;
+    selection.tool_output_format_configured = selected->second.tool_output_format_configured;
     error.clear();
     return true;
+}
+
+common_agent_tool_output_format common_agent_model_selection_effective_tool_output_format(
+        const common_agent_model_selection & selection,
+        common_agent_tool_output_format request_format) {
+    return selection.tool_output_format_configured ? selection.tool_output_format : request_format;
 }
 
 std::string common_agent_model_selection_cache_key(
@@ -378,7 +390,10 @@ std::string common_agent_model_selection_cache_key(
     for (const auto & sideband : selection.sidebands) {
         key << "flydelta:" << sideband.sideband_id << ':' << sideband.scale << '\n';
     }
-    key << "tool-output:" << common_agent_tool_output_format_name(selection.tool_output_format) << '\n';
+    key << "tool-output-configured:" << (selection.tool_output_format_configured ? "yes" : "no") << '\n';
+    if (selection.tool_output_format_configured) {
+        key << "tool-output:" << common_agent_tool_output_format_name(selection.tool_output_format) << '\n';
+    }
     return key.str();
 }
 

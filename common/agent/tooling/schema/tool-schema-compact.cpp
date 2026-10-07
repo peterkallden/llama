@@ -11,7 +11,52 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
+std::string compact_value(const json & value) {
+    if (value.is_object()) {
+        std::ostringstream out;
+        out << '{';
+        bool first = true;
+        for (const auto & item : value.items()) {
+            if (!first) out << "; ";
+            first = false;
+            out << item.key() << '=' << compact_value(item.value());
+        }
+        out << '}';
+        return out.str();
+    }
+    if (value.is_array()) {
+        std::ostringstream out;
+        out << '[';
+        bool first = true;
+        for (const auto & item : value) {
+            if (!first) out << ", ";
+            first = false;
+            out << compact_value(item);
+        }
+        out << ']';
+        return out.str();
+    }
+    if (value.is_string()) {
+        const auto text = value.get<std::string>();
+        return text.rfind("$", 0) == 0 ? text : value.dump();
+    }
+    return value.dump();
+}
+
 std::string scalar_type(const json & schema, size_t depth = 0) {
+    for (const auto * key : {"oneOf", "anyOf"}) {
+        if (!schema.contains(key) || !schema[key].is_array()) continue;
+        std::ostringstream alternatives;
+        alternatives << key << '(';
+        bool first = true;
+        for (const auto & alternative : schema[key]) {
+            if (!first) alternatives << "|";
+            first = false;
+            alternatives << scalar_type(alternative, depth + 1);
+        }
+        alternatives << ')';
+        return alternatives.str();
+    }
     if (schema.contains("x-agent-type") && schema["x-agent-type"].is_string()) {
         return schema["x-agent-type"].get<std::string>();
     }
@@ -42,7 +87,7 @@ std::string scalar_type(const json & schema, size_t depth = 0) {
     }
     if (type == "object") {
         const auto properties = schema.value("properties", json::object());
-        if (depth >= 2 || !properties.is_object() || properties.empty()) return "object";
+        if (depth >= 4 || !properties.is_object() || properties.empty()) return "object";
         std::set<std::string> required;
         for (const auto & value : schema.value("required", json::array())) {
             if (value.is_string()) required.insert(value.get<std::string>());
@@ -54,6 +99,10 @@ std::string scalar_type(const json & schema, size_t depth = 0) {
             if (count) nested << "; ";
             nested << it.key() << (required.count(it.key()) == 0 ? "?" : "")
                 << ':' << scalar_type(it.value(), depth + 1);
+            if (it.value().is_object() && it.value().contains("description") &&
+                    it.value()["description"].is_string()) {
+                nested << " (" << it.value()["description"].get<std::string>() << ')';
+            }
         }
         if (properties.size() > count) nested << "; ...";
         nested << '}';
@@ -121,6 +170,7 @@ std::vector<common_model_tool_field> project_fields(
     if (schema.value("type", std::string()) != "object") {
         common_model_tool_field field;
         field.name = "value";
+        field.description = schema.value("description", std::string());
         field.display_type = scalar_type(schema);
         fields.push_back(std::move(field));
         return fields;
@@ -145,6 +195,9 @@ std::vector<common_model_tool_field> project_fields(
     for (auto it = properties.begin(); it != properties.end(); ++it) {
         common_model_tool_field field;
         field.name = it.key();
+        if (it.value().is_object()) {
+            field.description = it.value().value("description", std::string());
+        }
         const auto semantic = semantic_fields.find(field.name);
         if (semantic != semantic_fields.end()) {
             field.required = semantic->second.required;
@@ -167,6 +220,7 @@ std::string render_fields(const std::vector<common_model_tool_field> & fields, b
         first = false;
         out << field.name << (inputs && !field.required ? "?" : "") << ':' << field.display_type;
         if (field.may_be_inferred) out << " [may be inferred]";
+        if (!field.description.empty()) out << " (" << field.description << ')';
     }
     return out.str();
 }
@@ -281,7 +335,27 @@ std::string common_render_compact_tool_description(
     if (!error.empty()) return {};
     std::string rendered = common_render_compact_tool_description(contract, error);
     if (!error.empty()) return {};
-    if (name == "data.join") {
+    const auto schema = json::parse(input_schema_json, nullptr, false);
+    const auto rules = schema.is_object()
+        ? schema.value("x-agent-rules", json::array())
+        : json::array();
+    if (rules.is_array()) {
+        for (const auto & rule : rules) {
+            if (rule.is_string()) rendered += "\nrule: " + rule.get<std::string>();
+        }
+    }
+    const auto examples = schema.is_object()
+        ? schema.value("x-agent-examples", json::array())
+        : json::array();
+    if (examples.is_array() && !examples.empty()) {
+        size_t count = 0;
+        for (const auto & example : examples) {
+            if (!example.is_object() || ++count > 3) continue;
+            const std::string compact_example = compact_value(example);
+            if (compact_example.size() > 1024) continue;
+            rendered += "\nexample: args:" + compact_example;
+        }
+    } else if (name == "data.join") {
         rendered += "\nexample: args:{left:$orders.dataset; right:$customers.dataset; on:[{left:customer_id; right:customer_id}]}";
     } else if (name == "data.aggregate") {
         rendered += "\nexample: args:{dataset:$joined.dataset; measures:[{function:sum; column:amount}]}";

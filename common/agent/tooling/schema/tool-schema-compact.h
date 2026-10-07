@@ -5,6 +5,7 @@
 
 struct common_model_tool_field {
     std::string name;
+    std::string description;
     std::string semantic_type;
     std::string display_type;
     std::string role;

@@ -795,6 +795,7 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         inputs.execution_control,
     };
     execution.require_tool_execution = inputs.require_tool_execution;
+    execution.tool_output_format = inputs.tool_output_format;
     execution.flydelta_activation = inputs.flydelta_activation;
     execution.tool_argument_bindings = inputs.tool_argument_bindings;
     execution.flydelta_capture = inputs.flydelta_capture;
@@ -826,6 +827,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.max_reflection_rounds = execution.policy.max_reflection_rounds;
     request.max_tool_batches = execution.tooling.profile_tools_active ? execution.policy.max_tool_rounds : 0;
     request.require_tool_execution = execution.require_tool_execution;
+    request.tool_output_format = execution.tool_output_format;
     request.allow_policy_gated_tool_proposals = execution.policy.allow_policy_gated_tool_proposals;
     request.deliberation_policy = execution.policy.deliberation_policy;
     request.cognitive_state = execution.cognitive_state;
@@ -836,6 +838,27 @@ common_agent_request make_agent_runtime_driver_request(
     request.flydelta_activation = execution.flydelta_activation;
     request.flydelta_capture = execution.flydelta_capture;
     request.tool_argument_bindings = execution.tool_argument_bindings;
+    if (execution.route_selected &&
+            execution.selected_route.kind != common_agent_route_kind::normal_plan &&
+            execution.execution_envelope_ready) {
+        common_plan_route_binding binding;
+        binding.route_id = execution.selected_route.id;
+        binding.blueprint_ref = execution.selected_route.blueprint_logical_id;
+        binding.blueprint_revision = execution.selected_route.blueprint_revision;
+        binding.graph_revision = execution.selected_route.graph_revision;
+        binding.execution_envelope_fingerprint = execution.execution_envelope.fingerprint;
+        binding.policy_revision = execution.execution_envelope.policy_revision;
+        if (execution.selected_route.workflow) {
+            binding.workflow_ref = execution.selected_route.workflow->workflow_ref;
+            binding.workflow_revision = execution.selected_route.workflow->workflow_revision;
+            request.selected_workflow = execution.selected_route.workflow;
+        }
+        request.route_binding = std::move(binding);
+        if (!execution.selected_route.blueprint_persisted_id.empty()) {
+            request.blueprint_plan_id = execution.selected_route.blueprint_persisted_id;
+        }
+        request.workflow_definition = execution.selected_route.workflow_definition;
+    }
     if (execution.route_selected && execution.selected_route.workflow &&
             execution.selected_route.workflow->workflow_ref ==
                 "workflow://resource/document-analysis") {

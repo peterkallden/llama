@@ -6,9 +6,8 @@
 #include <string>
 #include <vector>
 
-// Model-facing serialization is deliberately separate from the host/admin
-// JSONL transport. Native preserves the existing chat-template tool path;
-// jsonl and compact_dsl are textual model-output dialects.
+// Public profile choices are json and dsl. The json choice maps to native
+// structured output; jsonl remains a legacy textual dialect.
 enum class common_agent_tool_output_format {
     native,
     jsonl,
@@ -23,9 +22,8 @@ bool common_parse_agent_tool_output_format(
         common_agent_tool_output_format & format,
         std::string & error);
 
-// V1 deliberately exposes only scalar values and scalar enums. Complex
-// schemas remain available through native/JSONL profiles until a later DSL
-// extension defines their exact wire representation.
+// Compact DSL supports bounded scalar, array and object arguments. Schemas
+// outside that value grammar remain available through native/JSONL profiles.
 bool common_compact_dsl_schema_supported(
         const std::string & schema_json,
         std::string & reason);
@@ -34,6 +32,15 @@ bool common_parse_model_tool_call(
         common_agent_tool_output_format format,
         const std::string & text,
         common_agent_tool_call & call,
+        std::string & error);
+
+// Parse the compact multi-step planner form into the canonical JSON proposal
+// consumed by the ordinary plan parser and host validation pipeline.
+// Grammar: `plan goal="..."`, then one `step [as=alias] | open! TOOL ...`
+// line per operation. Steps are sequential unless the host adds dependencies.
+bool common_parse_compact_dsl_plan(
+        const std::string & text,
+        std::string & proposal_json,
         std::string & error);
 
 // Normalize a string that the caller's schema explicitly defines as a

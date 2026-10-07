@@ -28,6 +28,7 @@ struct common_agent_model_profile_spec {
     // Empty means inherit the base model's load policy.
     std::string load_policy;
     common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
+    bool tool_output_format_configured = false;
 };
 
 struct common_agent_model_catalog {
@@ -56,6 +57,7 @@ struct common_agent_model_selection {
     std::vector<common_agent_adapter_overlay> adapters;
     std::vector<common_agent_flydelta_sideband_overlay> sidebands;
     common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
+    bool tool_output_format_configured = false;
 };
 
 bool common_agent_validate_model_catalog(
@@ -86,6 +88,10 @@ bool common_agent_model_catalog_resolve_profile(
         const std::string & profile_id,
         common_agent_model_selection & selection,
         std::string & error);
+
+common_agent_tool_output_format common_agent_model_selection_effective_tool_output_format(
+        const common_agent_model_selection & selection,
+        common_agent_tool_output_format request_format);
 
 // The key is safe to use for residency/KV admission before a model is loaded.
 // It includes every selection field that can change serving behavior.

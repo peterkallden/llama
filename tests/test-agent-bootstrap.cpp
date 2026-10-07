@@ -416,6 +416,29 @@ int main() {
     assert(dataset_instance->derived_from_plan_id &&
         *dataset_instance->derived_from_plan_id == first.installed_blueprint_ids[2]);
 
+    // When a selected workflow cannot be host-materialized because semantic
+    // operation arguments are absent, do not persist its generic blueprint
+    // template as an executable task. The normal planner owns that fallback.
+    common_blueprint_selection_config deferred_selection_config;
+    deferred_selection_config.task_plan_id = "deferred-workflow-instance";
+    deferred_selection_config.session_id = config.session_id;
+    deferred_selection_config.scope = common_plan_scope::project;
+    deferred_selection_config.now = 46;
+    deferred_selection_config.selected_workflow = checked_in_dataset->workflow_bindings.front();
+    deferred_selection_config.materialize_instance =
+        [](const common_agent_request &, const common_plan_state &,
+                common_plan_state &, std::string &) {
+            return common_blueprint_materialization_outcome::not_applicable;
+        };
+    common_explicit_blueprint_selector deferred_selector("dataset-analysis-v2");
+    assert(common_agent_select_and_instantiate_blueprint(
+        checked_in_plans, selection_request, deferred_selector,
+        {{"dataset-analysis-v2", "bootstrap:local:project:project-a:blueprint:dataset-analysis-v2",
+            "dataset analysis"}},
+        deferred_selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::deferred_to_planner);
+    assert(!checked_in_plans.get(deferred_selection_config.task_plan_id, error));
+
     common_blueprint_selection_config rejected_selection_config = dataset_selection_config;
     rejected_selection_config.task_plan_id = "rejected-astar-instance";
     rejected_selection_config.materialize_instance =

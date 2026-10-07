@@ -333,6 +333,36 @@ int main() {
     const auto plan = store.get("turn-1", error);
     assert(plan && plan->scope == common_plan_scope::project && plan->namespace_id == "tenant-a" && plan->project_id == "project-a" && plan->observations.size() == 1 && plan->observations[0].summary == "current status");
 
+    common_plan_in_memory_store route_store;
+    assert(route_store.open("", error));
+    planner route_planner;
+    common_agent_runtime route_runtime(route_store, route_planner, e, r, &tool_runtime);
+    common_agent_request route_request = request;
+    route_request.plan_id.reset();
+    route_request.route_binding = common_plan_route_binding{
+        "blueprint:dataset-analysis-v2:workflow:dataset-join",
+        "dataset-analysis-v2", "bp-v2", "workflow://dataset/join", "wf-v2",
+        "graph-v1", "envelope-v1", "policy-v1"};
+    route_request.blueprint_plan_id = "blueprint-record-v2";
+    route_request.selected_workflow = common_plan_workflow_binding{
+        "workflow://dataset/join", "wf-v2"};
+    common_plan_workflow_definition route_workflow_definition;
+    route_workflow_definition.workflow_ref = "workflow://dataset/join";
+    route_workflow_definition.workflow_revision = "wf-v2";
+    route_request.workflow_definition = route_workflow_definition;
+    const auto routed = route_runtime.run(route_request);
+    assert(routed.error.empty());
+    const auto routed_plan = route_store.get("turn-1", error);
+    assert(routed_plan && routed_plan->route_binding &&
+        routed_plan->route_binding->route_id == route_request.route_binding->route_id &&
+        routed_plan->route_binding->execution_envelope_fingerprint == "envelope-v1" &&
+        routed_plan->derived_from_plan_id == route_request.blueprint_plan_id &&
+        routed_plan->selected_workflow && route_request.selected_workflow &&
+        routed_plan->selected_workflow->workflow_ref == route_request.selected_workflow->workflow_ref &&
+        routed_plan->selected_workflow->workflow_revision == route_request.selected_workflow->workflow_revision &&
+        routed_plan->workflow_definition &&
+        routed_plan->workflow_definition->workflow_ref == "workflow://dataset/join");
+
     common_plan_in_memory_store mixed_store;
     assert(mixed_store.open("", error));
     mixed_initial_plan_planner mixed_p;

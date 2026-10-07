@@ -2,6 +2,7 @@
 
 #include "memory/memory-retrieval.h"
 #include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/tooling/schema/tool-output-codec.h"
 #include "agent/agent-context-budgets.h"
 #include "agent/sandbox/sandbox-host-config.h"
 #include "tools/agent/host/agent-host-mcp-provider-config.h"
@@ -58,6 +59,7 @@ struct args {
     bool enable_memory_search_tool = false;
     bool enable_memory_remember_tool = false;
     std::string tool_profile;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
     std::string mcp_tool_command;
     std::vector<std::string> mcp_tool_args;
     std::string mcp_tool_server_name = "mcp";

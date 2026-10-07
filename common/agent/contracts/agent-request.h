@@ -68,16 +68,20 @@ struct common_agent_request {
     std::string project_id;
     std::string turn_id;
     std::optional<std::string> plan_id;
+    // Provenance for a host-selected route when ordinary planning is used
+    // instead of a host-materialized blueprint/workflow instance.
+    std::optional<common_plan_route_binding> route_binding;
+    std::optional<std::string> blueprint_plan_id;
+    std::optional<common_plan_workflow_binding> selected_workflow;
+    std::optional<common_plan_workflow_definition> workflow_definition;
     bool enable_memory = false;
     bool enable_planning = true;
     bool enable_reflection = true;
     // CLI/tests may require at least one successfully completed tool call
     // before the turn is allowed to fall back to a plain answer.
     bool require_tool_execution = false;
-    // Native preserves the existing chat-template path. JSONL and compact DSL
-    // are explicit textual model-output modes selected by the host/model
-    // profile or a smoke-local request override.
-    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
+    // JSON is available by explicit selection; compact DSL is the default.
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
     common_agent_deliberation_policy deliberation_policy;
     std::string prompt;
     std::vector<common_agent_input_resource> input_resources;

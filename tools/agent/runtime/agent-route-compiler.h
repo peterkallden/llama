@@ -24,6 +24,7 @@ struct common_agent_route_candidate {
     std::string blueprint_logical_id;
     std::string blueprint_persisted_id;
     std::optional<common_plan_workflow_binding> workflow;
+    std::optional<common_plan_workflow_definition> workflow_definition;
     std::string description;
     std::string blueprint_revision;
     std::string workflow_revision;
