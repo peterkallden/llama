@@ -2048,6 +2048,15 @@ public:
                       "the target step and tool; do not output either identifier. Prose guidance, reset, retry, "
                       "abort, and unrelated steps cannot repair this failure.";
         }
+        struct reflection_model_attempt {
+            std::string phase;
+            std::string system_input;
+            std::string user_input;
+            std::string structured_schema;
+            std::string output;
+            std::string generation_error;
+        };
+        std::vector<reflection_model_attempt> reflection_attempts;
         auto generate_reflection = [&](bool regeneration) {
             common_chat_msg attempt = user;
             if (regeneration) {
@@ -2060,7 +2069,7 @@ public:
                       "Regenerate one complete JSON object from the beginning. Do not continue partial JSON "
                       "or include commentary.";
             }
-            return inference.generate_result(make_agent_cli_generation_request(
+            const auto generated = inference.generate_result(make_agent_cli_generation_request(
                 request,
                 common_agent_generation_purpose::reflection,
                 {system, attempt},
@@ -2070,6 +2079,17 @@ public:
                         ? std::max(generation_config.n_predict, 128)
                         : std::max(generation_config.n_predict, 384)),
                 compact_dsl_output ? std::string() : reflection_schema));
+            if (generation_config.generation_trace) {
+                reflection_attempts.push_back({
+                    regeneration ? "regeneration" : "initial",
+                    system.content,
+                    attempt.content,
+                    compact_dsl_output ? std::string{} : reflection_schema,
+                    generated.content,
+                    generated.error_message,
+                });
+            }
+            return generated;
         };
         bool parsed = false;
         auto generation_result = common_agent_bounded_structured_regeneration(
@@ -2098,11 +2118,34 @@ public:
             return parsed;
         });
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
+        auto log_reflection_failure_io = [&](const std::string & reason) {
+            if (!generation_config.generation_trace) return;
+            auto write_field = [](const char * label, const std::string & value) {
+                std::fprintf(stderr, "agent reflection model I/O: %s bytes=%zu begin\n", label, value.size());
+                if (!value.empty()) std::fwrite(value.data(), 1, value.size(), stderr);
+                std::fprintf(stderr, "\nagent reflection model I/O: %s end\n", label);
+            };
+            std::fprintf(stderr,
+                "agent reflection model I/O: validation_failed=true reason=%s attempts=%zu format=%s\n",
+                reason.c_str(), reflection_attempts.size(), compact_dsl_output ? "dsl" : "json");
+            for (size_t index = 0; index < reflection_attempts.size(); ++index) {
+                const auto & logged = reflection_attempts[index];
+                std::fprintf(stderr,
+                    "agent reflection model I/O: attempt=%zu phase=%s generation_error=%s\n",
+                    index + 1, logged.phase.c_str(), logged.generation_error.c_str());
+                write_field("system_input", logged.system_input);
+                write_field("user_input", logged.user_input);
+                write_field("structured_schema", logged.structured_schema);
+                write_field("raw_output", logged.output);
+            }
+        };
         if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_agent_cli_generation_failure("model reflection generation", generation_result);
+            log_reflection_failure_io(error);
             return result;
         }
         if (!parsed) {
+            log_reflection_failure_io(error);
             fprintf(stderr, "warning: reflection %s rejected; using safe fallback (%s)\n",
                 compact_dsl_output ? "compact DSL" : "JSON", error.c_str());
             error.clear();

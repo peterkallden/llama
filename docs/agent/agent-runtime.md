@@ -5490,8 +5490,13 @@ For diagnostics, `--generation-trace` records bounded model generation,
 token-progress details, and a bounded preview of each completed generated
 content value. The preview is intended for local debugging of planner,
 reflection, repair, and answer formatting; it must not be treated as an
-authoritative audit log. `--agent-trace` records the corresponding bounded host
-tool lifecycle: normalized tool name, argument keys, selected resource URI,
+authoritative audit log. When a reflection response fails generation or
+dialect validation, this option also records each attempt's complete system
+input, user input, structured schema (when present), raw model output, and the
+validation or generation failure reason. This failure-only capture can include
+the full task context and is intended for local debugging; protect and share
+the resulting log accordingly. `--agent-trace` records the corresponding
+bounded host tool lifecycle: normalized tool name, argument keys, selected resource URI,
 whether safe defaults were applied, failure code, and a short sanitized
 diagnostic. During a `repair*` step it additionally records bounded
 `model_args` and, when normalization changed them, `normalized_args`; sensitive
