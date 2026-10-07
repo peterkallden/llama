@@ -177,14 +177,28 @@ planner context; the host binding remains authoritative in either case.
 
 ## Model-facing repair response
 
-Reflection follows the turn's selected output dialect. Compact reflection DSL
-starts with `reflect decision=...` using exactly one of `accept`, `revise` or
-`abort`, then uses bounded lines
-such as `complete STEP_ID`, `guidance "..."`, `replace STEP_ID | open! TOOL ...`
-`add | open! TOOL ...`, `assurance_action ACTION` and `learning_hint ...`. When
-the host has one unambiguous active/failed target, `STEP_ID` is omitted and
-bound by the host. Otherwise the model selects an existing plan ID, constrained
-to IDs from that plan; it never invents an internal ID.
+Reflection follows the turn's selected output dialect. Its ordinary model-facing
+form is deliberately not a plan-edit language. With no failed mandatory tool,
+the model receives verified observations, the user request and the draft, then
+returns exactly one of:
+
+```text
+reflect decision=accept
+```
+
+or:
+
+```text
+reflect decision=revise
+guidance "one short correction for the answer"
+```
+
+The host owns plan IDs, tool calls, dependencies and final synthesis in this
+ordinary review. It does not render tool contracts or ask the model to supply a
+`STEP_ID`. A failed mandatory step narrows the DSL instead to `abort` or a
+single `retry STEP_ID`, where the allowed failed IDs are explicitly listed.
+The broader parser still accepts bounded plan operations for persisted or
+legacy callers, but they are not the default prompt surface.
 
 For a retryable failed mandatory validation, reflection receives a narrower
 contract than ordinary reflection. The JSON form is:
