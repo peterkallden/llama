@@ -15,6 +15,7 @@
 #include "agent/adaptation/flydelta/flydelta-worker.h"
 #include "agent/adaptation/learning-transaction.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
+#include "agent/tooling/schema/tool-output-codec.h"
 #include "tools/agent/host/agent-host-config.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/server/server-context.h"
@@ -207,32 +208,53 @@ std::string preview(const common_agent_generation_result & result) {
 
 bool parse_model_tool_call(const common_agent_generation_result & result, json & parsed) {
     if (!common_agent_generation_succeeded(result)) return false;
-    parsed = json::parse(result.content, nullptr, false);
-    if (parsed.is_discarded()) {
-        const size_t first_object = result.content.find('{');
-        const size_t last_object = result.content.rfind('}');
-        if (first_object != std::string::npos && last_object > first_object) {
-            parsed = json::parse(result.content.substr(first_object,
-                last_object - first_object + 1), nullptr, false);
-        }
-    }
-    if (!parsed.is_object() || !parsed.contains("name") || !parsed["name"].is_string()) {
+    common_agent_tool_call call;
+    std::string error;
+    if (!common_parse_model_tool_call(
+            common_agent_tool_output_format::compact_dsl, result.content, call, error)) {
         return false;
     }
-    // The host's canonical repair uses "arguments", while several model
-    // tool-call serializers use the equivalent short form "args". Keep the
-    // host verifier strict and normalize this smoke-boundary representation
-    // before the verifier sees it.
-    if (!parsed.contains("arguments") && parsed.contains("args") &&
-            parsed["args"].is_object()) {
-        parsed["arguments"] = parsed["args"];
+    const json arguments = json::parse(call.arguments_json, nullptr, false);
+    if (!arguments.is_object()) return false;
+    parsed = {{"name", call.name}, {"arguments", arguments}};
+    return true;
+}
+
+std::string compact_dsl_value(const json & value) {
+    if (value.is_string()) return value.dump();
+    if (value.is_primitive()) return value.dump();
+    if (value.is_array()) {
+        std::string rendered = "[";
+        for (size_t index = 0; index < value.size(); ++index) {
+            if (index != 0) rendered += ",";
+            rendered += compact_dsl_value(value[index]);
+        }
+        return rendered + "]";
     }
-    return parsed.contains("arguments") && parsed["arguments"].is_object();
+    if (value.is_object()) {
+        std::string rendered = "{";
+        bool first = true;
+        for (const auto & entry : value.items()) {
+            if (!first) rendered += ";";
+            first = false;
+            rendered += entry.key() + "=" + compact_dsl_value(entry.value());
+        }
+        return rendered + "}";
+    }
+    return "null";
+}
+
+std::string compact_dsl_tool_call(const std::string & tool, const json & arguments) {
+    if (tool.empty() || !arguments.is_object()) return {};
+    std::string rendered = "open! " + tool;
+    for (const auto & argument : arguments.items()) {
+        rendered += " " + argument.key() + "=" + compact_dsl_value(argument.value());
+    }
+    return rendered;
 }
 
 std::string tool_call_continuation(const std::string & tool, const json & arguments) {
-    if (tool.empty() || !arguments.is_object()) return {};
-    return tool + "\",\"arguments\":" + arguments.dump() + "}";
+    return compact_dsl_tool_call(tool, arguments);
 }
 
 std::string parsed_tool_call_continuation(const common_agent_generation_result & result) {
@@ -348,7 +370,10 @@ common_agent_generation_request make_request(const options & value, const std::s
     request.purpose = common_agent_generation_purpose::tool_followup;
     request.options.n_predict = value.n_predict;
     request.options.n_threads = value.n_threads;
-    request.messages = {{"system", "You are a host-controlled dataset tool selector. Return only one canonical JSON object with name and arguments, no markdown.\n" + contract}, {"user", user}};
+    request.messages = {{"system",
+        "You are a host-controlled dataset tool selector. Return exactly one compact DSL call in the form "
+        "open! TOOL_NAME argument=value. Do not return JSON, native tool-call wrappers, markdown, or explanation.\n" +
+        contract}, {"user", user}};
     request.flydelta_capture = capture;
     request.flydelta_activation = std::move(activation);
     return request;
@@ -559,10 +584,33 @@ int main(int argc, char ** argv) {
             continue;
         }
         ++failures;
+        const std::string canonical_dsl_call = compact_dsl_tool_call(
+            expected, canonical_repair["arguments"]);
+        common_agent_tool_call parsed_canonical_dsl_call;
+        std::string canonical_dsl_error;
+        const bool canonical_dsl_parsed = common_parse_model_tool_call(
+            common_agent_tool_output_format::compact_dsl,
+            canonical_dsl_call,
+            parsed_canonical_dsl_call,
+            canonical_dsl_error);
+        json parsed_canonical_arguments = json::value_t::discarded;
+        if (canonical_dsl_parsed) {
+            parsed_canonical_arguments = json::parse(
+                parsed_canonical_dsl_call.arguments_json, nullptr, false);
+        }
+        if (!canonical_dsl_parsed || parsed_canonical_dsl_call.name != expected ||
+                parsed_canonical_arguments != canonical_repair["arguments"]) {
+            host.close();
+            std::cerr << "could not round-trip canonical DSL repair for " << id
+                      << ": " << (canonical_dsl_error.empty()
+                          ? "parsed tool or arguments differed"
+                          : canonical_dsl_error) << '\n';
+            return 1;
+        }
         const std::string repair_request = "The host rejected the prior tool-call attempt (" +
             failed_verdict.diagnostic + "). The host constructed the canonical repair below. " +
-            "Return this JSON object unchanged, including both name and arguments, with no markdown or explanation: " +
-            canonical_repair.dump();
+            "Return this single compact DSL call unchanged. Do not return JSON, markdown, or explanation: " +
+            canonical_dsl_call;
         common_agent_generation_result repaired_result;
         const bool repair_generated = inference->generate(make_request(value, contract, repair_request, capture), repaired_result);
         const auto repaired_verdict = verify_model_call(
@@ -767,6 +815,7 @@ int main(int argc, char ** argv) {
     std::error_code ignored;
     std::filesystem::remove_all(worker_root, ignored);
     std::cout << "flydelta_dataset_question_repair_model_smoke"
+              << " tool_output_format=dsl"
               << " baseline_passed=" << passed
               << " baseline_failures=" << failures
               << " unresolved=" << unresolved
