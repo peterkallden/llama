@@ -25,10 +25,11 @@ agent_smoke_run_logged "$seed_log" "$seed_bin" --db "$data_db" --orders "$orders
 grep -Eq 'seeded_orders=[1-9]' "$seed_log"
 
 gpu_layers="${LLAMA_AGENT_GPU_LAYERS:-99}"
-prompt='Describe the amount column in the orders dataset using the available dataset-analysis workflow. Report the count and mean from the executed result; do not guess.'
-LLAMA_AGENT_RESIDENT_TRACE="${LLAMA_AGENT_RESIDENT_TRACE:-1}" \
-LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-900}" \
-agent_smoke_run_logged "$agent_log" "$agent_bin" run \
+prompt='Describe only the amount column in the orders dataset using the available dataset-analysis workflow. Count and mean are requested statistics, not column names. Report the count and mean from the executed result; do not guess.'
+run_status=0
+if LLAMA_AGENT_RESIDENT_TRACE="${LLAMA_AGENT_RESIDENT_TRACE:-1}" \
+    LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-900}" \
+    agent_smoke_run_logged "$agent_log" "$agent_bin" run \
     --backend cozo \
     --memory-db "$work_dir/memory.cozo" \
     --plan-backend cozo \
@@ -55,7 +56,11 @@ agent_smoke_run_logged "$agent_log" "$agent_bin" run \
     --n-predict "${LLAMA_AGENT_N_PREDICT:-128}" \
     --context-size "${LLAMA_AGENT_CONTEXT_SIZE:-4096}" \
     --threads "${LLAMA_AGENT_THREADS:-4}" \
-    -ngl "$gpu_layers"
+    -ngl "$gpu_layers"; then
+    :
+else
+    run_status=$?
+fi
 
 if [[ "$gpu_layers" =~ ^[0-9]+$ ]] && (( gpu_layers >= 99 )); then
     grep -Fq "requested_gpu_layers=$gpu_layers effective_gpu_layers=-1 fit_params=true workspace_reservation=true legacy_full_offload_fit=true" "$agent_log" || {
@@ -65,6 +70,13 @@ if [[ "$gpu_layers" =~ ^[0-9]+$ ]] && (( gpu_layers >= 99 )); then
 fi
 grep -Fq 'workflow_action_selected' "$agent_log"
 grep -Eq 'stage=tool kind=(succeeded|completed).*tool=statistics.describe' "$agent_log"
-grep -Eiq 'count|mean' "$agent_log"
-echo "qwen_nomic_workflow_action=passed"
+grep -Eq 'workflow-action trace: attempt=[0-9]+ parse=ok tool=statistics[.]describe canonical_args=.*"columns":\["amount"\]' "$agent_log" || {
+    echo "workflow action smoke did not normalize the selected arguments to columns=[amount]" >&2
+    exit 1
+}
+echo "qwen_nomic_workflow_action_execution=passed"
+if (( run_status != 0 )); then
+    echo "full_turn=failed (exit=${run_status}; see log)" >&2
+    exit "$run_status"
+fi
 echo "log=${agent_log}"

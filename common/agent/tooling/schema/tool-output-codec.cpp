@@ -4,11 +4,13 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <map>
 #include <set>
 #include <sstream>
+#include <variant>
 
 using json = nlohmann::ordered_json;
 
@@ -276,6 +278,302 @@ bool parse_compact(const std::string & input, common_agent_tool_call & call, std
     return true;
 }
 
+bool split_flat_path(const std::string & path, std::vector<std::variant<std::string, size_t>> & parts) {
+    parts.clear();
+    size_t position = 0;
+    while (position < path.size()) {
+        const size_t key_start = position;
+        while (position < path.size() &&
+                (std::isalnum(static_cast<unsigned char>(path[position])) ||
+                 path[position] == '_' || path[position] == '-')) ++position;
+        if (position == key_start) return false;
+        std::string key = path.substr(key_start, position - key_start);
+        parts.emplace_back(std::move(key));
+        while (position < path.size() && path[position] == '[') {
+            ++position;
+            const size_t start = position;
+            while (position < path.size() && std::isdigit(static_cast<unsigned char>(path[position]))) ++position;
+            if (start == position || position >= path.size() || path[position++] != ']') return false;
+            size_t index = 0;
+            try {
+                index = static_cast<size_t>(std::stoull(path.substr(start, position - start - 1)));
+            } catch (...) {
+                return false;
+            }
+            parts.emplace_back(index);
+        }
+        if (position == path.size()) break;
+        if (path[position++] != '.' || position == path.size()) return false;
+    }
+    return !parts.empty();
+}
+
+bool assign_flat_path(
+        json & target,
+        const std::vector<std::variant<std::string, size_t>> & parts,
+        size_t depth,
+        const json & value,
+        std::string & error) {
+    if (depth >= parts.size()) {
+        error = "flat DSL path has no destination";
+        return false;
+    }
+    if (const auto * key = std::get_if<std::string>(&parts[depth])) {
+        if (!target.is_object()) {
+            error = "flat DSL path expected an object before field " + *key;
+            return false;
+        }
+        if (depth + 1 == parts.size()) {
+            if (target.contains(*key)) {
+                error = "flat DSL repeats field path: " + *key;
+                return false;
+            }
+            target[*key] = value;
+            return true;
+        }
+        const bool next_is_index = std::holds_alternative<size_t>(parts[depth + 1]);
+        if (!target.contains(*key)) target[*key] = next_is_index ? json::array() : json::object();
+        return assign_flat_path(target[*key], parts, depth + 1, value, error);
+    }
+    const size_t index = std::get<size_t>(parts[depth]);
+    if (!target.is_array() || index > target.size()) {
+        error = "flat DSL array indexes must be contiguous and match an array field";
+        return false;
+    }
+    if (index == target.size()) {
+        const bool next_is_index = depth + 1 < parts.size() &&
+            std::holds_alternative<size_t>(parts[depth + 1]);
+        target.push_back(depth + 1 == parts.size()
+            ? value
+            : (next_is_index ? json::array() : json::object()));
+        if (depth + 1 == parts.size()) return true;
+    }
+    return assign_flat_path(target[index], parts, depth + 1, value, error);
+}
+
+bool parse_flat_value(const std::string & source, json & value, std::string & error) {
+    const std::string text = trim(source);
+    if (text.empty()) {
+        error = "flat DSL field value is empty; omit an unset field instead";
+        return false;
+    }
+    if (text.front() == '{' || text.front() == '[') {
+        error = "flat DSL does not accept nested objects or arrays; use field paths or repeated lines";
+        return false;
+    }
+    size_t position = 0;
+    if (!parse_value(text, position, value, error)) return false;
+    while (position < text.size() && std::isspace(static_cast<unsigned char>(text[position]))) ++position;
+    if (position != text.size()) {
+        error = "flat DSL scalar values containing whitespace must be quoted";
+        return false;
+    }
+    return true;
+}
+
+const json * find_flat_directive(const json & schema, const std::string & name) {
+    if (!schema.is_object() || !schema.contains("properties")) return nullptr;
+    const auto & properties = schema["properties"];
+    if (!properties.is_object()) return nullptr;
+    for (const auto & property : properties.items()) {
+        if (!property.value().is_object() || property.value().value("type", std::string{}) != "array" ||
+                !property.value().contains("x-agent-flat") || !property.value()["x-agent-flat"].is_object()) continue;
+        if (property.value()["x-agent-flat"].value("directive", std::string{}) == name) return &property.value();
+    }
+    return nullptr;
+}
+
+std::string flat_directive_property_name(const json & schema, const std::string & name) {
+    const auto properties = schema.value("properties", json::object());
+    if (!properties.is_object()) return {};
+    for (const auto & property : properties.items()) {
+        if (property.value().is_object() && property.value().contains("x-agent-flat") &&
+                property.value()["x-agent-flat"].is_object() &&
+                property.value()["x-agent-flat"].value("directive", std::string{}) == name) {
+            return property.key();
+        }
+    }
+    return {};
+}
+
+bool parse_flat_directive_value(
+        const std::string & source,
+        const json & property_schema,
+        json & object,
+        std::string & error) {
+    const auto & annotation = property_schema["x-agent-flat"];
+    const auto & item_schema = property_schema["items"];
+    const auto item_properties = item_schema.value("properties", json::object());
+    if (!item_schema.is_object() || item_schema.value("type", std::string{}) != "object" ||
+            !item_properties.is_object()) {
+        error = "flat DSL directive annotation requires an object array item schema";
+        return false;
+    }
+
+    object = json::object();
+    const std::string value = trim(source);
+    const size_t first_equals = value.find('=');
+    const size_t first_space = value.find_first_of(" \t\r\n");
+    const bool named = first_equals != std::string::npos &&
+        (first_space == std::string::npos || first_equals < first_space) &&
+        first_equals > 0 && value.substr(0, first_equals).find_first_not_of(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") == std::string::npos;
+    if (named) {
+        size_t position = 0;
+        if (!parse_arguments(value, position, false, object, error)) return false;
+        while (position < value.size() && std::isspace(static_cast<unsigned char>(value[position]))) ++position;
+        if (position != value.size()) {
+            error = "flat DSL named directive has trailing content";
+            return false;
+        }
+    } else {
+        const auto slots = annotation.value("positional", json::array());
+        if (!slots.is_array() || slots.empty()) {
+            error = "flat DSL directive has no positional slot declaration; use named slots";
+            return false;
+        }
+        size_t position = 0;
+        size_t slot_index = 0;
+        while (position < value.size()) {
+            while (position < value.size() && std::isspace(static_cast<unsigned char>(value[position]))) ++position;
+            if (position >= value.size()) break;
+            if (slot_index >= slots.size() || !slots[slot_index].is_string()) {
+                error = "flat DSL directive contains more values than declared positional slots";
+                return false;
+            }
+            const auto field = slots[slot_index++].get<std::string>();
+            json slot_value;
+            if (!parse_value(value, position, slot_value, error)) return false;
+            if (slot_value.is_object() || slot_value.is_array()) {
+                error = "flat DSL directive slots must be scalar values";
+                return false;
+            }
+            object[field] = std::move(slot_value);
+        }
+    }
+    for (const auto & item : object.items()) {
+        if (!item_properties.contains(item.key())) {
+            error = "flat DSL directive contains an unknown slot: " + item.key();
+            return false;
+        }
+        if (item.value().is_object() || item.value().is_array()) {
+            error = "flat DSL directive slots must be scalar values";
+            return false;
+        }
+    }
+    if (!object.is_object() || object.empty()) {
+        error = "flat DSL directive must provide at least one slot";
+        return false;
+    }
+    return true;
+}
+
+bool parse_flat_compact(
+        const std::string & input,
+        const std::vector<common_chat_tool> & tools,
+        common_agent_tool_call & call,
+        std::string & error) {
+    std::vector<std::string> lines;
+    std::istringstream input_stream(input);
+    std::string line;
+    while (std::getline(input_stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        line = trim(line);
+        if (!line.empty()) lines.push_back(std::move(line));
+    }
+    if (lines.empty()) {
+        error = "flat DSL tool call is empty";
+        return false;
+    }
+    if (lines.size() == 1) return parse_compact(lines.front(), call, error);
+    if (lines.front().rfind("open! ", 0) != 0) {
+        error = "flat DSL must start with `open! TOOL_NAME`";
+        return false;
+    }
+    const std::string tool_name = trim(lines.front().substr(6));
+    if (tool_name.empty() || tool_name.find_first_of(" \t") != std::string::npos) {
+        error = "flat DSL tool header must contain one exact tool name";
+        return false;
+    }
+    const auto selected = std::find_if(tools.begin(), tools.end(), [&](const auto & tool) {
+        return tool.name == tool_name;
+    });
+    if (selected == tools.end()) {
+        error = "flat DSL selected a tool outside the available exact tool catalog";
+        return false;
+    }
+    const auto schema = json::parse(selected->parameters, nullptr, false);
+    if (!schema.is_object() || schema.value("type", std::string{}) != "object") {
+        error = "flat DSL selected tool has no object input schema";
+        return false;
+    }
+
+    json arguments = json::object();
+    for (size_t index = 1; index < lines.size(); ++index) {
+        const size_t separator = lines[index].find(':');
+        if (separator == std::string::npos) {
+            error = "flat DSL argument line must use `field: value`";
+            return false;
+        }
+        const std::string field = trim(lines[index].substr(0, separator));
+        const std::string source = trim(lines[index].substr(separator + 1));
+        if (field.empty()) {
+            error = "flat DSL argument field name is empty";
+            return false;
+        }
+        if (const auto * directive = find_flat_directive(schema, field)) {
+            json item;
+            if (!parse_flat_directive_value(source, *directive, item, error)) return false;
+            const auto property_name = flat_directive_property_name(schema, field);
+            if (property_name.empty()) {
+                error = "flat DSL directive has no schema destination: " + field;
+                return false;
+            }
+            if (!arguments.contains(property_name)) arguments[property_name] = json::array();
+            if (!arguments[property_name].is_array()) {
+                error = "flat DSL directive conflicts with an existing field path: " + field;
+                return false;
+            }
+            arguments[property_name].push_back(std::move(item));
+            continue;
+        }
+
+        json value;
+        if (!parse_flat_value(source, value, error)) return false;
+        std::vector<std::variant<std::string, size_t>> path;
+        if (!split_flat_path(field, path)) {
+            error = "flat DSL field path is invalid: " + field;
+            return false;
+        }
+        if (value.is_null() && path.size() == 1 && std::holds_alternative<std::string>(path.front())) {
+            const auto key = std::get<std::string>(path.front());
+            const auto required = schema.value("required", json::array());
+            if (std::find(required.begin(), required.end(), json(key)) == required.end()) {
+                // A null on an optional flat field is the model's explicit
+                // "unset" value; normalize it to omission, never an empty value.
+                continue;
+            }
+        }
+        if (path.size() == 1 && std::holds_alternative<std::string>(path.front()) &&
+                schema["properties"].contains(field) &&
+                schema["properties"][field].value("type", std::string{}) == "array" &&
+                !find_flat_directive(schema, field)) {
+            if (!arguments.contains(field)) arguments[field] = json::array();
+            if (!arguments[field].is_array()) {
+                error = "flat DSL repeated field conflicts with a non-array value: " + field;
+                return false;
+            }
+            arguments[field].push_back(std::move(value));
+        } else if (!assign_flat_path(arguments, path, 0, value, error)) {
+            return false;
+        }
+    }
+    call.name = tool_name;
+    call.arguments_json = arguments.dump();
+    error.clear();
+    return true;
+}
+
 bool compact_value_schema(const json & schema, std::string & reason, size_t depth = 0) {
     if (!schema.is_object()) {
         reason = "schema value is not an object";
@@ -377,6 +675,28 @@ bool common_compact_dsl_schema_supported(const std::string & schema_json, std::s
             }
         }
         if (!compact_value_schema(item.value(), reason)) return false;
+        if (item.value().is_object() && item.value().contains("x-agent-flat")) {
+            const auto & property = item.value();
+            const auto & annotation = property["x-agent-flat"];
+            const auto item_schema = property.value("items", json::object());
+            const auto item_properties = item_schema.value("properties", json::object());
+            if (property.value("type", std::string{}) != "array" || !annotation.is_object() ||
+                    annotation.value("directive", std::string{}) != item.key() ||
+                    !annotation.contains("positional") || !annotation["positional"].is_array() ||
+                    annotation["positional"].empty() || !item_schema.is_object() ||
+                    item_schema.value("type", std::string{}) != "object" || !item_properties.is_object()) {
+                reason = "flat DSL directive annotation must name an object array and declare positional slots: " + item.key();
+                return false;
+            }
+            std::set<std::string> slots;
+            for (const auto & slot : annotation["positional"]) {
+                if (!slot.is_string() || !item_properties.contains(slot.get<std::string>()) ||
+                        !slots.insert(slot.get<std::string>()).second) {
+                    reason = "flat DSL positional slot is unknown or repeated: " + item.key();
+                    return false;
+                }
+            }
+        }
     }
     return true;
 }
@@ -416,8 +736,28 @@ bool common_parse_model_tool_call(
     return true;
 }
 
+bool common_parse_model_tool_call(
+        common_agent_tool_output_format format,
+        const std::string & text,
+        const std::vector<common_chat_tool> & tools,
+        common_agent_tool_call & call,
+        std::string & error) {
+    if (format == common_agent_tool_output_format::compact_dsl) {
+        return parse_flat_compact(text, tools, call, error);
+    }
+    return common_parse_model_tool_call(format, text, call, error);
+}
+
 bool common_parse_compact_dsl_plan(
         const std::string & text,
+        std::string & proposal_json,
+        std::string & error) {
+    return common_parse_compact_dsl_plan(text, {}, proposal_json, error);
+}
+
+bool common_parse_compact_dsl_plan(
+        const std::string & text,
+        const std::vector<common_chat_tool> & tools,
         std::string & proposal_json,
         std::string & error) {
     proposal_json.clear();
@@ -430,7 +770,7 @@ bool common_parse_compact_dsl_plan(
         line = trim(line);
         if (!line.empty()) lines.push_back(std::move(line));
     }
-    if (lines.size() < 2 || lines.size() > 7) {
+    if (lines.size() < 2) {
         error = "compact DSL plan requires a goal and between one and six steps";
         return false;
     }
@@ -463,10 +803,25 @@ bool common_parse_compact_dsl_plan(
         return false;
     }
 
+    std::vector<std::string> step_blocks;
+    for (size_t index = 1; index < lines.size(); ++index) {
+        if (lines[index].rfind("step ", 0) == 0) {
+            step_blocks.push_back(lines[index]);
+        } else if (step_blocks.empty()) {
+            error = "compact DSL plan argument lines must follow a step";
+            return false;
+        } else {
+            step_blocks.back() += "\n" + lines[index];
+        }
+    }
+    if (step_blocks.empty() || step_blocks.size() > 6) {
+        error = "compact DSL plan requires between one and six steps";
+        return false;
+    }
+
     json steps = json::array();
     std::set<std::string> aliases;
-    for (size_t index = 1; index < lines.size(); ++index) {
-        const std::string & step_line = lines[index];
+    for (const auto & step_line : step_blocks) {
         if (step_line.rfind("step ", 0) != 0) {
             error = "compact DSL plan step must start with `step`";
             return false;
@@ -504,7 +859,11 @@ bool common_parse_compact_dsl_plan(
             return false;
         }
         common_agent_tool_call call;
-        if (!parse_compact(step_line.substr(separator + 3), call, error)) return false;
+        const std::string call_text = step_line.substr(separator + 3);
+        const bool parsed_call = tools.empty()
+            ? parse_compact(call_text, call, error)
+            : parse_flat_compact(call_text, tools, call, error);
+        if (!parsed_call) return false;
         json step = {{"tool", call.name}, {"args", json::parse(call.arguments_json)}};
         if (!alias.empty()) step["as"] = alias;
         steps.push_back(std::move(step));
@@ -550,8 +909,9 @@ std::string common_render_model_tool_output_instructions(
     if (format == common_agent_tool_output_format::jsonl) {
         out << "Use one JSON line: {\"tool\":\"TOOL_NAME\",\"arguments\":{...}}.\n";
     } else {
-        out << "Use one compact DSL line: open! TOOL_NAME key=value ... .\n"
-            << "A compatible call form is TOOL_NAME(key=value, ...).\n";
+        out << "Use flat DSL: first write `open! TOOL_NAME`, then one `field: value` per line.\n"
+            << "Repeat a field for array values. For nested values without a declared directive, use paths such as `operations[0].column: amount`.\n"
+            << "For annotated directives, use the listed positional slots by default; named `slot=value` entries are also accepted. Quote strings containing spaces. Omit unset fields; never use an empty value. Do not write nested braces or arrays.\n";
     }
     out << "Available model-facing tools:\n";
     size_t rendered = 0;

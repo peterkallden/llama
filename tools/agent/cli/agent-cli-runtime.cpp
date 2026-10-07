@@ -446,7 +446,7 @@ std::string reflection_json_schema(
         const std::vector<common_chat_tool> & tools,
         const std::string & implicit_replace_step_id) {
     using json = nlohmann::ordered_json;
-    const std::string base = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":DECISIONS},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"reset":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"retry":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}},"replace_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
+    const std::string base = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":[]},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"reset":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"retry":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}},"replace_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
     json schema = json::parse(base);
     schema["properties"]["decision"]["enum"] = json::parse(decision_enum);
     json step_id_enum = json::array();
@@ -1512,7 +1512,7 @@ public:
         } else {
             if (compact_dsl_output) {
                 system.content =
-                    "Return only a compact DSL plan, with no Markdown or commentary. Start with `plan goal=\"...\"`; then emit one line per tool step as `step [as=alias] | open! TOOL_NAME key=value ...`. Use `as=alias` only when later arguments need an unambiguous `$alias.field` result reference. Steps run sequentially; omit dependencies. Nested objects use `{field=value; other=value}`, arrays use `[value, value]`, strings with spaces must be double-quoted, and booleans/numbers/null are unquoted. Use only exact registered tool names. Build a small bounded execution plan.\n"
+                    "Return only a compact DSL plan, with no Markdown or commentary. Start with `plan goal=\"...\"`; begin each step with `step [as=alias] | open! TOOL_NAME`, then put one `field: value` on each following line belonging to that step. Use schema-listed positional directive slots by default; named `slot=value` entries are also accepted. Use paths such as `operations[0].column: amount` for other nested values, and repeat scalar array fields on separate lines. Quote strings with spaces, omit unset fields, and do not use nested braces or arrays. Use `as=alias` only when later arguments need an unambiguous `$alias.field` result reference. Steps run sequentially; omit dependencies. Use only exact registered tool names. Build a small bounded execution plan.\n"
                     "Registered tool contracts (use output fields as `$alias.field` only when needed):\n" + tool_contracts +
                     "Host-resolved tool arguments are authoritative; omit host-bound fields and the host will merge them. Never replace fixed values. Fixed bindings:" +
                     render_planner_host_argument_bindings(request) + "\n"
@@ -1571,7 +1571,7 @@ public:
             ? generation_config.planner_n_predict
             : std::max(generation_config.n_predict, 512);
         auto generate_plan = [&](bool regeneration) {
-            if (regeneration && !compact_dsl_output && pending_argument_repair.has_value() &&
+            if (regeneration && pending_argument_repair.has_value() &&
                     !argument_repair_attempted) {
                 argument_repair_attempted = true;
                 const auto & target = *pending_argument_repair;
@@ -1583,17 +1583,20 @@ public:
                     }
                 }
                 const std::string repair_rule = target.missing_argument.empty()
-                    ? "Replace the rejected arguments with a complete valid args object; remove unknown or invalid fields. Host validation error: " + target.validation_error + ". "
-                    : "Add the missing required field while preserving valid existing fields. Required field: " + target.missing_argument + ". ";
+                    ? "Correct only the invalid or missing argument fields. Host validation error: " + target.validation_error + ". "
+                    : "Provide only the missing required field. Required field: " + target.missing_argument + ". ";
+                const std::string repair_format = compact_dsl_output
+                    ? "Return only flat DSL argument lines in the selected tool's format: `field: value`, one per line. For annotated arrays, use the listed positional directive slots by default; named slots are also accepted. Use indexed field paths for other nested values. Quote strings with spaces. Omit unset fields; do not echo the full call or use nested braces/arrays. "
+                    : "Return only an args object with the repaired fields. ";
                 common_chat_msg repair_system{
                     "system",
-                    "Return only one JSON object with an args object for the already selected tool. "
+                    repair_format +
                     "Do not choose a different tool, add a plan step, or return a complete plan. "
                     "The host will validate the repaired args against the tool contract. "
                     "Use only values explicitly present in the user request or already present in "
                     "the existing args; the host will not invent semantic values. Selected tool: " +
                     target.tool_name + ". " + repair_rule +
-                    "Return args matching that tool's registered model-facing schema. "
+                    "Use only fields from that tool's registered model-facing schema. "
                     "Tool contract:" + selected_contract,
                 };
                 common_chat_msg repair_user{
@@ -1602,19 +1605,40 @@ public:
                     "\n[Existing selected step]\ntool: " + target.tool_name +
                     "\nargs: " + target.base_arguments_json +
                     "\n[Host validation error]\n" + target.validation_error +
-                    "\nReturn only {\"args\":{...}} with the tool arguments repaired.",
+                    (compact_dsl_output
+                        ? "\nReturn only the repaired flat DSL argument lines."
+                        : "\nReturn only {\"args\":{...}} with the tool arguments repaired."),
                 };
                 auto repaired = inference.generate_result(make_agent_cli_generation_request(
                     request,
                     common_agent_generation_purpose::planner,
                     {repair_system, repair_user},
                     make_agent_cli_generation_options(generation_config, std::min(planner_n_predict, 256)),
-                    planner_argument_repair_schema(target, tool_definitions)));
+                    compact_dsl_output ? std::string() : planner_argument_repair_schema(target, tool_definitions)));
                 if (common_agent_generation_succeeded(repaired)) {
                     std::string repaired_plan;
                     std::string repair_error;
-                    if (apply_planner_argument_repair(
-                            target, repaired.content, repaired_plan, repair_error)) {
+                    std::string repair_payload = repaired.content;
+                    if (compact_dsl_output) {
+                        const std::string call_text = "open! " + target.tool_name + "\n" + repaired.content;
+                        common_agent_tool_call repair_call;
+                        if (common_parse_model_tool_call(
+                                common_agent_tool_output_format::compact_dsl,
+                                call_text, tool_definitions, repair_call, repair_error) &&
+                                repair_call.name == target.tool_name) {
+                            const auto repair_args = nlohmann::ordered_json::parse(
+                                repair_call.arguments_json, nullptr, false);
+                            if (repair_args.is_object()) {
+                                repair_payload = nlohmann::ordered_json{{"args", repair_args}}.dump();
+                            } else {
+                                repair_error = "flat DSL repair did not produce an argument object";
+                            }
+                        } else if (repair_error.empty()) {
+                            repair_error = "flat DSL repair changed the already selected tool";
+                        }
+                    }
+                    if (repair_error.empty() && apply_planner_argument_repair(
+                            target, repair_payload, repaired_plan, repair_error)) {
                         repaired.content = std::move(repaired_plan);
                     } else {
                         repaired.content = target.candidate_plan_json;
@@ -1668,7 +1692,7 @@ public:
                 std::string model_candidate_text = candidate.content;
                 if (compact_dsl_output) {
                     parsed = common_parse_compact_dsl_plan(
-                        candidate.content, model_candidate_text, parse_error);
+                        candidate.content, tool_definitions, model_candidate_text, parse_error);
                 }
                 parsed = parsed && normalize_planner_host_dataset_references(
                     request, model_candidate_text, model_normalized_candidate, parse_error, false) &&

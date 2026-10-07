@@ -1259,6 +1259,14 @@ field is omitted, the selected model profile does not override the turn's
 `jsonl`, and `compact_dsl`
 remain accepted for compatibility.
 
+In `dsl` mode, tool arguments use the shared flat contract: `open! TOOL_NAME`
+followed by one `field: value` line per argument. Schema annotations may define
+repeatable positional directives for nested object arrays; named slots and
+generic indexed paths remain available. The host parses this surface into the
+canonical argument object and validates it against the registered schema. The
+older nested one-line DSL remains an accepted input during compatibility, but
+is not requested from the model.
+
 The complete target boundary is recorded in
 [Agent model residency and multi-model scheduling](agent-model-residency.md).
 In particular, the adaptation path must not own model loading: it supplies a

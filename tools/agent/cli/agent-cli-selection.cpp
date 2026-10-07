@@ -14,7 +14,9 @@
 #include "plan/plan-json.h"
 
 #include <algorithm>
+#include <functional>
 #include <set>
+#include <sstream>
 
 #include <nlohmann/json.hpp>
 
@@ -64,30 +66,86 @@ std::string blueprint_selector_view(const common_blueprint_candidate & candidate
 
 namespace {
 
-std::string workflow_action_grammar(const std::vector<common_chat_tool> & tools) {
-    std::string grammar = "root ::= \"open! \" tool-name arguments\ntool-name ::= ";
-    for (size_t i = 0; i < tools.size(); ++i) {
-        if (i) grammar += " | ";
-        grammar += "\"" + tools[i].name + "\"";
+std::string workflow_action_grammar(
+        const std::vector<common_chat_tool> & tools,
+        const std::vector<std::string> & host_resolved_dataset_tools) {
+    std::set<std::string> fields;
+    std::function<void(const json &, const std::string &)> collect_paths =
+        [&](const json & schema, const std::string & path) {
+            if (!schema.is_object()) return;
+            if (schema.value("type", std::string{}) == "object") {
+                const auto properties = schema.value("properties", json::object());
+                if (!properties.is_object()) return;
+                for (const auto & item : properties.items()) {
+                    const std::string child = path.empty() ? item.key() : path + "." + item.key();
+                    fields.insert(child);
+                    collect_paths(item.value(), child);
+                }
+            } else if (schema.value("type", std::string{}) == "array") {
+                const auto annotation = schema.value("x-agent-flat", json::object());
+                if (annotation.is_object()) {
+                    const auto directive = annotation.value("directive", std::string{});
+                    if (!directive.empty()) fields.insert(directive);
+                }
+                const auto items = schema.value("items", json::object());
+                if (items.value("type", std::string{}) == "object") {
+                    const auto properties = items.value("properties", json::object());
+                    if (properties.is_object()) {
+                        for (const auto & item : properties.items()) {
+                            const std::string child = path + "[%INDEX%]." + item.key();
+                            fields.insert(child);
+                            collect_paths(item.value(), child);
+                        }
+                    }
+                } else if (!path.empty()) {
+                    fields.insert(path);
+                }
+            }
+        };
+    std::set<std::string> tool_names;
+    for (const auto & tool : tools) {
+        tool_names.insert(tool.name);
+        auto schema = json::parse(tool.parameters, nullptr, false);
+        if (schema.is_object() &&
+                std::find(host_resolved_dataset_tools.begin(), host_resolved_dataset_tools.end(), tool.name) !=
+                    host_resolved_dataset_tools.end()) {
+            schema["properties"].erase("dataset");
+        }
+        if (schema.is_object()) collect_paths(schema, {});
     }
-    grammar +=
-        "\narguments ::= (\" \" argument)*\n"
-        "argument ::= identifier \"=\" value\n"
-        "identifier ::= [A-Za-z_] [A-Za-z0-9_-]*\n"
-        "value ::= string | object | array | number | \"true\" | \"false\" | \"null\" | identifier\n"
-        "string ::= \"\\\"\" ( [^\"\\\\] | \"\\\\\" ( [\"\\\\/bfnrt] | \"u\" [0-9a-fA-F]{4} ) )* \"\\\"\"\n"
-        "object ::= \"{\" (object-field (\";\" [ \t]* object-field)*)? \"}\"\n"
-        "object-field ::= identifier \"=\" value\n"
-        "array ::= \"[\" (value (\",\" [ \t]* value)*)? \"]\"\n"
-        "number ::= [+-]? ([0-9]+ (\".\" [0-9]*)? | \".\" [0-9]+) ([eE] [+-]? [0-9]+)?";
+    if (tool_names.empty() || fields.empty()) return {};
+
+    auto quote = [](const std::string & value) { return "\"" + value + "\""; };
+    std::string grammar = "root ::= \"open! \" tool-name (\"\\n\" field-line)*\ntool-name ::= ";
+    bool first = true;
+    for (const auto & name : tool_names) {
+        if (!first) grammar += " | ";
+        first = false;
+        grammar += quote(name);
+    }
+    grammar += "\nfield-line ::= field-name \": \" value\nfield-name ::= ";
+    first = true;
+    for (const auto & path : fields) {
+        if (!first) grammar += " | ";
+        first = false;
+        size_t position = 0;
+        while (position < path.size()) {
+            const size_t marker = path.find("%INDEX%", position);
+            const size_t end = marker == std::string::npos ? path.size() : marker;
+            if (end > position) grammar += quote(path.substr(position, end - position));
+            if (marker == std::string::npos) break;
+            grammar += " \"[\" index \"]\"";
+            position = marker + 7;
+        }
+    }
+    grammar += "\nindex ::= [0-9]+\nvalue ::= [^\\n]+";
     return grammar;
 }
 
 std::string workflow_action_contracts(
-        const std::vector<common_chat_tool> & tools,
-        const std::vector<std::string> & host_resolved_dataset_tools) {
+    const std::vector<common_chat_tool> & tools,
+    const std::vector<std::string> & host_resolved_dataset_tools) {
     std::string out;
-    std::string error;
     for (const auto & tool : tools) {
         auto parameters = json::parse(tool.parameters, nullptr, false);
         if (parameters.is_object() &&
@@ -100,10 +158,33 @@ std::string workflow_action_contracts(
                 parameters["required"] = std::move(required);
             }
         }
-        const auto compact = common_render_compact_tool_description(
-            tool.name, tool.description, parameters.is_object() ? parameters.dump() : tool.parameters,
-            tool.result_schema.empty() ? "{}" : tool.result_schema, error);
-        out += "\n- " + (compact.empty() ? tool.name : compact);
+        out += "\n- " + tool.name + " — " + tool.description;
+        if (!parameters.is_object()) continue;
+        const auto properties = parameters.value("properties", json::object());
+        const auto required = parameters.value("required", json::array());
+        if (!properties.is_object()) continue;
+        out += "\n  arguments:";
+        for (const auto & property : properties.items()) {
+            const bool is_required = std::find(required.begin(), required.end(), json(property.key())) != required.end();
+            const auto annotation = property.value().value("x-agent-flat", json::object());
+            if (annotation.is_object() && annotation.contains("directive")) {
+                out += "\n  " + annotation.value("directive", std::string{}) + " (repeatable directive)";
+                const auto positional = annotation.value("positional", json::array());
+                if (positional.is_array() && !positional.empty()) {
+                    out += ": slots in order ";
+                    for (size_t i = 0; i < positional.size(); ++i) {
+                        if (i) out += ", ";
+                        if (positional[i].is_string()) out += positional[i].get<std::string>();
+                    }
+                }
+            } else {
+                out += "\n  " + property.key() + (is_required ? " (required)" : " (optional)");
+            }
+            if (property.value().is_object() && property.value().contains("description") &&
+                    property.value()["description"].is_string()) {
+                out += " — " + property.value()["description"].get<std::string>();
+            }
+        }
     }
     return out;
 }
@@ -150,14 +231,34 @@ json workflow_action_schema(
 bool parse_workflow_action(
         const std::string & text,
         common_agent_tool_output_format format,
+        const std::vector<common_chat_tool> & tools,
+        const std::vector<std::string> & host_resolved_dataset_tools,
         std::string & tool_name,
         json & arguments,
         std::string & error) {
     tool_name.clear();
     arguments = json::object();
     if (format == common_agent_tool_output_format::compact_dsl) {
+        std::string parser_text = text;
+        const size_t first_newline = parser_text.find('\n');
+        const std::string header = parser_text.substr(0, first_newline);
+        const std::string selected_name = header.rfind("open! ", 0) == 0
+            ? header.substr(6)
+            : std::string{};
+        if (first_newline != std::string::npos &&
+                std::find(host_resolved_dataset_tools.begin(), host_resolved_dataset_tools.end(), selected_name) !=
+                    host_resolved_dataset_tools.end()) {
+            std::istringstream lines(parser_text.substr(first_newline + 1));
+            std::string line;
+            parser_text = header;
+            while (std::getline(lines, line)) {
+                const auto separator = line.find(':');
+                if (separator != std::string::npos && line.substr(0, separator) == "dataset") continue;
+                parser_text += "\n" + line;
+            }
+        }
         common_agent_tool_call call;
-        if (!common_parse_model_tool_call(format, text, call, error)) return false;
+        if (!common_parse_model_tool_call(format, parser_text, tools, call, error)) return false;
         tool_name = std::move(call.name);
         arguments = json::parse(call.arguments_json, nullptr, false);
     } else {
@@ -216,9 +317,11 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         common_chat_msg system{
             "system",
             output_format == common_agent_tool_output_format::compact_dsl
-                ? "Return exactly one compact DSL tool call on one line using the `open! TOOL_NAME key=value` form. "
+                ? "Return one flat DSL tool call: first `open! TOOL_NAME`, then one `field: value` per line. "
                   "Select only an exact registered tool name. Use only arguments needed for the requested operation; arguments must match the selected tool contract. "
-                  "Do not add a plan header, reasoning, a second step, or commentary.\nRegistered workflow tools:" +
+                  "Repeat array directives on separate lines, use schema-listed positional slots by default, quote values containing spaces, and omit unset fields. "
+                  "Only include values needed as tool arguments; do not turn requested result statistics into argument values. "
+                  "Do not use nested braces or arrays. Do not add a plan header, reasoning, a second step, or commentary.\nRegistered workflow tools:" +
                   workflow_action_contracts(tools, host_resolved_dataset_tools) +
                   (host_resolved_dataset_tools.empty() ? std::string{} :
                     "\nThe host resolves the dataset from the scoped inventory; omit the dataset argument.")
@@ -243,7 +346,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             output_format == common_agent_tool_output_format::compact_dsl
                 ? std::string{} : schema.dump());
         if (output_format == common_agent_tool_output_format::compact_dsl) {
-            generation_request.grammar = workflow_action_grammar(tools);
+            generation_request.grammar = workflow_action_grammar(tools, host_resolved_dataset_tools);
         }
         const auto generated = inference.generate_result(generation_request);
         result.generation = common_agent_generated_text_result_from_generation_result(generated);
@@ -253,7 +356,18 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         }
         std::string tool_name;
         json arguments;
-        if (!parse_workflow_action(generated.content, output_format, tool_name, arguments, last_error)) {
+        if (!parse_workflow_action(
+                generated.content, output_format, tools, host_resolved_dataset_tools,
+                tool_name, arguments, last_error)) {
+            if (generation_config.generation_trace) {
+                std::string preview = generated.content.substr(0, 2048);
+                for (char & ch : preview) {
+                    if ((static_cast<unsigned char>(ch) < 0x20 && ch != '\n' && ch != '\t') || ch == '\r') ch = ' ';
+                }
+                std::fprintf(stderr,
+                    "agent workflow-action trace: attempt=%zu parse=failed error=%s response=<<<%s>>>\n",
+                    attempt + 1, last_error.c_str(), preview.c_str());
+            }
             if (attempt == 0 && output_format == common_agent_tool_output_format::compact_dsl) continue;
             error = last_error;
             return result;
@@ -293,6 +407,15 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             if (attempt == 0 && output_format == common_agent_tool_output_format::compact_dsl) continue;
             error = "workflow action arguments violate " + tool_name + " schema: " + last_error;
             return result;
+        }
+        if (generation_config.generation_trace) {
+            std::string preview = generated.content.substr(0, 2048);
+            for (char & ch : preview) {
+                if ((static_cast<unsigned char>(ch) < 0x20 && ch != '\n' && ch != '\t') || ch == '\r') ch = ' ';
+            }
+            std::fprintf(stderr,
+                "agent workflow-action trace: attempt=%zu parse=ok tool=%s canonical_args=%s response=<<<%s>>>\n",
+                attempt + 1, tool_name.c_str(), normalized.c_str(), preview.c_str());
         }
         result.action = common_agent_tool_argument_binding{tool_name, normalized, "workflow-action", false};
         result.reason = "selected one route-scoped schema-valid tool action";

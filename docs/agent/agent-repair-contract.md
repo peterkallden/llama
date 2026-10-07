@@ -84,36 +84,55 @@ when loading legacy configurations:
 {"tool":"openalex.listWorks","arguments":{"search":"machine learning","per_page":1}}
 ```
 
-The V1 compact DSL accepts both the command form:
+Compact DSL keeps nested serialization out of the model-facing argument form.
+The model writes the exact tool name, then one flat field per line:
 
 ```text
-open! openalex.listWorks search="machine learning" per_page=1
+open! data.aggregate
+dataset: $inspect.dataset
+group_by: region
+measure: sum amount total_amount
+measure: count "*" order_count
 ```
 
-and the compatible call form:
+Schemas may declare repeatable directives with `x-agent-flat`, including the
+directive name and positional slot order. Positional slots are the default;
+the equivalent named form is also accepted:
 
 ```text
-openalex.listWorks(search="machine learning", per_page=1)
+measure: function=sum column=amount as=total_amount
 ```
 
-Both forms normalize to the same canonical `{tool,args}` call before ordinary
-host validation. Compact DSL supports bounded nested objects and arrays in
-addition to strings, numbers, booleans, null and scalar enums. Object fields
-use `{field=value; other=value}` and arrays use `[value, value]`; quoted
-strings use JSON string escaping. Schemas outside this value grammar remain
-available through JSON/native profiles.
+For unannotated nested schemas, use dotted/indexed field paths such as
+`operations[0].column: amount`; repeat scalar-array fields on separate lines.
+Quote values containing whitespace. Omit unset fields rather than writing an
+empty value. The shared schema-aware parser normalizes flat input to the same
+canonical `{tool,args}` object used by JSON/native calls, and ordinary host
+schema validation remains authoritative. The previous nested one-line DSL is
+still accepted for compatibility but is no longer the generated prompt form.
+
+Workflow-action selection uses this same flat codec, but compiles its response
+grammar from the currently eligible tools and their schema fields. Its prompt
+shows only the selected tool's purpose and actionable argument fields—not
+return schemas or nested serialization examples. Host-resolved dataset
+arguments are excluded from the grammar and removed if a model nevertheless
+emits one. A `null` value for an optional flat field is normalized to omission;
+empty strings are not treated as missing values.
 
 The planner also accepts Compact DSL for a complete multi-step plan:
 
 ```text
 plan goal="Aggregate selected rows"
-step as=inspect | open! dataset.inspect resource=r1
-step as=summary | open! data.aggregate dataset=$inspect.dataset measures=[{function=sum; field=amount}]
+step as=inspect | open! dataset.inspect
+resource: r1
+step as=summary | open! data.aggregate
+dataset: $inspect.dataset
+measure: sum amount total_amount
 ```
 
-The header is followed by one `step` line per tool call. Steps execute in
-sequence; optional `as=alias` names a prior result for `$alias.field`
-references. The planner decodes this form into its ordinary bounded plan
+Each step may continue with flat argument lines until the next `step` line.
+Steps execute in sequence; optional `as=alias` names a prior result for
+`$alias.field` references. The planner decodes this form into its ordinary bounded plan
 proposal, then runs the same host argument, binding, route-envelope and
 execution checks as JSON plans. JSON remains a valid planner format and is
 selected whenever the model profile uses `json` or legacy `jsonl`; Compact DSL is

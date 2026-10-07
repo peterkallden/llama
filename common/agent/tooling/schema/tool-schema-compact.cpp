@@ -11,39 +11,142 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
-std::string compact_value(const json & value) {
-    if (value.is_object()) {
-        std::ostringstream out;
-        out << '{';
-        bool first = true;
-        for (const auto & item : value.items()) {
-            if (!first) out << "; ";
-            first = false;
-            out << item.key() << '=' << compact_value(item.value());
-        }
-        out << '}';
-        return out.str();
-    }
-    if (value.is_array()) {
-        std::ostringstream out;
-        out << '[';
-        bool first = true;
-        for (const auto & item : value) {
-            if (!first) out << ", ";
-            first = false;
-            out << compact_value(item);
-        }
-        out << ']';
-        return out.str();
-    }
-    if (value.is_string()) {
-        const auto text = value.get<std::string>();
-        return text.rfind("$", 0) == 0 ? text : value.dump();
+std::string flat_scalar(const json & value) {
+    if (!value.is_string()) return value.dump();
+    const auto text = value.get<std::string>();
+    if (text.rfind("$", 0) == 0 && text.find_first_of(" \t\r\n") == std::string::npos) return text;
+    if (!text.empty() && text.find_first_not_of(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:-") == std::string::npos &&
+            text != "true" && text != "false" && text != "null") {
+        const auto number = json::parse(text, nullptr, false);
+        if (number.is_discarded() || !number.is_number()) return text;
     }
     return value.dump();
 }
 
-std::string scalar_type(const json & schema, size_t depth = 0) {
+std::string scalar_type(const json & schema, size_t depth = 0);
+
+std::string flat_directive_contract(const json & schema) {
+    const auto properties = schema.value("properties", json::object());
+    if (!properties.is_object()) return {};
+    std::ostringstream out;
+    for (const auto & property : properties.items()) {
+        if (!property.value().is_object() || !property.value().contains("x-agent-flat") ||
+                !property.value()["x-agent-flat"].is_object()) continue;
+        const auto & annotation = property.value()["x-agent-flat"];
+        const auto directive = annotation.value("directive", std::string{});
+        const auto slots = annotation.value("positional", json::array());
+        if (directive.empty() || !slots.is_array() || slots.empty()) continue;
+        out << "\n  " << directive << ":";
+        for (const auto & slot : slots) {
+            if (slot.is_string()) out << " <" << slot.get<std::string>() << ">";
+        }
+        out << " (repeat for each item; named slots also accepted)";
+        out << "\n  named form: " << directive << ":";
+        for (size_t i = 0; i < slots.size(); ++i) {
+            if (slots[i].is_string()) out << " " << slots[i].get<std::string>() << "=<value>";
+        }
+    }
+    return out.str();
+}
+
+void append_flat_schema_paths(
+        const json & schema,
+        const std::string & prefix,
+        std::vector<std::string> & paths,
+        size_t depth = 0) {
+    if (depth >= 8 || !schema.is_object()) return;
+    const auto properties = schema.value("properties", json::object());
+    if (!properties.is_object()) return;
+    for (const auto & property : properties.items()) {
+        if (paths.size() >= 32) return;
+        const std::string path = prefix.empty() ? property.key() : prefix + "." + property.key();
+        const auto & field = property.value();
+        if (field.is_object() && field.value("type", std::string{}) == "array") {
+            if (field.contains("x-agent-flat")) continue;
+            const auto item = field.value("items", json::object());
+            if (item.value("type", std::string{}) == "object") {
+                append_flat_schema_paths(item, path + "[0]", paths, depth + 1);
+            } else {
+                paths.push_back(path + "[0]: " + scalar_type(item));
+            }
+        } else if (field.is_object() && field.value("type", std::string{}) == "object") {
+            append_flat_schema_paths(field, path, paths, depth + 1);
+        } else if (!prefix.empty()) {
+            std::string description = path + ": " + scalar_type(field);
+            if (field.is_object() && field.contains("description") && field["description"].is_string()) {
+                description += " (" + field["description"].get<std::string>() + ")";
+            }
+            paths.push_back(std::move(description));
+        }
+    }
+}
+
+void flatten_example_fields(
+        const json & schema,
+        const json & value,
+        const std::string & prefix,
+        std::vector<std::string> & lines) {
+    if (!schema.is_object() || !value.is_object()) return;
+    const auto properties = schema.value("properties", json::object());
+    if (!properties.is_object()) return;
+    for (const auto & entry : value.items()) {
+        const auto & field = entry.value();
+        if (!properties.contains(entry.key())) continue;
+        const auto & field_schema = properties[entry.key()];
+        const std::string path = prefix.empty() ? entry.key() : prefix + "." + entry.key();
+        if (field_schema.is_object() && field_schema.contains("x-agent-flat") &&
+                field_schema["x-agent-flat"].is_object() && field.is_array()) {
+            const auto slots = field_schema["x-agent-flat"].value("positional", json::array());
+            const auto directive = field_schema["x-agent-flat"].value("directive", entry.key());
+            for (const auto & item : field) {
+                if (!item.is_object()) continue;
+                bool positional = slots.is_array() && !slots.empty();
+                std::vector<std::string> values;
+                for (const auto & slot : slots) {
+                    if (!slot.is_string() || !item.contains(slot.get<std::string>())) {
+                        positional = false;
+                        break;
+                    }
+                    values.push_back(flat_scalar(item[slot.get<std::string>()]));
+                }
+                std::string line = directive + ":";
+                if (positional) {
+                    for (const auto & slot_value : values) line += " " + slot_value;
+                } else {
+                    for (const auto & entry : item.items()) {
+                        line += " " + entry.key() + "=" + flat_scalar(entry.value());
+                    }
+                }
+                lines.push_back(std::move(line));
+            }
+        } else if (field.is_object()) {
+            flatten_example_fields(field_schema, field, path, lines);
+        } else if (field.is_array() && field_schema.value("type", std::string{}) == "array") {
+            for (size_t index = 0; index < field.size(); ++index) {
+                if (field[index].is_object()) {
+                    flatten_example_fields(field_schema.value("items", json::object()), field[index],
+                        path + "[" + std::to_string(index) + "]", lines);
+                } else {
+                    lines.push_back(path + ": " + flat_scalar(field[index]));
+                }
+            }
+        } else {
+            lines.push_back(path + ": " + flat_scalar(field));
+        }
+    }
+}
+
+std::string flat_example(const std::string & tool, const json & schema, const json & value) {
+    std::vector<std::string> lines;
+    flatten_example_fields(schema, value, {}, lines);
+    if (lines.empty()) return {};
+    std::string result = "\nexample:\nopen! " + tool;
+    for (const auto & line : lines) result += "\n" + line;
+    return result;
+}
+
+std::string scalar_type(const json & schema, size_t depth) {
     for (const auto * key : {"oneOf", "anyOf"}) {
         if (!schema.contains(key) || !schema[key].is_array()) continue;
         std::ostringstream alternatives;
@@ -72,6 +175,13 @@ std::string scalar_type(const json & schema, size_t depth = 0) {
     }
     const auto type = schema.value("type", std::string("value"));
     if (type == "array") {
+        if (schema.contains("x-agent-flat") && schema["x-agent-flat"].is_object()) {
+            return "directive(" + schema["x-agent-flat"].value("directive", std::string("item")) + ")[]";
+        }
+        if (schema.contains("items") && schema["items"].is_object() &&
+                schema["items"].value("type", std::string{}) == "object") {
+            return "object[]";
+        }
         return scalar_type(schema.value("items", json::object()), depth + 1) + "[]";
     }
     if (type == "integer" || type == "number") {
@@ -336,6 +446,14 @@ std::string common_render_compact_tool_description(
     std::string rendered = common_render_compact_tool_description(contract, error);
     if (!error.empty()) return {};
     const auto schema = json::parse(input_schema_json, nullptr, false);
+    const auto directives = flat_directive_contract(schema);
+    if (!directives.empty()) rendered += "\nflat DSL directives:" + directives;
+    std::vector<std::string> paths;
+    append_flat_schema_paths(schema, {}, paths);
+    if (!paths.empty()) {
+        rendered += "\nflat field paths:";
+        for (const auto & path : paths) rendered += "\n  " + path;
+    }
     const auto rules = schema.is_object()
         ? schema.value("x-agent-rules", json::array())
         : json::array();
@@ -351,20 +469,22 @@ std::string common_render_compact_tool_description(
         size_t count = 0;
         for (const auto & example : examples) {
             if (!example.is_object() || ++count > 3) continue;
-            const std::string compact_example = compact_value(example);
-            if (compact_example.size() > 1024) continue;
-            rendered += "\nexample: args:" + compact_example;
+            const std::string formatted = flat_example(name, schema, example);
+            if (formatted.size() <= 1024) rendered += formatted;
         }
     } else if (name == "data.join") {
-        rendered += "\nexample: args:{left:$orders.dataset; right:$customers.dataset; on:[{left:customer_id; right:customer_id}]}";
+        rendered += flat_example(name, schema, json{
+            {"left", "$orders.dataset"}, {"right", "$customers.dataset"},
+            {"on", json::array({json{{"left", "customer_id"}, {"right", "customer_id"}}})}});
     } else if (name == "data.aggregate") {
-        rendered += "\nexample: args:{dataset:$joined.dataset; measures:[{function:sum; column:amount}]}";
+        rendered += flat_example(name, schema, json{
+            {"dataset", "$joined.dataset"}, {"measures", json::array({json{{"function", "sum"}, {"column", "amount"}}})}});
     } else if (name == "dataset.select") {
-        rendered += "\nexample: args:{name:orders} -> dataset:$orders.dataset";
+        rendered += flat_example(name, schema, json{{"name", "orders"}});
     } else if (name == "dataset.list") {
-        rendered += "\nexample: steps:[dataset.list as=candidates; dataset.select(name=$candidates.names[0]) as=dataset] -> dataset:$dataset.dataset";
+        rendered += flat_example(name, schema, json::object());
     } else if (name == "statistics.describe") {
-        rendered += "\nexample: args:{dataset:$joined.dataset; columns:[amount]}";
+        rendered += flat_example(name, schema, json{{"dataset", "$joined.dataset"}, {"columns", json::array({"amount"})}});
     }
     return rendered;
 }

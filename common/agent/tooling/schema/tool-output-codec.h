@@ -34,12 +34,28 @@ bool common_parse_model_tool_call(
         common_agent_tool_call & call,
         std::string & error);
 
+// Schema-aware variant used by model-facing flat DSL. It accepts the legacy
+// one-line form as well as `open! TOOL` followed by flat field/directive
+// lines, then returns the ordinary canonical argument object.
+bool common_parse_model_tool_call(
+        common_agent_tool_output_format format,
+        const std::string & text,
+        const std::vector<common_chat_tool> & tools,
+        common_agent_tool_call & call,
+        std::string & error);
+
 // Parse the compact multi-step planner form into the canonical JSON proposal
 // consumed by the ordinary plan parser and host validation pipeline.
 // Grammar: `plan goal="..."`, then one `step [as=alias] | open! TOOL ...`
 // line per operation. Steps are sequential unless the host adds dependencies.
 bool common_parse_compact_dsl_plan(
         const std::string & text,
+        std::string & proposal_json,
+        std::string & error);
+
+bool common_parse_compact_dsl_plan(
+        const std::string & text,
+        const std::vector<common_chat_tool> & tools,
         std::string & proposal_json,
         std::string & error);
 

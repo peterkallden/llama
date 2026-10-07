@@ -125,6 +125,7 @@ bool parse_assistant_message(
         const common_agent_generation_result & generation_result,
         bool parse_tool_calls,
         common_agent_tool_output_format output_format,
+        const std::vector<common_chat_tool> & tools,
         common_chat_msg & assistant_message,
         std::string & error) {
     assistant_message = {};
@@ -132,7 +133,7 @@ bool parse_assistant_message(
     if (parse_tool_calls && is_textual_tool_output_format(output_format)) {
         assistant_message.content = generation_result.content;
         common_agent_tool_call call;
-        if (!common_parse_model_tool_call(output_format, generation_result.content, call, error)) {
+        if (!common_parse_model_tool_call(output_format, generation_result.content, tools, call, error)) {
             return false;
         }
         assistant_message.tool_calls.push_back({call.name, call.arguments_json, "textual-tool-1"});
@@ -326,6 +327,7 @@ bool run_agent_chat_runtime(
             generation_result,
             !execution.tooling.tools.empty(),
             execution.request.tool_output_format,
+            execution.tooling.tools,
             assistant_message,
             error)) {
         return false;
@@ -380,6 +382,7 @@ bool run_agent_chat_runtime(
                 generation_result,
                 allow_another_tool_round && !execution.tooling.tools.empty(),
                 execution.request.tool_output_format,
+                next_tools,
                 assistant_message,
                 error)) {
             return false;

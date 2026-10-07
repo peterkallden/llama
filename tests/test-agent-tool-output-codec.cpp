@@ -18,6 +18,15 @@ common_chat_tool list_works_tool() {
     };
 }
 
+common_chat_tool aggregate_tool() {
+    return {
+        "data.aggregate",
+        "Aggregate rows.",
+        R"json({"type":"object","additionalProperties":false,"required":["dataset","measures"],"properties":{"dataset":{"type":"string"},"group_by":{"type":"array","items":{"type":"string"}},"measures":{"type":"array","minItems":1,"x-agent-flat":{"directive":"measure","positional":["function","column","as"]},"items":{"type":"object","additionalProperties":false,"required":["function"],"properties":{"function":{"type":"string","enum":["sum","avg"]},"column":{"type":"string"},"as":{"type":"string"}}}}}})json",
+        R"json({"type":"object"})json",
+    };
+}
+
 void test_formats() {
     std::string error;
     common_agent_tool_output_format format;
@@ -99,6 +108,83 @@ void test_v1_schema_boundary_and_rendering() {
     assert(unsupported.empty());
     assert(instructions.find("openalex.listWorks") != std::string::npos);
     assert(instructions.find("complex") != std::string::npos);
+    assert(instructions.find("one `field: value` per line") != std::string::npos);
+    assert(instructions.find("Do not write nested braces or arrays") != std::string::npos);
+}
+
+void test_schema_aware_flat_dsl_and_named_slots() {
+    const auto tool = aggregate_tool();
+    const std::vector<common_chat_tool> tools{tool};
+    common_agent_tool_call call;
+    std::string error;
+    const std::string positional =
+        "open! data.aggregate\n"
+        "dataset: $inspect.dataset\n"
+        "group_by: region\n"
+        "measure: sum amount total_amount\n"
+        "measure: avg amount average_amount";
+    assert(common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl, positional, tools, call, error));
+    const auto args = nlohmann::json::parse(call.arguments_json);
+    assert(call.name == "data.aggregate");
+    assert(args["dataset"] == "$inspect.dataset");
+    assert(args["group_by"] == nlohmann::json::array({"region"}));
+    assert(args["measures"].size() == 2);
+    assert(args["measures"][0] == nlohmann::json({{"function", "sum"}, {"column", "amount"}, {"as", "total_amount"}}));
+
+    assert(common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl,
+        "open! data.aggregate\ngroup_by: null\nmeasure: sum amount total_amount",
+        tools, call, error));
+    const auto omitted_optional = nlohmann::json::parse(call.arguments_json);
+    assert(!omitted_optional.contains("group_by"));
+    assert(omitted_optional["measures"].size() == 1);
+
+    const std::string named =
+        "open! data.aggregate\n"
+        "dataset: $inspect.dataset\n"
+        "measure: function=sum column=amount as=total_amount";
+    assert(common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl, named, tools, call, error));
+    const auto named_args = nlohmann::json::parse(call.arguments_json);
+    assert(named_args["measures"][0]["as"] == "total_amount");
+    assert(!common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl,
+        "open! data.aggregate\ndataset: \nmeasure: sum", tools, call, error));
+    assert(error.find("empty") != std::string::npos);
+    assert(!common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl,
+        "open! data.aggregate\ndataset: x\nmeasure: sum {column=amount}", tools, call, error));
+}
+
+void test_flat_paths_and_multiline_plan() {
+    const auto tool = aggregate_tool();
+    const std::vector<common_chat_tool> tools{tool};
+    std::string proposal;
+    std::string error;
+    const std::string dsl =
+        "plan goal=\"Aggregate rows\"\n"
+        "step as=result | open! data.aggregate\n"
+        "dataset: $inspect.dataset\n"
+        "group_by: region\n"
+        "measure: sum amount total";
+    assert(common_parse_compact_dsl_plan(dsl, tools, proposal, error));
+    const auto plan = nlohmann::json::parse(proposal);
+    assert(plan["steps"][0]["args"]["measures"][0]["function"] == "sum");
+    assert(plan["steps"][0]["args"]["measures"][0]["as"] == "total");
+
+    const common_chat_tool nested{
+        "nested.tool", "Nested fields.",
+        R"json({"type":"object","properties":{"operations":{"type":"array","items":{"type":"object","properties":{"kind":{"type":"string"},"column":{"type":"string"}}}}}})json",
+        R"json({"type":"object"})json"};
+    common_agent_tool_call call;
+    assert(common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl,
+        "open! nested.tool\noperations[0].kind: rename\noperations[0].column: amount",
+        std::vector<common_chat_tool>{nested}, call, error));
+    const auto nested_args = nlohmann::json::parse(call.arguments_json);
+    assert(nested_args["operations"][0]["kind"] == "rename");
+    assert(nested_args["operations"][0]["column"] == "amount");
 }
 
 void test_nested_arguments_and_multistep_plan() {
@@ -199,6 +285,8 @@ int main() {
     test_compact_variants_normalize_identically();
     test_jsonl_normalization();
     test_v1_schema_boundary_and_rendering();
+    test_schema_aware_flat_dsl_and_named_slots();
+    test_flat_paths_and_multiline_plan();
     test_nested_arguments_and_multistep_plan();
     test_invalid_compact_output();
     test_compact_single_workflow_action();
