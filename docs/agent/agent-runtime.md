@@ -1328,6 +1328,34 @@ Join repair instead reports the required
 `left`/`right` inputs and declared aliases such as `$orders.dataset` and
 `$customers.dataset`, so the model makes that semantic choice explicitly.
 
+### Workflow action selection
+
+After a workflow-backed route is selected, the host presents at most five
+task-relevant actions from the route's resolved tool set. Dataset lookup and
+inspection tools are kept as host-owned A* prefix transitions; the model sees
+the applicable analysis operations. Selection generates one action at a time,
+not a plan. The DSL path asks for a single `open! TOOL_NAME ...` call and uses a
+grammar whose tool-name production is the exact route-scoped list. The JSON
+path uses a `oneOf` schema with an exact tool enum and that tool's argument
+schema. Both paths then validate the complete arguments against the registered
+schema, including nested objects, arrays, enum values, bounds and required
+fields. For dataset operations whose input can be resolved by the workflow's
+A* prefix, the dataset field is host-owned and omitted from the model-facing
+contract; the materializer resolves it from the current scoped inventory and
+the original registered tool schema remains authoritative at execution.
+
+The host adds the workflow task's goal, plan step IDs, dependencies and final
+answer step. The dataset materializer may resolve the selected action into a
+verified A* path, including dataset selection and inspection. If no registered
+host materializer applies, the host creates a bounded one-action workflow plan
+inside the selected route. In either case, the generic multi-step planner is
+not asked to reconstruct the already selected workflow frame.
+
+The Qwen server-context smoke for this path is
+`scripts/test-qwen-nomic-agent-workflow-action.sh`; it imports the checked-in
+workflow package, uses the default DSL mode, executes `statistics.describe`,
+and checks the resident GPU auto-fit trace when `-ngl 99` is requested.
+
 A self-reference is a separate planner error. A step such as
 `data.query(dataset=$orders.dataset, as=orders)` is invalid because the alias
 is created by that same step and therefore cannot be its input. Repair must

@@ -486,6 +486,9 @@ bool normalize_common_agent_dataset_tool_arguments(
         if (arguments.contains("group_by") && arguments["group_by"].is_string()) {
             arguments["group_by"] = nlohmann::ordered_json::array({arguments["group_by"]});
         }
+        if (arguments.contains("columns") && arguments["columns"].is_string()) {
+            arguments["columns"] = nlohmann::ordered_json::array({arguments["columns"]});
+        }
         if (!arguments.contains("columns") && arguments.contains("column")) {
             if (!arguments["column"].is_string() || arguments["column"].get<std::string>().empty()) {
                 error = "statistics.describe column must be a non-empty string";

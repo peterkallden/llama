@@ -1,4 +1,5 @@
 #include "agent/tooling/schema/tool-output-codec.h"
+#include "agent/tooling/contracts/schema-contract.h"
 #include "agent/contracts/agent-request.h"
 #include "plan/plan-json.h"
 
@@ -147,6 +148,49 @@ void test_invalid_compact_output() {
         "openalex.listWorks(search=\"x\" search=\"y\")", call, error));
 }
 
+void test_compact_single_workflow_action() {
+    common_agent_tool_call call;
+    std::string error;
+    assert(common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl,
+        "open! statistics.describe column=amount",
+        call, error));
+    assert(call.name == "statistics.describe");
+    assert(call.arguments_json == R"({"column":"amount"})");
+}
+
+void test_nested_tool_argument_schema_validation() {
+    const std::string schema = R"json({
+        "type":"object",
+        "additionalProperties":false,
+        "required":["operation"],
+        "properties":{
+            "operation":{"type":"string","enum":["aggregate","filter"]},
+            "measures":{"type":"array","minItems":1,"items":{
+                "type":"object","additionalProperties":false,
+                "required":["function","column"],
+                "properties":{
+                    "function":{"type":"string","enum":["sum","count"]},
+                    "column":{"type":"string","minLength":1}
+                }
+            }}
+        }
+    })json";
+    std::string normalized;
+    std::string error;
+    assert(common_schema_normalize_and_validate_object(
+        R"({"operation":"aggregate","measures":[{"function":"sum","column":"sales"}]})",
+        schema, normalized, error));
+    assert(!common_schema_normalize_and_validate_object(
+        R"({"operation":"aggregate","measures":[{"function":"median","column":"sales"}]})",
+        schema, normalized, error));
+    assert(!common_schema_normalize_and_validate_object(
+        R"({"operation":"aggregate","measures":[{"function":"sum"}]})",
+        schema, normalized, error));
+    assert(!common_schema_normalize_and_validate_object(
+        R"({"operation":"unknown"})", schema, normalized, error));
+}
+
 } // namespace
 
 int main() {
@@ -157,5 +201,7 @@ int main() {
     test_v1_schema_boundary_and_rendering();
     test_nested_arguments_and_multistep_plan();
     test_invalid_compact_output();
+    test_compact_single_workflow_action();
+    test_nested_tool_argument_schema_validation();
     return 0;
 }

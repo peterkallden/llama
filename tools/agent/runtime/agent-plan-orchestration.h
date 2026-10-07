@@ -78,6 +78,8 @@ struct common_agent_orchestration_runtime_context {
     std::vector<common_memory_hit> & route_procedure_memories;
     std::vector<common_agent_event> & pre_turn_events;
     std::vector<common_runtime_trace_entry> & pre_turn_trace;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
+    const std::vector<common_agent_tool_argument_binding> * tool_argument_bindings = nullptr;
 };
 
 bool maybe_auto_select_plan(

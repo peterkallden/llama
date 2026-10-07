@@ -6,7 +6,49 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
-bool validate_value(const json & value, const json & schema, const std::string & field, std::string & error) {
+bool validate_value(
+        const json & value,
+        const json & schema,
+        const std::string & field,
+        std::string & error,
+        size_t depth = 0) {
+    if (!schema.is_object() || depth > 32) {
+        error = "contract schema is invalid or exceeds the nesting limit";
+        return false;
+    }
+    const auto validate_alternatives = [&](const char * key, bool exactly_one) {
+        if (!schema.contains(key)) return true;
+        if (!schema.at(key).is_array() || schema.at(key).empty()) {
+            error = std::string("contract schema has an invalid ") + key;
+            return false;
+        }
+        size_t matches = 0;
+        std::string first_error;
+        for (const auto & alternative : schema.at(key)) {
+            std::string candidate_error;
+            if (validate_value(value, alternative, field, candidate_error, depth + 1)) {
+                ++matches;
+            } else if (first_error.empty()) {
+                first_error = std::move(candidate_error);
+            }
+        }
+        const bool valid = exactly_one ? matches == 1 : matches > 0;
+        if (!valid) {
+            error = std::string("contract field '") + field + "' does not match " + key;
+            if (!first_error.empty()) error += ": " + first_error;
+        }
+        return valid;
+    };
+    if (schema.contains("allOf")) {
+        if (!schema.at("allOf").is_array()) {
+            error = "contract schema has an invalid allOf";
+            return false;
+        }
+        for (const auto & component : schema.at("allOf")) {
+            if (!validate_value(value, component, field, error, depth + 1)) return false;
+        }
+    }
+    if (!validate_alternatives("anyOf", false) || !validate_alternatives("oneOf", true)) return false;
     const auto type = schema.value("type", std::string());
     const bool type_ok = type.empty() ||
         (type == "string" && value.is_string()) || (type == "integer" && value.is_number_integer()) ||
@@ -17,6 +59,10 @@ bool validate_value(const json & value, const json & schema, const std::string &
         bool found = false;
         for (const auto & allowed : schema["enum"]) if (allowed == value) { found = true; break; }
         if (!found) { error = "contract field '" + field + "' is not an allowed value"; return false; }
+    }
+    if (schema.contains("const") && schema.at("const") != value) {
+        error = "contract field '" + field + "' is not the required constant";
+        return false;
     }
     if (value.is_string()) {
         const auto size = value.get_ref<const std::string &>().size();
@@ -31,7 +77,30 @@ bool validate_value(const json & value, const json & schema, const std::string &
     if (value.is_array()) {
         if (schema.contains("minItems") && value.size() < schema["minItems"].get<size_t>()) { error = "contract field '" + field + "' has too few items"; return false; }
         if (schema.contains("maxItems") && value.size() > schema["maxItems"].get<size_t>()) { error = "contract field '" + field + "' has too many items"; return false; }
-        if (schema.contains("items")) for (size_t i = 0; i < value.size(); ++i) if (!validate_value(value[i], schema["items"], field + "[" + std::to_string(i) + "]", error)) return false;
+        if (schema.contains("items")) for (size_t i = 0; i < value.size(); ++i) if (!validate_value(value[i], schema["items"], field + "[" + std::to_string(i) + "]", error, depth + 1)) return false;
+    }
+    if (value.is_object()) {
+        const auto required = schema.value("required", json::array());
+        for (const auto & key : required) {
+            if (!key.is_string() || !value.contains(key.get<std::string>())) {
+                error = "required contract field is missing: " + field;
+                return false;
+            }
+        }
+        const auto properties = schema.value("properties", json::object());
+        const auto additional = schema.value("additionalProperties", json(true));
+        for (const auto & item : value.items()) {
+            if (properties.is_object() && properties.contains(item.key())) {
+                if (!validate_value(item.value(), properties.at(item.key()),
+                        field.empty() ? item.key() : field + "." + item.key(), error, depth + 1)) return false;
+            } else if (additional.is_boolean() && !additional.get<bool>()) {
+                error = "unexpected contract field: " + (field.empty() ? item.key() : field + "." + item.key());
+                return false;
+            } else if (additional.is_object() && !validate_value(item.value(), additional,
+                    field.empty() ? item.key() : field + "." + item.key(), error, depth + 1)) {
+                return false;
+            }
+        }
     }
     return true;
 }
@@ -84,11 +153,7 @@ bool common_schema_normalize_and_validate_object(const std::string & input_json,
     const auto schema = json::parse(schema_json, nullptr, false);
     if (!input.is_object()) { error = "contract input must be a JSON object"; return false; }
     if (!schema.is_object() || schema.value("type", std::string()) != "object") { error = "contract schema must describe an object"; return false; }
-    const auto required = schema.value("required", json::array());
-    const auto properties = schema.value("properties", json::object());
-    for (const auto & key : required) if (!key.is_string() || !input.contains(key.get<std::string>())) { error = "required contract field is missing"; return false; }
-    if (schema.value("additionalProperties", true) == false) for (auto field = input.begin(); field != input.end(); ++field) if (!properties.contains(field.key())) { error = "unexpected contract field: " + field.key(); return false; }
-    for (auto field = input.begin(); field != input.end(); ++field) if (properties.contains(field.key()) && !validate_value(field.value(), properties[field.key()], field.key(), error)) return false;
+    if (!validate_value(input, schema, "", error)) return false;
     normalized_json = input.dump();
     error.clear();
     return true;

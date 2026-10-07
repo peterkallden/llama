@@ -99,6 +99,9 @@ struct common_agent_generation_request {
     common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;
     common_agent_generation_options options;
     std::string json_schema;
+    // Optional host-built GBNF for non-JSON structured formats such as the
+    // bounded compact-DSL workflow action selector.
+    std::string grammar;
     std::vector<common_agent_generation_resource> input_resources;
     // Immutable host-prepared activation for this turn. The shared snapshot
     // avoids copying potentially large cvec data across continuation steps.

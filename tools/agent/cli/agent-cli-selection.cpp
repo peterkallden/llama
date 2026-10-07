@@ -3,6 +3,12 @@
 #include "../runtime/agent-runtime-assembly.h"
 #include "../tooling/agent-selection-contracts.h"
 #include "../tooling/agent-tool-provider.h"
+#include "agent/runtime-json-contracts.h"
+#include "agent/input-resources.h"
+#include "agent/dataset-contracts.h"
+#include "agent/tooling/contracts/schema-contract.h"
+#include "agent/tooling/schema/tool-output-codec.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
 
 #include "tools/agent/cli/agent-cli-scope.h"
 #include "plan/plan-json.h"
@@ -55,6 +61,247 @@ std::string blueprint_selector_view(const common_blueprint_candidate & candidate
 }
 
 } // namespace
+
+namespace {
+
+std::string workflow_action_grammar(const std::vector<common_chat_tool> & tools) {
+    std::string grammar = "root ::= \"open! \" tool-name arguments\ntool-name ::= ";
+    for (size_t i = 0; i < tools.size(); ++i) {
+        if (i) grammar += " | ";
+        grammar += "\"" + tools[i].name + "\"";
+    }
+    grammar +=
+        "\narguments ::= (\" \" argument)*\n"
+        "argument ::= identifier \"=\" value\n"
+        "identifier ::= [A-Za-z_] [A-Za-z0-9_-]*\n"
+        "value ::= string | object | array | number | \"true\" | \"false\" | \"null\" | identifier\n"
+        "string ::= \"\\\"\" ( [^\"\\\\] | \"\\\\\" ( [\"\\\\/bfnrt] | \"u\" [0-9a-fA-F]{4} ) )* \"\\\"\"\n"
+        "object ::= \"{\" (object-field (\";\" [ \t]* object-field)*)? \"}\"\n"
+        "object-field ::= identifier \"=\" value\n"
+        "array ::= \"[\" (value (\",\" [ \t]* value)*)? \"]\"\n"
+        "number ::= [+-]? ([0-9]+ (\".\" [0-9]*)? | \".\" [0-9]+) ([eE] [+-]? [0-9]+)?";
+    return grammar;
+}
+
+std::string workflow_action_contracts(
+        const std::vector<common_chat_tool> & tools,
+        const std::vector<std::string> & host_resolved_dataset_tools) {
+    std::string out;
+    std::string error;
+    for (const auto & tool : tools) {
+        auto parameters = json::parse(tool.parameters, nullptr, false);
+        if (parameters.is_object() &&
+                std::find(host_resolved_dataset_tools.begin(), host_resolved_dataset_tools.end(), tool.name) !=
+                    host_resolved_dataset_tools.end()) {
+            parameters["properties"].erase("dataset");
+            auto required = parameters.value("required", json::array());
+            if (required.is_array()) {
+                required.erase(std::remove(required.begin(), required.end(), json("dataset")), required.end());
+                parameters["required"] = std::move(required);
+            }
+        }
+        const auto compact = common_render_compact_tool_description(
+            tool.name, tool.description, parameters.is_object() ? parameters.dump() : tool.parameters,
+            tool.result_schema.empty() ? "{}" : tool.result_schema, error);
+        out += "\n- " + (compact.empty() ? tool.name : compact);
+    }
+    return out;
+}
+
+json workflow_action_schema(
+        const std::vector<common_chat_tool> & tools,
+        const std::vector<common_agent_tool_argument_binding> & fixed_bindings,
+        const std::vector<std::string> & host_resolved_dataset_tools) {
+    json branches = json::array();
+    for (const auto & tool : tools) {
+        auto arguments = json::parse(tool.parameters, nullptr, false);
+        if (!arguments.is_object() || arguments.value("type", std::string()) != "object") continue;
+        std::set<std::string> fixed;
+        for (const auto & binding : fixed_bindings) {
+            if (binding.tool_name != tool.name) continue;
+            const auto value = json::parse(binding.arguments_json, nullptr, false);
+            if (value.is_object()) for (const auto & item : value.items()) fixed.insert(item.key());
+        }
+        if (std::find(host_resolved_dataset_tools.begin(), host_resolved_dataset_tools.end(), tool.name) !=
+                host_resolved_dataset_tools.end()) {
+            fixed.insert("dataset");
+            arguments["properties"].erase("dataset");
+        }
+        json required = json::array();
+        for (const auto & item : arguments.value("required", json::array())) {
+            if (!item.is_string() || fixed.find(item.get<std::string>()) == fixed.end()) {
+                required.push_back(item);
+            }
+        }
+        arguments["required"] = std::move(required);
+        branches.push_back({
+            {"type", "object"},
+            {"additionalProperties", false},
+            {"required", json::array({"tool", "args"})},
+            {"properties", {
+                {"tool", {{"type", "string"}, {"enum", json::array({tool.name})}}},
+                {"args", std::move(arguments)},
+            }},
+        });
+    }
+    return {{"oneOf", std::move(branches)}};
+}
+
+bool parse_workflow_action(
+        const std::string & text,
+        common_agent_tool_output_format format,
+        std::string & tool_name,
+        json & arguments,
+        std::string & error) {
+    tool_name.clear();
+    arguments = json::object();
+    if (format == common_agent_tool_output_format::compact_dsl) {
+        common_agent_tool_call call;
+        if (!common_parse_model_tool_call(format, text, call, error)) return false;
+        tool_name = std::move(call.name);
+        arguments = json::parse(call.arguments_json, nullptr, false);
+    } else {
+        const auto value = json::parse(text, nullptr, false);
+        if (!value.is_object() || !value.contains("tool") || !value["tool"].is_string() ||
+                !value.contains("args") || !value["args"].is_object()) {
+            error = "workflow action must contain an exact tool name and args object";
+            return false;
+        }
+        tool_name = value["tool"].get<std::string>();
+        arguments = value["args"];
+    }
+    if (!arguments.is_object()) {
+        error = "workflow action arguments must be an object";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+} // namespace
+
+common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
+        common_agent_inference & inference,
+        const common_agent_generation_config & generation_config,
+        const common_agent_request & request,
+        const std::vector<common_chat_tool> & tools,
+        const std::vector<common_agent_tool_argument_binding> & fixed_bindings,
+        const std::vector<std::string> & host_resolved_dataset_tools,
+        common_agent_tool_output_format output_format,
+        std::string & error) {
+    common_agent_workflow_action_selection_result result;
+    error.clear();
+    if (tools.empty() || tools.size() > 5) {
+        error = "workflow action selection requires one to five task-relevant resolved tools";
+        return result;
+    }
+    std::set<std::string> names;
+    for (const auto & tool : tools) {
+        const auto parameters = json::parse(tool.parameters, nullptr, false);
+        if (tool.name.empty() || !names.insert(tool.name).second ||
+                !parameters.is_object() || parameters.value("type", std::string()) != "object") {
+            if (error.empty()) error = "workflow route contains an invalid tool contract";
+            return result;
+        }
+    }
+
+    std::string last_error;
+    const auto schema = workflow_action_schema(tools, fixed_bindings, host_resolved_dataset_tools);
+    if (output_format != common_agent_tool_output_format::compact_dsl &&
+            schema.value("oneOf", json::array()).empty()) {
+        error = "workflow action schema has no supported registered tools";
+        return result;
+    }
+    for (size_t attempt = 0; attempt < 2; ++attempt) {
+        common_chat_msg system{
+            "system",
+            output_format == common_agent_tool_output_format::compact_dsl
+                ? "Return exactly one compact DSL tool call on one line using the `open! TOOL_NAME key=value` form. "
+                  "Select only an exact registered tool name. Use only arguments needed for the requested operation; arguments must match the selected tool contract. "
+                  "Do not add a plan header, reasoning, a second step, or commentary.\nRegistered workflow tools:" +
+                  workflow_action_contracts(tools, host_resolved_dataset_tools) +
+                  (host_resolved_dataset_tools.empty() ? std::string{} :
+                    "\nThe host resolves the dataset from the scoped inventory; omit the dataset argument.")
+                : "Return exactly one JSON object with tool and args. Select one exact registered tool; "
+                  "args must match that tool's schema. Use only arguments needed for the requested operation. Do not add a plan, reasoning, or commentary.\n" +
+                    workflow_action_contracts(tools, host_resolved_dataset_tools) +
+                    (host_resolved_dataset_tools.empty() ? std::string{} :
+                    "\nThe host resolves the dataset from the scoped inventory; omit the dataset argument."),
+        };
+        common_chat_msg user{
+            "user",
+            "[User request]\n" + request.prompt +
+            common_agent_render_dataset_inventory(request.available_datasets, 2048) +
+            (attempt == 0 ? std::string{} : "\n[Host validation error]\n" + last_error +
+                "\nRegenerate the complete single action and correct the schema violation."),
+        };
+        auto generation_request = make_agent_cli_generation_request(
+            request,
+            common_agent_generation_purpose::operation_selection,
+            {system, user},
+            make_agent_cli_generation_options(generation_config, 128),
+            output_format == common_agent_tool_output_format::compact_dsl
+                ? std::string{} : schema.dump());
+        if (output_format == common_agent_tool_output_format::compact_dsl) {
+            generation_request.grammar = workflow_action_grammar(tools);
+        }
+        const auto generated = inference.generate_result(generation_request);
+        result.generation = common_agent_generated_text_result_from_generation_result(generated);
+        if (!common_agent_generation_succeeded(generated)) {
+            error = describe_agent_cli_generation_failure("workflow action selection", generated);
+            return result;
+        }
+        std::string tool_name;
+        json arguments;
+        if (!parse_workflow_action(generated.content, output_format, tool_name, arguments, last_error)) {
+            if (attempt == 0 && output_format == common_agent_tool_output_format::compact_dsl) continue;
+            error = last_error;
+            return result;
+        }
+        const auto selected = std::find_if(tools.begin(), tools.end(), [&](const auto & tool) {
+            return tool.name == tool_name;
+        });
+        if (selected == tools.end()) {
+            last_error = "workflow action selected a tool outside the exact route enum";
+            if (attempt == 0 && output_format == common_agent_tool_output_format::compact_dsl) continue;
+            error = last_error;
+            return result;
+        }
+        if (std::find(host_resolved_dataset_tools.begin(), host_resolved_dataset_tools.end(), tool_name) !=
+                host_resolved_dataset_tools.end()) {
+            // Dataset identity is resolved by the workflow materializer from
+            // scoped inventory and request context, never from model text.
+            arguments.erase("dataset");
+        }
+        common_agent_request bound_request = request;
+        bound_request.tool_argument_bindings = fixed_bindings;
+        json normalized_arguments;
+        bool changed = false;
+        if (!common_agent_runtime_apply_host_tool_arguments_to_json(
+                bound_request, tool_name, arguments, normalized_arguments, changed, last_error)) {
+            error = last_error;
+            return result;
+        }
+        if (!normalize_common_agent_dataset_tool_arguments(
+                tool_name, normalized_arguments, last_error)) {
+            error = "workflow action arguments could not be normalized: " + last_error;
+            return result;
+        }
+        std::string normalized;
+        if (!common_schema_normalize_and_validate_object(
+                normalized_arguments.dump(), selected->parameters, normalized, last_error)) {
+            if (attempt == 0 && output_format == common_agent_tool_output_format::compact_dsl) continue;
+            error = "workflow action arguments violate " + tool_name + " schema: " + last_error;
+            return result;
+        }
+        result.action = common_agent_tool_argument_binding{tool_name, normalized, "workflow-action", false};
+        result.reason = "selected one route-scoped schema-valid tool action";
+        error.clear();
+        return result;
+    }
+    error = last_error.empty() ? "workflow action selection failed" : last_error;
+    return result;
+}
 
 common_agent_route_selection_result select_llama_cli_route(
         common_agent_inference & inference,

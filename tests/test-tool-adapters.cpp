@@ -411,6 +411,9 @@ int main() {
     assert(result.ok && foundation_data.last_operation == "statistics.describe" &&
            foundation_data.last_request.find(R"("columns":["value"])" ) != std::string::npos &&
            foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos);
+    result = foundation_registry.execute({"statistics.describe", R"({"dataset":"dataset://analysis/sales","columns":"value"})"});
+    assert(result.ok && foundation_data.last_operation == "statistics.describe" &&
+           foundation_data.last_request.find(R"("columns":["value"])") != std::string::npos);
     result = foundation_registry.execute({"statistics.outliers", R"({"dataset":"dataset://analysis/sales","column":"value","group_by":"region"})"});
     assert(result.ok && foundation_data.last_operation == "statistics.outliers" &&
            foundation_data.last_request.find(R"("columns":["value"])" ) != std::string::npos &&

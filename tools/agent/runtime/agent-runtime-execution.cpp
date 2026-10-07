@@ -938,6 +938,8 @@ bool run_agent_runtime_driver(
         execution.route_procedure_memories,
         execution.pre_turn_events,
         execution.pre_turn_trace,
+        execution.tool_output_format,
+        &execution.tool_argument_bindings,
     };
 
     const std::string original_prompt = execution.orchestration_config.prompt;

@@ -183,6 +183,19 @@ void test_prepare_json_schema_generation() {
     assert(!prepared.parse_tool_calls);
 }
 
+void test_prepare_bounded_custom_grammar_generation() {
+    auto templates = make_templates();
+    auto request = make_base_request();
+    request.grammar = "root ::= \\\"workflow-action\\\"";
+
+    common_agent_prepared_generation prepared;
+    assert(common_agent_prepare_chat_generation(templates.get(), request, prepared));
+    assert(prepared.grammar.type == COMMON_GRAMMAR_TYPE_USER);
+    assert(prepared.grammar.grammar == request.grammar);
+    assert(!prepared.ignore_eos && !prepared.suppress_eog && !prepared.stream);
+    assert(!prepared.parse_tool_calls);
+}
+
 void test_flydelta_activation_is_per_request_and_server_accepts_active() {
     auto activation = std::make_shared<common_flydelta_activation_result>();
     activation->gate.apply = true;
@@ -488,6 +501,7 @@ int main() {
     test_teacher_forced_batch_fallback();
     test_prepare_tool_generation();
     test_prepare_json_schema_generation();
+    test_prepare_bounded_custom_grammar_generation();
     test_flydelta_activation_is_per_request_and_server_accepts_active();
     test_prepare_plain_chat_has_no_tool_grammar();
     test_server_task_params_from_prepared_generation();

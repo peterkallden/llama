@@ -35,6 +35,18 @@ bool common_agent_prepare_chat_generation(
     // its own schema and plan validation.
     prepared.parse_tool_calls = request.json_schema.empty() && !request.tools.empty();
 
+    if (request.json_schema.empty() && !request.grammar.empty()) {
+        prepared.grammar = common_grammar{
+            COMMON_GRAMMAR_TYPE_USER,
+            request.grammar,
+        };
+        // The server's streaming validator is intentionally JSON-specific.
+        // Custom grammars are completed by the sampler and collected as a
+        // normal response, then validated by their owning DSL/parser.
+        prepared.stream = false;
+        return true;
+    }
+
     if (request.json_schema.empty()) {
         // An empty tool view is ordinary chat, not an empty tool-call
         // grammar. Some small models (notably Qwen 1.5B) treat an enabled
@@ -53,6 +65,8 @@ bool common_agent_prepare_chat_generation(
         prepared.generation_prompt = generated_chat_params.generation_prompt;
         return true;
     }
+
+    if (!request.grammar.empty()) return false;
 
     prepared.grammar = common_grammar{
         COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT,

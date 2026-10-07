@@ -35,6 +35,63 @@ common_agent_request make_orchestration_selection_request(
     return request;
 }
 
+std::string lowercase(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::vector<common_chat_tool> task_relevant_workflow_tools(
+        const std::vector<common_chat_tool> & route_tools,
+        const common_agent_route_candidate & route,
+        const std::string & prompt) {
+    const bool dataset_workflow = route.workflow_definition &&
+        route.workflow_definition->family == "dataset";
+    const auto text = lowercase(prompt);
+    std::vector<std::pair<int, common_chat_tool>> ranked;
+    for (const auto & tool : route_tools) {
+        const auto name = lowercase(tool.name);
+        if (dataset_workflow && name.rfind("dataset.", 0) == 0) {
+            // Dataset resolution and inspection are deterministic A* prefix
+            // transitions; the model chooses the requested terminal operation.
+            continue;
+        }
+        std::vector<std::string> cues;
+        if (name == "data.join") cues = {"join", "merge", "combine"};
+        else if (name == "data.aggregate") cues = {"aggregate", "sum", "total", "group", "average"};
+        else if (name == "data.query") cues = {"query", "select rows", "show rows"};
+        else if (name == "data.filter") cues = {"filter", "where", "only rows"};
+        else if (name == "data.transform") cues = {"transform", "derive", "new column"};
+        else if (name == "statistics.describe") cues = {"describe", "statistics", "distribution", "summary"};
+        else if (name == "statistics.outliers") cues = {"outlier", "anomaly"};
+        else if (name == "statistics.value_counts") cues = {"frequency", "value counts", "category counts"};
+        else if (name == "artifact.export") cues = {"export", "download", "save as", "csv file"};
+        int score = 0;
+        for (const auto & cue : cues) {
+            if (text.find(cue) != std::string::npos) score += cue.find(' ') == std::string::npos ? 2 : 3;
+        }
+        if (score > 0) ranked.emplace_back(score, tool);
+    }
+    std::stable_sort(ranked.begin(), ranked.end(), [](const auto & left, const auto & right) {
+        return left.first > right.first;
+    });
+    std::vector<common_chat_tool> selected;
+    if (!ranked.empty()) {
+        for (const auto & item : ranked) {
+            if (selected.size() == 5) break;
+            selected.push_back(item.second);
+        }
+        return selected;
+    }
+    for (const auto & tool : route_tools) {
+        if (dataset_workflow && lowercase(tool.name).rfind("dataset.", 0) == 0) continue;
+        selected.push_back(tool);
+        if (selected.size() == 5) break;
+    }
+    return selected;
+}
+
 } // namespace
 
 common_agent_orchestration_config make_agent_orchestration_config(
@@ -475,11 +532,121 @@ bool maybe_select_agent_route(
         route_binding.workflow_revision = selected_route.workflow->workflow_revision;
     }
     selection_config.route_binding = route_binding;
+
+    auto request = make_orchestration_selection_request(context.config, context.scope);
+    request.selected_workflow = selected_route.workflow;
+    request.workflow_definition = selected_route.workflow_definition;
+    request.available_datasets = context.tooling->available_datasets;
+    if (context.policy_pack != nullptr) request.policy_pack = *context.policy_pack;
+    if (context.tool_argument_bindings != nullptr) {
+        request.tool_argument_bindings = *context.tool_argument_bindings;
+    }
+    std::optional<common_agent_tool_argument_binding> workflow_action;
+    if (selected_route.kind == common_agent_route_kind::blueprint_workflow) {
+        std::vector<common_chat_tool> resolved_route_tools;
+        for (const auto & tool : context.tooling->tools) {
+            if (std::find(selected_route.resolved_tools.begin(),
+                    selected_route.resolved_tools.end(), tool.name) !=
+                    selected_route.resolved_tools.end()) {
+                resolved_route_tools.push_back(tool);
+            }
+        }
+        const auto route_tools = task_relevant_workflow_tools(
+            resolved_route_tools, selected_route, request.prompt);
+        std::vector<std::string> host_resolved_dataset_tools;
+        if (selected_route.workflow_definition &&
+                selected_route.workflow_definition->family == "dataset") {
+            for (const auto & tool : route_tools) {
+                if (tool.name == "data.query" || tool.name == "data.filter" ||
+                        tool.name == "data.aggregate" || tool.name == "data.transform" ||
+                        tool.name == "statistics.describe" || tool.name == "statistics.outliers" ||
+                        tool.name == "statistics.value_counts") {
+                    host_resolved_dataset_tools.push_back(tool.name);
+                }
+            }
+        }
+        std::string action_error;
+        const auto action = select_llama_cli_workflow_action(
+            context.inference, context.generation_config, request, route_tools,
+            request.tool_argument_bindings, host_resolved_dataset_tools,
+            context.tool_output_format, action_error);
+        if (!action.action) {
+            error = "workflow action selection failed: " + action_error;
+            return false;
+        }
+        workflow_action = *action.action;
+        request.tool_argument_bindings.push_back(*workflow_action);
+        context.pre_turn_trace.push_back({
+            common_runtime_trace_stage::plan,
+            common_runtime_trace_kind::decided,
+            nlohmann::ordered_json{
+                {"type", "workflow_action_selected"},
+                {"tool", workflow_action->tool_name},
+                {"selection_mode", context.tool_output_format == common_agent_tool_output_format::compact_dsl
+                    ? "compact_dsl_grammar" : "json_schema"},
+                {"route_id", selected_route.id},
+            }.dump(),
+            context.current_plan_id,
+            {}, workflow_action->tool_name, {}, selected_route.id});
+    }
     if (context.config.blueprint_instance_materializer) {
         selection_config.materialize_instance = context.config.blueprint_instance_materializer;
     } else if (selected_route.kind == common_agent_route_kind::blueprint_workflow) {
         selection_config.materialize_instance = make_agent_dataset_workflow_materializer(
             context.plan_store, context.tooling);
+    }
+    if (selected_route.kind == common_agent_route_kind::blueprint_workflow && workflow_action) {
+        const auto workflow_materializer = selection_config.materialize_instance;
+        const auto action = *workflow_action;
+        selection_config.materialize_instance = [workflow_materializer, action](
+                const common_agent_request & materialization_request,
+                const common_plan_state & instance,
+                common_plan_state & materialized,
+                std::string & materialization_error) {
+            if (workflow_materializer) {
+                const auto outcome = workflow_materializer(
+                    materialization_request, instance, materialized, materialization_error);
+                if (outcome != common_blueprint_materialization_outcome::not_applicable) {
+                    return outcome;
+                }
+            }
+            common_plan_state out = instance;
+            out.kind = common_plan_kind::task;
+            out.steps.clear();
+            out.active_step_id.reset();
+            out.next_action.reset();
+            out.status = common_plan_status::active;
+            common_plan_step operation;
+            operation.id = instance.id + ":workflow:action";
+            operation.title = action.tool_name;
+            operation.objective = "Execute the selected workflow action.";
+            operation.intended_contribution = operation.objective;
+            operation.status = common_plan_step_status::active;
+            operation.mode = common_plan_step_mode::tool;
+            operation.selected_tool = action.tool_name;
+            operation.tool_call = common_plan_tool_call{action.tool_name, action.arguments_json};
+            operation.created_at = instance.created_at;
+            operation.updated_at = instance.updated_at;
+            out.steps.push_back(operation);
+            common_plan_step answer;
+            answer.id = instance.id + ":workflow:answer";
+            answer.title = "Answer";
+            answer.objective = instance.goal.empty()
+                ? "Answer from the workflow result." : instance.goal;
+            answer.intended_contribution = instance.success_criteria.empty()
+                ? answer.objective : instance.success_criteria;
+            answer.mode = common_plan_step_mode::final_response;
+            answer.status = common_plan_step_status::pending;
+            answer.depends_on = {operation.id};
+            answer.created_at = instance.created_at;
+            answer.updated_at = instance.updated_at;
+            out.steps.push_back(std::move(answer));
+            out.active_step_id = operation.id;
+            out.next_action = operation.id;
+            materialized = std::move(out);
+            materialization_error.clear();
+            return common_blueprint_materialization_outcome::applied;
+        };
     }
     if (context.tooling->profile_tools_active) {
         selection_config.capabilities_resolved = true;
@@ -500,8 +667,6 @@ bool maybe_select_agent_route(
         selection_config.blocked_constraint_ids = context.tooling->blocked_constraint_ids;
     }
     common_blueprint_selection_result selection;
-    auto request = make_orchestration_selection_request(context.config, context.scope);
-    if (context.policy_pack != nullptr) request.policy_pack = *context.policy_pack;
     if (!common_agent_select_and_instantiate_blueprint(
             context.plan_store, request, selector, {*blueprint_candidate}, selection_config,
             selection, error)) {
