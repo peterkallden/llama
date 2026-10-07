@@ -139,7 +139,7 @@ int main(int argc, char ** argv) {
     if (!parse_options(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL --openalex-spec PATH [--threads N]"
-                  << " [--tool-output-format {jsonl,compact_dsl}]"
+                  << " [--tool-output-format {json,dsl}]"
                   << " [--n-gpu-layers N] [--n-predict N] [--strict]\n";
         return 2;
     }
