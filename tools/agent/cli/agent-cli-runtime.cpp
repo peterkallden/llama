@@ -411,9 +411,8 @@ std::string retryable_tool_repair_schema(
     json item = {
         {"type", "object"},
         {"additionalProperties", false},
-        {"required", json::array({"step_id", "tool", "args"})},
+        {"required", json::array({"tool", "args"})},
         {"properties", {
-            {"step_id", { {"type", "string"}, {"minLength", 1}, {"maxLength", 64} }},
             {"tool", { {"type", "string"}, {"minLength", 1}, {"maxLength", 128} }},
             {"args", std::move(args_schema)},
             {"title", { {"type", "string"}, {"maxLength", 128} }},
@@ -421,9 +420,6 @@ std::string retryable_tool_repair_schema(
             {"contribution", { {"type", "string"}, {"maxLength", 512} }},
         }},
     };
-    if (target.step != nullptr) {
-        item["properties"]["step_id"] = { {"enum", json::array({target.step->id})} };
-    }
     if (!target.tool_name.empty()) {
         item["properties"]["tool"] = { {"enum", json::array({target.tool_name})} };
     }
@@ -442,6 +438,114 @@ std::string retryable_tool_repair_schema(
         }},
     };
     return schema.dump();
+}
+
+std::string reflection_json_schema(
+        const std::string & decision_enum,
+        const common_plan_state & plan,
+        const std::vector<common_chat_tool> & tools,
+        const std::string & implicit_replace_step_id) {
+    using json = nlohmann::ordered_json;
+    const std::string base = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":DECISIONS},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"reset":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"retry":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}},"replace_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
+    json schema = json::parse(base);
+    schema["properties"]["decision"]["enum"] = json::parse(decision_enum);
+    json step_id_enum = json::array();
+    std::set<std::string> plan_tool_names;
+    for (const auto & step : plan.steps) {
+        step_id_enum.push_back(step.id);
+        if (step.tool_call) plan_tool_names.insert(step.tool_call->name);
+        else if (step.selected_tool) plan_tool_names.insert(*step.selected_tool);
+    }
+    for (const auto * field : {"complete", "activate", "reset", "retry"}) {
+        if (step_id_enum.empty()) schema["properties"][field]["maxItems"] = 0;
+        else schema["properties"][field]["items"]["enum"] = step_id_enum;
+    }
+    json tool_enum = json::array();
+    for (const auto & tool : tools) tool_enum.push_back(tool.name);
+    const json tool_property = tool_enum.empty()
+        ? json{{"type", "string"}}
+        : json{{"enum", tool_enum}};
+    json item = {
+        {"type", "object"},
+        {"additionalProperties", false},
+        {"required", implicit_replace_step_id.empty() ? json::array({"step_id"}) : json::array()},
+        {"properties", {
+            {"step_id", {{"enum", step_id_enum}}},
+            {"title", {{"type", "string"}, {"maxLength", 128}}},
+            {"objective", {{"type", "string"}, {"maxLength", 512}}},
+            {"contribution", {{"type", "string"}, {"maxLength", 512}}},
+            {"reason_summary", {{"type", "string"}, {"maxLength", 512}}},
+            {"after", {{"oneOf", json::array({json{{"type", "string"}}, json{{"type", "array"}, {"maxItems", 8}, {"items", json{{"type", "string"}, {"maxLength", 64}}}}})}}},
+            {"depends_on", {{"type", "array"}, {"maxItems", 8}, {"items", {{"type", "string"}, {"maxLength", 64}}}}},
+            {"required_evidence", {{"type", "array"}, {"maxItems", 8}, {"items", {{"type", "string"}, {"maxLength", 128}}}}},
+            {"source_memory_ids", {{"type", "array"}, {"maxItems", 8}, {"items", {{"type", "string"}, {"maxLength", 128}}}}},
+            {"mode", {{"enum", json::array({"tool", "reasoning", "final", "final_response"})}}},
+            {"tool", tool_property},
+            {"args", {{"type", "object"}}},
+        }},
+    };
+    if (implicit_replace_step_id.empty()) {
+        if (step_id_enum.empty()) {
+            item["properties"].erase("step_id");
+            item["required"] = json::array();
+            schema["properties"]["replace_steps"]["maxItems"] = 0;
+        }
+    } else {
+        item["properties"].erase("step_id");
+        schema["properties"]["replace_steps"]["maxItems"] = 1;
+    }
+    std::string bound_tool_name;
+    if (!implicit_replace_step_id.empty()) {
+        const auto target = std::find_if(plan.steps.begin(), plan.steps.end(), [&](const common_plan_step & step) {
+            return step.id == implicit_replace_step_id;
+        });
+        if (target != plan.steps.end()) {
+            bound_tool_name = target->tool_call ? target->tool_call->name : target->selected_tool.value_or(std::string{});
+        }
+    } else if (plan_tool_names.size() == 1) {
+        bound_tool_name = *plan_tool_names.begin();
+    }
+    if (!bound_tool_name.empty()) {
+        const auto tool = std::find_if(tools.begin(), tools.end(), [&](const common_chat_tool & candidate) {
+            return candidate.name == bound_tool_name;
+        });
+        if (tool != tools.end()) {
+            item["properties"]["tool"]["enum"] = json::array({tool->name});
+            const auto args_schema = json::parse(tool->parameters, nullptr, false);
+            if (args_schema.is_object() && args_schema.value("type", std::string()) == "object") {
+                item["properties"]["args"] = args_schema;
+            }
+        }
+    } else {
+        // A free tool choice cannot be paired with its own argument schema in
+        // the host JSON-schema grammar. Keep replacements unavailable when
+        // the target/tool cannot be uniquely bound; other reflection actions
+        // (including retry/reset) remain available.
+        schema["properties"]["replace_steps"]["maxItems"] = 0;
+    }
+    schema["properties"]["replace_steps"]["items"] = std::move(item);
+    return schema.dump();
+}
+
+std::string infer_reflection_replace_step_id(
+        const common_plan_state & plan,
+        const retryable_tool_repair_target & retry_target) {
+    if (retry_target.step != nullptr) return retry_target.step->id;
+    const common_plan_step * unique_failed = nullptr;
+    for (const auto & step : plan.steps) {
+        if (step.optional || step.status != common_plan_step_status::failed ||
+                common_plan_step_effective_mode(step) != common_plan_step_mode::tool) continue;
+        if (unique_failed != nullptr) return {};
+        unique_failed = &step;
+    }
+    if (unique_failed != nullptr) return unique_failed->id;
+    if (plan.active_step_id) {
+        const auto active = std::find_if(plan.steps.begin(), plan.steps.end(), [&](const common_plan_step & step) {
+            return step.id == *plan.active_step_id;
+        });
+        if (active != plan.steps.end() && (active->tool_call || active->selected_tool)) return active->id;
+    }
+    return {};
 }
 
 std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
@@ -1867,34 +1971,70 @@ public:
         const auto retry_target =
             find_retryable_failed_mandatory_tool_validation_step(plan);
         const bool retryable_validation_repair_required = retry_target.step != nullptr;
+        const std::string inferred_replace_step_id =
+            infer_reflection_replace_step_id(plan, retry_target);
+        const bool compact_dsl_output =
+            request.tool_output_format == common_agent_tool_output_format::compact_dsl;
         const std::string decision_enum = failed_mandatory_tool_step
             ? R"(["revise","abort"])"
             : R"(["accept","revise","abort"])";
         const std::string reflection_schema = retryable_validation_repair_required
             ? retryable_tool_repair_schema(retry_target, tools)
-            : R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":)" +
-                decision_enum +
-                R"(},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"reset":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"retry":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}},"replace_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
+            : reflection_json_schema(decision_enum, plan, tools, inferred_replace_step_id);
+        if (compact_dsl_output) {
+            system.content =
+                "Return only compact reflection DSL, with no JSON, Markdown, or commentary. Start with "
+                "`reflect decision=...`, using exactly one of accept, revise, or abort. Then use one operation per line: `complete STEP_ID`, "
+                "`activate STEP_ID`, `reset STEP_ID`, `retry STEP_ID`, `guidance \"...\"`, "
+                "`next_action \"...\"`, `assurance_action ACTION`, `learning_hint category=... statement=... expected_reuse=...`, "
+                "`replace [STEP_ID] | open! TOOL_NAME key=value ...`, `add | open! TOOL_NAME key=value ...`, "
+                "`add_constraint id=... description=... hard=true`, `add_assumption id=... statement=...`, "
+                "or `invalidate_assumption ID`. Strings with spaces must be double-quoted; "
+                "arrays use [value, value], nested objects use {field=value; other=value}, and booleans/numbers are unquoted. "
+                "Use only exact registered tool names and arguments matching their contracts. "
+                "When a repair target is omitted below, the host has already bound the unique target; omit STEP_ID. "
+                "Otherwise select the exact step id shown in the plan. Prefer accept when the draft is supported, "
+                "and never accept while a mandatory tool step has failed.\nRelevant tool contracts:" +
+                render_reflection_tool_contracts(plan, tools) + "\n";
+            if (inferred_replace_step_id.empty()) {
+                system.content += " For replace, include the exact target step id from the plan; the host will reject unknown ids.\n";
+            } else {
+                system.content += " A replacement target is host-bound for this turn; omit STEP_ID in replace lines.\n";
+            }
+        }
         if (failed_mandatory_tool_step) {
             system.content +=
-                " A mandatory tool step is failed. The decision must be revise or abort, never accept. "
-                "For a repair, use reset or retry with the failed step id, or replace_steps with a corrected "
-                "registered tool call and exact arguments. Do not add an unrelated pending step.";
+                compact_dsl_output
+                    ? " A mandatory tool step is failed. Choose revise or abort, never accept. Repair it with "
+                      "reset STEP_ID, retry STEP_ID, or replace [STEP_ID] | open! TOOL_NAME ... as appropriate. "
+                      "Do not add an unrelated pending step."
+                    : " A mandatory tool step is failed. The decision must be revise or abort, never accept. "
+                      "For a repair, use reset or retry with the failed step id, or replace_steps with a corrected "
+                      "registered tool call and exact arguments. Do not add an unrelated pending step.";
         }
         if (retryable_validation_repair_required) {
             system.content +=
-                " This is a retryable host validation failure. Return exactly one replace_steps entry for the "
-                "failed step, with its exact registered tool name and corrected args. The host schema already "
-                "binds step_id and tool to the failed operation; do not invent either identifier. Prose guidance, "
-                "reset, retry, abort, and unrelated steps cannot repair this failure.";
+                compact_dsl_output
+                    ? " This is a retryable host validation failure. Return exactly `reflect decision=revise` and "
+                      "one `replace | open! TOOL_NAME ...` line with corrected arguments. The host supplies the "
+                      "failed step id and tool name; do not output either identifier. Do not add prose, reset, retry, "
+                      "abort, or unrelated steps."
+                    : " This is a retryable host validation failure. Return exactly one replace_steps entry for the "
+                      "failed step, with its exact registered tool name and corrected args. The host schema binds "
+                      "the target step and tool; do not output either identifier. Prose guidance, reset, retry, "
+                      "abort, and unrelated steps cannot repair this failure.";
         }
         auto generate_reflection = [&](bool regeneration) {
             common_chat_msg attempt = user;
             if (regeneration) {
                 attempt.content +=
-                    "\n[Regeneration]\nThe previous reflection was incomplete or structurally invalid. "
-                    "Regenerate one complete JSON object from the beginning. Do not continue partial JSON "
-                    "or include commentary.";
+                    compact_dsl_output
+                    ? "\n[Regeneration]\nThe previous reflection was incomplete or invalid. Regenerate the "
+                      "complete compact reflection DSL from the beginning; no JSON, Markdown, partial continuation, "
+                      "or commentary."
+                    : "\n[Regeneration]\nThe previous reflection was incomplete or structurally invalid. "
+                      "Regenerate one complete JSON object from the beginning. Do not continue partial JSON "
+                      "or include commentary.";
             }
             return inference.generate_result(make_agent_cli_generation_request(
                 request,
@@ -1905,26 +2045,50 @@ public:
                     is_singleton_host_bound_tool(request, tools)
                         ? std::max(generation_config.n_predict, 128)
                         : std::max(generation_config.n_predict, 384)),
-                reflection_schema));
+                compact_dsl_output ? std::string() : reflection_schema));
         };
         bool parsed = false;
         auto generation_result = common_agent_bounded_structured_regeneration(
             generate_reflection,
             [&](const auto & candidate) {
             error.clear();
-                parsed = common_reflection_parse_json(candidate.content, result, error, 8);
-                return parsed;
-            });
+            parsed = compact_dsl_output
+                    ? common_reflection_parse_compact_dsl(
+                        candidate.content, result, error, inferred_replace_step_id, 8)
+                    : common_reflection_parse_json(
+                        candidate.content, result, error, 8, inferred_replace_step_id);
+            if (parsed && retryable_validation_repair_required) {
+                const bool exact_repair = result.decision == common_reflection_decision::revise &&
+                    result.proposed_plan_operations.size() == 1 &&
+                    result.proposed_plan_operations.front().kind == common_plan_operation_kind::replace_step &&
+                    result.proposed_plan_operations.front().step_id &&
+                    *result.proposed_plan_operations.front().step_id == retry_target.step->id &&
+                    result.proposed_plan_operations.front().step &&
+                    result.proposed_plan_operations.front().step->tool_call &&
+                    result.proposed_plan_operations.front().step->tool_call->name == retry_target.tool_name;
+                if (!exact_repair) {
+                    parsed = false;
+                    error = "host-bound reflection repair must contain exactly the failed step replacement and registered tool";
+                }
+            }
+            return parsed;
+        });
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_agent_cli_generation_failure("model reflection generation", generation_result);
             return result;
         }
         if (!parsed) {
-            fprintf(stderr, "warning: reflection JSON rejected; accepting draft safely (%s)\n", error.c_str());
+            fprintf(stderr, "warning: reflection %s rejected; using safe fallback (%s)\n",
+                compact_dsl_output ? "compact DSL" : "JSON", error.c_str());
             error.clear();
-            result.decision = common_reflection_decision::accept;
-            result.ready_to_answer = true;
+            if (failed_mandatory_tool_step) {
+                result.decision = common_reflection_decision::abort;
+                result.ready_to_answer = false;
+            } else {
+                result.decision = common_reflection_decision::accept;
+                result.ready_to_answer = true;
+            }
         }
         if (result.decision == common_reflection_decision::request_action || result.decision == common_reflection_decision::replan) {
             result.decision = common_reflection_decision::revise;

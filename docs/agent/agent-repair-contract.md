@@ -125,9 +125,11 @@ The foreground CLI exposes the same explicit choice through
 configurations and invocations. Internally, `json` maps to the native tool
 output mode and `dsl` maps to the compact DSL codec.
 
-The output dialect changes only serialization and parsing. Tool identity,
-provider authority, host-required arguments, schema normalization, policy,
-reflection repair, execution and learning/evidence semantics remain shared.
+The selected output dialect applies to planning and reflection: reflection uses
+the same effective `json` or `dsl` preference, with JSON-schema generation for
+JSON and a bounded reflection DSL for DSL. Tool identity, provider authority,
+host-required arguments, schema normalization, policy, repair execution and
+learning/evidence semantics remain shared.
 
 When the host already knows a concrete argument value from a structured
 request, workflow slot or fixture, it may attach a
@@ -156,15 +158,23 @@ planner context; the host binding remains authoritative in either case.
 
 ## Model-facing repair response
 
+Reflection follows the turn's selected output dialect. Compact reflection DSL
+starts with `reflect decision=...` using exactly one of `accept`, `revise` or
+`abort`, then uses bounded lines
+such as `complete STEP_ID`, `guidance "..."`, `replace STEP_ID | open! TOOL ...`
+`add | open! TOOL ...`, `assurance_action ACTION` and `learning_hint ...`. When
+the host has one unambiguous active/failed target, `STEP_ID` is omitted and
+bound by the host. Otherwise the model selects an existing plan ID, constrained
+to IDs from that plan; it never invents an internal ID.
+
 For a retryable failed mandatory validation, reflection receives a narrower
-schema than ordinary reflection. It must return exactly one replacement:
+contract than ordinary reflection. The JSON form is:
 
 ```json
 {
   "decision": "revise",
   "replace_steps": [
     {
-      "step_id": "step_1",
       "tool": "openalex.listWorks",
       "args": {
         "search": "machine learning",
@@ -176,12 +186,18 @@ schema than ordinary reflection. It must return exactly one replacement:
 }
 ```
 
-The concrete schema binds `step_id` to the failed host step and `tool` to the
-already registered tool, normally by a single-value `enum`. It also imports
+The host binds the replacement to the failed step and registered tool; neither
+internal identifier is requested from the model. The JSON schema therefore
+omits `step_id` and constrains `tool` to the registered operation. It also imports
 the registered tool's argument schema and promotes the actually missing
 host-required argument to `required` when that property is present. The model
-therefore supplies the value, but cannot redirect the repair to another step
-or another operation.
+supplies only the corrected semantic argument values and cannot redirect the
+repair to another step or operation. In DSL mode the equivalent response is:
+
+```text
+reflect decision=revise
+replace | open! openalex.listWorks search="machine learning" per_page=1 select="id,display_name"
+```
 
 The response contract has these invariants:
 
@@ -189,13 +205,16 @@ The response contract has these invariants:
 | --- | --- | --- |
 | `decision` | host schema | exactly `revise` |
 | `replace_steps` | host schema | exactly one item |
-| `step_id` | host schema | exact failed mandatory step |
+| replacement target | host | exact failed mandatory step; omitted from model output |
 | `tool` | host schema | exact registered operation |
 | `args` | model within host schema | semantic values satisfying the registered contract |
 | provider scope and authority | host | never model supplied |
 
 Prose-only guidance, `retry`, `reset`, `abort`, an unrelated added step or a
 second replacement is not a repair for this failure class.
+If structured reflection remains invalid after its bounded regeneration, the
+runtime aborts rather than accepting a draft while a mandatory tool step is
+still failed.
 
 ## Acceptance and rerun
 

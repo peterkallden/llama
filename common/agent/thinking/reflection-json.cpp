@@ -1,7 +1,12 @@
 #include "agent/thinking/reflection-json.h"
 #include "agent/tooling/contracts/schema-contract.h"
+#include "agent/tooling/schema/tool-output-codec.h"
 #include "plan/plan-json.h"
 
+#include <algorithm>
+#include <cctype>
+#include <nlohmann/json.hpp>
+#include <sstream>
 #include <set>
 
 namespace {
@@ -93,12 +98,18 @@ bool parse_compact_tool(
 bool parse_compact_replace_step(
     const common_json_contract_value & item,
     common_plan_operation & op,
-    std::string & error) {
+    std::string & error,
+    const std::string & inferred_step_id) {
     if (!item.is_object()) { error = "invalid reflection replace_steps item"; return false; }
     std::string step_id;
     if (item.contains("step_id") && item["step_id"].is_string() && !item["step_id"].get<std::string>().empty()) step_id = item["step_id"].get<std::string>();
     else if (item.contains("id") && item["id"].is_string() && !item["id"].get<std::string>().empty()) step_id = item["id"].get<std::string>();
-    else { error = "reflection replace_steps step_id must be a non-empty string"; return false; }
+    else if (!item.contains("step_id") && !item.contains("id") && !inferred_step_id.empty()) step_id = inferred_step_id;
+    else { error = "reflection replace_steps requires a non-empty step_id (or a host-bound repair target)"; return false; }
+    if (!inferred_step_id.empty() && step_id != inferred_step_id) {
+        error = "reflection replacement target conflicts with the host-bound plan step";
+        return false;
+    }
     common_plan_step parsed;
     parsed.id = step_id;
     if (item.contains("title") && !item["title"].is_string()) { error = "reflection replace_steps title must be a string"; return false; }
@@ -125,6 +136,53 @@ bool parse_compact_replace_step(
     op.step_id = step_id;
     op.reason_summary = item.value("reason_summary", std::string{});
     op.step = parsed;
+    return true;
+}
+
+std::string trim_reflection_text(const std::string & text) {
+    size_t first = 0;
+    while (first < text.size() && std::isspace(static_cast<unsigned char>(text[first]))) ++first;
+    size_t last = text.size();
+    while (last > first && std::isspace(static_cast<unsigned char>(text[last - 1]))) --last;
+    return text.substr(first, last - first);
+}
+
+bool parse_reflection_quoted_string(const std::string & text, std::string & value, std::string & error) {
+    const auto parsed = nlohmann::json::parse(text, nullptr, false);
+    if (!parsed.is_string()) {
+        error = "reflection DSL value must be a quoted string";
+        return false;
+    }
+    value = parsed.get<std::string>();
+    return true;
+}
+
+bool parse_reflection_dsl_tool(const std::string & source, nlohmann::json & output, std::string & error) {
+    common_agent_tool_call call;
+    if (!common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl, source, call, error)) return false;
+    const auto arguments = nlohmann::json::parse(call.arguments_json, nullptr, false);
+    const bool memory_id_tool = call.name == "memory_get" ||
+        call.name == "memory_propose_update" || call.name == "memory_propose_forget";
+    if (!arguments.is_object() && !(memory_id_tool && arguments.is_string())) {
+        error = "reflection DSL tool arguments must be an object";
+        return false;
+    }
+    output = {{"tool", call.name}, {"args", arguments}};
+    return true;
+}
+
+bool parse_reflection_dsl_fields(const std::string & source, nlohmann::json & output, std::string & error) {
+    common_agent_tool_call call;
+    if (!common_parse_model_tool_call(
+            common_agent_tool_output_format::compact_dsl,
+            "open! reflection.fields " + source,
+            call,
+            error)) return false;
+    output = nlohmann::json::parse(call.arguments_json, nullptr, false);
+    if (!output.is_object()) {
+        error = "reflection DSL fields must form an object";
+        return false;
+    }
     return true;
 }
 
@@ -175,7 +233,12 @@ bool parse_compact_add_step(
 
 } // namespace
 
-bool common_reflection_parse_json(const std::string & text, common_reflection_result & result, std::string & error, size_t max_operations) {
+bool common_reflection_parse_json(
+        const std::string & text,
+        common_reflection_result & result,
+        std::string & error,
+        size_t max_operations,
+        const std::string & inferred_replace_step_id) {
     common_json_contract_value j;
     if (!common_json_contract_parse_object(text, j, error)) return false;
     try {
@@ -268,7 +331,7 @@ bool common_reflection_parse_json(const std::string & text, common_reflection_re
             if (!j["replace_steps"].is_array() || j["replace_steps"].size() > max_operations) { error = "too many reflection replace_steps"; return false; }
             for (const auto & item : j["replace_steps"]) {
                 common_plan_operation op;
-                if (!parse_compact_replace_step(item, op, error)) return false;
+                if (!parse_compact_replace_step(item, op, error, inferred_replace_step_id)) return false;
                 result.proposed_plan_operations.push_back(std::move(op));
             }
         }
@@ -360,4 +423,176 @@ bool common_reflection_parse_json(const std::string & text, common_reflection_re
         error = "malformed reflection JSON";
         return false;
     }
+}
+
+bool common_reflection_parse_compact_dsl(
+        const std::string & text,
+        common_reflection_result & result,
+        std::string & error,
+        const std::string & inferred_replace_step_id,
+        size_t max_operations) {
+    using json = nlohmann::json;
+    json normalized = json::object();
+    json guidance = json::array();
+    json complete = json::array();
+    json activate = json::array();
+    json reset = json::array();
+    json retry = json::array();
+    json additions = json::array();
+    json replacements = json::array();
+    json operations = json::array();
+    std::istringstream input(text);
+    std::string line;
+    bool have_decision = false;
+    size_t operation_count = 0;
+    size_t line_number = 0;
+    while (std::getline(input, line)) {
+        ++line_number;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        line = trim_reflection_text(line);
+        if (line.empty()) continue;
+        if (!have_decision) {
+            constexpr const char * prefix = "reflect decision=";
+            if (line.rfind(prefix, 0) != 0) {
+                error = "reflection DSL must start with `reflect decision=...`";
+                return false;
+            }
+            const std::string decision = trim_reflection_text(line.substr(std::char_traits<char>::length(prefix)));
+            if (decision.find_first_of(" \t") != std::string::npos ||
+                    (decision != "accept" && decision != "revise" && decision != "abort")) {
+                error = "reflection DSL decision must be accept, revise, or abort";
+                return false;
+            }
+            normalized["decision"] = decision;
+            have_decision = true;
+            continue;
+        }
+        const auto separator = line.find(" | ");
+        if (line.rfind("replace ", 0) == 0 && separator != std::string::npos) {
+            const std::string target = trim_reflection_text(line.substr(7, separator - 7));
+            if (!inferred_replace_step_id.empty() && !replacements.empty()) {
+                error = "only one replace line is allowed for the host-bound reflection target";
+                return false;
+            }
+            json replacement = json::object();
+            if (!target.empty()) replacement["step_id"] = target;
+            json tool;
+            if (!parse_reflection_dsl_tool(line.substr(separator + 3), tool, error)) return false;
+            replacement.update(tool);
+            replacements.push_back(std::move(replacement));
+            if (replacements.size() > (inferred_replace_step_id.empty() ? 2U : 1U)) {
+                error = "too many reflection DSL replace lines";
+                return false;
+            }
+            ++operation_count;
+            if (operation_count > max_operations) {
+                error = "too many reflection DSL operations";
+                return false;
+            }
+            continue;
+        }
+        if (line.rfind("add", 0) == 0 && separator != std::string::npos &&
+                trim_reflection_text(line.substr(3, separator - 3)).empty()) {
+            json addition;
+            if (!parse_reflection_dsl_tool(line.substr(separator + 3), addition, error)) return false;
+            additions.push_back(std::move(addition));
+            if (additions.size() > 2) {
+                error = "too many reflection DSL add lines";
+                return false;
+            }
+            ++operation_count;
+            if (operation_count > max_operations) {
+                error = "too many reflection DSL operations";
+                return false;
+            }
+            continue;
+        }
+        const auto space = line.find_first_of(" \t");
+        const std::string verb = line.substr(0, space);
+        const std::string argument = space == std::string::npos ? std::string{} : trim_reflection_text(line.substr(space + 1));
+        if (verb == "complete" || verb == "activate" || verb == "reset" || verb == "retry") {
+            if (argument.empty() || argument.find_first_of(" \t") != std::string::npos) {
+                error = "reflection DSL " + verb + " requires exactly one step id";
+                return false;
+            }
+            (verb == "complete" ? complete : verb == "activate" ? activate : verb == "reset" ? reset : retry).push_back(argument);
+            if (complete.size() > 2 || activate.size() > 2 || reset.size() > 2 || retry.size() > 2) {
+                error = "reflection DSL step-id lists are limited to two entries";
+                return false;
+            }
+            ++operation_count;
+        } else if (verb == "guidance" || verb == "next_action") {
+            std::string value;
+            if (!parse_reflection_quoted_string(argument, value, error)) return false;
+            if (verb == "guidance") guidance.push_back(value);
+            else normalized["next_action"] = value;
+            if (guidance.size() > 4) {
+                error = "reflection DSL guidance is limited to four entries";
+                return false;
+            }
+        } else if (verb == "assurance_action") {
+            static const std::set<std::string> allowed_actions = {
+                "accept", "revise_response", "revise_plan", "escalate_deliberate",
+                "escalate_research", "fail_bounded",
+            };
+            if (!allowed_actions.count(argument)) {
+                error = "reflection DSL assurance_action is unsupported";
+                return false;
+            }
+            normalized[verb] = argument;
+        } else if (verb == "learning_hint") {
+            json fields;
+            if (!parse_reflection_dsl_fields(argument, fields, error)) return false;
+            normalized[verb] = std::move(fields);
+        } else if (verb == "add_constraint" || verb == "add_assumption") {
+            json fields;
+            if (!parse_reflection_dsl_fields(argument, fields, error)) return false;
+            operations.push_back({
+                {"kind", verb},
+                {verb == "add_constraint" ? "constraint" : "assumption", std::move(fields)},
+            });
+            ++operation_count;
+        } else if (verb == "invalidate_assumption") {
+            if (argument.empty() || argument.find_first_of(" \t") != std::string::npos) {
+                error = "reflection DSL invalidate_assumption requires exactly one target id";
+                return false;
+            }
+            operations.push_back({{"kind", verb}, {"target_id", argument}});
+            ++operation_count;
+        } else if (verb == "ready_to_answer") {
+            if (argument != "true" && argument != "false") {
+                error = "reflection DSL ready_to_answer must be true or false";
+                return false;
+            }
+            normalized[verb] = argument == "true";
+        } else if (verb == "confidence") {
+            const auto parsed = json::parse(argument, nullptr, false);
+            if (!parsed.is_number() || parsed.get<double>() < 0.0 || parsed.get<double>() > 1.0) {
+                error = "reflection DSL confidence must be a number from 0 to 1";
+                return false;
+            }
+            normalized[verb] = parsed;
+        } else {
+            error = "unsupported reflection DSL line " + std::to_string(line_number) + ": " + verb;
+            return false;
+        }
+        if (operation_count > max_operations) {
+            error = "too many reflection DSL operations";
+            return false;
+        }
+    }
+    if (!have_decision) {
+        error = "reflection DSL is missing its decision line";
+        return false;
+    }
+    if (!guidance.empty()) normalized["revision_guidance"] = std::move(guidance);
+    if (!complete.empty()) normalized["complete"] = std::move(complete);
+    if (!activate.empty()) normalized["activate"] = std::move(activate);
+    if (!reset.empty()) normalized["reset"] = std::move(reset);
+    if (!retry.empty()) normalized["retry"] = std::move(retry);
+    if (!additions.empty()) normalized["add_steps"] = std::move(additions);
+    if (!replacements.empty()) normalized["replace_steps"] = std::move(replacements);
+    if (!operations.empty()) normalized["operations"] = std::move(operations);
+    return common_reflection_parse_json(
+        normalized.dump(), result, error, max_operations, inferred_replace_step_id);
 }

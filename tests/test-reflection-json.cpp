@@ -86,5 +86,46 @@ int main() {
     assert(!common_reflection_parse_json(R"({"decision":"revise","operations":[{"kind":"add_assumption","assumption":{"id":"a","statement":"x","confidence":2}}]})", result, error));
     assert(!common_reflection_parse_json(R"({"decision":"revise","operations":[{"kind":"invalidate_assumption"}]})", result, error));
     assert(!common_reflection_parse_json(R"({"decision":"revise","complete":"lookup"})", result, error));
+    assert(!common_reflection_parse_json(R"({"decision":"revise","replace_steps":[{"tool":"memory_search","args":{"query":"repair"}}]})", result, error));
+    assert(common_reflection_parse_json(
+        R"({"decision":"revise","replace_steps":[{"tool":"memory_search","args":{"query":"repair"}}]})",
+        result, error, 8, "failed-search"));
+    assert(result.proposed_plan_operations.size() == 1);
+    assert(*result.proposed_plan_operations[0].step_id == "failed-search");
+    assert(!common_reflection_parse_json(
+        R"({"decision":"revise","replace_steps":[{"step_id":"","tool":"memory_search","args":{"query":"repair"}}]})",
+        result, error, 8, "failed-search"));
+    assert(!common_reflection_parse_json(
+        R"({"decision":"revise","replace_steps":[{"step_id":"other-step","tool":"memory_search","args":{"query":"repair"}}]})",
+        result, error, 8, "failed-search"));
+
+    assert(common_reflection_parse_compact_dsl(
+        "reflect decision=revise\nguidance \"repair the failed lookup\"\n"
+        "replace | open! memory_search query=\"corrected lookup\" limit=3\n",
+        result, error, "failed-search"));
+    assert(result.decision == common_reflection_decision::revise);
+    assert(result.revision_guidance == std::vector<std::string>{"repair the failed lookup"});
+    assert(result.proposed_plan_operations.size() == 1);
+    assert(*result.proposed_plan_operations[0].step_id == "failed-search");
+    assert(result.proposed_plan_operations[0].step->tool_call->name == "memory_search");
+    assert(same_json_object(
+        result.proposed_plan_operations[0].step->tool_call->arguments_json,
+        R"({"limit":3,"query":"corrected lookup"})"));
+    assert(!common_reflection_parse_compact_dsl(
+        "reflect decision=revise\nreplace other-step | open! memory_search query=\"wrong target\" limit=3\n",
+        result, error, "failed-search"));
+    assert(common_reflection_parse_compact_dsl(
+        "reflect decision=revise\ncomplete lookup\n"
+        "add | open! memory_search query=\"follow-up\" limit=2\n",
+        result, error));
+    assert(result.proposed_plan_operations.size() == 2);
+    assert(*result.proposed_plan_operations[0].step_id == "lookup");
+    assert(result.proposed_plan_operations[1].kind == common_plan_operation_kind::add_step);
+    assert(common_reflection_parse_compact_dsl(
+        "reflect decision=revise\nassurance_action escalate_research\n"
+        "learning_hint category=\"tool_precondition\" statement=\"Check the schema before querying.\" expected_reuse=0.8\n",
+        result, error));
+    assert(result.next_action == common_agent_reflection_next_action::escalate_research);
+    assert(result.learning_hint && result.learning_hint->category == "tool_precondition");
     return 0;
 }
