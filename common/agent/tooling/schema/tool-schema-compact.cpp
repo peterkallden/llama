@@ -322,15 +322,36 @@ std::vector<common_model_tool_field> project_fields(
     return fields;
 }
 
-std::string render_fields(const std::vector<common_model_tool_field> & fields, bool inputs) {
+std::string model_facing_type(std::string type) {
+    constexpr const char * suffix = "[]";
+    if (type.size() >= 2 && type.compare(type.size() - 2, 2, suffix) == 0) {
+        type.resize(type.size() - 2);
+        return type + " list";
+    }
+    return type;
+}
+
+std::string render_return_names(const std::vector<common_model_tool_field> & fields) {
+    if (fields.empty()) return "result";
     std::ostringstream out;
-    bool first = true;
+    for (size_t index = 0; index < fields.size(); ++index) {
+        if (index != 0) out << ", ";
+        out << fields[index].name;
+        if (!fields[index].description.empty()) {
+            out << " (" << fields[index].description << ')';
+        }
+    }
+    return out.str();
+}
+
+std::string render_input_fields(const std::vector<common_model_tool_field> & fields) {
+    std::ostringstream out;
     for (const auto & field : fields) {
-        if (!first) out << (inputs ? "; " : ", ");
-        first = false;
-        out << field.name << (inputs && !field.required ? "?" : "") << ':' << field.display_type;
-        if (field.may_be_inferred) out << " [may be inferred]";
-        if (!field.description.empty()) out << " (" << field.description << ')';
+        out << "\n  " << field.name << " ("
+            << (field.required ? "required" : "optional")
+            << ", " << model_facing_type(field.display_type) << ')';
+        if (field.may_be_inferred) out << " [host may infer]";
+        if (!field.description.empty()) out << ": " << field.description;
     }
     return out.str();
 }
@@ -426,11 +447,9 @@ std::string common_render_compact_tool_description(
         std::string & error) {
     error.clear();
     std::ostringstream out;
-    out << contract.name << "\n" << contract.purpose << "\n";
-    const auto args = render_fields(contract.inputs, true);
-    out << "args: " << (args.empty() ? "object" : args) << "\n";
-    const auto returns = render_fields(contract.outputs, false);
-    out << "returns: " << (returns.empty() ? "value" : returns);
+    out << contract.name << ": " << contract.purpose
+        << " Returns: " << render_return_names(contract.outputs) << '.';
+    out << render_input_fields(contract.inputs);
     return out.str();
 }
 

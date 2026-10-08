@@ -221,11 +221,11 @@ int main() {
         resource_read->result_schema_json,
         compact_error);
     assert(compact_error.empty());
-    assert(compact_read.find("resource.read") != std::string::npos);
-    assert(compact_read.find("args: id:string") != std::string::npos);
-    assert(compact_read.find("representation?:text|bytes") != std::string::npos);
-    assert(compact_read.find("max_bytes?:integer[1..32768]") != std::string::npos);
-    assert(compact_read.find("returns:") != std::string::npos);
+    assert(compact_read.find("resource.read:") != std::string::npos);
+    assert(compact_read.find("Returns: result.") != std::string::npos);
+    assert(compact_read.find("id (required, string)") != std::string::npos);
+    assert(compact_read.find("representation (optional, text|bytes)") != std::string::npos);
+    assert(compact_read.find("max_bytes (optional, integer[1..32768])") != std::string::npos);
     const auto aggregate_compact = common_render_compact_tool_description(
         data_aggregate->name,
         data_aggregate->description,
@@ -233,16 +233,16 @@ int main() {
         common_tool_model_result_schema(*data_aggregate),
         compact_error);
     assert(compact_error.empty());
-    assert(aggregate_compact.find("dataset:dataset_ref") != std::string::npos);
-    assert(aggregate_compact.find("dataset?:dataset_ref [may be inferred]") != std::string::npos);
+    assert(aggregate_compact.find("data.aggregate:") != std::string::npos);
+    assert(aggregate_compact.find("dataset (optional, dataset_ref) [host may infer]") != std::string::npos);
     assert(aggregate_compact.find("measure: <function> <column> <as>") != std::string::npos);
     assert(aggregate_compact.find("named form: measure: function=<value> column=<value> as=<value>") != std::string::npos);
-    const auto aggregate_returns = aggregate_compact.find("\nreturns:");
+    const auto aggregate_returns = aggregate_compact.find(" Returns:");
     assert(aggregate_returns != std::string::npos);
     assert(aggregate_compact.substr(0, aggregate_returns).find("materialize") == std::string::npos);
     assert(aggregate_compact.find("materialized") == std::string::npos);
     assert(aggregate_compact.find("scan_truncated") == std::string::npos);
-    assert(aggregate_compact.find("returns: rows:object[], dataset:dataset_ref") != std::string::npos);
+    assert(aggregate_compact.find("Returns: rows, dataset") != std::string::npos);
     assert(aggregate_compact.find("example:\nopen! data.aggregate\ndataset: $orders.dataset\nmeasure: sum amount total_amount") != std::string::npos);
 
     const auto * data_filter = catalog.find_definition("data.filter");
@@ -255,7 +255,7 @@ int main() {
         common_tool_model_result_schema(*data_filter),
         compact_error);
     assert(compact_error.empty());
-    assert(filter_compact.find("conditions:object[]") != std::string::npos);
+    assert(filter_compact.find("conditions (required, object list)") != std::string::npos);
     assert(filter_compact.find("conditions[0].field: string") != std::string::npos);
     assert(filter_compact.find("Comparison operator. Null checks do not need value.") != std::string::npos);
     assert(filter_compact.find("example:\nopen! data.filter\ndataset: $orders.dataset\nconditions[0].field: status") != std::string::npos);
@@ -266,7 +266,7 @@ int main() {
         common_tool_model_result_schema(*data_join),
         compact_error);
     assert(compact_error.empty());
-    assert(join_compact.find("on:directive(on)[]") != std::string::npos);
+    assert(join_compact.find("on (required, directive(on) list)") != std::string::npos);
     assert(join_compact.find("on: <left> <right>") != std::string::npos);
     assert(join_compact.find("example:\nopen! data.join\nleft: $orders.dataset\nright: $customers.dataset\ntype: left\non: customer_id id") != std::string::npos);
     const auto transform_compact = common_render_compact_tool_description(
@@ -288,6 +288,20 @@ int main() {
     assert(compact_error.empty());
     assert(value_counts_compact.find("Exact column name from the selected dataset schema.") != std::string::npos);
     assert(value_counts_compact.find("example:\nopen! statistics.value_counts\ndataset: $orders.dataset\ncolumn: status\nlimit: 20") != std::string::npos);
+
+    const auto * statistics_describe = catalog.find_definition("statistics.describe");
+    assert(statistics_describe);
+    const auto describe_compact = common_render_compact_tool_description(
+        statistics_describe->name,
+        statistics_describe->description,
+        statistics_describe->model_input_schema_json,
+        common_tool_model_result_schema(*statistics_describe),
+        compact_error);
+    assert(compact_error.empty());
+    assert(describe_compact.find("Describe selected or schema-declared numeric columns in a bounded dataset. Returns: ") != std::string::npos);
+    assert(describe_compact.find("columns (per-column count, null_count, min, max, mean and stddev)") != std::string::npos);
+    assert(describe_compact.find("columns (optional, string list): Columns to describe") != std::string::npos);
+    assert(describe_compact.find("group_by (optional, string list): Return separate statistics for each group.") != std::string::npos);
     const auto artifact_compact = common_render_compact_tool_description(
         artifact_export->name,
         artifact_export->description,

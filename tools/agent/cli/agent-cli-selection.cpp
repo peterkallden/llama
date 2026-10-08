@@ -146,17 +146,6 @@ std::string workflow_action_contracts(
     const std::vector<common_chat_tool> & tools,
     const std::vector<std::string> & host_resolved_dataset_tools) {
     std::string out;
-    const auto append_enum = [&out](const json & field_schema) {
-        const auto values = field_schema.value("enum", json::array());
-        if (!values.is_array() || values.empty()) return;
-        out += "{";
-        for (size_t i = 0; i < values.size(); ++i) {
-            if (i) out += "|";
-            if (values[i].is_string()) out += values[i].get<std::string>();
-            else out += values[i].dump();
-        }
-        out += "}";
-    };
     for (const auto & tool : tools) {
         auto parameters = json::parse(tool.parameters, nullptr, false);
         if (parameters.is_object() &&
@@ -169,55 +158,18 @@ std::string workflow_action_contracts(
                 parameters["required"] = std::move(required);
             }
         }
-        out += "\n- " + tool.name;
-        if (!tool.description.empty()) {
-            out += ": " + bounded_model_text(tool.description, 220);
+        std::string render_error;
+        const std::string compact = common_render_compact_tool_description(
+            tool.name,
+            tool.description,
+            parameters.is_object() ? parameters.dump() : tool.parameters,
+            tool.result_schema.empty() ? "{}" : tool.result_schema,
+            render_error);
+        if (!render_error.empty()) {
+            out += "\n- " + tool.name;
+            continue;
         }
-        if (!parameters.is_object()) continue;
-        const auto properties = parameters.value("properties", json::object());
-        const auto required = parameters.value("required", json::array());
-        if (!properties.is_object()) continue;
-        for (const auto & property : properties.items()) {
-            const bool is_required = std::find(required.begin(), required.end(), json(property.key())) != required.end();
-            const auto annotation = property.value().value("x-agent-flat", json::object());
-            if (annotation.is_object() && annotation.contains("directive")) {
-                out += "\n  " + annotation.value("directive", property.key());
-                out += is_required ? " (required; repeatable; slots " : " (optional; repeatable; slots ";
-                const auto positional = annotation.value("positional", json::array());
-                if (positional.is_array() && !positional.empty()) {
-                    out += "in order ";
-                    for (size_t i = 0; i < positional.size(); ++i) {
-                        if (i) out += ", ";
-                        if (!positional[i].is_string()) continue;
-                        const auto slot = positional[i].get<std::string>();
-                        out += slot;
-                        const auto items = property.value().value("items", json::object());
-                        const auto slots = items.value("properties", json::object());
-                        if (slots.is_object() && slots.contains(slot)) append_enum(slots[slot]);
-                    }
-                }
-                out += ")";
-            } else {
-                out += "\n  " + property.key();
-                const std::string type = property.value().value("type", std::string("value"));
-                out += is_required ? " (required, " : " (optional, ";
-                if (type == "array") {
-                    const auto items = property.value().value("items", json::object());
-                    const std::string item_type = items.is_object()
-                        ? items.value("type", std::string("value")) : "value";
-                    out += item_type + " list)";
-                    append_enum(items);
-                } else {
-                    out += type + ")";
-                    append_enum(property.value());
-                }
-            }
-            if (property.value().is_object() && property.value().contains("description") &&
-                    property.value()["description"].is_string()) {
-                out += " — " + bounded_model_text(
-                    property.value()["description"].get<std::string>(), 144);
-            }
-        }
+        out += "\n- " + compact;
     }
     return out;
 }
@@ -350,10 +302,17 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         common_chat_msg system{
             "system",
             output_format == common_agent_tool_output_format::compact_dsl
-                ? ("Choose the listed tool that fits the request. Return one DSL action: `open! TOOL_NAME`, then `field: value` lines. "
-                  "Fill only needed arguments; omit unset or host-resolved fields. Scalar lists accept `a, b`, `[a, b]`, or repeated fields. "
-                  "Quote scalar values containing spaces or commas. For object lists, repeat the declared directive in slot order. "
-                  "Return no reasoning or commentary.\nTools:" +
+                ? ("Choose the best tool for the request.\n\n"
+                  "Return exactly one action:\n\n"
+                  "open! TOOL_NAME\n"
+                  "field: value\n\n"
+                  "Use one field per line.\n"
+                  "Use plain scalars for single values.\n"
+                  "For scalar lists, use `a, b`, `[a, b]`, or repeat the field.\n"
+                  "For object lists, repeat the declared directive; use indexed fields when shown.\n"
+                  "Omit unset or host-resolved fields.\n"
+                  "Quote values containing spaces or commas.\n\n"
+                  "Tools:" +
                   workflow_action_contracts(tools, host_resolved_dataset_tools))
                 : ("Choose the listed tool that fits the request. Return one JSON object with `tool` and `args` matching its contract. "
                   "Include needed arguments only; omit unset or host-resolved fields. Return no explanation.\nTools:" +
