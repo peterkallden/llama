@@ -226,14 +226,20 @@ void trace_planner_candidate(
 }
 
 std::string render_reflection_tool_contracts(
-        const common_plan_state & plan, const std::vector<common_chat_tool> & tools) {
+        const common_plan_state & plan,
+        const std::vector<common_chat_tool> & tools,
+        const std::string & only_tool = {}) {
     // Reflection only needs contracts for tools already present in the plan.
     // The runtime still validates every proposed operation against the full
     // host-owned view after the model returns.
     std::set<std::string> relevant_names;
-    for (const auto & step : plan.steps) {
-        if (step.tool_call) relevant_names.insert(step.tool_call->name);
-        if (step.selected_tool) relevant_names.insert(*step.selected_tool);
+    if (!only_tool.empty()) {
+        relevant_names.insert(only_tool);
+    } else {
+        for (const auto & step : plan.steps) {
+            if (step.tool_call) relevant_names.insert(step.tool_call->name);
+            if (step.selected_tool) relevant_names.insert(*step.selected_tool);
+        }
     }
     std::string rendered;
     std::string error;
@@ -1991,6 +1997,27 @@ public:
         const bool retryable_validation_repair_required = retry_target.step != nullptr;
         const std::string inferred_replace_step_id =
             infer_reflection_replace_step_id(plan, retry_target);
+        std::vector<std::pair<std::string, std::string>> failed_retry_choices;
+        const auto retry_choice_label = [](size_t index) {
+            std::string label;
+            do {
+                label.insert(label.begin(), static_cast<char>('A' + index % 26));
+                index = index / 26;
+                if (index == 0) break;
+                --index;
+            } while (true);
+            return label;
+        };
+        if (failed_mandatory_tool_step) {
+            size_t choice_index = 0;
+            for (const auto & step : plan.steps) {
+                if (common_plan_step_effective_mode(step) != common_plan_step_mode::tool ||
+                        step.optional || step.status != common_plan_step_status::failed) continue;
+                failed_retry_choices.emplace_back(retry_choice_label(choice_index++), step.id);
+            }
+        }
+        const std::string inferred_retry_step_id = failed_retry_choices.size() == 1
+            ? failed_retry_choices.front().second : std::string{};
         const bool compact_dsl_output =
             request.tool_output_format == common_agent_tool_output_format::compact_dsl;
         // Ordinary reflection is a review of a completed result, not another
@@ -2014,36 +2041,36 @@ public:
         if (compact_dsl_output) {
             if (retryable_validation_repair_required) {
                 system.content =
-                    "Return only compact reflection DSL, with no JSON, Markdown, or commentary. Start with these two lines:\n"
-                    "reflect decision=revise\n"
-                    "replace | open! TOOL_NAME\n"
-                    "Then add only the corrected flat `field: value` argument lines. The host already bound the "
-                    "failed step and tool: do not output an ID, choose another tool, add a step, or add prose. "
-                    "Use only values in the request or verified evidence. Tool contract:" +
-                    render_reflection_tool_contracts(plan, tools) + "\n";
+                    "Return compact reflection DSL. First line: reflect revise. Then return only corrected "
+                    "argument fields as `field: value` lines. Use the registered field names and allowed values "
+                    "shown here. Tool contract:" +
+                    render_reflection_tool_contracts(plan, tools, retry_target.tool_name) + "\n";
             } else if (failed_mandatory_tool_step) {
-                std::string failed_ids;
-                for (const auto & step : plan.steps) {
-                    if (common_plan_step_effective_mode(step) != common_plan_step_mode::tool ||
-                            step.optional || step.status != common_plan_step_status::failed) continue;
-                    if (!failed_ids.empty()) failed_ids += ", ";
-                    failed_ids += step.id;
+                system.content = "Return one reflection DSL result:\nreflect abort\n";
+                if (failed_retry_choices.size() == 1) {
+                    system.content += "or\nreflect retry\n";
+                } else {
+                    system.content += "or choose one failed step:\n";
+                    for (const auto & choice : failed_retry_choices) {
+                        const auto step = std::find_if(plan.steps.begin(), plan.steps.end(), [&](const common_plan_step & item) {
+                            return item.id == choice.second;
+                        });
+                        system.content += choice.first + " ";
+                        if (step != plan.steps.end()) {
+                            system.content += step->tool_call ? step->tool_call->name : step->selected_tool.value_or("tool");
+                            if (!step->objective.empty()) system.content += " — " + reflection_bounded_text(step->objective, 100);
+                        }
+                        system.content += "\n";
+                    }
+                    system.content += "Return `reflect retry LABEL` to retry one step.\n";
                 }
-                system.content =
-                    "Return only compact reflection DSL, with no JSON, Markdown, or commentary. A mandatory tool "
-                    "step failed, so do not accept. Return either `reflect decision=abort` or exactly:\n"
-                    "reflect decision=revise\nretry STEP_ID\n"
-                    "Use one failed step ID from this list: " + failed_ids +
-                    ". Do not add tools, replace steps, or other plan edits; the host owns those changes.\n";
             } else {
                 system.content =
-                    "Return only compact reflection DSL, with no JSON, Markdown, or commentary. Compare the draft "
-                    "with the user request and host-verified evidence. If it is supported, return exactly:\n"
-                    "reflect decision=accept\n"
-                    "Otherwise return exactly two lines:\n"
-                    "reflect decision=revise\n"
-                    "guidance \"one short correction for the answer\"\n"
-                    "Do not output a step ID, tool call, plan edit, or explanation. The host owns plan IDs and tools.\n";
+                    "Check the draft against the request and verified evidence. Return compact reflection DSL:\n"
+                    "reflect accept\n"
+                    "or:\n"
+                    "reflect revise\n"
+                    "guidance \"short correction\"\n";
             }
         } else {
             system.content = "Return only JSON matching the supplied schema. Compare the draft with the user request "
@@ -2088,9 +2115,7 @@ public:
             if (regeneration) {
                 attempt.content +=
                     compact_dsl_output
-                    ? "\n[Regeneration]\nThe previous reflection was incomplete or invalid. Regenerate the "
-                      "complete compact reflection DSL from the beginning; no JSON, Markdown, partial continuation, "
-                      "or commentary."
+                    ? "\n[Regeneration]\nRegenerate the complete reflection DSL from the beginning."
                     : "\n[Regeneration]\nThe previous reflection was incomplete or structurally invalid. "
                       "Regenerate one complete JSON object from the beginning. Do not continue partial JSON "
                       "or include commentary.";
@@ -2124,9 +2149,30 @@ public:
             error.clear();
             parsed = compact_dsl_output
                     ? common_reflection_parse_compact_dsl(
-                        candidate.content, result, error, inferred_replace_step_id, 8)
+                        candidate.content, result, error, inferred_replace_step_id, 8,
+                        retryable_validation_repair_required ? retry_target.tool_name : std::string{},
+                        inferred_retry_step_id, tools, failed_retry_choices)
                     : common_reflection_parse_json(
                         candidate.content, result, error, 8, inferred_replace_step_id);
+            if (parsed && failed_mandatory_tool_step && !retryable_validation_repair_required &&
+                    result.decision != common_reflection_decision::abort) {
+                bool has_retry = false;
+                for (const auto & operation : result.proposed_plan_operations) {
+                    if (operation.kind != common_plan_operation_kind::activate_step || !operation.step_id) continue;
+                    has_retry = true;
+                    const bool is_failed_step = std::any_of(failed_retry_choices.begin(), failed_retry_choices.end(),
+                        [&](const auto & item) { return item.second == *operation.step_id; });
+                    if (!is_failed_step) {
+                        parsed = false;
+                        error = "reflection retry must select a failed mandatory tool step";
+                        break;
+                    }
+                }
+                if (parsed && result.decision == common_reflection_decision::revise && !has_retry) {
+                    parsed = false;
+                    error = "reflection revise requires a retry for the failed mandatory tool step";
+                }
+            }
             if (parsed && retryable_validation_repair_required) {
                 const bool exact_repair = result.decision == common_reflection_decision::revise &&
                     result.proposed_plan_operations.size() == 1 &&

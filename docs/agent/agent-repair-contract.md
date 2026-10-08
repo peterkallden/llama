@@ -188,22 +188,23 @@ the model receives verified observations, the user request and the draft, then
 returns exactly one of:
 
 ```text
-reflect decision=accept
+reflect accept
 ```
 
 or:
 
 ```text
-reflect decision=revise
-guidance "one short correction for the answer"
+reflect revise
+guidance "short correction"
 ```
 
 The host owns plan IDs, tool calls, dependencies and final synthesis in this
 ordinary review. It does not render tool contracts or ask the model to supply a
-`STEP_ID`. A failed mandatory step narrows the DSL instead to `abort` or a
-single `retry STEP_ID`, where the allowed failed IDs are explicitly listed.
-The broader parser still accepts bounded plan operations for persisted or
-legacy callers, but they are not the default prompt surface.
+`STEP_ID`. A failed mandatory step narrows the DSL to `reflect abort` or
+`reflect retry`. The host binds the retry when exactly one step failed. When
+several failed steps are eligible, the prompt shows short labels and the host
+maps the selected label to its step ID. The parser continues to accept the
+older `reflect decision=...` form for compatibility.
 
 For a retryable failed mandatory validation, reflection receives a narrower
 contract than ordinary reflection. The JSON form is:
@@ -233,9 +234,16 @@ supplies only the corrected semantic argument values and cannot redirect the
 repair to another step or operation. In DSL mode the equivalent response is:
 
 ```text
-reflect decision=revise
-replace | open! openalex.listWorks search="machine learning" per_page=1 select="id,display_name"
+reflect revise
+search: "machine learning"
+per_page: 1
+select: "id,display_name"
 ```
+
+The model-facing repair prompt shows only the bound tool's registered
+argument contract. The model returns argument fields; the host supplies the
+failed step and tool identity, then validates the completed typed call against
+the registered schema, including enums and array rules.
 
 The response contract has these invariants:
 

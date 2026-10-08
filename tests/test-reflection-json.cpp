@@ -15,6 +15,45 @@ bool same_json_object(const std::string & lhs, const std::string & rhs) {
 int main() {
     common_reflection_result result;
     std::string error;
+    assert(common_reflection_parse_compact_dsl("reflect accept", result, error));
+    assert(result.decision == common_reflection_decision::accept);
+    assert(result.proposed_plan_operations.empty());
+    assert(common_reflection_parse_compact_dsl(
+        "reflect revise\nguidance \"count is missing\"", result, error));
+    assert(result.decision == common_reflection_decision::revise);
+    assert(result.revision_guidance == std::vector<std::string>{"count is missing"});
+    assert(common_reflection_parse_compact_dsl(
+        "reflect retry", result, error, {}, 8, {}, "failed-search"));
+    assert(result.decision == common_reflection_decision::revise);
+    assert(result.proposed_plan_operations.size() == 1);
+    assert(*result.proposed_plan_operations[0].step_id == "failed-search");
+    const std::vector<std::pair<std::string, std::string>> retry_choices = {
+        {"A", "failed-search"}, {"B", "failed-fetch"},
+    };
+    assert(common_reflection_parse_compact_dsl(
+        "reflect retry B", result, error, {}, 8, {}, {}, {}, retry_choices));
+    assert(result.proposed_plan_operations.size() == 1);
+    assert(*result.proposed_plan_operations[0].step_id == "failed-fetch");
+    assert(!common_reflection_parse_compact_dsl(
+        "reflect retry C", result, error, {}, 8, {}, {}, {}, retry_choices));
+
+    const common_chat_tool memory_search_tool{
+        "memory_search", "Search memory.",
+        R"({"type":"object","required":["query"],"properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":10}}})",
+        R"({"type":"object"})",
+    };
+    assert(common_reflection_parse_compact_dsl(
+        "reflect revise\nquery: \"corrected lookup\"\nlimit: 3\n",
+        result, error, "failed-search", 8, "memory_search", {}, {memory_search_tool}));
+    assert(result.proposed_plan_operations.size() == 1);
+    assert(result.proposed_plan_operations[0].step->tool_call->name == "memory_search");
+    assert(*result.proposed_plan_operations[0].step_id == "failed-search");
+    assert(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json,
+        R"({"query":"corrected lookup","limit":3})"));
+    assert(!common_reflection_parse_compact_dsl(
+        "reflect revise\nunknown: value\n",
+        result, error, "failed-search", 8, "memory_search", {}, {memory_search_tool}));
+
     assert(common_reflection_parse_json(
         R"({"decision":"revise","assurance_action":"escalate_research","issues":[]})",
         result, error));

@@ -3,7 +3,14 @@
 #include <sstream>
 #include <unordered_set>
 static void replace_all(std::string & s, const std::string & from, const std::string & to) { size_t p = 0; while ((p = s.find(from, p)) != std::string::npos) { s.replace(p, from.size(), to); p += to.size(); } }
-std::string common_plan_escape_context_text(const std::string & text) { std::string out = text; replace_all(out, "</runtime_plan>", "<\\/runtime_plan>"); replace_all(out, "<runtime_plan>", "<runtime_plan data-escaped=\"true\">"); return out; }
+std::string common_plan_escape_context_text(const std::string & text) {
+    std::string out = text;
+    replace_all(out, "</runtime_plan>", "<\\/runtime_plan>");
+    replace_all(out, "<runtime_plan>", "<runtime_plan data-escaped=\"true\">");
+    replace_all(out, "</verified_tool_observations>", "<\\/verified_tool_observations>");
+    replace_all(out, "<verified_tool_observations>", "<verified_tool_observations data-escaped=\"true\">");
+    return out;
+}
 static const char * step_mode_name(common_plan_step_mode mode) { return mode == common_plan_step_mode::tool ? "tool" : mode == common_plan_step_mode::reasoning ? "reasoning" : "final_response"; }
 
 static void append_observation(std::ostringstream & out, const common_plan_observation & observation) {
@@ -31,40 +38,162 @@ static const common_plan_step * observation_step(
     return nullptr;
 }
 
-static std::string compact_observation_value(const plan_context_json & value, size_t budget) {
-    if (value.is_object() && value.value("ok", false) && value.contains("result")) {
-        return compact_observation_value(value["result"], budget);
+static std::string observation_scalar(const plan_context_json & value) {
+    if (value.is_string()) {
+        return plan_context_json(common_plan_escape_context_text(value.get<std::string>())).dump();
     }
-    if (!value.is_object()) {
-        auto rendered = value.dump();
-        if (rendered.size() > budget) rendered.resize(budget);
-        return rendered;
-    }
+    return value.dump();
+}
 
-    // Keep scalar/evidence fields first. This prevents a large rows array or
-    // resource envelope from hiding totals, names and typed references.
-    static const std::vector<std::string> preferred = {
-        "names", "name", "dataset", "dataset_ref", "resource", "value", "total",
-        "count", "min", "max", "mean", "median", "columns", "group_by", "rows",
+static void append_flat_observation_value(
+        std::ostringstream & out,
+        const std::string & key,
+        const plan_context_json & value,
+        size_t & fact_count,
+        size_t max_facts,
+        size_t depth = 0) {
+    if (fact_count >= max_facts || depth > 8) return;
+    if (value.is_object()) {
+        for (const auto & item : value.items()) {
+            if (item.key() == "ok" || item.key() == "summary" || item.key() == "resources" ||
+                    item.key() == "materialized" || item.key() == "backend") continue;
+            const auto child = key.empty() ? item.key() : key + "." + item.key();
+            append_flat_observation_value(out, child, item.value(), fact_count, max_facts, depth + 1);
+            if (fact_count >= max_facts) return;
+        }
+        return;
+    }
+    if (value.is_array()) {
+        if (value.empty()) {
+            out << key << ": empty\n";
+            ++fact_count;
+            return;
+        }
+        for (size_t index = 0; index < value.size() && fact_count < max_facts; ++index) {
+            const auto child = key + "[" + std::to_string(index + 1) + "]";
+            append_flat_observation_value(out, child, value[index], fact_count, max_facts, depth + 1);
+        }
+        return;
+    }
+    out << common_plan_escape_context_text(key.empty() ? "value" : key)
+        << ": " << observation_scalar(value) << "\n";
+    ++fact_count;
+}
+
+static void append_statistics_observation(
+        std::ostringstream & out,
+        const std::string & tool_name,
+        const plan_context_json & result,
+        size_t & fact_count,
+        size_t max_facts) {
+    const auto append_scalar_fields = [&](const plan_context_json & object, const std::string & prefix,
+                                          const std::string & excluded) {
+        if (!object.is_object()) return;
+        for (const auto & item : object.items()) {
+            if (fact_count >= max_facts) return;
+            if (item.key() == excluded || item.value().is_object() || item.value().is_array()) continue;
+            out << prefix << common_plan_escape_context_text(item.key()) << ": "
+                << observation_scalar(item.value()) << "\n";
+            ++fact_count;
+        }
     };
-    plan_context_json projected = plan_context_json::object();
-    auto append = [&](const std::string & key) {
-        if (!value.contains(key) || projected.contains(key)) return;
-        if (key == "ok" || key == "summary" || key == "resources" ||
-                key == "materialized" || key == "scan_truncated" || key == "result_truncated" ||
-                key == "backend") return;
-        projected[key] = value[key];
-    };
-    for (const auto & key : preferred) append(key);
-    for (const auto & item : value.items()) {
-        if (item.value().is_primitive() || (item.value().is_array() && item.value().size() <= 8)) {
-            append(item.key());
+    if (tool_name == "statistics.value_counts") {
+        if (result.contains("column") && result["column"].is_string()) {
+            out << "column: " << observation_scalar(result["column"]) << "\n";
+            ++fact_count;
+        }
+        if (result.contains("values") && result["values"].is_array()) {
+            for (const auto & item : result["values"]) {
+                if (fact_count >= max_facts || !item.is_object()) continue;
+                out << "value: " << observation_scalar(item.value("value", plan_context_json())) << "\n";
+                ++fact_count;
+                append_scalar_fields(item, "  ", "value");
+            }
+        }
+        for (const auto & item : result.items()) {
+            if (item.key() == "column" || item.key() == "values" || item.value().is_object() || item.value().is_array()) continue;
+            if (fact_count >= max_facts) break;
+            out << item.key() << ": " << observation_scalar(item.value()) << "\n";
+            ++fact_count;
+        }
+        return;
+    }
+    if (tool_name == "statistics.outliers") {
+        append_flat_observation_value(out, "", result, fact_count, max_facts);
+        return;
+    }
+    if (result.contains("columns") && result["columns"].is_array()) {
+        for (const auto & column : result["columns"]) {
+            if (!column.is_object() || fact_count >= max_facts) continue;
+            out << "column: " << observation_scalar(column.value("name", plan_context_json("unknown"))) << "\n";
+            ++fact_count;
+            append_scalar_fields(column, "  ", "name");
         }
     }
-    auto rendered = projected.dump();
+    if (result.contains("groups") && result["groups"].is_array()) {
+        size_t group_index = 0;
+        for (const auto & group : result["groups"]) {
+            if (!group.is_object() || fact_count >= max_facts) continue;
+            ++group_index;
+            out << "group: " << group_index << "\n";
+            ++fact_count;
+            if (group.contains("columns") && group["columns"].is_array()) {
+                for (const auto & item : group.items()) {
+                    if (item.key() == "columns" || item.value().is_object() || item.value().is_array()) continue;
+                    out << "  " << common_plan_escape_context_text(item.key()) << ": "
+                        << observation_scalar(item.value()) << "\n";
+                    ++fact_count;
+                }
+                for (const auto & column : group["columns"]) {
+                    if (!column.is_object() || fact_count >= max_facts) continue;
+                    out << "  column: " << observation_scalar(column.value("name", plan_context_json("unknown"))) << "\n";
+                    ++fact_count;
+                    append_scalar_fields(column, "    ", "name");
+                }
+            } else {
+                append_scalar_fields(group, "  ", "");
+            }
+        }
+    }
+    for (const auto & item : result.items()) {
+        if (item.key() == "columns" || item.key() == "groups" || item.value().is_object() || item.value().is_array()) continue;
+        out << item.key() << ": " << observation_scalar(item.value()) << "\n";
+        ++fact_count;
+    }
+}
+
+static std::string render_flat_observation(
+        const std::string & tool_name,
+        const plan_context_json & payload,
+        const common_plan_observation & observation,
+        size_t budget) {
+    plan_context_json result = payload;
+    if (payload.is_object() && payload.contains("result")) {
+        result = payload["result"];
+    }
+    std::ostringstream out;
+    out << "- tool: " << common_plan_escape_context_text(tool_name) << "\n";
+    if (observation.dataset_refs.size() == 1) {
+        out << "  dataset: " << observation_scalar(observation.dataset_refs.front().uri) << "\n";
+    } else {
+        for (const auto & dataset : observation.dataset_refs) {
+            out << "  dataset: " << observation_scalar(dataset.uri) << "\n";
+        }
+    }
+    if (observation.resource_refs.size() == 1) {
+        out << "  resource: " << observation_scalar(observation.resource_refs.front().uri) << "\n";
+    }
+    size_t fact_count = 0;
+    if ((tool_name == "statistics.describe" || tool_name == "statistics.outliers" ||
+            tool_name == "statistics.value_counts") && result.is_object()) {
+        append_statistics_observation(out, tool_name, result, fact_count, 64);
+    } else {
+        append_flat_observation_value(out, "", result, fact_count, 64);
+    }
+    auto rendered = out.str();
     if (rendered.size() > budget) {
-        rendered.resize(budget);
-        rendered += "...";
+        rendered.resize(budget > 3 ? budget - 3 : budget);
+        if (budget > 3) rendered += "...";
     }
     return rendered;
 }
@@ -83,9 +212,13 @@ std::string common_plan_render_tool_observations(
         if (step && step->status != common_plan_step_status::completed) continue;
         const auto payload = plan_context_json::parse(observation.summary, nullptr, false);
         if (payload.is_discarded()) continue;
-        std::string line = "- " + observation.source + " [completed]";
-        if (step && step->semantic_alias) line += " as=" + *step->semantic_alias;
-        line += " result=" + compact_observation_value(payload, 900) + "\n";
+        std::string line = render_flat_observation(observation.source, payload, observation, 900);
+        const size_t tool_line_end = line.find('\n');
+        if (step && step->semantic_alias) {
+            line.insert(tool_line_end + 1,
+                "  alias: " + observation_scalar(*step->semantic_alias) + "\n");
+        }
+        line.insert(tool_line_end + 1, "  status: completed\n");
         if (line.size() >= remaining) {
             if (remaining > 32) out << line.substr(0, remaining - 16) << "...\n";
             break;

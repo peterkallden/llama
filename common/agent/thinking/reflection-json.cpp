@@ -430,7 +430,11 @@ bool common_reflection_parse_compact_dsl(
         common_reflection_result & result,
         std::string & error,
         const std::string & inferred_replace_step_id,
-        size_t max_operations) {
+        size_t max_operations,
+        const std::string & inferred_replace_tool_name,
+        const std::string & inferred_retry_step_id,
+        const std::vector<common_chat_tool> & tools,
+        const std::vector<std::pair<std::string, std::string>> & retry_step_choices) {
     using json = nlohmann::json;
     json normalized = json::object();
     json guidance = json::array();
@@ -446,25 +450,73 @@ bool common_reflection_parse_compact_dsl(
     bool have_decision = false;
     size_t operation_count = 0;
     size_t line_number = 0;
+    std::string repair_arguments;
     while (std::getline(input, line)) {
         ++line_number;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         line = trim_reflection_text(line);
         if (line.empty()) continue;
         if (!have_decision) {
-            constexpr const char * prefix = "reflect decision=";
-            if (line.rfind(prefix, 0) != 0) {
-                error = "reflection DSL must start with `reflect decision=...`";
+            std::string decision;
+            if (line.rfind("reflect decision=", 0) == 0) {
+                decision = trim_reflection_text(line.substr(std::string("reflect decision=").size()));
+            } else if (line.rfind("reflect ", 0) == 0) {
+                const std::string command = trim_reflection_text(line.substr(8));
+                const auto space = command.find_first_of(" \t");
+                const std::string verb = command.substr(0, space);
+                const std::string argument = space == std::string::npos
+                    ? std::string{} : trim_reflection_text(command.substr(space + 1));
+                if (verb == "retry") {
+                    if (!argument.empty()) {
+                        if (argument.find_first_of(" \t") != std::string::npos) {
+                            error = "reflection retry accepts one choice";
+                            return false;
+                        }
+                        const auto choice = std::find_if(retry_step_choices.begin(), retry_step_choices.end(),
+                            [&](const auto & item) { return item.first == argument; });
+                        if (choice != retry_step_choices.end()) {
+                            retry.push_back(choice->second);
+                        } else if (!retry_step_choices.empty() && std::none_of(
+                                retry_step_choices.begin(), retry_step_choices.end(),
+                                [&](const auto & item) { return item.second == argument; })) {
+                            error = "reflection retry must select a listed failed step";
+                            return false;
+                        } else {
+                            retry.push_back(argument);
+                        }
+                    } else if (!inferred_retry_step_id.empty()) {
+                        retry.push_back(inferred_retry_step_id);
+                    } else {
+                        error = "reflection retry requires a host-bound step or one choice";
+                        return false;
+                    }
+                    decision = "revise";
+                } else {
+                    if (!argument.empty()) {
+                        error = "reflection decision does not accept an argument";
+                        return false;
+                    }
+                    decision = verb;
+                }
+            } else {
+                error = "reflection DSL must start with a reflect decision";
                 return false;
             }
-            const std::string decision = trim_reflection_text(line.substr(std::char_traits<char>::length(prefix)));
             if (decision.find_first_of(" \t") != std::string::npos ||
                     (decision != "accept" && decision != "revise" && decision != "abort")) {
                 error = "reflection DSL decision must be accept, revise, or abort";
                 return false;
             }
             normalized["decision"] = decision;
+            if (!inferred_replace_tool_name.empty() && decision != "revise") {
+                error = "host-bound argument repair requires reflect revise";
+                return false;
+            }
             have_decision = true;
+            continue;
+        }
+        if (!inferred_replace_tool_name.empty()) {
+            repair_arguments += line + "\n";
             continue;
         }
         const auto separator = line.find(" | ");
@@ -512,10 +564,22 @@ bool common_reflection_parse_compact_dsl(
         const std::string argument = space == std::string::npos ? std::string{} : trim_reflection_text(line.substr(space + 1));
         if (verb == "complete" || verb == "activate" || verb == "reset" || verb == "retry") {
             if (argument.empty() || argument.find_first_of(" \t") != std::string::npos) {
-                error = "reflection DSL " + verb + " requires exactly one step id";
+                error = "reflection DSL " + verb + " requires exactly one step choice";
                 return false;
             }
-            (verb == "complete" ? complete : verb == "activate" ? activate : verb == "reset" ? reset : retry).push_back(argument);
+            std::string step_id = argument;
+            if (verb == "retry" && !retry_step_choices.empty()) {
+                const auto choice = std::find_if(retry_step_choices.begin(), retry_step_choices.end(),
+                    [&](const auto & item) { return item.first == argument; });
+                if (choice != retry_step_choices.end()) {
+                    step_id = choice->second;
+                } else if (std::none_of(retry_step_choices.begin(), retry_step_choices.end(),
+                        [&](const auto & item) { return item.second == argument; })) {
+                    error = "reflection retry must select a listed failed step";
+                    return false;
+                }
+            }
+            (verb == "complete" ? complete : verb == "activate" ? activate : verb == "reset" ? reset : retry).push_back(step_id);
             if (complete.size() > 2 || activate.size() > 2 || reset.size() > 2 || retry.size() > 2) {
                 error = "reflection DSL step-id lists are limited to two entries";
                 return false;
@@ -584,6 +648,28 @@ bool common_reflection_parse_compact_dsl(
     if (!have_decision) {
         error = "reflection DSL is missing its decision line";
         return false;
+    }
+    if (!inferred_replace_tool_name.empty()) {
+        if (repair_arguments.empty()) {
+            error = "host-bound reflection repair is missing argument fields";
+            return false;
+        }
+        common_agent_tool_call call;
+        const std::string action = "open! " + inferred_replace_tool_name + "\n" + repair_arguments;
+        if (!common_parse_model_tool_call(
+                common_agent_tool_output_format::compact_dsl, action, tools, call, error)) return false;
+        if (call.name != inferred_replace_tool_name) {
+            error = "host-bound reflection repair changed the registered tool";
+            return false;
+        }
+        const auto arguments = json::parse(call.arguments_json, nullptr, false);
+        if (!arguments.is_object()) {
+            error = "host-bound reflection repair arguments must be an object";
+            return false;
+        }
+        normalized["replace_steps"] = json::array({{{"tool", call.name}, {"args", arguments}}});
+        return common_reflection_parse_json(
+            normalized.dump(), result, error, max_operations, inferred_replace_step_id);
     }
     if (!guidance.empty()) normalized["revision_guidance"] = std::move(guidance);
     if (!complete.empty()) normalized["complete"] = std::move(complete);
