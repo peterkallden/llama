@@ -103,10 +103,11 @@ the equivalent named form is also accepted:
 measure: function=sum column=amount as=total_amount
 ```
 
-For scalar array fields, use a bracketed, comma-separated list such as
-`group_by: [region, amount]`. Repeating the field on separate lines remains
-valid. Brackets distinguish a list from a scalar string containing commas;
-quote that scalar string, for example `select: "id, display_name"`. For
+For scalar array fields, either a comma-separated list such as
+`group_by: region, amount` or a bracketed list such as
+`group_by: [region, amount]` is valid. Repeating the field on separate lines
+also remains valid. For scalar string fields, quote values containing commas,
+for example `select: "id, display_name"`. For
 unannotated nested schemas, use dotted/indexed field paths such as
 `operations[0].column: amount`; object-array directives keep their declared
 slot syntax. Quote values containing whitespace. Omit unset fields rather than

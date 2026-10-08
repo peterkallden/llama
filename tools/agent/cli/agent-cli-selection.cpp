@@ -326,10 +326,10 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             output_format == common_agent_tool_output_format::compact_dsl
                 ? "Return one flat DSL tool call: first `open! TOOL_NAME`, then one `field: value` per line. "
                   "Select only an exact registered tool name. Use only arguments needed for the requested operation; arguments must match the selected tool contract. "
-                  "For scalar array fields, use brackets and commas, for example `columns: [amount, region]`; repeating the field on separate lines is also accepted. "
+                  "For scalar array fields, use either comma-separated values such as `columns: amount, region` or brackets such as `columns: [amount, region]`; repeating the field on separate lines is also accepted. "
                   "For array-of-object directives, repeat the declared directive and use its listed positional slots by default. Quote strings containing spaces, and omit unset fields. "
                   "Only include values needed as tool arguments; do not turn requested result statistics into argument values. "
-                  "Use brackets to mark lists; quote scalar strings containing commas. Do not use nested object literals. Do not add a plan header, reasoning, a second step, or commentary.\nRegistered workflow tools:" +
+                  "Quote scalar strings containing commas. Do not use nested object literals. Do not add a plan header, reasoning, a second step, or commentary.\nRegistered workflow tools:" +
                   workflow_action_contracts(tools, host_resolved_dataset_tools) +
                   (host_resolved_dataset_tools.empty() ? std::string{} :
                     "\nThe host resolves the dataset from the scoped inventory; omit the dataset argument.")

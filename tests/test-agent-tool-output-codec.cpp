@@ -27,6 +27,15 @@ common_chat_tool aggregate_tool() {
     };
 }
 
+common_chat_tool describe_tool() {
+    return {
+        "statistics.describe",
+        "Describe selected dataset columns.",
+        R"json({"type":"object","additionalProperties":false,"required":["columns"],"properties":{"columns":{"type":"array","items":{"type":"string"}},"select":{"type":"string"}}})json",
+        R"json({"type":"object"})json",
+    };
+}
+
 void test_formats() {
     std::string error;
     common_agent_tool_output_format format;
@@ -109,6 +118,7 @@ void test_v1_schema_boundary_and_rendering() {
     assert(instructions.find("openalex.listWorks") != std::string::npos);
     assert(instructions.find("complex") != std::string::npos);
     assert(instructions.find("one `field: value` per line") != std::string::npos);
+    assert(instructions.find("comma-separated values such as `columns: region, amount`") != std::string::npos);
     assert(instructions.find("bracketed list such as `columns: [region, amount]`") != std::string::npos);
     assert(instructions.find("Quote scalar strings containing commas") != std::string::npos);
 }
@@ -143,6 +153,32 @@ void test_schema_aware_flat_dsl_and_named_slots() {
     const auto bracketed_args = nlohmann::json::parse(call.arguments_json);
     assert(bracketed_args["dataset"] == "sales, net");
     assert(bracketed_args["group_by"] == nlohmann::json::array({"region", "sales, net"}));
+
+    const std::vector<common_chat_tool> describe_tools{describe_tool()};
+    const std::string comma_separated_columns =
+        "open! statistics.describe\n"
+        "columns: amount, region";
+    assert(common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl, comma_separated_columns, describe_tools, call, error));
+    const auto comma_separated_args = nlohmann::json::parse(call.arguments_json);
+    assert(comma_separated_args["columns"] == nlohmann::json::array({"amount", "region"}));
+
+    const std::string comma_containing_column_name =
+        "open! statistics.describe\n"
+        "columns: amount, \"sales, net\"";
+    assert(common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl, comma_containing_column_name, describe_tools, call, error));
+    const auto quoted_comma_args = nlohmann::json::parse(call.arguments_json);
+    assert(quoted_comma_args["columns"] == nlohmann::json::array({"amount", "sales, net"}));
+
+    const std::string quoted_scalar_comma =
+        "open! statistics.describe\n"
+        "columns: amount\n"
+        "select: \"id, display_name\"";
+    assert(common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl, quoted_scalar_comma, describe_tools, call, error));
+    const auto quoted_scalar_args = nlohmann::json::parse(call.arguments_json);
+    assert(quoted_scalar_args["select"] == "id, display_name");
 
     assert(!common_parse_model_tool_call(
         common_agent_tool_output_format::compact_dsl,

@@ -371,6 +371,41 @@ bool parse_flat_value(const std::string & source, json & value, std::string & er
     return true;
 }
 
+bool parse_flat_scalar_array(const std::string & source, json & value, std::string & error) {
+    value = json::array();
+    size_t start = 0;
+    bool quoted = false;
+    bool escaped = false;
+    for (size_t i = 0; i <= source.size(); ++i) {
+        const char ch = i < source.size() ? source[i] : ',';
+        if (i < source.size() && quoted) {
+            if (escaped) escaped = false;
+            else if (ch == '\\') escaped = true;
+            else if (ch == '"') quoted = false;
+            continue;
+        }
+        if (i < source.size() && ch == '"') {
+            quoted = true;
+            continue;
+        }
+        if (ch != ',') continue;
+        const std::string item_text = trim(source.substr(start, i - start));
+        if (item_text.empty()) {
+            error = "flat DSL array values must be non-empty";
+            return false;
+        }
+        json item;
+        if (!parse_flat_value(item_text, item, error)) return false;
+        if (item.is_array() || item.is_object()) {
+            error = "flat DSL comma-separated lists accept scalar values only";
+            return false;
+        }
+        value.push_back(std::move(item));
+        start = i + 1;
+    }
+    return true;
+}
+
 const json * find_flat_directive(const json & schema, const std::string & name) {
     if (!schema.is_object() || !schema.contains("properties")) return nullptr;
     const auto & properties = schema["properties"];
@@ -536,6 +571,28 @@ bool parse_flat_compact(
                 return false;
             }
             arguments[property_name].push_back(std::move(item));
+            continue;
+        }
+
+        const auto properties = schema.value("properties", json::object());
+        const bool scalar_array_field = properties.is_object() && properties.contains(field) &&
+            properties[field].is_object() && properties[field].value("type", std::string{}) == "array" &&
+            properties[field].value("items", json::object()).is_object() &&
+            properties[field]["items"].value("type", std::string{}) != "object" &&
+            properties[field]["items"].value("type", std::string{}) != "array";
+        if (scalar_array_field && source != "null" && (source.empty() || source.front() != '[')) {
+            if (bracketed_array_fields.count(field)) {
+                error = "flat DSL cannot mix a bracketed list with repeated lines for field: " + field;
+                return false;
+            }
+            json values;
+            if (!parse_flat_scalar_array(source, values, error)) return false;
+            if (!arguments.contains(field)) arguments[field] = json::array();
+            if (!arguments[field].is_array()) {
+                error = "flat DSL repeated field conflicts with a non-array value: " + field;
+                return false;
+            }
+            for (auto & item : values) arguments[field].push_back(std::move(item));
             continue;
         }
 
@@ -937,7 +994,7 @@ std::string common_render_model_tool_output_instructions(
         out << "Use one JSON line: {\"tool\":\"TOOL_NAME\",\"arguments\":{...}}.\n";
     } else {
         out << "Use flat DSL: first write `open! TOOL_NAME`, then one `field: value` per line.\n"
-            << "For scalar array fields, write a bracketed list such as `columns: [region, amount]`; repeating the field on separate lines is also accepted. Quote scalar strings containing commas, for example `select: \"id, display_name\"`.\n"
+            << "For scalar array fields, use either comma-separated values such as `columns: region, amount` or a bracketed list such as `columns: [region, amount]`; repeating the field on separate lines is also accepted. Quote scalar strings containing commas, for example `select: \"id, display_name\"`.\n"
             << "For nested values without a declared directive, use paths such as `operations[0].column: amount`. For annotated directives, use the listed positional slots by default; named `slot=value` entries are also accepted. Quote strings containing spaces. Omit unset fields; never use an empty value. Do not write nested object literals.\n";
     }
     out << "Available model-facing tools:\n";
