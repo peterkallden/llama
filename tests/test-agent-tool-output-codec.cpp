@@ -109,7 +109,8 @@ void test_v1_schema_boundary_and_rendering() {
     assert(instructions.find("openalex.listWorks") != std::string::npos);
     assert(instructions.find("complex") != std::string::npos);
     assert(instructions.find("one `field: value` per line") != std::string::npos);
-    assert(instructions.find("Do not write nested braces or arrays") != std::string::npos);
+    assert(instructions.find("bracketed list such as `columns: [region, amount]`") != std::string::npos);
+    assert(instructions.find("Quote scalar strings containing commas") != std::string::npos);
 }
 
 void test_schema_aware_flat_dsl_and_named_slots() {
@@ -131,6 +132,26 @@ void test_schema_aware_flat_dsl_and_named_slots() {
     assert(args["group_by"] == nlohmann::json::array({"region"}));
     assert(args["measures"].size() == 2);
     assert(args["measures"][0] == nlohmann::json({{"function", "sum"}, {"column", "amount"}, {"as", "total_amount"}}));
+
+    const std::string bracketed_array =
+        "open! data.aggregate\n"
+        "dataset: \"sales, net\"\n"
+        "group_by: [region, \"sales, net\"]\n"
+        "measure: sum amount total_amount";
+    assert(common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl, bracketed_array, tools, call, error));
+    const auto bracketed_args = nlohmann::json::parse(call.arguments_json);
+    assert(bracketed_args["dataset"] == "sales, net");
+    assert(bracketed_args["group_by"] == nlohmann::json::array({"region", "sales, net"}));
+
+    assert(!common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl,
+        "open! data.aggregate\ndataset: $inspect.dataset\ngroup_by: [region, amount]\ngroup_by: channel\nmeasure: sum amount total_amount",
+        tools, call, error));
+    assert(!common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl,
+        "open! data.aggregate\ndataset: [$inspect.dataset]\nmeasure: sum amount total_amount",
+        tools, call, error));
 
     assert(common_parse_model_tool_call(
         common_agent_tool_output_format::compact_dsl,

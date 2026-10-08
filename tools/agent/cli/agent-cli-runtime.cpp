@@ -1516,7 +1516,7 @@ public:
                     "plan goal=\"short goal\"\n"
                     "step | open! TOOL_NAME\n"
                     "field: value\n"
-                    "Add another `step | open! ...` only when another tool call is needed. Use only exact registered tool names and fields from their contracts. Quote only strings with spaces. For nested or repeated fields, use the directive or indexed field syntax shown by that tool. Omit unset fields and host-bound fields. Do not emit IDs, dependencies, aliases, reasoning steps, or a final-answer step; the host supplies those.\n"
+                    "Add another `step | open! ...` only when another tool call is needed. Use only exact registered tool names and fields from their contracts. For scalar array fields, use bracketed comma-separated values; repeating a field is also accepted. For nested object arrays, use the declared directive or indexed field syntax. Quote strings with spaces, and omit unset or host-bound fields. Do not emit IDs, dependencies, aliases, reasoning steps, or a final-answer step; the host supplies those.\n"
                     "Tool contracts:\n" + tool_contracts +
                     "Host-bound fields are authoritative; do not replace them. Fixed bindings:" +
                     render_planner_host_argument_bindings(request) + "\n"
@@ -1590,7 +1590,7 @@ public:
                     ? "Correct only the invalid or missing argument fields. Host validation error: " + target.validation_error + ". "
                     : "Provide only the missing required field. Required field: " + target.missing_argument + ". ";
                 const std::string repair_format = compact_dsl_output
-                    ? "Return only flat DSL argument lines in the selected tool's format: `field: value`, one per line. For annotated arrays, use the listed positional directive slots by default; named slots are also accepted. Use indexed field paths for other nested values. Quote strings with spaces. Omit unset fields; do not echo the full call or use nested braces/arrays. "
+                    ? "Return only flat DSL argument lines in the selected tool's format: `field: value`, one per line. For scalar array fields, use brackets and commas, for example `columns: [amount, region]`; repeating the field is also accepted. For annotated object arrays, use the listed positional directive slots by default; named slots are also accepted. Use indexed field paths for other nested values. Quote strings with spaces. Omit unset fields; do not echo the full call or use nested object literals. "
                     : "Return only an args object with the repaired fields. ";
                 common_chat_msg repair_system{
                     "system",

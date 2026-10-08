@@ -103,10 +103,14 @@ the equivalent named form is also accepted:
 measure: function=sum column=amount as=total_amount
 ```
 
-For unannotated nested schemas, use dotted/indexed field paths such as
-`operations[0].column: amount`; repeat scalar-array fields on separate lines.
-Quote values containing whitespace. Omit unset fields rather than writing an
-empty value. The shared schema-aware parser normalizes flat input to the same
+For scalar array fields, use a bracketed, comma-separated list such as
+`group_by: [region, amount]`. Repeating the field on separate lines remains
+valid. Brackets distinguish a list from a scalar string containing commas;
+quote that scalar string, for example `select: "id, display_name"`. For
+unannotated nested schemas, use dotted/indexed field paths such as
+`operations[0].column: amount`; object-array directives keep their declared
+slot syntax. Quote values containing whitespace. Omit unset fields rather than
+writing an empty value. The shared schema-aware parser normalizes flat input to the same
 canonical `{tool,args}` object used by JSON/native calls, and ordinary host
 schema validation remains authoritative. The previous nested one-line DSL is
 still accepted for compatibility but is no longer the generated prompt form.

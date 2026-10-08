@@ -357,8 +357,8 @@ bool parse_flat_value(const std::string & source, json & value, std::string & er
         error = "flat DSL field value is empty; omit an unset field instead";
         return false;
     }
-    if (text.front() == '{' || text.front() == '[') {
-        error = "flat DSL does not accept nested objects or arrays; use field paths or repeated lines";
+    if (text.front() == '{') {
+        error = "flat DSL does not accept nested objects; use field paths or declared directives";
         return false;
     }
     size_t position = 0;
@@ -509,6 +509,7 @@ bool parse_flat_compact(
     }
 
     json arguments = json::object();
+    std::set<std::string> bracketed_array_fields;
     for (size_t index = 1; index < lines.size(); ++index) {
         const size_t separator = lines[index].find(':');
         if (separator == std::string::npos) {
@@ -540,6 +541,28 @@ bool parse_flat_compact(
 
         json value;
         if (!parse_flat_value(source, value, error)) return false;
+        if (value.is_array()) {
+            const auto properties = schema.value("properties", json::object());
+            if (!properties.is_object() || !properties.contains(field) ||
+                    !properties[field].is_object() ||
+                    properties[field].value("type", std::string{}) != "array") {
+                error = "flat DSL bracketed lists are valid only for array fields";
+                return false;
+            }
+            for (const auto & item : value) {
+                if (item.is_array() || item.is_object()) {
+                    error = "flat DSL bracketed lists accept scalar values; use field paths or declared directives for nested items";
+                    return false;
+                }
+            }
+            if (arguments.contains(field)) {
+                error = "flat DSL cannot mix a bracketed list with repeated lines for field: " + field;
+                return false;
+            }
+            bracketed_array_fields.insert(field);
+            arguments[field] = std::move(value);
+            continue;
+        }
         std::vector<std::variant<std::string, size_t>> path;
         if (!split_flat_path(field, path)) {
             error = "flat DSL field path is invalid: " + field;
@@ -558,6 +581,10 @@ bool parse_flat_compact(
                 schema["properties"].contains(field) &&
                 schema["properties"][field].value("type", std::string{}) == "array" &&
                 !find_flat_directive(schema, field)) {
+            if (bracketed_array_fields.count(field)) {
+                error = "flat DSL cannot mix a bracketed list with repeated lines for field: " + field;
+                return false;
+            }
             if (!arguments.contains(field)) arguments[field] = json::array();
             if (!arguments[field].is_array()) {
                 error = "flat DSL repeated field conflicts with a non-array value: " + field;
@@ -910,8 +937,8 @@ std::string common_render_model_tool_output_instructions(
         out << "Use one JSON line: {\"tool\":\"TOOL_NAME\",\"arguments\":{...}}.\n";
     } else {
         out << "Use flat DSL: first write `open! TOOL_NAME`, then one `field: value` per line.\n"
-            << "Repeat a field for array values. For nested values without a declared directive, use paths such as `operations[0].column: amount`.\n"
-            << "For annotated directives, use the listed positional slots by default; named `slot=value` entries are also accepted. Quote strings containing spaces. Omit unset fields; never use an empty value. Do not write nested braces or arrays.\n";
+            << "For scalar array fields, write a bracketed list such as `columns: [region, amount]`; repeating the field on separate lines is also accepted. Quote scalar strings containing commas, for example `select: \"id, display_name\"`.\n"
+            << "For nested values without a declared directive, use paths such as `operations[0].column: amount`. For annotated directives, use the listed positional slots by default; named `slot=value` entries are also accepted. Quote strings containing spaces. Omit unset fields; never use an empty value. Do not write nested object literals.\n";
     }
     out << "Available model-facing tools:\n";
     size_t rendered = 0;

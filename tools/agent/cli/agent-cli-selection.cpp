@@ -179,6 +179,13 @@ std::string workflow_action_contracts(
                 }
             } else {
                 out += "\n  " + property.key() + (is_required ? " (required)" : " (optional)");
+                if (property.value().is_object() &&
+                        property.value().value("type", std::string{}) == "array" &&
+                        property.value().contains("items") && property.value()["items"].is_object() &&
+                        property.value()["items"].value("type", std::string{}) != "object" &&
+                        property.value()["items"].value("type", std::string{}) != "array") {
+                    out += " [list: use brackets, e.g. [value1, value2]]";
+                }
             }
             if (property.value().is_object() && property.value().contains("description") &&
                     property.value()["description"].is_string()) {
@@ -319,9 +326,10 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             output_format == common_agent_tool_output_format::compact_dsl
                 ? "Return one flat DSL tool call: first `open! TOOL_NAME`, then one `field: value` per line. "
                   "Select only an exact registered tool name. Use only arguments needed for the requested operation; arguments must match the selected tool contract. "
-                  "Repeat array directives on separate lines, use schema-listed positional slots by default, quote values containing spaces, and omit unset fields. "
+                  "For scalar array fields, use brackets and commas, for example `columns: [amount, region]`; repeating the field on separate lines is also accepted. "
+                  "For array-of-object directives, repeat the declared directive and use its listed positional slots by default. Quote strings containing spaces, and omit unset fields. "
                   "Only include values needed as tool arguments; do not turn requested result statistics into argument values. "
-                  "Do not use nested braces or arrays. Do not add a plan header, reasoning, a second step, or commentary.\nRegistered workflow tools:" +
+                  "Use brackets to mark lists; quote scalar strings containing commas. Do not use nested object literals. Do not add a plan header, reasoning, a second step, or commentary.\nRegistered workflow tools:" +
                   workflow_action_contracts(tools, host_resolved_dataset_tools) +
                   (host_resolved_dataset_tools.empty() ? std::string{} :
                     "\nThe host resolves the dataset from the scoped inventory; omit the dataset argument.")
